@@ -1,0 +1,105 @@
+Entity	Field	Type	Notes
+Book	id	UUID	PK
+Book	slug	string	SEO-friendly идентификатор
+Book	createdAt	datetime	Дата создания
+Book	updatedAt	datetime	Дата обновления
+
+Entity	Field	Type	Notes
+BookVersion	id	UUID	PK
+BookVersion	bookId	UUID	FK → Book
+BookVersion	language	enum	en/es/fr/pt
+BookVersion	title	string	Название книги
+BookVersion	author	string	Автор
+BookVersion	description	text	Описание
+BookVersion	coverImageUrl	string	Обложка
+BookVersion	type	enum	text/audio/referral
+BookVersion	isFree	boolean	Бесплатная ли
+BookVersion	referralUrl	string	Ссылка на покупку
+BookVersion	createdAt	datetime	
+BookVersion	updatedAt	datetime	
+
+Entity	Field	Type	Notes
+BookSummary	id	UUID	PK
+BookSummary	bookVersionId	UUID	FK → BookVersion
+BookSummary	summary	text	Краткое содержание
+BookSummary	analysis	text	Литературный анализ (опционально)
+BookSummary	themes	text	Темы, идеи, цитаты (опционально)
+BookSummary	createdAt	datetime	Дата создания
+BookSummary	updatedAt	datetime	Дата обновления
+
+Entity	Field	Type	Notes
+Chapter	id	UUID	PK
+Chapter	bookVersionId	UUID	FK → BookVersion
+Chapter	number	int	Номер главы
+Chapter	title	string	Заголовок
+Chapter	content	text	Содержимое
+Chapter	createdAt	datetime	
+
+Entity	Field	Type	Notes
+AudioChapter	id	UUID	PK
+AudioChapter	bookVersionId	UUID	FK → BookVersion
+AudioChapter	number	int	Номер
+AudioChapter	title	string	Заголовок
+AudioChapter	audioUrl	string	Ссылка на аудио
+AudioChapter	duration	int	Продолжительность (сек)
+AudioChapter	createdAt	datetime	
+
+Entity	Field	Type	Notes
+User	id	UUID	PK
+User	email	string	
+User	passwordHash	string	
+User	name	string	Опционально
+User	avatarUrl	string	Опционально
+User	languagePreference	enum	en/es/fr/pt
+User	createdAt	datetime	
+User	lastLogin	datetime	
+
+Entity	Field	Type	Notes
+Bookshelf	id	UUID	PK
+Bookshelf	userId	UUID	FK → User
+Bookshelf	bookVersionId	UUID	FK → BookVersion
+Bookshelf	addedAt	datetime	
+
+Entity	Field	Type	Notes
+Comment	id	UUID	PK
+Comment	userId	UUID	FK → User
+Comment	bookVersionId	UUID	nullable, FK → BookVersion
+Comment	chapterId	UUID	nullable, FK → Chapter
+Comment	audioChapterId	UUID	nullable, FK → AudioChapter
+Comment	parentId	UUID	nullable, FK → Comment
+Comment	text	text	
+Comment	createdAt	datetime	
+Comment	updatedAt	datetime	
+
+Entity	Field	Type	Notes
+Like	id	UUID	PK
+Like	userId	UUID	FK → User
+Like	targetType	enum	comment/bookVersion
+Like	targetId	UUID	ID цели
+Like	createdAt	datetime	
+
+Entity	Field	Type	Notes
+Category	id	UUID	PK
+Category	type	enum	genre/author/popular/etc
+Category	name	string	
+Category	slug	string	SEO
+
+Entity	Field	Type	Notes
+BookCategory	id	UUID	PK
+BookCategory	bookVersionId	UUID	FK → BookVersion
+BookCategory	categoryId	UUID	FK → Category
+
+Entity	Field	Type	Notes
+ViewStat	id	UUID	PK
+ViewStat	bookVersionId	UUID	FK → BookVersion
+ViewStat	userId	UUID	nullable, FK → User
+ViewStat	source	enum	text/audio/referral
+ViewStat	timestamp	datetime	
+
+Entity	Field	Type	Notes
+ReadingProgress	id	UUID	PK
+ReadingProgress	userId	UUID	FK → User
+ReadingProgress	bookVersionId	UUID	FK → BookVersion
+ReadingProgress	chapterNumber	int	или audioChapterNumber
+ReadingProgress	position	float	прогресс % или сек
+ReadingProgress	updatedAt	datetime	
