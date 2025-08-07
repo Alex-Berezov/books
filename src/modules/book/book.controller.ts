@@ -1,34 +1,129 @@
-import { Controller, Get, Post, Body, Param, Patch, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Patch,
+  Delete,
+  HttpException,
+  HttpStatus,
+  Query,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { BookService } from './book.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
+import { PaginationDto } from '../../shared/dto/pagination.dto';
 
+@ApiTags('books')
 @Controller('books')
 export class BookController {
   constructor(private readonly bookService: BookService) {}
 
   @Post()
-  create(@Body() createBookDto: CreateBookDto) {
-    return this.bookService.create(createBookDto);
+  @ApiOperation({ summary: 'Create new book' })
+  @ApiResponse({ status: 201, description: 'Book successfully created' })
+  @ApiResponse({ status: 400, description: 'Invalid data format' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async create(@Body() createBookDto: CreateBookDto) {
+    try {
+      return await this.bookService.create(createBookDto);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to create book', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   @Get()
-  findAll() {
-    return this.bookService.findAll();
+  @ApiOperation({ summary: 'Get all books with pagination' })
+  @ApiResponse({ status: 200, description: 'Books list successfully retrieved' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async findAll(@Query() paginationDto: PaginationDto) {
+    try {
+      return await this.bookService.findAll(paginationDto);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to retrieve books list', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('slug/:slug')
+  @ApiOperation({ summary: 'Get book by slug' })
+  @ApiParam({ name: 'slug', description: 'Unique book slug' })
+  @ApiResponse({ status: 200, description: 'Book found' })
+  @ApiResponse({ status: 404, description: 'Book not found' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async findBySlug(@Param('slug') slug: string) {
+    try {
+      return await this.bookService.findBySlug(slug);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to get book by slug', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.bookService.findOne(id);
+  @ApiOperation({ summary: 'Get book by ID' })
+  @ApiParam({ name: 'id', description: 'Unique book ID' })
+  @ApiResponse({ status: 200, description: 'Book found' })
+  @ApiResponse({ status: 404, description: 'Book not found' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async findOne(@Param('id') id: string) {
+    try {
+      return await this.bookService.findOne(id);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to get book', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateBookDto: UpdateBookDto) {
-    return this.bookService.update(id, updateBookDto);
+  @ApiOperation({ summary: 'Update book' })
+  @ApiParam({ name: 'id', description: 'Unique book ID' })
+  @ApiResponse({ status: 200, description: 'Book successfully updated' })
+  @ApiResponse({ status: 404, description: 'Book not found' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async update(@Param('id') id: string, @Body() updateBookDto: UpdateBookDto) {
+    try {
+      return await this.bookService.update(id, updateBookDto);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to update book', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.bookService.remove(id);
+  @ApiOperation({ summary: 'Delete book' })
+  @ApiParam({ name: 'id', description: 'Unique book ID' })
+  @ApiResponse({ status: 200, description: 'Book successfully deleted' })
+  @ApiResponse({ status: 404, description: 'Book not found' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async remove(@Param('id') id: string) {
+    try {
+      await this.bookService.remove(id);
+      return { success: true };
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to delete book', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }
