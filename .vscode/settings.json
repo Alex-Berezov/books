@@ -1,0 +1,4 @@
+{
+  "prisma.showPrismaDataPlatformNotification": false,
+  "editor.formatOnSave": true
+}

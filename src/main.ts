@@ -3,6 +3,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { CreateBookDto } from './modules/book/dto/create-book.dto';
+import { UpdateBookDto } from './modules/book/dto/update-book.dto';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -22,9 +24,16 @@ async function bootstrap() {
     .setDescription('API for the Books application')
     .setVersion('1.0')
     .addBearerAuth()
+    .addServer('http://localhost:5000', 'Local')
+    .addServer('https://api.example.com', 'Prod')
     .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  const document = SwaggerModule.createDocument(app, config, {
+    extraModels: [CreateBookDto, UpdateBookDto],
+  });
+  SwaggerModule.setup('api/docs', app, document, {
+    jsonDocumentUrl: 'api/docs-json',
+    swaggerOptions: { persistAuthorization: true },
+  });
 
   // Add "api" prefix to all routes
   app.setGlobalPrefix('api');

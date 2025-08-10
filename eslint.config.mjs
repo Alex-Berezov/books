@@ -32,4 +32,10 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-call': 'off',
     },
   },
+  {
+    files: ['src/**/*.dto.ts', 'src/**/dto/**/*.ts', 'src/shared/dto/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-call': 'off',
+    },
+  },
 );

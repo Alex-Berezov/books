@@ -96,3 +96,21 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+# Books App Back
+
+## Slug валидация
+- Паттерн: `^[a-z0-9]+(?:-[a-z0-9]+)*$`
+- Только строчные латиница/цифры, разделитель дефис, без пробелов и двойных/крайних дефисов.
+
+## Swagger
+- Доступно по `/api/docs`.
+- Примеры и схемы подключены для DTO `CreateBookDto` и `UpdateBookDto`.
+
+## Prisma
+- Генерация клиента: `yarn prisma:generate`
+- Миграции (dev): `yarn prisma:migrate`
+- Сиды: `yarn prisma:seed`
+- Studio: `yarn prisma:studio`
+
+Требуется переменная окружения `DATABASE_URL` в `.env`.

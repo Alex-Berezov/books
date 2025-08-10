@@ -15,6 +15,7 @@ import { BookService } from './book.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
+import { SLUG_PATTERN } from '../../shared/validators/slug';
 
 @ApiTags('books')
 @Controller('books')
@@ -56,7 +57,12 @@ export class BookController {
 
   @Get('slug/:slug')
   @ApiOperation({ summary: 'Get book by slug' })
-  @ApiParam({ name: 'slug', description: 'Unique book slug' })
+  @ApiParam({
+    name: 'slug',
+    description: 'Unique book slug',
+    schema: { type: 'string', pattern: SLUG_PATTERN },
+    example: 'harry-potter',
+  })
   @ApiResponse({ status: 200, description: 'Book found' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
