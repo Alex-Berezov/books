@@ -4,6 +4,8 @@ import { PrismaService } from './prisma/prisma.service';
 import { BookModule } from './modules/book/book.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './modules/auth/auth.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -12,6 +14,8 @@ import { AppService } from './app.service';
       envFilePath: '.env',
     }),
     BookModule,
+    AuthModule,
+    UsersModule,
     // ...другие модули
   ],
   controllers: [AppController],
