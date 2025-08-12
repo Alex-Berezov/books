@@ -6,6 +6,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { BookVersionModule } from './modules/book-version/book-version.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { UsersModule } from './modules/users/users.module';
     BookModule,
     AuthModule,
     UsersModule,
+    BookVersionModule,
     // ...другие модули
   ],
   controllers: [AppController],

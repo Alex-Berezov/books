@@ -44,6 +44,9 @@ model BookVersion {
   readingProgress ReadingProgress[]
   seo             Seo?              @relation(fields: [seoId], references: [id])
   seoId           Int?              @unique
+
+  @@unique([bookId, language])
+  @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
 }
 
 model BookSummary {

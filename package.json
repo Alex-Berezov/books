@@ -21,7 +21,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "cleanup:bookVersions": "ts-node prisma/scripts/cleanup-duplicate-book-versions.ts",
+    "cleanup:bookVersions:apply": "APPLY=1 ts-node prisma/scripts/cleanup-duplicate-book-versions.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
