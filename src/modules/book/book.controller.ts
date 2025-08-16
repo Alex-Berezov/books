@@ -9,6 +9,7 @@ import {
   HttpException,
   HttpStatus,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { BookService } from './book.service';
@@ -16,6 +17,9 @@ import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { SLUG_PATTERN } from '../../shared/validators/slug';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Role, Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('books')
 @Controller('books')
@@ -27,6 +31,8 @@ export class BookController {
   @ApiResponse({ status: 201, description: 'Book successfully created' })
   @ApiResponse({ status: 400, description: 'Invalid data format' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   async create(@Body() createBookDto: CreateBookDto) {
     try {
       return await this.bookService.create(createBookDto);
@@ -102,6 +108,8 @@ export class BookController {
   @ApiResponse({ status: 200, description: 'Book successfully updated' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   async update(@Param('id') id: string, @Body() updateBookDto: UpdateBookDto) {
     try {
       return await this.bookService.update(id, updateBookDto);
@@ -120,6 +128,8 @@ export class BookController {
   @ApiResponse({ status: 200, description: 'Book successfully deleted' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   async remove(@Param('id') id: string) {
     try {
       await this.bookService.remove(id);

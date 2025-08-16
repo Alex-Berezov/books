@@ -7,6 +7,8 @@ import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { BookVersionModule } from './modules/book-version/book-version.module';
+import { ChapterModule } from './modules/chapter/chapter.module';
+import { RolesGuard } from './common/guards/roles.guard';
 
 @Module({
   imports: [
@@ -18,10 +20,11 @@ import { BookVersionModule } from './modules/book-version/book-version.module';
     AuthModule,
     UsersModule,
     BookVersionModule,
+    ChapterModule,
     // ...другие модули
   ],
   controllers: [AppController],
-  providers: [PrismaService, AppService],
+  providers: [PrismaService, AppService, RolesGuard],
   exports: [PrismaService],
 })
 export class AppModule {}

@@ -9,12 +9,16 @@ import {
   Delete,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { BookVersionService } from './book-version.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
 import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Language, BookType } from '@prisma/client';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Role, Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('book-versions')
 @Controller()
@@ -50,6 +54,8 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Create book version' })
   @ApiParam({ name: 'bookId' })
   @ApiResponse({ status: 201, description: 'Created' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   create(@Param('bookId') bookId: string, @Body() dto: CreateBookVersionDto) {
     return this.service.create(bookId, dto);
   }
@@ -63,6 +69,8 @@ export class BookVersionController {
 
   @Patch('versions/:id')
   @ApiOperation({ summary: 'Update version by id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateBookVersionDto) {
     return this.service.update(id, dto);
   }
@@ -70,6 +78,8 @@ export class BookVersionController {
   @Delete('versions/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete version by id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

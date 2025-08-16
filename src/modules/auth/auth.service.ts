@@ -4,7 +4,7 @@ import * as argon2 from 'argon2';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto, RegisterDto, RefreshDto } from './dto/auth.dto';
-import { User, Language as PrismaLanguage } from '@prisma/client';
+import { User, Language as PrismaLanguage, RoleName } from '@prisma/client';
 
 type PublicUser = Omit<User, 'passwordHash'>;
 
@@ -19,6 +19,24 @@ export class AuthService {
   async register(
     dto: RegisterDto,
   ): Promise<{ user: PublicUser; accessToken: string; refreshToken: string }> {
+    // Ensure core roles exist (idempotent)
+    await this.prisma.$transaction([
+      this.prisma.role.upsert({
+        where: { name: RoleName.user },
+        update: {},
+        create: { name: RoleName.user },
+      }),
+      this.prisma.role.upsert({
+        where: { name: RoleName.admin },
+        update: {},
+        create: { name: RoleName.admin },
+      }),
+      this.prisma.role.upsert({
+        where: { name: RoleName.content_manager },
+        update: {},
+        create: { name: RoleName.content_manager },
+      }),
+    ]);
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already in use');
 
@@ -32,6 +50,46 @@ export class AuthService {
         languagePreference: dto.languagePreference ?? PrismaLanguage.en,
       },
     });
+
+    // Assign default 'user' role and optionally elevated roles from env lists
+    const userRole = await this.prisma.role.findUnique({ where: { name: RoleName.user } });
+    if (userRole) {
+      await this.prisma.userRole.upsert({
+        where: { userId_roleId: { userId: user.id, roleId: userRole.id } },
+        create: { userId: user.id, roleId: userRole.id },
+        update: {},
+      });
+    }
+
+    const adminsList = (this.config.get<string>('ADMIN_EMAILS') || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (adminsList.includes(user.email.toLowerCase())) {
+      const adminRole = await this.prisma.role.findUnique({ where: { name: RoleName.admin } });
+      if (adminRole)
+        await this.prisma.userRole.upsert({
+          where: { userId_roleId: { userId: user.id, roleId: adminRole.id } },
+          create: { userId: user.id, roleId: adminRole.id },
+          update: {},
+        });
+    }
+
+    const managersList = (this.config.get<string>('CONTENT_MANAGER_EMAILS') || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (managersList.includes(user.email.toLowerCase())) {
+      const managerRole = await this.prisma.role.findUnique({
+        where: { name: RoleName.content_manager },
+      });
+      if (managerRole)
+        await this.prisma.userRole.upsert({
+          where: { userId_roleId: { userId: user.id, roleId: managerRole.id } },
+          create: { userId: user.id, roleId: managerRole.id },
+          update: {},
+        });
+    }
 
     const tokens = await this.signTokens(user.id, user.email);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });

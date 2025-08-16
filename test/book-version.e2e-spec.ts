@@ -27,6 +27,7 @@ describe('BookVersions e2e', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let bookId: string;
+  let adminToken: string;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -37,8 +38,22 @@ describe('BookVersions e2e', () => {
     );
     await app.init();
 
+    process.env.ADMIN_EMAILS = 'admin@example.com';
     const book = await prisma.book.create({ data: { slug: `book-${Date.now()}` } });
     bookId = book.id;
+
+    // ensure admin auth
+    const email = 'admin@example.com';
+    const password = 'password123';
+    const reg = await request(http()).post('/auth/register').send({ email, password });
+    if (reg.status === 201) {
+      adminToken = reg.body.accessToken as string;
+    } else if (reg.status === 409) {
+      const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
+      adminToken = login.body.accessToken as string;
+    } else {
+      throw new Error(`Admin register unexpected status ${reg.status}`);
+    }
   });
 
   afterAll(async () => {
@@ -50,6 +65,7 @@ describe('BookVersions e2e', () => {
   it('create -> list -> get -> update -> delete', async () => {
     const createRes = await request(http())
       .post(`/books/${bookId}/versions`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en,
         title: 'Title EN',
@@ -67,8 +83,15 @@ describe('BookVersions e2e', () => {
     expect(Array.isArray(listRes.body)).toBe(true);
     expect(listRes.body.length).toBe(1);
     await request(http()).get(`/versions/${versionId}`).expect(200);
-    await request(http()).patch(`/versions/${versionId}`).send({ title: 'Updated' }).expect(200);
-    await request(http()).delete(`/versions/${versionId}`).expect(204);
+    await request(http())
+      .patch(`/versions/${versionId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ title: 'Updated' })
+      .expect(200);
+    await request(http())
+      .delete(`/versions/${versionId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(204);
   });
 
   it('enforces uniqueness (bookId, language)', async () => {
@@ -76,6 +99,7 @@ describe('BookVersions e2e', () => {
     const book = await prisma.book.create({ data: { slug } });
     await request(http())
       .post(`/books/${book.id}/versions`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en,
         title: 'Title EN',
@@ -88,6 +112,7 @@ describe('BookVersions e2e', () => {
       .expect(201);
     await request(http())
       .post(`/books/${book.id}/versions`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en,
         title: 'Title EN 2',

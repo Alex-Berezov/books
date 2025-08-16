@@ -145,6 +145,14 @@
   - [x] Безопасность: JWT Guard; RolesGuard для admin-роутов
   - [x] Тесты: доступ/запрет, обновление профиля
 
+- [x] 1a. UsersModule — роли и права (расширение)
+  - [x] Роли: admin, content_manager, user (enum + хранение/проверка)
+  - [x] Политика: управление контентом (chapters/versions) доступно admin|content_manager
+  - [x] Источник ролей: хранение в БД + фолбэк по переменным окружения (ADMIN_EMAILS, CONTENT_MANAGER_EMAILS)
+  - [x] Guards/Decorators: Roles, RolesGuard обновлён — читает роли из БД
+  - [x] Swagger: базовое описание ролей через декоратор Roles
+  - [x] Тесты: e2e на доступ/запрет (401/403), управление ролями (assign/revoke)
+
 - [x] 2. AuthModule — готово
   - [x] Унификация DTO между контроллером и сервисом (используем Prisma $Enums.Language в DTO)
   - [x] Эндпоинты: POST /auth/register, POST /auth/login
@@ -171,11 +179,14 @@
   - [x] Расширенный Swagger (ответные схемы моделей) — готово
   - [x] Unit тесты сервиса (моки Prisma) — готово (`book-version.service.spec.ts`)
 
-- [ ] 5. ChaptersModule
-- Ответственность: текстовые главы.
-- Эндпоинты: GET /versions/:bookVersionId/chapters, GET /chapters/:id, POST /versions/:bookVersionId/chapters, PATCH /chapters/:id, DELETE /chapters/:id.
-- Ограничения: уникальность (bookVersionId, number).
-- Массовые операции: опционально bulk upsert/ре-нумерация.
+- [x] 5. ChaptersModule — готово
+  - [x] Каркас: controller / service / module
+  - [x] DTO + валидация (number >= 1, title, content)
+  - [x] Эндпоинты: GET /versions/:bookVersionId/chapters, GET /chapters/:id, POST /versions/:bookVersionId/chapters, PATCH /chapters/:id, DELETE /chapters/:id
+  - [x] Ограничения: уникальность (bookVersionId, number) — добавлен индекс в Prisma + миграция
+  - [x] Swagger теги/описания
+  - [x] Unit тесты сервиса (моки Prisma)
+  - [ ] Массовые операции: bulk upsert/ре-нумерация — отложено
 
 - [ ] 6. AudioChaptersModule
 - Аналогично главам: аудио-главы.
@@ -242,3 +253,15 @@
 - Кэш инвалидация: при изменениях версий/категорий/SEO/глав — чистить ключи списков и детальных карточек.
 - Авторизация: права на создание/редактирование контента (admin/editor), пользователи — только собственные ресурсы (полка, прогресс, лайки, комментарии).
 - Нагрузочное: пагинация по id/createdAt, лимиты на списки, индексация из раздела 2.
+
+<!-- Принял. Коротко по приоритету — что логичнее взять следующим и почему:
+
+AudioChaptersModule — лучший следующий шаг
+Причины: почти полный аналог Chapters (быстрый delivery, низкий риск), модель уже есть в Prisma (AudioChapter), уникальность (bookVersionId, number) задана.
+Что войдёт: DTO (audioUrl, duration), CRUD эндпоинты как у глав, RBAC (admin|content_manager) на write, e2e по happy/forbidden и уникальности.
+Альтернативы (после аудио-глав):
+
+SeoModule — 1:1 с BookVersion, простая реализация, сразу добавляет ценность для SEO.
+CategoriesModule — CRUD категорий (admin) + attach/detach к версиям; у нас уже есть связи и сиды, останется API и тесты.
+BookSummariesModule — upsert 1 summary на версию; небольшой объём.
+Рекомендация: начинаем с AudioChaptersModule, затем SeoModule или CategoriesModule (зависит от приоритета продуктовых задач). -->

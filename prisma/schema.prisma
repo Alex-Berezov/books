@@ -69,6 +69,8 @@ model Chapter {
   createdAt     DateTime    @default(now())
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
   comments      Comment[]
+
+  @@unique([bookVersionId, number])
 }
 
 model AudioChapter {
@@ -97,6 +99,7 @@ model User {
   likes              Like[]
   viewStats          ViewStat[]
   readingProgress    ReadingProgress[]
+  roles              UserRole[]
 }
 
 model Bookshelf {
@@ -255,4 +258,29 @@ enum ViewSource {
   text
   audio
   referral
+}
+
+// =====================
+// Roles & Permissions
+// =====================
+
+model Role {
+  id    Int        @id @default(autoincrement())
+  name  RoleName   @unique
+  users UserRole[]
+}
+
+model UserRole {
+  userId String
+  roleId Int
+  user   User @relation(fields: [userId], references: [id])
+  role   Role @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+}
+
+enum RoleName {
+  user
+  admin
+  content_manager
 }

@@ -1,8 +1,52 @@
-import { PrismaClient, Language, BookType, CategoryType } from '@prisma/client';
+import { PrismaClient, Language, BookType, CategoryType, RoleName } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 async function main() {
+  // Seed Roles
+  await prisma.$transaction([
+    prisma.role.upsert({
+      where: { name: RoleName.user },
+      update: {},
+      create: { name: RoleName.user },
+    }),
+    prisma.role.upsert({
+      where: { name: RoleName.admin },
+      update: {},
+      create: { name: RoleName.admin },
+    }),
+    prisma.role.upsert({
+      where: { name: RoleName.content_manager },
+      update: {},
+      create: { name: RoleName.content_manager },
+    }),
+  ]);
+
+  // Optionally map env emails to roles (idempotent)
+  const addRoleForEmails = async (emailsCsv: string | undefined, roleName: RoleName) => {
+    const emails = (emailsCsv || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (emails.length === 0) return;
+    const role = await prisma.role.findUnique({ where: { name: roleName }, select: { id: true } });
+    if (!role?.id) return;
+    for (const email of emails) {
+      const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+      if (user?.id) {
+        const exists = await prisma.userRole.findUnique({
+          where: { userId_roleId: { userId: user.id, roleId: role.id } },
+          select: { userId: true },
+        });
+        if (!exists) {
+          await prisma.userRole.create({ data: { userId: user.id, roleId: role.id } });
+        }
+      }
+    }
+  };
+
+  await addRoleForEmails(process.env.ADMIN_EMAILS, RoleName.admin);
+  await addRoleForEmails(process.env.CONTENT_MANAGER_EMAILS, RoleName.content_manager);
   // Seed Categories
   const categories = await prisma.$transaction([
     prisma.category.upsert({

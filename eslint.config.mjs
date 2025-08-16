@@ -32,6 +32,17 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-call': 'off',
     },
   },
+  // Loosen rules for Prisma scripts where type-aware linting often misfires
+  {
+    files: ['prisma/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+    },
+  },
   {
     files: ['src/**/*.dto.ts', 'src/**/dto/**/*.ts', 'src/shared/dto/**/*.ts'],
     rules: {

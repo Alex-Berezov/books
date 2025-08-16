@@ -1,9 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Req, UseGuards, Post } from '@nestjs/common';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags, ApiParam } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
-import { Language as PrismaLanguage } from '@prisma/client';
+import { Language as PrismaLanguage, RoleName } from '@prisma/client';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 
@@ -71,5 +71,31 @@ export class UsersController {
   @Delete(':id')
   deleteById(@Param('id') id: string) {
     return this.users.deleteById(id);
+  }
+
+  @ApiOperation({ summary: 'List user roles (admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @Roles(Role.Admin)
+  @Get(':id/roles')
+  listRoles(@Param('id') id: string) {
+    return this.users.listRoles(id);
+  }
+
+  @ApiOperation({ summary: 'Assign role to user (admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiParam({ name: 'role', description: 'Role name', enum: ['user', 'admin', 'content_manager'] })
+  @Roles(Role.Admin)
+  @Post(':id/roles/:role')
+  assignRole(@Param('id') id: string, @Param('role') role: RoleName) {
+    return this.users.assignRole(id, role);
+  }
+
+  @ApiOperation({ summary: 'Revoke role from user (admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiParam({ name: 'role', description: 'Role name', enum: ['user', 'admin', 'content_manager'] })
+  @Roles(Role.Admin)
+  @Delete(':id/roles/:role')
+  revokeRole(@Param('id') id: string, @Param('role') role: RoleName) {
+    return this.users.revokeRole(id, role);
   }
 }
