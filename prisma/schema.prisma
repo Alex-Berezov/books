@@ -83,6 +83,8 @@ model AudioChapter {
   createdAt     DateTime    @default(now())
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
   comments      Comment[]
+
+  @@unique([bookVersionId, number])
 }
 
 model User {
