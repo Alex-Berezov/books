@@ -13,6 +13,7 @@ import { SeoModule } from './modules/seo/seo.module';
 import { BookSummaryModule } from './modules/book-summary/book-summary.module';
 import { RolesGuard } from './common/guards/roles.guard';
 import { CategoryModule } from './modules/category/category.module';
+import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { CategoryModule } from './modules/category/category.module';
     SeoModule,
     BookSummaryModule,
     CategoryModule,
+    BookshelfModule,
     // ...другие модули
   ],
   controllers: [AppController],

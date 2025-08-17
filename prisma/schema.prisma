@@ -111,6 +111,8 @@ model Bookshelf {
   addedAt       DateTime    @default(now())
   user          User        @relation(fields: [userId], references: [id])
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+
+  @@unique([userId, bookVersionId])
 }
 
 model Comment {

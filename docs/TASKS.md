@@ -223,10 +223,14 @@
   - [x] Swagger теги/описания
   - [x] Тесты: e2e CRUD + attach/detach, idempotency duplicate attach
 
-- [ ] 10. BookshelfModule
-- Ответственность: полка пользователя.
-- Эндпоинты: GET /me/bookshelf, POST /me/bookshelf/:versionId, DELETE /me/bookshelf/:versionId.
-- Ограничения: 1 запись на (userId, bookVersionId) — защитить на уровне сервис + уникальный индекс.
+- [x] 10. BookshelfModule — готово
+- [x] Ответственность: полка пользователя.
+- [x] Эндпоинты: GET /me/bookshelf, POST /me/bookshelf/:versionId, DELETE /me/bookshelf/:versionId.
+- [x] Ограничения: уникальность (userId, bookVersionId) — добавлен @@unique в Prisma + миграция.
+- [x] Идемпотентность: повторный POST не создаёт дубликат, DELETE всегда 204.
+- [x] Пагинация: общий PaginationDto + метаданные total/hasNext.
+- [x] DTO ответов: BookshelfItemDto, BookshelfListDto (+ Swagger описания).
+- [x] Тесты: e2e доступ/запрет (401), happy path add/list/delete, 404 на несуществующую версию.
 
 - [ ] 11. CommentsModule
 - Ответственность: древовидные комментарии к версии/главе/аудио-главе.
@@ -268,14 +272,17 @@
 - Авторизация: права на создание/редактирование контента (admin/editor), пользователи — только собственные ресурсы (полка, прогресс, лайки, комментарии).
 - Нагрузочное: пагинация по id/createdAt, лимиты на списки, индексация из раздела 2.
 
-<!-- Принял. Коротко по приоритету — что логичнее взять следующим и почему:
+<!-- Рекомендую брать CommentsModule.
 
-AudioChaptersModule — лучший следующий шаг
-Причины: почти полный аналог Chapters (быстрый delivery, низкий риск), модель уже есть в Prisma (AudioChapter), уникальность (bookVersionId, number) задана.
-Что войдёт: DTO (audioUrl, duration), CRUD эндпоинты как у глав, RBAC (admin|content_manager) на write, e2e по happy/forbidden и уникальности.
-Альтернативы (после аудио-глав):
+Почему:
 
-SeoModule — 1:1 с BookVersion, простая реализация, сразу добавляет ценность для SEO.
-CategoriesModule — CRUD категорий (admin) + attach/detach к версиям; у нас уже есть связи и сиды, останется API и тесты.
-BookSummariesModule — upsert 1 summary на версию; небольшой объём.
-Рекомендация: начинаем с AudioChaptersModule, затем SeoModule или CategoriesModule (зависит от приоритета продуктовых задач). -->
+Разблокирует социальные фичи (обсуждения), повышает удержание.
+Логически предшествует Likes (лайки на комментарии).
+Схема уже есть (Comment), интеграция проста с версиями/главами/аудио.
+Краткий объём:
+
+Эндпоинты: GET /comments (target=version|chapter|audio, targetId, пагинация), POST /comments, PATCH /comments/:id, DELETE /comments/:id.
+Правила: ровно один FK из (bookVersionId|chapterId|audioChapterId); parentId опционален (древо); soft-delete/hidden + модерация для admin|content_manager.
+Индексы/валидация: добавить проверку взаимоисключающих FK на уровне сервиса + миграции для полезных индексов.
+RBAC: создание — авторизованные; правка/удаление — владелец или admin|content_manager.
+Тесты e2e: создание/ответы/пагинация/403/401/модерация. -->
