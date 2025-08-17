@@ -157,6 +157,8 @@ model BookCategory {
   categoryId    String
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
   category      Category    @relation(fields: [categoryId], references: [id])
+
+  @@unique([bookVersionId, categoryId])
 }
 
 model ViewStat {

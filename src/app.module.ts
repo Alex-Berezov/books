@@ -12,6 +12,7 @@ import { AudioChapterModule } from './modules/audio-chapter/audio-chapter.module
 import { SeoModule } from './modules/seo/seo.module';
 import { BookSummaryModule } from './modules/book-summary/book-summary.module';
 import { RolesGuard } from './common/guards/roles.guard';
+import { CategoryModule } from './modules/category/category.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     AudioChapterModule,
     SeoModule,
     BookSummaryModule,
+    CategoryModule,
     // ...другие модули
   ],
   controllers: [AppController],

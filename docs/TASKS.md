@@ -214,11 +214,14 @@
   - [x] RBAC: PUT — только admin|content_manager (JwtAuthGuard + RolesGuard)
   - [x] e2e тесты: GET null/данные, запреты (401/403), upsert и повторный GET
 
-- [ ] 9. CategoriesModule
-- Ответственность: категории и связь с версиями.
-- Эндпоинты: GET /categories, POST /categories (admin), PATCH /categories/:id (admin), DELETE /categories/:id (admin),
-  GET /categories/:slug/books, POST /versions/:id/categories (attach), DELETE /versions/:id/categories/:categoryId (detach).
-- Ограничения: Category.slug уникален; BookCategory уникальность (bookVersionId, categoryId).
+- [x] 9. CategoriesModule — готово
+  - [x] Ответственность: категории и связь с версиями.
+  - [x] Эндпоинты: GET /categories, POST /categories (admin), PATCH /categories/:id (admin), DELETE /categories/:id (admin),
+        GET /categories/:slug/books, POST /versions/:id/categories (attach), DELETE /versions/:id/categories/:categoryId (detach).
+  - [x] Ограничения: Category.slug уникален; BookCategory уникальность (bookVersionId, categoryId) — добавлен @@unique в Prisma + миграция.
+  - [x] RBAC: write-операции — только admin|content_manager (JwtAuthGuard + RolesGuard)
+  - [x] Swagger теги/описания
+  - [x] Тесты: e2e CRUD + attach/detach, idempotency duplicate attach
 
 - [ ] 10. BookshelfModule
 - Ответственность: полка пользователя.
