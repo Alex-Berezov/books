@@ -132,6 +132,14 @@
 - Для публичных эндпоинтов — кэш в Redis и инвалидация после изменений.
 - Для всех эндпоинтов — полные описания в Swagger с примерами и схемами.
 
+— Кэш и рейт-лимит (архитектурное решение)
+
+- На нулевом этапе Redis не подключаем. В проекте введены абстракции:
+  - CacheService (дефолт: in-memory), модуль `CacheModule`.
+  - RateLimiter (дефолт: in-memory), модуль `RateLimitModule`. Глобально выключен флагом `RATE_LIMIT_ENABLED`.
+- Переключение на Redis в будущем — через замену провайдеров этих токенов и включение флагов в .env.
+- До появления трафика полагаемся на индексы БД, корректные ответы кэша браузера/CDN и инвалидацию на уровне приложения.
+
 ---
 
 ## Приложение A. Бэклог модулей по сущностям (NestJS + Prisma)
@@ -224,19 +232,25 @@
   - [x] Тесты: e2e CRUD + attach/detach, idempotency duplicate attach
 
 - [x] 10. BookshelfModule — готово
-- [x] Ответственность: полка пользователя.
-- [x] Эндпоинты: GET /me/bookshelf, POST /me/bookshelf/:versionId, DELETE /me/bookshelf/:versionId.
-- [x] Ограничения: уникальность (userId, bookVersionId) — добавлен @@unique в Prisma + миграция.
-- [x] Идемпотентность: повторный POST не создаёт дубликат, DELETE всегда 204.
-- [x] Пагинация: общий PaginationDto + метаданные total/hasNext.
-- [x] DTO ответов: BookshelfItemDto, BookshelfListDto (+ Swagger описания).
-- [x] Тесты: e2e доступ/запрет (401), happy path add/list/delete, 404 на несуществующую версию.
+  - [x] Ответственность: полка пользователя.
+  - [x] Эндпоинты: GET /me/bookshelf, POST /me/bookshelf/:versionId, DELETE /me/bookshelf/:versionId.
+  - [x] Ограничения: уникальность (userId, bookVersionId) — добавлен @@unique в Prisma + миграция.
+  - [x] Идемпотентность: повторный POST не создаёт дубликат, DELETE всегда 204.
+  - [x] Пагинация: общий PaginationDto + метаданные total/hasNext.
+  - [x] DTO ответов: BookshelfItemDto, BookshelfListDto (+ Swagger описания).
+  - [x] Тесты: e2e доступ/запрет (401), happy path add/list/delete, 404 на несуществующую версию.
 
-- [ ] 11. CommentsModule
-- Ответственность: древовидные комментарии к версии/главе/аудио-главе.
-- Эндпоинты: GET /comments?target=version|chapter|audio&targetId=..., POST /comments, PATCH /comments/:id, DELETE /comments/:id.
-- Политика: parentId опционален, children через relation; soft-delete/hidden для модерации.
-- Ограничения: взаимоисключающие fk (ровно один из bookVersionId|chapterId|audioChapterId задан).
+- [x] 11. CommentsModule
+  - [x] Ответственность: древовидные комментарии к версии/главе/аудио-главе.
+  - [x] Эндпоинты: GET /comments?target=version|chapter|audio&targetId=..., POST /comments, PATCH /comments/:id, DELETE /comments/:id.
+  - [x] Политика: parentId опционален, children через relation; soft-delete (isDeleted)/hidden (isHidden) для модерации.
+  - [x] Ограничения: взаимоисключающие fk (ровно один из bookVersionId|chapterId|audioChapterId задан) — проверка на уровне сервиса.
+  - [x] Индексы: добавлены @@index для target-полей и parentId.
+  - [x] RBAC: права модерации admin|content_manager; фолбэк по env ADMIN_EMAILS/CONTENT_MANAGER_EMAILS.
+  - [x] Тесты: e2e happy/negative, модерация, soft-delete, взаим.исключающие поля.
+        Опционально на будущее:
+  - [ ] Добавить XOR CHECK-constraint в БД (raw SQL миграция).
+  - [ ] Включить rate limiting/антиспам для POST /comments.
 
 - [ ] 12. LikesModule
 - Ответственность: лайки к версии или комменту.
@@ -272,17 +286,30 @@
 - Авторизация: права на создание/редактирование контента (admin/editor), пользователи — только собственные ресурсы (полка, прогресс, лайки, комментарии).
 - Нагрузочное: пагинация по id/createdAt, лимиты на списки, индексация из раздела 2.
 
-<!-- Рекомендую брать CommentsModule.
+<!-- Логично взять LikesModule.
 
 Почему:
 
-Разблокирует социальные фичи (обсуждения), повышает удержание.
-Логически предшествует Likes (лайки на комментарии).
-Схема уже есть (Comment), интеграция проста с версиями/главами/аудио.
-Краткий объём:
+Прямое продолжение после Comments: лайки на комментарии и версии.
+Небольшой объём, быстрый user-value и метрики вовлечённости.
+Краткое ТЗ:
 
-Эндпоинты: GET /comments (target=version|chapter|audio, targetId, пагинация), POST /comments, PATCH /comments/:id, DELETE /comments/:id.
-Правила: ровно один FK из (bookVersionId|chapterId|audioChapterId); parentId опционален (древо); soft-delete/hidden + модерация для admin|content_manager.
-Индексы/валидация: добавить проверку взаимоисключающих FK на уровне сервиса + миграции для полезных индексов.
-RBAC: создание — авторизованные; правка/удаление — владелец или admin|content_manager.
-Тесты e2e: создание/ответы/пагинация/403/401/модерация. -->
+Эндпоинты:
+POST /likes (ровно один target: commentId | bookVersionId)
+DELETE /likes (тот же target)
+GET /likes/count?target=...&targetId=...
+Ограничения/БД:
+@@unique(userId, commentId) и @@unique(userId, bookVersionId)
+Индексы по targetId для быстрых count
+(Опционально) CHECK XOR на уровне БД, как обсудили
+Валидация:
+Взаимоисключающие поля (ровно одно)
+Права:
+POST/DELETE — авторизованный пользователь (JwtAuthGuard)
+Тесты e2e:
+Happy path (like/unlike, idempotent DELETE 204)
+Запреты (401), повторный POST (idempotent/409 — на выбор)
+Счётчики (count увеличивается/уменьшается)
+Swagger:
+DTO для запросов/ответов, описания ошибок
+(Опционально) Кэш count в Redis, инкременты/декременты -->

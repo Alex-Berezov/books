@@ -14,6 +14,9 @@ import { BookSummaryModule } from './modules/book-summary/book-summary.module';
 import { RolesGuard } from './common/guards/roles.guard';
 import { CategoryModule } from './modules/category/category.module';
 import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
+import { CommentsModule } from './modules/comments/comments.module';
+import { CacheModule } from './shared/cache/cache.module';
+import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
 
 @Module({
   imports: [
@@ -21,6 +24,8 @@ import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    CacheModule,
+    RateLimitModule,
     BookModule,
     AuthModule,
     UsersModule,
@@ -31,6 +36,7 @@ import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
     BookSummaryModule,
     CategoryModule,
     BookshelfModule,
+    CommentsModule,
     // ...другие модули
   ],
   controllers: [AppController],
