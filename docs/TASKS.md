@@ -188,20 +188,31 @@
   - [x] Unit тесты сервиса (моки Prisma)
   - [ ] Массовые операции: bulk upsert/ре-нумерация — отложено
 
-- [ ] 6. AudioChaptersModule
-- Аналогично главам: аудио-главы.
-- Эндпоинпы: как в 5), поля: audioUrl, duration.
-- Ограничения: уникальность (bookVersionId, number).
+- [x] 6. AudioChaptersModule — готово
+  - [x] Каркас: controller / service / module
+  - [x] DTO + валидация (number >= 1, title, audioUrl, duration)
+  - [x] Эндпоинты: GET /versions/:bookVersionId/audio-chapters, GET /audio-chapters/:id, POST /versions/:bookVersionId/audio-chapters, PATCH /audio-chapters/:id, DELETE /audio-chapters/:id
+  - [x] Ограничения: уникальность (bookVersionId, number) — добавлен индекс в Prisma + миграция
+  - [x] Swagger теги/описания
+  - [x] RBAC: создание/изменение/удаление — только admin|content_manager (JwtAuthGuard + RolesGuard)
+  - [x] e2e тесты: CRUD + пагинация + запреты (401/403) + проверка уникальности
 
-- [ ] 7. BookSummariesModule
-- Ответственность: summary/analysis/themes по версии.
-- Эндпоинты: GET /versions/:bookVersionId/summary, PUT /versions/:bookVersionId/summary.
-- Политика: 1 summary на версию (upsert).
+- [x] 7. BookSummariesModule — готово
+  - [x] Каркас: controller / service / module
+  - [x] DTO + валидация: summary (required), analysis/themes (optional)
+  - [x] Эндпоинты: GET /versions/:bookVersionId/summary, PUT /versions/:bookVersionId/summary (upsert)
+  - [x] Политика: 1 summary на версию (upsert через findFirst+create/update)
+  - [x] RBAC: PUT — только admin|content_manager
+  - [x] e2e тесты: GET пусто, запреты (401/403), upsert, повторный GET
 
-- [ ] 8. SeoModule
-- Ответственность: SEO мета для версии (1:1).
-- Эндпоинты: GET /versions/:bookVersionId/seo, PUT /versions/:bookVersionId/seo.
-- Ограничения: связь через уникальный fk в BookVersion (seoId).
+- [x] 8. SeoModule — готово
+  - [x] Каркас: controller / service / module
+  - [x] DTO + валидация (все поля опциональны; URL/ISO8601 проверяются)
+  - [x] Эндпоинты: GET /versions/:bookVersionId/seo, PUT /versions/:bookVersionId/seo (upsert)
+  - [x] Ограничения: 1:1 через уникальный fk в BookVersion (seoId) — схема уже включает @unique
+  - [x] Swagger теги/описания
+  - [x] RBAC: PUT — только admin|content_manager (JwtAuthGuard + RolesGuard)
+  - [x] e2e тесты: GET null/данные, запреты (401/403), upsert и повторный GET
 
 - [ ] 9. CategoriesModule
 - Ответственность: категории и связь с версиями.

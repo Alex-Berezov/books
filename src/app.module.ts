@@ -8,6 +8,9 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { BookVersionModule } from './modules/book-version/book-version.module';
 import { ChapterModule } from './modules/chapter/chapter.module';
+import { AudioChapterModule } from './modules/audio-chapter/audio-chapter.module';
+import { SeoModule } from './modules/seo/seo.module';
+import { BookSummaryModule } from './modules/book-summary/book-summary.module';
 import { RolesGuard } from './common/guards/roles.guard';
 
 @Module({
@@ -21,6 +24,9 @@ import { RolesGuard } from './common/guards/roles.guard';
     UsersModule,
     BookVersionModule,
     ChapterModule,
+    AudioChapterModule,
+    SeoModule,
+    BookSummaryModule,
     // ...другие модули
   ],
   controllers: [AppController],
