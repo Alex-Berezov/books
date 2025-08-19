@@ -17,6 +17,7 @@ import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
 import { CommentsModule } from './modules/comments/comments.module';
 import { CacheModule } from './shared/cache/cache.module';
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
+import { LikesModule } from './modules/likes/likes.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
     CategoryModule,
     BookshelfModule,
     CommentsModule,
+    LikesModule,
     // ...другие модули
   ],
   controllers: [AppController],

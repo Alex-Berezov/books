@@ -150,6 +150,11 @@ model Like {
   user          User         @relation(fields: [userId], references: [id])
   bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id])
   comment       Comment?     @relation(fields: [commentId], references: [id])
+
+  @@unique([userId, commentId])
+  @@unique([userId, bookVersionId])
+  @@index([commentId])
+  @@index([bookVersionId])
 }
 
 model Category {

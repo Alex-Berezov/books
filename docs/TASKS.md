@@ -252,11 +252,21 @@
   - [ ] Добавить XOR CHECK-constraint в БД (raw SQL миграция).
   - [ ] Включить rate limiting/антиспам для POST /comments.
 
-- [ ] 12. LikesModule
-- Ответственность: лайки к версии или комменту.
-- Эндпоинты: POST /likes, DELETE /likes, GET /likes/count?target=...&targetId=...
-- Ограничения: уникальность (userId, commentId) и (userId, bookVersionId); проверка, что задан ровно один target.
-- Счётчики: инкремент/декремент агрегатов (опционально материализованные поля или view).
+- [x] 12. LikesModule — готово
+- [x] Ответственность: лайки к версии или комменту.
+- [x] Эндпоинты:
+  - POST /likes (ровно один target: commentId | bookVersionId)
+  - DELETE /likes (тот же target)
+  - GET /likes/count?target=...&targetId=...
+- [x] Ограничения/БД:
+  - @@unique(userId, commentId) и @@unique(userId, bookVersionId)
+  - Индексы по targetId для быстрых count
+  - (Опционально) CHECK XOR на уровне БД — отложено (нужна raw SQL миграция)
+- [x] Валидация: взаимоисключающие поля (ровно одно)
+- [x] Права: POST/DELETE — авторизованный пользователь (JwtAuthGuard)
+- [x] Тесты e2e: happy path (like/unlike, idempotent DELETE 204), запреты (401), повторный POST (409 Conflict), счётчики (count увеличивается/уменьшается)
+- [x] Swagger: DTO для запросов/ответов, описания
+- [x] Кэш: count в in-memory CacheService (TTL 5с), инвалидация при like/unlike
 
 - [ ] 13. ViewStatsModule
 - Ответственность: запись просмотров и агрегации.
@@ -293,7 +303,6 @@
 Прямое продолжение после Comments: лайки на комментарии и версии.
 Небольшой объём, быстрый user-value и метрики вовлечённости.
 Краткое ТЗ:
-
 Эндпоинты:
 POST /likes (ровно один target: commentId | bookVersionId)
 DELETE /likes (тот же target)
