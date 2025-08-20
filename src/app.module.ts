@@ -18,6 +18,7 @@ import { CommentsModule } from './modules/comments/comments.module';
 import { CacheModule } from './shared/cache/cache.module';
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
 import { LikesModule } from './modules/likes/likes.module';
+import { ReadingProgressModule } from './modules/reading-progress/reading-progress.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { LikesModule } from './modules/likes/likes.module';
     BookshelfModule,
     CommentsModule,
     LikesModule,
+    ReadingProgressModule,
     // ...другие модули
   ],
   controllers: [AppController],

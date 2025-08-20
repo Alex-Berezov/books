@@ -1,10 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,19 +12,6 @@ export class CommentsService {
     private prisma: PrismaService,
     private config: ConfigService,
   ) {}
-
-  private ensureSingleTarget(dto: {
-    bookVersionId?: string;
-    chapterId?: string;
-    audioChapterId?: string;
-  }) {
-    const targets = [dto.bookVersionId, dto.chapterId, dto.audioChapterId].filter(Boolean);
-    if (targets.length !== 1) {
-      throw new BadRequestException(
-        'Exactly one of bookVersionId, chapterId, audioChapterId must be provided',
-      );
-    }
-  }
 
   async list(params: {
     target: 'version' | 'chapter' | 'audio';
@@ -61,8 +43,6 @@ export class CommentsService {
   }
 
   async create(userId: string, dto: CreateCommentDto) {
-    this.ensureSingleTarget(dto);
-
     if (dto.parentId) {
       const parent = await this.prisma.comment.findUnique({ where: { id: dto.parentId } });
       if (!parent || (parent as any).isDeleted) {

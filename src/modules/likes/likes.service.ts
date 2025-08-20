@@ -9,6 +9,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CACHE_SERVICE, CacheService } from '../../shared/cache/cache.interface';
 import { Inject } from '@nestjs/common';
 import { LikeRequestDto, LikeCountQueryDto } from './dto/like.dto';
+import { LikeCountDto, ToggleLikeResponseDto } from './dto/like-response.dto';
+import { msgExactlyOne } from '../../shared/constants/validation';
 
 @Injectable()
 export class LikesService {
@@ -20,7 +22,7 @@ export class LikesService {
   private ensureSingleTarget(dto: { commentId?: string; bookVersionId?: string }) {
     const targets = [dto.commentId, dto.bookVersionId].filter(Boolean);
     if (targets.length !== 1) {
-      throw new BadRequestException('Exactly one of commentId or bookVersionId must be provided');
+      throw new BadRequestException(msgExactlyOne('commentId', 'bookVersionId'));
     }
   }
 
@@ -96,7 +98,7 @@ export class LikesService {
     return { success: true };
   }
 
-  async count(q: LikeCountQueryDto): Promise<{ count: number }> {
+  async count(q: LikeCountQueryDto): Promise<LikeCountDto> {
     const key = this.countCacheKey(q.target, q.targetId);
     const cached = await this.cache.get<number>(key);
     if (typeof cached === 'number') return { count: cached };
@@ -108,7 +110,7 @@ export class LikesService {
     return { count };
   }
 
-  async toggle(userId: string, dto: LikeRequestDto): Promise<{ liked: boolean; count: number }> {
+  async toggle(userId: string, dto: LikeRequestDto): Promise<ToggleLikeResponseDto> {
     this.ensureSingleTarget(dto);
 
     const where = {
