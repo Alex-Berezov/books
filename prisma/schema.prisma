@@ -183,6 +183,9 @@ model ViewStat {
   timestamp     DateTime    @default(now())
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
   user          User?       @relation(fields: [userId], references: [id])
+
+  @@index([bookVersionId, timestamp])
+  @@index([userId])
 }
 
 model ReadingProgress {

@@ -268,11 +268,11 @@
 - [x] Swagger: DTO для запросов/ответов, описания
 - [x] Кэш: count в in-memory CacheService (TTL 5с), инвалидация при like/unlike
 
-- [ ] 13. ViewStatsModule
-- Ответственность: запись просмотров и агрегации.
-- Эндпоинты: POST /views (или interceptor), GET /views/aggregate?versionId&period=day|week|month.
-- Индексы: (bookVersionId, timestamp), userId.
-- Кэш: Redis на агрегаты.
+- [x] 13. ViewStatsModule — готово (PR: migration added, e2e)
+- [x] Ответственность: запись просмотров и агрегации.
+- [x] Эндпоинты: POST /views, GET /views/aggregate, GET /views/top
+- [x] Индексы: (bookVersionId, timestamp), userId — миграция добавлена
+- [x] Кэш: in-memory CacheService (TTL 30s), ключи views:agg/... и views:top/...
 
 - [x] 14. ReadingProgressModule — готово
 - [x] Ответственность: прогресс чтения/прослушивания.

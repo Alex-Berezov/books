@@ -19,6 +19,7 @@ import { CacheModule } from './shared/cache/cache.module';
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
 import { LikesModule } from './modules/likes/likes.module';
 import { ReadingProgressModule } from './modules/reading-progress/reading-progress.module';
+import { ViewStatsModule } from './modules/view-stats/view-stats.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { ReadingProgressModule } from './modules/reading-progress/reading-progre
     CommentsModule,
     LikesModule,
     ReadingProgressModule,
+    ViewStatsModule,
     // ...другие модули
   ],
   controllers: [AppController],
