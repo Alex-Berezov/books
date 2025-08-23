@@ -283,10 +283,42 @@
 - [x] Swagger: DTO + примеры
 - [x] Тесты e2e: 401, happy-path upsert, валидации, повторный GET
 
-- [ ] 15. UploadsModule (инфра)
+- [x] 15. UploadsModule (инфра)
 - Ответственность: pre-signed URL для обложек/аудио; привязка к полям coverImageUrl/audioUrl.
 - Эндпоинты: POST /uploads/presign (type=cover|audio, contentType, size).
 - Политика: роли/лимиты, валидация MIME, cleanup старых файлов.
+
+  План итераций (стабильный API, переключение драйвера через env):
+  - [x] 15.1 Uploads (local, для MVP)
+    - StorageModule: интерфейс IStorage и драйвер local (файлы в ./var/uploads; ServeStatic → /static).
+    - UploadsModule ручки:
+      - POST /uploads/presign → key + подписанный URL на POST /uploads/direct (local) + headers, TTL.
+      - POST /uploads/direct → приём файла по одноразовому токену, сохранение по key, ответ: publicUrl.
+    - POST /uploads/confirm → возвращает итоговый publicUrl и метаданные; БД не изменяет.
+  - Привязка URL осуществляется отдельным PATCH /versions/:id (coverImageUrl|audioUrl) с доменной валидацией/правами.
+    - DELETE /uploads?key=... → удаление файла.
+    - Валидации: contentType/size по типу (cover|audio). RBAC: admin|content_manager. RateLimitGuard. Swagger.
+    - Тесты e2e: presign → direct → GET /static → confirm, негативные кейсы. Без миграций БД (если не обновляем URL на confirm).
+    - Swagger: DTO + примеры
+
+  - [ ] 15.2 Uploads (Cloudflare R2)
+    - Драйвер R2 на основе @aws-sdk/client-s3 + presign (PUT), endpoint Cloudflare R2, forcePathStyle=true.
+    - CORS для пресайн-URL (PUT + Content-Type). Публичные URL через R2_PUBLIC_BASE_URL (или null, если приватно).
+  - Те же ручки: /uploads/presign теперь отдаёт presigned PUT для R2; фронт не меняется.
+  - Опционально: отдельный admin-эндпоинт "confirm+attach" одним запросом (только после стабилизации 15.1/PATCH-флоу).
+    - Тесты e2e: минимальный интеграционный (или с MinIO как S3-совместимым стендом). Скрипт миграции локальных файлов — опционально.
+    - Переключение: STORAGE*DRIVER=r2, R2*\* переменные в .env.
+
+  Когда выполнять:
+  - 15.1 — следующая итерация (сейчас), чтобы фронт и бэк полноценно работали на локалке.
+  - 15.2 — на этапе подготовки к депloю на сервер и подключению Cloudflare R2.
+
+  Краткий конфиг (.env):
+  - Общие: STORAGE_DRIVER=local|r2; UPLOADS_MAX_IMAGE_MB=5; UPLOADS_MAX_AUDIO_MB=100; UPLOADS_PRESIGN_TTL_SEC=600;
+    UPLOADS_ALLOWED_IMAGE_CT=image/jpeg,image/png,image/webp; UPLOADS_ALLOWED_AUDIO_CT=audio/mpeg,audio/mp4,audio/aac,audio/ogg.
+  - Local: LOCAL_UPLOADS_DIR=./var/uploads; LOCAL_PUBLIC_BASE_URL=http://localhost:3000/static.
+  - R2: R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com; R2_ACCESS_KEY_ID; R2_SECRET_ACCESS_KEY; R2_BUCKET=books;
+    R2_FORCE_PATH_STYLE=true; R2_PUBLIC_BASE_URL=https://static.example.com (опц.).
 
 - [ ] 16. Integrations/Tasks (BullMQ)
 - Очереди обработки медиа (генерация превью, нормализация аудио), ретраи, DLT.
@@ -300,99 +332,27 @@
 - Авторизация: права на создание/редактирование контента (admin/editor), пользователи — только собственные ресурсы (полка, прогресс, лайки, комментарии).
 - Нагрузочное: пагинация по id/createdAt, лимиты на списки, индексация из раздела 2.
 
-<!-- ТЗ: ViewStatsModule (NestJS + Prisma + PostgreSQL)
-Цель
-Записывать просмотры версий книги и отдавать агрегаты (серии по дням, топы за период).
-Без внешнего Redis: использовать имеющийся CacheService (in-memory) с коротким TTL.
+<!--
 
-Скоуп
-Модуль: controller + service + module, DTO/валидаторы, Swagger, e2e.
-Доступ: POST — публичный (анон/авторизованный), GET — публичный.
-Схема БД (Prisma)
+1. Массовые операции для глав
+Сейчас не критично для MVP. Делать, если редакторам уже нужно массово добавлять/пере-нумеровывать главы.
+Оценка: 0.5–1 день (эндпоинты, валидации, edge‑кейсы с пропусками/конфликтами, e2e). Имеет продуктовую ценность, но не блокер.
 
-Использовать существующую модель ViewStat:
-id (uuid), bookVersionId (string, FK), userId? (string, FK), source (enum ViewSource: text|audio|referral), timestamp (DateTime, now()).
-Добавить индексы миграцией:
-@@index([bookVersionId, timestamp])
-@@index([userId])
-Не менять существующие связи/enum.
-Эндпоинты
+2. Rate limiting для POST /comments
+Да, уместно сейчас: дешёво и повышает стойкость к спаму. Без миграций.
+Можно повесить guard на POST (и опционально PATCH/DELETE), при этом держать RATE_LIMIT_ENABLED=false по умолчанию. Добавим e2e на 429.
+Оценка: ~30–60 минут.
 
-POST /views
-Тело: { bookVersionId: string (uuid), source: 'text'|'audio'|'referral', timestamp?: ISO8601 }
-Если авторизован — пишем userId, иначе null.
-Валидации: существование bookVersionId; source из enum; timestamp ≤ now() (опц.).
-Идемпотентности не требуется; допускается частая запись.
-Ответ: { success: true }.
-GET /views/aggregate
-Query: versionId: string (uuid, required) | bookId?: string (опц., если захотим позже), period: 'day'|'week'|'month'|'all' (required), from?: ISO8601, to?: ISO8601, source?: 'text'|'audio'|'referral' (опц.).
-Агрегация по дням: series: [{ date: 'YYYY-MM-DD', count: number }], total: number.
-Ограничить диапазон по умолчанию: last 30 days, если не задан from/to (кроме 'all').
-Кэш: key views:agg:<versionId>:<period>:<from>:<to>:<source?>, TTL 30s.
-GET /views/top
-Query: period: 'day'|'week'|'month'|'all' (required), limit?: number (1..50, default 10), source?: 'text'|'audio'|'referral' (опц.).
-Ответ: items: [{ bookVersionId: string, count: number }], totalVersions: number.
-Кэш: key views:top:<period>:<limit>:<source?>, TTL 30s.
-Контракты (DTO)
+3. CHECK XOR в БД (comments и likes)
+Полезно для жёсткой целостности на уровне БД, но не срочно: валидация уже есть в сервисе.
+Лучше сделать одной миграцией для обоих модулей после быстрой проверки, что текущие данные соответствуют правилам (иначе миграция упадёт).
+Оценка: 1–2 часа (raw SQL миграция + пред‑чек + e2e/миграции в CI).
+Рекомендованный порядок:
 
-CreateViewDto: bookVersionId (IsUUID), source (IsIn enum), timestamp? (IsISO8601, max now).
-AggregateQueryDto: versionId (IsUUID) | (на будущее bookId), period (IsIn), from?/to? (IsISO8601), source? (IsIn), валидация from <= to.
-AggregateResponseDto: { total: number; series: { date: string; count: number }[] }.
-TopViewsQueryDto: period, limit?, source?.
-TopViewsResponseDto: { items: { bookVersionId: string; count: number }[]; totalVersions: number }.
-Бизнес-правила
 
-POST /views:
-404 если версия не существует.
-timestamp: если не передан — now(); если передан в будущем — 400.
-Агрегации:
-Периоды:
-day: последний день (24h) или from/to.
-week: последние 7 дней.
-month: последние 30/31 дней (упростить до 30).
-all: без ограничений (но защитить limit в топе).
-Для series по дням использовать date_trunc('day', timestamp) (Postgres), через $queryRaw.
-Для top — group by bookVersionId с фильтром по периодам, order by count desc, limit.
-Кэш:
-Получение: читать из CacheService; при отсутствии — вычислять и кэшировать.
-Инвалидация: на POST /views можно не чистить, полагаться на короткий TTL.
-Реализация
+Сейчас: п.2 (рейт‑лимит на комментарии). Низкий риск, быстрая выгода.
+Затем: п.3 (оба CHECK в одной миграции) — когда удобно вставить окно для БД‑изменений.
+Позже: п.1 — когда появится явная потребность редакторов.
+Если нужно, могу сразу добавить guard на POST /comments и подготовить e2e, а CHECK‑миграции оформить отдельным PR.
 
-Папка: src/modules/view-stats/{view-stats.module.ts, view-stats.controller.ts, view-stats.service.ts, dto/...}.
-Service:
-create(userId|null, dto): проверка версии, запись.
-aggregate(q): $queryRaw с date_trunc; сводить к DTO; кэш.
-top(q): $queryRaw с group by; кэш.
-Controller:
-Swagger: tag 'view-stats'; @ApiBearerAuth не требуется на POST (публичный).
-Ответы использовать строгие DTO.
-Безопасность:
-RateLimitGuard — опционально, включать через флаг, лимит для POST (например, 10 rps/ip).
-Тесты e2e:
-POST /views 201 для анонима и авторизованного; 404 при неверной версии; 400 при bad source.
-GET /views/aggregate: создать события в разные дни, проверить series и total.
-GET /views/top: создать просмотры по нескольким версиям, проверить сортировку и ограничение limit.
-Кэш: два последовательных запроса возвращают одинаковый ответ; после новой записи значения могут не обновиться мгновенно (TTL допускает лаг).
-Миграции:
-SQL миграция для индексов (см. выше). Обновить TASKS.md с пометкой про миграцию.
-Документация Swagger:
-Примеры тел/ответов для всех эндпоинтов.
-Описание периодов и дефолтных диапазонов.
-Критерии готовности (DoD)
-
-Код модуля, DTO, Swagger описан.
-Индексы применены миграцией.
-Все e2e тесты для модуля зелёные.
-Линт/тайпчек без ошибок.
-Кэширование работает (TTL ≥ 30s, настраиваемо через константу/конфиг).
-Запреты/ошибки: 400 на невалидные параметры, 404 на несуществующие сущности.
-Замечания
-
-Для агрегирования по bookId (все версии книги) можно добавить опционально позже.
-Если понадобится пер-секундная серия — расширить date_trunc('hour'|'minute').
-Для CI полные e2e запускать последовательно, чтобы не упереться в лимит коннектов БД.
-
--------
-
-Учёт просмотров и агрегаты (день/неделя/месяц), можно начать просто (POST /views или интерсептор) и кешировать агрегаты через имеющийся in-memory кэш (Redis позже).
-Рекомендованный порядок: ReadingProgress → ViewStats → Uploads (когда будет готова S3-инфра). -->
+-->

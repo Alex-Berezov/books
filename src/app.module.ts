@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { join } from 'node:path';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaService } from './prisma/prisma.service';
 import { BookModule } from './modules/book/book.module';
@@ -20,6 +22,9 @@ import { RateLimitModule } from './shared/rate-limit/rate-limit.module';
 import { LikesModule } from './modules/likes/likes.module';
 import { ReadingProgressModule } from './modules/reading-progress/reading-progress.module';
 import { ViewStatsModule } from './modules/view-stats/view-stats.module';
+import { UploadsModule } from './modules/uploads/uploads.module';
+
+const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 
 @Module({
   imports: [
@@ -27,6 +32,8 @@ import { ViewStatsModule } from './modules/view-stats/view-stats.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    // Static files for local uploads
+    ServeStaticModule.forRoot({ rootPath: staticRoot, serveRoot: '/static' }),
     CacheModule,
     RateLimitModule,
     BookModule,
@@ -43,6 +50,7 @@ import { ViewStatsModule } from './modules/view-stats/view-stats.module';
     LikesModule,
     ReadingProgressModule,
     ViewStatsModule,
+    UploadsModule,
     // ...другие модули
   ],
   controllers: [AppController],

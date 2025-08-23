@@ -5,6 +5,8 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { CreateBookDto } from './modules/book/dto/create-book.dto';
 import { UpdateBookDto } from './modules/book/dto/update-book.dto';
+import * as express from 'express';
+import { join } from 'node:path';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -37,6 +39,18 @@ async function bootstrap() {
 
   // Add "api" prefix to all routes
   app.setGlobalPrefix('api');
+
+  // Raw body middleware for direct uploads (local driver)
+  app.use(
+    '/api/uploads/direct',
+    express.raw({ type: '*/*', limit: '110mb' }), // 100MB + headroom
+  );
+
+  // Ensure static serving for local uploads (in addition to ServeStaticModule)
+  const uploadsRoot = process.env.LOCAL_UPLOADS_DIR
+    ? join(process.cwd(), process.env.LOCAL_UPLOADS_DIR)
+    : join(process.cwd(), 'var', 'uploads');
+  app.use('/static', express.static(uploadsRoot));
 
   await app.listen(5000);
   console.log(`Application is running on: ${await app.getUrl()}`);
