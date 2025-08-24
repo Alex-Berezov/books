@@ -100,17 +100,28 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 # Books App Back
 
 ## Slug валидация
+
 - Паттерн: `^[a-z0-9]+(?:-[a-z0-9]+)*$`
 - Только строчные латиница/цифры, разделитель дефис, без пробелов и двойных/крайних дефисов.
 
 ## Swagger
+
 - Доступно по `/api/docs`.
 - Примеры и схемы подключены для DTO `CreateBookDto` и `UpdateBookDto`.
 
 ## Prisma
+
 - Генерация клиента: `yarn prisma:generate`
 - Миграции (dev): `yarn prisma:migrate`
 - Сиды: `yarn prisma:seed`
 - Studio: `yarn prisma:studio`
 
 Требуется переменная окружения `DATABASE_URL` в `.env`.
+
+## Rate limiting
+
+- Включение: `RATE_LIMIT_ENABLED=1` (по умолчанию выключено)
+- Настройки (опционально):
+  - `RATE_LIMIT_COMMENTS_PER_MINUTE` — число действий в окно (дефолт 10)
+  - `RATE_LIMIT_COMMENTS_WINDOW_MS` — размер окна в миллисекундах (дефолт 60000)
+    Примечание: несмотря на название "PER_MINUTE", лимит работает с любым окном, задаваемым `RATE_LIMIT_COMMENTS_WINDOW_MS`.

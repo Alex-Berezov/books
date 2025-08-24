@@ -19,6 +19,7 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -27,6 +28,7 @@ import { ListCommentsQueryDto } from './dto/list-comments.dto';
 import { CommentListDto } from './dto/comment-list.dto';
 import { CommentDto } from './dto/comment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 // RolesGuard not required; owner-or-moderator checks are inside service
 
 interface RequestUser {
@@ -53,8 +55,9 @@ export class CommentsController {
 
   @Post('comments')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RateLimitGuard)
   @ApiOperation({ summary: 'Create comment' })
+  @ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
   @ApiOkResponse({ type: CommentDto })
   create(@Req() req: { user: RequestUser }, @Body() dto: CreateCommentDto) {
     return this.service.create(req.user.userId, dto);
@@ -70,10 +73,11 @@ export class CommentsController {
 
   @Patch('comments/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RateLimitGuard)
   @ApiOperation({
     summary: 'Update comment (owner can edit text; admins/moderators can also hide/unhide)',
   })
+  @ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
   @ApiOkResponse({ type: CommentDto })
   update(
     @Req() req: { user: RequestUser },
@@ -85,9 +89,10 @@ export class CommentsController {
 
   @Delete('comments/:id')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RateLimitGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete (soft) comment. Owner or admin/content_manager.' })
+  @ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
   async remove(@Req() req: { user: RequestUser }, @Param('id') id: string) {
     await this.service.remove(id, req.user);
     return;

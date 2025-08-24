@@ -23,6 +23,7 @@ import { LikesModule } from './modules/likes/likes.module';
 import { ReadingProgressModule } from './modules/reading-progress/reading-progress.module';
 import { ViewStatsModule } from './modules/view-stats/view-stats.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
+import { StatusModule } from './modules/status/status.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 
@@ -51,6 +52,7 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     ReadingProgressModule,
     ViewStatsModule,
     UploadsModule,
+    StatusModule,
     // ...другие модули
   ],
   controllers: [AppController],
