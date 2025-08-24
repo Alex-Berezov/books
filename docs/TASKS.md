@@ -342,7 +342,9 @@
   - [x] Драйвер InMemory через RateLimitModule; ключ = userId или IP
   - [x] Параметры лимита через env: RATE_LIMIT_COMMENTS_PER_MINUTE, RATE_LIMIT_COMMENTS_WINDOW_MS
 
-- [ ] 2. CHECK XOR в БД (comments и likes)
-- Полезно для жёсткой целостности на уровне БД, но не срочно: валидация уже есть в сервисе.
-- Лучше сделать одной миграцией для обоих модулей после быстрой проверки, что текущие данные соответствуют правилам (иначе миграция упадёт).
-- Оценка: 1–2 часа (raw SQL миграция + пред‑чек + e2e/миграции в CI).
+- [x] 2. CHECK XOR в БД (comments и likes) — готово (миграция, e2e, 2025-08-24)
+  - [x] Добавлена raw SQL миграция: `20250824153000_add_xor_checks_comments_likes`
+  - [x] Комментарии: ровно один target из (bookVersionId|chapterId|audioChapterId)
+  - [x] Лайки: ровно один target из (bookVersionId|commentId)
+  - [x] Безопасная очистка dev-данных в миграции (DELETE несоответствующих строк перед CHECK)
+  - [x] Тесты e2e зелёные; приложение работает с новыми ограничениями
