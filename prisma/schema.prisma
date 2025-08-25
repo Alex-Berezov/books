@@ -30,6 +30,9 @@ model BookVersion {
   type            BookType
   isFree          Boolean
   referralUrl     String?
+  // Публикация
+  status          PublicationStatus @default(published)
+  publishedAt     DateTime?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   book            Book              @relation(fields: [bookId], references: [id])
@@ -306,4 +309,13 @@ enum RoleName {
   user
   admin
   content_manager
+}
+
+// =====================
+// Publication Status
+// =====================
+
+enum PublicationStatus {
+  draft
+  published
 }

@@ -62,7 +62,7 @@ describe('BookVersions e2e', () => {
 
   // Strongly typed helper to avoid unsafe any from Nest's getHttpServer()
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
-  it('create -> list -> get -> update -> delete', async () => {
+  it('create (draft) -> public not visible -> admin sees -> publish -> public visible -> unpublish -> hide -> delete', async () => {
     const createRes = await request(http())
       .post(`/books/${bookId}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
@@ -79,10 +79,37 @@ describe('BookVersions e2e', () => {
     const created: BookVersionResponse = createRes.body as BookVersionResponse;
     const versionId = created.id;
 
-    const listRes = await request(http()).get(`/books/${bookId}/versions`).expect(200);
-    expect(Array.isArray(listRes.body)).toBe(true);
-    expect(listRes.body.length).toBe(1);
+    // Public must not see draft
+    const listDraftHidden = await request(http()).get(`/books/${bookId}/versions`).expect(200);
+    expect(Array.isArray(listDraftHidden.body)).toBe(true);
+    expect(listDraftHidden.body.length).toBe(0);
+    await request(http()).get(`/versions/${versionId}`).expect(404);
+
+    // Admin sees draft via admin route
+    const adminList = await request(http())
+      .get(`/admin/books/${bookId}/versions`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(adminList.body.length).toBe(1);
+
+    // Publish -> public should see now
+    await request(http())
+      .patch(`/versions/${versionId}/publish`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const listAfterPublish = await request(http()).get(`/books/${bookId}/versions`).expect(200);
+    expect(listAfterPublish.body.length).toBe(1);
     await request(http()).get(`/versions/${versionId}`).expect(200);
+
+    // Unpublish -> public should hide again
+    await request(http())
+      .patch(`/versions/${versionId}/unpublish`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const listAfterUnpublish = await request(http()).get(`/books/${bookId}/versions`).expect(200);
+    expect(listAfterUnpublish.body.length).toBe(0);
+    await request(http()).get(`/versions/${versionId}`).expect(404);
+    // Update still works via admin
     await request(http())
       .patch(`/versions/${versionId}`)
       .set('Authorization', `Bearer ${adminToken}`)

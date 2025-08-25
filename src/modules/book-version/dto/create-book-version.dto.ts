@@ -3,7 +3,11 @@ import { IsBoolean, IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-v
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
 export class CreateBookVersionDto {
-  @ApiProperty({ enum: Object.values(PrismaLanguage), description: 'Язык версии книги' })
+  @ApiProperty({
+    enum: Object.values(PrismaLanguage),
+    description: 'Язык версии книги',
+    example: 'en',
+  })
   @IsIn(Object.values(PrismaLanguage))
   language!: PrismaLanguage;
 
@@ -24,7 +28,11 @@ export class CreateBookVersionDto {
   @IsUrl()
   coverImageUrl!: string;
 
-  @ApiProperty({ enum: Object.values(PrismaBookType), description: 'Тип контента' })
+  @ApiProperty({
+    enum: Object.values(PrismaBookType),
+    description: 'Тип контента',
+    example: 'text',
+  })
   @IsIn(Object.values(PrismaBookType))
   type!: PrismaBookType;
 
@@ -37,12 +45,18 @@ export class CreateBookVersionDto {
   @IsUrl()
   referralUrl?: string;
 
-  @ApiPropertyOptional({ description: 'Опциональные SEO metaTitle' })
+  @ApiPropertyOptional({
+    description: 'Опциональные SEO metaTitle',
+    example: 'Harry Potter — Summary',
+  })
   @IsOptional()
   @IsString()
   seoMetaTitle?: string;
 
-  @ApiPropertyOptional({ description: 'Опциональные SEO metaDescription' })
+  @ApiPropertyOptional({
+    description: 'Опциональные SEO metaDescription',
+    example: 'Overview, themes and details about the book',
+  })
   @IsOptional()
   @IsString()
   seoMetaDescription?: string;

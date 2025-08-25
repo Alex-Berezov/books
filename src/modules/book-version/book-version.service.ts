@@ -2,20 +2,23 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
-import { Prisma, Language, BookType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { Language, BookType } from '@prisma/client';
 
 @Injectable()
 export class BookVersionService {
   constructor(private prisma: PrismaService) {}
 
   async list(bookId: string, filters: { language?: Language; type?: BookType; isFree?: boolean }) {
+    const where: Prisma.BookVersionWhereInput = {
+      bookId,
+      ...(filters.language ? { language: filters.language } : {}),
+      ...(filters.type ? { type: filters.type } : {}),
+      ...(filters.isFree !== undefined ? { isFree: filters.isFree } : {}),
+      status: 'published',
+    };
     return this.prisma.bookVersion.findMany({
-      where: {
-        bookId,
-        ...(filters.language ? { language: filters.language } : {}),
-        ...(filters.type ? { type: filters.type } : {}),
-        ...(filters.isFree !== undefined ? { isFree: filters.isFree } : {}),
-      },
+      where,
       orderBy: { createdAt: 'desc' },
       include: { seo: { select: { metaTitle: true, metaDescription: true } } },
     });
@@ -53,6 +56,7 @@ export class BookVersionService {
             isFree: dto.isFree,
             referralUrl: dto.referralUrl,
             seoId,
+            status: 'draft',
           },
           include: { seo: { select: { metaTitle: true, metaDescription: true } } },
         });
@@ -65,7 +69,17 @@ export class BookVersionService {
     }
   }
 
-  async get(id: string) {
+  async getPublic(id: string) {
+    const version = await this.prisma.bookVersion.findFirst({
+      where: { id, status: 'published' },
+      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+    });
+    if (!version) throw new NotFoundException('BookVersion not found');
+    return version;
+  }
+
+  // Админский доступ — любая версия
+  async getAdmin(id: string) {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id },
       include: { seo: { select: { metaTitle: true, metaDescription: true } } },
@@ -122,6 +136,44 @@ export class BookVersionService {
     if (!existing) throw new NotFoundException('BookVersion not found');
     return this.prisma.bookVersion.delete({
       where: { id },
+      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+    });
+  }
+
+  async publish(id: string) {
+    const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('BookVersion not found');
+    return this.prisma.bookVersion.update({
+      where: { id },
+      data: { status: 'published', publishedAt: new Date() },
+      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+    });
+  }
+
+  async unpublish(id: string) {
+    const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('BookVersion not found');
+    return this.prisma.bookVersion.update({
+      where: { id },
+      data: { status: 'draft', publishedAt: null },
+      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+    });
+  }
+
+  // Админский листинг без фильтра по статусу
+  async listAdmin(
+    bookId: string,
+    filters: { language?: Language; type?: BookType; isFree?: boolean },
+  ) {
+    const where: Prisma.BookVersionWhereInput = {
+      bookId,
+      ...(filters.language ? { language: filters.language } : {}),
+      ...(filters.type ? { type: filters.type } : {}),
+      ...(filters.isFree !== undefined ? { isFree: filters.isFree } : {}),
+    };
+    return this.prisma.bookVersion.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
       include: { seo: { select: { metaTitle: true, metaDescription: true } } },
     });
   }

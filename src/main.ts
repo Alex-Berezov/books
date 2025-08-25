@@ -5,6 +5,8 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { CreateBookDto } from './modules/book/dto/create-book.dto';
 import { UpdateBookDto } from './modules/book/dto/update-book.dto';
+import { CreateBookVersionDto } from './modules/book-version/dto/create-book-version.dto';
+import { UpdateBookVersionDto } from './modules/book-version/dto/update-book-version.dto';
 import * as express from 'express';
 import { join } from 'node:path';
 
@@ -23,14 +25,24 @@ async function bootstrap() {
   // Set up Swagger documentation
   const config = new DocumentBuilder()
     .setTitle('Books App API')
-    .setDescription('API for the Books application')
+    .setDescription(
+      [
+        'API for the Books application',
+        '',
+        'How to publish a book version:',
+        '1) POST /api/books/{bookId}/versions — create a version (draft by default).',
+        '2) Optionally PATCH /api/versions/{id} — edit fields or SEO.',
+        '3) PATCH /api/versions/{id}/publish — publish the version (status=published).',
+        '4) To hide again — PATCH /api/versions/{id}/unpublish (status=draft).',
+      ].join('\n'),
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .addServer('http://localhost:5000', 'Local')
     .addServer('https://api.example.com', 'Prod')
     .build();
   const document = SwaggerModule.createDocument(app, config, {
-    extraModels: [CreateBookDto, UpdateBookDto],
+    extraModels: [CreateBookDto, UpdateBookDto, CreateBookVersionDto, UpdateBookVersionDto],
   });
   SwaggerModule.setup('api/docs', app, document, {
     jsonDocumentUrl: 'api/docs-json',

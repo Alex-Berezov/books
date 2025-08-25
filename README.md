@@ -118,6 +118,47 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 
 Требуется переменная окружения `DATABASE_URL` в `.env`.
 
+## Публикация версий (draft/published)
+
+- Новые версии книг создаются в статусе `draft`.
+- Публичные ручки возвращают только `published` версии.
+- Эндпоинты управления статусом (требуют роли admin или content_manager):
+  - `PATCH /versions/:id/publish` — публикует версию, выставляет `publishedAt`.
+  - `PATCH /versions/:id/unpublish` — снимает с публикации, `status=draft`, `publishedAt=null`.
+- Листинги:
+  - Публично: `GET /books/:bookId/versions` — только опубликованные.
+  - Админ: `GET /admin/books/:bookId/versions` — включает черновики (требует авторизации и ролей).
+  - Также публичный листинг поддерживает параметр `includeDrafts=true`, но результат корректен только для авторизованных админов/контент-менеджеров.
+
+Примеры (curl):
+
+```bash
+# Создать версию (draft)
+curl -X POST \
+  -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "language":"en","title":"Title","author":"Author","description":"Desc",
+    "coverImageUrl":"https://example.com/c.jpg","type":"text","isFree":true
+  }' \
+  http://localhost:3000/books/<BOOK_ID>/versions
+
+# Опубликовать
+curl -X PATCH -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
+  http://localhost:3000/versions/<VERSION_ID>/publish
+
+# Снять с публикации
+curl -X PATCH -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
+  http://localhost:3000/versions/<VERSION_ID>/unpublish
+
+# Публичный список (только published)
+curl http://localhost:3000/books/<BOOK_ID>/versions
+
+# Админский список (включая draft)
+curl -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
+  http://localhost:3000/admin/books/<BOOK_ID>/versions
+```
+
 ## Rate limiting
 
 - Включение: `RATE_LIMIT_ENABLED=1` (по умолчанию выключено)
