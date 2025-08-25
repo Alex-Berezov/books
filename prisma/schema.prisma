@@ -5,6 +5,7 @@ datasource db {
 
 generator client {
   provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
 }
 
 // =====================
@@ -43,6 +44,7 @@ model BookVersion {
   comments        Comment[]
   likes           Like[]
   categories      BookCategory[]
+  tags            BookTag[]
   viewStats       ViewStat[]
   readingProgress ReadingProgress[]
   seo             Seo?              @relation(fields: [seoId], references: [id])
@@ -182,6 +184,25 @@ model BookCategory {
   category      Category    @relation(fields: [categoryId], references: [id])
 
   @@unique([bookVersionId, categoryId])
+}
+
+model Tag {
+  id    String    @id @default(uuid())
+  name  String
+  slug  String    @unique
+  books BookTag[]
+}
+
+model BookTag {
+  id            String      @id @default(uuid())
+  bookVersionId String
+  tagId         String
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  tag           Tag         @relation(fields: [tagId], references: [id])
+
+  @@unique([bookVersionId, tagId])
+  @@index([tagId])
+  @@index([bookVersionId])
 }
 
 model ViewStat {

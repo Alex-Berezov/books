@@ -148,6 +148,26 @@ Swagger схемы:
   - `GET /categories/tree` → `[CategoryTreeNodeDto]`
   - `GET /categories/:id/children` → `[CategoryTreeNodeDto]`
 
+  ## Теги
+
+  Базовые операции: CRUD и привязка тегов к версиям книг.
+  - GET /tags — список (поддерживает page, limit)
+  - POST /tags — создать (admin|content_manager)
+  - PATCH /tags/:id — обновить (admin|content_manager)
+  - DELETE /tags/:id — удалить (admin|content_manager)
+  - GET /tags/:slug/books — версии по тегу
+
+  Привязка к версиям:
+  - POST /versions/:id/tags — привязать тег к версии (идемпотентно)
+  - DELETE /versions/:id/tags/:tagId — отвязать тег от версии (идемпотентно)
+
+  Правила и валидация:
+  - Slug тега валидируется тем же паттерном, что и категории/книги: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (см. `src/shared/validators/slug.ts`).
+
+  Примечания:
+  - Публичная выборка `GET /tags/:slug/books` сейчас не фильтрует версии по статусу публикации. При необходимости можно ограничить до только `published` в последующей итерации.
+  - Операции привязки/отвязки реализованы идемпотентно (повторные вызовы безопасны).
+
 ## Swagger
 
 - Доступно по `/api/docs`.
@@ -161,6 +181,36 @@ Swagger схемы:
 - Studio: `yarn prisma:studio`
 
 Требуется переменная окружения `DATABASE_URL` в `.env`.
+
+### Версии и output Prisma Client
+
+- Prisma CLI: 6.14.0
+- @prisma/client: 6.14.0
+- Конфигурация генератора: в `prisma/schema.prisma` задано `output = "../node_modules/.prisma/client"` (путь указан относительно файла схемы). В итоге клиент попадает в корневой `./node_modules/.prisma/client`. Импорт в приложении остаётся через `@prisma/client`.
+
+Зачем это нужно:
+
+- Устойчивая генерация клиента и совместимость с будущими версиями Prisma.
+- Исключает перезапись сторонних артефактов, а также упрощает кэширование в CI.
+
+### Траблшутинг миграций (PostgreSQL)
+
+Если при `prisma migrate dev` / `prisma migrate status` видите ошибки вида дублирующихся индексов (например, `Like_userId_commentId_key`), это часто связано с повторным созданием одного и того же уникального индекса в ранних миграциях. Подход к исправлению на dev:
+
+1. Сделать создание индексов идемпотентным: заменить `CREATE UNIQUE INDEX ...` на `CREATE UNIQUE INDEX IF NOT EXISTS ...` в конфликтующих миграциях.
+2. Сбросить dev-базу и повторно применить миграции.
+3. Перегенерировать Prisma Client.
+
+Пример команд:
+
+```bash
+# ВНИМАНИЕ: удалит данные в dev-базе
+npx prisma migrate reset --force
+
+# Применить миграции и сгенерировать клиент заново
+yarn prisma:migrate
+yarn prisma:generate
+```
 
 Полезные документы:
 
