@@ -16,7 +16,7 @@
 В этом списке задачи перечислены в том порядке, в котором их стоит выполнять сейчас (без пересборки разделов ниже):
 
 1. 18 — Черновики/публикация для книг и версий — [x] (2025-08-25)
-2. 19 — Обзор книги и доступность разделов (флаги/URL)
+2. 19 — Обзор книги и доступность разделов (флаги/URL) — [x] (2025-08-25)
 3. 20 — Категории: Подкатегории (иерархия)
 4. 21 — Теги: модель и привязка к версиям
 5. 22 — CMS-страницы приложения (Page)
@@ -193,10 +193,17 @@
 
 - Цель: Для фронтенда возвращать агрегированные флаги наличия разделов и их URL/идентификаторы.
 - Объём:
-  - Эндпоинт: `GET /books/:slug/overview?lang=xx` → { book, availableLanguages[], hasText, hasAudio, hasSummary, versionIds: {text?, audio?}, seo: { for main/read/listen/summary } }.
-  - Реализация на базе `Book`, `BookVersion`, `AudioChapter`, `BookSummary`, `Seo`.
+  - [x] Эндпоинт: `GET /books/:slug/overview?lang=xx` → { book, availableLanguages[], hasText, hasAudio, hasSummary, versionIds: {text?, audio?}, seo: { main/read/listen/summary } }.
+  - [x] Реализация на базе `Book`, `BookVersion`, `BookSummary`, `Seo` (учёт статуса публикации).
 - Критерии приёмки: для книги с текстом/аудио/пересказом флаги и SEO заполнены корректно; для отсутствующих — false/null; e2e на 2–3 сценария.
 - Замечания: SEO берём из `Seo` версии с фолбэками; поля H1 — формируем из title/author по шаблонам (опц.).
+
+Примечания по реализации:
+
+- Публично учитываются только версии в статусе `published`.
+- Доступные языки формируются из опубликованных версий.
+- Выбор SEO: main → text > audio > referral; read → text; listen → audio; summary → text > audio.
+- Добавлен e2e-тест `book-overview.e2e-spec.ts`.
 
 ## 20) Категории: Подкатегории (иерархия)
 

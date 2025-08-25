@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { BookService } from './book.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
@@ -40,6 +40,28 @@ export class BookController {
       if (err instanceof HttpException) throw err;
       throw new HttpException(
         { message: 'Failed to create book', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get(':slug/overview')
+  @ApiOperation({
+    summary: 'Get book overview by slug',
+    description:
+      'Агрегированный обзор книги: доступные языки, наличие текста/аудио/пересказа, ID версий и SEO-бандл. Публично показывает только опубликованные версии.',
+  })
+  @ApiParam({ name: 'slug', description: 'Unique book slug' })
+  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
+  @ApiResponse({ status: 200, description: 'Overview returned' })
+  @ApiResponse({ status: 404, description: 'Book not found' })
+  async overview(@Param('slug') slug: string, @Query('lang') lang?: string) {
+    try {
+      return await this.bookService.getOverview(slug, lang);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to get book overview', details: (err as Error).message },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
