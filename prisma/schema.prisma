@@ -166,6 +166,12 @@ model Category {
   name  String
   slug  String         @unique
   books BookCategory[]
+  // Иерархия категорий (self-relation)
+  parentId String?
+  parent   Category?     @relation("CategoryToCategory", fields: [parentId], references: [id])
+  children Category[]    @relation("CategoryToCategory")
+
+  @@index([parentId])
 }
 
 model BookCategory {

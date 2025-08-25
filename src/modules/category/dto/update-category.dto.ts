@@ -21,4 +21,9 @@ export class UpdateCategoryDto implements Partial<CreateCategoryDto> {
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;
+
+  @ApiPropertyOptional({ description: 'Родительская категория', nullable: true })
+  @IsOptional()
+  @IsString()
+  parentId?: string | null;
 }

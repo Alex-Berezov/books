@@ -100,15 +100,51 @@ describe('Categories e2e', () => {
     const cat = await prisma.category.findUnique({ where: { id: categoryId } });
     await request(http()).get(`/categories/${cat?.slug}/books`).expect(200);
 
+    // create child category
+    const childRes = await request(http())
+      .post('/categories')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        type: 'genre',
+        name: 'Dark Fantasy',
+        slug: `dark-fantasy-e2e-${Date.now()}`,
+        parentId: categoryId,
+      })
+      .expect(201);
+    const childId = childRes.body.id as string;
+
+    // get children
+    await request(http()).get(`/categories/${categoryId}/children`).expect(200);
+
+    // get tree
+    await request(http()).get('/categories/tree').expect(200);
+
+    // try delete parent (should fail)
+    await request(http())
+      .delete(`/categories/${categoryId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400);
+
+    // move child to root
+    await request(http())
+      .patch(`/categories/${childId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ parentId: null })
+      .expect(200);
+
     // detach
     await request(http())
       .delete(`/versions/${versionId}/categories/${categoryId}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(204);
 
-    // delete category
+    // delete category and child
     await request(http())
       .delete(`/categories/${categoryId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+    await request(http())
+      .delete(`/categories/${childId}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(204);
   });

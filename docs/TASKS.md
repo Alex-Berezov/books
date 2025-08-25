@@ -227,7 +227,8 @@
 - [x] 9. CategoriesModule — готово
   - [x] Ответственность: категории и связь с версиями.
   - [x] Эндпоинты: GET /categories, POST /categories (admin), PATCH /categories/:id (admin), DELETE /categories/:id (admin),
-        GET /categories/:slug/books, POST /versions/:id/categories (attach), DELETE /versions/:id/categories/:categoryId (detach).
+        GET /categories/:slug/books, POST /versions/:id/categories (attach), DELETE /versions/:id/categories/:categoryId (detach),
+        GET /categories/:id/children, GET /categories/tree.
   - [x] Ограничения: Category.slug уникален; BookCategory уникальность (bookVersionId, categoryId) — добавлен @@unique в Prisma + миграция.
   - [x] RBAC: write-операции — только admin|content_manager (JwtAuthGuard + RolesGuard)
   - [x] Swagger теги/описания

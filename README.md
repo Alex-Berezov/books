@@ -101,13 +101,57 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 
 ## Slug валидация
 
-- Паттерн: `^[a-z0-9]+(?:-[a-z0-9]+)*$`
-- Только строчные латиница/цифры, разделитель дефис, без пробелов и двойных/крайних дефисов.
+Используем единый паттерн для slug'ов книг/категорий:
+
+Паттерн (RegExp): `^[a-z0-9]+(?:-[a-z0-9]+)*$`
+
+Требования:
+
+- Только латинские буквы в нижнем регистре и цифры
+- Разделитель — дефис `-`
+- Без пробелов, без двойных/крайних дефисов
+
+Примеры:
+
+- Допустимо: `harry-potter`, `book-123`, `a1-b2-c3`
+- Недопустимо: `Harry-Potter` (прописные), `book__123` (подчёркивания), `book--123` (двойной дефис), `-abc` или `abc-` (крайние дефисы)
+
+Подсказка: в DTO используется `SLUG_PATTERN` и `SLUG_REGEX` из `src/shared/validators/slug.ts`; сообщения валидации берутся из `SLUG_REGEX_README`.
+
+## Категории
+
+Базовые операции: CRUD и привязка категорий к версиям книг. Также поддерживается иерархия категорий (родитель/дети).
+
+- POST /categories — создать (admin|content_manager)
+- PATCH /categories/:id — обновить (admin|content_manager)
+- DELETE /categories/:id — удалить (admin|content_manager)
+- GET /categories — список
+- GET /categories/:slug/books — версии по слагу категории
+- GET /categories/:id/children — прямые дочерние категории
+- GET /categories/tree — полное дерево категорий
+
+Привязка к версиям:
+
+- POST /versions/:id/categories — привязать категорию к версии
+- DELETE /versions/:id/categories/:categoryId — отвязать
+
+Правила и валидация:
+
+- Поле parentId опционально; чтобы снять родителя, передайте `parentId: null` в PATCH.
+- Запрещены циклы и самопривязка (`parentId != id`).
+- Нельзя удалить категорию, если у неё есть дочерние категории.
+
+Swagger схемы:
+
+- Дерево и список детей описаны через общий DTO `CategoryTreeNodeDto` (см. `src/modules/category/dto/category-tree-node.dto.ts`).
+- Эндпоинты:
+  - `GET /categories/tree` → `[CategoryTreeNodeDto]`
+  - `GET /categories/:id/children` → `[CategoryTreeNodeDto]`
 
 ## Swagger
 
 - Доступно по `/api/docs`.
-- Примеры и схемы подключены для DTO `CreateBookDto` и `UpdateBookDto`.
+- Схемы и примеры подключены для ключевых DTO модулей (Books, Versions, Categories в т.ч. `CategoryTreeNodeDto`).
 
 ## Prisma
 
@@ -118,45 +162,52 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 
 Требуется переменная окружения `DATABASE_URL` в `.env`.
 
+Полезные документы:
+
+- Итерационный план и статус: `docs/ITERATION_TASKS.md`
+- Контекст и правила для ИИ-агента: `docs/AGENT_CONTEXT.md`
+- Обзор проекта: `docs/PROJECT_OVERVIEW.md`
+- История изменений: `CHANGELOG.md`
+
 ## Публикация версий (draft/published)
 
 - Новые версии книг создаются в статусе `draft`.
 - Публичные ручки возвращают только `published` версии.
 - Эндпоинты управления статусом (требуют роли admin или content_manager):
-  - `PATCH /versions/:id/publish` — публикует версию, выставляет `publishedAt`.
-  - `PATCH /versions/:id/unpublish` — снимает с публикации, `status=draft`, `publishedAt=null`.
+- `PATCH /versions/:id/publish` — публикует версию, выставляет `publishedAt`.
+- `PATCH /versions/:id/unpublish` — снимает с публикации, `status=draft`, `publishedAt=null`.
 - Листинги:
-  - Публично: `GET /books/:bookId/versions` — только опубликованные.
-  - Админ: `GET /admin/books/:bookId/versions` — включает черновики (требует авторизации и ролей).
-  - Также публичный листинг поддерживает параметр `includeDrafts=true`, но результат корректен только для авторизованных админов/контент-менеджеров.
+- Публично: `GET /books/:bookId/versions` — только опубликованные.
+- Админ: `GET /admin/books/:bookId/versions` — включает черновики (требует авторизации и ролей).
+- Также публичный листинг поддерживает параметр `includeDrafts=true`, но результат корректен только для авторизованных админов/контент-менеджеров.
 
 Примеры (curl):
 
 ```bash
 # Создать версию (draft)
 curl -X POST \
-  -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "language":"en","title":"Title","author":"Author","description":"Desc",
-    "coverImageUrl":"https://example.com/c.jpg","type":"text","isFree":true
-  }' \
-  http://localhost:3000/books/<BOOK_ID>/versions
+ -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
+ -H "Content-Type: application/json" \
+ -d '{
+   "language":"en","title":"Title","author":"Author","description":"Desc",
+   "coverImageUrl":"https://example.com/c.jpg","type":"text","isFree":true
+ }' \
+ http://localhost:3000/books/<BOOK_ID>/versions
 
 # Опубликовать
 curl -X PATCH -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
-  http://localhost:3000/versions/<VERSION_ID>/publish
+ http://localhost:3000/versions/<VERSION_ID>/publish
 
 # Снять с публикации
 curl -X PATCH -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
-  http://localhost:3000/versions/<VERSION_ID>/unpublish
+ http://localhost:3000/versions/<VERSION_ID>/unpublish
 
 # Публичный список (только published)
 curl http://localhost:3000/books/<BOOK_ID>/versions
 
 # Админский список (включая draft)
 curl -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
-  http://localhost:3000/admin/books/<BOOK_ID>/versions
+ http://localhost:3000/admin/books/<BOOK_ID>/versions
 ```
 
 ## Rate limiting

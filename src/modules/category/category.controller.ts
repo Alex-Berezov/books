@@ -11,7 +11,8 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { CategoryTreeNodeDto } from './dto/category-tree-node.dto';
 import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -34,6 +35,27 @@ export class CategoryController {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
     return this.service.list(page, limit);
+  }
+
+  @Get('categories/tree')
+  @ApiOperation({ summary: 'Get full categories tree (root nodes with nested children)' })
+  @ApiOkResponse({
+    description: 'Array of root categories with nested children',
+    type: [CategoryTreeNodeDto],
+  })
+  tree() {
+    return this.service.getTree();
+  }
+
+  @Get('categories/:id/children')
+  @ApiOperation({ summary: 'Get direct children of the category' })
+  @ApiParam({ name: 'id' })
+  @ApiOkResponse({
+    description: 'Array of direct child categories',
+    type: [CategoryTreeNodeDto],
+  })
+  children(@Param('id') id: string) {
+    return this.service.getChildren(id);
   }
 
   @Post('categories')
