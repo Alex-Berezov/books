@@ -20,6 +20,8 @@
 
 ---
 
+См. также: подробный итерационный план с краткими ТЗ — файл `docs/ITERATION_TASKS.md`.
+
 ## 1. Инфраструктура разработки и стандарты
 
 - Добавить Husky + lint-staged, pre-commit: lint, format, typecheck, test:unit быстр.
