@@ -11,6 +11,20 @@
 - Валидация: slug по `SLUG_PATTERN`, перечисления для `type`/`language`.
 - Тесты: e2e `pages.e2e-spec.ts` покрывает основные сценарии.
 
+# Package manager
+
+- Проект работает на yarn. Агентам и разработчикам: используйте только команды yarn, не используйте npm.
+- Примеры:
+  - `yarn`
+  - `yarn prisma:generate`
+  - `yarn start:dev`
+
+# Заметка: prisma/node_modules внутри каталога prisma
+
+- Рабочая схема — только `prisma/schema.prisma`.
+- Если внутри папки `prisma/` появился собственный `node_modules/` и, как следствие, `prisma/node_modules/@prisma/client/schema.prisma`, это приводит к конфликтам (дубли источников/генераторов/моделей) в IDE.
+- Решение: удалить `prisma/node_modules` и работать с npm/yarn только из корня проекта. Затем выполнить `yarn prisma:generate` для регенерации клиента.
+
 # AGENT_CONTEXT
 
 Этот документ помогает ИИ-агенту быстро понять контекст проекта и наши правила работы.

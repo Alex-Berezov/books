@@ -1,3 +1,16 @@
+Разное:
+
+- Проект использует yarn (classic) — не используйте npm. Все команды запускайте через yarn скрипты.
+
+Быстрый старт (с yarn):
+
+Установка зависимостей: `yarn`
+Генерация Prisma Client: `yarn prisma:generate`
+Миграции dev: `yarn prisma:migrate`
+Сиды: `yarn prisma:seed`
+Запуск dev: `yarn start:dev`
+E2E тесты: `yarn test:e2e`
+
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>
