@@ -186,6 +186,16 @@ Swagger схемы:
 - Доступно по `/api/docs`.
 - Схемы и примеры подключены для ключевых DTO модулей (Books, Versions, Categories в т.ч. `CategoryTreeNodeDto`).
 
+## Медиа-библиотека
+
+- Загрузки выполняются через модуль Uploads: пресайн → прямой upload → получение `key` и `publicUrl`.
+- Для повторного использования файлов добавлен модуль Media:
+  - POST `/media/confirm` — создать/обновить запись `MediaAsset` по `key` (идемпотентно).
+  - GET `/media` — листинг с фильтрами `q` (подстрока по key/url) и `type` (префикс contentType), пагинация.
+  - DELETE `/media/:id` — мягкое удаление записи и попытка удаления файла.
+- Доступ только для ролей admin|content_manager.
+- Модель `MediaAsset` описана в `prisma/schema.prisma` (создать миграцию локально перед запуском e2e для медиа).
+
 ## Prisma
 
 - Генерация клиента: `yarn prisma:generate`

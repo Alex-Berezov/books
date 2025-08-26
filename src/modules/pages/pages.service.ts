@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-assignment */
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, PublicationStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';

@@ -1,0 +1,45 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "e2e:media",
+			"type": "shell",
+			"command": "yarn test:e2e -- media.e2e-spec.ts",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "e2e:media",
+			"type": "shell",
+			"command": "yarn test:e2e -- media.e2e-spec.ts",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "e2e:media",
+			"type": "shell",
+			"command": "yarn test:e2e -- media.e2e-spec.ts",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "e2e:media",
+			"type": "shell",
+			"command": "yarn test:e2e -- media.e2e-spec.ts",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		}
+	]
+}

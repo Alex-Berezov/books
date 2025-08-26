@@ -26,6 +26,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { StatusModule } from './modules/status/status.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { PagesModule } from './modules/pages/pages.module';
+import { MediaModule } from './modules/media/media.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 
@@ -57,6 +58,7 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     StatusModule,
     TagsModule,
     PagesModule,
+    MediaModule,
     // ...другие модули
   ],
   controllers: [AppController],

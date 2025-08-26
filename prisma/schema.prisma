@@ -107,7 +107,10 @@ model User {
   viewStats          ViewStat[]
   readingProgress    ReadingProgress[]
   roles              UserRole[]
+  mediaAssets        MediaAsset[]
 }
+
+
 
 model Bookshelf {
   id            String      @id @default(uuid())
@@ -230,6 +233,28 @@ model ReadingProgress {
   bookVersion        BookVersion @relation(fields: [bookVersionId], references: [id])
 
   @@unique([userId, bookVersionId])
+}
+
+// =====================
+// Media Library
+// =====================
+
+model MediaAsset {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  url          String
+  contentType  String?
+  size         Int?
+  width        Int?
+  height       Int?
+  hash         String?
+  createdAt    DateTime @default(now())
+  createdById  String?
+  createdBy    User?    @relation(fields: [createdById], references: [id])
+  isDeleted    Boolean  @default(false)
+
+  @@index([createdAt])
+  @@index([hash])
 }
 
 // =====================
