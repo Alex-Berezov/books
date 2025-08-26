@@ -1,3 +1,16 @@
+## CMS-страницы (Page)
+
+- Назначение: простые контентные страницы приложения, управляемые из админского API.
+- Модель Prisma: `Page { id, slug @unique, title, type enum, content, status PublicationStatus, language, seoId?, createdAt, updatedAt }`.
+- Статусы: draft/published — публичный эндпоинт возвращает только published.
+- Язык: одна запись на язык (строгий enum из Prisma на текущий момент).
+- SEO: опциональная 1:1-связь с `Seo` (именованная relation `SeoForPage`).
+- Эндпоинты:
+  - Публичные: `GET /pages/:slug`.
+  - Админ: `GET /admin/pages`, `POST /admin/pages`, `PATCH /admin/pages/:id`, `PATCH /admin/pages/:id/publish`, `PATCH /admin/pages/:id/unpublish`, `DELETE /admin/pages/:id`.
+- Валидация: slug по `SLUG_PATTERN`, перечисления для `type`/`language`.
+- Тесты: e2e `pages.e2e-spec.ts` покрывает основные сценарии.
+
 # AGENT_CONTEXT
 
 Этот документ помогает ИИ-агенту быстро понять контекст проекта и наши правила работы.

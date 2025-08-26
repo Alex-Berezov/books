@@ -71,3 +71,12 @@ React Native + Expo — клиент под iOS/Android.
 - Иерархия: поля `parentId`, эндпоинты `GET /categories/:id/children` и `GET /categories/tree`.
 - Правила: запрет циклов/самопривязки, нельзя удалить категорию с дочерними.
 - Swagger: единый DTO `CategoryTreeNodeDto` для узлов дерева.
+
+### CMS-страницы (Page)
+
+Для контентных страниц добавлена модель `Page` и модуль `PagesModule`.
+
+- Публично: `GET /pages/:slug` — отдаёт только опубликованные страницы.
+- Админ (admin|content_manager): `GET /admin/pages`, `POST /admin/pages`, `PATCH /admin/pages/:id`, `PATCH /admin/pages/:id/publish`, `PATCH /admin/pages/:id/unpublish`, `DELETE /admin/pages/:id`.
+- Поля: `slug`, `title`, `type` (generic|category_index|author_index), `content`, `language`, `status`, `seoId?`.
+- Статус публикации управляет видимостью в публичном API.

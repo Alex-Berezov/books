@@ -47,7 +47,7 @@ model BookVersion {
   tags            BookTag[]
   viewStats       ViewStat[]
   readingProgress ReadingProgress[]
-  seo             Seo?              @relation(fields: [seoId], references: [id])
+  seo             Seo?              @relation("SeoForBookVersion", fields: [seoId], references: [id])
   seoId           Int?              @unique
 
   @@unique([bookId, language])
@@ -233,6 +233,25 @@ model ReadingProgress {
 }
 
 // =====================
+// CMS Pages
+// =====================
+
+model Page {
+  id        String      @id @default(uuid())
+  slug      String      @unique
+  title     String
+  type      PageType
+  content   String
+  status    PublicationStatus @default(draft)
+  language  Language
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  // Optional SEO one-to-one
+  seo       Seo?        @relation("SeoForPage", fields: [seoId], references: [id])
+  seoId     Int?        @unique
+}
+
+// =====================
 // Seo модель
 // =====================
 
@@ -275,7 +294,10 @@ model Seo {
   eventLocationCountry String?
 
   // Связь с BookVersion (1:1)
-  bookVersion BookVersion?
+  bookVersion BookVersion? @relation("SeoForBookVersion")
+
+  // Связь с Page (1:1)
+  page Page? @relation("SeoForPage")
 }
 
 // =====================
@@ -311,6 +333,13 @@ enum ViewSource {
   text
   audio
   referral
+}
+
+// Типы CMS-страниц
+enum PageType {
+  generic
+  category_index
+  author_index
 }
 
 // =====================

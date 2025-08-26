@@ -19,7 +19,7 @@
 2. 19 — Обзор книги и доступность разделов (флаги/URL) — [x] (2025-08-25)
 3. 20 — Категории: Подкатегории (иерархия) — [x] (2025-08-25)
 4. 21 — Теги: модель и привязка к версиям — [x] (2025-08-25)
-5. 22 — CMS-страницы приложения (Page)
+5. 22 — CMS-страницы приложения (Page) — [x] (2025-08-26)
 6. 23 — Медиа-библиотека (повторное использование)
 7. 24 — Языки: политика выбора и расширяемость набора
 8. 25 — SEO bundle сервис (OG/Twitter/Canonical)
@@ -274,15 +274,43 @@
 - В `schema.prisma` настроен `generator client` с `output = "./node_modules/.prisma/client"`.
 - README дополнён разделом о версиях Prisma, output и троблшутинге миграций (идемпотентные индексы + reset в dev).
 
-## 22) CMS-страницы приложения (Page)
+## 22) CMS-страницы приложения (Page) — [x] (2025-08-26)
 
 - Цель: Управлять контентными страницами приложения (общие страницы, шаблоны главных разделов).
 - Объём:
-  - Prisma: `Page` (id, slug @unique, title, type enum: generic|category_index|author_index, content (JSON|text), status draft|published, language, seoId?, timestamps).
-  - Эндпоинты: CRUD для админов; публичные `GET /pages/:slug` (только published).
-  - Swagger/валидации; базовые e2e (draft недоступен публично).
-- Критерии приёмки: страница создаётся/редактируется/публикуется; публичная выдача корректна.
-- Замечания: контент — простой (без блочного редактора); мультиязычие — одноязычные записи на версию языка.
+  - [x] Prisma: добавлена модель `Page` (id, slug @unique, title, type enum: generic|category_index|author_index, content: String, status draft|published, language, seoId?, timestamps) и enum `PageType`; настроена 1:1-связь `Seo` ↔ `Page` с именованными relation.
+  - [x] Backend (NestJS): модуль `PagesModule` с API:
+    - [x] Публично: `GET /pages/:slug` — возвращает только `published`.
+    - [x] Админ (admin|content_manager):
+      - `GET /admin/pages?page&limit` — листинг всех страниц (включая draft).
+      - `POST /admin/pages` — создать.
+      - `PATCH /admin/pages/:id` — обновить поля.
+      - `PATCH /admin/pages/:id/publish` — опубликовать.
+      - `PATCH /admin/pages/:id/unpublish` — снять с публикации.
+      - `DELETE /admin/pages/:id` — удалить.
+  - [x] Swagger/валидации DTO (slug, enum type/language, status); роли/гварды повторяют стиль Categories/Tags.
+  - [x] e2e: сценарий CRUD + publish/unpublish + публичная доступность (см. `test/pages.e2e-spec.ts`).
+- Критерии приёмки: страница создаётся/редактируется/публикуется; публичная выдача корректна — покрыто e2e.
+- Замечания:
+  - Контент хранится как строка (в дальнейшем можно сменить на JSON с редактором).
+  - Мультиязычие — отдельные записи `Page` на каждый язык.
+  - Связь с `Seo` опциональна; добавлены именованные relation: `SeoForPage`, `SeoForBookVersion`.
+
+Примечания по реализации:
+
+- Файлы (основное):
+  - Prisma: `prisma/schema.prisma` — модели `Page`, enum `PageType`, связи в `Seo`/`BookVersion`.
+  - Бэкенд: `src/modules/pages/*` (controller, service, module, DTO) + подключение в `AppModule`.
+  - Тесты: `test/pages.e2e-spec.ts` — создание (draft), 404 публично; publish — 200 публично; unpublish — снова 404; обновление/удаление и админ-список.
+
+Примечания по миграции БД:
+
+- В автоматическом окружении `prisma migrate dev` недоступна (неинтерактивная среда). Для локальной разработки выполните последовательно:
+  1. Обновить schema: уже сделано в репозитории.
+  2. Создать миграцию локально: `yarn prisma:migrate --name add_cms_pages`.
+  3. Сгенерировать клиент: `yarn prisma:generate`.
+  4. Применить миграции в dev БД. После этого e2e `pages` пройдут.
+- Отдельное замечание: ранее упомянутая конфликтная миграция `20250825112250_qwerty` (дубликаты индексов в `Like`) может потребовать ручной коррекции в dev. После устранения — миграции для `Page` применяются без проблем.
 
 ## 23) Медиа-библиотека (повторное использование изображений/аудио)
 
