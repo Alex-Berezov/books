@@ -22,7 +22,7 @@
 5. 22 — CMS-страницы приложения (Page) — [x] (2025-08-26)
 6. 23 — Медиа-библиотека (повторное использование) — [x] (2025-08-26) — см. docs/MEDIA_LIBRARY.md
 7. 24 — Языки: политика выбора и расширяемость набора — [x] (2025-08-26)
-8. 25 — SEO bundle сервис (OG/Twitter/Canonical)
+8. 25 — SEO bundle сервис (OG/Twitter/Canonical) — [x] (2025-08-26)
 
 Далее — инфраструктурные и платформенные задачи (их можно выполнять параллельно, но ниже основной приоритет):
 
@@ -369,12 +369,40 @@
 - Критерии приёмки: после добавления нового языка миграцией Prisma API принимает и отдаёт этот язык; выбор версии корректен — покрыто e2e.
 - Замечания: если появится требование управлять языками без миграций — вернёмся к варианту с отдельной таблицей и миграцией DTO на строковые коды ISO.
 
-## 25) SEO bundle сервис (OG/Twitter/Canonical)
+## 25) SEO bundle сервис (OG/Twitter/Canonical) — [x] (2025-08-26)
 
 - Цель: Единая сборка SEO-мета с фолбэками и правилами.
 - Объём:
-  - Сервис-компоновщик SEO: при отсутствии явных полей `Seo` — использовать разумные дефолты (title из версии/книги, canonical из маршрута).
-  - Эндпоинт: `GET /seo/resolve?type=book|version|page&id=...` → OG/Twitter/robots/canonical.
-  - Документация шаблонов и приоритетов источников.
-- Критерии приёмки: фронтенд получает полный набор полей для сниппетов; e2e smoke.
-- Замечания: sitemap/robots остаются в задачах 14; здесь — сборка мета для карточек/страниц.
+  - [x] Сервис-компоновщик SEO в `SeoService.resolveByParams(type, id)`: при отсутствии явных полей `Seo` — используются адекватные фолбэки (title из версии/книги/страницы; canonical из публичного маршрута; OG/Twitter заполняются от meta).
+  - [x] Эндпоинт: `GET /seo/resolve?type=book|version|page&id=...` — возвращает бандл: `{ meta, openGraph, twitter, schema.event? }`.
+  - [x] Валидация query-параметров и 400 при неверном `type`.
+  - [x] Кэширование существующих `Seo` по версии (reuse имеющейся карты из `SeoService`).
+  - [x] E2E: smoke на `GET /seo/resolve` (version и book), файл `test/seo.e2e-spec.ts`.
+- Критерии приёмки: фронтенд получает полный набор полей для сниппетов; e2e smoke проходит.
+- Замечания:
+  - Источник base URL: `LOCAL_PUBLIC_BASE_URL` (env), по умолчанию `http://localhost:3000`.
+  - sitemap/robots остаются в задаче 14; здесь только сборка мета.
+  - Для `type=book` используется slug книги, берётся последняя опубликованная версия для фолбэков title/description/cover.
+  - Для `type=version` используется ID версии; для `type=page` — slug опубликованной страницы.
+
+Примечания по реализации:
+
+- Файлы (основное):
+  - `src/modules/seo/seo.service.ts` — метод `resolveByParams`, вспомогательный `resolve`, фолбэки OG/Twitter/Canonical, поддержка schema.org/Event при наличии полей в Seo.
+  - `src/modules/seo/seo.controller.ts` — хендлер `GET /seo/resolve` с проверкой `type` и делегированием в сервис.
+  - `src/modules/seo/dto/resolve-seo.dto.ts` — типы запроса (используются в сервисе и для Swagger enum).
+  - Тесты: `test/seo.e2e-spec.ts` — добавлен сценарий для `/seo/resolve` (version + book fallback).
+
+Правила приоритетов и фолбэки:
+
+- Meta.title → Seo.metaTitle → `<Version.title — Version.author>` → `Page.title` → `Book {slug}`.
+- Meta.description → Seo.metaDescription → Version.description → отсутствует.
+- Canonical → Seo.canonicalUrl → `${LOCAL_PUBLIC_BASE_URL}{canonicalPath}`.
+- OpenGraph: title/description/url берутся из Meta/Canonical; image → Seo.ogImageUrl → coverImageUrl.
+- Twitter: card → Seo.twitterCard → `summary_large_image` при наличии OG image, иначе `summary`.
+- Schema.org/Event включается, если заполнены event-поля в Seo.
+
+Критерии готовности (проверено):
+
+- [x] Комpиляция, типы и линтер без ошибок.
+- [x] E2E: `seo.e2e-spec.ts` зелёный, включая новый smoke по `/seo/resolve`.

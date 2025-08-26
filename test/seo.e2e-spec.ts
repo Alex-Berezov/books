@@ -136,4 +136,37 @@ describe('Seo e2e', () => {
     expect(get2.body.metaTitle).toBe('Title 2');
     expect(get2.body.ogDescription).toBe('OG Desc');
   });
+
+  it('GET /seo/resolve returns bundle for version and book (fallback)', async () => {
+    // Version resolve
+    const r1 = await request(http())
+      .get('/seo/resolve')
+      .query({ type: 'version', id: versionId })
+      .expect(200);
+    expect(r1.body.meta.title).toBeDefined();
+    expect(r1.body.openGraph.title).toBeDefined();
+    expect(r1.body.meta.canonicalUrl).toContain('/versions/');
+
+    // Create a book with no SEO and resolve by slug (fallback to version data if any)
+    const book = await prisma.book.create({ data: { slug: `book-seo-resolve-${Date.now()}` } });
+    await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: 'en',
+        title: 'V Title',
+        author: 'V Author',
+        description: 'V Desc',
+        coverImageUrl: 'https://example.com/cover.jpg',
+        type: 'text',
+        isFree: true,
+        status: 'published',
+      },
+    });
+    const r2 = await request(http())
+      .get('/seo/resolve')
+      .query({ type: 'book', id: book.slug })
+      .expect(200);
+    expect(typeof r2.body.meta.title).toBe('string');
+    expect(r2.body.meta.canonicalUrl).toContain(`/books/${book.slug}`);
+  });
 });
