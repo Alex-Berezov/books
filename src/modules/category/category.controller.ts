@@ -10,8 +10,16 @@ import {
   Post,
   Query,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiHeader,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CategoryTreeNodeDto } from './dto/category-tree-node.dto';
 import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -88,8 +96,22 @@ export class CategoryController {
   @Get('categories/:slug/books')
   @ApiOperation({ summary: 'Get book versions by category slug' })
   @ApiParam({ name: 'slug' })
-  versionsByCategory(@Param('slug') slug: string) {
-    return this.service.getBySlugWithBooks(slug);
+  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
+  @ApiHeader({
+    name: 'Accept-Language',
+    required: false,
+    description: 'RFC 7231 header, e.g. en-US,en;q=0.9,es;q=0.8',
+    schema: {
+      type: 'string',
+      example: 'es-ES,fr;q=0.9,en;q=0.5',
+    },
+  })
+  versionsByCategory(
+    @Param('slug') slug: string,
+    @Query('lang') lang?: string,
+    @Headers('accept-language') acceptLanguage?: string,
+  ) {
+    return this.service.getBySlugWithBooks(slug, lang, acceptLanguage);
   }
 
   @Post('versions/:id/categories')

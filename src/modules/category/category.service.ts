@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { Prisma, Category as PrismaCategory } from '@prisma/client';
+import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
+import { resolveRequestedLanguage } from '../../shared/language/language.util';
 
 export type CategoryTreeNode = {
   id: string;
@@ -90,15 +91,28 @@ export class CategoryService {
     return this.prisma.category.delete({ where: { id } });
   }
 
-  async getBySlugWithBooks(slug: string) {
+  async getBySlugWithBooks(slug: string, queryLang?: string, acceptLanguageHeader?: string) {
     const category = await this.prisma.category.findUnique({ where: { slug } });
     if (!category) throw new NotFoundException('Category not found');
-    const links = await this.prisma.bookCategory.findMany({
-      where: { categoryId: category.id },
-      select: { bookVersion: true },
-      orderBy: { bookVersion: { createdAt: 'desc' } },
+
+    // Public endpoint: only published versions
+    const versions = await this.prisma.bookVersion.findMany({
+      where: {
+        status: 'published',
+        categories: { some: { categoryId: category.id } },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
     });
-    return { category, versions: links.map((l) => l.bookVersion) };
+
+    const availableLanguages: Language[] = Array.from(new Set(versions.map((v) => v.language)));
+    const preferred = resolveRequestedLanguage({
+      queryLang,
+      acceptLanguage: acceptLanguageHeader || null,
+      available: availableLanguages,
+    });
+    const filtered = preferred ? versions.filter((v) => v.language === preferred) : versions;
+    return { category, versions: filtered, availableLanguages };
   }
 
   async attachCategoryToVersion(versionId: string, categoryId: string) {

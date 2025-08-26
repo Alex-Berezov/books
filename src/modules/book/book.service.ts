@@ -3,7 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
-import { BookType, Language } from '@prisma/client';
+import { BookType } from '@prisma/client';
+import { resolveRequestedLanguage } from '../../shared/language/language.util';
 
 @Injectable()
 export class BookService {
@@ -64,7 +65,7 @@ export class BookService {
   }
 
   // Overview aggregation for frontend
-  async getOverview(slug: string, lang?: string) {
+  async getOverview(slug: string, lang?: string, acceptLanguageHeader?: string) {
     const book = await this.prisma.book.findUnique({ where: { slug } });
     if (!book) throw new NotFoundException(`Book with slug ${slug} not found`);
 
@@ -82,8 +83,11 @@ export class BookService {
 
     const availableLanguages = Array.from(new Set(versions.map((v) => v.language)));
 
-    const preferredLang =
-      lang && Object.values(Language).includes(lang as Language) ? (lang as Language) : undefined;
+    const preferredLang = resolveRequestedLanguage({
+      queryLang: lang,
+      acceptLanguage: acceptLanguageHeader || null,
+      available: availableLanguages,
+    });
 
     // Pick versions by type (closest to requested lang, fallback to first available)
     const pickByType = (type: BookType) => {

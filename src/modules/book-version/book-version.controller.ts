@@ -10,11 +10,20 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
 import { BookVersionService } from './book-version.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
-import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags, ApiBody } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+  ApiBody,
+  ApiHeader,
+} from '@nestjs/swagger';
 import { Language, BookType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -35,6 +44,16 @@ export class BookVersionController {
   @ApiQuery({ name: 'language', required: false })
   @ApiQuery({ name: 'type', required: false })
   @ApiQuery({ name: 'isFree', required: false, schema: { type: 'boolean' } })
+  @ApiHeader({
+    name: 'Accept-Language',
+    required: false,
+    description:
+      'RFC 7231 header. Используется только если параметр language не задан: выбирает ближайший доступный язык из опубликованных версий.',
+    schema: {
+      type: 'string',
+      example: 'es-ES,fr;q=0.9,en;q=0.5',
+    },
+  })
   @ApiQuery({
     name: 'includeDrafts',
     required: false,
@@ -48,6 +67,7 @@ export class BookVersionController {
     @Query('type') type?: string,
     @Query('isFree') isFree?: string,
     @Query('includeDrafts') includeDrafts?: string,
+    @Headers('accept-language') acceptLanguage?: string,
   ) {
     const langEnum =
       language && Object.values(Language).includes(language as Language)
@@ -63,11 +83,15 @@ export class BookVersionController {
         isFree: isFree !== undefined ? isFree === 'true' : undefined,
       });
     }
-    return this.service.list(bookId, {
-      language: langEnum,
-      type: typeEnum,
-      isFree: isFree !== undefined ? isFree === 'true' : undefined,
-    });
+    return this.service.list(
+      bookId,
+      {
+        language: langEnum,
+        type: typeEnum,
+        isFree: isFree !== undefined ? isFree === 'true' : undefined,
+      },
+      acceptLanguage,
+    );
   }
 
   @Post('books/:bookId/versions')

@@ -9,7 +9,11 @@ import { Language, BookType } from '@prisma/client';
 export class BookVersionService {
   constructor(private prisma: PrismaService) {}
 
-  async list(bookId: string, filters: { language?: Language; type?: BookType; isFree?: boolean }) {
+  async list(
+    bookId: string,
+    filters: { language?: Language; type?: BookType; isFree?: boolean },
+    acceptLanguageHeader?: string,
+  ) {
     const where: Prisma.BookVersionWhereInput = {
       bookId,
       ...(filters.language ? { language: filters.language } : {}),
@@ -17,6 +21,21 @@ export class BookVersionService {
       ...(filters.isFree !== undefined ? { isFree: filters.isFree } : {}),
       status: 'published',
     };
+    // If no explicit language filter is provided, apply Accept-Language fallback to prefer one language
+    if (!filters.language && acceptLanguageHeader) {
+      const all = await this.prisma.bookVersion.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      });
+      const available = Array.from(new Set(all.map((v) => v.language)));
+      const { resolveRequestedLanguage } = await import('../../shared/language/language.util');
+      const preferred = resolveRequestedLanguage({
+        acceptLanguage: acceptLanguageHeader,
+        available,
+      });
+      return preferred ? all.filter((v) => v.language === preferred) : all;
+    }
     return this.prisma.bookVersion.findMany({
       where,
       orderBy: { createdAt: 'desc' },

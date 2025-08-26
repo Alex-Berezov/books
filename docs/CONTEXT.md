@@ -11,6 +11,13 @@
 - Валидация: slug по `SLUG_PATTERN`, перечисления для `type`/`language`.
 - Тесты: e2e `pages.e2e-spec.ts` покрывает основные сценарии.
 
+## Языки и политика выбора
+
+- Поддерживаемые коды языков заданы через Prisma enum `Language` (en, es, fr, pt). Добавление нового языка — через миграцию Prisma.
+- Резолвинг языка в публичных ручках: `?lang` → заголовок `Accept-Language` → `DEFAULT_LANGUAGE` (env, по умолчанию `en`).
+- Реализация в `src/shared/language/language.util.ts`; задокументировано в README.
+- Специфика `GET /books/:bookId/versions`: при отсутствии явного `?language=` применяется `Accept-Language` (c фолбэком к `DEFAULT_LANGUAGE`), иначе используется язык из параметра. Это поведение покрыто e2e `test/book-versions-list-language.e2e-spec.ts`.
+
 # Package manager
 
 - Проект работает на yarn. Агентам и разработчикам: используйте только команды yarn, не используйте npm.

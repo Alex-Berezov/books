@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, Language } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
+import { resolveRequestedLanguage } from '../../shared/language/language.util';
 
 @Injectable()
 export class TagsService {
@@ -40,15 +41,23 @@ export class TagsService {
     return this.prisma.tag.delete({ where: { id } });
   }
 
-  async versionsByTagSlug(slug: string) {
+  async versionsByTagSlug(slug: string, queryLang?: string, acceptLanguageHeader?: string) {
     const tag = await this.prisma.tag.findUnique({ where: { slug } });
     if (!tag) throw new NotFoundException('Tag not found');
-    const links = await this.prisma.bookTag.findMany({
-      where: { tagId: tag.id },
-      select: { bookVersion: true },
-      orderBy: { bookVersion: { createdAt: 'desc' } },
+    // public only: published versions with this tag
+    const versions = await this.prisma.bookVersion.findMany({
+      where: { status: 'published', tags: { some: { tagId: tag.id } } },
+      orderBy: { createdAt: 'desc' },
+      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
     });
-    return { tag, versions: links.map((l) => l.bookVersion) };
+    const availableLanguages: Language[] = Array.from(new Set(versions.map((v) => v.language)));
+    const preferred = resolveRequestedLanguage({
+      queryLang,
+      acceptLanguage: acceptLanguageHeader || null,
+      available: availableLanguages,
+    });
+    const filtered = preferred ? versions.filter((v) => v.language === preferred) : versions;
+    return { tag, versions: filtered, availableLanguages };
   }
 
   async attach(versionId: string, tagId: string) {

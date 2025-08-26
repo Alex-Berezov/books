@@ -10,8 +10,9 @@ import {
   HttpStatus,
   Query,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiHeader } from '@nestjs/swagger';
 import { BookService } from './book.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
@@ -54,10 +55,19 @@ export class BookController {
   @ApiParam({ name: 'slug', description: 'Unique book slug' })
   @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
   @ApiResponse({ status: 200, description: 'Overview returned' })
+  @ApiHeader({
+    name: 'Accept-Language',
+    required: false,
+    description: 'RFC 7231 header, e.g. en-US,en;q=0.9,es;q=0.8',
+  })
   @ApiResponse({ status: 404, description: 'Book not found' })
-  async overview(@Param('slug') slug: string, @Query('lang') lang?: string) {
+  async overview(
+    @Param('slug') slug: string,
+    @Query('lang') lang?: string,
+    @Headers('accept-language') acceptLanguage?: string,
+  ) {
     try {
-      return await this.bookService.getOverview(slug, lang);
+      return await this.bookService.getOverview(slug, lang, acceptLanguage);
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new HttpException(

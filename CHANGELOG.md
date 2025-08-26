@@ -29,3 +29,12 @@
 - Миграционные конфликты с дублирующимися индексами `Like_*` решены путём замены `CREATE UNIQUE INDEX` на `CREATE UNIQUE INDEX IF NOT EXISTS` в соответствующих миграциях, после чего выполнен dev reset и повторное применение миграций.
 - Обновлены версии Prisma: `prisma` 6.14.0, `@prisma/client` 6.14.0. В `schema.prisma` установлен `generator client { output = "../node_modules/.prisma/client" }`.
 - README дополнен разделом о версиях Prisma, output и троблшутинге миграций.
+
+## 2025-08-26 — Языки: политика выбора и расширяемость
+
+- Добавлена утилита `shared/language/language.util.ts` (парсер Accept-Language, политика резолвинга: `?lang` → Accept-Language → DEFAULT_LANGUAGE).
+- Применено в `GET /books/:slug/overview`, а также расширено на `GET /categories/:slug/books` и `GET /tags/:slug/books` (фильтрация по языку, `availableLanguages` в ответе, поддержка `?lang` и `Accept-Language`).
+- E2E: `test/language-policy.e2e-spec.ts` и `test/language-policy-categories-tags.e2e-spec.ts` проверяют приоритеты и фолбэки.
+- Документация обновлена: README (раздел про языки), `docs/ITERATION_TASKS.md` (помечено как выполнено), ADR `docs/adr/2025-08-26-language-policy-and-extensibility.md` (решение — остаться на Prisma enum `Language`).
+- Конфигурация e2e переведена на последовательный режим (`maxWorkers: 1` в `test/jest-e2e.json`) для стабильности в dev-среде.
+- Дополнение: публичный листинг `GET /books/:bookId/versions` теперь учитывает `Accept-Language`, если `?language` не задан. Добавлены README-примеры и e2e `test/book-versions-list-language.e2e-spec.ts`.

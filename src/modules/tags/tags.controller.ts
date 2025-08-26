@@ -10,8 +10,9 @@ import {
   Post,
   Query,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { TagsService } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -66,8 +67,22 @@ export class TagsController {
   @Get('tags/:slug/books')
   @ApiOperation({ summary: 'Get book versions by tag slug' })
   @ApiParam({ name: 'slug' })
-  versionsByTag(@Param('slug') slug: string) {
-    return this.service.versionsByTagSlug(slug);
+  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
+  @ApiHeader({
+    name: 'Accept-Language',
+    required: false,
+    description: 'RFC 7231 header, e.g. en-US,en;q=0.9,es;q=0.8',
+    schema: {
+      type: 'string',
+      example: 'es-ES,fr;q=0.9,en;q=0.5',
+    },
+  })
+  versionsByTag(
+    @Param('slug') slug: string,
+    @Query('lang') lang?: string,
+    @Headers('accept-language') acceptLanguage?: string,
+  ) {
+    return this.service.versionsByTagSlug(slug, lang, acceptLanguage);
   }
 
   @Post('versions/:id/tags')

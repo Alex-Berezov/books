@@ -40,6 +40,18 @@
 				"$tsc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "e2e:lang-filter",
+			"type": "shell",
+			"command": "yarn test:e2e -- language-policy-categories-tags.e2e-spec.ts",
+			"group": "build"
+		},
+		{
+			"label": "e2e:versions-lang",
+			"type": "shell",
+			"command": "yarn test:e2e -- book-versions-list-language.e2e-spec.ts",
+			"group": "build"
 		}
 	]
 }

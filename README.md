@@ -44,6 +44,20 @@ E2E тесты: `yarn test:e2e`
 $ yarn install
 ```
 
+## Языки: политика выбора и расширяемость
+
+- Поддерживаемые языки задаются Prisma enum `Language` (en, es, fr, pt). Добавление нового языка выполняется миграцией Prisma (см. ADR ниже).
+- Политика выбора языка в публичных ручках:
+  - Принимаем `?lang=` (приоритетнее всего) и/или заголовок `Accept-Language` (RFC 7231), затем фолбэк на `DEFAULT_LANGUAGE` (env, по умолчанию en).
+  - Если указанный язык отсутствует среди доступных у сущности — используем следующий источник (Accept-Language → DEFAULT_LANGUAGE). Если и он отсутствует — выбирается первый доступный.
+- Реализация:
+  - Утилита `src/shared/language/language.util.ts` — парсинг Accept-Language и резолвинг языка.
+  - Применено в публичных ручках: `GET /books/:slug/overview`, `GET /categories/:slug/books`, `GET /tags/:slug/books`, а также `GET /books/:bookId/versions` (см. ниже заметки и примеры).
+- E2E: `test/language-policy.e2e-spec.ts` и `test/language-policy-categories-tags.e2e-spec.ts` покрывают приоритет `?lang` над Accept-Language и фолбэк на дефолтный язык.
+  - Конфиг e2e переведён на последовательный запуск (`maxWorkers: 1`) для стабильности (ограничение соединений БД в dev-среде).
+
+ADR: см. `docs/adr/2025-08-26-language-policy-and-extensibility.md` — зафиксировано решение оставаться на Prisma enum, пока не потребуется динамическое управление списком языков через отдельную таблицу.
+
 ## Compile and run the project
 
 ```bash
@@ -140,6 +154,7 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 - DELETE /categories/:id — удалить (admin|content_manager)
 - GET /categories — список
 - GET /categories/:slug/books — версии по слагу категории
+  - Параметры локализации: `?lang`, заголовок `Accept-Language`; возвращает также `availableLanguages`.
 - GET /categories/:id/children — прямые дочерние категории
 - GET /categories/tree — полное дерево категорий
 
@@ -169,6 +184,7 @@ Swagger схемы:
   - PATCH /tags/:id — обновить (admin|content_manager)
   - DELETE /tags/:id — удалить (admin|content_manager)
   - GET /tags/:slug/books — версии по тегу
+  - Параметры локализации: `?lang`, заголовок `Accept-Language`; возвращает также `availableLanguages`.
 
   Привязка к версиям:
   - POST /versions/:id/tags — привязать тег к версии (идемпотентно)
@@ -254,6 +270,12 @@ yarn prisma:generate
 - Админ: `GET /admin/books/:bookId/versions` — включает черновики (требует авторизации и ролей).
 - Также публичный листинг поддерживает параметр `includeDrafts=true`, но результат корректен только для авторизованных админов/контент-менеджеров.
 
+Локализация листинга версий (`GET /books/:bookId/versions`):
+
+- Если параметр `language` не указан, сервер применяет политику `Accept-Language` → `DEFAULT_LANGUAGE` → первый доступный.
+- Если `?language=` задан явно, он имеет приоритет над заголовком `Accept-Language`.
+- Значение `DEFAULT_LANGUAGE` задаётся переменной окружения (см. `.env.example`, по умолчанию `en`).
+
 Примеры (curl):
 
 ```bash
@@ -277,6 +299,13 @@ curl -X PATCH -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
 
 # Публичный список (только published)
 curl http://localhost:3000/books/<BOOK_ID>/versions
+
+# Публичный список с выбором языка через Accept-Language (если ?language не передан)
+curl -H "Accept-Language: es-ES,fr;q=0.9,en;q=0.5" \
+  http://localhost:3000/books/<BOOK_ID>/versions
+
+# Явный выбор языка параметром (приоритетнее Accept-Language)
+curl "http://localhost:3000/books/<BOOK_ID>/versions?language=fr"
 
 # Админский список (включая draft)
 curl -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
