@@ -1,11 +1,36 @@
-import { Body, Controller, Delete, Get, Param, Patch, Req, UseGuards, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags, ApiParam } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Req,
+  UseGuards,
+  Post,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
 import { Language as PrismaLanguage, RoleName } from '@prisma/client';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import {
+  IsInt,
+  IsOptional as IsOptionalCls,
+  IsString as IsStringCls,
+  Min,
+  Max,
+} from 'class-validator';
 
 interface RequestUser {
   userId: string;
@@ -20,6 +45,36 @@ class PublicUserDto {
   languagePreference!: string;
   createdAt!: Date;
   lastLogin?: Date | null;
+  roles!: ('user' | 'admin' | 'content_manager')[];
+}
+
+class ListUsersQueryDto {
+  @IsOptionalCls()
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptionalCls()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 20;
+
+  @IsOptionalCls()
+  @IsStringCls()
+  q?: string;
+
+  // 'only' — только сотрудники (admin|content_manager); 'exclude' — исключить сотрудников
+  @IsOptionalCls()
+  @IsStringCls()
+  staff?: 'only' | 'exclude';
+}
+
+class PagedUsersDto {
+  items!: PublicUserDto[];
+  total!: number;
+  page!: number;
+  limit!: number;
 }
 
 class UpdateMeDto {
@@ -49,6 +104,30 @@ export class UsersController {
   @Get('me')
   me(@Req() req: { user: RequestUser }) {
     return this.users.me(req.user.userId);
+  }
+
+  @ApiOperation({ summary: 'List users (admin only)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'q', required: false, type: String, description: 'Search by email or name' })
+  @ApiQuery({
+    name: 'staff',
+    required: false,
+    type: String,
+    description:
+      "Filter staff: 'only' to show only admins/content managers; 'exclude' to hide them",
+    enum: ['only', 'exclude'],
+  })
+  @ApiOkResponse({ type: PagedUsersDto })
+  @Roles(Role.Admin)
+  @Get()
+  list(@Query() query: ListUsersQueryDto) {
+    return this.users.list({
+      page: query.page ?? 1,
+      limit: query.limit ?? 20,
+      q: query.q?.trim() || undefined,
+      staff: query.staff,
+    });
   }
 
   @ApiOperation({ summary: 'Update current user profile' })

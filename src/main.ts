@@ -64,8 +64,11 @@ async function bootstrap() {
     : join(process.cwd(), 'var', 'uploads');
   app.use('/static', express.static(uploadsRoot));
 
-  await app.listen(5000);
-  console.log(`Application is running on: ${await app.getUrl()}`);
+  const PORT = Number(process.env.PORT) || 5000;
+  const HOST = process.env.HOST || '0.0.0.0';
+  await app.listen(PORT, HOST);
+  const displayedUrl = `http://localhost:${PORT}`;
+  console.log(`Application is running on: ${displayedUrl}`);
 }
 
 void bootstrap();

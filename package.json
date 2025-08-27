@@ -6,7 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-  "build": "nest build",
+    "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -24,7 +24,9 @@
     "prisma:seed": "prisma db seed",
     "prisma:studio": "prisma studio",
     "cleanup:bookVersions": "ts-node prisma/scripts/cleanup-duplicate-book-versions.ts",
-    "cleanup:bookVersions:apply": "APPLY=1 ts-node prisma/scripts/cleanup-duplicate-book-versions.ts"
+    "cleanup:bookVersions:apply": "APPLY=1 ts-node prisma/scripts/cleanup-duplicate-book-versions.ts",
+    "cleanup:testUsers": "ts-node prisma/scripts/cleanup-test-users.ts",
+    "cleanup:testUsers:apply": "APPLY=1 ts-node prisma/scripts/cleanup-test-users.ts"
   },
   "packageManager": "yarn@1.22.22",
   "dependencies": {
