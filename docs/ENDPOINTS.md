@@ -11,10 +11,10 @@
 Примечания:
 
 - Параметры пагинации: page, limit (по умолчанию зависят от обработчика)
-- Политика языка: ?lang и/или заголовок Accept-Language (RFC 7231) — отмечено у соответствующих ручек
+- Политика языка (мультисайт): публичные ручки используют префикс `/:lang` (en|fr|es|pt). Префикс имеет приоритет над `?lang` и `Accept-Language`.
 
 - Базовый URL (dev): http://localhost:5000
-- Глобальный префикс маршрутов: /api. В списке ниже пути указаны без префикса; реальный URL = /api + указанный путь (например, GET /auth/login ⇒ GET /api/auth/login).
+- Глобальный префикс маршрутов: /api. В списке ниже пути указаны без префикса; реальный URL = /api + указанный путь (например, GET /auth/login ⇒ GET /api/auth/login). Для публичных ручек добавляется языковой префикс: `/api/:lang/...`.
 
 ---
 
@@ -59,16 +59,16 @@
 ## 5) Books
 
 - POST /books — Auth + Roles(admin|content_manager) — создать книгу
-- GET /books — Public — список книг (пагинация)
-- GET /books/slug/:slug — Public — получить по slug
-- GET /books/:id — Public — получить по id
+- GET /:lang/books — Public — список книг (пагинация)
+- GET /:lang/books/slug/:slug — Public — получить по slug
+- GET /:lang/books/:id — Public — получить по id
 - PATCH /books/:id — Auth + Roles(admin|content_manager) — обновить книгу
 - DELETE /books/:id — Auth + Roles(admin|content_manager) — удалить книгу
-- GET /books/:slug/overview — Public — обзор по slug; язык: ?lang, Accept-Language; показывает только опубликованные версии
+- GET /:lang/books/:slug/overview — Public — обзор по slug (язык из префикса); показывает только опубликованные версии
 
 ## 6) Book Versions
 
-- GET /books/:bookId/versions — Public — список опубликованных версий; фильтры: language, type, isFree; Accept-Language как фолбэк
+- GET /:lang/books/:bookId/versions — Public — список опубликованных версий (язык из префикса); фильтры: language (опц., override), type, isFree
   - Примечание: includeDrafts=true — только для админов/контент-менеджеров (Auth + Roles), иначе игнорируется
 - POST /books/:bookId/versions — Auth + Roles(admin|content_manager) — создать версию (draft)
 - GET /admin/books/:bookId/versions — Auth + Roles(admin|content_manager) — админ-листинг (включая draft)
@@ -107,23 +107,27 @@
 
 ## 11) Categories
 
+Примечание i18n: публичные ручки используют переводы таксономий — поиск категории ведётся по паре `(language, slug)` из `CategoryTranslation`.
+
 - GET /categories — Public — список (пагинация)
 - GET /categories/tree — Public — полное дерево категорий
 - GET /categories/:id/children — Public — прямые дети категории
 - POST /categories — Auth + Roles(admin|content_manager) — создать категорию
 - PATCH /categories/:id — Auth + Roles(admin|content_manager) — обновить категорию
 - DELETE /categories/:id — Auth + Roles(admin|content_manager) — удалить (204); запрещено при наличии дочерних
-- GET /categories/:slug/books — Public — версии по слагу категории; язык: ?lang, Accept-Language; ответ включает availableLanguages
+- GET /:lang/categories/:slug/books — Public — версии по слагу категории (язык из префикса); ответ включает availableLanguages
 - POST /versions/:id/categories — Auth + Roles(admin|content_manager) — привязать категорию к версии
 - DELETE /versions/:id/categories/:categoryId — Auth + Roles(admin|content_manager) — отвязать (204)
 
 ## 12) Tags
 
+Примечание i18n: публичные ручки используют переводы таксономий — поиск тега ведётся по паре `(language, slug)` из `TagTranslation`.
+
 - GET /tags — Public — список (пагинация)
 - POST /tags — Auth + Roles(admin|content_manager) — создать тег
 - PATCH /tags/:id — Auth + Roles(admin|content_manager) — обновить тег
 - DELETE /tags/:id — Auth + Roles(admin|content_manager) — удалить (204)
-- GET /tags/:slug/books — Public — версии по слагу тега; язык: ?lang, Accept-Language; ответ включает availableLanguages
+- GET /:lang/tags/:slug/books — Public — версии по слагу тега (язык из префикса); ответ включает availableLanguages
 - POST /versions/:id/tags — Auth + Roles(admin|content_manager) — привязать тег к версии
 - DELETE /versions/:id/tags/:tagId — Auth + Roles(admin|content_manager) — отвязать (204)
 
@@ -161,7 +165,7 @@
 
 ## 18) Pages (CMS)
 
-- GET /pages/:slug — Public — публичная страница (только published)
+- GET /:lang/pages/:slug — Public — публичная страница (только published; язык из префикса)
 - GET /admin/pages — Auth + Roles(admin|content_manager) — листинг страниц (draft+published)
 - POST /admin/pages — Auth + Roles(admin|content_manager) — создать страницу
 - PATCH /admin/pages/:id — Auth + Roles(admin|content_manager) — обновить

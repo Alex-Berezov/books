@@ -47,16 +47,15 @@ $ yarn install
 ## Языки: политика выбора и расширяемость
 
 - Поддерживаемые языки задаются Prisma enum `Language` (en, es, fr, pt). Добавление нового языка выполняется миграцией Prisma (см. ADR ниже).
-- Политика выбора языка в публичных ручках:
-  - Принимаем `?lang=` (приоритетнее всего) и/или заголовок `Accept-Language` (RFC 7231), затем фолбэк на `DEFAULT_LANGUAGE` (env, по умолчанию en).
-  - Если указанный язык отсутствует среди доступных у сущности — используем следующий источник (Accept-Language → DEFAULT_LANGUAGE). Если и он отсутствует — выбирается первый доступный.
+- Режим мультисайта: публичные URL имеют префикс языка `/:lang` (например, `/en/book/...`). Язык берётся из префикса пути и имеет приоритет над `?lang` и `Accept-Language`.
+- Совместимость: `?lang` и заголовок `Accept-Language` могут использоваться как fallback.
 - Реализация:
-  - Утилита `src/shared/language/language.util.ts` — парсинг Accept-Language и резолвинг языка.
-  - Применено в публичных ручках: `GET /books/:slug/overview`, `GET /categories/:slug/books`, `GET /tags/:slug/books`, а также `GET /books/:bookId/versions` (см. ниже заметки и примеры).
-- E2E: `test/language-policy.e2e-spec.ts` и `test/language-policy-categories-tags.e2e-spec.ts` покрывают приоритет `?lang` над Accept-Language и фолбэк на дефолтный язык.
-  - Конфиг e2e переведён на последовательный запуск (`maxWorkers: 1`) для стабильности (ограничение соединений БД в dev-среде).
+  - Резолвер языка из префикса пути (request-scoped контекст) + утилита `src/shared/language/language.util.ts` для fallback.
+  - Применяется в публичных ручках: `GET /:lang/books/:slug/overview`, `GET /:lang/categories/:slug/books`, `GET /:lang/tags/:slug/books`, `GET /:lang/books/:bookId/versions`.
+- E2E: добавлены сценарии с префиксом языка; тесты приоритезации префикса над заголовками.
 
 ADR: см. `docs/adr/2025-08-26-language-policy-and-extensibility.md` — зафиксировано решение оставаться на Prisma enum, пока не потребуется динамическое управление списком языков через отдельную таблицу.
+Дополнительно: `docs/adr/2025-08-29-multisite-i18n.md` и `docs/MULTISITE_I18N.md` — решение о мультисайте и план внедрения.
 
 ## Compile and run the project
 
