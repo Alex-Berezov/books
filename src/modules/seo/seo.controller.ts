@@ -7,6 +7,7 @@ import {
   Put,
   UseGuards,
   Query,
+  Headers,
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiTags, ApiResponse, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -15,6 +16,9 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { SeoService } from './seo.service';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 // no import of ResolveSeoType here to avoid type resolution warnings in validation decorators
+import { ApiHeader } from '@nestjs/swagger';
+import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
+import { Language } from '@prisma/client';
 
 @ApiTags('seo')
 @Controller()
@@ -58,14 +62,52 @@ export class SeoController {
     name: 'id',
     description: 'Entity identifier or slug (book/page). For version: id only.',
   })
+  @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
+  @ApiHeader({ name: 'Accept-Language', required: false })
   @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
-  resolve(@Query('type') typeRaw: string, @Query('id') idRaw: string): Promise<any> {
+  resolve(
+    @Query('type') typeRaw: string,
+    @Query('id') idRaw: string,
+    @Query('lang') queryLang?: string,
+    @Headers('accept-language') acceptLanguage?: string,
+  ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
     const allowed = ['book', 'version', 'page'] as const;
     const isAllowed = (val: string): val is (typeof allowed)[number] =>
       (allowed as readonly string[]).includes(val);
-    if (!isAllowed(t)) throw new BadRequestException('Invalid type');
-    return this.service.resolveByParams(t, id);
+    if (!isAllowed(t)) {
+      throw new BadRequestException('Invalid type');
+    }
+    return this.service.resolvePublic(t, id, { queryLang, acceptLanguage });
+  }
+
+  // Language-prefixed public resolver (prefix has higher priority than query/header)
+  @Get(':lang/seo/resolve')
+  @ApiOperation({ summary: 'Resolve SEO bundle (public) for specific language (by path prefix)' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiQuery({ name: 'type', enum: ['book', 'version', 'page'] })
+  @ApiQuery({
+    name: 'id',
+    description: 'Entity identifier or slug (book/page). For version: id only.',
+  })
+  @ApiHeader({ name: 'Accept-Language', required: false })
+  @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
+  resolveWithLang(
+    @Param('lang', LangParamPipe) pathLang: Language,
+    @Query('type') typeRaw: string,
+    @Query('id') idRaw: string,
+    @Query('lang') queryLang?: string,
+    @Headers('accept-language') acceptLanguage?: string,
+  ): Promise<any> {
+    const t = String(typeRaw);
+    const id = String(idRaw);
+    const allowed = ['book', 'version', 'page'] as const;
+    const isAllowed = (val: string): val is (typeof allowed)[number] =>
+      (allowed as readonly string[]).includes(val);
+    if (!isAllowed(t)) {
+      throw new BadRequestException('Invalid type');
+    }
+    return this.service.resolvePublic(t, id, { pathLang, queryLang, acceptLanguage });
   }
 }

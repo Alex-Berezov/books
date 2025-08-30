@@ -54,6 +54,14 @@ $ yarn install
   - Применяется в публичных ручках: `GET /:lang/books/:slug/overview`, `GET /:lang/categories/:slug/books`, `GET /:lang/tags/:slug/books`, `GET /:lang/books/:bookId/versions`.
 - E2E: добавлены сценарии с префиксом языка; тесты приоритезации префикса над заголовками.
 
+  ### SEO resolve и i18n
+  - Публичные резолверы SEO учитывают язык:
+    - `GET /seo/resolve?type=book|version|page&id=...&lang=xx` + заголовок `Accept-Language`.
+    - `GET /:lang/seo/resolve?type=...&id=...` — язык пути имеет приоритет над query/header.
+  - Канонический URL:
+    - Для `version` фиксируется без префикса: `/versions/:id`.
+    - Для `book`/`page` включает префикс языка: `/:lang/books/:slug`, `/:lang/pages/:slug`.
+
 ADR: см. `docs/adr/2025-08-26-language-policy-and-extensibility.md` — зафиксировано решение оставаться на Prisma enum, пока не потребуется динамическое управление списком языков через отдельную таблицу.
 Дополнительно: `docs/adr/2025-08-29-multisite-i18n.md` и `docs/MULTISITE_I18N.md` — решение о мультисайте и план внедрения.
 

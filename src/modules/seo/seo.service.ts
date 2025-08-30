@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Seo } from '@prisma/client';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoQueryDto, ResolveSeoType } from './dto/resolve-seo.dto';
+import { Language } from '@prisma/client';
+import { getDefaultLanguage, resolveRequestedLanguage } from '../../shared/language/language.util';
 
 @Injectable()
 export class SeoService {
@@ -259,5 +261,174 @@ export class SeoService {
 
   async resolve(query: ResolveSeoQueryDto) {
     return this.resolveByParams(query.type, query.id);
+  }
+
+  /**
+   * Public resolver with language awareness. Priority:
+   * 1) Path language (if provided and available for the entity)
+   * 2) query ?lang
+   * 3) Accept-Language
+   * 4) DEFAULT_LANGUAGE
+   *
+   * For type="version" canonical remains non-prefixed (/versions/:id).
+   * For type="book" and type="page" canonical is prefixed with effective language.
+   */
+  async resolvePublic(
+    type: ResolveSeoType | 'book' | 'version' | 'page',
+    id: string,
+    opts?: { pathLang?: Language; queryLang?: string; acceptLanguage?: string },
+  ): Promise<any> {
+    const publicBase = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:3000';
+
+    const buildBundle = (
+      base: {
+        title: string;
+        description?: string | null;
+        canonicalPath: string;
+        imageUrl?: string | null;
+      },
+      seo?: Seo | null,
+      opts2?: { allowCanonicalOverride?: boolean },
+    ) => {
+      const allowOverride = opts2?.allowCanonicalOverride ?? true;
+      const canonicalUrl = allowOverride
+        ? seo?.canonicalUrl || `${publicBase}${base.canonicalPath}`
+        : `${publicBase}${base.canonicalPath}`;
+      const metaTitle = seo?.metaTitle || base.title;
+      const metaDescription = seo?.metaDescription || base.description || undefined;
+      const ogTitle = seo?.ogTitle || metaTitle;
+      const ogDescription = seo?.ogDescription || metaDescription;
+      const ogUrl = seo?.ogUrl || canonicalUrl;
+      const ogImageUrl = seo?.ogImageUrl || base.imageUrl || undefined;
+      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+      return {
+        meta: {
+          title: metaTitle,
+          description: metaDescription,
+          robots: seo?.robots || undefined,
+          canonicalUrl,
+        },
+        openGraph: {
+          title: ogTitle,
+          description: ogDescription,
+          type: seo?.ogType || 'website',
+          url: ogUrl,
+          image: ogImageUrl
+            ? { url: ogImageUrl, alt: seo?.ogImageAlt || metaTitle || undefined }
+            : undefined,
+        },
+        twitter: {
+          card: twitterCard,
+          site: seo?.twitterSite || undefined,
+          creator: seo?.twitterCreator || undefined,
+          image: ogImageUrl || undefined,
+        },
+        schema: {
+          event: seo?.eventName
+            ? {
+                name: seo.eventName,
+                description: seo.eventDescription || undefined,
+                startDate: seo.eventStartDate?.toISOString(),
+                endDate: seo.eventEndDate?.toISOString(),
+                url: seo.eventUrl || undefined,
+                image: seo.eventImageUrl || undefined,
+                location: seo.eventLocationName
+                  ? {
+                      name: seo.eventLocationName,
+                      street: seo.eventLocationStreet || undefined,
+                      city: seo.eventLocationCity || undefined,
+                      region: seo.eventLocationRegion || undefined,
+                      postal: seo.eventLocationPostal || undefined,
+                      country: seo.eventLocationCountry || undefined,
+                    }
+                  : undefined,
+              }
+            : undefined,
+        },
+      } as const;
+    };
+
+    const pickEffectiveLanguage = (available?: Language[]): Language => {
+      const availableArr = available && available.length > 0 ? available : undefined;
+      if (availableArr && opts?.pathLang && availableArr.includes(opts.pathLang))
+        return opts.pathLang;
+      const resolved = resolveRequestedLanguage({
+        queryLang: opts?.queryLang,
+        acceptLanguage: opts?.acceptLanguage,
+        available: availableArr,
+      });
+      return resolved ?? getDefaultLanguage();
+    };
+
+    const t = String(type) as 'book' | 'version' | 'page';
+    if (t === 'version') {
+      const v = await this.prisma.bookVersion.findUnique({ where: { id } });
+      if (!v) throw new NotFoundException('BookVersion not found');
+      const seo = v.seoId ? await this.prisma.seo.findUnique({ where: { id: v.seoId } }) : null;
+      const base = {
+        title: `${v.title} — ${v.author}`,
+        description: v.description,
+        canonicalPath: `/versions/${v.id}`,
+        imageUrl: v.coverImageUrl || undefined,
+      } as const;
+      return buildBundle(base, seo, { allowCanonicalOverride: false });
+    }
+
+    if (t === 'book') {
+      const book = await this.prisma.book.findUnique({ where: { slug: id } });
+      if (!book) throw new NotFoundException('Book not found');
+      const versions = await this.prisma.bookVersion.findMany({
+        where: { bookId: book.id, status: 'published' },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          language: true,
+          title: true,
+          author: true,
+          description: true,
+          coverImageUrl: true,
+          seoId: true,
+        },
+      });
+      const available = versions.map((v) => v.language);
+      const effLang = pickEffectiveLanguage(available);
+      const chosen = versions.find((v) => v.language === effLang) ?? versions[0];
+      const seo = chosen?.seoId
+        ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
+        : null;
+      const base = {
+        title: chosen ? `${chosen.title} — ${chosen.author}` : `Book ${book.slug}`,
+        description: chosen?.description || null,
+        canonicalPath: `/${effLang}/books/${book.slug}`,
+        imageUrl: chosen?.coverImageUrl || undefined,
+      } as const;
+      return buildBundle(base, seo || undefined);
+    }
+
+    if (t === 'page') {
+      const candidates = await this.prisma.page.findMany({
+        where: { slug: id, status: 'published' },
+        select: { id: true, language: true },
+      });
+      if (candidates.length === 0) throw new NotFoundException('Page not found');
+      const available = candidates.map((c) => c.language);
+      const effLang = pickEffectiveLanguage(available);
+      const pick = candidates.find((c) => c.language === effLang) ?? candidates[0];
+      const page = await this.prisma.page.findUnique({ where: { id: pick.id } });
+      const seo = page?.seoId
+        ? await this.prisma.seo.findUnique({ where: { id: page.seoId } })
+        : null;
+      const base = {
+        title: page!.title,
+        description: null,
+        canonicalPath: `/${effLang}/pages/${page!.slug}`,
+        imageUrl: undefined,
+      } as const;
+      return buildBundle(base, seo || undefined);
+    }
+
+    // Fallback: use original behavior
+    return this.resolveByParams(type, id);
   }
 }

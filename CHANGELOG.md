@@ -50,3 +50,14 @@
   - `POST /admin/:lang/books/:bookId/versions` — новый эндпоинт создания в выбранном админ-языке.
 - Сервисы скорректированы: проверки дублей и сохранение учитывают эффективный язык.
 - Обновлён Swagger (описания и заголовок `X-Admin-Language`).
+
+## 2025-08-30 — Мультисайт i18n: SEO resolve по языку
+
+- Добавлен учёт языка в публичном резолвере SEO:
+  - Новый маршрут: `GET /:lang/seo/resolve` (язык пути приоритетнее `lang` и `Accept-Language`).
+  - Расширен маршрут: `GET /seo/resolve?type=book|version|page&id=...&lang=...` + заголовок `Accept-Language`.
+- Правила canonical:
+  - `version` — всегда без префикса: `/versions/:id`.
+  - `book`/`page` — с префиксом языка: `/:lang/books/:slug`, `/:lang/pages/:slug`.
+- Реализация: метод `resolvePublic` в `SeoService`; контроллер получил маршруты и Swagger-декораторы.
+- E2E: добавлен `test/seo-i18n.e2e-spec.ts` (приоритет пути, корректный canonical).

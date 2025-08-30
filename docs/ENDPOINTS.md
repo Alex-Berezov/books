@@ -104,6 +104,11 @@
 - GET /versions/:bookVersionId/seo — Public — получить SEO-мета (или null)
 - PUT /versions/:bookVersionId/seo — Auth + Roles(admin|content_manager) — upsert SEO-мета
 - GET /seo/resolve?type=book|version|page&id=... — Public — резолв SEO-бандла с фолбэками
+  - Параметры i18n: `lang` (query), `Accept-Language` (header); для book/page канонический URL включает префикс языка
+  - Приоритет: `:lang` в пути (см. ниже) > `lang` в query > `Accept-Language` > DEFAULT_LANGUAGE
+- GET /:lang/seo/resolve?type=book|version|page&id=... — Public — i18n-резолв SEO с префиксом языка (приоритетнее query/header)
+  - Для `type=version` канонический URL всегда без префикса: `/versions/:id`
+  - Для `type=book` | `page` канонический URL включает префикс: `/:lang/books/:slug` | `/:lang/pages/:slug`
 
 ## 11) Categories
 
