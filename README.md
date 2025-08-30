@@ -161,6 +161,21 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 
 ## Категории
 
+- Sitemap/Robots per-language
+
+Добавлены SEO-эндпоинты для карт сайта и robots.txt с учётом языковых префиксов:
+
+- GET /api/sitemap.xml — индекс, содержит ссылки на per-language карты (`/sitemap-en.xml`, `/sitemap-es.xml`, ...)
+- GET /api/sitemap-:lang.xml — карта для конкретного языка; URL включают `/:lang` префикс (книги и страницы)
+- GET /api/robots.txt — базовый robots с ссылкой на `/sitemap.xml`
+
+Настройки:
+
+- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес (по умолчанию http://localhost:3000)
+- SITEMAP_CACHE_TTL_MS — TTL кэша генерации sitemap/robots (по умолчанию 60000 мс)
+
+Примечание: версии книг `/versions/:id` намеренно не включаются в sitemap; канонические публичные URL формируются для книг/страниц с языковым префиксом.
+
 Базовые операции: CRUD и привязка категорий к версиям книг. Также поддерживается иерархия категорий (родитель/дети). Локализация реализована через переводы CategoryTranslation.
 
 - POST /categories — создать (admin|content_manager)

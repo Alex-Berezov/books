@@ -29,6 +29,7 @@ import { TagsModule } from './modules/tags/tags.module';
 import { PagesModule } from './modules/pages/pages.module';
 import { MediaModule } from './modules/media/media.module';
 import { PublicModule } from './modules/public/public.module';
+import { SitemapModule } from './modules/sitemap/sitemap.module';
 import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
@@ -63,6 +64,7 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     PagesModule,
     MediaModule,
     PublicModule,
+    SitemapModule,
     // ...другие модули
   ],
   controllers: [AppController],

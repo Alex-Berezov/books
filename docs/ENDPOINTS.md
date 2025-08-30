@@ -111,6 +111,17 @@
   - Для `type=version` канонический URL всегда без префикса: `/versions/:id`
   - Для `type=book` | `page` канонический URL включает префикс: `/:lang/books/:slug` | `/:lang/pages/:slug`
 
+## 10.1) Sitemap/Robots (i18n)
+
+- GET /sitemap.xml — Public — индекс с картами сайта по каждому языку (`/sitemap-en.xml`, `/sitemap-es.xml`, ...)
+- GET /sitemap-:lang.xml — Public — карта сайта для конкретного языка; URL содержат языковой префикс `/:lang`
+- GET /robots.txt — Public — базовый robots с ссылкой на `/sitemap.xml`
+
+Примечания:
+
+- Источник базового публичного адреса берётся из `LOCAL_PUBLIC_BASE_URL` (env), по умолчанию `http://localhost:3000`.
+- В sitemap включены опубликованные страницы (`Page.status=published`) и книги (канонические URL книг на основе опубликованных версий по языку). Версии (`/versions/:id`) в sitemap не включаются.
+
 ## 11) Categories
 
 Примечание i18n: публичные ручки используют переводы таксономий — поиск категории ведётся по паре `(language, slug)` из `CategoryTranslation`.
