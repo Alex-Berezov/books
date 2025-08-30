@@ -1,0 +1,1 @@
+-- No-op migration. This directory existed without a migration.sql; keeping it to preserve migration history alignment.

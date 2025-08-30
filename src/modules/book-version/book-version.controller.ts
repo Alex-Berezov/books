@@ -28,6 +28,7 @@ import { Language, BookType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 
 @ApiTags('book-versions')
 @Controller()
@@ -189,12 +190,14 @@ export class BookVersionController {
     return this.service.create(bookId, dto);
   }
 
-  @Get('admin/books/:bookId/versions')
+  @Get('admin/:lang/books/:bookId/versions')
   @ApiOperation({ summary: 'Admin: list versions for a book (includes drafts)' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiParam({ name: 'bookId' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   listAdmin(
+    @Param('lang', LangParamPipe) _lang: Language,
     @Param('bookId') bookId: string,
     @Query('language') language?: string,
     @Query('type') type?: string,

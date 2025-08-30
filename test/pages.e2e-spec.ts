@@ -49,7 +49,7 @@ describe('Pages e2e', () => {
 
     // create page (draft by default)
     const createRes = await request(http())
-      .post('/admin/pages')
+      .post('/admin/en/pages')
       .set('Authorization', `Bearer ${adminAccess}`)
       .send({
         slug,
@@ -66,7 +66,7 @@ describe('Pages e2e', () => {
 
     // publish
     await request(http())
-      .patch(`/admin/pages/${pageId}/publish`)
+      .patch(`/admin/en/pages/${pageId}/publish`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
 
@@ -76,20 +76,20 @@ describe('Pages e2e', () => {
 
     // update title
     await request(http())
-      .patch(`/admin/pages/${pageId}`)
+      .patch(`/admin/en/pages/${pageId}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .send({ title: 'About updated' })
       .expect(200);
 
     // admin list
     await request(http())
-      .get('/admin/pages?page=1&limit=5')
+      .get('/admin/en/pages?page=1&limit=5')
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
 
     // unpublish
     await request(http())
-      .patch(`/admin/pages/${pageId}/unpublish`)
+      .patch(`/admin/en/pages/${pageId}/unpublish`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
 
@@ -97,7 +97,7 @@ describe('Pages e2e', () => {
 
     // delete
     await request(http())
-      .delete(`/admin/pages/${pageId}`)
+      .delete(`/admin/en/pages/${pageId}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(204);
   });

@@ -52,6 +52,13 @@
 			"type": "shell",
 			"command": "yarn test:e2e -- book-versions-list-language.e2e-spec.ts",
 			"group": "build"
+		},
+		{
+			"label": "e2e:all",
+			"type": "shell",
+			"command": "yarn test:e2e:serial",
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

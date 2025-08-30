@@ -87,7 +87,7 @@ describe('BookVersions e2e', () => {
 
     // Admin sees draft via admin route
     const adminList = await request(http())
-      .get(`/admin/books/${bookId}/versions`)
+      .get(`/admin/en/books/${bookId}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(adminList.body.length).toBe(1);

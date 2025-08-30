@@ -24,7 +24,7 @@
 7. 24 — Языки: политика выбора и расширяемость набора — [x] (2025-08-26)
 8. 25 — SEO bundle сервис (OG/Twitter/Canonical) — [x] (2025-08-26)
 
-9. 26 — Мультисайт i18n: базовая маршрутизация и Page unique (language, slug)
+9. 26 — Мультисайт i18n: базовая маршрутизация и Page unique (language, slug) — [x] (2025-08-30)
 10. 27 — Мультисайт i18n: админ-контекст языка (листинги/создание)
 11. 28 — Мультисайт i18n: SEO resolve по языку и e2e
 12. 29 — Мультисайт i18n: таксономии через переводы (\*Translation)
@@ -156,16 +156,32 @@
 
 ## 15) BullMQ (интеграция базовая)
 
-## 26) Мультисайт i18n: базовая маршрутизация и Page unique
+## 26) Мультисайт i18n: базовая маршрутизация и Page unique — [x] (2025-08-30)
 
 - Цель: Перевести публичные ручки на `/:lang` и разрешить одинаковые `slug` для страниц на разных языках.
 - Объём:
-  - Prisma: изменить модель Page — `slug` без `@unique`, добавить `@@unique([language, slug])`, `@@index([language])`; миграция.
-  - Роутинг: префикс `/:lang(en|fr|es|pt)`; резолвер языка в request-контекст.
-  - Контроллеры книг/страниц: использовать язык из префикса.
-  - E2E: smoke по `/:lang` и проверка приоритета — язык из пути имеет приоритет над `?lang` и `Accept-Language`.
+  - [x] Prisma: изменить модель Page — `slug` без `@unique`, добавить `@@unique([language, slug])`, `@@index([language])`; миграция `20250830120000_page_unique_language_slug`.
+  - [x] Роутинг: введён префикс `/:lang(en|fr|es|pt)` для публичных ручек (новый контроллер `PublicController`).
+  - [x] Контроллеры книг/страниц: `GET /:lang/books/:slug/overview` и `GET /:lang/pages/:slug` используют язык из пути с наивысшим приоритетом; публичный `GET /pages/:slug` сохраняет совместимость и использует политику выбора языка (query/header → default).
+  - [x] E2E: добавлен `test/i18n-routing.e2e-spec.ts` — smoke по `/:lang` и приоритету языка пути над `?lang` и `Accept-Language`.
 - Критерии приёмки: страницы и книги доступны по локализованным URL; миграция применяется; тесты зелёные.
-- Замечания: совместимость с `?lang`/`Accept-Language` сохраняется как fallback.
+- Замечания:
+  - Совместимость с `?lang`/`Accept-Language` сохранена как fallback для публичных ручек без префикса.
+  - SEO-резолвер по языку пути отложен в задачу 28 (см. ниже), canonical пока без `/:lang`.
+  - Категории/теги пока не локализованы — фильтрация по языку версий выполнена ранее, их локализация — задача 29.
+
+Примечания по реализации:
+
+- Файлы:
+  - Prisma: `prisma/schema.prisma` (Page @@unique([language, slug]) + @@index([language])) и миграция `prisma/migrations/20250830120000_page_unique_language_slug/`.
+  - Новый модуль: `src/modules/public/public.module.ts` и `public.controller.ts` — публичные URL с префиксом `/:lang`.
+  - Pages: расширен сервис `PagesService` методами `getPublicBySlug(slug, language?)` и `getPublicBySlugWithPolicy(slug, queryLang?, acceptLanguage?)`; контроллер `pages.controller.ts` поддерживает `?lang` и `Accept-Language` для совместимости.
+  - AppModule: подключён `PublicModule`.
+- Тесты: `test/i18n-routing.e2e-spec.ts` покрывает приоритет языка пути и доступ страниц по `(language, slug)`.
+
+Миграции БД:
+
+- В dev-среде применить: `yarn prisma:migrate --name page_unique_language_slug` (уже добавлен SQL для безопасного дропа индекса `Page_slug_key` и создания составного уникального индекса). При необходимости выполните reset на dev.
 
 ## 27) Мультисайт i18n: админ-контекст языка
 

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
 import { ConfigModule } from '@nestjs/config';
@@ -27,6 +28,8 @@ import { StatusModule } from './modules/status/status.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { PagesModule } from './modules/pages/pages.module';
 import { MediaModule } from './modules/media/media.module';
+import { PublicModule } from './modules/public/public.module';
+import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 
@@ -59,10 +62,16 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     TagsModule,
     PagesModule,
     MediaModule,
+    PublicModule,
     // ...другие модули
   ],
   controllers: [AppController],
-  providers: [PrismaService, AppService, RolesGuard],
+  providers: [
+    PrismaService,
+    AppService,
+    RolesGuard,
+    { provide: APP_GUARD, useClass: LanguageResolverGuard },
+  ],
   exports: [PrismaService],
 })
 export class AppModule {}

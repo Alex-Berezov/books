@@ -10,8 +10,9 @@ import {
   Post,
   Query,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { PagesService } from './pages.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
@@ -19,6 +20,8 @@ import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
+import { Language } from '@prisma/client';
 
 @ApiTags('pages')
 @Controller()
@@ -29,65 +32,84 @@ export class PagesController {
   @Get('pages/:slug')
   @ApiOperation({ summary: 'Публичная страница по slug (только published)' })
   @ApiParam({ name: 'slug' })
-  getPublic(@Param('slug') slug: string): Promise<any> {
-    return this.service.getPublicBySlug(slug);
+  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
+  @ApiHeader({ name: 'Accept-Language', required: false })
+  getPublic(
+    @Param('slug') slug: string,
+    @Query('lang') lang?: string,
+    @Headers('accept-language') acceptLanguage?: string,
+  ): Promise<any> {
+    return this.service.getPublicBySlugWithPolicy(slug, lang, acceptLanguage);
   }
 
   // Admin listing (with drafts)
-  @Get('admin/pages')
+  @Get('admin/:lang/pages')
   @ApiOperation({ summary: 'Листинг страниц (админ): draft+published' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  adminList(@Query() pagination?: PaginationDto): Promise<any> {
+  adminList(
+    @Param('lang', LangParamPipe) _lang: Language,
+    @Query() pagination?: PaginationDto,
+  ): Promise<any> {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
     return this.service.adminList(page, limit);
   }
 
-  @Post('admin/pages')
+  @Post('admin/:lang/pages')
   @ApiOperation({ summary: 'Создать страницу (админ)' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  create(@Body() dto: CreatePageDto): Promise<any> {
+  create(@Param('lang', LangParamPipe) _lang: Language, @Body() dto: CreatePageDto): Promise<any> {
     return this.service.create(dto);
   }
 
-  @Patch('admin/pages/:id')
+  @Patch('admin/:lang/pages/:id')
   @ApiOperation({ summary: 'Обновить страницу (админ)' })
   @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  update(@Param('id') id: string, @Body() dto: UpdatePageDto): Promise<any> {
+  update(
+    @Param('lang', LangParamPipe) _lang: Language,
+    @Param('id') id: string,
+    @Body() dto: UpdatePageDto,
+  ): Promise<any> {
     return this.service.update(id, dto);
   }
 
-  @Delete('admin/pages/:id')
+  @Delete('admin/:lang/pages/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Удалить страницу (админ)' })
   @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  remove(@Param('id') id: string): Promise<any> {
+  remove(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
     return this.service.remove(id);
   }
 
-  @Patch('admin/pages/:id/publish')
+  @Patch('admin/:lang/pages/:id/publish')
   @ApiOperation({ summary: 'Опубликовать страницу' })
   @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  publish(@Param('id') id: string): Promise<any> {
+  publish(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
     return this.service.setStatus(id, 'published');
   }
 
-  @Patch('admin/pages/:id/unpublish')
+  @Patch('admin/:lang/pages/:id/unpublish')
   @ApiOperation({ summary: 'Снять страницу с публикации' })
   @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  unpublish(@Param('id') id: string): Promise<any> {
+  unpublish(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
     return this.service.setStatus(id, 'draft');
   }
 }

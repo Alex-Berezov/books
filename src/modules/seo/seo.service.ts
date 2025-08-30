@@ -135,8 +135,12 @@ export class SeoService {
         imageUrl?: string | null;
       },
       seo?: Seo | null,
+      opts?: { allowCanonicalOverride?: boolean },
     ) => {
-      const canonicalUrl = seo?.canonicalUrl || `${publicBase}${base.canonicalPath}`;
+      const allowOverride = opts?.allowCanonicalOverride ?? true;
+      const canonicalUrl = allowOverride
+        ? seo?.canonicalUrl || `${publicBase}${base.canonicalPath}`
+        : `${publicBase}${base.canonicalPath}`;
       const metaTitle = seo?.metaTitle || base.title;
       const metaDescription = seo?.metaDescription || base.description || undefined;
       const ogTitle = seo?.ogTitle || metaTitle;
@@ -201,7 +205,8 @@ export class SeoService {
         canonicalPath: `/versions/${v.id}`,
         imageUrl: v.coverImageUrl || undefined,
       } as const;
-      return buildBundle(base, seo);
+      // For version, canonical must always be the version route
+      return buildBundle(base, seo, { allowCanonicalOverride: false });
     }
     if (t === 'book') {
       // Book identified by slug

@@ -263,7 +263,7 @@ model MediaAsset {
 
 model Page {
   id        String      @id @default(uuid())
-  slug      String      @unique
+  slug      String
   title     String
   type      PageType
   content   String
@@ -274,6 +274,9 @@ model Page {
   // Optional SEO one-to-one
   seo       Seo?        @relation("SeoForPage", fields: [seoId], references: [id])
   seoId     Int?        @unique
+
+  @@unique([language, slug])
+  @@index([language])
 }
 
 // =====================
