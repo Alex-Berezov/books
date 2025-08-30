@@ -52,6 +52,7 @@ $ yarn install
 - Реализация:
   - Резолвер языка из префикса пути (request-scoped контекст) + утилита `src/shared/language/language.util.ts` для fallback.
   - Применяется в публичных ручках: `GET /:lang/books/:slug/overview`, `GET /:lang/categories/:slug/books`, `GET /:lang/tags/:slug/books`, `GET /:lang/books/:bookId/versions`.
+  - Совместимость категорий/тегов: дополнительно доступны legacy-маршруты без префикса языка — `GET /categories/:slug/books` и `GET /tags/:slug/books`. Они выбирают язык по `?lang` (приоритетнее) или `Accept-Language` и возвращают `availableLanguages`.
 - E2E: добавлены сценарии с префиксом языка; тесты приоритезации префикса над заголовками.
 
   ### SEO resolve и i18n
@@ -160,16 +161,19 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 
 ## Категории
 
-Базовые операции: CRUD и привязка категорий к версиям книг. Также поддерживается иерархия категорий (родитель/дети).
+Базовые операции: CRUD и привязка категорий к версиям книг. Также поддерживается иерархия категорий (родитель/дети). Локализация реализована через переводы CategoryTranslation.
 
 - POST /categories — создать (admin|content_manager)
 - PATCH /categories/:id — обновить (admin|content_manager)
 - DELETE /categories/:id — удалить (admin|content_manager)
 - GET /categories — список
-- GET /categories/:slug/books — версии по слагу категории
-  - Параметры локализации: `?lang`, заголовок `Accept-Language`; возвращает также `availableLanguages`.
+- GET /:lang/categories/:slug/books — версии по слагу перевода категории (язык из префикса); также возвращает availableLanguages
 - GET /categories/:id/children — прямые дочерние категории
 - GET /categories/tree — полное дерево категорий
+- GET /categories/:id/translations — список переводов (admin|content_manager)
+- POST /categories/:id/translations — создать перевод (admin|content_manager)
+- PATCH /categories/:id/translations/:language — обновить перевод (admin|content_manager)
+- DELETE /categories/:id/translations/:language — удалить перевод (admin|content_manager)
 
 Привязка к версиям:
 
@@ -191,24 +195,23 @@ Swagger схемы:
 
   ## Теги
 
-  Базовые операции: CRUD и привязка тегов к версиям книг.
+  Базовые операции: CRUD и привязка тегов к версиям книг. Локализация реализована через переводы TagTranslation.
   - GET /tags — список (поддерживает page, limit)
   - POST /tags — создать (admin|content_manager)
   - PATCH /tags/:id — обновить (admin|content_manager)
   - DELETE /tags/:id — удалить (admin|content_manager)
-  - GET /tags/:slug/books — версии по тегу
-  - Параметры локализации: `?lang`, заголовок `Accept-Language`; возвращает также `availableLanguages`.
+  - GET /:lang/tags/:slug/books — версии по слагу перевода тега (язык из префикса); возвращает также availableLanguages
+  - GET /tags/:id/translations — список переводов (admin|content_manager)
+  - POST /tags/:id/translations — создать перевод (admin|content_manager)
+  - PATCH /tags/:id/translations/:language — обновить перевод (admin|content_manager)
+  - DELETE /tags/:id/translations/:language — удалить перевод (admin|content_manager)
 
   Привязка к версиям:
   - POST /versions/:id/tags — привязать тег к версии (идемпотентно)
   - DELETE /versions/:id/tags/:tagId — отвязать тег от версии (идемпотентно)
 
   Правила и валидация:
-  - Slug тега валидируется тем же паттерном, что и категории/книги: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (см. `src/shared/validators/slug.ts`).
-
-  Примечания:
-  - Публичная выборка `GET /tags/:slug/books` сейчас не фильтрует версии по статусу публикации. При необходимости можно ограничить до только `published` в последующей итерации.
-  - Операции привязки/отвязки реализованы идемпотентно (повторные вызовы безопасны).
+  - Slug валидируется паттерном `^[a-z0-9]+(?:-[a-z0-9]+)*$` (см. `src/shared/validators/slug.ts`).
 
 ## Swagger
 

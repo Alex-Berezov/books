@@ -47,19 +47,38 @@ async function main() {
 
   await addRoleForEmails(process.env.ADMIN_EMAILS, RoleName.admin);
   await addRoleForEmails(process.env.CONTENT_MANAGER_EMAILS, RoleName.content_manager);
-  // Seed Categories
-  const categories = await prisma.$transaction([
-    prisma.category.upsert({
-      where: { slug: 'fantasy' },
-      update: {},
-      create: { slug: 'fantasy', name: 'Fantasy', type: CategoryType.genre },
-    }),
-    prisma.category.upsert({
-      where: { slug: 'bestsellers' },
-      update: {},
-      create: { slug: 'bestsellers', name: 'Bestsellers', type: CategoryType.popular },
-    }),
+  // Seed Categories (slug is not unique anymore => no upsert by slug)
+  const getOrCreateCategory = async (
+    slug: string,
+    name: string,
+    type: CategoryType,
+  ): Promise<{ id: string; slug: string; name: string }> => {
+    const existing = await prisma.category.findFirst({ where: { slug } });
+    if (existing) return existing;
+    return prisma.category.create({ data: { slug, name, type } });
+  };
+
+  const categories = await Promise.all([
+    getOrCreateCategory('fantasy', 'Fantasy', CategoryType.genre),
+    getOrCreateCategory('bestsellers', 'Bestsellers', CategoryType.popular),
   ]);
+
+  // Ensure default translations for seeded categories (idempotent)
+  for (const cat of categories) {
+    const existing = await prisma.categoryTranslation.findUnique({
+      where: { categoryId_language: { categoryId: cat.id, language: Language.en } },
+    });
+    if (!existing) {
+      await prisma.categoryTranslation.create({
+        data: {
+          categoryId: cat.id,
+          language: Language.en,
+          name: cat.name,
+          slug: cat.slug,
+        },
+      });
+    }
+  }
 
   // Seed Book with Version
   const book = await prisma.book.upsert({

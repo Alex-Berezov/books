@@ -61,3 +61,14 @@
   - `book`/`page` — с префиксом языка: `/:lang/books/:slug`, `/:lang/pages/:slug`.
 - Реализация: метод `resolvePublic` в `SeoService`; контроллер получил маршруты и Swagger-декораторы.
 - E2E: добавлен `test/seo-i18n.e2e-spec.ts` (приоритет пути, корректный canonical).
+
+## 2025-08-30 — Таксономии через переводы (CategoryTranslation/TagTranslation)
+
+- Prisma: добавлены модели `CategoryTranslation` и `TagTranslation`; уникальность slug перенесена в переводы (`@@unique([language, slug])`), на базовых `Category.slug`/`Tag.slug` снята `@unique`. Добавлены индексы и обратные связи.
+- Публичные ручки категорий/тегов резолвят по `(language, slug)` перевода; маршруты доступны через `/:lang/categories/:slug/books` и `/:lang/tags/:slug/books`.
+- Совместимость: сохранены legacy-маршруты без префикса языка — `GET /categories/:slug/books` и `GET /tags/:slug/books`; язык выбирается по `?lang` или `Accept-Language`.
+- Админ-CRUD переводов:
+  - `GET/POST /categories/:id/translations`, `PATCH/DELETE /categories/:id/translations/:language`.
+  - `GET/POST /tags/:id/translations`, `PATCH/DELETE /tags/:id/translations/:language`.
+- Seed: автодобавление перевода по умолчанию (en) для базовых категорий; upsert по slug заменён на `findFirst` + `create` из-за снятия уникальности на базовом slug.
+- README/ENDPOINTS обновлены.

@@ -4,6 +4,8 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
+import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
+import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 
 export type CategoryTreeNode = {
   id: string;
@@ -92,8 +94,24 @@ export class CategoryService {
   }
 
   async getBySlugWithBooks(slug: string, queryLang?: string, acceptLanguageHeader?: string) {
-    const category = await this.prisma.category.findUnique({ where: { slug } });
-    if (!category) throw new NotFoundException('Category not found');
+    const headerLang = acceptLanguageHeader || null;
+    const preferred = resolveRequestedLanguage({
+      queryLang,
+      acceptLanguage: headerLang,
+      available: [],
+    });
+
+    const trans = await this.prisma.categoryTranslation.findUnique({
+      where: { language_slug: { language: preferred ?? Language.en, slug } },
+      include: { category: true },
+    });
+    let category: PrismaCategory | null =
+      trans && 'category' in trans ? ((trans.category as PrismaCategory | null) ?? null) : null;
+    if (!category) {
+      // Fallback to base category by slug for backward compatibility
+      category = await this.prisma.category.findFirst({ where: { slug } });
+      if (!category) throw new NotFoundException('Category not found');
+    }
 
     // Public endpoint: only published versions
     const versions = await this.prisma.bookVersion.findMany({
@@ -106,13 +124,105 @@ export class CategoryService {
     });
 
     const availableLanguages: Language[] = Array.from(new Set(versions.map((v) => v.language)));
-    const preferred = resolveRequestedLanguage({
+    const effective = resolveRequestedLanguage({
       queryLang,
       acceptLanguage: acceptLanguageHeader || null,
       available: availableLanguages,
     });
-    const filtered = preferred ? versions.filter((v) => v.language === preferred) : versions;
-    return { category, versions: filtered, availableLanguages };
+    const filtered = effective ? versions.filter((v) => v.language === effective) : versions;
+
+    return {
+      category: { ...category, translation: trans ?? null },
+      versions: filtered,
+      availableLanguages,
+    };
+  }
+
+  // Public resolver by path language and translation slug (/:lang/categories/:slug/books)
+  async getByLangSlugWithBooks(pathLang: Language, slug: string) {
+    const trans = await this.prisma.categoryTranslation.findUnique({
+      where: { language_slug: { language: pathLang, slug } },
+      include: { category: true },
+    });
+    let category: PrismaCategory | null =
+      trans && 'category' in trans ? ((trans.category as PrismaCategory | null) ?? null) : null;
+    if (!category) {
+      // Fallback to base category by slug if translation not present
+      category = await this.prisma.category.findFirst({ where: { slug } });
+      if (!category) throw new NotFoundException('Category not found');
+    }
+
+    const versions = await this.prisma.bookVersion.findMany({
+      where: {
+        status: 'published',
+        language: pathLang,
+        categories: { some: { categoryId: category.id } },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+    });
+    const availableLanguages: Language[] = Array.from(
+      new Set(
+        (
+          await this.prisma.bookVersion.findMany({
+            where: { status: 'published', categories: { some: { categoryId: category.id } } },
+            select: { language: true },
+          })
+        ).map((v) => v.language),
+      ),
+    );
+
+    return { category: { ...category, translation: trans ?? null }, versions, availableLanguages };
+  }
+
+  // ===== Translations (Admin) =====
+  listTranslations(categoryId: string) {
+    return this.prisma.categoryTranslation.findMany({
+      where: { categoryId },
+      orderBy: { language: 'asc' },
+    });
+  }
+
+  async createTranslation(categoryId: string, dto: CreateCategoryTranslationDto) {
+    const exists = await this.prisma.category.findUnique({ where: { id: categoryId } });
+    if (!exists) throw new NotFoundException('Category not found');
+    try {
+      return this.prisma.categoryTranslation.create({
+        data: { categoryId, language: dto.language, name: dto.name, slug: dto.slug },
+      });
+    } catch (e: any) {
+      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
+        throw new BadRequestException('Translation with same (language, slug) already exists');
+      }
+      throw e;
+    }
+  }
+
+  async updateTranslation(
+    categoryId: string,
+    language: Language,
+    dto: UpdateCategoryTranslationDto,
+  ) {
+    const tr = await this.prisma.categoryTranslation.findUnique({
+      where: { categoryId_language: { categoryId, language } },
+    });
+    if (!tr) throw new NotFoundException('Translation not found');
+
+    return this.prisma.categoryTranslation.update({
+      where: { categoryId_language: { categoryId, language } },
+      data: { name: dto.name, slug: dto.slug },
+    });
+  }
+
+  async deleteTranslation(categoryId: string, language: Language) {
+    const tr = await this.prisma.categoryTranslation.findUnique({
+      where: { categoryId_language: { categoryId, language } },
+    });
+    if (!tr) return { success: true };
+    await this.prisma.categoryTranslation.delete({
+      where: { categoryId_language: { categoryId, language } },
+    });
+    return { success: true };
   }
 
   async attachCategoryToVersion(versionId: string, categoryId: string) {

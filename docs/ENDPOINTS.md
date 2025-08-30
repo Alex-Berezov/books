@@ -12,6 +12,7 @@
 
 - Параметры пагинации: page, limit (по умолчанию зависят от обработчика)
 - Политика языка (мультисайт): публичные ручки используют префикс `/:lang` (en|fr|es|pt). Префикс имеет приоритет над `?lang` и `Accept-Language`.
+- Совместимость: для категорий и тегов сохранены legacy-маршруты без `/:lang` для обратной совместимости; они принимают `?lang` и/или заголовок `Accept-Language` для выбора языка.
 
 - Базовый URL (dev): http://localhost:5000
 - Глобальный префикс маршрутов: /api. В списке ниже пути указаны без префикса; реальный URL = /api + указанный путь (например, GET /auth/login ⇒ GET /api/auth/login). Для публичных ручек добавляется языковой префикс: `/api/:lang/...`.
@@ -117,24 +118,34 @@
 - GET /categories — Public — список (пагинация)
 - GET /categories/tree — Public — полное дерево категорий
 - GET /categories/:id/children — Public — прямые дети категории
-- POST /categories — Auth + Roles(admin|content_manager) — создать категорию
-- PATCH /categories/:id — Auth + Roles(admin|content_manager) — обновить категорию
+- POST /categories — Auth + Roles(admin|content_manager) — создать категорию (базовую)
+- PATCH /categories/:id — Auth + Roles(admin|content_manager) — обновить категорию (базовую)
 - DELETE /categories/:id — Auth + Roles(admin|content_manager) — удалить (204); запрещено при наличии дочерних
-- GET /:lang/categories/:slug/books — Public — версии по слагу категории (язык из префикса); ответ включает availableLanguages
+- GET /:lang/categories/:slug/books — Public — версии по слагу перевода категории (язык из префикса); ответ включает availableLanguages
+- GET /categories/:slug/books — Public — legacy-маршрут без префикса языка; язык выбирается по `?lang` (приоритетнее) или `Accept-Language`; ответ включает availableLanguages
 - POST /versions/:id/categories — Auth + Roles(admin|content_manager) — привязать категорию к версии
 - DELETE /versions/:id/categories/:categoryId — Auth + Roles(admin|content_manager) — отвязать (204)
+- GET /categories/:id/translations — Auth + Roles(admin|content_manager) — список переводов
+- POST /categories/:id/translations — Auth + Roles(admin|content_manager) — создать перевод
+- PATCH /categories/:id/translations/:language — Auth + Roles(admin|content_manager) — обновить перевод
+- DELETE /categories/:id/translations/:language — Auth + Roles(admin|content_manager) — удалить перевод (204)
 
 ## 12) Tags
 
 Примечание i18n: публичные ручки используют переводы таксономий — поиск тега ведётся по паре `(language, slug)` из `TagTranslation`.
 
 - GET /tags — Public — список (пагинация)
-- POST /tags — Auth + Roles(admin|content_manager) — создать тег
-- PATCH /tags/:id — Auth + Roles(admin|content_manager) — обновить тег
+- POST /tags — Auth + Roles(admin|content_manager) — создать тег (базовый)
+- PATCH /tags/:id — Auth + Roles(admin|content_manager) — обновить тег (базовый)
 - DELETE /tags/:id — Auth + Roles(admin|content_manager) — удалить (204)
-- GET /:lang/tags/:slug/books — Public — версии по слагу тега (язык из префикса); ответ включает availableLanguages
+- GET /:lang/tags/:slug/books — Public — версии по слагу перевода тега (язык из префикса); ответ включает availableLanguages
+- GET /tags/:slug/books — Public — legacy-маршрут без префикса языка; язык выбирается по `?lang` (приоритетнее) или `Accept-Language`; ответ включает availableLanguages
 - POST /versions/:id/tags — Auth + Roles(admin|content_manager) — привязать тег к версии
 - DELETE /versions/:id/tags/:tagId — Auth + Roles(admin|content_manager) — отвязать (204)
+- GET /tags/:id/translations — Auth + Roles(admin|content_manager) — список переводов
+- POST /tags/:id/translations — Auth + Roles(admin|content_manager) — создать перевод
+- PATCH /tags/:id/translations/:language — Auth + Roles(admin|content_manager) — обновить перевод
+- DELETE /tags/:id/translations/:language — Auth + Roles(admin|content_manager) — удалить перевод (204)
 
 ## 13) Bookshelf (полка пользователя)
 

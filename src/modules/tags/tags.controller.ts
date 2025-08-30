@@ -21,6 +21,9 @@ import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
+import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
+import { Language } from '@prisma/client';
 
 @ApiTags('tags')
 @Controller()
@@ -64,25 +67,19 @@ export class TagsController {
     return this.service.remove(id);
   }
 
+  // Note: публичный путь теперь обрабатывается в PublicController (/:lang/tags/:slug/books)
+  // Публичный путь без префикса языка (обратная совместимость)
   @Get('tags/:slug/books')
-  @ApiOperation({ summary: 'Get book versions by tag slug' })
+  @ApiOperation({ summary: 'Публичный список версий книги по тегу (без префикса языка)' })
   @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
-  @ApiHeader({
-    name: 'Accept-Language',
-    required: false,
-    description: 'RFC 7231 header, e.g. en-US,en;q=0.9,es;q=0.8',
-    schema: {
-      type: 'string',
-      example: 'es-ES,fr;q=0.9,en;q=0.5',
-    },
-  })
-  versionsByTag(
+  @ApiQuery({ name: 'lang', required: false, description: 'Опциональный язык (?lang=...)' })
+  @ApiHeader({ name: 'Accept-Language', required: false })
+  publicBySlug(
     @Param('slug') slug: string,
-    @Query('lang') lang?: string,
+    @Query('lang') queryLang?: string,
     @Headers('accept-language') acceptLanguage?: string,
   ) {
-    return this.service.versionsByTagSlug(slug, lang, acceptLanguage);
+    return this.service.versionsByTagSlug(slug, queryLang, acceptLanguage);
   }
 
   @Post('versions/:id/tags')
@@ -103,5 +100,49 @@ export class TagsController {
   @Roles(Role.Admin, Role.ContentManager)
   detach(@Param('id') versionId: string, @Param('tagId') tagId: string) {
     return this.service.detach(versionId, tagId);
+  }
+
+  // === Translations (Admin) ===
+  @Get('tags/:id/translations')
+  @ApiOperation({ summary: 'List tag translations (admin)' })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  listTranslations(@Param('id') id: string) {
+    return this.service.listTranslations(id);
+  }
+
+  @Post('tags/:id/translations')
+  @ApiOperation({ summary: 'Create tag translation (admin)' })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  createTranslation(@Param('id') id: string, @Body() dto: CreateTagTranslationDto) {
+    return this.service.createTranslation(id, dto);
+  }
+
+  @Patch('tags/:id/translations/:language')
+  @ApiOperation({ summary: 'Update tag translation (admin)' })
+  @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  updateTranslation(
+    @Param('id') id: string,
+    @Param('language') language: Language,
+    @Body() dto: UpdateTagTranslationDto,
+  ) {
+    return this.service.updateTranslation(id, language, dto);
+  }
+
+  @Delete('tags/:id/translations/:language')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete tag translation (admin)' })
+  @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  deleteTranslation(@Param('id') id: string, @Param('language') language: Language) {
+    return this.service.deleteTranslation(id, language);
   }
 }

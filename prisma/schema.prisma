@@ -169,12 +169,13 @@ model Category {
   id    String         @id @default(uuid())
   type  CategoryType
   name  String
-  slug  String         @unique
+  slug  String
   books BookCategory[]
   // Иерархия категорий (self-relation)
   parentId String?
   parent   Category?     @relation("CategoryToCategory", fields: [parentId], references: [id])
   children Category[]    @relation("CategoryToCategory")
+  translations CategoryTranslation[]
 
   @@index([parentId])
 }
@@ -192,8 +193,9 @@ model BookCategory {
 model Tag {
   id    String    @id @default(uuid())
   name  String
-  slug  String    @unique
+  slug  String
   books BookTag[]
+  translations TagTranslation[]
 }
 
 model BookTag {
@@ -368,6 +370,38 @@ enum PageType {
   generic
   category_index
   author_index
+}
+
+// =====================
+// Taxonomy Translations
+// =====================
+
+model CategoryTranslation {
+  id         String   @id @default(uuid())
+  categoryId String
+  language   Language
+  name       String
+  slug       String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([language, slug])
+  @@unique([categoryId, language])
+  @@index([categoryId])
+  @@index([language])
+}
+
+model TagTranslation {
+  id       String   @id @default(uuid())
+  tagId    String
+  language Language
+  name     String
+  slug     String
+  tag      Tag      @relation(fields: [tagId], references: [id])
+
+  @@unique([language, slug])
+  @@unique([tagId, language])
+  @@index([tagId])
+  @@index([language])
 }
 
 // =====================

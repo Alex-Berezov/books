@@ -29,6 +29,9 @@ import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
+import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
+import { Language } from '@prisma/client';
 
 @ApiTags('categories')
 @Controller()
@@ -93,25 +96,62 @@ export class CategoryController {
     return this.service.remove(id);
   }
 
+  // Публичный путь без префикса языка (для обратной совместимости)
   @Get('categories/:slug/books')
-  @ApiOperation({ summary: 'Get book versions by category slug' })
+  @ApiOperation({ summary: 'Публичный список версий книги по категории (без префикса языка)' })
   @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
-  @ApiHeader({
-    name: 'Accept-Language',
-    required: false,
-    description: 'RFC 7231 header, e.g. en-US,en;q=0.9,es;q=0.8',
-    schema: {
-      type: 'string',
-      example: 'es-ES,fr;q=0.9,en;q=0.5',
-    },
-  })
-  versionsByCategory(
+  @ApiQuery({ name: 'lang', required: false, description: 'Опциональный язык (?lang=...)' })
+  @ApiHeader({ name: 'Accept-Language', required: false })
+  publicBySlug(
     @Param('slug') slug: string,
-    @Query('lang') lang?: string,
+    @Query('lang') queryLang?: string,
     @Headers('accept-language') acceptLanguage?: string,
   ) {
-    return this.service.getBySlugWithBooks(slug, lang, acceptLanguage);
+    return this.service.getBySlugWithBooks(slug, queryLang, acceptLanguage);
+  }
+
+  // === Translations (Admin) ===
+  @Get('categories/:id/translations')
+  @ApiOperation({ summary: 'List category translations (admin)' })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  listTranslations(@Param('id') id: string) {
+    return this.service.listTranslations(id);
+  }
+
+  @Post('categories/:id/translations')
+  @ApiOperation({ summary: 'Create category translation (admin)' })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  createTranslation(@Param('id') id: string, @Body() dto: CreateCategoryTranslationDto) {
+    return this.service.createTranslation(id, dto);
+  }
+
+  @Patch('categories/:id/translations/:language')
+  @ApiOperation({ summary: 'Update category translation (admin)' })
+  @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  updateTranslation(
+    @Param('id') id: string,
+    @Param('language') language: Language,
+    @Body() dto: UpdateCategoryTranslationDto,
+  ) {
+    return this.service.updateTranslation(id, language, dto);
+  }
+
+  @Delete('categories/:id/translations/:language')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete category translation (admin)' })
+  @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  deleteTranslation(@Param('id') id: string, @Param('language') language: Language) {
+    return this.service.deleteTranslation(id, language);
   }
 
   @Post('versions/:id/categories')
