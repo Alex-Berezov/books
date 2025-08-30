@@ -48,24 +48,39 @@ export class PagesController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   adminList(
-    @Param('lang', LangParamPipe) _lang: Language,
+    @Param('lang', LangParamPipe) lang: Language,
     @Query() pagination?: PaginationDto,
+    @Headers('x-admin-language') adminLangHeader?: string,
   ): Promise<any> {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
-    return this.service.adminList(page, limit);
+    const headerLang = (adminLangHeader || '').toLowerCase();
+    const effLang = (Object.values(Language) as string[]).includes(headerLang)
+      ? (headerLang as Language)
+      : lang;
+    return this.service.adminList(page, limit, effLang);
   }
 
   @Post('admin/:lang/pages')
   @ApiOperation({ summary: 'Создать страницу (админ)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  create(@Param('lang', LangParamPipe) _lang: Language, @Body() dto: CreatePageDto): Promise<any> {
-    return this.service.create(dto);
+  create(
+    @Param('lang', LangParamPipe) lang: Language,
+    @Body() dto: CreatePageDto,
+    @Headers('x-admin-language') adminLangHeader?: string,
+  ): Promise<any> {
+    const headerLang = (adminLangHeader || '').toLowerCase();
+    const effLang = (Object.values(Language) as string[]).includes(headerLang)
+      ? (headerLang as Language)
+      : lang;
+    return this.service.create(dto, effLang);
   }
 
   @Patch('admin/:lang/pages/:id')

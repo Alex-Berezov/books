@@ -43,9 +43,10 @@ export class BookVersionService {
     });
   }
 
-  async create(bookId: string, dto: CreateBookVersionDto) {
+  async create(bookId: string, dto: CreateBookVersionDto, overrideLanguage?: Language) {
+    const effectiveLanguage = overrideLanguage ?? dto.language;
     const existing = await this.prisma.bookVersion.findFirst({
-      where: { bookId, language: dto.language },
+      where: { bookId, language: effectiveLanguage },
       select: { id: true },
     });
     if (existing) {
@@ -66,7 +67,7 @@ export class BookVersionService {
         return tx.bookVersion.create({
           data: {
             bookId,
-            language: dto.language,
+            language: effectiveLanguage,
             title: dto.title,
             author: dto.author,
             description: dto.description,

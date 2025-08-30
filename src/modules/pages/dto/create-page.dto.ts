@@ -21,9 +21,12 @@ export class CreatePageDto {
   @IsString()
   content!: string;
 
-  @ApiProperty({ enum: ['en', 'es', 'fr', 'pt'] })
+  // Внимание: язык для админских ручек создаётся из контекста админки (/:lang или X-Admin-Language)
+  // Поле оставлено опциональным для обратной совместимости, но контроллер его игнорирует.
+  @ApiProperty({ enum: ['en', 'es', 'fr', 'pt'], required: false })
+  @IsOptional()
   @IsIn(['en', 'es', 'fr', 'pt'])
-  language!: 'en' | 'es' | 'fr' | 'pt';
+  language?: 'en' | 'es' | 'fr' | 'pt';
 
   @ApiProperty({ description: 'ID SEO сущности', required: false, nullable: true })
   @IsOptional()

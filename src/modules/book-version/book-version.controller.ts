@@ -190,6 +190,28 @@ export class BookVersionController {
     return this.service.create(bookId, dto);
   }
 
+  @Post('admin/:lang/books/:bookId/versions')
+  @ApiOperation({ summary: 'Admin: create book version in selected admin language' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiParam({ name: 'bookId' })
+  @ApiBody({ type: CreateBookVersionDto })
+  @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  createAdmin(
+    @Param('lang', LangParamPipe) lang: Language,
+    @Param('bookId') bookId: string,
+    @Body() dto: CreateBookVersionDto,
+    @Headers('x-admin-language') adminLangHeader?: string,
+  ) {
+    // Игнорируем dto.language — язык берётся из контекста админки
+    const headerLang = (adminLangHeader || '').toLowerCase();
+    const effLang = (Object.values(Language) as string[]).includes(headerLang)
+      ? (headerLang as Language)
+      : lang;
+    return this.service.create(bookId, dto, effLang);
+  }
+
   @Get('admin/:lang/books/:bookId/versions')
   @ApiOperation({ summary: 'Admin: list versions for a book (includes drafts)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
@@ -197,16 +219,21 @@ export class BookVersionController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   listAdmin(
-    @Param('lang', LangParamPipe) _lang: Language,
+    @Param('lang', LangParamPipe) pathLang: Language,
     @Param('bookId') bookId: string,
     @Query('language') language?: string,
     @Query('type') type?: string,
     @Query('isFree') isFree?: string,
+    @Headers('x-admin-language') adminLangHeader?: string,
   ) {
+    const headerLang = (adminLangHeader || '').toLowerCase();
+    const pathEff = (Object.values(Language) as string[]).includes(headerLang)
+      ? (headerLang as Language)
+      : pathLang;
     const langEnum =
       language && Object.values(Language).includes(language as Language)
         ? (language as Language)
-        : undefined;
+        : pathEff; // по умолчанию — язык из контекста админки (заголовок > путь)
     const typeEnum =
       type && Object.values(BookType).includes(type as BookType) ? (type as BookType) : undefined;
     return this.service.listAdmin(bookId, {

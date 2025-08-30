@@ -57,6 +57,12 @@ $ yarn install
 ADR: см. `docs/adr/2025-08-26-language-policy-and-extensibility.md` — зафиксировано решение оставаться на Prisma enum, пока не потребуется динамическое управление списком языков через отдельную таблицу.
 Дополнительно: `docs/adr/2025-08-29-multisite-i18n.md` и `docs/MULTISITE_I18N.md` — решение о мультисайте и план внедрения.
 
+### Админ-контекст языка
+
+- Админка работает в выбранном языке. На бэке поддерживается префикс `/admin/:lang` и заголовок `X-Admin-Language` (имеет приоритет над языком пути).
+- Листинги и создание контента используют эффективный язык: Pages (`GET/POST /admin/:lang/pages`), BookVersions (`GET/POST /admin/:lang/books/:bookId/versions`).
+- В DTO создание Page/BookVersion поле `language` игнорируется (берётся из админ-контекста) — оставлено опциональным для совместимости.
+
 ## Compile and run the project
 
 ```bash

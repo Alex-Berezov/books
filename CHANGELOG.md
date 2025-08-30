@@ -38,3 +38,15 @@
 - Документация обновлена: README (раздел про языки), `docs/ITERATION_TASKS.md` (помечено как выполнено), ADR `docs/adr/2025-08-26-language-policy-and-extensibility.md` (решение — остаться на Prisma enum `Language`).
 - Конфигурация e2e переведена на последовательный режим (`maxWorkers: 1` в `test/jest-e2e.json`) для стабильности в dev-среде.
 - Дополнение: публичный листинг `GET /books/:bookId/versions` теперь учитывает `Accept-Language`, если `?language` не задан. Добавлены README-примеры и e2e `test/book-versions-list-language.e2e-spec.ts`.
+
+## 2025-08-30 — Мультисайт i18n: админ-контекст языка (листинги/создание)
+
+- Добавлен заголовок `X-Admin-Language` (приоритетнее `:lang` в пути админки) для единого контекста языка.
+- Pages (admin):
+  - `GET /admin/:lang/pages` — фильтрация по эффективному языку.
+  - `POST /admin/:lang/pages` — язык берётся из контекста; поле `language` в DTO сделано опциональным и игнорируется при создании.
+- BookVersions (admin):
+  - `GET /admin/:lang/books/:bookId/versions` — по умолчанию фильтрация по эффективному языку; `?language` переопределяет.
+  - `POST /admin/:lang/books/:bookId/versions` — новый эндпоинт создания в выбранном админ-языке.
+- Сервисы скорректированы: проверки дублей и сохранение учитывают эффективный язык.
+- Обновлён Swagger (описания и заголовок `X-Admin-Language`).

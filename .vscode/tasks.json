@@ -59,6 +59,41 @@
 			"command": "yarn test:e2e:serial",
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "e2e:all",
+			"type": "shell",
+			"command": "yarn test:e2e:serial",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "e2e:all",
+			"type": "shell",
+			"command": "yarn test:e2e:serial",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "e2e:all",
+			"type": "shell",
+			"command": "yarn test:e2e:serial",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "e2e:all",
+			"type": "shell",
+			"command": "yarn test:e2e:serial",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "e2e:all",
+			"type": "shell",
+			"command": "yarn test:e2e:serial",
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

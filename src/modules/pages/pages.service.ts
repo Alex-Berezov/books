@@ -40,12 +40,17 @@ export class PagesService {
     return this.prisma.page.findUnique({ where: { id: pick.id } });
   }
 
-  adminList(page = 1, limit = 20) {
+  adminList(page = 1, limit = 20, language?: Language) {
     const skip = (page - 1) * limit;
-    return this.prisma.page.findMany({ orderBy: { createdAt: 'desc' }, skip, take: limit });
+    return this.prisma.page.findMany({
+      where: language ? { language } : undefined,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    });
   }
 
-  async create(dto: CreatePageDto) {
+  async create(dto: CreatePageDto, language: Language) {
     try {
       return await this.prisma.page.create({
         data: {
@@ -53,7 +58,7 @@ export class PagesService {
           title: dto.title,
           type: dto.type,
           content: dto.content,
-          language: dto.language,
+          language,
           seoId: dto.seoId ?? null,
         },
       });
