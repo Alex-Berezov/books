@@ -13,7 +13,8 @@ export class LocalStorageService implements StorageService {
     // Defaults match TASKS.md suggestions
     const configured = process.env.LOCAL_UPLOADS_DIR || './var/uploads';
     this.baseDir = resolve(configured);
-    this.publicBaseUrl = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:3000/static';
+    // Default to 5000 to match dev server port; can be overridden via env
+    this.publicBaseUrl = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:5000/static';
   }
 
   private resolvePath(key: string) {
