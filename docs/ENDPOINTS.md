@@ -12,7 +12,7 @@
 
 - Параметры пагинации: page, limit (по умолчанию зависят от обработчика)
 - Политика языка (мультисайт): публичные ручки используют префикс `/:lang` (en|fr|es|pt). Префикс имеет приоритет над `?lang` и `Accept-Language`.
-- Совместимость: для категорий и тегов сохранены legacy-маршруты без `/:lang` для обратной совместимости; они принимают `?lang` и/или заголовок `Accept-Language` для выбора языка.
+- Совместимость: для категорий и тегов (а также страниц) сохранены legacy-маршруты без `/:lang` для обратной совместимости; они принимают `?lang` и/или заголовок `Accept-Language` для выбора языка.
 
 - Базовый URL (dev): http://localhost:5000
 - Глобальный префикс маршрутов: /api. В списке ниже пути указаны без префикса; реальный URL = /api + указанный путь (например, GET /auth/login ⇒ GET /api/auth/login). Для публичных ручек добавляется языковой префикс: `/api/:lang/...`.
@@ -29,6 +29,8 @@
 - POST /auth/login — Public — вход
 - POST /auth/refresh — Public — обновление токенов
 - POST /auth/logout — Public — статeless заглушка
+
+Примечание i18n (совет): на экранах авторизации/регистрации UI передаёт текущий язык заголовком `Accept-Language` и параметром `redirect=/:lang/...` для возврата после входа. Самих `/:lang` префиксов в путях auth нет.
 
 ## 2) [x] Users
 
@@ -60,19 +62,24 @@
 ## 5) Books
 
 - POST /books — Auth + Roles(admin|content_manager) — создать книгу
-- GET /:lang/books — Public — список книг (пагинация)
-- GET /:lang/books/slug/:slug — Public — получить по slug
-- GET /:lang/books/:id — Public — получить по id
+- GET /books — Public — список книг (пагинация)
+- GET /books/slug/:slug — Public — получить по slug
+- GET /books/:id — Public — получить по id
 - PATCH /books/:id — Auth + Roles(admin|content_manager) — обновить книгу
 - DELETE /books/:id — Auth + Roles(admin|content_manager) — удалить книгу
 - GET /:lang/books/:slug/overview — Public — обзор по slug (язык из префикса); показывает только опубликованные версии
 
+Примечание SEO/i18n:
+
+- Канонический публичный URL книги — `/:lang/books/:slug` (overview-страница). Списки и lookup контейнера (`/books`, `/books/slug/:slug`, `/books/:id`) остаются нейтральными по языку и не включаются в sitemap.
+
 ## 6) Book Versions
 
-- GET /:lang/books/:bookId/versions — Public — список опубликованных версий (язык из префикса); фильтры: language (опц., override), type, isFree
+- GET /books/:bookId/versions — Public — список опубликованных версий (фильтры: language (опц., override), type, isFree; при отсутствии language используется Accept-Language)
   - Примечание: includeDrafts=true — только для админов/контент-менеджеров (Auth + Roles), иначе игнорируется
 - POST /books/:bookId/versions — Auth + Roles(admin|content_manager) — создать версию (draft)
-- GET /admin/books/:bookId/versions — Auth + Roles(admin|content_manager) — админ-листинг (включая draft)
+- POST /admin/:lang/books/:bookId/versions — Auth + Roles(admin|content_manager) — создать версию в выбранном админ-языке (заголовок X-Admin-Language приоритетнее языка пути)
+- GET /admin/:lang/books/:bookId/versions — Auth + Roles(admin|content_manager) — админ-листинг (включая draft; по умолчанию фильтрует по эффективному админ-языку, можно переопределить ?language)
 - GET /versions/:id — Public — получить версию (только published)
 - PATCH /versions/:id — Auth + Roles(admin|content_manager) — обновить версию
 - DELETE /versions/:id — Auth + Roles(admin|content_manager) — удалить версию (204)
@@ -110,6 +117,14 @@
 - GET /:lang/seo/resolve?type=book|version|page&id=... — Public — i18n-резолв SEO с префиксом языка (приоритетнее query/header)
   - Для `type=version` канонический URL всегда без префикса: `/versions/:id`
   - Для `type=book` | `page` канонический URL включает префикс: `/:lang/books/:slug` | `/:lang/pages/:slug`
+
+### 10.2) SEO i18n рекомендации (для фронта/генераторов)
+
+- Hreflang-кластер на каждой языковой странице: `<link rel="alternate" hreflang="en|fr|es|pt|x-default" href="..."/>` — ссылки на все доступные языковые URL книги/страницы + x-default.
+- Self-canonical: у каждой языковой версии свой канонический URL (включая `/:lang`). Для версий книг — каноникалы без префикса (`/versions/:id`).
+- Заголовок `Content-Language: <lang>` для публичных страниц.
+- Карты сайта: в `/sitemap-:lang.xml` и/или через расширение `xhtml:link` указывать alternates для связанного URL на других языках.
+- Тех/нейтральные ручки не индексировать (по месту, например, через meta robots или X-Robots-Tag) и не включать в sitemap (версии уже исключены).
 
 ## 10.1) Sitemap/Robots (i18n)
 
@@ -193,12 +208,17 @@
 ## 18) Pages (CMS)
 
 - GET /:lang/pages/:slug — Public — публичная страница (только published; язык из префикса)
-- GET /admin/pages — Auth + Roles(admin|content_manager) — листинг страниц (draft+published)
-- POST /admin/pages — Auth + Roles(admin|content_manager) — создать страницу
-- PATCH /admin/pages/:id — Auth + Roles(admin|content_manager) — обновить
-- DELETE /admin/pages/:id — Auth + Roles(admin|content_manager) — удалить (204)
-- PATCH /admin/pages/:id/publish — Auth + Roles(admin|content_manager) — опубликовать
-- PATCH /admin/pages/:id/unpublish — Auth + Roles(admin|content_manager) — снять с публикации
+- GET /pages/:slug — Public — legacy-маршрут без префикса; язык выбирается по ?lang (приоритетнее) или Accept-Language
+- GET /admin/:lang/pages — Auth + Roles(admin|content_manager) — листинг страниц (draft+published; эффективный язык берётся из X-Admin-Language, иначе из :lang)
+- POST /admin/:lang/pages — Auth + Roles(admin|content_manager) — создать страницу (язык берётся из админ-контекста; поле language в DTO игнорируется)
+- PATCH /admin/:lang/pages/:id — Auth + Roles(admin|content_manager) — обновить
+- DELETE /admin/:lang/pages/:id — Auth + Roles(admin|content_manager) — удалить (204)
+- PATCH /admin/:lang/pages/:id/publish — Auth + Roles(admin|content_manager) — опубликовать
+- PATCH /admin/:lang/pages/:id/unpublish — Auth + Roles(admin|content_manager) — снять с публикации
+
+Примечание SEO (legacy):
+
+- В проде для `GET /pages/:slug` (без префикса) рекомендуется `noindex` или `rel=canonical` на соответствующий `/:lang/pages/:slug`, чтобы поисковики индексировали i18n-страницы и не конкурировали с legacy-URL.
 
 ## 19) Status (админ)
 
@@ -217,7 +237,7 @@
 3. Books → Book Versions → Chapters → Audio Chapters — создание контента, публикация
 4. Book Summaries → SEO (upsert) → SEO Resolve — метаданные и SEO-бандл
 5. Categories → Tags — CRUD и привязка к версиям; публичные ручки по slug (+политика языка)
-6. Pages — админ CRUD и публичная выдача published
+6. Pages — админ CRUD (через /admin/:lang и X-Admin-Language) и публичная выдача published (в т.ч. legacy /pages/:slug)
 7. Bookshelf → Reading Progress — пользовательские данные
 8. Comments → Likes — социальные взаимодействия (в т.ч. rate-limit)
 9. View Stats — запись и агрегация просмотров
