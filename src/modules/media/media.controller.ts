@@ -28,8 +28,13 @@ import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
+import { promises as fs } from 'node:fs';
+import { memoryStorage } from 'multer';
 import { UploadsService } from '../uploads/uploads.service';
 import { PresignRequestDto, UploadType } from '../uploads/dto/presign.dto';
+
+type UploadedFileType = { buffer?: Buffer; mimetype?: string; size?: number; path?: string };
 
 @ApiTags('media')
 @Controller()
@@ -81,17 +86,35 @@ export class MediaController {
       required: ['file'],
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor(
+      'file',
+      ((): MulterOptions => ({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        storage: memoryStorage(),
+        limits: { fileSize: 110 * 1024 * 1024 }, // ~110MB, как в /uploads/direct
+      }))(),
+    ),
+  )
   async uploadOne(
-    @UploadedFile() file: { buffer: Buffer; mimetype?: string; size?: number },
+    @UploadedFile() file: UploadedFileType,
     @Body('type') type: UploadType = UploadType.cover,
     @Req() req: Request,
   ) {
     const typed = req as Request & { user?: { userId: string } };
     const userId = typed.user?.userId as string;
-    if (!file || !file.buffer) throw new BadRequestException('file is required');
+    if (!file) throw new BadRequestException('file is required');
     const ct = file.mimetype || 'application/octet-stream';
     const size = Number(file.size || 0);
+    // Получаем буфер: либо из memoryStorage, либо читаем с диска (если Multer сохранил во временный файл)
+    let buf: Buffer;
+    if (file.buffer && Buffer.isBuffer(file.buffer)) {
+      buf = file.buffer;
+    } else if (file.path) {
+      buf = await fs.readFile(file.path);
+    } else {
+      throw new BadRequestException('Unable to read uploaded file');
+    }
     // 1) presign
     const presignDto: PresignRequestDto = {
       type,
@@ -100,7 +123,7 @@ export class MediaController {
     } as PresignRequestDto;
     const pres = await this.uploads.presign(presignDto, userId);
     // 2) direct (using in-memory buffer)
-    const direct = await this.uploads.directUpload(pres.token, file.buffer, ct, userId);
+    const direct = await this.uploads.directUpload(pres.token, buf, ct, userId);
     // 3) media.confirm
     const asset = await this.service.confirm(
       {
@@ -111,6 +134,12 @@ export class MediaController {
       },
       userId,
     );
+    // Best-effort cleanup временного файла, если он создавался на диске
+    try {
+      if (file.path) await fs.unlink(file.path);
+    } catch {
+      // ignore
+    }
     return asset;
   }
 

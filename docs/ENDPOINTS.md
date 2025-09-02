@@ -46,14 +46,14 @@
 - POST /users/:id/roles/:role — Auth + Roles(admin) — выдать роль (user|admin|content_manager)
 - DELETE /users/:id/roles/:role — Auth + Roles(admin) — отозвать роль
 
-## 3) Uploads (raw файлы) ➜ Media
+## 3) [x] Uploads (raw файлы) ➜ Media
 
 - POST /uploads/presign — Auth + Roles(admin|content_manager) — получить presign-токен для прямой загрузки
 - POST /uploads/direct — Auth — прямая бинарная загрузка по токену (Rate-limit включён)
 - POST /uploads/confirm?key=... — Auth + Roles(admin|content_manager) — подтверждение объекта, возврат publicUrl
 - DELETE /uploads?key=... — Auth + Roles(admin|content_manager) — удалить объект по ключу
 
-## 4) Media (повторное использование файлов)
+## 4) [x] Media (повторное использование файлов)
 
 - POST /media/upload — Auth + Roles(admin|content_manager) — ОДНИМ запросом загрузить файл (multipart/form-data) и зафиксировать его в медиа-библиотеке (внутри: presign → direct → media.confirm); ответ: MediaAsset
 - POST /media/confirm — Auth + Roles(admin|content_manager) — создать/обновить запись MediaAsset по key (идемпотентно)
