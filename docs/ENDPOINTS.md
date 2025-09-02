@@ -55,6 +55,7 @@
 
 ## 4) Media (повторное использование файлов)
 
+- POST /media/upload — Auth + Roles(admin|content_manager) — ОДНИМ запросом загрузить файл (multipart/form-data) и зафиксировать его в медиа-библиотеке (внутри: presign → direct → media.confirm); ответ: MediaAsset
 - POST /media/confirm — Auth + Roles(admin|content_manager) — создать/обновить запись MediaAsset по key (идемпотентно)
 - GET /media — Auth + Roles(admin|content_manager) — листинг (q, type, page, limit)
 - DELETE /media/:id — Auth + Roles(admin|content_manager) — soft-delete записи и попытка удаления файла
