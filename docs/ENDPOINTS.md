@@ -60,7 +60,7 @@
 - GET /media — Auth + Roles(admin|content_manager) — листинг (q, type, page, limit)
 - DELETE /media/:id — Auth + Roles(admin|content_manager) — soft-delete записи и попытка удаления файла
 
-## 5) Books
+## 5) [x] Books
 
 - POST /books — Auth + Roles(admin|content_manager) — создать книгу
 - GET /books — Public — список книг (пагинация)
@@ -74,7 +74,7 @@
 
 - Канонический публичный URL книги — `/:lang/books/:slug` (overview-страница). Списки и lookup контейнера (`/books`, `/books/slug/:slug`, `/books/:id`) остаются нейтральными по языку и не включаются в sitemap.
 
-## 6) Book Versions
+## 6) [x] Book Versions
 
 - GET /books/:bookId/versions — Public — список опубликованных версий (фильтры: language (опц., override), type, isFree; при отсутствии language используется Accept-Language)
   - Примечание: includeDrafts=true — только для админов/контент-менеджеров (Auth + Roles), иначе игнорируется
@@ -87,7 +87,7 @@
 - PATCH /versions/:id/publish — Auth + Roles(admin|content_manager) — опубликовать версию
 - PATCH /versions/:id/unpublish — Auth + Roles(admin|content_manager) — снять с публикации (draft)
 
-## 7) Chapters (текстовые главы)
+## 7) [x] Chapters (текстовые главы)
 
 - GET /versions/:bookVersionId/chapters — Public — список глав (пагинация)
 - POST /versions/:bookVersionId/chapters — Auth + Roles(admin|content_manager) — создать главу
@@ -95,7 +95,7 @@
 - PATCH /chapters/:id — Auth + Roles(admin|content_manager) — обновить главу
 - DELETE /chapters/:id — Auth + Roles(admin|content_manager) — удалить (204)
 
-## 8) Audio Chapters (аудио-главы)
+## 8) [x] Audio Chapters (аудио-главы)
 
 - GET /versions/:bookVersionId/audio-chapters — Public — список аудио-глав (пагинация)
 - POST /versions/:bookVersionId/audio-chapters — Auth + Roles(admin|content_manager) — создать аудио-главу
@@ -103,12 +103,12 @@
 - PATCH /audio-chapters/:id — Auth + Roles(admin|content_manager) — обновить аудио-главу
 - DELETE /audio-chapters/:id — Auth + Roles(admin|content_manager) — удалить (204)
 
-## 9) Book Summaries (пересказ/выжимка)
+## 9) [x] Book Summaries (пересказ/выжимка)
 
 - GET /versions/:bookVersionId/summary — Public — получить пересказ версии (или null)
 - PUT /versions/:bookVersionId/summary — Auth + Roles(admin|content_manager) — upsert пересказ
 
-## 10) SEO
+## 10) [x] SEO
 
 - GET /versions/:bookVersionId/seo — Public — получить SEO-мета (или null)
 - PUT /versions/:bookVersionId/seo — Auth + Roles(admin|content_manager) — upsert SEO-мета
@@ -119,7 +119,7 @@
   - Для `type=version` канонический URL всегда без префикса: `/versions/:id`
   - Для `type=book` | `page` канонический URL включает префикс: `/:lang/books/:slug` | `/:lang/pages/:slug`
 
-### 10.2) SEO i18n рекомендации (для фронта/генераторов)
+### 10.2) [x] SEO i18n рекомендации (для фронта/генераторов)
 
 - Hreflang-кластер на каждой языковой странице: `<link rel="alternate" hreflang="en|fr|es|pt|x-default" href="..."/>` — ссылки на все доступные языковые URL книги/страницы + x-default.
 - Self-canonical: у каждой языковой версии свой канонический URL (включая `/:lang`). Для версий книг — каноникалы без префикса (`/versions/:id`).
@@ -127,7 +127,7 @@
 - Карты сайта: в `/sitemap-:lang.xml` и/или через расширение `xhtml:link` указывать alternates для связанного URL на других языках.
 - Тех/нейтральные ручки не индексировать (по месту, например, через meta robots или X-Robots-Tag) и не включать в sitemap (версии уже исключены).
 
-## 10.1) Sitemap/Robots (i18n)
+## 10.1) [x] Sitemap/Robots (i18n)
 
 - GET /sitemap.xml — Public — индекс с картами сайта по каждому языку (`/sitemap-en.xml`, `/sitemap-es.xml`, ...)
 - GET /sitemap-:lang.xml — Public — карта сайта для конкретного языка; URL содержат языковой префикс `/:lang`
@@ -138,7 +138,7 @@
 - Источник базового публичного адреса берётся из `LOCAL_PUBLIC_BASE_URL` (env), по умолчанию `http://localhost:3000`.
 - В sitemap включены опубликованные страницы (`Page.status=published`) и книги (канонические URL книг на основе опубликованных версий по языку). Версии (`/versions/:id`) в sitemap не включаются.
 
-## 11) Categories
+## 11) [x] Categories
 
 Примечание i18n: публичные ручки используют переводы таксономий — поиск категории ведётся по паре `(language, slug)` из `CategoryTranslation`.
 
@@ -157,7 +157,7 @@
 - PATCH /categories/:id/translations/:language — Auth + Roles(admin|content_manager) — обновить перевод
 - DELETE /categories/:id/translations/:language — Auth + Roles(admin|content_manager) — удалить перевод (204)
 
-## 12) Tags
+## 12) [x] Tags
 
 Примечание i18n: публичные ручки используют переводы таксономий — поиск тега ведётся по паре `(language, slug)` из `TagTranslation`.
 
@@ -174,26 +174,69 @@
 - PATCH /tags/:id/translations/:language — Auth + Roles(admin|content_manager) — обновить перевод
 - DELETE /tags/:id/translations/:language — Auth + Roles(admin|content_manager) — удалить перевод (204)
 
-## 13) Bookshelf (полка пользователя)
+## 13) [x] Bookshelf (полка пользователя)
 
 - GET /me/bookshelf — Auth — список моих версий (пагинация)
 - POST /me/bookshelf/:versionId — Auth — добавить версию
 - DELETE /me/bookshelf/:versionId — Auth — удалить (204); идемпотентно
 
-## 14) Reading Progress (прогресс чтения/прослушивания)
+## 14) [x] Reading Progress (прогресс чтения/прослушивания)
 
 - GET /me/progress/:versionId — Auth — получить мой прогресс по версии
 - PUT /me/progress/:versionId — Auth — upsert прогресса (chapterNumber|audioChapterNumber, position)
 
-## 15) Comments
+## 15) [x] Comments
 
 - GET /comments?target=version|chapter|audio&targetId=...&page&limit — Public — список комментариев
 - POST /comments — Auth — создать комментарий (Rate-limit)
+  Body: ровно одно из полей цели обязательно (XOR): bookVersionId | chapterId | audioChapterId. Для ответа на комментарий используйте parentId (опционально).
+
+  Примеры:
+
+  Комментарий к версии:
+  {
+  "bookVersionId": "{{ versionId }}",
+  "text": "Отличная книга!"
+  }
+
+  Комментарий к главе:
+  {
+  "chapterId": "{{ chapterId }}",
+  "text": "Полезная глава."
+  }
+
+  Комментарий к аудио‑главе:
+  {
+  "audioChapterId": "{{ audioChapterId }}",
+  "text": "Классная озвучка!"
+  }
+
+  Ответ на комментарий (reply) к версии:
+  {
+  "bookVersionId": "{{ versionId }}",
+  "parentId": "{{ commentId }}",
+  "text": "Согласен!"
+  }
+
+  Замечание: поля target и targetId не поддерживаются — используйте конкретные _\_Id поля как выше. При передаче более одного целевого _\_Id вернётся 400 (ровно одно должно быть задано).
+
 - GET /comments/:id — Public — получить комментарий
 - PATCH /comments/:id — Auth — обновить (Rate-limit; владелец может редактировать текст; модераторы — скрывать/раскрывать)
+  Примеры:
+
+  Обновление текста (только владелец):
+  {
+  "text": "Обновлённый текст комментария"
+  }
+
+  Скрыть/раскрыть (только модератор admin|content_manager):
+  {
+  "isHidden": true
+  }
+
 - DELETE /comments/:id — Auth — soft-delete (204; Rate-limit)
 
-## 16) Likes
+## 16) [x] Likes
 
 - POST /likes — Auth — поставить лайк (ровно один target: commentId | bookVersionId)
 - DELETE /likes — Auth — убрать лайк (204; идемпотентно)
@@ -221,13 +264,19 @@
 
 - В проде для `GET /pages/:slug` (без префикса) рекомендуется `noindex` или `rel=canonical` на соответствующий `/:lang/pages/:slug`, чтобы поисковики индексировали i18n-страницы и не конкурировали с legacy-URL.
 
-## 19) Status (админ)
+## 19) [x] Status (админ)
 
 - GET /status/rate-limit — Auth + Roles(admin) — текущая конфигурация rate limit
 
-## 20) Root
+## 20) Root / Health
 
-- GET / — Public — health-заглушка (getHello)
+- GET / — Public — редирект на Swagger UI (`/api/docs`) — удобно для прод/стейджа
+- GET /health — Public — health JSON
+  {
+  "status": "ok",
+  "uptime": 12.34,
+  "timestamp": "2025-09-04T12:34:56.789Z"
+  }
 
 ---
 
