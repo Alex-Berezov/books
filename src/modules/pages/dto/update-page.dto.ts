@@ -1,4 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
@@ -32,6 +33,7 @@ export class UpdatePageDto {
 
   @ApiPropertyOptional({ description: 'ID SEO сущности', nullable: true })
   @IsOptional()
+  @Type(() => Number)
   seoId?: number | null;
 
   @ApiPropertyOptional({ description: 'Статус публикации', enum: ['draft', 'published'] })

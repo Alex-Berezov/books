@@ -84,18 +84,33 @@ export class PagesService {
       if (dup)
         throw new BadRequestException('Page with same slug already exists for this language');
     }
-    return this.prisma.page.update({
-      where: { id },
-      data: {
-        slug: dto.slug ?? undefined,
-        title: dto.title ?? undefined,
-        type: dto.type ?? undefined,
-        content: dto.content ?? undefined,
-        language: dto.language ?? undefined,
-        seoId: dto.seoId ?? undefined,
-        status: dto.status ?? undefined,
-      },
-    });
+    // If seoId is provided (including null), optionally check existence to provide clearer error
+    if (dto.seoId !== undefined && dto.seoId !== null) {
+      const seo = await this.prisma.seo.findUnique({ where: { id: dto.seoId } });
+      if (!seo) {
+        throw new BadRequestException('SEO entity not found for provided seoId');
+      }
+    }
+    try {
+      return await this.prisma.page.update({
+        where: { id },
+        data: {
+          slug: dto.slug ?? undefined,
+          title: dto.title ?? undefined,
+          type: dto.type ?? undefined,
+          content: dto.content ?? undefined,
+          language: dto.language ?? undefined,
+          seoId: dto.seoId ?? undefined,
+          status: dto.status ?? undefined,
+        },
+      });
+    } catch (e: unknown) {
+      const err = e as Prisma.PrismaClientKnownRequestError & { meta?: { constraint?: string } };
+      if (err?.code === 'P2003' && err?.meta?.constraint === 'Page_seoId_fkey') {
+        throw new BadRequestException('Invalid seoId: referenced SEO entity does not exist');
+      }
+      throw e;
+    }
   }
 
   async setStatus(id: string, status: PublicationStatus) {

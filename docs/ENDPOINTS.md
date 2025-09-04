@@ -249,7 +249,7 @@
 - GET /views/aggregate?versionId=...&period=day|week|month|all&from&to&source — Public — агрегация по дням
 - GET /views/top?period=...&limit&source — Public — топ просматриваемых версий за период
 
-## 18) Pages (CMS)
+## 18) [x] Pages (CMS)
 
 - GET /:lang/pages/:slug — Public — публичная страница (только published; язык из префикса)
 - GET /pages/:slug — Public — legacy-маршрут без префикса; язык выбирается по ?lang (приоритетнее) или Accept-Language
@@ -268,7 +268,7 @@
 
 - GET /status/rate-limit — Auth + Roles(admin) — текущая конфигурация rate limit
 
-## 20) Root / Health
+## 20) [x] Root / Health
 
 - GET / — Public — редирект на Swagger UI (`/api/docs`) — удобно для прод/стейджа
 - GET /health — Public — health JSON

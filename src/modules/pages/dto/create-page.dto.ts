@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
@@ -30,5 +31,6 @@ export class CreatePageDto {
 
   @ApiProperty({ description: 'ID SEO сущности', required: false, nullable: true })
   @IsOptional()
+  @Type(() => Number)
   seoId?: number | null;
 }
