@@ -102,6 +102,18 @@ $ yarn run test:e2e
 $ yarn run test:cov
 ```
 
+## Dev-воркфлоу: pre-commit (Husky + lint-staged)
+
+- В репозитории настроен pre-commit хук Husky, который выполняет:
+  - `lint-staged` для изменённых файлов (`eslint --fix` и `prettier --write` для `*.{ts,tsx,js}`; `prettier --write` для `*.{md,yml,yaml,json}`).
+  - Быстрый типовой контроль: `yarn typecheck` (`tsc --noEmit`).
+- Установка и активация:
+  - Husky инициализируется автоматически через `"prepare": "husky && chmod +x .husky/pre-commit || true"` при `yarn`.
+  - Используется только Yarn (classic). npm не поддерживается.
+- Обход/починка:
+  - В экстренных случаях можно пропустить хук: `git commit -m "msg" --no-verify` (не рекомендуется).
+  - Если хук не исполняется из-за прав, выполните: `chmod +x .husky/pre-commit`.
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.

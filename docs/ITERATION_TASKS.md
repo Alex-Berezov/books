@@ -32,7 +32,7 @@
 
 Далее — инфраструктурные и платформенные задачи (их можно выполнять параллельно, но ниже основной приоритет):
 
-9. 1 — Dev-воркфлоу: Husky + lint-staged + pre-commit
+9.  1 — Dev-воркфлоу: Husky + lint-staged + pre-commit — [x] (2025-09-05)
 10. 2 — VS Code задачи (.vscode/tasks.json)
 11. 3 — README актуализация
 12. 4 — docs/AGENT_CONTEXT.md
@@ -49,15 +49,24 @@
 23. 16 — Sentry (ошибки)
 24. 17 — Uploads (R2, Cloudflare) — отложено
 
-## 1) Dev-воркфлоу: Husky + lint-staged + pre-commit
+## 1) Dev-воркфлоу: Husky + lint-staged + pre-commit — [x] (2025-09-05)
 
 - Цель: Блокировать коммиты с линт/формат/тип-ошибками; ускорить локальную проверку качества.
-- Объём:
-  - Добавить devDeps: husky, lint-staged.
-  - Инициализировать Husky; создать `.husky/pre-commit`.
-  - В `package.json` добавить `lint-staged` конфиг: eslint --fix, prettier --write для ts/yml/md; быстрый `tsc --noEmit`.
+- Объём (выполнено):
+  - [x] Добавить devDeps: husky, lint-staged.
+  - [x] Инициализировать Husky; создать `.husky/pre-commit`.
+  - [x] В `package.json` добавить `lint-staged` конфиг: eslint --fix, prettier --write для ts/yml/md; быстрый `tsc --noEmit`.
+  - [x] Добавлен скрипт `typecheck` (tsc --noEmit) и `prepare` (инициализация Husky).
 - Критерии приёмки: при попытке `git commit` с ошибками линтера/типов — коммит блокируется; без ошибок — проходит.
 - Замечания: unit-тесты в pre-commit не запускаем (будут отдельной задачей).
+
+Примечания по реализации:
+
+- Добавлен `.husky/pre-commit`, который запускает `yarn lint-staged` и затем быстрый `yarn typecheck`.
+- В `package.json` добавлен блок `lint-staged`:
+  - `*.{ts,tsx,js}` → `eslint --fix` + `prettier --write`.
+  - `*.{md,yml,yaml,json}` → `prettier --write`.
+- Для надёжности в `prepare` добавлен `chmod +x .husky/pre-commit`.
 
 Примечание по пакетному менеджеру:
 

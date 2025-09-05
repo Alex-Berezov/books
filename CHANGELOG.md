@@ -72,3 +72,13 @@
   - `GET/POST /tags/:id/translations`, `PATCH/DELETE /tags/:id/translations/:language`.
 - Seed: автодобавление перевода по умолчанию (en) для базовых категорий; upsert по slug заменён на `findFirst` + `create` из-за снятия уникальности на базовом slug.
 - README/ENDPOINTS обновлены.
+
+## 2025-09-05 — Dev-воркфлоу: Husky + lint-staged + pre-commit
+
+- Добавлены dev-зависимости: husky, lint-staged.
+- Добавлен скрипт `prepare` для инициализации Husky.
+- Создан хук `.husky/pre-commit`: запускает `lint-staged` (eslint --fix + prettier) и быстрый `yarn typecheck`.
+- В `package.json`:
+  - Добавлен скрипт `typecheck` (`tsc --noEmit`).
+  - Добавлена секция `lint-staged` с правилами для `*.{ts,tsx,js}` и `*.{md,yml,yaml,json}`.
+- Документация обновлена: `docs/ITERATION_TASKS.md` (пункт 1 выполнен), README дополнен разделом о pre-commit проверках.
