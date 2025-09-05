@@ -66,6 +66,78 @@ yarn prisma:generate
 5. Запустите приложение в dev-режиме: `yarn start:dev` (или VS Code задача «dev»)
 6. Swagger будет доступен на: http://localhost:5000/api/docs
 
+### Запуск через Docker Compose (dev)
+
+Если у вас не установлен PostgreSQL/Redis локально, используйте готовый compose:
+
+1. Скопируйте `.env.example` → `.env` и при необходимости отредактируйте `DATABASE_URL` (по умолчанию указывает на `postgres://postgres:postgres@localhost:5432/books?schema=public`).
+
+2. Поднимите сервисы БД и Redis:
+
+```bash
+docker compose up -d
+```
+
+3. Примените миграции и сгенерируйте Prisma Client:
+
+```bash
+yarn prisma:migrate
+yarn prisma:generate
+```
+
+4. (Опционально) запустите сиды:
+
+```bash
+yarn prisma:seed
+```
+
+5. Запустите приложение:
+
+```bash
+yarn start:dev
+```
+
+Остановка сервисов:
+
+```bash
+docker compose down
+```
+
+Примечания:
+
+- Данные Postgres сохраняются в именованном volume `postgres_data`.
+- Порты: Postgres `5432`, Redis `6379` (можно переопределить через переменные в `.env`).
+- Redis добавлен для будущих задач (кэш/очереди); текущий код может работать без него.
+
+### VS Code Dev Container (опционально)
+
+В репозитории есть конфигурация `.devcontainer/` для запуска в контейнере разработчика:
+
+- Использует текущий `docker-compose.yml` для Postgres/Redis и дополнительный `docker-compose.devcontainer.yml` с `app` сервисом на Node 22.
+- Откройте папку в VS Code → «Reopen in Container». После сборки контейнера автоматически выполнится `yarn && yarn prisma:generate`.
+- Порты 5000/5432/6379 проброшены наружу; рабочая директория маунтится как volume.
+
+### Makefile алиасы
+
+Для ускорения типовых команд добавлен `Makefile`:
+
+```bash
+make up           # docker compose up -d
+make down         # docker compose down
+make logs         # логи compose
+make ps           # статус сервисов
+make migrate      # yarn prisma:migrate
+make generate     # yarn prisma:generate
+make seed         # yarn prisma:seed
+make dev          # yarn start:dev
+make reset        # npx prisma migrate reset --force (удалит данные!)
+make prisma-studio# yarn prisma:studio
+make lint         # yarn lint
+make typecheck    # yarn typecheck
+make e2e          # yarn test:e2e
+make e2e-serial   # yarn test:e2e:serial
+```
+
 ## Переменные окружения (.env)
 
 Минимально требуется задать:

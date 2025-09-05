@@ -1,0 +1,32 @@
+{
+  "name": "Books App Back (Dev)",
+  "dockerComposeFile": ["../docker-compose.yml", "docker-compose.devcontainer.yml"],
+  "service": "app",
+  "runServices": ["postgres", "redis"],
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "containerEnv": {
+    "NODE_OPTIONS": "--enable-source-maps --max-old-space-size=4096"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "editor.formatOnSave": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "/bin/bash"
+          }
+        }
+      },
+      "extensions": [
+        "Prisma.prisma",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  "forwardPorts": [5000, 5432, 6379],
+  "postCreateCommand": "yarn && yarn prisma:generate"
+}

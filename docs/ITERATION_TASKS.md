@@ -36,7 +36,7 @@
 10. 2 — VS Code задачи (.vscode/tasks.json) — [x] (2025-09-05)
 11. 3 — README актуализация — [x] (2025-09-05)
 12. 4 — docs/AGENT_CONTEXT.md — [x] (2025-09-05)
-13. 5 — Docker Compose (dev): Postgres + Redis
+13. 5 — Docker Compose (dev): Postgres + Redis — [x] (2025-09-05)
 14. 6 — .env.example расширение
 15. 7 — Юнит-тесты (первый пакет)
 16. 8 — Безопасность: Helmet, CORS, лимиты тела
@@ -112,12 +112,23 @@
 - Критерии приёмки: документ существует и покрывает основное; ссылка добавлена в README; зафиксирован в CHANGELOG — выполнено.
 - Замечания: держать документ кратким и актуальным; при изменениях дополнять README/ITERATION_TASKS/CHANGELOG.
 
-## 5) Docker Compose (dev): Postgres + Redis
+## 5) Docker Compose (dev): Postgres + Redis — [x] (2025-09-05)
 
 - Цель: Единая локальная среда без ручной установки сервисов.
-- Объём: Добавить `docker-compose.yml` (postgres, redis, волюмы, healthcheck), `DATABASE_URL` в `.env.example` для compose, makefile-алиасы (опц.).
-- Критерии приёмки: `docker compose up -d` поднимает БД/Redis; приложение подключается; `yarn prisma:migrate` успешно применяет миграции.
-- Замечания: данные в именованных volume, экспонировать 5432/6379 только локально.
+- Объём (выполнено):
+  - [x] Добавлен `docker-compose.yml` с сервисами `postgres` (14) и `redis` (7-alpine), healthchecks и именованным volume для данных Postgres.
+  - [x] Обновлён `.env.example`: `DATABASE_URL` теперь соответствует дефолтам compose (`postgres/postgres@localhost:5432/books?schema=public`), добавлены настраиваемые `POSTGRES_DB|USER|PASSWORD|PORT`, `REDIS_PORT`.
+  - [x] Документация: в README добавлен раздел «Запуск через Docker Compose (dev)» с шагами запуска, миграциями и остановкой.
+  - [x] CHANGELOG дополнен записью об этой итерации.
+- Критерии приёмки: `docker compose up -d` поднимает БД/Redis; приложение подключается по `DATABASE_URL`; `yarn prisma:migrate` успешно применяет миграции — выполнено.
+- Замечания: данные Postgres хранятся в именованном volume `postgres_data`; порты 5432/6379 проброшены только на localhost; Redis добавлен на будущее — в текущем коде может не использоваться.
+
+Дополнение к итерации (улучшения dev-опыта) — [x] (2025-09-05):
+
+- [x] Dev Container (`.devcontainer/`): конфигурация для VS Code с использованием `docker-compose.yml` + `docker-compose.devcontainer.yml`. Автозапуск `yarn && yarn prisma:generate` в контейнере, проброс портов 5000/5432/6379.
+- [x] Makefile: алиасы для `docker compose up/down`, `prisma:migrate/generate/seed`, `start:dev`, `reset`, `prisma:studio`.
+- [x] Доп. тюнинг DevContainer: bash как терминал по умолчанию, `NODE_OPTIONS` для удобной отладки (`--enable-source-maps`, увеличение памяти).
+- [x] Доп. цели Makefile: `lint`, `typecheck`, `e2e`, `e2e-serial`.
 
 ## 6) .env.example расширение
 

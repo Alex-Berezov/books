@@ -94,6 +94,21 @@
 - Дополнен README: требования окружения, быстрый запуск, раздел `.env` с ключами и дефолтами, заметки по тестам, раздел про статические файлы `/static` и локальные загрузки, уточнение по Swagger (`/api/docs-json`).
 - Цель — чтобы разработчик мог поднять проект без обращения к внешним источникам.
 
+## 2025-09-05 — Docker Compose (dev): Postgres + Redis
+
+- Добавлен `docker-compose.yml` с сервисами Postgres 14 и Redis 7 (alpine), healthchecks и volume `postgres_data`.
+- Обновлён `.env.example`: `DATABASE_URL` по умолчанию указывает на compose (postgres/postgres), добавлены переменные `POSTGRES_DB|USER|PASSWORD|PORT`, `REDIS_PORT` для переопределений.
+- README: новый раздел «Запуск через Docker Compose (dev)» с шагами `docker compose up -d` → `yarn prisma:migrate` → `yarn prisma:generate` → `yarn start:dev`.
+- Цель — единая локальная среда для быстрого старта без ручной установки БД/Redis.
+
+## 2025-09-05 — DevContainer и Makefile алиасы
+
+- Добавлен `.devcontainer/` (VS Code): `devcontainer.json` + вспомогательный `docker-compose.devcontainer.yml` с сервисом `app` (Node 22). Автокоманда `yarn && yarn prisma:generate` после создания.
+- Добавлен `Makefile` с алиасами: `up/down/logs/ps`, `migrate/generate/seed`, `dev`, `reset`, `prisma-studio`.
+- README дополнен разделами «VS Code Dev Container» и «Makefile алиасы».
+- Тюнинг DevContainer: добавлены `NODE_OPTIONS=--enable-source-maps --max-old-space-size=4096`, bash как терминал по умолчанию, расширение `ms-azuretools.vscode-docker`.
+- Makefile дополнен целями `lint`, `typecheck`, `e2e`, `e2e-serial`.
+
 ## 2025-09-05 — AGENT_CONTEXT и инженерные правила
 
 - Добавлен документ `docs/AGENT_CONTEXT.md`: золотые правила, контракт итерации, стиль и соглашения, тестирование, миграции Prisma, переменные окружения, VS Code задачи, шаблон PR, границы/безопасность, быстрые команды.

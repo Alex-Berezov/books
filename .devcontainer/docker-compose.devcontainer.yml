@@ -1,0 +1,19 @@
+version: '3.9'
+
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/javascript-node:22
+    container_name: books_app_dev
+    init: true
+    volumes:
+      - ..:/workspace:cached
+    working_dir: /workspace
+    command: sleep infinity
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
