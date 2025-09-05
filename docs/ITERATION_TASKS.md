@@ -158,6 +158,13 @@
 Статус итераций:
 
 - 1. Языковая политика и общие утилиты — выполнено (2025-09-05): добавлены `language.util.spec.ts`, `language-resolver.guard.spec.ts`, `lang-param.pipe.spec.ts`.
+- 2. Авторизация, роли и базовые guard — выполнено (2025-09-05): добавлены `roles.guard.spec.ts`, `jwt-auth.guard.spec.ts`; покрыты happy/deny/cache/env сценарии.
+- 3. Контентные сущности: книги и версии — выполнено (2025-09-05):
+  - Добавлены unit‑тесты: `modules/book/book.service.spec.ts`, `modules/book-version/book-version.service.spec.ts` (доп. кейсы), `modules/book-summary/book-summary.service.spec.ts`.
+  - Проверено: overview (языки, SEO‑фолбэки, флаги), выбор версий по Accept-Language, статусы draft/published в публичных ручках, publish/unpublish, upsert summary.
+- 4. Таксономии и фильтрация — выполнено (2025-09-05):
+  - Категории: иерархия (запрет циклов), запрет удаления родителя с детьми, публичные резолверы с локализованными slug и фильтрацией по языку; detach 404 при отсутствии связи.
+  - Теги: публичные резолверы (локализованные slug) и фильтрация по языку; attach/detach идемпотентны.
 
 ## 8) Безопасность: Helmet, CORS, лимиты тела
 

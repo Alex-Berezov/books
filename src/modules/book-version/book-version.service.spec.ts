@@ -231,4 +231,78 @@ describe('BookVersionService', () => {
     expect(res.id).toBe('v3');
     expect(prisma.bookVersion.delete).toHaveBeenCalled();
   });
+
+  it('list applies Accept-Language when language not specified', async () => {
+    const now = new Date();
+    (prisma.bookVersion.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: 'v-en',
+        bookId: 'b1',
+        language: Language.en,
+        title: 'T',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'u',
+        type: BookType.text,
+        isFree: true,
+        referralUrl: null,
+        createdAt: now,
+        updatedAt: now,
+        seoId: undefined,
+        seo: null,
+        status: 'published',
+        publishedAt: now,
+      },
+      {
+        id: 'v-es',
+        bookId: 'b1',
+        language: Language.es,
+        title: 'T',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'u',
+        type: BookType.text,
+        isFree: true,
+        referralUrl: null,
+        createdAt: now,
+        updatedAt: now,
+        seoId: undefined,
+        seo: null,
+        status: 'published',
+        publishedAt: now,
+      },
+    ]);
+
+    const list = await service.list('b1', {}, 'es, fr;q=0.8');
+    expect(list).toHaveLength(1);
+    expect(list[0].language).toBe(Language.es);
+  });
+
+  it('getPublic throws NotFound for draft', async () => {
+    (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
+    await expect(service.getPublic('v-draft')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('publish and unpublish toggle status and publishedAt', async () => {
+    const now = new Date();
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' } as any);
+    (prisma.bookVersion.update as jest.Mock)
+      .mockResolvedValueOnce({ id: 'v1', status: 'published', publishedAt: now } as any)
+      .mockResolvedValueOnce({ id: 'v1', status: 'draft', publishedAt: null } as any);
+
+    const pub = await service.publish('v1');
+    expect(pub.status).toBe('published');
+    const unpub = await service.unpublish('v1');
+    expect(unpub.status).toBe('draft');
+  });
+
+  it('listAdmin ignores status filter (returns drafts too)', async () => {
+    const now = new Date();
+    (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([
+      { id: 'v-pub', status: 'published', createdAt: now, updatedAt: now } as any,
+      { id: 'v-draft', status: 'draft', createdAt: now, updatedAt: now } as any,
+    ]);
+    const res = await service.listAdmin('b1', {});
+    expect(res.map((r) => r.id)).toEqual(['v-pub', 'v-draft']);
+  });
 });

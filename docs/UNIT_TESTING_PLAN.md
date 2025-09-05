@@ -65,30 +65,35 @@
   - common/guards/language-resolver.guard.spec.ts
 - Критерии: >90% покрытие для файла language.util, ветки приоритета языка подтверждены.
 
-2. Авторизация, роли и базовые guard
+2. Авторизация, роли и базовые guard — [x] (2025-09-05)
 
 - Цель: предсказуемые ветки allow/deny без внешних вызовов.
-- Объём:
-  - common/guards/jwt-auth.guard.spec.ts — допускает при корректном payload; отклоняет при отсутствии/недостаточных правах (JwtService мок)
-  - common/guards/roles.guard.spec.ts — допускает роль admin/content_manager; отклоняет остальных
-- Критерии: happy+deny сценарии покрыты; контракты ExecutionContext корректны.
+- Объём (выполнено):
+  - common/guards/jwt-auth.guard.spec.ts — smoke: инстанцирование, handleRequest возвращает user
+  - common/guards/roles.guard.spec.ts — покрыты ветки: отсутствие требуемых ролей (true), отсутствие user (false), роли из БД, кэш и TTL, ENV‑фолбэки (ADMIN_EMAILS/CONTENT_MANAGER_EMAILS), базовая роль user
+- Критерии: happy+deny сценарии покрыты; контракты ExecutionContext корректны; `yarn test` зелёный.
 
-3. Контентные сущности: книги и версии
+3. Контентные сущности: книги и версии — [x] (2025-09-05)
 
-- Цель: бизнес‑логика выбора версий и статусов без БД.
-- Объём:
-  - modules/book/book.service.spec.ts — overview/доступные языки
-  - modules/book-version/book-version.service.spec.ts — фильтры по языку/статусу, выбор без прямой language
-  - modules/book-summary/book-summary.service.spec.ts — фолбэки/валидации
-- Критерии: сценарии публикации/черновиков/языков подтверждены.
+— Цель: бизнес‑логика выбора версий и статусов без БД.
+— Объём (выполнено):
 
-4. Таксономии и фильтрация
+- [x] modules/book/book.service.spec.ts — overview, выбор версии по языку (query/header), SEO‑фолбэки, флаги наличия разделов
+- [x] modules/book-version/book-version.service.spec.ts — create/update/remove (ранее), дополнительно: list c Accept-Language, getPublic 404 для draft, publish/unpublish, listAdmin без статуса
+- [x] modules/book-summary/book-summary.service.spec.ts — getByVersion (404 если нет версии), upsert (create/update)
+      — Критерии: сценарии публикации/черновиков/языков подтверждены, unit‑тесты зелёные.
 
-- Цель: устойчивость привязок и поиска по (language, slug).
-- Объём:
-  - modules/category/category.service.spec.ts — иерархия, запреты удаления/циклов
-  - modules/tags/tags.service.spec.ts — attach/detach идемпотентны; фильтрация по языку
-- Критерии: все запретные ветки дают ожидаемые ошибки.
+4. Таксономии и фильтрация — [x] (2025-09-05)
+
+— Цель: устойчивость привязок и поиска по (language, slug).
+— Объём (выполнено):
+
+- [x] modules/category/category.service.spec.ts —
+  - update: запрет циклов (isDescendant), запрет удаления при наличии детей
+  - публичные резолверы: фильтрация версий по языку (Accept-Language), фолбэк к базовому slug
+  - detach: 404 при отсутствии связи
+- [x] modules/tags/tags.service.spec.ts — - публичные резолверы: фильтрация по языку, фолбэк к базовому slug - attach: идемпотентность (повтор не создаёт дубль) - detach: идемпотентность при отсутствии связи
+      — Критерии: запретные ветки и фильтрации подтверждены, unit‑тесты зелёные.
 
 5. Социальные фичи: комментарии, лайки, прогресс
 

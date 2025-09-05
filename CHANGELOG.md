@@ -116,6 +116,23 @@
 
 ## 2025-09-05 — .env.example расширение
 
+-
+
+## 2025-09-05 — Юнит‑тесты: контентные сущности (книги и версии)
+
+- Добавлены unit‑тесты согласно плану (итерация 3):
+  - `src/modules/book/book.service.spec.ts` — агрегатор overview (языковая политика, SEO‑фолбэки, флаги наличия разделов).
+  - `src/modules/book-version/book-version.service.spec.ts` — доп. сценарии: list с Accept-Language, publish/unpublish, getPublic для draft = 404, listAdmin без фильтра по статусу.
+  - `src/modules/book-summary/book-summary.service.spec.ts` — getByVersion (404 на отсутствующую версию) и upsert (create/update).
+- Все unit‑тесты проходят (`yarn test`). Документация обновлена: `docs/UNIT_TESTING_PLAN.md`, `docs/ITERATION_TASKS.md`.
+
+## 2025-09-05 — Юнит‑тесты: таксономии и фильтрация
+
+- Добавлены unit‑тесты согласно плану (итерация 4):
+  - `src/modules/category/category.service.spec.ts` — проверки иерархии (цикл), запрет удаления при наличии детей, публичные резолверы с фильтрацией по языку и фолбэком на базовый slug, 404 при detach отсутствующей связи.
+  - `src/modules/tags/tags.service.spec.ts` — публичные резолверы: фильтрация по языку, фолбэк к базовому slug; attach идемпотентен; detach идемпотентен.
+- Запуск `yarn test` — все тесты зелёные. Обновлены `docs/UNIT_TESTING_PLAN.md` и `docs/ITERATION_TASKS.md`.
+
 - Обновлён `.env.example`:
   - Добавлены переменные `PORT`, `HOST` (с комментариями, соответствуют дефолтам в коде).
   - Добавлена `CONTENT_MANAGER_EMAILS` для назначения роли `content_manager` по списку email.

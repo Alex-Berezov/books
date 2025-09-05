@@ -90,7 +90,6 @@ export class MediaController {
     FileInterceptor(
       'file',
       ((): MulterOptions => ({
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         storage: memoryStorage(),
         limits: { fileSize: 110 * 1024 * 1024 }, // ~110MB, как в /uploads/direct
       }))(),
