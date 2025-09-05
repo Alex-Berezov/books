@@ -1,14 +1,9 @@
-#!/bin/sh
-# husky
-# v9 shim for POSIX sh
+echo "husky - DEPRECATED
 
-# this file is included by hooks and ensures POSIX sh compatibility
+Please remove the following two lines from $0:
 
-command_exists () {
-  command -v "$1" >/dev/null 2>&1
-}
+#!/usr/bin/env sh
+. \"\$(dirname -- \"\$0\")/_/husky.sh\"
 
-# Yarn classic detection (optional)
-if command_exists yarn; then
-  :
-fi
+They WILL FAIL in v10.0.0
+"

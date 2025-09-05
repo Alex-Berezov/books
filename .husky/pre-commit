@@ -1,5 +1,4 @@
 #!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
 
 # Yarn classic only; abort if yarn not installed
 command -v yarn >/dev/null 2>&1 || { echo >&2 "Yarn is required but it's not installed. Skipping pre-commit checks."; exit 0; }
