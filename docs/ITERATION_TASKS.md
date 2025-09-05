@@ -37,7 +37,7 @@
 11. 3 — README актуализация — [x] (2025-09-05)
 12. 4 — docs/AGENT_CONTEXT.md — [x] (2025-09-05)
 13. 5 — Docker Compose (dev): Postgres + Redis — [x] (2025-09-05)
-14. 6 — .env.example расширение
+14. 6 — .env.example расширение — [x] (2025-09-05)
 15. 7 — Юнит-тесты (первый пакет)
 16. 8 — Безопасность: Helmet, CORS, лимиты тела
 17. 9 — Health/Readiness (terminus)
@@ -133,9 +133,17 @@
 ## 6) .env.example расширение
 
 - Цель: Все переменные, которые использует код, должны быть отражены в примере.
-- Объём: Добавить/обновить: RATE_LIMIT_ENABLED, RATE_LIMIT_COMMENTS_WINDOW_MS, RATE_LIMIT_COMMENTS_PER_MINUTE, LOCAL_UPLOADS_DIR, LOCAL_PUBLIC_BASE_URL, UPLOADS_MAX_IMAGE_MB, UPLOADS_MAX_AUDIO_MB, UPLOADS_PRESIGN_TTL_SEC, UPLOADS_ALLOWED_IMAGE_CT, UPLOADS_ALLOWED_AUDIO_CT, CONTENT_MANAGER_EMAILS, CORS_ORIGIN, PORT.
-- Критерии приёмки: при копировании `.env.example` → `.env` приложение стартует; значения по умолчанию соответствуют коду.
-- Замечания: поясняющие комментарии к каждому ключу.
+- Объём (выполнено):
+  - [x] Добавлены/уточнены ключи в `.env.example`:
+    - PORT, HOST (серверные настройки; по умолчанию 5000/0.0.0.0 из кода)
+    - CONTENT_MANAGER_EMAILS (авто-выдача роли content_manager по email)
+    - LOCAL_PUBLIC_BASE_URL (уточнено поведение: SEO/Sitemap используют 3000, локальное хранилище — 5000/static; можно переопределить единым значением)
+    - CORS_ORIGIN (оставлен как опциональный ключ)
+    - Прочие ранее добавленные ключи для uploads/cache/rate limit оставлены с комментариями и дефолтами из кода
+  - [x] README дополнен описанием новых ключей и пояснениями по LOCAL_PUBLIC_BASE_URL.
+  - [x] Проверена фактическая загрузка значений в коде (поиск по `process.env`/`ConfigService`).
+- Критерии приёмки: при копировании `.env.example` → `.env` приложение стартует; значения по умолчанию соответствуют коду — выполнено.
+- Замечания: указывать email-списки через запятую; для dev рекомендуется `LOCAL_PUBLIC_BASE_URL=http://localhost:5000/static`.
 
 ## 7) Юнит-тесты (первый пакет)
 

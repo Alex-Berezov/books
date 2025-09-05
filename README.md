@@ -150,7 +150,7 @@ make e2e-serial   # yarn test:e2e:serial
 - HOST — адрес прослушивания (по умолчанию 0.0.0.0)
 - DEFAULT_LANGUAGE — язык по умолчанию для i18n-политики (по умолчанию `en`)
 - LOCAL_UPLOADS_DIR — каталог для локальных загрузок (по умолчанию `var/uploads`)
-- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес для генерации ссылок (по умолчанию `http://localhost:3000` в SEO/Sitemap; для локального стораджа publicBase — `http://localhost:5000/static`)
+- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес для генерации ссылок. Если не задан — по умолчанию `http://localhost:3000` в SEO/Sitemap, и `http://localhost:5000/static` для локального стораджа. Рекомендуется для dev ставить `http://localhost:5000/static`.
 - UPLOADS_MAX_IMAGE_MB — лимит изображений в МБ (по умолчанию 5)
 - UPLOADS_MAX_AUDIO_MB — лимит аудио в МБ (по умолчанию 100)
 - UPLOADS_PRESIGN_TTL_SEC — TTL для presign (по умолчанию 600)
@@ -162,6 +162,9 @@ make e2e-serial   # yarn test:e2e:serial
 - RATE_LIMIT_ENABLED — включение лимитов (0/1)
 - RATE_LIMIT_COMMENTS_PER_MINUTE — лимит операций для комментариев за окно (дефолт 10)
 - RATE_LIMIT_COMMENTS_WINDOW_MS — размер окна для лимита (дефолт 60000)
+- ADMIN_EMAILS — список email через запятую для авто-выдачи роли admin (например, `admin@example.com`)
+- CONTENT_MANAGER_EMAILS — список email через запятую для авто-выдачи роли content_manager
+- CORS_ORIGIN — разрешённый Origin для CORS (по умолчанию `*`)
 
 ## Языки: политика выбора и расширяемость
 
@@ -230,6 +233,12 @@ $ yarn run test:cov
 ```bash
 yarn test:e2e -- tags.e2e-spec.ts
 ```
+
+### Тестовое окружение (.env.test)
+
+- Для e2e используется временная БД, создаваемая на основе `DATABASE_URL` из `.env`.
+- В репозитории добавлен пример `.env.test.example` — можно скопировать в `.env.test` при необходимости.
+- Скрипты e2e (test/setup-e2e.ts, test/teardown-e2e.ts) автоматически выставляют служебные переменные `PRISMA_TEST_DB_NAME` и `PRISMA_TEST_ADMIN_URL` и не требуют их ручной установки.
 
 ## VS Code задачи
 
