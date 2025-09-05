@@ -2,6 +2,13 @@
 
 - Проект использует yarn (classic) — не используйте npm. Все команды запускайте через yarn скрипты.
 
+## Требования (локально)
+
+- Node.js 22+
+- Yarn (classic) 1.x — проект использует только yarn, npm не поддерживается
+- PostgreSQL 14+ (локально или в Docker)
+- Git
+
 Быстрый старт (с yarn):
 
 Установка зависимостей: `yarn`
@@ -43,6 +50,46 @@ E2E тесты: `yarn test:e2e`
 ```bash
 $ yarn install
 ```
+
+## Быстрый запуск с нуля
+
+1. Установите зависимости: `yarn`
+2. Создайте `.env` (см. раздел «Переменные окружения»): задайте `DATABASE_URL`
+3. Примените миграции и сгенерируйте клиент Prisma:
+
+```bash
+yarn prisma:migrate
+yarn prisma:generate
+```
+
+4. При необходимости — наполните dev-данными: `yarn prisma:seed`
+5. Запустите приложение в dev-режиме: `yarn start:dev` (или VS Code задача «dev»)
+6. Swagger будет доступен на: http://localhost:5000/api/docs
+
+## Переменные окружения (.env)
+
+Минимально требуется задать:
+
+- DATABASE_URL — строка подключения к PostgreSQL (например, `postgresql://user:pass@localhost:5432/books?schema=public`)
+
+Опциональные (имеют дефолты в коде):
+
+- PORT — порт HTTP-сервера (по умолчанию 5000)
+- HOST — адрес прослушивания (по умолчанию 0.0.0.0)
+- DEFAULT_LANGUAGE — язык по умолчанию для i18n-политики (по умолчанию `en`)
+- LOCAL_UPLOADS_DIR — каталог для локальных загрузок (по умолчанию `var/uploads`)
+- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес для генерации ссылок (по умолчанию `http://localhost:3000` в SEO/Sitemap; для локального стораджа publicBase — `http://localhost:5000/static`)
+- UPLOADS_MAX_IMAGE_MB — лимит изображений в МБ (по умолчанию 5)
+- UPLOADS_MAX_AUDIO_MB — лимит аудио в МБ (по умолчанию 100)
+- UPLOADS_PRESIGN_TTL_SEC — TTL для presign (по умолчанию 600)
+- UPLOADS_ALLOWED_IMAGE_CT — список разрешённых content-type изображений через запятую (по умолчанию `image/jpeg,image/png,image/webp`)
+- UPLOADS_ALLOWED_AUDIO_CT — список разрешённых content-type аудио (по умолчанию `audio/mpeg,audio/mp4,audio/aac,audio/ogg`)
+- SITEMAP_CACHE_TTL_MS — кэширование sitemap/robots (по умолчанию 60000)
+- SEO_CACHE_TTL_MS — кэш SEO-бандла (опц., по умолчанию выключено)
+- VIEWS_CACHE_TTL_MS — кэш агрегатов просмотров (по умолчанию 30000)
+- RATE_LIMIT_ENABLED — включение лимитов (0/1)
+- RATE_LIMIT_COMMENTS_PER_MINUTE — лимит операций для комментариев за окно (дефолт 10)
+- RATE_LIMIT_COMMENTS_WINDOW_MS — размер окна для лимита (дефолт 60000)
 
 ## Языки: политика выбора и расширяемость
 
@@ -102,6 +149,16 @@ $ yarn run test:e2e
 $ yarn run test:cov
 ```
 
+Примечания по тестам:
+
+- Юнит‑тесты: `yarn test`.
+- E2E‑тесты: `yarn test:e2e` (в dev настроен последовательный режим для стабильности).
+- Запуск одного e2e-файла:
+
+```bash
+yarn test:e2e -- tags.e2e-spec.ts
+```
+
 ## VS Code задачи
 
 В репозитории настроены задачи VS Code для быстрого запуска типовых сценариев разработки. Файл конфигурации: `.vscode/tasks.json`.
@@ -122,6 +179,16 @@ $ yarn run test:cov
 
 1. Откройте VS Code → Command Palette → "Tasks: Run Task" → выберите задачу.
 2. Фоновые задачи (`dev`, `prisma:studio`) останавливаются через Terminal → Kill Task.
+
+## Статические файлы (/static) и локальные загрузки
+
+- Локальные загрузки сохраняются в каталог `LOCAL_UPLOADS_DIR` (по умолчанию `var/uploads`).
+- Файлы автоматически отдаются по пути `/static`, пример: `http://localhost:5000/static/<relative-path>`.
+- Прямые загрузки (локальный драйвер): POST `/api/uploads/direct` (лимит ~110 МБ, см. `main.ts`).
+- Переиспользование файлов через Media Library:
+  - POST `/media/confirm` — создать/обновить `MediaAsset` по `key` (идемпотентно);
+  - GET `/media` — поиск/листинг по `q` и `type`;
+  - DELETE `/media/:id` — мягкое удаление.
 
 ## Dev-воркфлоу: pre-commit (Husky + lint-staged)
 
@@ -269,6 +336,7 @@ Swagger схемы:
 
 - Доступно по `/api/docs`.
 - Схемы и примеры подключены для ключевых DTO модулей (Books, Versions, Categories в т.ч. `CategoryTreeNodeDto`).
+- JSON документ для интеграций: `/api/docs-json`.
 
 ## Медиа-библиотека
 
