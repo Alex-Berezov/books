@@ -224,6 +224,11 @@ $ yarn run test:e2e
 $ yarn run test:cov
 ```
 
+Примечания по юнит‑тестам:
+
+- Юнит‑сьюты запускаются без БД/Redis; зависимости (Prisma/Storage/Jwt/Config) мокируются.
+- Подробный план покрытия и статус итераций — в `docs/UNIT_TESTING_PLAN.md`.
+
 Примечания по тестам:
 
 - Юнит‑тесты: `yarn test`.
