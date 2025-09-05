@@ -102,6 +102,27 @@ $ yarn run test:e2e
 $ yarn run test:cov
 ```
 
+## VS Code задачи
+
+В репозитории настроены задачи VS Code для быстрого запуска типовых сценариев разработки. Файл конфигурации: `.vscode/tasks.json`.
+
+Доступные задачи:
+
+- dev — `yarn start:dev` (фон)
+- lint — `yarn lint` (с подсветкой ошибок через `$eslint-stylish`)
+- typecheck — `yarn typecheck` (с `$tsc` problem matcher)
+- test:e2e — `yarn test:e2e`
+- test:e2e:serial — `yarn test:e2e:serial`
+- prisma:generate — `yarn prisma:generate`
+- prisma:migrate — `yarn prisma:migrate`
+- prisma:seed — `yarn prisma:seed`
+- prisma:studio — `yarn prisma:studio` (фон)
+
+Как запускать:
+
+1. Откройте VS Code → Command Palette → "Tasks: Run Task" → выберите задачу.
+2. Фоновые задачи (`dev`, `prisma:studio`) останавливаются через Terminal → Kill Task.
+
 ## Dev-воркфлоу: pre-commit (Husky + lint-staged)
 
 - В репозитории настроен pre-commit хук Husky, который выполняет:

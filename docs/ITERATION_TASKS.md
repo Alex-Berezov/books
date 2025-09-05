@@ -33,7 +33,7 @@
 Далее — инфраструктурные и платформенные задачи (их можно выполнять параллельно, но ниже основной приоритет):
 
 9.  1 — Dev-воркфлоу: Husky + lint-staged + pre-commit — [x] (2025-09-05)
-10. 2 — VS Code задачи (.vscode/tasks.json)
+10. 2 — VS Code задачи (.vscode/tasks.json) — [x] (2025-09-05)
 11. 3 — README актуализация
 12. 4 — docs/AGENT_CONTEXT.md
 13. 5 — Docker Compose (dev): Postgres + Redis
@@ -72,12 +72,22 @@
 
 - В проекте используем только yarn (classic). Не использовать npm. Все команды в задачах и скриптах — через yarn.
 
-## 2) VS Code задачи (.vscode/tasks.json)
+## 2) VS Code задачи (.vscode/tasks.json) — [x] (2025-09-05)
 
 - Цель: Быстрые команды из VS Code: lint, typecheck, test:e2e, dev, prisma-сценарии.
-- Объём: Создать `.vscode/tasks.json` с задачами: `lint`, `typecheck`, `test:e2e`, `dev`, `prisma:migrate`, `prisma:seed`, `prisma:studio`.
-- Критерии приёмки: задачи видны и запускаются в VS Code; ошибки подсвечиваются в Problems.
-- Замечания: использовать текущие скрипты `yarn` из `package.json`.
+- Объём (выполнено):
+  - [x] Создан файл `.vscode/tasks.json`.
+  - [x] Добавлены задачи: `dev`, `lint`, `typecheck`, `test:e2e`, `test:e2e:serial`, `prisma:generate`, `prisma:migrate`, `prisma:seed`, `prisma:studio`.
+  - [x] Привязаны problem matchers: `$eslint-stylish` для `lint`, `$tsc` для `typecheck`.
+  - [x] Фоновые задачи помечены `isBackground: true` (`dev`, `prisma:studio`).
+- Критерии приёмки: задачи видны и запускаются в VS Code; ошибки подсвечиваются в Problems — выполнено.
+- Замечания: используются существующие yarn-скрипты из `package.json`; npm не использовать.
+
+Примечания по использованию в VS Code:
+
+- Откройте палитру команд → Tasks: Run Task → выберите нужную задачу.
+- Для e2e есть два варианта: обычный (`test:e2e`) и последовательный (`test:e2e:serial`) для стабильности локально.
+- `prisma:studio` и `dev` работают в фоне; остановка — через Terminal → Kill Task.
 
 ## 3) README актуализация
 

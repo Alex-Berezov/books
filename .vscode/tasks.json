@@ -1,99 +1,60 @@
 {
-	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "e2e:media",
-			"type": "shell",
-			"command": "yarn test:e2e -- media.e2e-spec.ts",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "e2e:media",
-			"type": "shell",
-			"command": "yarn test:e2e -- media.e2e-spec.ts",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "e2e:media",
-			"type": "shell",
-			"command": "yarn test:e2e -- media.e2e-spec.ts",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "e2e:media",
-			"type": "shell",
-			"command": "yarn test:e2e -- media.e2e-spec.ts",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "e2e:lang-filter",
-			"type": "shell",
-			"command": "yarn test:e2e -- language-policy-categories-tags.e2e-spec.ts",
-			"group": "build"
-		},
-		{
-			"label": "e2e:versions-lang",
-			"type": "shell",
-			"command": "yarn test:e2e -- book-versions-list-language.e2e-spec.ts",
-			"group": "build"
-		},
-		{
-			"label": "e2e:all",
-			"type": "shell",
-			"command": "yarn test:e2e:serial",
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "e2e:all",
-			"type": "shell",
-			"command": "yarn test:e2e:serial",
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "e2e:all",
-			"type": "shell",
-			"command": "yarn test:e2e:serial",
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "e2e:all",
-			"type": "shell",
-			"command": "yarn test:e2e:serial",
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "e2e:all",
-			"type": "shell",
-			"command": "yarn test:e2e:serial",
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "e2e:all",
-			"type": "shell",
-			"command": "yarn test:e2e:serial",
-			"isBackground": false,
-			"group": "build"
-		}
-	]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev",
+      "type": "shell",
+      "command": "yarn start:dev",
+      "isBackground": true,
+      "group": "build"
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "yarn lint",
+      "problemMatcher": ["$eslint-stylish"],
+      "group": "build"
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "yarn typecheck",
+      "problemMatcher": ["$tsc"],
+      "group": "build"
+    },
+    {
+      "label": "test:e2e",
+      "type": "shell",
+      "command": "yarn test:e2e",
+      "group": "test"
+    },
+    {
+      "label": "test:e2e:serial",
+      "type": "shell",
+      "command": "yarn test:e2e:serial",
+      "group": "test"
+    },
+    {
+      "label": "prisma:generate",
+      "type": "shell",
+      "command": "yarn prisma:generate"
+    },
+    {
+      "label": "prisma:migrate",
+      "type": "shell",
+      "command": "yarn prisma:migrate",
+      "group": "build"
+    },
+    {
+      "label": "prisma:seed",
+      "type": "shell",
+      "command": "yarn prisma:seed"
+    },
+    {
+      "label": "prisma:studio",
+      "type": "shell",
+      "command": "yarn prisma:studio",
+      "isBackground": true
+    }
+  ]
 }

@@ -82,3 +82,9 @@
   - Добавлен скрипт `typecheck` (`tsc --noEmit`).
   - Добавлена секция `lint-staged` с правилами для `*.{ts,tsx,js}` и `*.{md,yml,yaml,json}`.
 - Документация обновлена: `docs/ITERATION_TASKS.md` (пункт 1 выполнен), README дополнен разделом о pre-commit проверках.
+
+## 2025-09-05 — VS Code задачи (.vscode/tasks.json)
+
+- Добавлен файл `.vscode/tasks.json` с задачами: `dev`, `lint`, `typecheck`, `test:e2e`, `test:e2e:serial`, `prisma:generate`, `prisma:migrate`, `prisma:seed`, `prisma:studio`.
+- Настроены problem matchers: `$eslint-stylish` для lint, `$tsc` для typecheck. Фоновые задачи помечены `isBackground`.
+- Обновлена документация: `docs/ITERATION_TASKS.md` (п. «2 — VS Code задачи» помечен как выполненный), README — раздел «VS Code задачи».
