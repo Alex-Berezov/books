@@ -46,7 +46,7 @@
 20. 12 — Dockerfile(prod) + docker-compose.prod.yml — [x] (2025-09-06)
 21. 14 — SEO: sitemap.xml и robots.txt — [x] (2025-09-06)
 22. 15 — BullMQ (интеграция базовая) — [x] (2025-09-06)
-23. 16 — Sentry (ошибки)
+23. 16 — Sentry (ошибки) — [x] (2025-09-06)
 24. 17 — Uploads (R2, Cloudflare) — отложено
 
 ## 1) Dev-воркфлоу: Husky + lint-staged + pre-commit — [x] (2025-09-05)
@@ -429,12 +429,23 @@
 - Критерии приёмки: очередь создаётся; health возвращает счетчики; e2e smoke.
 - Замечания: бизнес-джобы вне диапазона этой итерации.
 
-## 16) Sentry (ошибки)
+## 16) Sentry (ошибки) — [x] (2025-09-06)
 
 - Цель: Сбор ошибок prod/staging.
-- Объём: Инициализация SDK, фильтры Nest для необработанных ошибок, конфиг через env (dsn, env, release), маскирование секретов.
-- Критерии приёмки: в dev можно отключить; ручной тест генерирует событие при включении.
-- Замечания: performance tracing опционально.
+- Объём (выполнено):
+  - [x] Добавлена зависимость `@sentry/node`.
+  - [x] Инициализация в `main.ts` (условно: включается при наличии `SENTRY_DSN`; выключатель `SENTRY_ENABLED=0`).
+  - [x] Глобальный фильтр `SentryExceptionFilter`: отправляет 5xx-ошибки в Sentry; игнорирует типичные 4xx (400/401/403/404/429); маскирует чувствительные поля тела запроса (`password|token|authorization|secret|cookie`).
+  - [x] Добавлен админ-хук для ручной проверки: `POST /status/sentry-test` (Auth + Role Admin) — бросает тестовую ошибку.
+  - [x] Переменные окружения в `.env.example`: `SENTRY_DSN`, `SENTRY_ENV`, `SENTRY_RELEASE`, `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_PROFILES_SAMPLE_RATE`, `SENTRY_ENABLED`.
+  - [x] Документация обновлена: README (раздел «Sentry»), `docs/ENDPOINTS.md` (ручка `status/sentry-test`).
+- Критерии приёмки:
+  - При заданном `SENTRY_DSN` и роли Admin запрос `POST /api/status/sentry-test` приводит к событию в Sentry.
+  - В dev без DSN — интеграция выключена; приложение работает как прежде.
+  - Ошибки 4xx не отправляются в Sentry (шум от валидатор/доступа не собирается).
+- Замечания:
+  - Performance tracing оставлен опциональным (enabled через `*_SAMPLE_RATE`).
+  - Фильтр устойчив к ошибкам Sentry SDK и не влияет на стандартную обработку исключений Nest.
 
 ## 17) Uploads (R2, Cloudflare) — отложено
 

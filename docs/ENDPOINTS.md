@@ -279,6 +279,7 @@
 ## 19) [x] Status (админ)
 
 - GET /status/rate-limit — Auth + Roles(admin) — текущая конфигурация rate limit
+- POST /status/sentry-test — Auth + Roles(admin) — сгенерировать тестовую 500‑ошибку; при включённом Sentry (см. env SENTRY_DSN) событие улетит в Sentry
 
 ## 20) [x] Root / Health
 

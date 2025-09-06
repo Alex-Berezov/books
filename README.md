@@ -398,6 +398,15 @@ yarn test:e2e -- tags.e2e-spec.ts
 - Файлы автоматически отдаются по пути `/static`, пример: `http://localhost:5000/static/<relative-path>`.
 - Прямые загрузки (локальный драйвер): POST `/api/uploads/direct` (лимит ~110 МБ, см. `main.ts`).
 - Переиспользование файлов через Media Library:
+
+## Мониторинг ошибок: Sentry (опционально)
+
+- Интеграция включается автоматически, если задан `SENTRY_DSN` (см. `.env.example`). Принудительно отключить можно `SENTRY_ENABLED=0`.
+- Дополнительные переменные: `SENTRY_ENV` (по умолчанию `NODE_ENV`), `SENTRY_RELEASE`, `SENTRY_TRACES_SAMPLE_RATE=0`, `SENTRY_PROFILES_SAMPLE_RATE=0`.
+- Что отправляется:
+  - 5xx ошибки с контекстом запроса (метод, путь/роут, заголовки, query, params; тело — с маскировкой полей `password|token|authorization|secret|cookie`).
+  - 4xx (400/401/403/404/429) — игнорируются, чтобы не шуметь.
+- Тест ручка: `POST /api/status/sentry-test` — требует Auth + роль Admin; генерирует 500 и при активном Sentry создаёт событие.
   - POST `/media/confirm` — создать/обновить `MediaAsset` по `key` (идемпотентно);
   - GET `/media` — поиск/листинг по `q` и `type`;
   - DELETE `/media/:id` — мягкое удаление.

@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { RateLimitConfigDto } from './dto/rate-limit-config.dto';
@@ -31,5 +31,14 @@ export class StatusController {
       scope: 'userId|ip',
       endpoints: ['POST /comments', 'PATCH /comments/:id', 'DELETE /comments/:id'],
     };
+  }
+
+  @Post('sentry-test')
+  @ApiOperation({ summary: 'Сгенерировать тестовую ошибку для проверки интеграции Sentry' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin)
+  sentryTest(): never {
+    throw new Error('Sentry test error (manual trigger)');
   }
 }

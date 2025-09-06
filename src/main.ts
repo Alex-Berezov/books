@@ -8,12 +8,33 @@ import { UpdateBookDto } from './modules/book/dto/update-book.dto';
 import { CreateBookVersionDto } from './modules/book-version/dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './modules/book-version/dto/update-book-version.dto';
 import { configureSecurity } from './common/security/app-security.config';
+import * as Sentry from '@sentry/node';
+import { HttpAdapterHost } from '@nestjs/core';
+import { SentryExceptionFilter } from './shared/sentry/sentry.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // Security (Helmet, CORS, body limits, static, direct upload raw)
   configureSecurity(app);
+
+  // Sentry init (optional, controlled by env SENTRY_DSN). Disabled in dev unless explicitly enabled.
+  const dsn = process.env.SENTRY_DSN;
+  const sentryEnabled = Boolean(dsn) && (process.env.SENTRY_ENABLED ?? '1') !== '0';
+  if (sentryEnabled) {
+    Sentry.init({
+      dsn,
+      environment: process.env.SENTRY_ENV || process.env.NODE_ENV || 'development',
+      release: process.env.SENTRY_RELEASE,
+      tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0),
+      profilesSampleRate: Number(process.env.SENTRY_PROFILES_SAMPLE_RATE ?? 0),
+      integrations: [],
+      // отключаем autoSessionTracking — API не использует браузерные сессии
+      autoSessionTracking: false,
+    });
+    const httpAdapterHost = app.get(HttpAdapterHost);
+    app.useGlobalFilters(new SentryExceptionFilter(httpAdapterHost, true));
+  }
 
   // Set up global ValidationPipe:
   app.useGlobalPipes(
