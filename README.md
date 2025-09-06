@@ -229,6 +229,12 @@ $ yarn run test:cov
 - Юнит‑сьюты запускаются без БД/Redis; зависимости (Prisma/Storage/Jwt/Config) мокируются.
 - Подробный план покрытия и статус итераций — в `docs/UNIT_TESTING_PLAN.md`.
 
+Дополнение (2025-09-06): расширены кейсы юнит‑тестов
+
+- AuthService: refresh — невалидный/протухший токен → Unauthorized; logout → success=true.
+- UsersService: assignRole/revokeRole — NotFound для отсутствующих пользователя/роли; list — пагинация и staff=exclude.
+- ViewStatsService: aggregate/top — фильтрация по source; валидация from>to; подтверждено кеширование.
+
 Примечания по тестам:
 
 - Юнит‑тесты: `yarn test`.

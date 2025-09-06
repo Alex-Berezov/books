@@ -123,4 +123,15 @@ describe('AuthService (unit)', () => {
     expect(res.accessToken).toBe('a3');
     expect(res.refreshToken).toBe('r3');
   });
+
+  it('refresh: invalid/expired token → Unauthorized', async () => {
+    jwt.verifyAsync.mockRejectedValueOnce(new UnauthorizedException('invalid'));
+    await expect(service.refresh({ refreshToken: 'bad' })).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('logout: returns success=true', () => {
+    expect(service.logout()).toEqual({ success: true });
+  });
 });

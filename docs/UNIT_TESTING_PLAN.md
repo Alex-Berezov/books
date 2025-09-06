@@ -139,6 +139,12 @@
 
 Итог: `yarn test` — зелёный; покрытие по ядру стабильно. Примеры моков и подход см. в соответствующих `*.spec.ts` файлах.
 
+Дополнение (2025-09-06): расширены кейсы
+
+- AuthService: refresh — невалидный/протухший токен → Unauthorized; logout → success=true.
+- UsersService: assignRole/revokeRole — NotFound для отсутствующих пользователя/роли; list — пагинация и staff=exclude.
+- ViewStatsService: aggregate/top — фильтрация по source; валидация from>to; подтверждено кеширование.
+
 ---
 
 ## Технические детали

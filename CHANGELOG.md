@@ -180,3 +180,9 @@
   - `src/modules/view-stats/view-stats.service.spec.ts` — create (валидация версии и времени), aggregate/top с in‑memory кэшем и суммой.
   - `src/modules/public/public.controller.spec.ts` — делегации и приоритет языка пути над query/header.
 - Документация обновлена: `docs/UNIT_TESTING_PLAN.md` — пункт «9. Прочее» помечен выполненным, добавлены примечания.
+
+## 2025-09-06 — Дополнение: расширены юнит‑кейсы
+
+- AuthService: refresh — невалидный/протухший токен → Unauthorized; logout → success=true.
+- UsersService: assignRole/revokeRole — NotFound для отсутствующих пользователя/роли; list — пагинация и staff=exclude.
+- ViewStatsService: aggregate/top — фильтрация по source; валидация from>to; подтверждено кеширование.

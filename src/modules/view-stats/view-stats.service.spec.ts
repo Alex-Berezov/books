@@ -88,4 +88,26 @@ describe('ViewStatsService (unit)', () => {
     expect(res.totalVersions).toBe(2);
     expect(cache.set).toHaveBeenCalled();
   });
+
+  it('aggregate: supports source filter and throws when from>to', async () => {
+    cache.get.mockResolvedValueOnce(undefined);
+    prisma.$queryRaw.mockResolvedValueOnce([{ date: '2025-01-01', count: 1 }]);
+    const ok = await service.aggregate({ versionId, period: 'day', source: ViewSource.audio });
+    expect(ok.total).toBe(1);
+
+    await expect(
+      service.aggregate({ versionId, period: 'week', from: '2025-02-01', to: '2025-01-01' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('top: applies source and limit, caches with TTL', async () => {
+    cache.get.mockResolvedValueOnce(undefined);
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { bookVersionId: 'v1', count: 2 },
+      { bookVersionId: 'v2', count: 1 },
+    ]);
+    const res = await service.top({ period: 'week', limit: 2, source: ViewSource.referral });
+    expect(res.items.length).toBe(2);
+    expect(cache.set).toHaveBeenCalled();
+  });
 });

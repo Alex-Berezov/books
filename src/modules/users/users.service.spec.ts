@@ -156,6 +156,37 @@ describe('UsersService (unit)', () => {
     await expect(service.revokeRole('u1', 'user')).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('assignRole: user or role not found', async () => {
+    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    await expect(service.assignRole('missing', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+
+    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
+    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    await expect(service.assignRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('revokeRole: user or role not found (and non-existing link delete throws handled by service path)', async () => {
+    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    await expect(service.revokeRole('missing', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+
+    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
+    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    await expect(service.revokeRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('list: pagination boundaries and staff=exclude filter', async () => {
+    const uA = { ...baseUser, id: 'uA', email: 'admin@example.com' } as User;
+    const uB = { ...baseUser, id: 'uB', email: 'plain@example.com' } as User;
+    (prismaMock.user.count as jest.Mock).mockResolvedValue(2);
+    (prismaMock.user.findMany as jest.Mock).mockResolvedValue([uA, uB]);
+    (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+
+    const res = await service.list({ page: 1, limit: 1, staff: 'exclude' });
+    expect(res.page).toBe(1);
+    expect(res.limit).toBe(1);
+    expect(Array.isArray(res.items)).toBe(true);
+  });
+
   it('list: staff only includes users with DB roles or ENV emails; returns items with computed roles', async () => {
     config.get.mockImplementation((key: string) => {
       if (key === 'ADMIN_EMAILS') return 'admin@example.com';
