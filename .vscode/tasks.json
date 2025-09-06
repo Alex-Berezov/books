@@ -79,6 +79,43 @@
       "type": "shell",
       "command": "yarn ci",
       "group": "build"
+    },
+    {
+      "label": "docker:build:prod",
+      "type": "shell",
+      "command": "docker compose --profile prod -f docker-compose.prod.yml build",
+      "group": "build"
+    },
+    {
+      "label": "docker:up:prod",
+      "type": "shell",
+      "command": "docker compose --profile prod -f docker-compose.prod.yml up -d",
+      "isBackground": true,
+      "group": "build"
+    },
+    {
+      "label": "docker:down:prod",
+      "type": "shell",
+      "command": "docker compose --profile prod -f docker-compose.prod.yml down",
+      "group": "build"
+    },
+    {
+      "label": "docker:logs:prod",
+      "type": "shell",
+      "command": "docker compose --profile prod -f docker-compose.prod.yml logs -f --tail=100",
+      "isBackground": true
+    },
+    {
+      "label": "docker:tag:prod",
+      "type": "shell",
+      "command": "bash -lc 'IMAGE_TAG=${IMAGE_TAG:-latest}; docker tag books-app:prod ${REGISTRY:-localhost}/books-app:${IMAGE_TAG}'",
+      "group": "build"
+    },
+    {
+      "label": "docker:push:prod",
+      "type": "shell",
+      "command": "bash -lc 'IMAGE_TAG=${IMAGE_TAG:-latest}; docker push ${REGISTRY:-localhost}/books-app:${IMAGE_TAG}'",
+      "group": "build"
     }
   ]
 }

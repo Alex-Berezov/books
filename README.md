@@ -117,6 +117,41 @@ docker compose down
 - Порты: Postgres `5432`, Redis `6379` (можно переопределить через переменные в `.env`).
 - Redis добавлен для будущих задач (кэш/очереди); текущий код может работать без него.
 
+### Продакшн-сборка: Dockerfile + docker-compose.prod.yml
+
+В репозитории добавлен продакшн Dockerfile (multi-stage) и compose для близкого к прод окружения:
+
+- `Dockerfile` — multi-stage: builder (yarn build, prisma generate) → runner (NODE_ENV=production, только prod-зависимости). На старте запускает `scripts/docker-entrypoint.sh` (выполняет `prisma migrate deploy`, затем `node dist/main.js`).
+- `docker-compose.prod.yml` — сервисы `app` и `postgres`. По умолчанию пробрасывает порт 5000 и использует переменные из `.env`.
+
+Быстрый запуск (локально, production-режим):
+
+```bash
+# Собрать образ и запустить (profile prod)
+docker compose --profile prod -f docker-compose.prod.yml up -d --build
+
+# Логи приложения
+docker compose --profile prod -f docker-compose.prod.yml logs -f app
+```
+
+Полезные примечания:
+
+- Переменные окружения читаются из `.env` (DATABASE_URL и др.). Для prod рекомендуется задать `CORS_ORIGIN`, `LOCAL_PUBLIC_BASE_URL`.
+- Migrate deploy запускается автоматически при старте контейнера, если доступен `prisma` в `node_modules/.bin`.
+- Для lean-образа используется `.dockerignore` (исключены node_modules, dist, тесты, docs и пр.).
+- Порт и параметры БД можно переопределять через переменные среды: `PORT`, `POSTGRES_*`.
+
+VS Code задачи (Docker prod):
+
+- `docker:build:prod` — сборка образа по `docker-compose.prod.yml` (с profile `prod`).
+- `docker:up:prod` — запуск prod‑связки в фоне.
+- `docker:down:prod` — остановка.
+- `docker:logs:prod` — просмотр логов приложения.
+- `docker:tag:prod` — тегирование образа: использует env `REGISTRY` и `IMAGE_TAG` (дефолт: `localhost` и `latest`).
+- `docker:push:prod` — публикация образа в реестр.
+
+В `docker-compose.prod.yml` добавлен healthcheck для сервиса `app` (проверяет `GET /metrics`). Compose использует profile `prod` (активируйте флагом `--profile prod`).
+
 ### VS Code Dev Container (опционально)
 
 В репозитории есть конфигурация `.devcontainer/` для запуска в контейнере разработчика:

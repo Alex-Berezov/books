@@ -43,7 +43,7 @@
 17. 9 — Health/Readiness (terminus) — [x] (2025-09-06)
 18. 10 — Prometheus метрики — [x] (2025-09-06)
 19. 11 — CI (провайдер-независимый скрипт + шаблоны GitHub/GitLab) — [x] (2025-09-06)
-20. 12 — Dockerfile(prod) + docker-compose.prod.yml
+20. 12 — Dockerfile(prod) + docker-compose.prod.yml — [x] (2025-09-06)
 21. 14 — SEO: sitemap.xml и robots.txt
 22. 15 — BullMQ (интеграция базовая)
 23. 16 — Sentry (ошибки)

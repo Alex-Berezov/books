@@ -124,6 +124,14 @@
   - `src/modules/book/book.service.spec.ts` — агрегатор overview (языковая политика, SEO‑фолбэки, флаги наличия разделов).
   - `src/modules/book-version/book-version.service.spec.ts` — доп. сценарии: list с Accept-Language, publish/unpublish, getPublic для draft = 404, listAdmin без фильтра по статусу.
   - `src/modules/book-summary/book-summary.service.spec.ts` — getByVersion (404 на отсутствующую версию) и upsert (create/update).
+
+## 2025-09-06 — Прод: Dockerfile и docker-compose.prod
+
+- Добавлен `Dockerfile` (multi-stage: builder → runner) с прод-окружением и запуском через `scripts/docker-entrypoint.sh`.
+- Добавлен `docker-compose.prod.yml` для локального запуска prod-подобной связки `app + postgres`.
+- Добавлен `.dockerignore` для оптимизации контекста сборки.
+- Написаны unit-тесты для devops-артефактов: `src/devops/dockerfiles.spec.ts` (валидирует наличие и ключевые элементы конфигов).
+- README дополнен разделом «Продакшн-сборка: Dockerfile + docker-compose.prod.yml» с примерами запуска.
 - Все unit‑тесты проходят (`yarn test`). Документация обновлена: `docs/UNIT_TESTING_PLAN.md`, `docs/ITERATION_TASKS.md`.
 
 ## 2025-09-05 — Юнит‑тесты: таксономии и фильтрация
