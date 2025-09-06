@@ -116,13 +116,13 @@
   - [x] modules/pages/pages.service.spec.ts — public resolver с политикой языка (query/header), setStatus (publish/unpublish) со сценариями 404/успех.
 - Критерии: текст/каноникал соответствуют правилам; кеш не застревает; unit-тесты зелёные.
 
-7. Медиа и загрузки
+7. Медиа и загрузки — [x] (2025-09-06)
 
 - Цель: безопасная идемпотентность и soft‑delete.
-- Объём:
-  - modules/media/media.service.spec.ts — confirm существующей записи обновляет метаданные и снимает isDeleted
-  - modules/uploads/uploads.service.spec.ts — валидации, имя файла, size/type; сторадж мок
-- Критерии: повторный confirm не создаёт дубликаты; удаления помечают isDeleted.
+- Объём (выполнено):
+  - [x] modules/media/media.service.spec.ts — confirm создаёт/обновляет запись, снимает isDeleted у существующей; проверка P2002 (гонка) с возвратом найденной записи; list фильтрует по q/type и исключает deleted; remove — soft‑delete + best‑effort удаление файла.
+  - [x] modules/uploads/uploads.service.spec.ts — presign валидирует contentType и размер, генерирует key/headers/token и ставит токен в cache; directUpload проверяет токен/пользователя/CT/размер и сохраняет файл, удаляя токен; delete и getPublicUrl делегируют стораджу.
+- Критерии: повторный confirm не создаёт дубликаты; удаления помечают isDeleted; directUpload отклоняет неверный токен/чужого пользователя/несовпадение content-type и превышение заявленного размера.
 
 8. Хранилище и вспомогательные слои
 

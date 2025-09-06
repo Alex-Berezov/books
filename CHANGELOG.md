@@ -154,4 +154,11 @@
     - `type=book`/`type=page` — canonical с префиксом `/:lang`, язык выбирается по приоритету: path > query > `Accept-Language` > default.
   - `src/modules/sitemap/sitemap.service.spec.ts` — `robots.txt`, индекс sitemap по всем языкам (из Prisma enum `Language`), per-language sitemap (страницы и книги), кэширование по TTL (fake timers), уникальность слугов книг.
   - `src/modules/pages/pages.service.spec.ts` — public resolver с политикой языка и `setStatus` (publish/unpublish), 404 для отсутствующих сущностей.
+
+## 2025-09-06 — Юнит‑тесты: Медиа и загрузки
+
+- Добавлены unit‑тесты согласно плану (итерация 7):
+  - `src/modules/uploads/uploads.service.spec.ts` — presign (валидации CT/размера, генерация key/token/headers, запись токена в cache), directUpload (проверки токена/пользователя/CT/размера, сохранение и очистка токена), delete/publicUrl — делегирование стораджу.
+  - `src/modules/media/media.service.spec.ts` — confirm (идемпотентность, снятие isDeleted), обработка P2002 при гонке, list с фильтрами q/type и исключением deleted, remove — soft‑delete + best‑effort удаление файла.
+- Документация: обновлены `docs/UNIT_TESTING_PLAN.md` (п.7 отмечен как выполненный) и `docs/MEDIA_LIBRARY.md` (раздел про тесты).
 - Все unit‑тесты проходят (`yarn test`). Обновлены: `docs/UNIT_TESTING_PLAN.md` (итерация 6 помечена выполненной, добавлены детали) и краткие пояснения в `docs/ITERATION_TASKS.md`.

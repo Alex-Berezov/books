@@ -172,6 +172,11 @@
   - Pages: публичный резолвер (`getPublicBySlugWithPolicy`) и `setStatus`; сценарии 404/успех покрыты.
   - Результат: `yarn test` — зелёный.
 
+- 7. Медиа и загрузки — выполнено (2025-09-06):
+  - UploadsService: покрыты presign (валидации, генерация key/token/headers, запись токена в cache), directUpload (проверки токена/пользователя/CT/размера, сохранение в сторадж, очистка токена), delete и getPublicUrl (делегирование стораджу).
+  - MediaService: confirm идемпотентен (create/update + снятие isDeleted), валидация URL, обработка P2002 с возвратом найденной записи, list с q/type и исключением deleted, remove — soft‑delete + best‑effort удаление файла.
+  - Документация обновлена: `docs/UNIT_TESTING_PLAN.md` (п.7 помечен выполненным) и `docs/MEDIA_LIBRARY.md` (раздел «Тесты» дополнен unit‑покрытием).
+
 ## 8) Безопасность: Helmet, CORS, лимиты тела
 
 - Цель: Базовая защита HTTP, корректный CORS, предсказуемые лимиты тела.

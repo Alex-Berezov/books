@@ -68,7 +68,8 @@
 
 ## Тесты
 
-- e2e: `test/media.e2e-spec.ts` — smoke-сценарии confirm → list → delete.
+- unit: покрытие сервиса `MediaService` (идемпотентность confirm, валидация URL, листинг с фильтрами, soft-delete с best‑effort удалением из стораджа) и `UploadsService` (presign/validate, directUpload токен/CT/размер, delete, publicUrl). Тесты не обращаются к БД/диску — используются моки `PrismaService`, `StorageService`, `CacheService`.
+- e2e: `test/media.e2e-spec.ts` — smoke-сценарии confirm → list → delete и `test/uploads.e2e-spec.ts` — presign → direct → confirm → delete.
 
 ## Доступ/безопасность
 
