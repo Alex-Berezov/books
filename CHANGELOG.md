@@ -171,3 +171,12 @@
   - `src/shared/cache/inmemory.cache.spec.ts` — InMemoryCacheService: set/get/del и TTL‑экспирация через fake timers.
 - Документация обновлена: `docs/UNIT_TESTING_PLAN.md` (п. 8 помечен выполненным), `docs/ITERATION_TASKS.md` (статус юнит‑тестов обновлён).
 - Результат: `yarn test` — все тесты зелёные; интерфейсы устойчивы к расширениям.
+
+## 2025-09-06 — Юнит‑тесты: 9. Прочее (Users/Auth/ViewStats/Public)
+
+- Добавлены unit‑тесты:
+  - `src/modules/users/users.service.spec.ts` — me/update/delete (каскад), assign/revoke roles, list со staff‑фильтрами и ENV‑повышениями ролей.
+  - `src/modules/auth/auth.service.spec.ts` — register (конфликт email, happy), login (неверный пароль/успех), refresh; моки Jwt/argon2/Config.
+  - `src/modules/view-stats/view-stats.service.spec.ts` — create (валидация версии и времени), aggregate/top с in‑memory кэшем и суммой.
+  - `src/modules/public/public.controller.spec.ts` — делегации и приоритет языка пути над query/header.
+- Документация обновлена: `docs/UNIT_TESTING_PLAN.md` — пункт «9. Прочее» помечен выполненным, добавлены примечания.
