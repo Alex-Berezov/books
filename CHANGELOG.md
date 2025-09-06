@@ -145,3 +145,13 @@
 
 - Добавлен файл `.env.test.example` с примером переменных для e2e.
 - README дополнен разделом про `.env.test` и механизм временной БД (`PRISMA_TEST_*`).
+
+## 2025-09-06 — Юнит‑тесты: SEO, Sitemap и Public резолверы
+
+- Добавлены unit‑тесты согласно плану (итерация 6):
+  - `src/modules/seo/seo.service.spec.ts` — проверены фолбэки мета/OG/Twitter и canonical:
+    - `type=version` — canonical всегда `/versions/:id`, без языкового префикса и без переопределения из SEO.
+    - `type=book`/`type=page` — canonical с префиксом `/:lang`, язык выбирается по приоритету: path > query > `Accept-Language` > default.
+  - `src/modules/sitemap/sitemap.service.spec.ts` — `robots.txt`, индекс sitemap по всем языкам (из Prisma enum `Language`), per-language sitemap (страницы и книги), кэширование по TTL (fake timers), уникальность слугов книг.
+  - `src/modules/pages/pages.service.spec.ts` — public resolver с политикой языка и `setStatus` (publish/unpublish), 404 для отсутствующих сущностей.
+- Все unit‑тесты проходят (`yarn test`). Обновлены: `docs/UNIT_TESTING_PLAN.md` (итерация 6 помечена выполненной, добавлены детали) и краткие пояснения в `docs/ITERATION_TASKS.md`.

@@ -95,7 +95,7 @@
 - [x] modules/tags/tags.service.spec.ts — - публичные резолверы: фильтрация по языку, фолбэк к базовому slug - attach: идемпотентность (повтор не создаёт дубль) - detach: идемпотентность при отсутствии связи
       — Критерии: запретные ветки и фильтрации подтверждены, unit‑тесты зелёные.
 
-5. Социальные фичи: комментарии, лайки, прогресс
+5. Социальные фичи: комментарии, лайки, прогресс — [x] (2025-09-05)
 
 - Цель: избежать регрессий в идемпотентности и ограничениях.
 - Объём:
@@ -104,14 +104,17 @@
   - modules/reading-progress/reading-progress.service.spec.ts — upsert‑семантика
 - Критерии: happy/edge сценарии подтверждены.
 
-6. SEO, Sitemap и Public резолверы
+6. SEO, Sitemap и Public резолверы — [x] (2025-09-06)
 
 - Цель: корректность выдачи мета/канонических URL и XML.
-- Объём:
-  - modules/seo/seo.service.spec.ts — фолбэки и canonical с префиксом языка
-  - modules/sitemap/sitemap.service.spec.ts — генерация индексного и per-language sitemap, TTL кеша (через подмену таймера)
-  - modules/pages/pages.service.spec.ts — public resolver с политикой языка, publish/unpublish
-- Критерии: текст/каноникал соответствуют правилам; кеш не застревает.
+- Объём (выполнено):
+  - [x] modules/seo/seo.service.spec.ts — фолбэки и canonical:
+    - type=version: canonical всегда без префикса языка, игнорируем override из SEO.
+    - type=book/page: canonical с языковым префиксом по политике приоритетов (path > query > Accept-Language > default).
+    - Проверка OG/Twitter фолбэков и выбора версии/страницы по языку.
+  - [x] modules/sitemap/sitemap.service.spec.ts — генерация индексного и per-language sitemap, проверка кеша TTL (через fake timers) и уникальности slug книг.
+  - [x] modules/pages/pages.service.spec.ts — public resolver с политикой языка (query/header), setStatus (publish/unpublish) со сценариями 404/успех.
+- Критерии: текст/каноникал соответствуют правилам; кеш не застревает; unit-тесты зелёные.
 
 7. Медиа и загрузки
 

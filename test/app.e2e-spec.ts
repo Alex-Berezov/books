@@ -16,7 +16,15 @@ describe('AppController (e2e)', () => {
     await app.init();
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer()).get('/').expect(200).expect('Hello World!');
+  it('/ (GET) redirects to docs', () => {
+    return request(app.getHttpServer()).get('/').expect(302).expect('Location', '/api/docs');
+  });
+
+  it('/health (GET) returns ok', async () => {
+    const res = await request(app.getHttpServer()).get('/health').expect(200);
+    const body = res.body as { status: string; uptime: number; timestamp: string };
+    expect(body.status).toBe('ok');
+    expect(typeof body.uptime).toBe('number');
+    expect(typeof body.timestamp).toBe('string');
   });
 });
