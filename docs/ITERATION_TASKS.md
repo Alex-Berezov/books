@@ -41,7 +41,7 @@
 15. 7 — Юнит-тесты: полное покрытие критической инфраструктуры (см. docs/UNIT_TESTING_PLAN.md) — [x] (2025-09-06)
 16. 8 — Безопасность: Helmet, CORS, лимиты тела — [x] (2025-09-06)
 17. 9 — Health/Readiness (terminus) — [x] (2025-09-06)
-18. 10 — Prometheus метрики
+18. 10 — Prometheus метрики — [x] (2025-09-06)
 19. 11 — GitHub Actions (CI)
 20. 12 — Dockerfile(prod) + docker-compose.prod.yml
 21. 14 — SEO: sitemap.xml и robots.txt
@@ -209,12 +209,22 @@
 - Критерии приёмки: корректные коды/JSON для обоих эндпоинтов, unit-тесты на happy/edge кейсы (DB ok/fail, Redis ok/fail/skipped).
 - Замечания: пока без реального Redis-клиента — используется лёгкий `RedisProbe` на основе env, будет заменён в задаче по BullMQ/Redis. Liveness не зависит от внешних сервисов.
 
-## 10) Prometheus метрики
+## 10) Prometheus метрики — [x] (2025-09-06)
 
 - Цель: `/metrics` с базовыми метриками процесса и HTTP.
-- Объём: `prom-client`, коллекция default metrics; middleware/interceptor для HTTP duration/код ответа; endpoint `/metrics`.
-- Критерии приёмки: curl `/metrics` возвращает текстовую экспозицию; значения растут/изменяются при запросах.
-- Замечания: без аутентификации на dev.
+- Объём (выполнено):
+  - [x] Добавлен `MetricsModule` (`src/modules/metrics/`):
+    - `MetricsService` — собственный Registry, `collectDefaultMetrics`, гистограмма `http_request_duration_seconds{method,route,status_code}` с стандартными bucket’ами.
+    - `MetricsInterceptor` — глобальный interceptor, замеряет длительность каждого HTTP-запроса и проставляет статус-код.
+    - `MetricsController` — `GET /metrics` возвращает текстовую экспозицию в формате Prometheus (`text/plain; version=0.0.4`).
+  - [x] Подключено в `AppModule`.
+  - [x] Добавлена зависимость: `prom-client`.
+- Тесты (unit):
+  - `metrics.service.spec.ts` — наличие default metrics и гистограммы, корректные лейблы и экспозиция.
+  - `metrics.controller.spec.ts` — корректный Content-Type и наличие ключевых метрик в выдаче.
+  - `metrics.interceptor.spec.ts` — запись успешных и ошибочных ответов (лейблы method/route, наличие счетчиков).
+- Критерии приёмки: curl `/metrics` возвращает текстовую экспозицию; значения растут/изменяются при запросах — выполнено.
+- Замечания: без аутентификации на dev. В будущем можно добавить выключатель через env и базовую защиту.
 
 ## 11) GitHub Actions (CI)
 

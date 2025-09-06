@@ -65,6 +65,7 @@ yarn prisma:generate
 4. При необходимости — наполните dev-данными: `yarn prisma:seed`
 5. Запустите приложение в dev-режиме: `yarn start:dev` (или VS Code задача «dev»)
 6. Swagger будет доступен на: http://localhost:5000/api/docs
+7. Метрики Prometheus: http://localhost:5000/metrics
 
 ### Запуск через Docker Compose (dev)
 
@@ -93,15 +94,22 @@ yarn prisma:seed
 
 5. Запустите приложение:
 
-```bash
+````bash
 yarn start:dev
-```
+
+6. Проверьте метрики Prometheus:
+
+```bash
+curl -s http://localhost:5000/metrics | head -n 20
+````
+
+````
 
 Остановка сервисов:
 
 ```bash
 docker compose down
-```
+````
 
 Примечания:
 
@@ -176,6 +184,14 @@ make e2e-serial   # yarn test:e2e:serial
 - CORS: `CORS_ORIGIN` (строка, по умолчанию `*`), методы/заголовки разрешены по списку; поддержаны заголовки `X-Admin-Language` и `Accept-Language`.
 - Лимиты тела: JSON и URL-encoded по 1 МБ по умолчанию. Настраиваются переменными `BODY_LIMIT_JSON` и `BODY_LIMIT_URLENCODED`.
 - Отдельный маршрут для прямых загрузок принимает «сырое» тело до ~110 МБ: `POST /api/uploads/direct`.
+
+### Мониторинг: Prometheus метрики
+
+- Эндпоинт: `GET /metrics` — текстовая экспозиция в формате Prometheus (content-type `text/plain; version=0.0.4`).
+- Содержимое:
+  - Стандартные метрики процесса (`collectDefaultMetrics` из `prom-client`).
+  - Гистограмма `http_request_duration_seconds{method,route,status_code}` для всех HTTP‑запросов (глобальный interceptor).
+- На dev не защищено аутентификацией. Для prod можно добавить защиту/ограничение CIDR в будущих итерациях.
 
 См. `src/common/security/app-security.config.ts` и `src/main.ts` для включения.
 

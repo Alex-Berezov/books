@@ -54,7 +54,9 @@ describe('Security config (Helmet, CORS, limits)', () => {
     await app.init();
 
     const origin = 'http://example.com';
-    const preflight = await request(app.getHttpServer())
+    const preflight = await (
+      request as unknown as (server: unknown) => request.SuperTest<request.Test>
+    )(app.getHttpServer())
       .options('/echo/json')
       .set('Origin', origin)
       .set('Access-Control-Request-Method', 'POST');
@@ -73,14 +75,14 @@ describe('Security config (Helmet, CORS, limits)', () => {
     // Build a payload slightly over 1mb (1,050,000 bytes)
     const big = 'x'.repeat(1_050_000);
     // JSON
-    const resJson = await request(app.getHttpServer())
+    const resJson = await request(app.getHttpServer() as import('http').Server)
       .post('/echo/json')
       .set('Content-Type', 'application/json')
       .send({ big });
     expect([413, 400]).toContain(resJson.status); // 413 Payload Too Large expected, but some envs may return 400
 
     // URL-encoded
-    const resUrl = await request(app.getHttpServer())
+    const resUrl = await request(app.getHttpServer() as import('http').Server)
       .post('/echo/url')
       .set('Content-Type', 'application/x-www-form-urlencoded')
       .send(`big=${encodeURIComponent(big)}`);

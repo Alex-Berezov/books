@@ -201,3 +201,10 @@
 - Liveness не зависит от внешних сервисов; возвращает `status`, `uptime`, `timestamp`.
 - Документация обновлена: `docs/ENDPOINTS.md`, `docs/ITERATION_TASKS.md`.
 - Unit‑тесты: `src/modules/health/health.service.spec.ts`, `src/modules/health/health.controller.spec.ts` покрывают сценарии up/down/skipped.
+
+## 2025-09-06 — Prometheus метрики
+
+- Добавлен `MetricsModule` с `/metrics` на основе `prom-client`.
+- Собираются default process‑метрики и HTTP‑гистограмма `http_request_duration_seconds` с лейблами `method`, `route`, `status_code`.
+- Глобальный `MetricsInterceptor` измеряет длительность запросов и проставляет статус.
+- Unit‑тесты: `src/modules/metrics/metrics.service.spec.ts`, `src/modules/metrics/metrics.controller.spec.ts`, `src/modules/metrics/metrics.interceptor.spec.ts`.
