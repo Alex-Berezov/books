@@ -193,3 +193,11 @@
 - AuthService: refresh — невалидный/протухший токен → Unauthorized; logout → success=true.
 - UsersService: assignRole/revokeRole — NotFound для отсутствующих пользователя/роли; list — пагинация и staff=exclude.
 - ViewStatsService: aggregate/top — фильтрация по source; валидация from>to; подтверждено кеширование.
+
+## 2025-09-06 — Health/Readiness endpoints
+
+- Добавлен `HealthModule` с `GET /health/liveness` и `GET /health/readiness`.
+- Readiness проверяет Prisma (`SELECT 1`) и опционально Redis (через простой `RedisProbe` из env: `REDIS_URL|REDIS_HOST`). Если Redis не сконфигурирован — `redis: skipped`.
+- Liveness не зависит от внешних сервисов; возвращает `status`, `uptime`, `timestamp`.
+- Документация обновлена: `docs/ENDPOINTS.md`, `docs/ITERATION_TASKS.md`.
+- Unit‑тесты: `src/modules/health/health.service.spec.ts`, `src/modules/health/health.controller.spec.ts` покрывают сценарии up/down/skipped.

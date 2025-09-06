@@ -31,6 +31,7 @@ import { MediaModule } from './modules/media/media.module';
 import { PublicModule } from './modules/public/public.module';
 import { SitemapModule } from './modules/sitemap/sitemap.module';
 import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
+import { HealthModule } from './modules/health/health.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 
@@ -65,6 +66,7 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     MediaModule,
     PublicModule,
     SitemapModule,
+    HealthModule,
     // ...другие модули
   ],
   controllers: [AppController],

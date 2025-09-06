@@ -278,6 +278,18 @@
   "timestamp": "2025-09-04T12:34:56.789Z"
   }
 
+Дополнительно (Terminus-like):
+
+- GET /health/liveness — Public — статус процесса (без внешних зависимостей)
+- GET /health/readiness — Public — готовность внешних зависимостей (Prisma + Redis опц.)
+  {
+  "status": "up|down",
+  "details": {
+  "prisma": "up|down",
+  "redis": "up|down|skipped"
+  }
+  }
+
 ---
 
 ## Рекомендуемый порядок тестирования в Insomnia

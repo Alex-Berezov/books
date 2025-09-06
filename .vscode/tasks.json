@@ -55,6 +55,24 @@
       "type": "shell",
       "command": "yarn prisma:studio",
       "isBackground": true
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "yarn typecheck",
+      "group": "build"
+    },
+    {
+      "label": "unit-tests",
+      "type": "shell",
+      "command": "yarn test",
+      "group": "test"
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "yarn lint",
+      "group": "build"
     }
   ]
 }

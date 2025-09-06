@@ -40,7 +40,7 @@
 14. 6 — .env.example расширение — [x] (2025-09-05)
 15. 7 — Юнит-тесты: полное покрытие критической инфраструктуры (см. docs/UNIT_TESTING_PLAN.md) — [x] (2025-09-06)
 16. 8 — Безопасность: Helmet, CORS, лимиты тела — [x] (2025-09-06)
-17. 9 — Health/Readiness (terminus)
+17. 9 — Health/Readiness (terminus) — [x] (2025-09-06)
 18. 10 — Prometheus метрики
 19. 11 — GitHub Actions (CI)
 20. 12 — Dockerfile(prod) + docker-compose.prod.yml
@@ -202,12 +202,12 @@
 - Критерии приёмки: приложение стартует; preflight проходит; e2e зелёные.
 - Замечания: не включать строгие политики, лояльные дефолты для dev.
 
-## 9) Health/Readiness (terminus)
+## 9) Health/Readiness (terminus) — [x] (2025-09-06)
 
-- Цель: Эндпоинты `/health/liveness`, `/health/readiness` (DB+Redis).
-- Объём: Подключить `@nestjs/terminus`; создать модуль/контроллер; проверки Prisma и Redis (если Redis недоступен — readiness=false, liveness=true).
-- Критерии приёмки: корректные коды/JSON для обоих эндпоинтов.
-- Замечания: Redis клиент реиспользовать/провайдить; для dev можно заглушку, если Redis не сконфигурирован.
+- Цель: Эндпоинты `/health/liveness`, `/health/readiness` (DB+Redis) для оркестраторов и мониторинга.
+- Объём: Создан `HealthModule` с `HealthController` и `HealthService`; проверки Prisma через `$queryRaw(SELECT 1)`, Redis — опционально (если нет конфигурации, помечается как `skipped`).
+- Критерии приёмки: корректные коды/JSON для обоих эндпоинтов, unit-тесты на happy/edge кейсы (DB ok/fail, Redis ok/fail/skipped).
+- Замечания: пока без реального Redis-клиента — используется лёгкий `RedisProbe` на основе env, будет заменён в задаче по BullMQ/Redis. Liveness не зависит от внешних сервисов.
 
 ## 10) Prometheus метрики
 
