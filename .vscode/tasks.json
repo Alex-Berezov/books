@@ -73,6 +73,12 @@
       "type": "shell",
       "command": "yarn lint",
       "group": "build"
+    },
+    {
+      "label": "ci",
+      "type": "shell",
+      "command": "yarn ci",
+      "group": "build"
     }
   ]
 }

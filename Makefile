@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: up down logs ps migrate generate seed dev reset prisma-studio lint typecheck e2e e2e-serial
+.PHONY: up down logs ps migrate generate seed dev reset prisma-studio lint typecheck e2e e2e-serial ci
 
 up:
 	docker compose up -d
@@ -43,3 +43,6 @@ e2e:
 
 e2e-serial:
 	yarn test:e2e:serial
+
+ci:
+	yarn ci

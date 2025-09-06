@@ -296,10 +296,21 @@ yarn test:e2e -- tags.e2e-spec.ts
 - prisma:seed — `yarn prisma:seed`
 - prisma:studio — `yarn prisma:studio` (фон)
 
+- ci — `yarn ci` (portable CI: install → prisma generate → lint → typecheck → unit → (опц.) e2e → build)
+
 Как запускать:
 
 1. Откройте VS Code → Command Palette → "Tasks: Run Task" → выберите задачу.
 2. Фоновые задачи (`dev`, `prisma:studio`) останавливаются через Terminal → Kill Task.
+
+## CI (portable)
+
+- В репозитории есть провайдер‑независимый скрипт CI: `scripts/ci.sh`. Он выполняется локально командой `yarn ci` или через Makefile `make ci`.
+- Скрипт включает: установку зависимостей, `prisma:generate`, `lint`, `typecheck`, юнит‑тесты и сборку. E2E выключены по умолчанию.
+- Чтобы включить E2E в CI (или локально под управлением CI), задайте переменные окружения: `CI_E2E=1` и `DATABASE_URL` (валидное подключение к Postgres). Тогда будет выполнен `yarn test:e2e:serial`.
+- Шаблоны конфигов поставляются для обоих провайдеров:
+  - GitHub: `.github/workflows/ci.yml` — вызывает `yarn ci`.
+  - GitLab: `.gitlab-ci.yml` — stage `ci`, также вызывает `yarn ci`.
 
 ## Статические файлы (/static) и локальные загрузки
 

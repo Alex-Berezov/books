@@ -42,7 +42,7 @@
 16. 8 — Безопасность: Helmet, CORS, лимиты тела — [x] (2025-09-06)
 17. 9 — Health/Readiness (terminus) — [x] (2025-09-06)
 18. 10 — Prometheus метрики — [x] (2025-09-06)
-19. 11 — GitHub Actions (CI)
+19. 11 — CI (провайдер-независимый скрипт + шаблоны GitHub/GitLab) — [x] (2025-09-06)
 20. 12 — Dockerfile(prod) + docker-compose.prod.yml
 21. 14 — SEO: sitemap.xml и robots.txt
 22. 15 — BullMQ (интеграция базовая)
@@ -162,6 +162,27 @@
 - 3. Контентные сущности: книги и версии — выполнено (2025-09-05):
   - Добавлены unit‑тесты: `modules/book/book.service.spec.ts`, `modules/book-version/book-version.service.spec.ts` (доп. кейсы), `modules/book-summary/book-summary.service.spec.ts`.
   - Проверено: overview (языки, SEO‑фолбэки, флаги), выбор версий по Accept-Language, статусы draft/published в публичных ручках, publish/unpublish, upsert summary.
+
+## 11) CI (провайдер‑независимый) — [x] (2025-09-06)
+
+- Цель: Настроить единый скрипт CI, который можно запускать локально и в любом провайдере (GitHub/GitLab), без жёсткой привязки к платформе. Это снижает поддержку и упрощает перенос.
+- Объём (выполнено):
+  - [x] Добавлен `scripts/ci.sh` — запускает: install → prisma generate → lint → typecheck → unit tests → (опц.) e2e → build.
+  - [x] В `package.json` добавлен скрипт `ci` (вызов `bash scripts/ci.sh`).
+  - [x] В `Makefile` добавлена цель `ci` (делегирует на `yarn ci`).
+  - [x] В `.vscode/tasks.json` добавлена задача `ci` для локального запуска из VS Code.
+  - [x] Добавлены шаблоны CI:
+    - `.github/workflows/ci.yml` — вызывает `yarn ci` (e2e по умолчанию выключены).
+    - `.gitlab-ci.yml` — аналогично, stage `ci` с `yarn ci`.
+- Критерии приёмки:
+  - Локальный запуск `yarn ci` проходит на чистой машине при корректной `.env` и установленном Node 22/Yarn classic.
+  - Шаблоны GitHub/GitLab не содержат провайдер‑специфичной логики кроме вызова `yarn ci`.
+  - В README/CHANGELOG отражены изменения и инструкции по включению e2e в CI.
+- Замечания:
+  - E2E по умолчанию отключены в CI (включаются через переменную `CI_E2E=1` и наличие `DATABASE_URL`). Это позволяет использовать внешний управляемый Postgres/Service Container позже без усложнения текущей итерации.
+  - Пакетный менеджер — только Yarn (classic). Не использовать npm.
+  - Для GitHub можно добавить service container с Postgres в отдельной задаче, если решим запускать e2e в CI.
+
 - 4. Таксономии и фильтрация — выполнено (2025-09-05):
   - Категории: иерархия (запрет циклов), запрет удаления родителя с детьми, публичные резолверы с локализованными slug и фильтрацией по языку; detach 404 при отсутствии связи.
   - Теги: публичные резолверы (локализованные slug) и фильтрация по языку; attach/detach идемпотентны.

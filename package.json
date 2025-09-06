@@ -28,7 +28,8 @@
     "cleanup:bookVersions:apply": "APPLY=1 ts-node prisma/scripts/cleanup-duplicate-book-versions.ts",
     "cleanup:testUsers": "ts-node prisma/scripts/cleanup-test-users.ts",
     "cleanup:testUsers:apply": "APPLY=1 ts-node prisma/scripts/cleanup-test-users.ts",
-    "prepare": "husky && chmod +x .husky/pre-commit || true"
+    "prepare": "husky && chmod +x .husky/pre-commit || true",
+    "ci": "bash scripts/ci.sh"
   },
   "packageManager": "yarn@1.22.22",
   "dependencies": {

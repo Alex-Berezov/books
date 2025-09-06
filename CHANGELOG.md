@@ -208,3 +208,10 @@
 - Собираются default process‑метрики и HTTP‑гистограмма `http_request_duration_seconds` с лейблами `method`, `route`, `status_code`.
 - Глобальный `MetricsInterceptor` измеряет длительность запросов и проставляет статус.
 - Unit‑тесты: `src/modules/metrics/metrics.service.spec.ts`, `src/modules/metrics/metrics.controller.spec.ts`, `src/modules/metrics/metrics.interceptor.spec.ts`.
+
+## 2025-09-06 — CI провайдер‑независимый (portable)
+
+- Добавлен скрипт `scripts/ci.sh`, который выполняет линт, typecheck, unit‑тесты, опционально e2e (по `CI_E2E=1` и при наличии `DATABASE_URL`), и сборку.
+- В `package.json` добавлен скрипт `ci`; в `Makefile` — цель `ci`; в `.vscode/tasks.json` — задача `ci`.
+- Добавлены шаблоны: `.github/workflows/ci.yml` и `.gitlab-ci.yml`, оба вызывают `yarn ci`.
+- Документация обновлена: `docs/ITERATION_TASKS.md` (пункт «11 — CI» помечен выполненным, добавлен раздел), README — раздел «CI (portable)».
