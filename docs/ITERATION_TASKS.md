@@ -45,7 +45,7 @@
 19. 11 — CI (провайдер-независимый скрипт + шаблоны GitHub/GitLab) — [x] (2025-09-06)
 20. 12 — Dockerfile(prod) + docker-compose.prod.yml — [x] (2025-09-06)
 21. 14 — SEO: sitemap.xml и robots.txt — [x] (2025-09-06)
-22. 15 — BullMQ (интеграция базовая)
+22. 15 — BullMQ (интеграция базовая) — [x] (2025-09-06)
 23. 16 — Sentry (ошибки)
 24. 17 — Uploads (R2, Cloudflare) — отложено
 
@@ -287,7 +287,28 @@
 - Критерии приёмки: XML/текст валидны; корректные `Content-Type`; кэш работает; `yarn test` — зелёный.
 - Замечания: lastmod/priority не включены (MVP). Генерацию можно вынести в фоновую очередь позже.
 
-## 15) BullMQ (интеграция базовая)
+## 15) BullMQ (интеграция базовая) — [x] (2025-09-06)
+
+- Цель: Подключить фреймворк очередей для фоновых задач, подготовить минимальную инфраструктуру (подключение к Redis, очередь-пример, воркер, админ-ручки и метрики здоровья).
+- Объём (выполнено):
+  - [x] Зависимости: добавлены `bullmq` и `ioredis` в `package.json`.
+  - [x] Модуль `QueueModule` (`src/modules/queue/*`):
+    - [x] Подключение к Redis через env (`REDIS_URL` или `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`). Если Redis не задан — модуль очередей отключается (провайдеры возвращают undefined, без ошибок).
+    - [x] Очередь `demo` + `Worker` с простым обработчиком (асинхронная задержка, возврат `{ ok, at }`). Конкурентность настраивается через `BULLMQ_DEMO_CONCURRENCY`.
+    - [x] Контроллер `QueueController` с админ-ручками: `GET /queues/status`, `GET /queues/demo/stats`, `POST /queues/demo/enqueue` (Auth + Role Admin).
+    - [x] Сервис `QueueService` с методами `status`, `enqueueDemo`, `getDemoStats`.
+  - [x] Интеграция в `AppModule` — модуль очередей подключён глобально.
+  - [x] Health/Readiness: `HealthModule` теперь выполняет реальный `PING` к Redis через `ioredis` (если Redis настроен). При отсутствии конфигурации Redis помечается как `skipped`.
+  - [x] Документация: README — раздел про очереди; `.env.example` — переменные `REDIS_*`, `BULLMQ_*`; `docs/ENDPOINTS.md` — добавлены ручки очередей.
+- Критерии приёмки: при наличии Redis (например, через `docker compose up -d`) доступно:
+  - `GET /api/health/readiness` → `redis: up` (после старта Redis)
+  - `GET /api/queues/status` (с токеном админа) → `{ enabled: true }`
+  - `POST /api/queues/demo/enqueue` (админ) → `{ id: "..." }`, далее `GET /api/queues/demo/stats` показывает рост `completed`/`waiting`.
+  - При отсутствии Redis — `{ enabled: false }`, readiness помечает `redis: skipped`.
+- Замечания:
+  - Бизнес-джобы не входят в объём итерации; будут добавлены в профильных задачах (обработка изображений/аудио, генерация sitemap и т. п.).
+  - Для прод-среды рекомендуется отдельный процесс-воркер или несколько реплик сервиса. Текущая реализация — in-process worker для упрощения dev.
+  - Мониторинг/админ UI очередей не включён (опционально можно подключить `bull-board` в дальнейших итерациях).
 
 ## 26) Мультисайт i18n: базовая маршрутизация и Page unique — [x] (2025-08-30)
 

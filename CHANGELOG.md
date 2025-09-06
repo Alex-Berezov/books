@@ -118,6 +118,22 @@
 
 -
 
+## 2025-09-06 — BullMQ (интеграция базовая)
+
+- Добавлены зависимости `bullmq` и `ioredis`.
+- Новый модуль `QueueModule`: подключение к Redis из env, очередь `demo`, `Worker` с простым обработчиком, сервис и контроллер.
+- Админ-ручки: `GET /queues/status`, `GET /queues/demo/stats`, `POST /queues/demo/enqueue`.
+- Health/Readiness: Redis-проверка заменена на реальный `PING` через `ioredis` (если Redis настроен), иначе `skipped`.
+- Документация: README (раздел про очереди), `.env.example` (`REDIS_*`, `BULLMQ_*`), `docs/ENDPOINTS.md` (ручки очередей), `docs/ITERATION_TASKS.md` (помечено как выполнено).
+
+### 2025-09-06 — SecurityModule и воркер BullMQ: доработки
+
+- SecurityModule теперь экспортирует `JwtAuthGuard` вместе с `RolesGuard` для единообразного подключения в контроллерах.
+- Доработан демо‑воркер BullMQ:
+  - Поддержан `BULLMQ_WORKER_LOG_LEVEL` (debug|info|warn|error) и `BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS` (таймаут graceful shutdown, по умолчанию 5000 мс).
+  - Переключатель `BULLMQ_IN_PROCESS_WORKER`: `0|false` — выключить in‑process воркер (по умолчанию включён).
+- Документация обновлена: README — раздел «Shared modules: Prisma/Security» и параметры воркера; `.env.example` дополнен новыми ключами; `docs/ENDPOINTS.md` — примечания к очередям.
+
 ## 2025-09-05 — Юнит‑тесты: контентные сущности (книги и версии)
 
 - Добавлены unit‑тесты согласно плану (итерация 3):

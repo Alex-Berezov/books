@@ -3,6 +3,7 @@ import { HealthController } from './health.controller';
 import { HealthService, RedisProbe } from './health.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import IORedis from 'ioredis';
 
 class EnvRedisProbe implements RedisProbe {
   private readonly url?: string;
@@ -13,9 +14,19 @@ class EnvRedisProbe implements RedisProbe {
     return !!this.url;
   }
   async ping(): Promise<boolean> {
-    // Placeholder ping: since we don't have redis client yet, treat configured as up.
-    // Will be replaced with real client in BullMQ/Redis task.
-    return Promise.resolve(this.isConfigured());
+    if (!this.isConfigured()) return false;
+    const host = this.config.get<string>('REDIS_HOST') ?? '127.0.0.1';
+    const port = Number(this.config.get<string>('REDIS_PORT') ?? '6379');
+    const url = this.config.get<string>('REDIS_URL');
+    const client = url ? new IORedis(url) : new IORedis({ host, port });
+    try {
+      const res = await client.ping();
+      return res === 'PONG';
+    } catch {
+      return false;
+    } finally {
+      client.disconnect();
+    }
   }
 }
 

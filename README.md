@@ -117,6 +117,27 @@ docker compose down
 - Порты: Postgres `5432`, Redis `6379` (можно переопределить через переменные в `.env`).
 - Redis добавлен для будущих задач (кэш/очереди); текущий код может работать без него.
 
+### Очереди (BullMQ) — базовая интеграция
+
+- Поддерживается базовая интеграция BullMQ с Redis. При наличии `REDIS_URL` или `REDIS_HOST`/`REDIS_PORT` модуль очередей активируется и поднимает демонстрационную очередь `demo` с воркером.
+- Админ-эндпоинты (Auth + Role Admin):
+  - `GET /queues/status` — статус подсистемы очередей (enabled: true|false)
+  - `GET /queues/demo/stats` — счётчики очереди demo
+  - `POST /queues/demo/enqueue` — поставить тестовую задачу `{ delayMs?: number }`
+- Переменные окружения:
+  - `REDIS_URL` или `REDIS_HOST`/`REDIS_PORT` (+ `REDIS_PASSWORD`)
+  - `BULLMQ_DEMO_QUEUE` (по умолчанию demo)
+  - `BULLMQ_DEMO_CONCURRENCY` (по умолчанию 2)
+  - `BULLMQ_IN_PROCESS_WORKER` (0/1) — запуск in-process воркера вместе с приложением (dev по умолчанию 1)
+  - `BULLMQ_WORKER_LOG_LEVEL` — уровень логирования воркера: debug|info|warn|error (по умолчанию info)
+  - `BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS` — таймаут graceful shutdown воркера (по умолчанию 5000)
+- Если Redis не настроен — модуль очередей отключается автоматически; health/readiness продолжает работать, Redis помечается как `skipped`.
+
+#### Отдельный процесс воркера
+
+- Запуск демо‑воркера в отдельном процессе: `yarn worker:demo`.
+- Воркерт читает те же переменные Redis (`REDIS_URL` или `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`), а также поддерживает конфиги выше (`BULLMQ_DEMO_QUEUE`, `BULLMQ_DEMO_CONCURRENCY`, `BULLMQ_WORKER_LOG_LEVEL`, `BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS`).
+
 ### Продакшн-сборка: Dockerfile + docker-compose.prod.yml
 
 В репозитории добавлен продакшн Dockerfile (multi-stage) и compose для близкого к прод окружения:
@@ -219,6 +240,30 @@ make e2e-serial   # yarn test:e2e:serial
 - CORS: `CORS_ORIGIN` (строка, по умолчанию `*`), методы/заголовки разрешены по списку; поддержаны заголовки `X-Admin-Language` и `Accept-Language`.
 - Лимиты тела: JSON и URL-encoded по 1 МБ по умолчанию. Настраиваются переменными `BODY_LIMIT_JSON` и `BODY_LIMIT_URLENCODED`.
 - Отдельный маршрут для прямых загрузок принимает «сырое» тело до ~110 МБ: `POST /api/uploads/direct`.
+
+## Shared modules: Prisma/Security
+
+В приложении есть два глобальных «shared» модуля, упрощающих DI и переиспользование безопасности и БД:
+
+- `PrismaModule` (`src/shared/prisma/prisma.module.ts`) — помечен `@Global()`, предоставляет и экспортирует `PrismaService`. Доступен во всех модулях без явного импорта сервиса.
+- `SecurityModule` (`src/shared/security/security.module.ts`) — помечен `@Global()`, импортирует `PrismaModule`, предоставляет и экспортирует `RolesGuard` и `JwtAuthGuard` для единообразия.
+
+Как использовать в контроллерах:
+
+```ts
+import { UseGuards } from '@nestjs/common';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin') // или Role.Admin из enum
+```
+
+Примечания:
+
+- Гварды НЕ зарегистрированы глобально через `APP_GUARD`, чтобы публичные ручки оставались открытыми по умолчанию. Подключайте `@UseGuards` на нужных контроллерах/методах.
+- Ранее локальные провайдеры `RolesGuard`/`PrismaService` из модулей удалены — используйте shared‑модули. Это устраняет циклы зависимостей и упрощает e2e.
 
 ### Мониторинг: Prometheus метрики
 

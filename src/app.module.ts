@@ -3,7 +3,6 @@ import { APP_GUARD } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
 import { ConfigModule } from '@nestjs/config';
-import { PrismaService } from './prisma/prisma.service';
 import { BookModule } from './modules/book/book.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -14,7 +13,6 @@ import { ChapterModule } from './modules/chapter/chapter.module';
 import { AudioChapterModule } from './modules/audio-chapter/audio-chapter.module';
 import { SeoModule } from './modules/seo/seo.module';
 import { BookSummaryModule } from './modules/book-summary/book-summary.module';
-import { RolesGuard } from './common/guards/roles.guard';
 import { CategoryModule } from './modules/category/category.module';
 import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
 import { CommentsModule } from './modules/comments/comments.module';
@@ -33,6 +31,9 @@ import { SitemapModule } from './modules/sitemap/sitemap.module';
 import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
 import { HealthModule } from './modules/health/health.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
+import { QueueModule } from './modules/queue/queue.module';
+import { PrismaModule } from './shared/prisma/prisma.module';
+import { SecurityModule } from './shared/security/security.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 
@@ -42,6 +43,9 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
       isGlobal: true,
       envFilePath: '.env',
     }),
+    // Global shared providers
+    PrismaModule,
+    SecurityModule,
     // Static files for local uploads
     ServeStaticModule.forRoot({ rootPath: staticRoot, serveRoot: '/static' }),
     CacheModule,
@@ -69,15 +73,11 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     SitemapModule,
     HealthModule,
     MetricsModule,
+    QueueModule,
     // ...другие модули
   ],
   controllers: [AppController],
-  providers: [
-    PrismaService,
-    AppService,
-    RolesGuard,
-    { provide: APP_GUARD, useClass: LanguageResolverGuard },
-  ],
-  exports: [PrismaService],
+  providers: [AppService, { provide: APP_GUARD, useClass: LanguageResolverGuard }],
+  // No exports: shared providers are exposed by global modules
 })
 export class AppModule {}

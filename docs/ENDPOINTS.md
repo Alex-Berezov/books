@@ -199,6 +199,18 @@
   "text": "Отличная книга!"
   }
 
+## 16) [x] Queues (BullMQ) — admin only
+
+- GET /queues/status — Auth + Roles(admin) — статус подсистемы очередей (enabled)
+- GET /queues/demo/stats — Auth + Roles(admin) — счётчики demo-очереди
+- POST /queues/demo/enqueue — Auth + Roles(admin) — добавить демо-задачу `{ delayMs?: number }`
+
+Примечания по очередям и безопасности:
+
+- Доступ к админ-ручкам обеспечивается комбинацией `JwtAuthGuard` + `RolesGuard`. Оба гварда предоставляются глобальным `SecurityModule` и подключаются на контроллерах через `@UseGuards`.
+- Воркер может работать in‑process или отдельно: переключение через `BULLMQ_IN_PROCESS_WORKER=0|1`. Отдельный процесс воркера запускается командой `yarn worker:demo`.
+- Конфигурация воркера: `BULLMQ_WORKER_LOG_LEVEL` (debug|info|warn|error) и `BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS` для graceful shutdown.
+
   Комментарий к главе:
   {
   "chapterId": "{{ chapterId }}",
