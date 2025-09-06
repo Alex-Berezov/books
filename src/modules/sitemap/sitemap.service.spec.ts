@@ -35,6 +35,7 @@ describe('SitemapService (unit)', () => {
     const first = service.robots();
     const second = service.robots();
     expect(first.body).toContain('Sitemap: http://localhost:5000/static/sitemap.xml');
+    expect(first.contentType).toBe('text/plain; charset=utf-8');
     expect(second.body).toBe(first.body); // cached content equality
     expect(second.contentType).toBe(first.contentType);
   });
@@ -42,6 +43,7 @@ describe('SitemapService (unit)', () => {
   it('sitemap index lists all language sitemaps and caches by TTL', () => {
     const first = service.sitemapIndex();
     expect(first.body).toContain('<sitemapindex');
+    expect(first.contentType).toBe('application/xml; charset=utf-8');
     for (const lang of Object.values(Language)) {
       expect(first.body).toContain(`http://localhost:5000/static/sitemap-${lang}.xml`);
     }
@@ -79,5 +81,24 @@ describe('SitemapService (unit)', () => {
     const third = await service.perLanguage('en');
     expect(third.body).not.toBe(first.body);
     expect(third.body).toContain('http://localhost:5000/static/en/pages/updated');
+  });
+
+  it('falls back to default public base when env not set', async () => {
+    // Recreate service with env without LOCAL_PUBLIC_BASE_URL
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.LOCAL_PUBLIC_BASE_URL;
+    const fresh = new SitemapService(prisma as unknown as PrismaService);
+    prisma.page.findMany.mockResolvedValueOnce([{ slug: 'home' }]);
+    prisma.bookVersion.findMany.mockResolvedValueOnce([{ book: { slug: 'book' } }]);
+
+    const robots = fresh.robots();
+    expect(robots.body).toContain('Sitemap: http://localhost:3000/sitemap.xml');
+
+    const index = fresh.sitemapIndex();
+    expect(index.body).toContain('http://localhost:3000/sitemap-en.xml');
+
+    const per = await fresh.perLanguage('en');
+    expect(per.body).toContain('http://localhost:3000/en/pages/home');
+    expect(per.body).toContain('http://localhost:3000/en/books/book');
   });
 });

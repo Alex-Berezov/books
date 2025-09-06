@@ -44,7 +44,7 @@
 18. 10 — Prometheus метрики — [x] (2025-09-06)
 19. 11 — CI (провайдер-независимый скрипт + шаблоны GitHub/GitLab) — [x] (2025-09-06)
 20. 12 — Dockerfile(prod) + docker-compose.prod.yml — [x] (2025-09-06)
-21. 14 — SEO: sitemap.xml и robots.txt
+21. 14 — SEO: sitemap.xml и robots.txt — [x] (2025-09-06)
 22. 15 — BullMQ (интеграция базовая)
 23. 16 — Sentry (ошибки)
 24. 17 — Uploads (R2, Cloudflare) — отложено
@@ -268,12 +268,24 @@
 - Критерии приёмки: корректный выбор и фолбэк; документировано в README.
 - Замечания: не трогаем бизнес-логику CRUD.
 
-## 14) SEO: sitemap.xml и robots.txt
+## 14) SEO: sitemap.xml и robots.txt — [x] (2025-09-06)
 
-- Цель: Базовая SEO-отдача.
-- Объём: Endpoint `GET /sitemap.xml` (версии книг с canonical), `GET /robots.txt` (лояльный дефолт). Кэшировать на 30–60с.
-- Критерии приёмки: корректный content-type; XML/текст валидны; e2e smoke.
-- Замечания: без приоритезации/lastmod — MVP.
+- Цель: Базовая SEO-отдача (индекс sitemap по языкам, per-language карты и robots.txt).
+- Объём (выполнено):
+  - [x] Реализован `SitemapService` и `SitemapController` с эндпоинтами:
+    - `GET /sitemap.xml` — индекс карт сайта по всем языкам из Prisma enum `Language`.
+    - `GET /sitemap-:lang.xml` — карта сайта для конкретного языка (страницы и книги, URL с префиксом `/:lang`).
+    - `GET /robots.txt` — базовый robots с `Allow: /` и ссылкой на `/sitemap.xml`.
+  - [x] Кэширование in-memory с TTL из `SITEMAP_CACHE_TTL_MS` (по умолчанию 60с).
+  - [x] Базовый публичный адрес берётся из `LOCAL_PUBLIC_BASE_URL` (дефолт `http://localhost:3000`).
+  - [x] Подключение модуля — выполнено ранее в задаче 30; актуализированы юнит‑тесты.
+- Тесты (unit):
+  - `src/modules/sitemap/sitemap.service.spec.ts` — проверки robots, индексного sitemap, per-language карты (страницы и книги), кэширования TTL, уникальности слугов книг; проверка `content-type`; фолбэк базового URL при отсутствии env.
+  - `src/modules/sitemap/sitemap.controller.spec.ts` — делегация и корректные заголовки/тело ответа для всех трёх ручек.
+- Тесты (e2e):
+  - `test/sitemap.e2e-spec.ts` — smoke: контент-тайпы и наличие ключевых тегов в ответах `/sitemap.xml`, `/sitemap-:lang.xml`, `/robots.txt`.
+- Критерии приёмки: XML/текст валидны; корректные `Content-Type`; кэш работает; `yarn test` — зелёный.
+- Замечания: lastmod/priority не включены (MVP). Генерацию можно вынести в фоновую очередь позже.
 
 ## 15) BullMQ (интеграция базовая)
 
