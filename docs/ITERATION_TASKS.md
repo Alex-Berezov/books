@@ -39,7 +39,7 @@
 13. 5 — Docker Compose (dev): Postgres + Redis — [x] (2025-09-05)
 14. 6 — .env.example расширение — [x] (2025-09-05)
 15. 7 — Юнит-тесты: полное покрытие критической инфраструктуры (см. docs/UNIT_TESTING_PLAN.md) — [x] (2025-09-06)
-16. 8 — Безопасность: Helmet, CORS, лимиты тела
+16. 8 — Безопасность: Helmet, CORS, лимиты тела — [x] (2025-09-06)
 17. 9 — Health/Readiness (terminus)
 18. 10 — Prometheus метрики
 19. 11 — GitHub Actions (CI)
@@ -184,6 +184,20 @@
 ## 8) Безопасность: Helmet, CORS, лимиты тела
 
 - Цель: Базовая защита HTTP, корректный CORS, предсказуемые лимиты тела.
+- Объём (выполнено):
+  - [x] Добавлен централизованный конфиг безопасности: `src/common/security/app-security.config.ts`.
+  - [x] Подключён в `src/main.ts` (`configureSecurity(app)`): Helmet, CORS, body-parser лимиты, raw для `/api/uploads/direct`, статика `/static`.
+  - [x] Переменные окружения: `CORS_ORIGIN`, `BODY_LIMIT_JSON`, `BODY_LIMIT_URLENCODED` (добавлены в `.env.example`, README).
+  - [x] Юнит‑тесты: `src/common/security/app-security.config.spec.ts` — проверяются заголовки Helmet, CORS preflight, ошибки 413 на телах >1 МБ.
+- Критерии приёмки:
+  - Приложение отдаёт стандартные security-заголовки (X-Frame-Options, X-Content-Type-Options, X-DNS-Prefetch-Control и т. п.).
+  - CORS разрешает указанный `CORS_ORIGIN` и корректно обрабатывает preflight.
+  - JSON/urlencoded тела больше лимита получают 413 Payload Too Large.
+  - Прямые загрузки на `/api/uploads/direct` принимают до ~110 МБ.
+  - `yarn test` — зелёный для добавленных unit‑тестов.
+- Замечания:
+  - В dev CSP отключён (Helmet `contentSecurityPolicy: false`), чтобы не ломать Swagger.
+  - Для статики включён `crossOriginResourcePolicy: cross-origin`, чтобы позволить отдачу файлов с `/static`.
 - Объём: В `main.ts` подключить Helmet; CORS по `CORS_ORIGIN`; общий `json/raw` body limit из env (кроме `/uploads/direct`, где уже задано).
 - Критерии приёмки: приложение стартует; preflight проходит; e2e зелёные.
 - Замечания: не включать строгие политики, лояльные дефолты для dev.

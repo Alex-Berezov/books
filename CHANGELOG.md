@@ -158,6 +158,13 @@
 ## 2025-09-06 — Юнит‑тесты: Медиа и загрузки
 
 - Добавлены unit‑тесты согласно плану (итерация 7):
+
+## 2025-09-06 — Безопасность: Helmet, CORS, лимиты тела
+
+- Добавлен централизованный конфиг безопасности `src/common/security/app-security.config.ts` и подключение в `main.ts`.
+- Включены Helmet (CSP off в dev), CORS (`CORS_ORIGIN`), лимиты для JSON/URL-encoded (`BODY_LIMIT_JSON|URLENCODED`), raw 110 МБ для `/api/uploads/direct`, статика `/static`.
+- Обновлены `.env.example` и README (секция про безопасность).
+- Юнит‑тесты `src/common/security/app-security.config.spec.ts`: проверка security-заголовков, CORS preflight и 413 для больших тел.
   - `src/modules/uploads/uploads.service.spec.ts` — presign (валидации CT/размера, генерация key/token/headers, запись токена в cache), directUpload (проверки токена/пользователя/CT/размера, сохранение и очистка токена), delete/publicUrl — делегирование стораджу.
   - `src/modules/media/media.service.spec.ts` — confirm (идемпотентность, снятие isDeleted), обработка P2002 при гонке, list с фильтрами q/type и исключением deleted, remove — soft‑delete + best‑effort удаление файла.
 - Документация: обновлены `docs/UNIT_TESTING_PLAN.md` (п.7 отмечен как выполненный) и `docs/MEDIA_LIBRARY.md` (раздел про тесты).

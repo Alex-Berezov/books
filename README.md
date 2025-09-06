@@ -151,6 +151,9 @@ make e2e-serial   # yarn test:e2e:serial
 - DEFAULT_LANGUAGE — язык по умолчанию для i18n-политики (по умолчанию `en`)
 - LOCAL_UPLOADS_DIR — каталог для локальных загрузок (по умолчанию `var/uploads`)
 - LOCAL_PUBLIC_BASE_URL — базовый публичный адрес для генерации ссылок. Если не задан — по умолчанию `http://localhost:3000` в SEO/Sitemap, и `http://localhost:5000/static` для локального стораджа. Рекомендуется для dev ставить `http://localhost:5000/static`.
+- CORS_ORIGIN — разрешённый Origin для CORS (по умолчанию `*`).
+- BODY_LIMIT_JSON — лимит для JSON-тел (по умолчанию `1mb`).
+- BODY_LIMIT_URLENCODED — лимит для urlencoded-тел (по умолчанию `1mb`).
 - UPLOADS_MAX_IMAGE_MB — лимит изображений в МБ (по умолчанию 5)
 - UPLOADS_MAX_AUDIO_MB — лимит аудио в МБ (по умолчанию 100)
 - UPLOADS_PRESIGN_TTL_SEC — TTL для presign (по умолчанию 600)
@@ -164,7 +167,17 @@ make e2e-serial   # yarn test:e2e:serial
 - RATE_LIMIT_COMMENTS_WINDOW_MS — размер окна для лимита (дефолт 60000)
 - ADMIN_EMAILS — список email через запятую для авто-выдачи роли admin (например, `admin@example.com`)
 - CONTENT_MANAGER_EMAILS — список email через запятую для авто-выдачи роли content_manager
-- CORS_ORIGIN — разрешённый Origin для CORS (по умолчанию `*`)
+
+### Безопасность: Helmet, CORS и лимиты тела
+
+В приложении включены базовые защиты и предсказуемые лимиты:
+
+- Helmet с безопасными заголовками (в dev отключён CSP, чтобы не мешать Swagger).
+- CORS: `CORS_ORIGIN` (строка, по умолчанию `*`), методы/заголовки разрешены по списку; поддержаны заголовки `X-Admin-Language` и `Accept-Language`.
+- Лимиты тела: JSON и URL-encoded по 1 МБ по умолчанию. Настраиваются переменными `BODY_LIMIT_JSON` и `BODY_LIMIT_URLENCODED`.
+- Отдельный маршрут для прямых загрузок принимает «сырое» тело до ~110 МБ: `POST /api/uploads/direct`.
+
+См. `src/common/security/app-security.config.ts` и `src/main.ts` для включения.
 
 ## Языки: политика выбора и расширяемость
 

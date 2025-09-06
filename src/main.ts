@@ -7,11 +7,13 @@ import { CreateBookDto } from './modules/book/dto/create-book.dto';
 import { UpdateBookDto } from './modules/book/dto/update-book.dto';
 import { CreateBookVersionDto } from './modules/book-version/dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './modules/book-version/dto/update-book-version.dto';
-import * as express from 'express';
-import { join } from 'node:path';
+import { configureSecurity } from './common/security/app-security.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Security (Helmet, CORS, body limits, static, direct upload raw)
+  configureSecurity(app);
 
   // Set up global ValidationPipe:
   app.useGlobalPipes(
@@ -51,18 +53,6 @@ async function bootstrap() {
 
   // Add "api" prefix to all routes
   app.setGlobalPrefix('api');
-
-  // Raw body middleware for direct uploads (local driver)
-  app.use(
-    '/api/uploads/direct',
-    express.raw({ type: '*/*', limit: '110mb' }), // 100MB + headroom
-  );
-
-  // Ensure static serving for local uploads (in addition to ServeStaticModule)
-  const uploadsRoot = process.env.LOCAL_UPLOADS_DIR
-    ? join(process.cwd(), process.env.LOCAL_UPLOADS_DIR)
-    : join(process.cwd(), 'var', 'uploads');
-  app.use('/static', express.static(uploadsRoot));
 
   const PORT = Number(process.env.PORT) || 5000;
   const HOST = process.env.HOST || '0.0.0.0';
