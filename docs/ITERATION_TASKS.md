@@ -173,9 +173,13 @@
   - Результат: `yarn test` — зелёный.
 
 - 7. Медиа и загрузки — выполнено (2025-09-06):
-  - UploadsService: покрыты presign (валидации, генерация key/token/headers, запись токена в cache), directUpload (проверки токена/пользователя/CT/размера, сохранение в сторадж, очистка токена), delete и getPublicUrl (делегирование стораджу).
-  - MediaService: confirm идемпотентен (create/update + снятие isDeleted), валидация URL, обработка P2002 с возвратом найденной записи, list с q/type и исключением deleted, remove — soft‑delete + best‑effort удаление файла.
-  - Документация обновлена: `docs/UNIT_TESTING_PLAN.md` (п.7 помечен выполненным) и `docs/MEDIA_LIBRARY.md` (раздел «Тесты» дополнен unit‑покрытием).
+- 8.  Хранилище и вспомогательные слои — выполнено (2025-09-06):
+- Добавлены юнит‑тесты для `StorageService` контракта и локального драйвера, а также `InMemoryCacheService`.
+- Файлы: `src/shared/storage/storage.interface.spec.ts`, `src/shared/storage/local.storage.spec.ts`, `src/shared/cache/inmemory.cache.spec.ts`.
+- Критерии: save/delete/exists/stat/getPublicUrl соответствуют контракту; delete идемпотентен; TTL‑экспирация кэша проверена. `yarn test` — зелёный.
+- UploadsService: покрыты presign (валидации, генерация key/token/headers, запись токена в cache), directUpload (проверки токена/пользователя/CT/размера, сохранение в сторадж, очистка токена), delete и getPublicUrl (делегирование стораджу).
+- MediaService: confirm идемпотентен (create/update + снятие isDeleted), валидация URL, обработка P2002 с возвратом найденной записи, list с q/type и исключением deleted, remove — soft‑delete + best‑effort удаление файла.
+- Документация обновлена: `docs/UNIT_TESTING_PLAN.md` (п.7 помечен выполненным) и `docs/MEDIA_LIBRARY.md` (раздел «Тесты» дополнен unit‑покрытием).
 
 ## 8) Безопасность: Helmet, CORS, лимиты тела
 

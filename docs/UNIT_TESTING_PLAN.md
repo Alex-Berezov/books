@@ -122,15 +122,14 @@
 - Объём (выполнено):
   - [x] modules/media/media.service.spec.ts — confirm создаёт/обновляет запись, снимает isDeleted у существующей; проверка P2002 (гонка) с возвратом найденной записи; list фильтрует по q/type и исключает deleted; remove — soft‑delete + best‑effort удаление файла.
   - [x] modules/uploads/uploads.service.spec.ts — presign валидирует contentType и размер, генерирует key/headers/token и ставит токен в cache; directUpload проверяет токен/пользователя/CT/размер и сохраняет файл, удаляя токен; delete и getPublicUrl делегируют стораджу.
-- Критерии: повторный confirm не создаёт дубликаты; удаления помечают isDeleted; directUpload отклоняет неверный токен/чужого пользователя/несовпадение content-type и превышение заявленного размера.
-
-8. Хранилище и вспомогательные слои
+- Критерии: повторный confirm не создаёт дубликаты; удаления помечают isDeleted; directUpload отклоняет неверный токен/чужого пользователя/несовпадение content-type и превышение заявленного размера. 8. Хранилище и вспомогательные слои — [x] (2025-09-06)
 
 - Цель: единый контракт стораджа и кэша.
 - Объём:
-  - shared/storage/storage.interface.spec.ts — тестируем через фиктивную реализацию (in‑memory) контракт методов getPublicUrl/put/remove
-  - common/cache (если есть) — базовые сценарии
-- Критерии: интерфейсы устойчивы к расширениям; ошибки мапятся корректно.
+  - [x] shared/storage/storage.interface.spec.ts — контракт через in‑memory реализацию: save/delete/exists/stat/getPublicUrl. Стримовый путь (Readable) собирается в Buffer; проверка contentType в stat.
+  - [x] shared/storage/local.storage.spec.ts — unit‑тесты локального драйвера: сохранение, exists/stat, idempotent delete (ENOENT → no‑op), защита от directory traversal в key, корректная сборка публичного URL из env.
+  - [x] shared/cache/inmemory.cache.spec.ts — базовые сценарии: set/get/del и TTL‑экспирация через fake timers.
+  - Критерии: интерфейсы устойчивы к расширениям; ошибки мапятся корректно; `yarn test` — зелёный.
 
 9. Прочее
 

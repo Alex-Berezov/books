@@ -162,3 +162,12 @@
   - `src/modules/media/media.service.spec.ts` — confirm (идемпотентность, снятие isDeleted), обработка P2002 при гонке, list с фильтрами q/type и исключением deleted, remove — soft‑delete + best‑effort удаление файла.
 - Документация: обновлены `docs/UNIT_TESTING_PLAN.md` (п.7 отмечен как выполненный) и `docs/MEDIA_LIBRARY.md` (раздел про тесты).
 - Все unit‑тесты проходят (`yarn test`). Обновлены: `docs/UNIT_TESTING_PLAN.md` (итерация 6 помечена выполненной, добавлены детали) и краткие пояснения в `docs/ITERATION_TASKS.md`.
+
+## 2025-09-06 — Юнит‑тесты: хранилище и кэш (итерация 8)
+
+- Добавлены unit‑тесты для общих слоёв хранения и кэша:
+  - `src/shared/storage/storage.interface.spec.ts` — контракт StorageService через in‑memory реализацию (save/delete/exists/stat/getPublicUrl, потоковый ввод).
+  - `src/shared/storage/local.storage.spec.ts` — драйвер локального стораджа: запись/чтение/статистика, идемпотентное удаление (ENOENT → no‑op), защита от directory traversal, формирование публичного URL.
+  - `src/shared/cache/inmemory.cache.spec.ts` — InMemoryCacheService: set/get/del и TTL‑экспирация через fake timers.
+- Документация обновлена: `docs/UNIT_TESTING_PLAN.md` (п. 8 помечен выполненным), `docs/ITERATION_TASKS.md` (статус юнит‑тестов обновлён).
+- Результат: `yarn test` — все тесты зелёные; интерфейсы устойчивы к расширениям.
