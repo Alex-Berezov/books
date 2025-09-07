@@ -69,6 +69,14 @@ export class CategoryController {
     return this.service.getChildren(id);
   }
 
+  @Get('categories/:id/ancestors')
+  @ApiOperation({ summary: 'Get ancestors path of the category (root → ... → parent)' })
+  @ApiParam({ name: 'id' })
+  @ApiOkResponse({ description: 'Array from root to parent (excluding the node itself)' })
+  ancestors(@Param('id') id: string) {
+    return this.service.getAncestors(id);
+  }
+
   @Post('categories')
   @ApiOperation({ summary: 'Create category' })
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -108,6 +116,15 @@ export class CategoryController {
     @Headers('accept-language') acceptLanguage?: string,
   ) {
     return this.service.getBySlugWithBooks(slug, queryLang, acceptLanguage);
+  }
+
+  // Публичный путь с префиксом языка
+  @Get(':lang/categories/:slug/books')
+  @ApiOperation({ summary: 'Публичный список версий книги по категории (с префиксом языка)' })
+  @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiParam({ name: 'slug' })
+  publicByLangSlug(@Param('lang') lang: Language, @Param('slug') slug: string) {
+    return this.service.getByLangSlugWithBooks(lang, slug);
   }
 
   // === Translations (Admin) ===

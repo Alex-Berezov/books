@@ -403,7 +403,48 @@ export class SeoService {
         canonicalPath: `/${effLang}/books/${book.slug}`,
         imageUrl: chosen?.coverImageUrl || undefined,
       } as const;
-      return buildBundle(base, seo || undefined);
+      const bundle = buildBundle(base, seo || undefined) as {
+        meta: unknown;
+        openGraph: unknown;
+        twitter: unknown;
+        schema: unknown;
+      } & { breadcrumbPath?: Array<{ id: string; name: string; slug: string }> };
+      try {
+        if (chosen?.id) {
+          const links = await this.prisma.bookCategory.findMany({
+            where: { bookVersionId: chosen.id },
+            select: { category: { select: { id: true, name: true, slug: true, parentId: true } } },
+          });
+          const cat = links[0]?.category;
+          if (cat) {
+            const path: Array<{ id: string; name: string; slug: string }> = [];
+            let current: {
+              id: string;
+              name: string;
+              slug: string;
+              parentId: string | null;
+            } | null = cat;
+            while (current?.parentId) {
+              const parent: {
+                id: string;
+                name: string;
+                slug: string;
+                parentId: string | null;
+              } | null = await this.prisma.category.findUnique({
+                where: { id: current.parentId },
+                select: { id: true, name: true, slug: true, parentId: true },
+              });
+              if (!parent) break;
+              path.push({ id: parent.id, name: parent.name, slug: parent.slug });
+              current = parent;
+            }
+            bundle.breadcrumbPath = path.reverse();
+          }
+        }
+      } catch {
+        // ignore breadcrumb errors
+      }
+      return bundle;
     }
 
     if (t === 'page') {

@@ -118,6 +118,7 @@
 - GET /:lang/seo/resolve?type=book|version|page&id=... — Public — i18n-резолв SEO с префиксом языка (приоритетнее query/header)
   - Для `type=version` канонический URL всегда без префикса: `/versions/:id`
   - Для `type=book` | `page` канонический URL включает префикс: `/:lang/books/:slug` | `/:lang/pages/:slug`
+  - Дополнительно: для `type=book` ответ включает `breadcrumbPath` (если есть привязанные категории у выбранной версии) — массив от корня до родителя категории: `[{ id, slug, name }]`
 
 ### 10.2) [x] SEO i18n рекомендации (для фронта/генераторов)
 
@@ -145,6 +146,7 @@
 - GET /categories — Public — список (пагинация)
 - GET /categories/tree — Public — полное дерево категорий
 - GET /categories/:id/children — Public — прямые дети категории
+- GET /categories/:id/ancestors — Public — предки категории от корня до родителя (для хлебных крошек)
 - POST /categories — Auth + Roles(admin|content_manager) — создать категорию (базовую)
 - PATCH /categories/:id — Auth + Roles(admin|content_manager) — обновить категорию (базовую)
 - DELETE /categories/:id — Auth + Roles(admin|content_manager) — удалить (204); запрещено при наличии дочерних

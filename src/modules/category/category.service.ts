@@ -290,6 +290,33 @@ export class CategoryService {
     return this.prisma.category.findMany({ where: { parent: { id } }, orderBy: { name: 'asc' } });
   }
 
+  async getAncestors(id: string) {
+    const node = await this.prisma.category.findUnique({
+      where: { id },
+      select: { parentId: true },
+    });
+    if (!node) throw new NotFoundException('Category not found');
+    const path: Array<{
+      id: string;
+      name: string;
+      slug: string;
+      type: PrismaCategory['type'];
+      parentId: string | null;
+    }> = [];
+    let current: string | null = node.parentId;
+    while (current) {
+      const c = await this.prisma.category.findUnique({
+        where: { id: current },
+        select: { id: true, name: true, slug: true, type: true, parentId: true },
+      });
+      if (!c) break;
+      path.push(c);
+      current = c.parentId;
+    }
+    // we collected from child->parent, need root->... order excluding the node itself
+    return path.reverse();
+  }
+
   private async isDescendant(nodeId: string, maybeAncestorId: string): Promise<boolean> {
     // climb up from nodeId to root to see if we meet maybeAncestorId
     let current: string | null = nodeId;

@@ -149,7 +149,7 @@ describe('Seo e2e', () => {
 
     // Create a book with no SEO and resolve by slug (fallback to version data if any)
     const book = await prisma.book.create({ data: { slug: `book-seo-resolve-${Date.now()}` } });
-    await prisma.bookVersion.create({
+    const bv = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
         language: 'en',
@@ -162,11 +162,36 @@ describe('Seo e2e', () => {
         status: 'published',
       },
     });
+    // Create categories: root -> sub, attach sub to version
+    const rootSlug = `root-${Date.now()}`;
+    const rootCat = await request(http())
+      .post('/categories')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ type: 'genre', name: 'Root', slug: rootSlug })
+      .expect(201);
+    const sub = await request(http())
+      .post('/categories')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        type: 'genre',
+        name: 'Sub',
+        slug: `sub-${Date.now()}`,
+        parentId: rootCat.body.id as string,
+      })
+      .expect(201);
+    await request(http())
+      .post(`/versions/${bv.id}/categories`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ categoryId: sub.body.id as string })
+      .expect(201);
     const r2 = await request(http())
       .get('/seo/resolve')
       .query({ type: 'book', id: book.slug })
       .expect(200);
     expect(typeof r2.body.meta.title).toBe('string');
     expect(r2.body.meta.canonicalUrl).toContain(`/books/${book.slug}`);
+    expect(Array.isArray(r2.body.breadcrumbPath)).toBe(true);
+    expect(r2.body.breadcrumbPath.length).toBeGreaterThanOrEqual(1);
+    expect(r2.body.breadcrumbPath[0].slug).toBe(rootSlug);
   });
 });

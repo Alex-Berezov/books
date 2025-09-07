@@ -50,6 +50,13 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
                 body: this.safeBody(req.body),
                 ip: req.ip,
               });
+              // Optional lightweight breadcrumbs for request timeline
+              const breadcrumbs = [
+                { category: 'http', level: 'info', message: `${method} ${req.originalUrl}` },
+                { category: 'http', level: 'error', message: `→ ${status}` },
+              ] as const;
+              scope.addBreadcrumb(breadcrumbs[0]);
+              scope.addBreadcrumb(breadcrumbs[1]);
               const user = this.getUser(req);
               if (user?.id) {
                 scope.setUser({ id: String(user.id), email: user.email });
