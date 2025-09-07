@@ -29,6 +29,7 @@ import { MediaModule } from './modules/media/media.module';
 import { PublicModule } from './modules/public/public.module';
 import { SitemapModule } from './modules/sitemap/sitemap.module';
 import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
+import { GlobalRateLimitGuard } from './common/guards/global-rate-limit.guard';
 import { HealthModule } from './modules/health/health.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { QueueModule } from './modules/queue/queue.module';
@@ -77,7 +78,13 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     // ...другие модули
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: LanguageResolverGuard }],
+  providers: [
+    AppService,
+    // Global throttling first
+    { provide: APP_GUARD, useClass: GlobalRateLimitGuard },
+    // Language resolution after throttling
+    { provide: APP_GUARD, useClass: LanguageResolverGuard },
+  ],
   // No exports: shared providers are exposed by global modules
 })
 export class AppModule {}

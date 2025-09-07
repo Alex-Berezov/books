@@ -21,12 +21,18 @@ export function configureSecurity(app: INestApplication): void {
     }),
   );
 
-  // CORS
+  // CORS: supports wildcard, single origin, or comma-separated whitelist.
+  // Set CORS_CREDENTIALS=1 to enable credentialed requests.
   const originEnv = process.env.CORS_ORIGIN || '*';
-  const corsOrigin = originEnv === '*' ? '*' : originEnv;
+  const corsCredentials = (process.env.CORS_CREDENTIALS ?? '0') === '1';
+  const origins = originEnv
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const corsOrigin: string | string[] = origins.length === 1 ? origins[0] : origins;
   app.enableCors({
     origin: corsOrigin,
-    credentials: false,
+    credentials: corsCredentials,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',

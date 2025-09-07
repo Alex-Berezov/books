@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import type { Application as ExpressApp } from 'express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { CreateBookDto } from './modules/book/dto/create-book.dto';
 import { UpdateBookDto } from './modules/book/dto/update-book.dto';
@@ -14,6 +15,16 @@ import { SentryExceptionFilter } from './shared/sentry/sentry.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Respect reverse proxy headers when running behind a proxy (e.g., ingress)
+  if ((process.env.TRUST_PROXY ?? '0') === '1') {
+    const httpAdapter = app.getHttpAdapter();
+    const getInstance = (httpAdapter as { getInstance?: () => unknown }).getInstance;
+    if (typeof getInstance === 'function') {
+      const instance = getInstance.call(httpAdapter) as ExpressApp;
+      instance.set('trust proxy', 1);
+    }
+  }
 
   // Security (Helmet, CORS, body limits, static, direct upload raw)
   configureSecurity(app);
@@ -45,32 +56,36 @@ async function bootstrap() {
     }),
   );
 
-  // Set up Swagger documentation
-  const config = new DocumentBuilder()
-    .setTitle('Books App API')
-    .setDescription(
-      [
-        'API for the Books application',
-        '',
-        'How to publish a book version:',
-        '1) POST /api/books/{bookId}/versions — create a version (draft by default).',
-        '2) Optionally PATCH /api/versions/{id} — edit fields or SEO.',
-        '3) PATCH /api/versions/{id}/publish — publish the version (status=published).',
-        '4) To hide again — PATCH /api/versions/{id}/unpublish (status=draft).',
-      ].join('\n'),
-    )
-    .setVersion('1.0')
-    .addBearerAuth()
-    .addServer('http://localhost:5000', 'Local')
-    .addServer('https://api.example.com', 'Prod')
-    .build();
-  const document = SwaggerModule.createDocument(app, config, {
-    extraModels: [CreateBookDto, UpdateBookDto, CreateBookVersionDto, UpdateBookVersionDto],
-  });
-  SwaggerModule.setup('api/docs', app, document, {
-    jsonDocumentUrl: 'api/docs-json',
-    swaggerOptions: { persistAuthorization: true },
-  });
+  // Set up Swagger documentation (disabled in prod by default unless SWAGGER_ENABLED=1)
+  const isProd = process.env.NODE_ENV === 'production';
+  const swaggerEnabled = (process.env.SWAGGER_ENABLED ?? (isProd ? '0' : '1')) === '1';
+  if (swaggerEnabled) {
+    const config = new DocumentBuilder()
+      .setTitle('Books App API')
+      .setDescription(
+        [
+          'API for the Books application',
+          '',
+          'How to publish a book version:',
+          '1) POST /api/books/{bookId}/versions — create a version (draft by default).',
+          '2) Optionally PATCH /api/versions/{id} — edit fields or SEO.',
+          '3) PATCH /api/versions/{id}/publish — publish the version (status=published).',
+          '4) To hide again — PATCH /api/versions/{id}/unpublish (status=draft).',
+        ].join('\n'),
+      )
+      .setVersion('1.0')
+      .addBearerAuth()
+      .addServer('http://localhost:5000', 'Local')
+      .addServer('https://api.example.com', 'Prod')
+      .build();
+    const document = SwaggerModule.createDocument(app, config, {
+      extraModels: [CreateBookDto, UpdateBookDto, CreateBookVersionDto, UpdateBookVersionDto],
+    });
+    SwaggerModule.setup('api/docs', app, document, {
+      jsonDocumentUrl: 'api/docs-json',
+      swaggerOptions: { persistAuthorization: true },
+    });
+  }
 
   // Add "api" prefix to all routes
   app.setGlobalPrefix('api');

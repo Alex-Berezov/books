@@ -173,6 +173,33 @@ VS Code задачи (Docker prod):
 
 В `docker-compose.prod.yml` добавлен healthcheck для сервиса `app` (проверяет `GET /metrics`). Compose использует profile `prod` (активируйте флагом `--profile prod`).
 
+## Безопасность (CORS, Swagger, Proxy)
+
+- CORS:
+  - Переменные: `CORS_ORIGIN` (поддерживает список через запятую), `CORS_CREDENTIALS` (0/1).
+  - Для prod используйте белый список доменов и включайте `CORS_CREDENTIALS=1` только если реально нужны cookie/withCredentials.
+- Swagger:
+  - В prod по умолчанию отключён. Включить: `SWAGGER_ENABLED=1`.
+  - Рекомендуется не публиковать Swagger в интернет без авторизации/ограничений.
+- Reverse proxy:
+  - Если работаете за прокси (ingress), включите `TRUST_PROXY=1`, чтобы корректно обрабатывались X-Forwarded-\* заголовки.
+
+### Глобальный троттлинг
+
+- Включение: `RATE_LIMIT_GLOBAL_ENABLED=1`.
+- Параметры: `RATE_LIMIT_GLOBAL_MAX` (по умолчанию 100), `RATE_LIMIT_GLOBAL_WINDOW_MS` (по умолчанию 60000).
+- Исключения: `/health`, `/metrics`, `/api/docs`, `/api/docs-json` (не ограничиваются).
+
+## Генерация OpenAPI типов для фронтенда
+
+- Скрипты:
+  - `yarn openapi:types` — генерирует типы в `libs/api-client/types.ts` из `http://localhost:5000/api/docs-json`.
+  - `OPENAPI_URL=... yarn openapi:types` — указать произвольный URL спецификации.
+  - `yarn openapi:types:prod` — shortcut для прод-URL.
+- Зачем: единые типы контрактов для FE, без ручной синхронизации.
+- Для полноценного SDK (axios/fetch + хуки) можно добавить orval или openapi-generator (см. docs/ITERATION_TASKS.md).
+  - Для RTK Query можно использовать `@rtk-query/codegen-openapi` в фронтовом репозитории, чтобы генерировать endpoints прямо в `createApi`.
+
 ### VS Code Dev Container (опционально)
 
 В репозитории есть конфигурация `.devcontainer/` для запуска в контейнере разработчика:

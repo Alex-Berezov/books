@@ -116,6 +116,34 @@
       "type": "shell",
       "command": "bash -lc 'IMAGE_TAG=${IMAGE_TAG:-latest}; docker push ${REGISTRY:-localhost}/books-app:${IMAGE_TAG}'",
       "group": "build"
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "yarn typecheck",
+      "problemMatcher": ["$tsc"],
+      "group": "build"
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "yarn typecheck",
+      "problemMatcher": ["$tsc"],
+      "group": "build"
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "yarn typecheck",
+      "problemMatcher": ["$tsc"],
+      "group": "build"
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "yarn typecheck",
+      "problemMatcher": ["$tsc"],
+      "group": "build"
     }
   ]
 }

@@ -31,7 +31,9 @@
     "cleanup:testUsers": "ts-node prisma/scripts/cleanup-test-users.ts",
     "cleanup:testUsers:apply": "APPLY=1 ts-node prisma/scripts/cleanup-test-users.ts",
     "prepare": "husky && chmod +x .husky/pre-commit || true",
-    "ci": "bash scripts/ci.sh"
+    "ci": "bash scripts/ci.sh",
+    "openapi:types": "openapi-typescript ${OPENAPI_URL:-http://localhost:5000/api/docs-json} -o libs/api-client/types.ts",
+    "openapi:types:prod": "OPENAPI_URL=${OPENAPI_URL:-https://api.example.com/api/docs-json} yarn openapi:types"
   },
   "packageManager": "yarn@1.22.22",
   "dependencies": {
@@ -81,6 +83,7 @@
     "jest": "^29.7.0",
     "lint-staged": "^15.2.10",
     "prettier": "^3.6.2",
+    "openapi-typescript": "^7.5.2",
     "prisma": "^6.14.0",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
