@@ -189,6 +189,14 @@
 - Включены Helmet (CSP off в dev), CORS (`CORS_ORIGIN`), лимиты для JSON/URL-encoded (`BODY_LIMIT_JSON|URLENCODED`), raw 110 МБ для `/api/uploads/direct`, статика `/static`.
 - Обновлены `.env.example` и README (секция про безопасность).
 - Юнит‑тесты `src/common/security/app-security.config.spec.ts`: проверка security-заголовков, CORS preflight и 413 для больших тел.
+
+## 2025-09-07 — Документация для фронтенд‑агентов
+
+- Добавлена папка `docs/frontend-agents/` с материалами для разработки фронтенда (Next.js App Router, React Query/SWR, Auth.js):
+  - `README.md`, `architecture-and-routing.md`, `auth-next-auth.md`, `data-fetching-and-types.md`,
+    `api-cheatsheet.md`, `pages-contracts.md`, `seo.md`, `error-handling.md`, `quickstart.md`.
+- Источник: синхронизировано с бэкенд‑доками `docs/ENDPOINTS.md` и e2e‑тестами (i18n/SEO/overview).
+- Цель: скопировать в FE‑репозиторий, чтобы ИИ‑агенты могли опираться на актуальные контракты и политику i18n/SEO.
   - `src/modules/uploads/uploads.service.spec.ts` — presign (валидации CT/размера, генерация key/token/headers, запись токена в cache), directUpload (проверки токена/пользователя/CT/размера, сохранение и очистка токена), delete/publicUrl — делегирование стораджу.
   - `src/modules/media/media.service.spec.ts` — confirm (идемпотентность, снятие isDeleted), обработка P2002 при гонке, list с фильтрами q/type и исключением deleted, remove — soft‑delete + best‑effort удаление файла.
 - Документация: обновлены `docs/UNIT_TESTING_PLAN.md` (п.7 отмечен как выполненный) и `docs/MEDIA_LIBRARY.md` (раздел про тесты).
