@@ -176,6 +176,42 @@
       "type": "shell",
       "command": "docker-compose -f docker-compose.monitoring.yml logs -f",
       "isBackground": true
+    },
+    {
+      "label": "security:setup",
+      "type": "shell",
+      "command": "./scripts/setup_security.sh",
+      "group": "build"
+    },
+    {
+      "label": "security:test",
+      "type": "shell",
+      "command": "./scripts/test_security.sh",
+      "group": "test"
+    },
+    {
+      "label": "backup:create",
+      "type": "shell",
+      "command": "./scripts/backup_database.sh daily",
+      "group": "build"
+    },
+    {
+      "label": "backup:restore",
+      "type": "shell",
+      "command": "./scripts/restore_database.sh",
+      "group": "build"
+    },
+    {
+      "label": "backup:test",
+      "type": "shell",
+      "command": "./scripts/test_backup.sh",
+      "group": "test"
+    },
+    {
+      "label": "backup:setup-cron",
+      "type": "shell",
+      "command": "./scripts/setup_backup_cron.sh",
+      "group": "build"
     }
   ]
 }
