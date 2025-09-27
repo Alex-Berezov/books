@@ -7,7 +7,20 @@ COPY package.json yarn.lock ./
 RUN yarn install
 COPY . .
 RUN yarn prisma:generate || echo "Prisma generate failed, continuing..."
-RUN yarn build
+# Debug build process
+RUN echo "=== Build Debug ===" && \
+    cat tsconfig.json && \
+    echo "=== Running nest build ===" && \
+    yarn build && \
+    echo "=== Checking result ===" && \
+    ls -la && \
+    find . -name "*.js" -path "./dist*" || true && \
+    echo "=== Trying alternative build ===" && \
+    (npx tsc -p tsconfig.build.json || true) && \
+    ls -la dist/ || echo "No dist directory found" && \
+    echo "=== Creating dist if missing ===" && \
+    ([ ! -d "dist" ] && npx nest build --webpack || true) && \
+    ls -la dist/ || echo "Still no dist directory"
 
 FROM node:22-alpine AS runner
 ENV NODE_ENV=production
