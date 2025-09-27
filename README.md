@@ -635,12 +635,34 @@ yarn prisma:migrate
 yarn prisma:generate
 ```
 
-Полезные документы:
+## 📚 Документация
 
-- Итерационный план и статус: `docs/ITERATION_TASKS.md`
-- Контекст и правила для ИИ-агента: `docs/AGENT_CONTEXT.md`
-- Обзор проекта: `docs/PROJECT_OVERVIEW.md`
-- История изменений: `CHANGELOG.md`
+### Разработка
+
+- **Итерационный план:** `docs/ITERATION_TASKS.md`
+- **Контекст для ИИ:** `docs/AGENT_CONTEXT.md`
+- **Обзор проекта:** `docs/PROJECT_OVERVIEW.md`
+- **История изменений:** `CHANGELOG.md`
+
+### Deployment и Production
+
+- **🚀 Руководство по деплою:** `docs/DEPLOYMENT.md` - **основной файл**
+- **⏭️ Следующие шаги:** `docs/NEXT_STEPS_DEPLOYMENT.md`
+- **🔒 Reverse Proxy:** `docs/REVERSE_PROXY_GUIDE.md`
+- **📊 Мониторинг:** `docs/MONITORING_GUIDE.md`
+
+### Архитектурные решения
+
+- **Языковая политика:** `docs/adr/2025-08-26-language-policy-and-extensibility.md`
+- **Мультисайт i18n:** `docs/adr/2025-08-29-multisite-i18n.md`
+- **Иерархия категорий:** `docs/adr/2025-08-25-category-hierarchy-strategy.md`
+
+### Специализированные темы
+
+- **API Endpoints:** `docs/ENDPOINTS.md`
+- **Мультисайт поддержка:** `docs/MULTISITE_I18N.md`
+- **Медиа-библиотека:** `docs/MEDIA_LIBRARY.md`
+- **Тестирование:** `docs/UNIT_TESTING_PLAN.md`
 
 ## Публикация версий (draft/published)
 
