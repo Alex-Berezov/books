@@ -4,6 +4,25 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-09-27 — Система мониторинга: Prometheus + Grafana + AlertManager
+
+- **Создана полная система мониторинга** (Пункт 11 DEPLOYMENT.md):
+  - `docker-compose.monitoring.yml` - Prometheus, Grafana, AlertManager, Node Exporter
+  - `configs/prometheus.yml` - конфигурация сбора метрик из NestJS `/api/metrics`
+  - `configs/alert_rules.yml` - правила алертов (критические/предупреждающие)
+  - `configs/alertmanager.yml` - настройки уведомлений (email/Slack)
+- **Дашборды Grafana**:
+  - NestJS Application Dashboard - HTTP метрики, response times, error rates
+  - System Resources Dashboard - CPU, память, диск, сеть
+  - Error Monitoring Dashboard - специализированный мониторинг ошибок
+- **Скрипты автоматизации**:
+  - `scripts/setup_monitoring.sh` - автоматическая установка системы мониторинга
+  - `scripts/test_monitoring.sh` - комплексная проверка всех компонентов
+- **Документация**: `docs/MONITORING_GUIDE.md` - полное руководство по настройке и использованию
+- **VS Code задачи**: добавлены задачи для управления мониторингом
+- **Переменные окружения**: `.env.monitoring` и обновлен `.env.example`
+- Завершен **Пункт 11 из DEPLOYMENT.md**, готов к бэкапам или интеграции с фронтендом
+
 ## 2025-09-27 — Reverse Proxy: Caddy конфигурация и безопасность
 
 - **Создана конфигурация Caddy** (`configs/Caddyfile.prod`):

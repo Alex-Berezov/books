@@ -1,0 +1,101 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'books-app'
+    environment: 'production'
+
+rule_files:
+  - 'alert_rules.yml'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # Scrape NestJS application metrics
+  - job_name: 'books-app'
+    static_configs:
+      - targets: ['172.17.0.1:5000'] # Docker bridge network
+    metrics_path: '/api/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: false
+    params:
+      format: ['prometheus']
+
+  # Scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+
+  # Scrape Node Exporter (system metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  # Health checks для основного приложения
+  - job_name: 'books-app-health'
+    static_configs:
+      - targets: ['172.17.0.1:5000']
+    metrics_path: '/api/health/readiness'
+    scrape_interval: 30s
+    scrape_timeout: 5s
+
+# Recording rules для часто используемых запросов
+recording_rules:
+  - name: books_app_rules
+    rules:
+      # HTTP request rate per minute
+      - record: books_app:http_requests:rate1m
+        expr: rate(http_request_duration_seconds_count[1m])
+
+      # HTTP error rate (4xx, 5xx)
+      - record: books_app:http_errors:rate1m
+        expr: rate(http_request_duration_seconds_count{status_code=~"4..|5.."}[1m])
+
+      # HTTP error ratio (errors / total requests)
+      - record: books_app:http_error_ratio:rate5m
+        expr: |
+          (
+            rate(http_request_duration_seconds_count{status_code=~"4..|5.."}[5m])
+            /
+            rate(http_request_duration_seconds_count[5m])
+          ) * 100
+
+      # P95 response time
+      - record: books_app:http_request_duration:p95
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+
+      # P99 response time
+      - record: books_app:http_request_duration:p99
+        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
+
+  - name: system_rules
+    rules:
+      # CPU usage percentage
+      - record: node:cpu_usage:rate5m
+        expr: |
+          100 - (
+            avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance) * 100
+          )
+
+      # Memory usage percentage
+      - record: node:memory_usage:percentage
+        expr: |
+          (
+            (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) 
+            / node_memory_MemTotal_bytes
+          ) * 100
+
+      # Disk usage percentage
+      - record: node:disk_usage:percentage
+        expr: |
+          (
+            (node_filesystem_size_bytes{fstype!="tmpfs"} - node_filesystem_free_bytes{fstype!="tmpfs"})
+            / node_filesystem_size_bytes{fstype!="tmpfs"}
+          ) * 100

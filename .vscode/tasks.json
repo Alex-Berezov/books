@@ -144,6 +144,38 @@
       "command": "yarn typecheck",
       "problemMatcher": ["$tsc"],
       "group": "build"
+    },
+    {
+      "label": "monitoring:setup",
+      "type": "shell",
+      "command": "./scripts/setup_monitoring.sh",
+      "isBackground": true,
+      "group": "build"
+    },
+    {
+      "label": "monitoring:test",
+      "type": "shell",
+      "command": "./scripts/test_monitoring.sh",
+      "group": "test"
+    },
+    {
+      "label": "monitoring:start",
+      "type": "shell",
+      "command": "docker-compose -f docker-compose.monitoring.yml up -d",
+      "isBackground": true,
+      "group": "build"
+    },
+    {
+      "label": "monitoring:stop",
+      "type": "shell",
+      "command": "docker-compose -f docker-compose.monitoring.yml down",
+      "group": "build"
+    },
+    {
+      "label": "monitoring:logs",
+      "type": "shell",
+      "command": "docker-compose -f docker-compose.monitoring.yml logs -f",
+      "isBackground": true
     }
   ]
 }

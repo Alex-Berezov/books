@@ -1,0 +1,126 @@
+groups:
+  - name: books_app_alerts
+    rules:
+      # Critical alerts - immediate response required
+      - alert: BooksAppDown
+        expr: up{job="books-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: books-app
+        annotations:
+          summary: 'Books application is down'
+          description: 'Books application has been down for more than 1 minute'
+
+      - alert: HighErrorRate
+        expr: books_app:http_error_ratio:rate5m > 10
+        for: 5m
+        labels:
+          severity: critical
+          service: books-app
+        annotations:
+          summary: 'High HTTP error rate'
+          description: 'HTTP error rate is {{ $value }}% over the last 5 minutes'
+
+      - alert: VeryHighResponseTime
+        expr: books_app:http_request_duration:p99 > 5
+        for: 5m
+        labels:
+          severity: critical
+          service: books-app
+        annotations:
+          summary: 'Very high response times'
+          description: 'P99 response time is {{ $value }}s over the last 5 minutes'
+
+      - alert: HighMemoryUsage
+        expr: node:memory_usage:percentage > 95
+        for: 2m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: 'Critical memory usage'
+          description: 'Memory usage is {{ $value }}% on {{ $labels.instance }}'
+
+      - alert: DiskSpaceFull
+        expr: node:disk_usage:percentage > 90
+        for: 1m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: 'Disk space critically low'
+          description: 'Disk usage is {{ $value }}% on {{ $labels.instance }} ({{ $labels.mountpoint }})'
+
+      # Warning alerts - attention needed within reasonable time
+      - alert: ModerateErrorRate
+        expr: books_app:http_error_ratio:rate5m > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: books-app
+        annotations:
+          summary: 'Moderate HTTP error rate'
+          description: 'HTTP error rate is {{ $value }}% over the last 10 minutes'
+
+      - alert: HighResponseTime
+        expr: books_app:http_request_duration:p99 > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: books-app
+        annotations:
+          summary: 'High response times'
+          description: 'P99 response time is {{ $value }}s over the last 10 minutes'
+
+      - alert: HighMemoryUsage
+        expr: node:memory_usage:percentage > 85
+        for: 10m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: 'High memory usage'
+          description: 'Memory usage is {{ $value }}% on {{ $labels.instance }}'
+
+      - alert: HighCPUUsage
+        expr: node:cpu_usage:rate5m > 80
+        for: 15m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: 'High CPU usage'
+          description: 'CPU usage is {{ $value }}% on {{ $labels.instance }}'
+
+      - alert: DiskSpaceWarning
+        expr: node:disk_usage:percentage > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: 'Disk space running low'
+          description: 'Disk usage is {{ $value }}% on {{ $labels.instance }} ({{ $labels.mountpoint }})'
+
+  - name: monitoring_system_alerts
+    rules:
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: monitoring
+        annotations:
+          summary: 'Prometheus is down'
+          description: 'Prometheus has been down for more than 1 minute'
+
+      - alert: NodeExporterDown
+        expr: up{job="node-exporter"} == 0
+        for: 1m
+        labels:
+          severity: warning
+          service: monitoring
+        annotations:
+          summary: 'Node Exporter is down'
+          description: 'Node Exporter has been down for more than 1 minute'
