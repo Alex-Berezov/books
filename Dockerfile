@@ -7,19 +7,7 @@ COPY package.json yarn.lock ./
 RUN yarn install
 COPY . .
 RUN yarn prisma:generate || echo "Prisma generate failed, continuing..."
-RUN echo "=== Starting build process ===" && \
-    echo "Current directory contents:" && ls -la && \
-    echo "TypeScript config:" && cat tsconfig.json && \
-    echo "NestJS config:" && cat nest-cli.json && \
-    echo "Running yarn build..." && \
-    yarn build && \
-    echo "Build completed, checking dist:" && ls -la dist/ && \
-    echo "Build completed successfully" || \
-    (echo "Build failed!" && \
-     echo "Current directory after failed build:" && ls -la && \
-     echo "Checking if tsc is available:" && npx tsc --version && \
-     echo "Checking if nest CLI is available:" && npx nest --version && \
-     exit 1)
+RUN yarn build
 
 FROM node:22-alpine AS runner
 ENV NODE_ENV=production
