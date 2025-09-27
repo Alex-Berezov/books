@@ -6,7 +6,8 @@ COPY package.json yarn.lock ./
 # regenerate and commit a correct yarn.lock, then restore the flag.
 RUN yarn install
 COPY . .
-RUN yarn prisma:generate || true && yarn build
+RUN yarn prisma:generate || echo "Prisma generate failed, continuing..."
+RUN yarn build
 
 FROM node:22-alpine AS runner
 ENV NODE_ENV=production

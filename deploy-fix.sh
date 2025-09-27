@@ -11,7 +11,14 @@ docker compose -f docker-compose.prod.yml down
 
 # 2. Пересобрать образ без кэша
 echo "2. Rebuilding image without cache..."
-docker compose -f docker-compose.prod.yml build --no-cache app
+if ! docker compose -f docker-compose.prod.yml build --no-cache app; then
+  echo "ERROR: Docker build failed. Checking builder stage..."
+  docker build --target builder -t books-app:builder-debug .
+  echo "Checking if dist directory exists in builder:"
+  docker run --rm books-app:builder-debug ls -la /app/ || true
+  docker run --rm books-app:builder-debug ls -la /app/dist/ || true
+  exit 1
+fi
 
 # 3. Запустить контейнеры
 echo "3. Starting containers..."
