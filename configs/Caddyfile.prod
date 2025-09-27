@@ -1,0 +1,81 @@
+# Caddy конфигурация для продакшена
+# Файл: /etc/caddy/Caddyfile
+
+# Основной API домен
+api.example.com {
+    # Проксирование на внутренний порт приложения
+    reverse_proxy localhost:5000
+
+    # Базовые заголовки безопасности
+    header {
+        # Убрать информацию о сервере
+        -Server
+
+        # Заголовки безопасности
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy strict-origin-when-cross-origin
+        
+        # HSTS (HTTPS принудительно)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    }
+
+    # Rate limiting на уровне Caddy
+    rate_limit {
+        zone dynamic_rl {
+            key {remote_host}
+            events 100
+            window 1m
+        }
+    }
+
+    # Логирование в JSON формате
+    log {
+        output file /var/log/caddy/api.log {
+            roll_size 100mb
+            roll_keep 5
+            roll_keep_for 720h
+        }
+        format json
+        level INFO
+    }
+
+    # Специальная обработка для metrics endpoint (ограничить доступ)
+    @metrics path /api/metrics
+    respond @metrics "Metrics endpoint disabled in production" 403
+
+    # Healthcheck разрешен (нужен для Docker и мониторинга)
+    @health path /api/health/*
+    reverse_proxy @health localhost:5000
+
+    # Все остальные запросы
+    @api path /api/*
+    reverse_proxy @api localhost:5000
+
+    # Статические файлы (если есть)
+    @static path /static/*
+    reverse_proxy @static localhost:5000
+
+    # Редирект с корня на API docs (если Swagger включен в dev)
+    redir / /api/docs 302
+}
+
+# Перенаправление с www
+www.api.example.com {
+    redir https://api.example.com{uri} permanent
+}
+
+# Альтернативный домен для тестирования (если есть)
+api-staging.example.com {
+    reverse_proxy localhost:5001
+    
+    # Менее строгие ограничения для staging
+    rate_limit {
+        zone staging_rl {
+            key {remote_host}
+            events 200
+            window 1m
+        }
+    }
+}
