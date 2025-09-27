@@ -22,5 +22,16 @@ if [ -x node_modules/.bin/prisma ]; then
   node_modules/.bin/prisma migrate deploy || echo "[entrypoint] prisma migrate deploy failed or not needed"
 fi
 
-# Start the app
-exec node dist/main.js
+# Resolve main entry (support both dist/main.js and dist/src/main.js)
+APP_MAIN=""
+if [ -f dist/main.js ]; then
+  APP_MAIN="dist/main.js"
+elif [ -f dist/src/main.js ]; then
+  APP_MAIN="dist/src/main.js"
+else
+  echo "[entrypoint] ERROR: main.js not found in dist/. Contents:" >&2
+  ls -R dist || true
+  exit 1
+fi
+echo "[entrypoint] Starting app using $APP_MAIN"
+exec node "$APP_MAIN"
