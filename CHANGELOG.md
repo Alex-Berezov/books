@@ -4,6 +4,19 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-09-27 — Продакшн конфигурация: переменные окружения
+
+- **Создан `.env.prod`** с правильными настройками для продакшена:
+  - `NODE_ENV=production`, `SWAGGER_ENABLED=0`, `RATE_LIMIT_GLOBAL_ENABLED=1`, `TRUST_PROXY=1`
+  - Безопасные JWT секреты (44+ символа, сгенерированы openssl)
+  - Продакшн `DATABASE_URL` с пользователем `books_app` и сильным паролем
+  - CORS настроен для фронтенда, rate limiting включен
+- **Обновлен `docker-compose.prod.yml`**: использует `.env.prod`, исправлен healthcheck на `/api/metrics`
+- **Созданы утилиты**: `test_prod_settings.sh` и `check_prod_config.js` для проверки конфигурации
+- **Проверены эндпоинты**: `/api/metrics`, `/api/health/liveness`, `/api/health/readiness` существуют и работают
+- **Права доступа**: `.env.prod` имеет права 600 (только владелец может читать)
+- Завершен **Пункт 6 из DEPLOYMENT.md**, готов к переходу к Reverse Proxy
+
 ## 2025-08-25 — Категории: иерархия
 
 - Добавлен self-relation `Category.parentId` + индекс, миграция `20250825140000_add_category_hierarchy`.
