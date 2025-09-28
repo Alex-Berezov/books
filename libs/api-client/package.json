@@ -1,0 +1,23 @@
+{
+  "name": "@books-app/api-client",
+  "version": "1.0.0",
+  "description": "Ready-to-use TypeScript API client for Books App",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "keywords": [
+    "books-app",
+    "api-client",
+    "typescript",
+    "frontend-ready",
+    "lightweight"
+  ],
+  "peerDependencies": {
+    "axios": "^1.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "src/**/*",
+    "*.md"
+  ],
+  "license": "MIT"
+}

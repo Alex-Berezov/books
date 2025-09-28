@@ -33,8 +33,7 @@
     "prepare": "husky && chmod +x .husky/pre-commit || true",
     "ci": "bash scripts/ci.sh",
     "openapi:types": "openapi-typescript ${OPENAPI_URL:-http://localhost:5000/api/docs-json} -o libs/api-client/types.ts",
-    "openapi:types:prod": "OPENAPI_URL=${OPENAPI_URL:-https://api.example.com/api/docs-json} yarn openapi:types",
-    "api-client:build": "tsc --project libs/api-client/tsconfig.json"
+    "openapi:types:prod": "OPENAPI_URL=${OPENAPI_URL:-https://api.example.com/api/docs-json} yarn openapi:types"
   },
   "packageManager": "yarn@1.22.22",
   "dependencies": {
