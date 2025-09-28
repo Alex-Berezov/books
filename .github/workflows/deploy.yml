@@ -1,0 +1,375 @@
+name: 📦 Production Deployment
+
+on:
+  push:
+    tags:
+      - 'v*' # Срабатывает на теги вида v1.0.0, v2.1.3, etc.
+    branches:
+      - main # Автодеплой с main ветки (опционально)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (tag, branch, or commit)'
+        required: true
+        default: 'main'
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      skip_tests:
+        description: 'Skip tests (emergency deploy)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: books-app
+  DEPLOY_USER: deploy
+
+jobs:
+  # =====================================================
+  # ТЕСТИРОВАНИЕ И ПРОВЕРКИ
+  # =====================================================
+
+  test:
+    name: 🧪 Tests & Quality Checks
+    runs-on: ubuntu-22.04
+    if: ${{ !github.event.inputs.skip_tests }}
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: books_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Для semantic versioning
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: 🔧 Install Dependencies
+        run: |
+          yarn --frozen-lockfile
+          yarn prisma generate
+
+      - name: 📋 Lint & Type Check
+        run: |
+          yarn lint
+          yarn typecheck
+
+      - name: 🧪 Unit Tests
+        run: yarn test
+        env:
+          NODE_ENV: test
+
+      - name: 🔧 Setup Test Database
+        run: |
+          yarn prisma migrate deploy
+          yarn prisma db seed
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/books_test?schema=public
+
+      - name: 🧪 E2E Tests
+        run: yarn test:e2e:serial
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/books_test?schema=public
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+
+  # =====================================================
+  # СБОРКА DOCKER ОБРАЗА
+  # =====================================================
+
+  build:
+    name: 🏗️ Build Docker Image
+    runs-on: ubuntu-22.04
+    needs: [test]
+    if: ${{ always() && (needs.test.result == 'success' || github.event.inputs.skip_tests) }}
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Extract Version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="main-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: 🔑 Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix={{branch}}-
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🏗️ Build and Push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_DATE=${{ github.run_id }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 📋 Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.tags }}
+          artifact-name: sbom-${{ steps.version.outputs.version }}.spdx.json
+          output-file: ./sbom-${{ steps.version.outputs.version }}.spdx.json
+
+      - name: 🔍 Security Scan
+        uses: anchore/scan-action@v3
+        with:
+          image: ${{ steps.meta.outputs.tags }}
+          fail-build: false # Не останавливаем деплой при средних уязвимостях
+
+  # =====================================================
+  # ДЕПЛОЙ В PRODUCTION
+  # =====================================================
+
+  deploy:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-22.04
+    needs: [build]
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+      url: https://${{ vars.PRODUCTION_DOMAIN }}
+
+    steps:
+      - name: 📥 Checkout Deployment Scripts
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/deploy_production.sh
+            scripts/health_check.sh
+            docker-compose.prod.yml
+            .env.prod.template
+          sparse-checkout-cone-mode: false
+
+      - name: 🔑 Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: 📋 Prepare Deployment
+        run: |
+          echo "🔧 Deployment configuration:"
+          echo "Version: ${{ needs.build.outputs.version }}"
+          echo "Image: ${{ needs.build.outputs.image-tag }}"
+          echo "Server: ${{ vars.PRODUCTION_SERVER }}"
+          echo "Domain: ${{ vars.PRODUCTION_DOMAIN }}"
+
+      - name: 🚀 Deploy to Server
+        run: |
+          # Подключение к серверу и выполнение деплоя
+          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
+            set -euo pipefail
+            
+            echo "🔄 Preparing deployment environment..."
+            cd /opt/books/app
+            
+            # Обновление скриптов деплоя (если нужно)
+            if [[ -d ".git" ]]; then
+              git fetch origin main
+              git checkout origin/main -- scripts/deploy_production.sh docker-compose.prod.yml
+              chmod +x scripts/deploy_production.sh
+            fi
+            
+            # Логин в registry для pull образа
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            
+            echo "🚀 Starting deployment..."
+            ./scripts/deploy_production.sh \
+              --version "${{ needs.build.outputs.version }}" \
+              --registry "${{ env.REGISTRY }}/${{ github.repository_owner }}" \
+              --force
+            
+            echo "✅ Deployment completed!"
+          EOF
+
+      - name: 🏥 Health Check
+        run: |
+          echo "🏥 Running post-deployment health checks..."
+
+          # Ожидание готовности сервиса
+          max_attempts=20
+          attempt=0
+
+          while [[ $attempt -lt $max_attempts ]]; do
+            if curl -sf "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness"; then
+              echo "✅ Service is healthy!"
+              break
+            fi
+            
+            ((attempt++))
+            echo "⏳ Attempt $attempt/$max_attempts..."
+            sleep 15
+          done
+
+          if [[ $attempt -eq $max_attempts ]]; then
+            echo "❌ Health check failed after $max_attempts attempts"
+            exit 1
+          fi
+
+      - name: 📊 Verify Deployment
+        run: |
+          echo "📊 Verifying deployment..."
+
+          # Проверка версии API
+          api_response=$(curl -sf "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness")
+          api_version=$(echo "$api_response" | jq -r '.version // "unknown"')
+
+          echo "🔍 API Version: $api_version"
+          echo "🎯 Expected Version: ${{ needs.build.outputs.version }}"
+
+          # Проверка основных endpoints
+          endpoints=(
+            "/api/health/readiness"
+            "/api/metrics"
+          )
+
+          for endpoint in "${endpoints[@]}"; do
+            if curl -sf "https://${{ vars.PRODUCTION_DOMAIN }}$endpoint" > /dev/null; then
+              echo "✅ $endpoint - OK"
+            else
+              echo "❌ $endpoint - FAILED"
+              exit 1
+            fi
+          done
+
+          echo "✅ All verifications passed!"
+
+  # =====================================================
+  # УВЕДОМЛЕНИЯ
+  # =====================================================
+
+  notify:
+    name: 📢 Notifications
+    runs-on: ubuntu-22.04
+    needs: [build, deploy]
+    if: always()
+
+    steps:
+      - name: 📢 Notify Success
+        if: ${{ needs.deploy.result == 'success' }}
+        run: |
+          echo "🎉 Deployment successful!"
+          echo "Version: ${{ needs.build.outputs.version }}"
+          echo "Environment: ${{ github.event.inputs.environment || 'production' }}"
+          echo "URL: https://${{ vars.PRODUCTION_DOMAIN }}"
+
+          # Здесь можно добавить интеграции с:
+          # - Slack (webhook)
+          # - Discord
+          # - Telegram
+          # - Email
+
+      - name: 🚨 Notify Failure
+        if: ${{ needs.deploy.result == 'failure' }}
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Version: ${{ needs.build.outputs.version }}"
+          echo "Check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # =====================================================
+  # ОТКАТ (Manual trigger)
+  # =====================================================
+
+  rollback:
+    name: ⏪ Emergency Rollback
+    runs-on: ubuntu-22.04
+    if: failure() && github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
+
+    steps:
+      - name: 🔑 Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: ⏪ Rollback Deployment
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
+            set -euo pipefail
+            
+            echo "⏪ Starting emergency rollback..."
+            cd /opt/books/app
+            
+            if [[ -f "./scripts/deploy_production.sh" ]]; then
+              ./scripts/deploy_production.sh --rollback --force
+              echo "✅ Rollback completed!"
+            else
+              echo "❌ Rollback script not found!"
+              exit 1
+            fi
+          EOF

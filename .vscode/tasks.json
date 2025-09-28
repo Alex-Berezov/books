@@ -212,6 +212,36 @@
       "type": "shell",
       "command": "./scripts/setup_backup_cron.sh",
       "group": "build"
+    },
+    {
+      "label": "deploy:setup-server",
+      "type": "shell",
+      "command": "./scripts/setup_server.sh --domain api.example.com --dry-run",
+      "group": "build"
+    },
+    {
+      "label": "deploy:production",
+      "type": "shell",
+      "command": "./scripts/deploy_production.sh --version main --dry-run",
+      "group": "build"
+    },
+    {
+      "label": "deploy:rollback",
+      "type": "shell",
+      "command": "./scripts/deploy_production.sh --rollback --dry-run",
+      "group": "build"
+    },
+    {
+      "label": "health:check:local",
+      "type": "shell",
+      "command": "./scripts/health_check.sh --detailed",
+      "group": "test"
+    },
+    {
+      "label": "health:check:prod",
+      "type": "shell",
+      "command": "./scripts/health_check.sh --url https://api.example.com --detailed",
+      "group": "test"
     }
   ]
 }
