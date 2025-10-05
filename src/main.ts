@@ -59,7 +59,11 @@ async function bootstrap() {
   // Set up Swagger documentation (disabled in prod by default unless SWAGGER_ENABLED=1)
   const isProd = process.env.NODE_ENV === 'production';
   const swaggerEnabled = (process.env.SWAGGER_ENABLED ?? (isProd ? '0' : '1')) === '1';
+  console.log(
+    `Swagger setup: isProd=${isProd}, SWAGGER_ENABLED=${process.env.SWAGGER_ENABLED}, swaggerEnabled=${swaggerEnabled}`,
+  );
   if (swaggerEnabled) {
+    console.log('Setting up Swagger documentation...');
     const config = new DocumentBuilder()
       .setTitle('Books App API')
       .setDescription(
@@ -81,8 +85,8 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, config, {
       extraModels: [CreateBookDto, UpdateBookDto, CreateBookVersionDto, UpdateBookVersionDto],
     });
-    SwaggerModule.setup('api/docs', app, document, {
-      jsonDocumentUrl: 'api/docs-json',
+    SwaggerModule.setup('docs', app, document, {
+      jsonDocumentUrl: 'docs-json',
       swaggerOptions: { persistAuthorization: true },
     });
   }

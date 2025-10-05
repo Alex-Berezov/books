@@ -64,12 +64,21 @@ check_dependencies() {
 check_ssh_access() {
     log_info "Проверка SSH доступа к серверу $SERVER_IP..."
     
+    # Сначала пробуем без пароля (с ключом)
     if ssh -o ConnectTimeout=10 -o BatchMode=yes $SERVER_USER@$SERVER_IP "echo 'SSH OK'" >/dev/null 2>&1; then
-        log_success "SSH доступ к серверу работает"
+        log_success "SSH доступ к серверу работает (ключ)"
+        return 0
+    fi
+    
+    # Если не получилось, проверяем с вводом пароля
+    log_info "SSH ключ не найден, проверяем доступ с паролем..."
+    if ssh -o ConnectTimeout=10 $SERVER_USER@$SERVER_IP "echo 'SSH OK'" >/dev/null 2>&1; then
+        log_success "SSH доступ к серверу работает (пароль)"
+        return 0
     else
         log_error "Нет SSH доступа к серверу $SERVER_IP"
         log_info "Убедитесь что:"
-        log_info "  - SSH ключ добавлен на сервер"
+        log_info "  - SSH ключ добавлен на сервер или доступен ввод пароля"
         log_info "  - Пользователь $SERVER_USER существует"
         log_info "  - Сервер доступен по сети"
         exit 1
@@ -80,7 +89,7 @@ check_ssh_access() {
 copy_setup_script() {
     log_info "Копирование скрипта установки на сервер..."
     
-    if scp ./setup_bibliaris_caddy.sh $SERVER_USER@$SERVER_IP:/tmp/; then
+    if scp scripts/setup_bibliaris_caddy.sh $SERVER_USER@$SERVER_IP:/tmp/; then
         log_success "Скрипт скопирован на сервер"
     else
         log_error "Ошибка копирования скрипта на сервер"
