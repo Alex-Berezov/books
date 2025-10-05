@@ -4,16 +4,36 @@ set -euo pipefail
 # Wait for Postgres if DATABASE_URL is set to a postgres scheme
 if [[ "${DATABASE_URL:-}" == postgres* || "${DATABASE_URL:-}" == postgresql* ]]; then
   echo "[entrypoint] Waiting for Postgres to be ready..."
-  # Minimal wait loop using psql via npx prisma (which bundles engine) isn't reliable; use pg_isready if available
-  ATTEMPTS=30
-  until node -e "
-    const { URL } = require('url');
+  # Extract host and port from DATABASE_URL and test actual connection
+  DB_HOST=$(node -e "
     try {
       const u = new URL(process.env.DATABASE_URL);
-      console.log('DB host:', u.hostname);
-      process.exit(0);
-    } catch (e) { process.exit(1); }
-  " >/dev/null 2>&1; do sleep 1; done
+      console.log(u.hostname);
+    } catch (e) { 
+      console.log('postgres'); 
+    }
+  ")
+  DB_PORT=$(node -e "
+    try {
+      const u = new URL(process.env.DATABASE_URL);
+      console.log(u.port || '5432');
+    } catch (e) { 
+      console.log('5432'); 
+    }
+  ")
+  
+  ATTEMPTS=30
+  for i in $(seq 1 $ATTEMPTS); do
+    if nc -z "$DB_HOST" "$DB_PORT"; then
+      echo "[entrypoint] Postgres is ready!"
+      break
+    fi
+    if [ "$i" -eq "$ATTEMPTS" ]; then
+      echo "[entrypoint] Postgres is not ready after $ATTEMPTS attempts, continuing anyway..."
+    fi
+    echo "[entrypoint] Waiting for Postgres... attempt $i/$ATTEMPTS"
+    sleep 2
+  done
 fi
 
 # Run prisma migrate deploy if prisma CLI exists

@@ -9,6 +9,42 @@
 
 Метаданные (опционально) после пункта: PR #, commit, дата, assignee, миграция (да/нет).
 
+## КРИТИЧЕСКИЕ ПРОБЛЕМЫ ДЛЯ ИСПРАВЛЕНИЯ
+
+### [BLOCKED] E2E тесты падают из-за неправильной конфигурации Redis/BullMQ
+
+**Проблема**: GitHub Actions зависает на тестах. Ошибка: `BullMQ: Your redis options maxRetriesPerRequest must be null`
+
+**Местоположение**: `src/modules/queue/queue.module.ts:74`
+
+```typescript
+return new QueueEvents(name, opts);
+```
+
+**Причина**: BullMQ требует `maxRetriesPerRequest: null` для блокирующих операций в Redis конфигурации.
+
+**Воздействие**:
+
+- Блокирует CI/CD pipeline
+- Невозможно мержить PR
+- Все e2e тесты падают с той же ошибкой
+
+**Дополнительные ошибки**:
+
+- `TypeError: Cannot read properties of undefined (reading 'close')` в afterAll() блоках
+- Worker errors: `Cannot read properties of undefined (reading 'client')`
+
+**План исправления**:
+
+1. Изучить текущую Redis конфигурацию в queue.module.ts
+2. Добавить `maxRetriesPerRequest: null` в опции Redis для тестового окружения
+3. Убедиться что Redis клиент правильно инициализируется в тестах
+4. Добавить proper cleanup в afterAll блоки
+
+**Приоритет**: HIGH - блокирует разработку
+
+---
+
 ## 0. Текущее состояние (готово)
 
 - NestJS приложение, базовый модуль Books с CRUD-эндпоинтами.
