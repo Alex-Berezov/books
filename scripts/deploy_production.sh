@@ -39,7 +39,7 @@ ROLLBACK=false
 DRY_RUN=false
 
 # Пути
-DEPLOY_DIR="/opt/books/app"
+DEPLOY_DIR="/opt/books/app/src"
 BACKUP_DIR="/opt/books/backups"
 LOG_DIR="/opt/books/logs"
 
