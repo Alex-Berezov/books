@@ -339,7 +339,9 @@ build_image() {
     local full_image_tag="$image_tag"
     
     if [[ "$REGISTRY" != "localhost" ]]; then
-        full_image_tag="$REGISTRY/books-app:$IMAGE_TAG"
+        # Registry уже содержит полный путь включая repository name
+        # Например: ghcr.io/alex-berezov/books
+        full_image_tag="$REGISTRY:$IMAGE_TAG"
     fi
     
     if [[ "$PULL_IMAGE" == true ]]; then
