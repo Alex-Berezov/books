@@ -119,6 +119,10 @@ jobs:
     needs: [test]
     if: ${{ always() && (needs.test.result == 'success' || github.event.inputs.skip_tests) }}
 
+    permissions:
+      contents: read
+      packages: write
+
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
