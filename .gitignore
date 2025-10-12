@@ -56,3 +56,7 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /generated/prisma
+
+# GitHub Actions secrets (SSH keys, etc.)
+.github-secrets/
+!.github-secrets/SETUP_INSTRUCTIONS.md

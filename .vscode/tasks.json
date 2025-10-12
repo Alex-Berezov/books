@@ -242,6 +242,13 @@
       "type": "shell",
       "command": "./scripts/health_check.sh --url https://api.example.com --detailed",
       "group": "test"
+    },
+    {
+      "label": "ssh:test",
+      "type": "shell",
+      "command": "./scripts/test_ssh_connection.sh",
+      "group": "test",
+      "problemMatcher": []
     }
   ]
 }
