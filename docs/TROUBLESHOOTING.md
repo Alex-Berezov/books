@@ -2,6 +2,56 @@
 
 Руководство по решению распространённых проблем в проекте.
 
+## Docker Registry: "repository name must be lowercase"
+
+### Симптомы
+
+- Deploy падает с ошибкой: `invalid reference format: repository name (Alex-Berezov/books-app) must be lowercase`
+- Ошибка возникает при `docker pull` образа из GitHub Container Registry
+- В логах деплоя: `docker pull ghcr.io/Alex-Berezov/books-app:tag` fails
+
+### Причина
+
+Docker registry требует **строго lowercase** имена репозиториев. GitHub username может содержать заглавные буквы (например, `Alex-Berezov`), но Docker registry не принимает такие имена.
+
+### Решение
+
+**Уже исправлено в workflow** (см. `.github/workflows/deploy.yml`):
+
+Используйте `${{ github.repository }}` вместо `${{ github.repository_owner }}/${{ env.IMAGE_NAME }}`:
+
+```yaml
+# ❌ Старый подход (может содержать заглавные буквы)
+images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+# Результат: ghcr.io/Alex-Berezov/books-app
+
+# ✅ Новый подход (автоматически lowercase)
+images: ${{ env.REGISTRY }}/${{ github.repository }}
+# Результат: ghcr.io/alex-berezov/books
+```
+
+### Принцип
+
+- `github.repository_owner` — сохраняет регистр: `Alex-Berezov`
+- `github.repository` — **автоматически в lowercase**: `alex-berezov/books`
+- Docker registry принимает только lowercase имена
+
+### Где обновить
+
+Замените во всех местах использования image paths:
+
+1. `docker/metadata-action` - images parameter
+2. `anchore/sbom-action` - image parameter
+3. `anchore/scan-action` - image parameter
+4. Deploy step - `--registry` parameter
+
+### Ссылки
+
+- [Docker Registry Specification](https://docs.docker.com/registry/spec/api/)
+- Commit: 2025-10-12 "fix: Docker registry - lowercase repository name"
+
+---
+
 ## BullMQ: "Your redis options maxRetriesPerRequest must be null"
 
 ### Симптомы
