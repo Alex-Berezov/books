@@ -4,6 +4,8 @@
 
 Формат: Дата — Краткое название — Детали.
 
+\\ test //
+
 ## 2025-10-12 — Исправление Docker registry: lowercase repository name
 
 - **Проблема**: Deploy падал с ошибкой "invalid reference format: repository name (Alex-Berezov/books-app) must be lowercase"
