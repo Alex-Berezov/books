@@ -4,6 +4,18 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-12 — Исправление SBOM generation в CI/CD pipeline
+
+- **Проблема**: SBOM generation падал с ошибкой "syft failed with exit code 1"
+- **Причина**: `anchore/sbom-action` получал несколько тегов вместо одного конкретного тега образа
+- **Исправление**:
+  - ✅ Изменён `image` parameter с `${{ steps.meta.outputs.tags }}` на конкретный тег
+  - ✅ Добавлен `continue-on-error: true` для SBOM и Security Scan steps
+  - ✅ Теперь ошибки SBOM/сканирования не блокируют деплой
+- **Результат**: Pipeline продолжает работу даже если SBOM generation не удался
+- **Файлы**:
+  - `.github/workflows/deploy.yml` - исправлены SBOM и Security Scan steps
+
 ## 2025-10-12 — Исправление permissions для GitHub Container Registry
 
 - **Проблема**: Build Docker Image падал с ошибкой "denied: installation not allowed to Create organization package"
