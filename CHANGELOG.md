@@ -4,6 +4,27 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-12 — Настройка SSH для production деплоя
+
+- **Задача**: Подготовка к полноценному production деплою через GitHub Actions
+- **Реализовано**:
+  - ✅ Сгенерированы ED25519 SSH ключи для деплоя
+  - ✅ Создан скрипт `scripts/test_ssh_connection.sh` для проверки подключения
+  - ✅ Подробные инструкции в `.github-secrets/SETUP_INSTRUCTIONS.md`
+  - ✅ Быстрая инструкция в `.github-secrets/QUICKSTART.md`
+  - ✅ Обновлён `.gitignore` - приватные ключи исключены из Git
+  - ✅ Добавлена VS Code задача `ssh:test` для удобной проверки
+- **Следующие шаги**:
+  1. Настроить `deploy` пользователя на production сервере
+  2. Добавить GitHub Secret `DEPLOY_SSH_KEY`
+  3. Добавить GitHub Variables `PRODUCTION_SERVER` и `PRODUCTION_DOMAIN`
+  4. Запустить workflow для полного CI/CD деплоя
+- **Файлы**:
+  - `.github-secrets/` - директория с инструкциями и ключами (не в Git)
+  - `scripts/test_ssh_connection.sh` - скрипт проверки SSH
+  - `.gitignore` - добавлено исключение `.github-secrets/`
+  - `.vscode/tasks.json` - новая задача `ssh:test`
+
 ## 2025-10-12 — Исправление SBOM generation в CI/CD pipeline
 
 - **Проблема**: SBOM generation падал с ошибкой "syft failed with exit code 1"
