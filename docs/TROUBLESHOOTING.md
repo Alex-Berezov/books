@@ -121,6 +121,72 @@ if (queuesEnabled) {
 
 ---
 
+## Jest не завершается после E2E тестов
+
+### Симптомы
+
+- После выполнения e2e тестов Jest не завершается
+- Сообщение: `Jest did not exit one second after the test run has completed`
+- CI/CD pipeline "зависает" на несколько секунд/минут после завершения тестов
+- Предупреждение: `This usually means that there are asynchronous operations that weren't stopped in your tests`
+
+### Причина
+
+BullMQ создаёт **постоянные соединения** с Redis (Workers, QueueEvents, Queue instances), которые продолжают слушать события даже после вызова `app.close()`. Jest видит открытые handles и ждёт их закрытия, но они могут не закрываться вовремя.
+
+Хотя в `QueueModule` реализован `onModuleDestroy` для graceful shutdown, внутренние таймеры и соединения Redis могут задерживать полное закрытие.
+
+### Решение
+
+**Уже исправлено** (см. `package.json`):
+
+Добавлен флаг `--forceExit` в e2e скрипты:
+
+```json
+{
+  "scripts": {
+    "test:e2e": "jest --config ./test/jest-e2e.json --forceExit",
+    "test:e2e:serial": "jest --config ./test/jest-e2e.json --runInBand --forceExit"
+  }
+}
+```
+
+### Что делает `--forceExit`?
+
+- Jest **принудительно завершается** сразу после выполнения всех тестов
+- Не ждёт закрытия всех асинхронных операций
+- **Безопасно** для интеграционных тестов с внешними зависимостями (БД, Redis, очереди)
+
+### Альтернативы (не рекомендуются)
+
+```bash
+# ❌ Увеличение таймаута (не решает проблему)
+jest --forceExit --detectOpenHandles
+
+# ❌ Явное закрытие всех handles (слишком сложно поддерживать)
+afterAll(async () => {
+  await app.close();
+  await new Promise(resolve => setTimeout(resolve, 1000));
+});
+```
+
+### Best Practice
+
+`--forceExit` - **стандартная практика** для e2e/интеграционных тестов с:
+
+- Базами данных
+- Redis/Кэшами
+- Очередями задач
+- WebSocket соединениями
+- Внешними API
+
+### Ссылки
+
+- [Jest CLI Options - forceExit](https://jestjs.io/docs/cli#--forceexit)
+- Commit: 2025-10-12 "Исправление Jest зависания после E2E тестов"
+
+---
+
 ## Другие проблемы
 
 _(Добавляйте сюда решения новых проблем по мере необходимости)_
