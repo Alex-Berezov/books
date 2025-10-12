@@ -63,6 +63,64 @@ export class QueueModule implements OnModuleDestroy {
 
 ---
 
+## E2E тесты очередей: проверка доступности Redis
+
+### Симптомы
+
+- Тест `queues.e2e-spec.ts` падает с ошибкой: `expected 201 "Created", got 503 "Service Unavailable"`
+- Переменные Redis (`REDIS_HOST`, `REDIS_PORT`) настроены в CI, но тест всё равно падает
+- Ошибка в тесте `POST /queues/demo/enqueue behaves depending on Redis availability`
+
+### Причина
+
+Тест проверял **наличие переменных окружения** (`REDIS_URL` или `REDIS_HOST`), но не **фактическую доступность** Redis. В CI Redis может быть настроен, но не подключаться успешно (не готов, проблема с сетью и т.д.).
+
+### Решение
+
+**Уже исправлено в тесте** (см. `test/queues.e2e-spec.ts`):
+
+1. Заменена проверка через переменные окружения:
+
+```typescript
+// ❌ Старый подход (проверка переменных)
+const hasRedis = !!(process.env.REDIS_URL || process.env.REDIS_HOST);
+```
+
+2. На проверку через API:
+
+```typescript
+// ✅ Новый подход (проверка фактической доступности)
+let queuesEnabled: boolean;
+
+beforeAll(async () => {
+  // ... инициализация приложения ...
+
+  // Проверяем фактическую доступность очередей через API
+  const token = await getAdminToken();
+  const statusRes = await request(http())
+    .get('/queues/status')
+    .set('Authorization', `Bearer ${token}`);
+  queuesEnabled = statusRes.body?.enabled === true;
+});
+
+// Использование в тестах
+if (queuesEnabled) {
+  const res = await rq.expect(201);
+} else {
+  await rq.expect(503);
+}
+```
+
+### Принцип
+
+Тест проверяет **реальное состояние системы**, а не предположения на основе конфигурации. Эндпоинт `/queues/status` возвращает `enabled: true` только если Redis подключение установлено успешно.
+
+### Ссылки
+
+- Commit: 2025-10-12 "Исправление queues.e2e-spec.ts - проверка фактической доступности Redis"
+
+---
+
 ## Другие проблемы
 
 _(Добавляйте сюда решения новых проблем по мере необходимости)_
