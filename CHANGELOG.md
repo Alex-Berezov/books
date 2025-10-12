@@ -4,6 +4,20 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-12 — Исправление E2E тестов: BullMQ настройки
+
+- **Проблема**: E2E тесты падали в GitHub Actions с ошибкой "BullMQ: Your redis options maxRetriesPerRequest must be null"
+- **Причина**: BullMQ требует `maxRetriesPerRequest: null` для блокирующих операций (Worker, QueueEvents)
+- **Исправления**:
+  - ✅ Установлен `maxRetriesPerRequest: null` в `buildConnectionOpts()` для объектных настроек Redis
+  - ✅ Добавлена передача `maxRetriesPerRequest: null` при создании клиента из строкового URL
+  - ✅ Реализован `onModuleDestroy` lifecycle hook в `QueueModule` для graceful shutdown воркеров, очередей и Redis подключения
+  - ✅ Обновлён `.env.test.example` с комментариями о Redis для тестов
+- **Результат**: E2E тесты должны успешно проходить в CI с настроенным Redis
+- **Файлы**:
+  - `src/modules/queue/queue.module.ts` - исправлены настройки Redis и добавлен lifecycle hook
+  - `.env.test.example` - добавлены переменные Redis с пояснениями
+
 ## 2025-10-12 — Итерация 7: Финализация и очистка документации (ЗАВЕРШЕНО)
 
 - **ПОЛНОСТЬЮ ЗАВЕРШЕНА** - Исправлены критические проблемы production и очищена документация

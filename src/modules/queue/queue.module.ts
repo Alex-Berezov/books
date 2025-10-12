@@ -1,4 +1,4 @@
-import { Module, Provider } from '@nestjs/common';
+import { Module, Provider, OnModuleDestroy, Inject, Optional } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import {
   Queue,
@@ -29,7 +29,8 @@ function buildConnectionOpts(config: ConfigService): RedisOptions | string | nul
     host,
     port,
     password,
-    maxRetriesPerRequest: 2,
+    // BullMQ требует maxRetriesPerRequest: null для блокирующих операций (Worker, QueueEvents)
+    maxRetriesPerRequest: null,
     enableReadyCheck: true,
   };
   return redisOptions;
@@ -42,7 +43,8 @@ const redisProvider: Provider = {
     const opts = buildConnectionOpts(config);
     if (!opts) return undefined;
     if (typeof opts === 'string') {
-      return new IORedis(opts);
+      // BullMQ требует maxRetriesPerRequest: null для блокирующих операций
+      return new IORedis(opts, { maxRetriesPerRequest: null });
     }
 
     return new IORedis(opts);
@@ -113,4 +115,27 @@ const demoWorkerProvider: Provider = {
   controllers: [QueueController],
   exports: [QueueService, REDIS_CONNECTION, DEMO_QUEUE, DEMO_QUEUE_EVENTS],
 })
-export class QueueModule {}
+export class QueueModule implements OnModuleDestroy {
+  constructor(
+    @Optional() @Inject('DEMO_WORKER') private readonly worker?: Worker,
+    @Optional() @Inject(DEMO_QUEUE_EVENTS) private readonly queueEvents?: QueueEvents,
+    @Optional() @Inject(DEMO_QUEUE) private readonly queue?: Queue,
+    @Optional() @Inject(REDIS_CONNECTION) private readonly connection?: IORedis,
+  ) {}
+
+  async onModuleDestroy() {
+    // Graceful shutdown: закрываем воркер, очередь, события и Redis подключение
+    if (this.worker) {
+      await this.worker.close();
+    }
+    if (this.queueEvents) {
+      await this.queueEvents.close();
+    }
+    if (this.queue) {
+      await this.queue.close();
+    }
+    if (this.connection) {
+      await this.connection.quit();
+    }
+  }
+}

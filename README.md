@@ -120,6 +120,7 @@ docker compose down
 ### Очереди (BullMQ) — базовая интеграция
 
 - Поддерживается базовая интеграция BullMQ с Redis. При наличии `REDIS_URL` или `REDIS_HOST`/`REDIS_PORT` модуль очередей активируется и поднимает демонстрационную очередь `demo` с воркером.
+- **Важно**: BullMQ требует `maxRetriesPerRequest: null` в настройках Redis для блокирующих операций (Worker, QueueEvents). Это автоматически настроено в `QueueModule`.
 - Админ-эндпоинты (Auth + Role Admin):
   - `GET /queues/status` — статус подсистемы очередей (enabled: true|false)
   - `GET /queues/demo/stats` — счётчики очереди demo
@@ -132,6 +133,7 @@ docker compose down
   - `BULLMQ_WORKER_LOG_LEVEL` — уровень логирования воркера: debug|info|warn|error (по умолчанию info)
   - `BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS` — таймаут graceful shutdown воркера (по умолчанию 5000)
 - Если Redis не настроен — модуль очередей отключается автоматически; health/readiness продолжает работать, Redis помечается как `skipped`.
+- **Graceful shutdown**: модуль реализует `onModuleDestroy` lifecycle hook для корректного закрытия воркеров, очередей и Redis подключения при остановке приложения или в тестах.
 
 #### Отдельный процесс воркера
 
