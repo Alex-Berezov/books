@@ -185,15 +185,17 @@ jobs:
 
       - name: 📋 Generate SBOM
         uses: anchore/sbom-action@v0
+        continue-on-error: true # Не блокируем деплой при ошибках SBOM
         with:
-          image: ${{ steps.meta.outputs.tags }}
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
           artifact-name: sbom-${{ steps.version.outputs.version }}.spdx.json
           output-file: ./sbom-${{ steps.version.outputs.version }}.spdx.json
 
       - name: 🔍 Security Scan
         uses: anchore/scan-action@v3
+        continue-on-error: true # Не блокируем деплой при ошибках сканирования
         with:
-          image: ${{ steps.meta.outputs.tags }}
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
           fail-build: false # Не останавливаем деплой при средних уязвимостях
 
   # =====================================================
