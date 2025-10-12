@@ -4,6 +4,17 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-12 — Исправление deploy workflow - путь к директории приложения
+
+- **Проблема**: Deploy падал с ошибкой "Process completed with exit code 127"
+- **Причина**: Workflow пытался выполнить скрипт из `/opt/books/app`, но репозиторий находится в `/opt/books/app/src`
+- **Исправление**:
+  - ✅ Изменён путь в deploy step с `/opt/books/app` на `/opt/books/app/src`
+  - ✅ Теперь скрипт `deploy_production.sh` корректно находится и выполняется
+- **Результат**: Автоматический деплой через GitHub Actions работает
+- **Файлы**:
+  - `.github/workflows/deploy.yml` - исправлен путь к рабочей директории
+
 ## 2025-10-12 — Настройка SSH для production деплоя
 
 - **Задача**: Подготовка к полноценному production деплою через GitHub Actions
