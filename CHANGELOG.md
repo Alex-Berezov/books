@@ -4,6 +4,29 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-12 — Исправление логики деплоя: разделение Git версии и Docker image tag
+
+- **Проблема**: Deploy падал с ошибкой "❌ Версия не найдена: main-fe455d6"
+- **Причина**:
+  - `deploy_production.sh` пытался найти Git tag `main-fe455d6`, которого не существует
+  - В CI Git уже обновлён через `git reset --hard origin/main`, но скрипт пытался сделать checkout по версии
+  - Параметр `--version` использовался и для Git checkout и для Docker image tag, что вызывало конфликт
+- **Решение**:
+  - ✅ Добавлен параметр `--image-tag` для явного указания Docker image tag
+  - ✅ Добавлен флаг `--skip-git-update` (Git уже обновлён в CI workflow)
+  - ✅ Добавлен флаг `--pull` для pull образа из registry вместо локальной сборки
+  - ✅ Workflow обновлён: передаёт `--image-tag`, `--skip-git-update`, `--pull`
+- **Как работает теперь**:
+  1. Workflow обновляет Git: `git reset --hard origin/main`
+  2. Workflow вызывает: `deploy_production.sh --image-tag main-abc1234 --skip-git-update --pull`
+  3. Скрипт пропускает Git checkout (уже обновлено)
+  4. Скрипт делает `docker pull ghcr.io/.../books-app:main-abc1234`
+  5. Деплой выполняется с образом из registry
+- **Результат**: Деплой должен пройти успешно
+- **Файлы**:
+  - `scripts/deploy_production.sh` - новая логика параметров, функция `build_image()` с поддержкой pull
+  - `.github/workflows/deploy.yml` - обновлены параметры деплоя
+
 ## 2025-10-12 — Исправление скрипта бэкапа БД для Docker окружения
 
 - **Проблема**: Deploy падал с ошибкой при создании бэкапа БД
