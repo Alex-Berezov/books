@@ -241,7 +241,7 @@ jobs:
             set -euo pipefail
             
             echo "🔄 Preparing deployment environment..."
-            cd /opt/books/app
+            cd /opt/books/app/src
             
             # Обновление скриптов деплоя (если нужно)
             if [[ -d ".git" ]]; then
