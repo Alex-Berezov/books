@@ -4,6 +4,22 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-12 — Исправление Docker registry: lowercase repository name
+
+- **Проблема**: Deploy падал с ошибкой "invalid reference format: repository name (Alex-Berezov/books-app) must be lowercase"
+- **Причина**:
+  - Docker registry требует **lowercase** имена репозиториев
+  - GitHub username `Alex-Berezov` содержит заглавные буквы
+  - Workflow использовал: `${{ github.repository_owner }}/${{ env.IMAGE_NAME }}`
+  - Результат: `ghcr.io/Alex-Berezov/books-app:main-abc1234` ❌
+- **Решение**:
+  - ✅ Изменено на `${{ github.repository }}` (автоматически lowercase)
+  - ✅ Результат: `ghcr.io/alex-berezov/books:main-abc1234` ✅
+  - ✅ Обновлены все image paths в workflow (metadata, sbom, scan, deploy)
+- **Результат**: Docker образы теперь публикуются с правильным lowercase именем
+- **Файлы**:
+  - `.github/workflows/deploy.yml` - исправлены все image paths
+
 ## 2025-10-12 — Исправление логики деплоя: разделение Git версии и Docker image tag
 
 - **Проблема**: Deploy падал с ошибкой "❌ Версия не найдена: main-fe455d6"
