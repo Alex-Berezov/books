@@ -236,8 +236,11 @@ jobs:
 
       - name: 🚀 Deploy to Server
         run: |
+          # Lowercase repository name для Docker
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
           # Подключение к серверу и выполнение деплоя
-          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << EOF
             set -euo pipefail
             
             echo "🔄 Preparing deployment environment..."
@@ -264,7 +267,7 @@ jobs:
             echo "🚀 Starting deployment..."
             ./scripts/deploy_production.sh \
               --image-tag "${{ needs.build.outputs.version }}" \
-              --registry "${{ env.REGISTRY }}/${{ github.repository }}" \
+              --registry "${{ env.REGISTRY }}/${REPO_LOWER}" \
               --skip-git-update \
               --pull \
               --no-backup \
