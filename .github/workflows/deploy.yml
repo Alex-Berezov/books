@@ -265,6 +265,7 @@ jobs:
             ./scripts/deploy_production.sh \
               --version "${{ needs.build.outputs.version }}" \
               --registry "${{ env.REGISTRY }}/${{ github.repository_owner }}" \
+              --no-backup \
               --force
             
             echo "✅ Deployment completed!"

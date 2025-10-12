@@ -117,12 +117,30 @@ backup_database() {
     log_info "Создание бэкапа базы данных (тип: $backup_type)..."
     
     if [[ "$USE_DOCKER" == "true" ]]; then
+        # Найти PostgreSQL контейнер
+        local postgres_container=$(docker ps -qf name=postgres)
+        
+        if [[ -z "$postgres_container" ]]; then
+            log_error "PostgreSQL контейнер не найден"
+            return 1
+        fi
+        
+        # Получить переменные окружения из контейнера
+        local container_user=$(docker exec "$postgres_container" env | grep "^POSTGRES_USER=" | cut -d= -f2)
+        local container_db=$(docker exec "$postgres_container" env | grep "^POSTGRES_DB=" | cut -d= -f2)
+        
+        # Использовать переменные из контейнера, если они не пусты
+        local db_user="${container_user:-$POSTGRES_USER}"
+        local db_name="${container_db:-$POSTGRES_DB}"
+        
+        log_info "Используем БД: $db_name, пользователь: $db_user"
+        
         # Бэкап через Docker
-        docker exec "$(docker ps -qf name=postgres)" pg_dump \
+        docker exec "$postgres_container" pg_dump \
             -h localhost \
             -p 5432 \
-            -U "$POSTGRES_USER" \
-            -d "$POSTGRES_DB" \
+            -U "$db_user" \
+            -d "$db_name" \
             --no-owner \
             --no-privileges \
             --verbose \
