@@ -109,8 +109,27 @@ if (envVars.JWT_REFRESH_SECRET) {
 
 // Проверить DATABASE_URL format
 if (envVars.DATABASE_URL) {
-  const isPostgres = envVars.DATABASE_URL.startsWith('postgresql://');
+  const urlStr = envVars.DATABASE_URL;
+  const isPostgres = urlStr.startsWith('postgresql://') || urlStr.startsWith('postgres://');
   console.log(`🗄️  DATABASE_URL format: ${isPostgres ? 'PostgreSQL ✅' : 'Unknown ⚠️'}`);
+  try {
+    const u = new URL(String(urlStr));
+    const port = u.port || '5432';
+    const portOk = /^\d+$/.test(port);
+    console.log(`🔌 DATABASE_URL port: ${port} ${portOk ? '✅' : '❌'}`);
+    if (!portOk) {
+      console.error(
+        '   ↳ Порт должен быть числом. Убедитесь, что вы не используете переменные в URL (напр. ${POSTGRES_PORT}) и нет комментариев в строке.',
+      );
+    }
+    if (u.password && /[@/:]/.test(decodeURIComponent(u.password))) {
+      console.log(
+        '🔐 DATABASE_URL password: содержит спецсимволы — убедитесь, что он URL-кодирован (%2F, %40, %3A, %3D и т.д.) ⚠️',
+      );
+    }
+  } catch {
+    console.error('❌ DATABASE_URL: некорректный URL, не удалось распарсить');
+  }
 }
 
 // Проверить файл docker-compose.prod.yml

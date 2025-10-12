@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Expand variable placeholders in DATABASE_URL if present (e.g., ${POSTGRES_PORT})
+if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *'${'* ]]; then
+  echo "[entrypoint] Expanding variables in DATABASE_URL from environment..."
+  # shellcheck disable=SC2034
+  DATABASE_URL=$(eval echo "$DATABASE_URL")
+  export DATABASE_URL
+fi
+
 # Wait for Postgres if DATABASE_URL is set to a postgres scheme
 if [[ "${DATABASE_URL:-}" == postgres* || "${DATABASE_URL:-}" == postgresql* ]]; then
   echo "[entrypoint] Waiting for Postgres to be ready..."

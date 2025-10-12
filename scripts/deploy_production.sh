@@ -236,6 +236,38 @@ check_environment() {
     log_success "Окружение проверено"
 }
 
+# Валидация .env.prod и DATABASE_URL
+validate_env() {
+    log "Проверка .env.prod и DATABASE_URL..."
+    local envfile="$DEPLOY_DIR/.env.prod"
+    if [[ ! -f "$envfile" ]]; then
+        log_error ".env.prod не найден в $DEPLOY_DIR"
+        exit 1
+    fi
+    # Извлекаем DATABASE_URL (убираем кавычки если есть)
+    local raw_db_url
+    raw_db_url=$(grep -E '^DATABASE_URL=' "$envfile" | sed 's/^DATABASE_URL=//' | sed 's/^\"\|\"$//g' | sed "s/^'\|'$//g") || true
+    if [[ -z "$raw_db_url" ]]; then
+        log_error "DATABASE_URL не задан в .env.prod"
+        exit 1
+    fi
+    # Если есть плейсхолдеры вида ${VAR}, пытаемся развернуть их из .env.prod
+    local db_url_to_check="$raw_db_url"
+    if [[ "$raw_db_url" == *'${'* ]]; then
+        db_url_to_check=$(bash -c "set -a; source '$envfile'; set +a; eval echo \"$raw_db_url\"")
+    fi
+    # Проверяем, что порт числовой, если указан
+    if ! node -e "try{const u=new URL(String(process.argv[1])); const p=u.port||''; if(p && !/^\\d+$/.test(String(p))){process.exit(42)} process.exit(0)}catch{process.exit(43)}" "$db_url_to_check"; then
+        log_error "DATABASE_URL имеет невалидный порт. Проверьте формат host:port и URL-кодирование пароля."
+        log_info "Пример корректного URL: postgresql://user:pass@postgres:5432/db?schema=public"
+        exit 1
+    fi
+    # Логируем без пароля
+    local safe_url
+    safe_url=$(node -e "const u=new URL(process.argv[1]); u.password=u.password? '***' : ''; console.log(u.toString())" "$db_url_to_check" 2>/dev/null || echo "(не удалось распарсить)")
+    log_success "DATABASE_URL валиден: $safe_url"
+}
+
 # Проверка состояния сервисов
 check_services() {
     log "Проверка состояния сервисов..."
@@ -278,7 +310,9 @@ save_current_state() {
     
     local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
     local current_tag=$(git describe --tags --exact-match 2>/dev/null || echo "no-tag")
-    local current_image=$(docker compose -f docker-compose.prod.yml images --format json | jq -r '.Repository + ":" + .Tag' | head -1 2>/dev/null || echo "unknown")
+    # docker compose images --format json outputs an array; pick the app service image if present
+    local current_image=$(docker compose -f docker-compose.prod.yml images --format json \
+        | jq -r '.[0] | (.Repository + ":" + .Tag)' 2>/dev/null || echo "unknown")
     
     cat > "$ROLLBACK_FILE" << EOF
 {
@@ -354,6 +388,8 @@ build_image() {
         if [[ "$REGISTRY" != "localhost" ]]; then
             execute "docker tag $full_image_tag $image_tag"
             execute "docker tag $full_image_tag books-app:latest"
+            # Ensure compose service 'app' uses the pulled image by tagging as books-app:prod (compose file image)
+            execute "docker tag $full_image_tag books-app:prod"
         fi
         
         log_success "Образ получен: $full_image_tag"
@@ -386,7 +422,8 @@ run_migrations() {
     cd "$DEPLOY_DIR"
     
     # Запуск временного контейнера для миграций
-    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps app sh -c 'npx prisma migrate deploy'"
+    # Запускаем миграции, обходя entrypoint, чтобы не запускать приложение
+    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' app npx prisma migrate deploy"
     
     log_success "Миграции выполнены"
 }
@@ -621,6 +658,7 @@ main() {
     
     # Проверки
     check_environment
+    validate_env
     
     if [[ "$ROLLBACK" == true ]]; then
         perform_rollback

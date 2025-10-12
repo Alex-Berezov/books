@@ -132,6 +132,11 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
+      - name: ⬇️ Normalize repository to lowercase
+        # Some actions/registries require lowercase image names. Persist as REPO_LOWER for later steps.
+        run: |
+          echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
       - name: 🔍 Extract Version
         id: version
         run: |
@@ -156,7 +161,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          images: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -187,7 +192,7 @@ jobs:
         uses: anchore/sbom-action@v0
         continue-on-error: true # Не блокируем деплой при ошибках SBOM
         with:
-          image: ${{ env.REGISTRY }}/${{ github.repository }}:${{ steps.version.outputs.version }}
+          image: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:${{ steps.version.outputs.version }}
           artifact-name: sbom-${{ steps.version.outputs.version }}.spdx.json
           output-file: ./sbom-${{ steps.version.outputs.version }}.spdx.json
 
@@ -195,7 +200,7 @@ jobs:
         uses: anchore/scan-action@v3
         continue-on-error: true # Не блокируем деплой при ошибках сканирования
         with:
-          image: ${{ env.REGISTRY }}/${{ github.repository }}:${{ steps.version.outputs.version }}
+          image: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:${{ steps.version.outputs.version }}
           fail-build: false # Не останавливаем деплой при средних уязвимостях
 
   # =====================================================
