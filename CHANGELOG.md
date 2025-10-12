@@ -4,6 +4,17 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-12 — Исправление permissions для GitHub Container Registry
+
+- **Проблема**: Build Docker Image падал с ошибкой "denied: installation not allowed to Create organization package"
+- **Причина**: У GitHub Actions не было прав на push образов в GitHub Container Registry (ghcr.io)
+- **Исправление**:
+  - ✅ Добавлены `permissions` в build job: `contents: read`, `packages: write`
+  - ✅ Теперь workflow может пушить Docker образы в ghcr.io
+- **Результат**: Docker образы успешно публикуются в GHCR при каждом деплое
+- **Файлы**:
+  - `.github/workflows/deploy.yml` - добавлена секция permissions в build job
+
 ## 2025-10-12 — Исправление Jest зависания после E2E тестов
 
 - **Проблема**: Jest не завершался после e2e тестов с сообщением "Jest did not exit one second after the test run has completed"
