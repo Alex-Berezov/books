@@ -256,15 +256,36 @@ validate_env() {
     if [[ "$raw_db_url" == *'${'* ]]; then
         db_url_to_check=$(bash -c "set -a; source '$envfile'; set +a; eval echo \"$raw_db_url\"")
     fi
-    # Проверяем, что порт числовой, если указан
-    if ! node -e "try{const u=new URL(String(process.argv[1])); const p=u.port||''; if(p && !/^\\d+$/.test(String(p))){process.exit(42)} process.exit(0)}catch{process.exit(43)}" "$db_url_to_check"; then
+    # Базовая проверка схемы
+    case "$db_url_to_check" in
+      postgres://*|postgresql://*) : ;; 
+      *)
+        log_error "DATABASE_URL должен начинаться с postgres:// или postgresql://"
+        exit 1
+        ;;
+    esac
+    # Извлечь host:port
+    local without_scheme="${db_url_to_check#*://}"
+    local after_at="${without_scheme##*@}"        # убираем креды, если есть
+    local hostport="${after_at%%/*}"              # до первого '/'
+    local port=""
+    if [[ "$hostport" == *:* ]]; then
+        port="${hostport##*:}"
+    fi
+    if [[ -n "$port" && ! "$port" =~ ^[0-9]+$ ]]; then
         log_error "DATABASE_URL имеет невалидный порт. Проверьте формат host:port и URL-кодирование пароля."
         log_info "Пример корректного URL: postgresql://user:pass@postgres:5432/db?schema=public"
         exit 1
     fi
-    # Логируем без пароля
-    local safe_url
-    safe_url=$(node -e "const u=new URL(process.argv[1]); u.password=u.password? '***' : ''; console.log(u.toString())" "$db_url_to_check" 2>/dev/null || echo "(не удалось распарсить)")
+    # Сохраняем расширенный URL для дальнейших шагов (миграции)
+    export DEPLOY_EXPANDED_DATABASE_URL="$db_url_to_check"
+    # Логируем маскированный URL (скрываем креды)
+    local safe_url="$db_url_to_check"
+    if [[ "$safe_url" == *"@"* ]]; then
+        safe_url="***@${after_at}"
+        # Добавим схему обратно
+        safe_url="${db_url_to_check%%://*}://$safe_url"
+    fi
     log_success "DATABASE_URL валиден: $safe_url"
 }
 
@@ -310,9 +331,9 @@ save_current_state() {
     
     local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
     local current_tag=$(git describe --tags --exact-match 2>/dev/null || echo "no-tag")
-    # docker compose images --format json outputs an array; pick the app service image if present
+    # docker compose images --format json outputs an array; prefer the 'app' service image
     local current_image=$(docker compose -f docker-compose.prod.yml images --format json \
-        | jq -r '.[0] | (.Repository + ":" + .Tag)' 2>/dev/null || echo "unknown")
+        | jq -r 'map(select(.Service == "app")) | if length>0 then (.[0].Repository + ":" + .[0].Tag) else (.[0].Repository + ":" + .[0].Tag) end' 2>/dev/null || echo "unknown")
     
     cat > "$ROLLBACK_FILE" << EOF
 {
@@ -423,7 +444,13 @@ run_migrations() {
     
     # Запуск временного контейнера для миграций
     # Запускаем миграции, обходя entrypoint, чтобы не запускать приложение
-    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' app npx prisma migrate deploy"
+    # Передаем явно DATABASE_URL (расширенный), чтобы Prisma не увидел нечисловой порт
+    local dburl="${DEPLOY_EXPANDED_DATABASE_URL:-}"
+    if [[ -z "$dburl" ]]; then
+        # подстраховка
+        dburl=$(grep -E '^DATABASE_URL=' "$DEPLOY_DIR/.env.prod" | sed 's/^DATABASE_URL=//' | sed 's/^\"\|\"$//g' | sed "s/^'\|'$//g" || true)
+    fi
+    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL=\"$dburl\" app npx prisma migrate deploy"
     
     log_success "Миграции выполнены"
 }
