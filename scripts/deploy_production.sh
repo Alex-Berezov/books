@@ -31,12 +31,15 @@ NC='\033[0m'
 
 # Переменные по умолчанию
 VERSION=""
+IMAGE_TAG=""
 REGISTRY="localhost"
 NO_BACKUP=false
 NO_MIGRATE=false
 FORCE=false
 ROLLBACK=false
 DRY_RUN=false
+SKIP_GIT_UPDATE=false
+PULL_IMAGE=false
 
 # Пути
 DEPLOY_DIR="/opt/books/app/src"
@@ -82,7 +85,10 @@ Production Deployment Script
 ПАРАМЕТРЫ:
     --version VERSION    Версия для деплоя (git tag, branch, commit)
                         Примеры: v1.2.3, main, abc1234
+    --image-tag TAG     Docker image tag (если отличается от version)
     --registry REGISTRY  Docker registry (по умолчанию: localhost)
+    --skip-git-update   Не обновлять Git репозиторий (уже обновлен в CI)
+    --pull              Pull образ из registry вместо локальной сборки
     --no-backup         Пропустить создание бэкапа
     --no-migrate        Пропустить выполнение миграций
     --force             Не спрашивать подтверждение
@@ -91,11 +97,14 @@ Production Deployment Script
     -h, --help          Показать эту справку
 
 ПРИМЕРЫ:
-    # Деплой новой версии
+    # Деплой новой версии (локальная сборка)
     ./scripts/deploy_production.sh --version v1.2.3
     
     # Деплой с пропуском бэкапа
     ./scripts/deploy_production.sh --version main --no-backup
+    
+    # Деплой из CI (Git уже обновлен, pull образа)
+    ./scripts/deploy_production.sh --image-tag main-abc1234 --skip-git-update --pull
     
     # Откат к предыдущей версии
     ./scripts/deploy_production.sh --rollback
@@ -119,9 +128,21 @@ while [[ $# -gt 0 ]]; do
             VERSION="$2"
             shift 2
             ;;
+        --image-tag)
+            IMAGE_TAG="$2"
+            shift 2
+            ;;
         --registry)
             REGISTRY="$2"
             shift 2
+            ;;
+        --skip-git-update)
+            SKIP_GIT_UPDATE=true
+            shift
+            ;;
+        --pull)
+            PULL_IMAGE=true
+            shift
             ;;
         --no-backup)
             NO_BACKUP=true
@@ -155,9 +176,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Автоопределение IMAGE_TAG если не задан
+if [[ -z "$IMAGE_TAG" && -n "$VERSION" ]]; then
+    IMAGE_TAG="$VERSION"
+fi
+
 # Проверка параметров
-if [[ "$ROLLBACK" == false && -z "$VERSION" ]]; then
-    log_error "Не указана версия. Используйте --version или --rollback"
+if [[ "$ROLLBACK" == false && -z "$IMAGE_TAG" ]]; then
+    log_error "Не указан image tag. Используйте --image-tag, --version или --rollback"
     echo "Используйте --help для справки"
     exit 1
 fi
@@ -260,8 +286,8 @@ save_current_state() {
     "commit": "$current_commit",
     "tag": "$current_tag", 
     "image": "$current_image",
-    "deployment_user": "$(whoami)",
-    "version": "$VERSION"
+    "image_tag": "$IMAGE_TAG",
+    "deployment_user": "$(whoami)"
 }
 EOF
     
@@ -270,6 +296,15 @@ EOF
 
 # Обновление кода
 update_code() {
+    if [[ "$SKIP_GIT_UPDATE" == true ]]; then
+        log_info "Пропуск обновления Git (--skip-git-update)"
+        cd "$DEPLOY_DIR"
+        local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+        log_info "Текущая версия Git: $current_branch @ $current_commit"
+        return 0
+    fi
+    
     log "Обновление кода до версии: $VERSION"
     
     cd "$DEPLOY_DIR"
@@ -296,28 +331,45 @@ update_code() {
     log_success "Код обновлен до коммита: $new_commit"
 }
 
-# Сборка образа
+# Сборка/pull образа
 build_image() {
-    log "Сборка Docker образа..."
-    
     cd "$DEPLOY_DIR"
     
-    local image_tag="books-app:$VERSION"
+    local image_tag="books-app:$IMAGE_TAG"
+    local full_image_tag="$image_tag"
+    
     if [[ "$REGISTRY" != "localhost" ]]; then
-        image_tag="$REGISTRY/books-app:$VERSION"
+        full_image_tag="$REGISTRY/books-app:$IMAGE_TAG"
     fi
     
-    # Сборка с многоступенчатым кэшированием
-    execute "docker build \
-        --target runner \
-        --tag $image_tag \
-        --tag books-app:latest \
-        --build-arg BUILD_DATE=$(date -Iseconds) \
-        --build-arg VCS_REF=$(git rev-parse HEAD) \
-        --build-arg VERSION=$VERSION \
-        ."
-    
-    log_success "Образ собран: $image_tag"
+    if [[ "$PULL_IMAGE" == true ]]; then
+        log "Pull Docker образа из registry..."
+        
+        # Pull образа из registry
+        execute "docker pull $full_image_tag"
+        
+        # Тегируем для локального использования
+        if [[ "$REGISTRY" != "localhost" ]]; then
+            execute "docker tag $full_image_tag $image_tag"
+            execute "docker tag $full_image_tag books-app:latest"
+        fi
+        
+        log_success "Образ получен: $full_image_tag"
+    else
+        log "Сборка Docker образа..."
+        
+        # Локальная сборка с многоступенчатым кэшированием
+        execute "docker build \
+            --target runner \
+            --tag $image_tag \
+            --tag books-app:latest \
+            --build-arg BUILD_DATE=$(date -Iseconds) \
+            --build-arg VCS_REF=$(git rev-parse HEAD) \
+            --build-arg VERSION=$IMAGE_TAG \
+            ."
+        
+        log_success "Образ собран: $image_tag"
+    fi
 }
 
 # Выполнение миграций
@@ -455,7 +507,8 @@ save_deployment_state() {
     cat > "$STATE_FILE" << EOF
 {
     "timestamp": "$(date -Iseconds)",
-    "version": "$VERSION",
+    "image_tag": "$IMAGE_TAG",
+    "git_version": "$VERSION",
     "commit": "$commit",
     "tag": "$tag",
     "registry": "$REGISTRY", 
@@ -536,7 +589,10 @@ main() {
     if [[ "$ROLLBACK" == true ]]; then
         echo "Режим: ОТКАТ к предыдущей версии"
     else
-        echo "Версия: $VERSION"
+        echo "Image Tag: $IMAGE_TAG"
+        if [[ -n "$VERSION" && "$VERSION" != "$IMAGE_TAG" ]]; then
+            echo "Git Version: $VERSION"
+        fi
         echo "Registry: $REGISTRY"
     fi
     echo "Режим выполнения: $([ "$DRY_RUN" == true ] && echo "DRY RUN" || echo "РЕАЛЬНЫЙ ДЕПЛОЙ")"
@@ -546,7 +602,7 @@ main() {
         if [[ "$ROLLBACK" == true ]]; then
             read -p "Выполнить откат? (y/N): " -n 1 -r
         else
-            read -p "Выполнить деплой версии $VERSION? (y/N): " -n 1 -r
+            read -p "Выполнить деплой образа $IMAGE_TAG? (y/N): " -n 1 -r
         fi
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -558,8 +614,8 @@ main() {
     # Инициализация
     mkdir -p "$LOG_DIR"
     
-    log "Начало деплоя версии $VERSION"
-    send_notification "START" "Начат деплой версии $VERSION"
+    log "Начало деплоя образа $IMAGE_TAG"
+    send_notification "START" "Начат деплой образа $IMAGE_TAG"
     
     # Проверки
     check_environment
@@ -586,14 +642,17 @@ main() {
             echo "✅ Деплой выполнен успешно!"
             echo "========================================"
             echo -e "${NC}"
-            echo "Версия: $VERSION"
+            echo "Image Tag: $IMAGE_TAG"
+            if [[ -n "$VERSION" && "$VERSION" != "$IMAGE_TAG" ]]; then
+                echo "Git Version: $VERSION"
+            fi
             echo "Время: $(date)"
             echo "Логи: $LOG_DIR/deployment.log"
             
-            send_notification "SUCCESS" "Деплой версии $VERSION выполнен успешно"
+            send_notification "SUCCESS" "Деплой образа $IMAGE_TAG выполнен успешно"
         else
             log_error "Деплой не прошел проверки"
-            send_notification "FAILURE" "Деплой версии $VERSION не прошел проверки"
+            send_notification "FAILURE" "Деплой образа $IMAGE_TAG не прошел проверки"
             
             if [[ "$FORCE" == false ]]; then
                 read -p "Выполнить автоматический откат? (Y/n): " -n 1 -r

@@ -263,8 +263,10 @@ jobs:
             
             echo "🚀 Starting deployment..."
             ./scripts/deploy_production.sh \
-              --version "${{ needs.build.outputs.version }}" \
+              --image-tag "${{ needs.build.outputs.version }}" \
               --registry "${{ env.REGISTRY }}/${{ github.repository_owner }}" \
+              --skip-git-update \
+              --pull \
               --no-backup \
               --force
             
