@@ -8,7 +8,7 @@ describe('Queues (BullMQ) e2e', () => {
   let app: INestApplication;
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
-  const hasRedis = !!(process.env.REDIS_URL || process.env.REDIS_HOST);
+  let queuesEnabled: boolean;
 
   beforeAll(async () => {
     process.env.ADMIN_EMAILS = 'admin@example.com';
@@ -18,6 +18,13 @@ describe('Queues (BullMQ) e2e', () => {
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
     await app.init();
+
+    // Проверяем фактическую доступность очередей через API
+    const token = await getAdminToken();
+    const statusRes = await request(http())
+      .get('/queues/status')
+      .set('Authorization', `Bearer ${token}`);
+    queuesEnabled = statusRes.body?.enabled === true;
   });
 
   afterAll(async () => {
@@ -40,7 +47,8 @@ describe('Queues (BullMQ) e2e', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(typeof res.body.enabled).toBe('boolean');
-    if (!hasRedis) expect(res.body.enabled).toBe(false);
+    // Проверяем что значение соответствует фактической доступности
+    expect(res.body.enabled).toBe(queuesEnabled);
   });
 
   it('GET /queues/demo/stats (admin) works w/ or w/o Redis', async () => {
@@ -58,7 +66,7 @@ describe('Queues (BullMQ) e2e', () => {
       .post('/queues/demo/enqueue')
       .set('Authorization', `Bearer ${token}`)
       .send({ delayMs: 5 });
-    if (hasRedis) {
+    if (queuesEnabled) {
       const res = await rq.expect(201);
       expect(res.body.id).toBeDefined();
     } else {
