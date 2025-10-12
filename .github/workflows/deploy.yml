@@ -243,10 +243,18 @@ jobs:
             echo "🔄 Preparing deployment environment..."
             cd /opt/books/app/src
             
-            # Обновление скриптов деплоя (если нужно)
+            # Сохранение локальных изменений и обновление кода
             if [[ -d ".git" ]]; then
+              echo "📦 Stashing local changes..."
+              git stash --include-untracked || true
+              
+              echo "🔄 Fetching latest code..."
               git fetch origin main
-              git checkout origin/main -- scripts/deploy_production.sh docker-compose.prod.yml
+              
+              echo "🔄 Updating to latest version..."
+              git reset --hard origin/main
+              
+              echo "✅ Code updated successfully"
               chmod +x scripts/deploy_production.sh
             fi
             
