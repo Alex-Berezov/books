@@ -41,6 +41,7 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 .env.local
+.env.prod  # Production secrets - never commit!
 
 # temp directory
 .temp
