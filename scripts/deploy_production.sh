@@ -242,6 +242,7 @@ validate_env() {
     local envfile="$DEPLOY_DIR/.env.prod"
     if [[ ! -f "$envfile" ]]; then
         log_error ".env.prod не найден в $DEPLOY_DIR"
+        log_info "Создайте .env.prod на основе .env.prod.template"
         exit 1
     fi
     # Извлекаем DATABASE_URL (убираем кавычки если есть)
@@ -251,6 +252,22 @@ validate_env() {
         log_error "DATABASE_URL не задан в .env.prod"
         exit 1
     fi
+    
+    # Проверка пароля на проблемные символы
+    if [[ "$raw_db_url" =~ postgresql://[^:]+:([^@]+)@ ]]; then
+        local password="${BASH_REMATCH[1]}"
+        # Если пароль содержит / или = БЕЗ URL-кодирования - это ошибка
+        if [[ "$password" == *"/"* || "$password" == *"="* ]] && [[ "$password" != *"%"* ]]; then
+            log_error "❌ ОШИБКА: Пароль БД содержит символы / или = без URL-кодирования!"
+            log_error "Prisma не может парсить такой URL."
+            log_info "Решения:"
+            log_info "  1. Используйте пароль без спецсимволов (рекомендуется)"
+            log_info "  2. URL-кодируйте пароль: / → %2F, = → %3D"
+            log_info "Текущий пароль содержит проблемные символы: $password"
+            exit 1
+        fi
+    fi
+    
     # Если есть плейсхолдеры вида ${VAR}, пытаемся развернуть их из .env.prod
     local db_url_to_check="$raw_db_url"
     if [[ "$raw_db_url" == *'${'* ]]; then
