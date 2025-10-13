@@ -497,17 +497,24 @@ deploy_services() {
             break
         fi
         
-        if curl -sf "http://localhost:5000/api/health/liveness" &> /dev/null; then
+        # Проверяем Docker healthcheck статус контейнера app
+        local health_status
+        health_status=$(docker compose -f docker-compose.prod.yml ps --format json app 2>/dev/null | jq -r '.Health // "none"')
+        
+        if [[ "$health_status" == "healthy" ]]; then
             log_success "Сервис готов к работе"
             return 0
         fi
         
         ((attempt++))
-        log_info "Попытка $attempt/$max_attempts..."
+        log_info "Попытка $attempt/$max_attempts (статус: $health_status)..."
         sleep 5
     done
     
     log_error "Сервис не готов после $max_attempts попыток"
+    # Показываем логи для диагностики
+    log_info "Последние логи контейнера:"
+    docker compose -f docker-compose.prod.yml logs --tail=20 app || true
     return 1
 }
 
@@ -524,6 +531,8 @@ verify_deployment() {
     
     local checks_passed=0
     local total_checks=5
+    local app_container
+    app_container=$(docker compose -f docker-compose.prod.yml ps -q app)
     
     # 1. Проверка запущенных контейнеров
     if docker compose -f docker-compose.prod.yml ps --format json | jq -e '.State == "running"' &> /dev/null; then
@@ -533,16 +542,16 @@ verify_deployment() {
         log_error "✗ Контейнеры не запущены"
     fi
     
-    # 2. Проверка healthcheck
-    if curl -sf "http://localhost:5000/api/health/liveness" &> /dev/null; then
+    # 2. Проверка healthcheck через docker exec
+    if [[ -n "$app_container" ]] && docker exec "$app_container" wget -q -O- http://localhost:5000/api/health/liveness &> /dev/null; then
         log_success "✓ Health check прошел"
         ((checks_passed++))
     else
         log_error "✗ Health check не прошел"
     fi
     
-    # 3. Проверка базы данных
-    if curl -sf "http://localhost:5000/api/health/readiness" &> /dev/null; then
+    # 3. Проверка базы данных через readiness
+    if [[ -n "$app_container" ]] && docker exec "$app_container" wget -q -O- http://localhost:5000/api/health/readiness &> /dev/null; then
         log_success "✓ База данных подключена"
         ((checks_passed++))
     else
@@ -550,7 +559,7 @@ verify_deployment() {
     fi
     
     # 4. Проверка метрик
-    if curl -sf "http://localhost:5000/api/metrics" &> /dev/null; then
+    if [[ -n "$app_container" ]] && docker exec "$app_container" wget -q -O- http://localhost:5000/api/metrics &> /dev/null; then
         log_success "✓ Метрики доступны"
         ((checks_passed++))
     else
@@ -558,7 +567,10 @@ verify_deployment() {
     fi
     
     # 5. Проверка версии API
-    local api_version=$(curl -sf "http://localhost:5000/api/health/liveness" | jq -r '.version // "unknown"' 2>/dev/null || echo "unknown")
+    local api_version="unknown"
+    if [[ -n "$app_container" ]]; then
+        api_version=$(docker exec "$app_container" wget -q -O- http://localhost:5000/api/health/liveness 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+    fi
     if [[ "$api_version" != "unknown" ]]; then
         log_success "✓ API версия: $api_version"
         ((checks_passed++))

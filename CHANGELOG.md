@@ -6,6 +6,30 @@
 
 \\ test //
 
+## 2025-10-13 — Исправление URL-кодирования пароля БД для Prisma миграций
+
+- **Проблема**: Deploy падал с ошибкой "P1013: invalid port number in database URL"
+- **Причина**:
+  - Пароль PostgreSQL содержал спецсимволы: `74NGgfM121ZvKPxamNTPgCp/YsU=`
+  - Символы `/` и `=` не были URL-кодированы
+  - Prisma не мог корректно распарсить строку подключения
+  - Ошибка: `postgresql://books_app:74NGgfM121ZvKPxamNTPgCp/YsU=@postgres:5432/...`
+- **Решение**:
+  - ✅ Добавлено автоматическое URL-кодирование пароля в `deploy_production.sh`
+  - ✅ Используется Python `urllib.parse.quote()` для корректного кодирования
+  - ✅ Обнаружение спецсимволов (`/`, `=`) и автоматическое кодирование
+  - ✅ Обновлён `.env.prod` на сервере с URL-кодированным паролем
+  - ✅ Результат: `postgresql://books_app:74NGgfM121ZvKPxamNTPgCp%2FYsU%3D@postgres:5432/...`
+- **Как работает**:
+  1. Скрипт извлекает DATABASE_URL из `.env.prod`
+  2. Парсит URL и извлекает пароль через regex
+  3. Если пароль содержит `/` или `=` — применяет URL-кодирование
+  4. Передаёт исправленный URL в Prisma migrate deploy
+- **Результат**: Миграции выполняются успешно, деплой проходит
+- **Файлы**:
+  - `scripts/deploy_production.sh` - добавлено автоматическое URL-кодирование пароля
+  - `.env.prod` на сервере - обновлён с URL-кодированным паролем
+
 ## 2025-10-12 — Исправление Docker registry: lowercase repository name
 
 - **Проблема**: Deploy падал с ошибкой "invalid reference format: repository name (Alex-Berezov/books-app) must be lowercase"
