@@ -26,6 +26,13 @@ on:
         type: boolean
         default: false
 
+# Глобальные permissions для workflow
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: books-app
@@ -118,10 +125,6 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [test]
     if: ${{ always() && (needs.test.result == 'success' || github.event.inputs.skip_tests) }}
-
-    permissions:
-      contents: read
-      packages: write
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
