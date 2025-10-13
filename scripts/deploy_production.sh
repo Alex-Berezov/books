@@ -450,6 +450,25 @@ run_migrations() {
         # подстраховка
         dburl=$(grep -E '^DATABASE_URL=' "$DEPLOY_DIR/.env.prod" | sed 's/^DATABASE_URL=//' | sed 's/^\"\|\"$//g' | sed "s/^'\|'$//g" || true)
     fi
+    
+    # URL-кодирование пароля для Prisma (если пароль содержит спецсимволы)
+    # Извлекаем части URL: protocol://user:password@host:port/db?params
+    if [[ "$dburl" =~ ^([^:]+)://([^:]+):([^@]+)@(.+)$ ]]; then
+        local protocol="${BASH_REMATCH[1]}"
+        local user="${BASH_REMATCH[2]}"
+        local password="${BASH_REMATCH[3]}"
+        local rest="${BASH_REMATCH[4]}"
+        
+        # URL-кодируем пароль (только если содержит /, = или другие спецсимволы)
+        if [[ "$password" == *[/=]* ]]; then
+            # Используем Python для корректного URL-кодирования
+            local encoded_password
+            encoded_password=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$password', safe=''))")
+            dburl="${protocol}://${user}:${encoded_password}@${rest}"
+            log_info "Пароль БД содержит спецсимволы - выполнено URL-кодирование"
+        fi
+    fi
+    
     execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL=\"$dburl\" app npx prisma migrate deploy"
     
     log_success "Миграции выполнены"
