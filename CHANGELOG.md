@@ -6,6 +6,66 @@
 
 \\ test //
 
+## 2025-10-13 — КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Пароль БД со спецсимволами + Проброс порта для Caddy
+
+- **Главная проблема**: Приложение не запускалось в production из-за 2 критических проблем
+  1. Prisma не может парсить пароль БД с символами `/` и `=`
+  2. Caddy не мог проксировать запросы - порт 5000 не был доступен
+
+### Решение проблемы с паролем БД:
+
+- **Проблема**: `PrismaClientInitializationError: invalid port number in database URL`
+- **Причина**: Пароль PostgreSQL `74NGgfM121ZvKPxamNTPgCp/YsU=` содержал `/` и `=`
+- **Попытки исправления**:
+  - ❌ URL-кодирование пароля в `.env.prod` - Prisma в runtime не поддерживает
+  - ❌ Использование оригинального пароля - Prisma не может парсить URL
+- **Финальное решение**:
+  - ✅ Сгенерирован новый пароль БД без спецсимволов: `HNvJ9VLQQpvhGtNVZuXaWFeIdEgTYFRy`
+  - ✅ Выполнено `ALTER USER books_app WITH PASSWORD '...'`
+  - ✅ Обновлён `.env.prod` с новым паролем
+  - ✅ Приложение успешно запустилось со статусом `healthy`
+
+### Решение проблемы с Caddy:
+
+- **Проблема**: Caddy не мог проксировать на `localhost:5000` - timeout на всех запросах
+- **Причина**: Порт 5000 не был проброшен из Docker контейнера
+- **Решение**:
+  - ✅ Проброшен порт `127.0.0.1:5000:5000` в `docker-compose.prod.yml`
+  - ✅ Доступ только с localhost - внешние запросы заблокированы
+  - ✅ Caddy успешно проксирует через HTTPS
+
+### Результат:
+
+- ✅ API полностью работает: https://bibliaris.com/api/health/liveness
+- ✅ Database подключена: https://bibliaris.com/api/health/readiness
+- ✅ Метрики доступны: https://bibliaris.com/api/metrics
+- ✅ SSL работает через Let's Encrypt
+- ✅ Контейнеры в статусе `healthy`
+
+### Файлы:
+
+- `.env.prod` на сервере - новый пароль БД
+- `docker-compose.prod.yml` - проброс порта 127.0.0.1:5000
+- `scripts/deploy_production.sh` - URL-кодирование только для миграций
+
+## 2025-10-13 — Исправление публикации Docker образов в GitHub Container Registry
+
+- **Проблема**: Build падал с ошибкой "denied: permission_denied: write_package"
+- **Причина**:
+  - Workflow не имел прав на публикацию пакетов в GHCR
+  - Отсутствовали глобальные permissions для `packages: write`
+  - При создании нового пакета требуются дополнительные права
+- **Решение**:
+  - ✅ Добавлены глобальные permissions в workflow:
+    - `packages: write` - для публикации пакетов
+    - `id-token: write` - для attestations
+    - `attestations: write` - для SBOM и provenance
+  - ✅ Убраны дублирующие permissions из build job
+  - ✅ Права теперь применяются ко всем jobs
+- **Результат**: Docker образы успешно публикуются в ghcr.io/alex-berezov/books
+- **Файлы**:
+  - `.github/workflows/deploy.yml` - добавлены глобальные permissions
+
 ## 2025-10-13 — Исправление проверки готовности сервисов через Docker healthcheck
 
 - **Проблема**: Deploy падал с ошибкой "Сервис не готов после 30 попыток"
