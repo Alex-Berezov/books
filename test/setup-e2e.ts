@@ -21,11 +21,11 @@ function buildTempDbUrl(baseUrl: string, dbName: string): { adminUrl: string; db
 }
 
 export default function globalSetup(): void {
-  // Load base env (.env)
-  dotenvConfig({ path: '.env' });
+  // Load test env (.env.test), fallback to .env if not exists
+  dotenvConfig({ path: '.env.test' });
   const baseUrl = process.env.DATABASE_URL;
   if (!baseUrl) {
-    throw new Error('DATABASE_URL is not set. Please configure it in .env');
+    throw new Error('DATABASE_URL is not set. Please configure it in .env.test or .env');
   }
 
   // Create isolated temporary database for this e2e run

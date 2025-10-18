@@ -2,7 +2,7 @@ import { config as dotenvConfig } from 'dotenv';
 import { execSync } from 'node:child_process';
 
 export default function globalTeardown(): void {
-  dotenvConfig({ path: '.env' });
+  dotenvConfig({ path: '.env.test' });
   const adminUrl = process.env.PRISMA_TEST_ADMIN_URL;
   const dbName = process.env.PRISMA_TEST_DB_NAME;
   if (!adminUrl || !dbName) return;

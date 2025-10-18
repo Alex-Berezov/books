@@ -4,6 +4,87 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-18 — ✅ ИСПРАВЛЕНИЕ: E2E тесты - недостающие зависимости и конфигурация
+
+**СТАТУС**: ✅ Все тесты проходят успешно! 31/32 test suites, 73/75 tests passed.
+
+### Проблема:
+
+После последнего push все E2E тесты падали с ошибкой:
+
+```
+Nest can't resolve dependencies of the AuthRateLimitGuard (ConfigService, ?).
+Please make sure that the argument Symbol(RATE_LIMITER) at index [1] is available in the AuthModule context.
+```
+
+### Причина:
+
+1. **Отсутствующая зависимость**: `AuthModule` не импортировал `RateLimitModule`, поэтому провайдер `RATE_LIMITER` не был доступен для `AuthRateLimitGuard`
+2. **Неправильная конфигурация БД для тестов**: E2E setup использовал `.env` с production credentials вместо superuser для создания тестовых БД
+3. **Rate limiting в тестах**: Тесты попадали под ограничения rate limiter
+
+### Решение:
+
+#### 1. Исправлена зависимость AuthRateLimitGuard
+
+- ✅ Добавлен импорт `RateLimitModule` в `AuthModule`
+- ✅ Теперь `RATE_LIMITER` провайдер доступен для всех guards в AuthModule
+
+**Файлы**: `src/modules/auth/auth.module.ts`
+
+#### 2. Настроена тестовая конфигурация БД
+
+- ✅ Создан `.env.test` с credentials для postgres superuser (коммитится в Git)
+- ✅ Обновлён `test/setup-e2e.ts` для использования `.env.test` вместо `.env`
+- ✅ Обновлён `test/teardown-e2e.ts` для использования `.env.test`
+- ✅ **Удалён `.env.test` из `.gitignore`** - файл безопасно коммитить (только тестовые credentials)
+- ✅ Установлен пароль для postgres user: `ALTER USER postgres PASSWORD 'postgres'`
+
+**Важно**: `.env.test` теперь коммитится в Git, так как:
+
+- Содержит только тестовые credentials, не production секреты
+- Нужен для работы E2E тестов в GitHub Actions CI
+- Обеспечивает единую конфигурацию для всех разработчиков
+
+**Файлы**:
+
+- `.env.test` (NEW, tracked in Git)
+- `test/setup-e2e.ts`
+- `test/teardown-e2e.ts`
+- `.gitignore` - удалён `.env.test`, оставлен `.env.test.local`
+- `README.md` - добавлена секция про управление env файлами
+
+#### 3. Отключён rate limiting для тестов
+
+- ✅ Добавлены переменные в `.env.test`: `RATE_LIMIT_AUTH_ENABLED=0`, `RATE_LIMIT_GLOBAL_ENABLED=0`
+- ✅ Обновлён `test/users-auth.e2e-spec.ts` для явного отключения rate limiting
+
+**Файлы**:
+
+- `.env.test`
+- `test/users-auth.e2e-spec.ts`
+
+### Результат:
+
+**✅ Все тесты проходят:**
+
+- ✅ Test Suites: 31 passed, 1 skipped, 32 total
+- ✅ Tests: 73 passed, 2 skipped, 75 total
+- ✅ Время выполнения: ~41s
+
+### Изменённые файлы:
+
+1. `src/modules/auth/auth.module.ts` - добавлен импорт RateLimitModule
+2. `.env.test` - создан тестовый конфиг (NEW, tracked in Git)
+3. `test/setup-e2e.ts` - использует .env.test
+4. `test/teardown-e2e.ts` - использует .env.test
+5. `test/users-auth.e2e-spec.ts` - отключён rate limiting
+6. `.gitignore` - удалён `.env.test` (теперь файл коммитится)
+7. `README.md` - добавлена секция про управление env файлами
+8. `CHANGELOG.md` - обновлён
+
+---
+
 ## 2025-10-18 — ✅ УСПЕШНЫЙ ДЕПЛОЙ: Полное исправление deploy pipeline
 
 **СТАТУС**: ✅ Production работает полностью! Все проверки пройдены.

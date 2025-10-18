@@ -6,11 +6,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 
 @Module({
   imports: [
     ConfigModule,
     PassportModule,
+    RateLimitModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
