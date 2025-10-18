@@ -4,6 +4,77 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-18 — ✅ УСПЕШНЫЙ ДЕПЛОЙ: Полное исправление deploy pipeline
+
+**СТАТУС**: ✅ Production работает полностью! Все проверки пройдены.
+
+### Проблемы и решения:
+
+#### 1. Создание .env.prod из GitHub Secrets
+
+- **Проблема**: Deploy падал с ошибкой "❌ .env.prod не найден в /opt/books/app/src"
+- **Причина**: `.env.prod` в `.gitignore`, не создавался при деплое
+- **Решение**: ✅ Добавлен шаг создания из GitHub Secret `ENV_PROD` в workflow
+- **Файлы**: `.github/workflows/deploy.yml`, `docs/GITHUB_SECRETS_SETUP.md`, `QUICK_FIX_ENV_PROD.md`
+
+#### 2. Таймаут ожидания готовности сервисов
+
+- **Проблема**: Скрипт падал на "Ожидание готовности сервисов" - не дожидался healthcheck
+- **Причина**:
+  - Docker healthcheck имеет `start_period=10s` + `interval=10s` × `retries=10` = ~110s
+  - Скрипт начинал проверку сразу, первый healthcheck только через 10 секунд
+- **Решение**:
+  - ✅ Добавлена начальная задержка 15 секунд перед первой проверкой
+  - ✅ Увеличен `max_attempts` с 30 до 60 (5 минут вместо 2.5)
+- **Файлы**: `scripts/deploy_production.sh`
+
+#### 3. Проверка готовности через wget (отсутствует в образе)
+
+- **Проблема**: `verify_deployment()` использовал `wget`, которого нет в production образе
+- **Причина**: Базовый образ `node:22-alpine-slim` не включает wget
+- **Решение**:
+  - ✅ Заменён `wget` на встроенный Node.js `http.get()`
+  - ✅ Используется тот же подход что и в Docker healthcheck
+- **Файлы**: `scripts/deploy_production.sh`
+
+### Результат:
+
+**✅ Production полностью функционален:**
+
+- ✅ API: https://bibliaris.com/api/health/liveness
+- ✅ Database: https://bibliaris.com/api/health/readiness
+- ✅ Metrics: https://bibliaris.com/api/metrics
+- ✅ Swagger: https://bibliaris.com/docs
+- ✅ Контейнеры: `healthy` статус
+- ✅ Деплой: все проверки пройдены
+
+### Изменённые файлы:
+
+- `.github/workflows/deploy.yml` - создание `.env.prod` из секрета
+- `scripts/deploy_production.sh` - таймауты и проверки через Node.js
+- `docs/GITHUB_SECRETS_SETUP.md` - руководство по настройке секретов (NEW)
+- `docs/TROUBLESHOOTING.md` - секция "Deploy падает: .env.prod не найден"
+- `QUICK_FIX_ENV_PROD.md` - быстрая инструкция (NEW)
+- `.gitignore` - добавлена директория `docs/errors/`
+- `CHANGELOG.md` - обновлён с деталями исправлений
+
+### Безопасность:
+
+- ✅ JWT секреты обновлены (`openssl rand -base64 32`)
+- ✅ `.env.prod` не хранится в Git
+- ✅ Секреты зашифрованы в GitHub Secrets
+- ✅ Файл на сервере с правами `600`
+- ✅ CORS настроен с credentials
+- ✅ Admin emails: `admin@bibliaris.com`
+
+### Commits:
+
+- `568b1d3` - fix: создание .env.prod из GitHub Secrets в deploy workflow
+- `eaee6a4` - fix(deploy): увеличен таймаут ожидания готовности сервисов
+- `a77181b` - fix(deploy): исправлена проверка готовности - заменён wget на node
+
+---
+
 ## 2025-10-18 — ИСПРАВЛЕНИЕ: Создание .env.prod из GitHub Secrets в deploy workflow
 
 - **Проблема**: Deploy падал с ошибкой "❌ .env.prod не найден в /opt/books/app/src"

@@ -151,24 +151,34 @@ docker compose down
 
 ## 🚀 Production Deployment
 
-Проект включает полную систему для развертывания в production окружении.
+✅ **Production успешно развернут и работает**: [bibliaris.com](https://bibliaris.com)
 
 ### Быстрый деплой в production
 
+**Важно**: Деплой использует GitHub Secrets для управления `.env.prod`. См. [GITHUB_SECRETS_SETUP.md](docs/GITHUB_SECRETS_SETUP.md) для настройки.
+
 ```bash
-# 1. Настройка сервера (автоматическая)
-./scripts/setup_server.sh --domain api.yourdomain.com
+# 1. Настройте GitHub Secrets (один раз):
+# - Создайте ENV_PROD secret с содержимым .env.prod
+# - Настройте DEPLOY_SSH_KEY для SSH-доступа
+# - См. docs/GITHUB_SECRETS_SETUP.md для деталей
 
-# 2. Создание .env.prod из template
-cp .env.prod.template .env.prod
-vim .env.prod  # обновить для вашего домена
+# 2. Деплой через GitHub Actions (автоматически при push в main)
+git push origin main
 
-# 3. Первый деплой
+# 3. Или ручной деплой на сервере:
 ./scripts/deploy_production.sh --version main
 
 # 4. Проверка готовности
-./scripts/health_check.sh --url https://api.yourdomain.com
+./scripts/health_check.sh --url https://bibliaris.com
 ```
+
+### Работающие Production URL
+
+- **API Health**: https://bibliaris.com/api/health/liveness
+- **Database Check**: https://bibliaris.com/api/health/readiness
+- **Metrics**: https://bibliaris.com/api/metrics
+- **API Docs**: https://bibliaris.com/docs
 
 ### Возможности системы деплоя
 
