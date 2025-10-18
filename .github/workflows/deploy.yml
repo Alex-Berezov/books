@@ -269,6 +269,14 @@ jobs:
               chmod +x scripts/deploy_production.sh
             fi
             
+            # Создание .env.prod из секретов
+            echo "📝 Creating .env.prod from secrets..."
+            cat > .env.prod << 'ENVEOF'
+          ${{ secrets.ENV_PROD }}
+          ENVEOF
+            chmod 600 .env.prod
+            echo "✅ .env.prod created successfully"
+            
             # Логин в registry для pull образа
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             
