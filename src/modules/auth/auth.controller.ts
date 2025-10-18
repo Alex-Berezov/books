@@ -1,5 +1,6 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiOkResponse, ApiCreatedResponse } from '@nestjs/swagger';
+import { AuthRateLimitGuard } from '../../common/guards/auth-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshDto, RegisterDto } from './dto/auth.dto';
 
@@ -21,6 +22,7 @@ class AuthResponse {
 
 @ApiTags('auth')
 @Controller('auth')
+@UseGuards(AuthRateLimitGuard) // Применяем rate limiting ко всем auth endpoints
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 

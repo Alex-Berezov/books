@@ -2,11 +2,12 @@ import { INestApplication } from '@nestjs/common';
 import helmet from 'helmet';
 import * as express from 'express';
 import { join } from 'node:path';
+import { getCorsConfig, getCorsConfigInfo } from '../../config/cors.config';
 
 /**
  * Apply security middleware and body limits consistently across the app.
  * - Helmet with safe defaults (CSP disabled in non-prod to not break Swagger)
- * - CORS with origin from env (CORS_ORIGIN, default "*") and common headers
+ * - CORS configured via getCorsConfig() from cors.config.ts
  * - Body parsers: JSON and URL-encoded with 1mb limits by default
  * - Raw body for local direct uploads (110mb)
  * - Static files for local uploads mapped to /static
@@ -21,31 +22,15 @@ export function configureSecurity(app: INestApplication): void {
     }),
   );
 
-  // CORS: supports wildcard, single origin, or comma-separated whitelist.
-  // Set CORS_CREDENTIALS=1 to enable credentialed requests.
-  const originEnv = process.env.CORS_ORIGIN || '*';
-  const corsCredentials = (process.env.CORS_CREDENTIALS ?? '0') === '1';
-  const origins = originEnv
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const corsOrigin: string | string[] = origins.length === 1 ? origins[0] : origins;
-  app.enableCors({
-    origin: corsOrigin,
-    credentials: corsCredentials,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Admin-Language',
-      'Accept-Language',
-      'Accept',
-      'Origin',
-      'User-Agent',
-    ],
-    exposedHeaders: ['Content-Length'],
-    optionsSuccessStatus: 204,
+  // CORS: использует централизованную конфигурацию из cors.config.ts
+  const corsConfig = getCorsConfig();
+  const corsInfo = getCorsConfigInfo();
+  console.log('[Security] CORS Configuration:', {
+    origins: corsInfo.origins,
+    credentials: corsInfo.credentials,
+    warning: corsInfo.warning,
   });
+  app.enableCors(corsConfig);
 
   // Body parsers (generic)
   const jsonLimit = process.env.BODY_LIMIT_JSON || '1mb';

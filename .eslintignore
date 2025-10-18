@@ -1,0 +1,11 @@
+# Build outputs
+dist/
+build/
+node_modules/
+
+# Generated files
+libs/api-client/types.ts
+libs/api-client/api-schema.json
+
+# Scripts (Node.js style)
+scripts/generate-openapi-schema.js
