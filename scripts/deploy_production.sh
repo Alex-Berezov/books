@@ -564,8 +564,8 @@ verify_deployment() {
         log_error "✗ Контейнеры не запущены"
     fi
     
-    # 2. Проверка healthcheck через docker exec
-    if [[ -n "$app_container" ]] && docker exec "$app_container" wget -q -O- http://localhost:5000/api/health/liveness &> /dev/null; then
+    # 2. Проверка healthcheck через node (wget может отсутствовать в образе)
+    if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/health/liveness',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
         log_success "✓ Health check прошел"
         ((checks_passed++))
     else
@@ -573,7 +573,7 @@ verify_deployment() {
     fi
     
     # 3. Проверка базы данных через readiness
-    if [[ -n "$app_container" ]] && docker exec "$app_container" wget -q -O- http://localhost:5000/api/health/readiness &> /dev/null; then
+    if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/health/readiness',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
         log_success "✓ База данных подключена"
         ((checks_passed++))
     else
@@ -581,23 +581,21 @@ verify_deployment() {
     fi
     
     # 4. Проверка метрик
-    if [[ -n "$app_container" ]] && docker exec "$app_container" wget -q -O- http://localhost:5000/api/metrics &> /dev/null; then
+    if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/metrics',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
         log_success "✓ Метрики доступны"
         ((checks_passed++))
     else
         log_error "✗ Метрики недоступны"
     fi
     
-    # 5. Проверка версии API
-    local api_version="unknown"
-    if [[ -n "$app_container" ]]; then
-        api_version=$(docker exec "$app_container" wget -q -O- http://localhost:5000/api/health/liveness 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
-    fi
-    if [[ "$api_version" != "unknown" ]]; then
-        log_success "✓ API версия: $api_version"
+    # 5. Проверка версии API через Docker healthcheck статус
+    local health_status
+    health_status=$(docker compose -f docker-compose.prod.yml ps --format json app 2>/dev/null | jq -r '.Health // "none"')
+    if [[ "$health_status" == "healthy" ]]; then
+        log_success "✓ Docker healthcheck: $health_status"
         ((checks_passed++))
     else
-        log_warning "? Версия API не определена"
+        log_warning "? Docker healthcheck: $health_status"
     fi
     
     # Результат
