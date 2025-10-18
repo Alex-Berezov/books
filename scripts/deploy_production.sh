@@ -505,7 +505,12 @@ deploy_services() {
     
     # Ожидание готовности
     log "Ожидание готовности сервисов..."
-    local max_attempts=30
+    
+    # Начальная задержка для старта приложения и первого healthcheck
+    log_info "Ожидание 15 секунд для запуска приложения..."
+    sleep 15
+    
+    local max_attempts=60  # Увеличено с 30 до 60 попыток (5 минут максимум)
     local attempt=0
     
     while [[ $attempt -lt $max_attempts ]]; do
