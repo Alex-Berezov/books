@@ -170,6 +170,27 @@ docker compose down
 
 ✅ **Production успешно развернут и работает**: [bibliaris.com](https://bibliaris.com)
 
+### 🚀 Быстрые команды для Production
+
+**📖 См. [docs/PRODUCTION_QUICK_COMMANDS.md](docs/PRODUCTION_QUICK_COMMANDS.md)** - полный список команд для управления production.
+
+Самые частые операции:
+
+```bash
+# SSH доступ
+ssh deploy@bibliaris.com
+
+# Включить/отключить Swagger
+./scripts/toggle_swagger.sh enable
+./scripts/toggle_swagger.sh disable
+
+# Логи приложения
+docker compose --profile prod -f docker-compose.prod.yml logs -f app
+
+# Health checks
+curl https://bibliaris.com/api/health/liveness
+```
+
 ### Быстрый деплой в production
 
 **Важно**: Деплой использует GitHub Secrets для управления `.env.prod`. См. [GITHUB_SECRETS_SETUP.md](docs/GITHUB_SECRETS_SETUP.md) для настройки.
@@ -265,6 +286,8 @@ VS Code задачи (Docker prod):
 - Swagger:
   - В prod по умолчанию отключён. Включить: `SWAGGER_ENABLED=1`.
   - Рекомендуется не публиковать Swagger в интернет без авторизации/ограничений.
+  - **Для фронтенд-разработки**: [docs/SWAGGER_FOR_FRONTEND.md](docs/SWAGGER_FOR_FRONTEND.md)
+  - **Для production**: [docs/SWAGGER_ON_PRODUCTION.md](docs/SWAGGER_ON_PRODUCTION.md)
 - Reverse proxy:
   - Если работаете за прокси (ingress), включите `TRUST_PROXY=1`, чтобы корректно обрабатывались X-Forwarded-\* заголовки.
 
