@@ -16,9 +16,11 @@ export class AuthService {
     private config: ConfigService,
   ) {}
 
-  async register(
-    dto: RegisterDto,
-  ): Promise<{ user: PublicUser; accessToken: string; refreshToken: string }> {
+  async register(dto: RegisterDto): Promise<{
+    user: PublicUser & { roles: RoleName[] };
+    accessToken: string;
+    refreshToken: string;
+  }> {
     // Ensure core roles exist (idempotent)
     await this.prisma.$transaction([
       this.prisma.role.upsert({
@@ -93,12 +95,17 @@ export class AuthService {
 
     const tokens = await this.signTokens(user.id, user.email);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
-    return { user: this.publicUser(user), ...tokens };
+
+    // Include roles in register response
+    const roles = await this.computeRoles(user);
+    return { user: { ...this.publicUser(user), roles }, ...tokens };
   }
 
-  async login(
-    dto: LoginDto,
-  ): Promise<{ user: PublicUser; accessToken: string; refreshToken: string }> {
+  async login(dto: LoginDto): Promise<{
+    user: PublicUser & { roles: RoleName[] };
+    accessToken: string;
+    refreshToken: string;
+  }> {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
@@ -107,7 +114,10 @@ export class AuthService {
 
     const tokens = await this.signTokens(user.id, user.email);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
-    return { user: this.publicUser(user), ...tokens };
+
+    // Include roles in login response
+    const roles = await this.computeRoles(user);
+    return { user: { ...this.publicUser(user), roles }, ...tokens };
   }
 
   async refresh(dto: RefreshDto): Promise<{ accessToken: string; refreshToken: string }> {
@@ -155,5 +165,31 @@ export class AuthService {
       createdAt: user.createdAt,
       lastLogin: user.lastLogin,
     };
+  }
+
+  private async computeRoles(user: User): Promise<RoleName[]> {
+    // Roles from DB
+    const dbLinks = await this.prisma.userRole.findMany({
+      where: { userId: user.id },
+      include: { role: true },
+    });
+    const set = new Set<RoleName>(dbLinks.map((l) => l.role.name));
+
+    // ENV-based elevated roles (same logic as RolesGuard)
+    const adminsList = (this.config.get<string>('ADMIN_EMAILS') || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    const managersList = (this.config.get<string>('CONTENT_MANAGER_EMAILS') || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (adminsList.includes(user.email.toLowerCase())) set.add('admin');
+    if (managersList.includes(user.email.toLowerCase())) set.add('content_manager');
+
+    // Baseline 'user'
+    set.add('user');
+
+    return Array.from(set);
   }
 }
