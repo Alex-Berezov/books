@@ -39,7 +39,7 @@ describe('AuthService (unit)', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
-      userRole: { upsert: jest.fn() },
+      userRole: { upsert: jest.fn(), findMany: jest.fn() },
       $transaction: jest.fn(async (arr: any[]) => arr),
     };
     jwt = {
@@ -79,12 +79,14 @@ describe('AuthService (unit)', () => {
     prisma.user.create.mockResolvedValueOnce(user);
     prisma.role.findUnique.mockResolvedValue({ id: 'r-user', name: 'user' });
     prisma.userRole.upsert.mockResolvedValue({});
+    prisma.userRole.findMany.mockResolvedValue([]); // no DB roles, will get from ENV
     prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
 
     const res = await service.register({ email: user.email, password: 'p', name: 'n' });
     expect(prisma.user.create).toHaveBeenCalled();
     expect(prisma.userRole.upsert).toHaveBeenCalled();
     expect(res.user.email).toBe(user.email);
+    expect(res.user.roles).toEqual(['user']); // should include roles now
     expect(res.accessToken).toBe('acc');
     expect(res.refreshToken).toBe('ref');
   });
@@ -108,9 +110,11 @@ describe('AuthService (unit)', () => {
     prisma.user.findUnique.mockResolvedValueOnce(user);
     (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
     jwt.signAsync = jest.fn().mockResolvedValueOnce('acc2').mockResolvedValueOnce('ref2');
+    prisma.userRole.findMany.mockResolvedValue([]); // no DB roles, will get from ENV
     prisma.user.update.mockResolvedValueOnce({ ...user, lastLogin: now });
 
     const res = await service.login({ email: user.email, password: 'p' });
+    expect(res.user.roles).toEqual(['user']); // should include roles now
     expect(res.accessToken).toBe('acc2');
     expect(res.refreshToken).toBe('ref2');
     expect(prisma.user.update).toHaveBeenCalled();
