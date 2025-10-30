@@ -187,5 +187,5 @@ export async function apiRequest<P extends ApiPath, M extends ApiMethod<P>>(
 Проверьте:
 
 1. API сервер запущен (для локальной генерации)
-2. Swagger включен (`SWAGGER_ENABLED=1` в `.env`)
+2. Доступность `/docs-json` endpoint (Swagger всегда включен)
 3. Доступность production URL (для prod генерации)

@@ -56,40 +56,34 @@ async function bootstrap() {
     }),
   );
 
-  // Set up Swagger documentation (disabled in prod by default unless SWAGGER_ENABLED=1)
-  const isProd = process.env.NODE_ENV === 'production';
-  const swaggerEnabled = (process.env.SWAGGER_ENABLED ?? (isProd ? '0' : '1')) === '1';
-  console.log(
-    `Swagger setup: isProd=${isProd}, SWAGGER_ENABLED=${process.env.SWAGGER_ENABLED}, swaggerEnabled=${swaggerEnabled}`,
-  );
-  if (swaggerEnabled) {
-    console.log('Setting up Swagger documentation...');
-    const config = new DocumentBuilder()
-      .setTitle('Books App API')
-      .setDescription(
-        [
-          'API for the Books application',
-          '',
-          'How to publish a book version:',
-          '1) POST /api/books/{bookId}/versions — create a version (draft by default).',
-          '2) Optionally PATCH /api/versions/{id} — edit fields or SEO.',
-          '3) PATCH /api/versions/{id}/publish — publish the version (status=published).',
-          '4) To hide again — PATCH /api/versions/{id}/unpublish (status=draft).',
-        ].join('\n'),
-      )
-      .setVersion('1.0')
-      .addBearerAuth()
-      .addServer('http://localhost:5000', 'Local')
-      .addServer('https://api.example.com', 'Prod')
-      .build();
-    const document = SwaggerModule.createDocument(app, config, {
-      extraModels: [CreateBookDto, UpdateBookDto, CreateBookVersionDto, UpdateBookVersionDto],
-    });
-    SwaggerModule.setup('docs', app, document, {
-      jsonDocumentUrl: 'docs-json',
-      swaggerOptions: { persistAuthorization: true },
-    });
-  }
+  // Set up Swagger documentation - ALWAYS ENABLED
+  console.log('Setting up Swagger documentation...');
+  const config = new DocumentBuilder()
+    .setTitle('Books App API')
+    .setDescription(
+      [
+        'API for the Books application',
+        '',
+        'How to publish a book version:',
+        '1) POST /api/books/{bookId}/versions — create a version (draft by default).',
+        '2) Optionally PATCH /api/versions/{id} — edit fields or SEO.',
+        '3) PATCH /api/versions/{id}/publish — publish the version (status=published).',
+        '4) To hide again — PATCH /api/versions/{id}/unpublish (status=draft).',
+      ].join('\n'),
+    )
+    .setVersion('1.0')
+    .addBearerAuth()
+    .addServer('http://localhost:5000', 'Local')
+    .addServer('https://api.bibliaris.com', 'Production')
+    .build();
+  const document = SwaggerModule.createDocument(app, config, {
+    extraModels: [CreateBookDto, UpdateBookDto, CreateBookVersionDto, UpdateBookVersionDto],
+  });
+  SwaggerModule.setup('docs', app, document, {
+    jsonDocumentUrl: 'docs-json',
+    swaggerOptions: { persistAuthorization: true },
+  });
+  console.log('✅ Swagger documentation available at /docs');
 
   // Add "api" prefix to all routes
   app.setGlobalPrefix('api');

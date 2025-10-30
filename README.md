@@ -284,9 +284,9 @@ VS Code задачи (Docker prod):
   - Переменные: `CORS_ORIGIN` (поддерживает список через запятую), `CORS_CREDENTIALS` (0/1).
   - Для prod используйте белый список доменов и включайте `CORS_CREDENTIALS=1` только если реально нужны cookie/withCredentials.
 - Swagger:
-  - В prod по умолчанию отключён. Включить: `SWAGGER_ENABLED=1`.
-  - Рекомендуется не публиковать Swagger в интернет без авторизации/ограничений.
-  - **Для фронтенд-разработки**: [docs/SWAGGER_FOR_FRONTEND.md](docs/SWAGGER_FOR_FRONTEND.md)
+  - **Swagger всегда включен** на `/docs`, OpenAPI схема на `/docs-json`.
+  - Рекомендуется защищать Swagger в production с помощью reverse proxy/firewall при необходимости.
+  - **Для фронтенд-разработки**: [docs/AI_AGENT_FRONTEND_GUIDE.md](docs/AI_AGENT_FRONTEND_GUIDE.md)
   - **Для production**: [docs/SWAGGER_ON_PRODUCTION.md](docs/SWAGGER_ON_PRODUCTION.md)
 - Reverse proxy:
   - Если работаете за прокси (ingress), включите `TRUST_PROXY=1`, чтобы корректно обрабатывались X-Forwarded-\* заголовки.
