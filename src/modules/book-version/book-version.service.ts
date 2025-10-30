@@ -53,7 +53,7 @@ export class BookVersionService {
       throw new BadRequestException('Version for this language already exists for this book');
     }
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction(async (tx) => {
         let seoId: number | undefined;
         if (dto.seoMetaTitle || dto.seoMetaDescription) {
           const seo = await tx.seo.create({
@@ -64,7 +64,7 @@ export class BookVersionService {
           });
           seoId = seo.id;
         }
-        return tx.bookVersion.create({
+        const created = await tx.bookVersion.create({
           data: {
             bookId,
             language: effectiveLanguage,
@@ -80,7 +80,11 @@ export class BookVersionService {
           },
           include: { seo: { select: { metaTitle: true, metaDescription: true } } },
         });
+        console.log('🔍 Created BookVersion ID:', created.id, 'Length:', created.id.length);
+        return created;
       });
+      console.log('🔍 Returning BookVersion ID:', result.id, 'Length:', result.id.length);
+      return result;
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Version for this language already exists for this book');
