@@ -17,10 +17,18 @@
 ### Архитектура и спецификации
 
 - **[ENDPOINTS.md](ENDPOINTS.md)** - Полная спецификация API endpoints
+- **[API_URL_STRUCTURE.md](API_URL_STRUCTURE.md)** - ⭐ Архитектурное решение по структуре URL
 - **[MULTISITE_I18N.md](MULTISITE_I18N.md)** - Мультиязычность и i18n
 - **[MEDIA_LIBRARY.md](MEDIA_LIBRARY.md)** - Система управления медиа
 - **[ADMIN_UI_SPEC.md](ADMIN_UI_SPEC.md)** - Спецификация админ-панели
 - **[adr/](adr/)** - Architecture Decision Records (ADR)
+
+### Frontend интеграция
+
+- **[AI_AGENT_FRONTEND_GUIDE.md](AI_AGENT_FRONTEND_GUIDE.md)** - 🤖 Полное руководство для AI-агентов фронтенда
+- **[FIX_401_UNAUTHORIZED.md](FIX_401_UNAUTHORIZED.md)** - 🚨 Решение проблемы 401 при создании книг
+- **[FRONTEND_QUICK_START.md](FRONTEND_QUICK_START.md)** - 🚀 Быстрый старт для фронтенда
+- **[ITERATION_8_FRONTEND_PREPARATION.md](ITERATION_8_FRONTEND_PREPARATION.md)** - Подготовка к интеграции фронтенда
 
 ### Roadmap и планирование
 
@@ -66,10 +74,13 @@ yarn typecheck         # typescript check
 
 ### Production URLs
 
-- **API**: https://bibliaris.com/api/*
-- **Swagger**: https://bibliaris.com/docs
-- **Health**: https://bibliaris.com/api/health/liveness
-- **Metrics**: https://bibliaris.com/api/metrics
+- **API Base**: https://api.bibliaris.com/api/*
+- **Swagger UI**: https://api.bibliaris.com/docs ⭐
+- **OpenAPI JSON**: https://api.bibliaris.com/docs-json ⭐
+- **Health**: https://api.bibliaris.com/api/health/liveness
+- **Metrics**: https://api.bibliaris.com/api/metrics
+
+**Примечание**: Swagger на `/docs` (без `/api`), API endpoints на `/api/*` - см. [API_URL_STRUCTURE.md](API_URL_STRUCTURE.md)
 
 ## 📊 Статус проекта
 

@@ -23,8 +23,10 @@ ssh deploy@bibliaris.com
 
 **URLs после включения:**
 
-- Swagger UI: https://bibliaris.com/docs
-- OpenAPI JSON: https://bibliaris.com/docs-json
+- Swagger UI: https://api.bibliaris.com/docs
+- OpenAPI JSON: https://api.bibliaris.com/docs-json
+
+**Примечание:** Swagger находится на `/docs` (без префикса `/api`), в то время как все API endpoints на `/api/*`
 
 ## 🐳 Docker
 
@@ -52,13 +54,19 @@ docker compose --profile prod -f docker-compose.prod.yml up -d
 
 ```bash
 # Liveness (приложение живо?)
-curl https://bibliaris.com/api/health/liveness
+curl https://api.bibliaris.com/api/health/liveness
 
 # Readiness (БД доступна?)
-curl https://bibliaris.com/api/health/readiness
+curl https://api.bibliaris.com/api/health/readiness
 
 # Метрики
-curl https://bibliaris.com/api/metrics
+curl https://api.bibliaris.com/api/metrics
+
+# Swagger UI (если включен)
+open https://api.bibliaris.com/docs
+
+# OpenAPI схема
+curl https://api.bibliaris.com/docs-json
 ```
 
 ## 🔄 Деплой

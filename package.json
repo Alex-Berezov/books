@@ -33,10 +33,10 @@
     "prepare": "husky && chmod +x .husky/pre-commit || true",
     "ci": "bash scripts/ci.sh",
     "openapi:schema": "node scripts/generate-openapi-schema.js",
-    "openapi:schema:prod": "node scripts/generate-openapi-schema.js https://api.bibliaris.com/api/docs-json",
-    "openapi:types": "openapi-typescript ${OPENAPI_URL:-http://localhost:5000/api/docs-json} -o libs/api-client/types.ts",
+    "openapi:schema:prod": "node scripts/generate-openapi-schema.js https://api.bibliaris.com/docs-json",
+    "openapi:types": "openapi-typescript ${OPENAPI_URL:-http://localhost:5000/docs-json} -o libs/api-client/types.ts",
     "openapi:types:from-schema": "openapi-typescript libs/api-client/api-schema.json -o libs/api-client/types.ts",
-    "openapi:types:prod": "openapi-typescript https://api.bibliaris.com/api/docs-json -o libs/api-client/types.ts",
+    "openapi:types:prod": "openapi-typescript https://api.bibliaris.com/docs-json -o libs/api-client/types.ts",
     "api-client:build": "tsc --project libs/api-client/tsconfig.json"
   },
   "packageManager": "yarn@1.22.22",

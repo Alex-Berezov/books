@@ -12,8 +12,8 @@
  *
  * Examples:
  *   node scripts/generate-openapi-schema.js
- *   node scripts/generate-openapi-schema.js http://localhost:5000/api/docs-json
- *   node scripts/generate-openapi-schema.js https://api.bibliaris.com/api/docs-json
+ *   node scripts/generate-openapi-schema.js http://localhost:5000/docs-json
+ *   node scripts/generate-openapi-schema.js https://api.bibliaris.com/docs-json
  *
  * Saves to: libs/api-client/api-schema.json
  */
@@ -23,7 +23,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const url = process.argv[2] || 'http://localhost:5000/api/docs-json';
+const url = process.argv[2] || 'http://localhost:5000/docs-json';
 const outputDir = path.join(__dirname, '../libs/api-client');
 const outputFile = path.join(outputDir, 'api-schema.json');
 

@@ -90,8 +90,8 @@ yarn prisma:generate
 
 4. При необходимости — наполните dev-данными: `yarn prisma:seed`
 5. Запустите приложение в dev-режиме: `yarn start:dev` (или VS Code задача «dev»)
-6. Swagger будет доступен на: http://localhost:5000/api/docs
-7. Метрики Prometheus: http://localhost:5000/metrics
+6. Swagger будет доступен на: http://localhost:5000/docs
+7. Метрики Prometheus: http://localhost:5000/api/metrics
 
 ### Запуск через Docker Compose (dev)
 
@@ -295,14 +295,14 @@ VS Code задачи (Docker prod):
 
 - Включение: `RATE_LIMIT_GLOBAL_ENABLED=1`.
 - Параметры: `RATE_LIMIT_GLOBAL_MAX` (по умолчанию 100), `RATE_LIMIT_GLOBAL_WINDOW_MS` (по умолчанию 60000).
-- Исключения: `/health`, `/metrics`, `/api/docs`, `/api/docs-json` (не ограничиваются).
+- Исключения: `/health`, `/metrics`, `/docs`, `/docs-json` (не ограничиваются).
 
 ## Генерация OpenAPI типов для фронтенда
 
 - Скрипты:
-  - `yarn openapi:types` — генерирует типы в `libs/api-client/types.ts` из `http://localhost:5000/api/docs-json`.
+  - `yarn openapi:types` — генерирует типы в `libs/api-client/types.ts` из `http://localhost:5000/docs-json`.
   - `OPENAPI_URL=... yarn openapi:types` — указать произвольный URL спецификации.
-  - `yarn openapi:types:prod` — shortcut для прод-URL.
+  - `yarn openapi:types:prod` — shortcut для прод-URL (`https://api.bibliaris.com/docs-json`).
 - Зачем: единые типы контрактов для FE, без ручной синхронизации.
 - Для полноценного SDK (axios/fetch + хуки) можно добавить orval или openapi-generator (см. docs/ITERATION_TASKS.md).
   - Для RTK Query можно использовать `@rtk-query/codegen-openapi` в фронтовом репозитории, чтобы генерировать endpoints прямо в `createApi`.
@@ -689,9 +689,10 @@ Swagger схемы:
 
 ## Swagger
 
-- Доступно по `/api/docs`.
+- Доступно по `/docs` (без префикса `/api`).
 - Схемы и примеры подключены для ключевых DTO модулей (Books, Versions, Categories в т.ч. `CategoryTreeNodeDto`).
-- JSON документ для интеграций: `/api/docs-json`.
+- JSON документ для интеграций: `/docs-json` (без префикса `/api`).
+- **Примечание**: Swagger настраивается ДО `setGlobalPrefix('api')`, поэтому доступен без `/api` префикса. Все API endpoints находятся на `/api/*`.
 
 ## Медиа-библиотека
 
@@ -764,6 +765,7 @@ yarn prisma:generate
 
 ### Архитектурные решения
 
+- **Структура URL:** `docs/API_URL_STRUCTURE.md` ⭐ - почему `/docs` без `/api`
 - **Языковая политика:** `docs/adr/2025-08-26-language-policy-and-extensibility.md`
 - **Мультисайт i18n:** `docs/adr/2025-08-29-multisite-i18n.md`
 - **Иерархия категорий:** `docs/adr/2025-08-25-category-hierarchy-strategy.md`
@@ -774,6 +776,11 @@ yarn prisma:generate
 - **Мультисайт поддержка:** `docs/MULTISITE_I18N.md`
 - **Медиа-библиотека:** `docs/MEDIA_LIBRARY.md`
 - **Тестирование:** `docs/UNIT_TESTING_PLAN.md`
+
+### Frontend интеграция
+
+- **🤖 AI Agent Guide:** `docs/AI_AGENT_FRONTEND_GUIDE.md` - инструкция для AI разрабатывающих фронтенд
+- **Frontend Preparation:** `docs/ITERATION_8_FRONTEND_PREPARATION.md`
 
 ## Публикация версий (draft/published)
 

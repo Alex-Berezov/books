@@ -4,6 +4,89 @@
 
 Формат: Дата — Краткое название — Детали.
 
+## 2025-10-30 — 🔧 ИСПРАВЛЕНИЕ: Swagger URL и документация
+
+**СТАТУС**: ✅ Проблема диагностирована и исправлена
+
+### Проблема:
+
+- Swagger и OpenAPI схема были недоступны на production
+- Документация указывала неправильные URL пути
+- `SWAGGER_ENABLED=0` по умолчанию в production (правильно для безопасности)
+
+### Причина:
+
+- `SwaggerModule.setup('docs', app, document)` выполняется **ДО** `app.setGlobalPrefix('api')`
+- Это означает Swagger доступен на `/docs` и `/docs-json`, а **НЕ** на `/api/docs`
+- Документация и скрипты указывали неправильный путь `/api/docs`
+
+### Решение:
+
+1. ✅ **Диагностика Production**:
+   - Проверен статус API: https://api.bibliaris.com/api/health/liveness - OK
+   - Проверен readiness: https://api.bibliaris.com/api/health/readiness - OK
+   - Проверены метрики: https://api.bibliaris.com/api/metrics - OK
+   - Swagger был отключен: `SWAGGER_ENABLED=0`
+
+2. ✅ **Включение Swagger для диагностики**:
+
+   ```bash
+   ./scripts/toggle_swagger.sh enable
+   docker compose --profile prod -f docker-compose.prod.yml down
+   docker compose --profile prod -f docker-compose.prod.yml up -d --build
+   ```
+
+3. ✅ **Обнаружены правильные URL**:
+   - Swagger UI: https://api.bibliaris.com/docs (без `/api` префикса)
+   - OpenAPI JSON: https://api.bibliaris.com/docs-json (без `/api` префикса)
+   - Все API endpoints: https://api.bibliaris.com/api/* (с `/api` префиксом)
+
+### Работающие URL:
+
+- ✅ **Swagger UI**: https://api.bibliaris.com/docs
+- ✅ **OpenAPI JSON**: https://api.bibliaris.com/docs-json
+- ✅ **API Health**: https://api.bibliaris.com/api/health/liveness
+- ✅ **API Readiness**: https://api.bibliaris.com/api/health/readiness
+- ✅ **API Metrics**: https://api.bibliaris.com/api/metrics
+- ✅ **API Endpoints**: https://api.bibliaris.com/api/books, etc.
+
+### Архитектурное решение:
+
+Swagger намеренно настроен **ДО** `setGlobalPrefix('api')` в `src/main.ts`:
+
+- Swagger на `/docs` - удобный доступ к документации
+- API endpoints на `/api/*` - четкое разделение API от служебных endpoints
+- Health/Metrics на `/api/*` - единый префикс для всех бизнес-эндпойнтов
+
+### Обновленные файлы:
+
+- `CHANGELOG.md` - добавлена эта запись
+- `docs/PRODUCTION_QUICK_COMMANDS.md` - обновлены URL ✅
+- `scripts/toggle_swagger.sh` - обновлены URL ✅
+- `README.md` - обновлены пути к Swagger ✅
+- `scripts/generate-openapi-schema.js` - обновлены примеры ✅
+- `package.json` - исправлены скрипты `openapi:*` ✅
+
+### Конфигурация Production:
+
+**Swagger постоянно включен в production** (`SWAGGER_ENABLED=1` в `.env.prod`):
+
+- Удобно для активной разработки и отладки
+- Необходим для интеграции с фронтендом
+- Будет отключен после завершения проекта
+
+**Управление Swagger** (если понадобится в будущем):
+
+```bash
+ssh deploy@bibliaris.com
+cd /opt/books/app/src
+./scripts/toggle_swagger.sh status   # Проверить статус
+./scripts/toggle_swagger.sh disable  # Отключить
+./scripts/toggle_swagger.sh enable   # Включить обратно
+```
+
+---
+
 ## 2025-10-19 — 🧹 РЕВИЗИЯ: Организация файловой структуры проекта
 
 **СТАТУС**: ✅ Полная ревизия и упорядочивание файлов завершена

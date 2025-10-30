@@ -67,8 +67,8 @@ function enable_swagger() {
   
   echo ""
   echo -e "${GREEN}✅ Swagger включен!${NC}"
-  echo -e "${GREEN}📍 URL: https://bibliaris.com/docs${NC}"
-  echo -e "${GREEN}📍 JSON: https://bibliaris.com/docs-json${NC}"
+  echo -e "${GREEN}📍 URL: https://api.bibliaris.com/docs${NC}"
+  echo -e "${GREEN}📍 JSON: https://api.bibliaris.com/docs-json${NC}"
   echo ""
   echo -e "${YELLOW}⚠️  НЕ ЗАБУДЬТЕ ОТКЛЮЧИТЬ после использования: $0 disable${NC}"
 }
