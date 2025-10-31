@@ -283,6 +283,51 @@ export class BookVersionController {
     return this.service.getPublic(id);
   }
 
+  @Get('admin/versions/:id')
+  @ApiOperation({
+    summary: 'Admin: Get version by id (any status)',
+    description: 'Возвращает версию в любом статусе (draft, published). Требует авторизации.',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiResponse({
+    status: 200,
+    description: 'Version found (any status)',
+    content: {
+      'application/json': {
+        examples: {
+          draft: {
+            summary: 'Draft version',
+            value: {
+              id: '0c1c1e5a-1111-2222-3333-444444444444',
+              bookId: 'a1111111-b222-4c33-d444-555555555555',
+              language: 'en',
+              title: "Harry Potter and the Philosopher's Stone",
+              author: 'J.K. Rowling',
+              description: 'First book of the series',
+              coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
+              type: 'text',
+              isFree: true,
+              referralUrl: 'https://amazon.com/ref123',
+              status: 'draft',
+              publishedAt: null,
+              createdAt: '2025-08-25T12:00:00.000Z',
+              updatedAt: '2025-08-25T12:00:00.000Z',
+              seo: {
+                metaTitle: 'Harry Potter — Summary',
+                metaDescription: 'Overview, themes and details about the book',
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+  getAdmin(@Param('id') id: string) {
+    return this.service.getAdmin(id);
+  }
+
   @Patch('versions/:id')
   @ApiOperation({ summary: 'Update version by id' })
   @ApiBody({

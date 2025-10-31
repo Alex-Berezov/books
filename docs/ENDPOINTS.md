@@ -76,16 +76,42 @@
 
 ## 6) [x] Book Versions
 
+**⚠️ ВАЖНО: Public vs Admin endpoints**
+
+Версии книг имеют два набора endpoints:
+
+- **Public** (`/api/versions/{id}`) — возвращает ТОЛЬКО опубликованные версии (`status: 'published'`)
+- **Admin** (`/api/admin/versions/{id}`) — возвращает версии в ЛЮБОМ статусе (`draft`, `published`)
+
+**Для админ-панели используйте ТОЛЬКО admin endpoints!**
+
+См. подробную документацию: [`docs/FIX_BOOK_VERSION_404.md`](FIX_BOOK_VERSION_404.md)
+
+### Public Endpoints (только published)
+
 - GET /books/:bookId/versions — Public — список опубликованных версий (фильтры: language (опц., override), type, isFree; при отсутствии language используется Accept-Language)
-  - Примечание: includeDrafts=true — только для админов/контент-менеджеров (Auth + Roles), иначе игнорируется
+- **GET /versions/:id** — Public — **получить версию (ТОЛЬКО published)**
+
+### Admin Endpoints (любой статус: draft/published)
+
 - POST /books/:bookId/versions — Auth + Roles(admin|content_manager) — создать версию (draft)
 - POST /admin/:lang/books/:bookId/versions — Auth + Roles(admin|content_manager) — создать версию в выбранном админ-языке (заголовок X-Admin-Language приоритетнее языка пути)
 - GET /admin/:lang/books/:bookId/versions — Auth + Roles(admin|content_manager) — админ-листинг (включая draft; по умолчанию фильтрует по эффективному админ-языку, можно переопределить ?language)
-- GET /versions/:id — Public — получить версию (только published)
+- **GET /admin/versions/:id** — Auth + Roles(admin|content_manager) — **получить версию (ЛЮБОЙ статус: draft/published)**
 - PATCH /versions/:id — Auth + Roles(admin|content_manager) — обновить версию
 - DELETE /versions/:id — Auth + Roles(admin|content_manager) — удалить версию (204)
 - PATCH /versions/:id/publish — Auth + Roles(admin|content_manager) — опубликовать версию
 - PATCH /versions/:id/unpublish — Auth + Roles(admin|content_manager) — снять с публикации (draft)
+
+**⚠️ Типичная ошибка:**
+
+```typescript
+// ❌ НЕПРАВИЛЬНО для админ-панели
+GET / api / versions / { id }; // Возвращает 404 для черновиков!
+
+// ✅ ПРАВИЛЬНО для админ-панели
+GET / api / admin / versions / { id }; // Возвращает любой статус
+```
 
 ## 7) [x] Chapters (текстовые главы)
 

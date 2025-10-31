@@ -92,6 +92,15 @@ describe('BookVersions e2e', () => {
       .expect(200);
     expect(adminList.body.length).toBe(1);
 
+    // Admin can get draft version by ID via admin endpoint
+    const adminGetDraft = await request(http())
+      .get(`/admin/versions/${versionId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(adminGetDraft.body.id).toBe(versionId);
+    expect(adminGetDraft.body.status).toBe('draft');
+    expect(adminGetDraft.body.title).toBe('Title EN');
+
     // Publish -> public should see now
     await request(http())
       .patch(`/versions/${versionId}/publish`)
