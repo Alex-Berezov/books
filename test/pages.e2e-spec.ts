@@ -101,4 +101,59 @@ describe('Pages e2e', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(204);
   });
+
+  it('GET /admin/pages/:id - should return page by ID (any status)', async () => {
+    slug = `test-page-${Date.now()}`;
+
+    // Create draft page
+    const createRes = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        slug,
+        title: 'Test Page',
+        type: 'generic',
+        content: 'Test content',
+      })
+      .expect(201);
+    pageId = createRes.body.id as string;
+
+    // Get page by ID (should work for draft)
+    const getRes = await request(http())
+      .get(`/admin/pages/${pageId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+
+    expect(getRes.body.id).toBe(pageId);
+    expect(getRes.body.slug).toBe(slug);
+    expect(getRes.body.title).toBe('Test Page');
+    expect(getRes.body.status).toBe('draft');
+    expect(getRes.body.language).toBe('en');
+
+    // Publish page
+    await request(http())
+      .patch(`/admin/en/pages/${pageId}/publish`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+
+    // Get page by ID (should work for published)
+    const getPublishedRes = await request(http())
+      .get(`/admin/pages/${pageId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+
+    expect(getPublishedRes.body.status).toBe('published');
+
+    // Cleanup
+    await request(http())
+      .delete(`/admin/en/pages/${pageId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+
+    // Get non-existent page should return 404
+    await request(http())
+      .get(`/admin/pages/${pageId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(404);
+  });
 });

@@ -295,6 +295,7 @@ GET / api / admin / versions / { id }; // Возвращает любой ста
 - GET /pages/:slug — Public — legacy-маршрут без префикса; язык выбирается по ?lang (приоритетнее) или Accept-Language
 - GET /admin/:lang/pages — Auth + Roles(admin|content_manager) — листинг страниц (draft+published; эффективный язык берётся из X-Admin-Language, иначе из :lang)
 - POST /admin/:lang/pages — Auth + Roles(admin|content_manager) — создать страницу (язык берётся из админ-контекста; поле language в DTO игнорируется)
+- **GET /admin/pages/:id** — Auth + Roles(admin|content_manager) — получить страницу по ID (ЛЮБОЙ статус: draft/published)
 - PATCH /admin/:lang/pages/:id — Auth + Roles(admin|content_manager) — обновить
 - DELETE /admin/:lang/pages/:id — Auth + Roles(admin|content_manager) — удалить (204)
 - PATCH /admin/:lang/pages/:id/publish — Auth + Roles(admin|content_manager) — опубликовать

@@ -65,6 +65,12 @@ export class PagesService {
     };
   }
 
+  async findById(id: string) {
+    const page = await this.prisma.page.findUnique({ where: { id } });
+    if (!page) throw new NotFoundException('Page not found');
+    return page;
+  }
+
   async create(dto: CreatePageDto, language: Language) {
     try {
       return await this.prisma.page.create({

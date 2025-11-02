@@ -6,6 +6,91 @@
 
 ---
 
+## 2025-11-02 — ✨ НОВЫЙ ENDPOINT: GET /admin/pages/:id для получения страницы по ID
+
+**СТАТУС**: ✅ Реализован и задокументирован
+
+### Проблема:
+
+После создания страницы через `POST /admin/:lang/pages` не было возможности загрузить её по ID для редактирования. Frontend получал 404:
+
+```
+GET /api/admin/pages/8ee2d5cf-0dc9-48f1-b7a4-419230ea3d1e
+Response: 404 Not Found
+```
+
+### Решение:
+
+Добавлен новый endpoint по аналогии с версиями книг:
+
+```
+GET /api/admin/pages/:id
+```
+
+**Характеристики:**
+
+- ✅ Auth + Roles(admin|content_manager)
+- ✅ Возвращает страницу в ЛЮБОМ статусе (draft/published)
+- ✅ Без префикса `:lang` (как у versions)
+- ✅ Полная типизация: `Promise<PageResponse>`
+
+**Response:**
+
+```json
+{
+  "id": "uuid",
+  "slug": "string",
+  "title": "string",
+  "type": "generic" | "category_index" | "author_index",
+  "content": "string",
+  "language": "en" | "fr" | "es" | "pt",
+  "status": "draft" | "published",
+  "seoId": number | null,
+  "createdAt": "ISO date",
+  "updatedAt": "ISO date"
+}
+```
+
+### Использование:
+
+```typescript
+// 1. Создать страницу
+const createRes = await fetch('/api/admin/en/pages', {
+  method: 'POST',
+  body: JSON.stringify({ slug: 'test', title: 'Test', type: 'generic', content: '...' }),
+});
+const page = await createRes.json();
+
+// 2. Загрузить для редактирования
+const getRes = await fetch(`/api/admin/pages/${page.id}`);
+const pageData = await getRes.json();
+
+// 3. Обновить
+await fetch(`/api/admin/en/pages/${page.id}`, {
+  method: 'PATCH',
+  body: JSON.stringify({ title: 'Updated Title' }),
+});
+```
+
+### Файлы:
+
+- `src/modules/pages/pages.service.ts` - добавлен метод `findById()`
+- `src/modules/pages/pages.controller.ts` - добавлен endpoint `@Get('admin/pages/:id')`
+- `docs/ENDPOINTS.md` - обновлена документация
+- `docs/PAGES_API_GUIDE.md` - добавлен пример использования
+- `CHANGELOG.md` - обновлён
+
+**Сравнение с Book Versions:**
+
+Endpoint следует той же логике, что и версии книг:
+
+- ✅ `GET /admin/versions/:id` - версии (любой статус)
+- ✅ `GET /admin/pages/:id` - страницы (любой статус)
+- ✅ `GET /versions/:id` - версии (только published) - public
+- ⏳ `GET /pages/:slug` - страницы (только published) - public
+
+---
+
 ## 2025-11-02 — 🔧 УЛУЧШЕНИЕ: Типизация Pages API для корректной генерации OpenAPI schema
 
 **СТАТУС**: ✅ Добавлена полная типизация

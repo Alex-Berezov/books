@@ -195,6 +195,7 @@ PATCH /api/admin/en/pages/page-uuid-here
 ```
 GET    /api/admin/:lang/pages              - Список страниц (пагинированный)
 POST   /api/admin/:lang/pages              - Создать страницу
+GET    /api/admin/pages/:id                - Получить страницу по ID (любой статус)
 PATCH  /api/admin/:lang/pages/:id          - Обновить страницу
 DELETE /api/admin/:lang/pages/:id          - Удалить страницу
 PATCH  /api/admin/:lang/pages/:id/publish  - Опубликовать страницу
@@ -233,7 +234,18 @@ const page = await createResponse.json();
 console.log('Created page:', page);
 // { id: "uuid", slug: "privacy-policy", status: "draft", ... }
 
-// 2. Опубликовать страницу
+// 2. Получить страницу для редактирования
+const getResponse = await fetch(`https://api.bibliaris.com/api/admin/pages/${page.id}`, {
+  headers: {
+    Authorization: `Bearer ${token}`,
+  },
+});
+
+const pageData = await getResponse.json();
+console.log('Page data:', pageData);
+// { id: "uuid", slug: "privacy-policy", status: "draft", content: "...", ... }
+
+// 3. Опубликовать страницу
 const publishResponse = await fetch(
   `https://api.bibliaris.com/api/admin/en/pages/${page.id}/publish`,
   {
@@ -248,7 +260,7 @@ const published = await publishResponse.json();
 console.log('Published page:', published);
 // { id: "uuid", slug: "privacy-policy", status: "published", ... }
 
-// 3. Проверить на публичном endpoint
+// 4. Проверить на публичном endpoint
 const publicResponse = await fetch('https://api.bibliaris.com/api/en/pages/privacy-policy');
 const publicPage = await publicResponse.json();
 console.log('Public page:', publicPage);

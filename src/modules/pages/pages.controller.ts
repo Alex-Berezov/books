@@ -86,6 +86,16 @@ export class PagesController {
     return this.service.create(dto, effLang);
   }
 
+  @Get('admin/pages/:id')
+  @ApiOperation({ summary: 'Получить страницу по ID (админ): любой статус' })
+  @ApiParam({ name: 'id', description: 'UUID страницы' })
+  @ApiResponse({ status: 200, type: PageResponse })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  findById(@Param('id') id: string): Promise<PageResponse> {
+    return this.service.findById(id);
+  }
+
   @Patch('admin/:lang/pages/:id')
   @ApiOperation({ summary: 'Обновить страницу (админ)' })
   @ApiParam({ name: 'id' })
