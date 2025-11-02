@@ -133,10 +133,13 @@ export class BookVersionService {
             seoId = seo.id;
           }
         }
+        // Убираем SEO поля из DTO, так как они не существуют в BookVersion schema
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { seoMetaTitle, seoMetaDescription, ...updateData } = dto;
         const updated = await tx.bookVersion.update({
           where: { id },
           data: {
-            ...dto,
+            ...updateData,
             seoId,
           },
           include: { seo: { select: { metaTitle: true, metaDescription: true } } },

@@ -40,14 +40,29 @@ export class PagesService {
     return this.prisma.page.findUnique({ where: { id: pick.id } });
   }
 
-  adminList(page = 1, limit = 20, language?: Language) {
+  async adminList(page = 1, limit = 20, language?: Language) {
     const skip = (page - 1) * limit;
-    return this.prisma.page.findMany({
-      where: language ? { language } : undefined,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
+    const where = language ? { language } : undefined;
+
+    const [data, total] = await Promise.all([
+      this.prisma.page.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.page.count({ where }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async create(dto: CreatePageDto, language: Language) {
