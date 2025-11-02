@@ -12,7 +12,7 @@ import {
   UseGuards,
   Headers,
 } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { PagesService } from './pages.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
@@ -22,6 +22,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
+import { PageResponse, PaginatedPagesResponse } from './dto/page-response.dto';
 
 @ApiTags('pages')
 @Controller()
@@ -49,13 +50,14 @@ export class PagesController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
+  @ApiResponse({ status: 200, type: PaginatedPagesResponse })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   adminList(
     @Param('lang', LangParamPipe) lang: Language,
     @Query() pagination?: PaginationDto,
     @Headers('x-admin-language') adminLangHeader?: string,
-  ): Promise<any> {
+  ): Promise<PaginatedPagesResponse> {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
     const headerLang = (adminLangHeader || '').toLowerCase();
@@ -69,13 +71,14 @@ export class PagesController {
   @ApiOperation({ summary: 'Создать страницу (админ)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
+  @ApiResponse({ status: 201, type: PageResponse })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(
     @Param('lang', LangParamPipe) lang: Language,
     @Body() dto: CreatePageDto,
     @Headers('x-admin-language') adminLangHeader?: string,
-  ): Promise<any> {
+  ): Promise<PageResponse> {
     const headerLang = (adminLangHeader || '').toLowerCase();
     const effLang = (Object.values(Language) as string[]).includes(headerLang)
       ? (headerLang as Language)
