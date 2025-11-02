@@ -63,7 +63,7 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .expect(200);
-    const foundEs = (listEs.body as any[]).some((p) => p.slug === slug && p.language === 'es');
+    const foundEs = (listEs.body.data as any[]).some((p) => p.slug === slug && p.language === 'es');
     expect(foundEs).toBe(true);
 
     // Ensure not shown in EN listing by default when header=en
@@ -72,7 +72,7 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.en)
       .expect(200);
-    const foundEn = (listEn.body as any[]).some((p) => p.slug === slug && p.language === 'en');
+    const foundEn = (listEn.body.data as any[]).some((p) => p.slug === slug && p.language === 'en');
     expect(foundEn).toBe(false);
   });
 
@@ -135,13 +135,15 @@ describe('Admin language context (e2e)', () => {
       .get('/admin/fr/pages')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listFr.body as any[]).some((p) => p.slug === slug && p.language === 'fr')).toBe(true);
+    expect((listFr.body.data as any[]).some((p) => p.slug === slug && p.language === 'fr')).toBe(
+      true,
+    );
 
     const listEn = await request(http())
       .get('/admin/en/pages')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listEn.body as any[]).some((p) => p.slug === slug)).toBe(false);
+    expect((listEn.body.data as any[]).some((p) => p.slug === slug)).toBe(false);
 
     // BookVersions
     const book = await prisma.book.create({
