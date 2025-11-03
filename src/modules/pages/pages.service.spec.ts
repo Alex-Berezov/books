@@ -43,6 +43,7 @@ describe('PagesService (unit)', () => {
       expect(res).toEqual({ id: 'p1', slug: 'about', language: 'en' });
       expect(prisma.page.findFirst).toHaveBeenCalledWith({
         where: { slug: 'about', language: 'en', status: 'published' },
+        include: { seo: true },
       });
     });
 
@@ -102,6 +103,7 @@ describe('PagesService (unit)', () => {
       expect(prisma.page.update).toHaveBeenCalledWith({
         where: { id: 'p1' },
         data: { status: 'published' },
+        include: { seo: true },
       });
     });
 
