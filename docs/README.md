@@ -41,8 +41,10 @@
 ### Frontend интеграция
 
 - **[AI_AGENT_FRONTEND_GUIDE.md](AI_AGENT_FRONTEND_GUIDE.md)** - 🤖 Полное руководство для AI-агентов фронтенда
-- **[FRONTEND_COMMON_ISSUES.md](FRONTEND_COMMON_ISSUES.md)** - � Распространенные проблемы и их решения
+- **[FRONTEND_COMMON_ISSUES.md](FRONTEND_COMMON_ISSUES.md)** - ⚠️ Распространенные проблемы и их решения
 - **[FRONTEND_QUICK_START.md](FRONTEND_QUICK_START.md)** - 🚀 Быстрый старт для фронтенда
+- **[PAGES_API_GUIDE.md](PAGES_API_GUIDE.md)** - 📄 Подробное руководство по Pages API
+- **[errors/PAGES_SEO_NOT_SAVING.md](errors/PAGES_SEO_NOT_SAVING.md)** - 🐛 Решение: SEO Settings не сохраняются
 
 ### Roadmap и планирование
 
