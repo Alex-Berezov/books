@@ -1,7 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches, MinLength, ValidateNested } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { SeoInputDto } from './seo-input.dto';
 
 export class UpdatePageDto {
   @ApiPropertyOptional({ description: 'Slug страницы', pattern: SLUG_PATTERN })
@@ -35,6 +36,15 @@ export class UpdatePageDto {
   @IsOptional()
   @Type(() => Number)
   seoId?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'SEO данные (автоматически создаёт/обновляет SEO entity)',
+    type: SeoInputDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SeoInputDto)
+  seo?: SeoInputDto;
 
   @ApiPropertyOptional({ description: 'Статус публикации', enum: ['draft', 'published'] })
   @IsOptional()

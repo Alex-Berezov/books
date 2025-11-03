@@ -116,13 +116,42 @@ export class PagesService {
       if (dup)
         throw new BadRequestException('Page with same slug already exists for this language');
     }
-    // If seoId is provided (including null), optionally check existence to provide clearer error
-    if (dto.seoId !== undefined && dto.seoId !== null) {
-      const seo = await this.prisma.seo.findUnique({ where: { id: dto.seoId } });
-      if (!seo) {
-        throw new BadRequestException('SEO entity not found for provided seoId');
+
+    // Handle SEO: if dto.seo is provided, create or update SEO entity
+    let finalSeoId = dto.seoId;
+    if (dto.seo) {
+      // Check if SEO fields are not all null/undefined
+      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+      if (hasSeoData) {
+        if (exists.seoId) {
+          // Update existing SEO entity
+          await this.prisma.seo.update({
+            where: { id: exists.seoId },
+            data: dto.seo,
+          });
+          finalSeoId = exists.seoId;
+        } else {
+          // Create new SEO entity
+          const newSeo = await this.prisma.seo.create({
+            data: dto.seo,
+          });
+          finalSeoId = newSeo.id;
+        }
+      } else if (exists.seoId) {
+        // All SEO fields are null - detach SEO entity
+        finalSeoId = null;
       }
+    } else if (dto.seoId !== undefined) {
+      // Legacy: seoId provided directly
+      if (dto.seoId !== null) {
+        const seo = await this.prisma.seo.findUnique({ where: { id: dto.seoId } });
+        if (!seo) {
+          throw new BadRequestException('SEO entity not found for provided seoId');
+        }
+      }
+      finalSeoId = dto.seoId;
     }
+
     try {
       return await this.prisma.page.update({
         where: { id },
@@ -132,7 +161,7 @@ export class PagesService {
           type: dto.type ?? undefined,
           content: dto.content ?? undefined,
           language: dto.language ?? undefined,
-          seoId: dto.seoId ?? undefined,
+          seoId: finalSeoId !== undefined ? finalSeoId : undefined,
           status: dto.status ?? undefined,
         },
         include: { seo: true },

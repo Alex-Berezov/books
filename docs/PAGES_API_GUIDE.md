@@ -134,9 +134,53 @@ POST /api/admin/en/pages
 }
 ```
 
-### Вариант 2: Создать SEO, затем привязать к странице
+### Вариант 2: Автоматическое создание SEO при обновлении страницы (РЕКОМЕНДУЕТСЯ)
 
-**Шаг 1:** Создайте SEO сущность (если такой endpoint существует)
+**Самый удобный способ!** Backend автоматически создаст SEO entity.
+
+```json
+PATCH /api/admin/en/pages/{pageId}
+{
+  "title": "About Us",
+  "content": "Content here...",
+  "seo": {                           // ✅ Вложенный объект SEO
+    "metaTitle": "About Us - My Site",
+    "metaDescription": "Learn more about our company",
+    "canonicalUrl": "https://example.com/about",
+    "ogTitle": "About Us",
+    "ogImageUrl": "https://example.com/og-image.jpg"
+  }
+}
+
+Response:
+{
+  "id": "uuid",
+  "slug": "about",
+  "seoId": 42,                       // ✅ Создан автоматически
+  "seo": {
+    "id": 42,
+    "metaTitle": "About Us - My Site",
+    "metaDescription": "Learn more about our company",
+    ...
+  }
+}
+```
+
+**При последующих обновлениях** SEO entity будет обновляться автоматически:
+
+```json
+PATCH /api/admin/en/pages/{pageId}
+{
+  "seo": {
+    "metaTitle": "Updated SEO Title",  // ✅ Обновит существующую SEO entity
+    "ogImageUrl": "new-image.jpg"
+  }
+}
+```
+
+### Вариант 3: Создать SEO отдельно, затем привязать (Legacy)
+
+**Шаг 1:** Создайте SEO сущность
 
 ```json
 POST /api/seo
@@ -153,39 +197,42 @@ Response:
 }
 ```
 
-**Шаг 2:** Создайте страницу с `seoId`
+**Шаг 2:** Привяжите к странице
 
 ```json
-POST /api/admin/en/pages
+PATCH /api/admin/en/pages/{pageId}
 {
-  "slug": "about",
-  "title": "About Us",
-  "type": "generic",
-  "content": "Lorem ipsum...",
-  "seoId": 42                // ✅ Используем ID из шага 1
+  "seoId": 42                // ✅ Привязать существующую SEO entity
 }
 ```
 
-### Вариант 3: Добавить SEO после создания страницы
+### Удаление SEO данных
 
-**Шаг 1:** Создайте страницу без SEO
+Отправьте все SEO поля как `null`:
 
 ```json
-POST /api/admin/en/pages
+PATCH /api/admin/en/pages/{pageId}
 {
-  "slug": "about",
-  "title": "About Us",
-  "type": "generic",
-  "content": "Lorem ipsum...",
-  "seoId": null
+  "seo": {
+    "metaTitle": null,
+    "metaDescription": null,
+    "ogTitle": null,
+    // ... все поля null
+  }
+}
+
+// Результат: seoId станет null, страница без SEO
+```
+
 }
 
 Response:
 {
-  "id": "page-uuid-here",
-  ...
+"id": "page-uuid-here",
+...
 }
-```
+
+````
 
 **Шаг 2:** Обновите страницу с SEO
 
@@ -194,7 +241,7 @@ PATCH /api/admin/en/pages/page-uuid-here
 {
   "seoId": 42
 }
-```
+````
 
 ---
 
