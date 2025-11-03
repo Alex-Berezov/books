@@ -156,4 +156,35 @@ describe('Pages e2e', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(404);
   });
+
+  it('GET /admin/pages/:id - should include SEO data when present', async () => {
+    slug = `page-with-seo-${Date.now()}`;
+
+    // First, check that page without SEO returns seo: null
+    const createRes = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        slug,
+        title: 'Page without SEO',
+        type: 'generic',
+        content: 'Content',
+      })
+      .expect(201);
+    pageId = createRes.body.id as string;
+
+    const getNoSeoRes = await request(http())
+      .get(`/admin/pages/${pageId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+
+    expect(getNoSeoRes.body.seoId).toBeNull();
+    expect(getNoSeoRes.body.seo).toBeNull();
+
+    // Cleanup
+    await request(http())
+      .delete(`/admin/en/pages/${pageId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+  });
 });

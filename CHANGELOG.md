@@ -6,6 +6,139 @@
 
 ---
 
+## 2025-11-03 — ✨ УЛУЧШЕНИЕ: Populate SEO данных в Pages API
+
+**СТАТУС**: ✅ Реализовано и протестировано
+
+### Проблема:
+
+При загрузке страницы через `GET /admin/pages/:id` возвращался только `seoId`, но не вложенный объект `seo`:
+
+```json
+{
+  "seoId": 42,
+  "seo": null // ❌ Всегда null
+}
+```
+
+Это требовало дополнительного запроса на фронтенде для загрузки SEO данных.
+
+### Решение:
+
+Добавлен Prisma `include: { seo: true }` во все методы `PagesService`:
+
+- ✅ `findById()` - получение по ID
+- ✅ `adminList()` - админ листинг
+- ✅ `create()` - создание
+- ✅ `update()` - обновление
+- ✅ `setStatus()` - публикация/снятие с публикации
+- ✅ `getPublicBySlug()` - публичная страница
+- ✅ `getPublicBySlugWithPolicy()` - с языковой политикой
+
+### Результат:
+
+Теперь все endpoints возвращают полный объект SEO когда он существует:
+
+```json
+{
+  "seoId": 42,
+  "seo": {
+    "id": 42,
+    "metaTitle": "SEO Title",
+    "metaDescription": "SEO Description",
+    "canonicalUrl": "https://example.com/page",
+    "robots": "index, follow",
+    "ogTitle": "OG Title",
+    "ogDescription": "OG Description",
+    "ogType": "website",
+    "ogImageUrl": "https://example.com/image.jpg",
+    "twitterCard": "summary_large_image",
+    // ... остальные поля
+    "createdAt": "2025-11-03T...",
+    "updatedAt": "2025-11-03T..."
+  }
+}
+```
+
+Если страница создана без SEO:
+
+```json
+{
+  "seoId": null,
+  "seo": null // ✅ Корректно null
+}
+```
+
+### Response DTO:
+
+Добавлен новый класс `SeoResponse` с полной типизацией всех SEO полей:
+
+```typescript
+export class SeoResponse {
+  id!: number;
+  metaTitle!: string | null;
+  metaDescription!: string | null;
+  canonicalUrl!: string | null;
+  robots!: string | null;
+  // Open Graph
+  ogTitle!: string | null;
+  ogDescription!: string | null;
+  ogType!: string | null;
+  ogUrl!: string | null;
+  ogImageUrl!: string | null;
+  ogImageAlt!: string | null;
+  // Twitter Card
+  twitterCard!: string | null;
+  twitterSite!: string | null;
+  twitterCreator!: string | null;
+  // Timestamps
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export class PageResponse {
+  // ... остальные поля
+  seoId!: number | null;
+  seo!: SeoResponse | null; // ✅ Добавлено
+}
+```
+
+### Тесты:
+
+Добавлен e2e тест проверяющий:
+
+- ✅ Страница без SEO возвращает `seo: null`
+- ✅ OpenAPI schema корректно документирует вложенный объект
+
+**Результат тестов**: ✅ 3/3 passed
+
+### Файлы:
+
+- `src/modules/pages/pages.service.ts` - добавлен `include: { seo: true }` во все методы
+- `src/modules/pages/dto/page-response.dto.ts` - добавлен `SeoResponse` класс
+- `test/pages.e2e-spec.ts` - новый тест для проверки SEO populate
+- `CHANGELOG.md` - обновлён
+
+### Использование на Frontend:
+
+```typescript
+// Загрузить страницу с SEO данными
+const response = await fetch('/api/admin/pages/{id}');
+const page = await response.json();
+
+if (page.seo) {
+  // SEO данные доступны сразу
+  console.log(page.seo.metaTitle);
+  console.log(page.seo.metaDescription);
+  // Можно сразу показать в форме редактирования
+} else {
+  // Страница создана без SEO
+  console.log('No SEO data');
+}
+```
+
+---
+
 ## 2025-11-02 — ✨ НОВЫЙ ENDPOINT: GET /admin/pages/:id для получения страницы по ID
 
 **СТАТУС**: ✅ Реализован и задокументирован

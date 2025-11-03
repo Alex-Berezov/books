@@ -13,7 +13,10 @@ export class PagesService {
     const where = language
       ? { slug, language, status: 'published' as const }
       : { slug, status: 'published' as const };
-    const page = await this.prisma.page.findFirst({ where });
+    const page = await this.prisma.page.findFirst({
+      where,
+      include: { seo: true },
+    });
     if (!page) throw new NotFoundException('Page not found');
     return page;
   }
@@ -37,7 +40,10 @@ export class PagesService {
     const pick = preferred
       ? (candidates.find((c) => c.language === preferred) ?? candidates[0])
       : candidates[0];
-    return this.prisma.page.findUnique({ where: { id: pick.id } });
+    return this.prisma.page.findUnique({
+      where: { id: pick.id },
+      include: { seo: true },
+    });
   }
 
   async adminList(page = 1, limit = 20, language?: Language) {
@@ -50,6 +56,7 @@ export class PagesService {
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
+        include: { seo: true },
       }),
       this.prisma.page.count({ where }),
     ]);
@@ -66,7 +73,10 @@ export class PagesService {
   }
 
   async findById(id: string) {
-    const page = await this.prisma.page.findUnique({ where: { id } });
+    const page = await this.prisma.page.findUnique({
+      where: { id },
+      include: { seo: true },
+    });
     if (!page) throw new NotFoundException('Page not found');
     return page;
   }
@@ -82,6 +92,7 @@ export class PagesService {
           language,
           seoId: dto.seoId ?? null,
         },
+        include: { seo: true },
       });
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
@@ -124,6 +135,7 @@ export class PagesService {
           seoId: dto.seoId ?? undefined,
           status: dto.status ?? undefined,
         },
+        include: { seo: true },
       });
     } catch (e: unknown) {
       const err = e as Prisma.PrismaClientKnownRequestError & { meta?: { constraint?: string } };
@@ -137,7 +149,11 @@ export class PagesService {
   async setStatus(id: string, status: PublicationStatus) {
     const exists = await this.prisma.page.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Page not found');
-    return this.prisma.page.update({ where: { id }, data: { status } });
+    return this.prisma.page.update({
+      where: { id },
+      data: { status },
+      include: { seo: true },
+    });
   }
 
   async remove(id: string) {

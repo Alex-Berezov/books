@@ -80,6 +80,47 @@ Content-Type: application/json
 
 ## 📖 Работа с SEO для страниц
 
+### ✅ SEO данные автоматически включаются в ответ
+
+Все endpoints для страниц теперь возвращают вложенный объект `seo` когда он существует:
+
+```json
+GET /api/admin/pages/{id}
+
+Response:
+{
+  "id": "uuid",
+  "slug": "about",
+  "title": "About Us",
+  "seoId": 42,
+  "seo": {                    // ✅ Автоматически включён
+    "id": 42,
+    "metaTitle": "About Us - My Site",
+    "metaDescription": "Learn more about our company",
+    "canonicalUrl": "https://example.com/about",
+    "robots": "index, follow",
+    "ogTitle": "About Us",
+    "ogDescription": "About page description",
+    "ogType": "website",
+    "ogImageUrl": "https://example.com/og-image.jpg",
+    "twitterCard": "summary_large_image",
+    "createdAt": "2025-11-03T...",
+    "updatedAt": "2025-11-03T..."
+  }
+}
+```
+
+Если страница без SEO:
+
+```json
+{
+  "id": "uuid",
+  "slug": "contact",
+  "seoId": null,
+  "seo": null // ✅ null когда SEO не привязан
+}
+```
+
 ### Вариант 1: Создать страницу БЕЗ SEO
 
 ```json
