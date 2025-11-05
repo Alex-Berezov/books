@@ -61,3 +61,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # GitHub Actions secrets (SSH keys, etc.)
 .github-secrets/
 !.github-secrets/SETUP_INSTRUCTIONS.md
+
+# Documentation moved to books-app-docs repository
+docs/
+!docs/BACKEND_MIGRATION_QUICKSTART.md

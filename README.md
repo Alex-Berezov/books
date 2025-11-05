@@ -1,3 +1,13 @@
+## 📚 Документация
+
+**Документация проекта перенесена в отдельный репозиторий:**
+[books-app-docs](https://github.com/Alex-Berezov/books-app-docs)
+
+- **Backend документация**: `backend/` папка в books-app-docs
+- **API документация**: `backend/api/`
+- **Руководства по деплою**: `backend/deployment/`
+- **Архитектурные решения**: `backend/architecture/`
+
 Разное:
 
 - Проект использует yarn (classic) — не используйте npm. Все команды запускайте через yarn скрипты.
@@ -32,8 +42,8 @@
 
 **См. также:**
 
-- [docs/PRODUCTION_QUICK_COMMANDS.md](docs/PRODUCTION_QUICK_COMMANDS.md) - команды для управления production
-- [docs/PRODUCTION_DEPLOYMENT_GUIDE.md](docs/PRODUCTION_DEPLOYMENT_GUIDE.md) - полное руководство по деплою
+- [Production Quick Commands](https://github.com/Alex-Berezov/books-app-docs/blob/main/backend/deployment/quick-commands.md) - команды для управления production
+- [Production Deployment Guide](https://github.com/Alex-Berezov/books-app-docs/blob/main/backend/deployment/production.md) - полное руководство по деплою
 
 ---
 
