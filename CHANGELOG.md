@@ -6,7 +6,183 @@
 
 ---
 
-## 2025-11-03 — � ДОКУМЕНТАЦИЯ: Диагностика проблемы "SEO Settings не сохраняются"
+## 2025-11-08 — ✨ НОВОЕ: Pages API теперь поддерживает вложенный объект SEO при создании страницы (POST)
+
+**СТАТУС**: ✅ Реализовано
+
+### Проблема:
+
+Frontend не мог отправить SEO данные при создании страницы (POST), потому что `CreatePageDto` не поддерживал вложенный объект `seo`. Приходилось создавать страницу без SEO, а потом обновлять её через PATCH.
+
+### Решение:
+
+Добавлена поддержка вложенного объекта `seo` в `CreatePageDto` (по аналогии с `UpdatePageDto`).
+
+### Изменения:
+
+#### 1. Обновлён CreatePageDto
+
+```typescript
+// src/modules/pages/dto/create-page.dto.ts
+export class CreatePageDto {
+  @ApiProperty({ description: 'Slug страницы' })
+  slug!: string;
+
+  @ApiProperty({ description: 'Заголовок страницы' })
+  title!: string;
+
+  @ApiProperty({ enum: ['generic', 'category_index', 'author_index'] })
+  type!: 'generic' | 'category_index' | 'author_index';
+
+  @ApiProperty({ description: 'Контент страницы' })
+  content!: string;
+
+  @ApiPropertyOptional({ description: 'ID SEO сущности (legacy)', nullable: true })
+  @IsOptional()
+  seoId?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'SEO данные (автоматически создаёт SEO entity)',
+    type: SeoInputDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SeoInputDto)
+  seo?: SeoInputDto; // ✅ НОВОЕ ПОЛЕ
+}
+```
+
+#### 2. Обновлён метод create() в PagesService
+
+```typescript
+// src/modules/pages/pages.service.ts
+async create(dto: CreatePageDto, language: Language) {
+  // Handle SEO: if dto.seo is provided, create SEO entity first
+  let finalSeoId = dto.seoId;
+
+  if (dto.seo) {
+    // Check if SEO fields are not all null/undefined
+    const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+    if (hasSeoData) {
+      // Create new SEO entity
+      const newSeo = await this.prisma.seo.create({
+        data: dto.seo,
+      });
+      finalSeoId = newSeo.id;
+    }
+  } else if (dto.seoId !== undefined && dto.seoId !== null) {
+    // Legacy: seoId provided directly - validate it exists
+    const seo = await this.prisma.seo.findUnique({ where: { id: dto.seoId } });
+    if (!seo) {
+      throw new BadRequestException('SEO entity not found for provided seoId');
+    }
+    finalSeoId = dto.seoId;
+  }
+
+  return await this.prisma.page.create({
+    data: {
+      slug: dto.slug,
+      title: dto.title,
+      type: dto.type,
+      content: dto.content,
+      language,
+      seoId: finalSeoId ?? null,
+    },
+    include: { seo: true },
+  });
+}
+```
+
+### Использование:
+
+#### Вариант 1: Создать страницу С SEO (атомарно)
+
+```typescript
+POST /api/admin/en/pages
+{
+  "slug": "about",
+  "title": "About Us",
+  "type": "generic",
+  "content": "Page content...",
+  "seo": {  // ✅ Вложенный объект SEO
+    "metaTitle": "About Us - Company Name",
+    "metaDescription": "Learn more about our company",
+    "canonicalUrl": "https://bibliaris.com/en/about",
+    "robots": "index, follow",
+    "ogTitle": "About Us",
+    "ogDescription": "Learn more about our company",
+    "ogImageUrl": "https://example.com/og-image.jpg",
+    "twitterCard": "summary_large_image"
+  }
+}
+
+// Response:
+{
+  "id": "uuid",
+  "slug": "about",
+  "seoId": 42,  // ✅ Создан автоматически
+  "seo": {
+    "id": 42,
+    "metaTitle": "About Us - Company Name",
+    ...
+  }
+}
+```
+
+#### Вариант 2: Создать страницу БЕЗ SEO
+
+```typescript
+POST /api/admin/en/pages
+{
+  "slug": "contact",
+  "title": "Contact Us",
+  "type": "generic",
+  "content": "Contact page..."
+  // seo не указан - страница создастся без SEO
+}
+
+// Response:
+{
+  "id": "uuid",
+  "slug": "contact",
+  "seoId": null,
+  "seo": null
+}
+```
+
+### Обратная совместимость:
+
+✅ Legacy способ с `seoId` всё ещё работает:
+
+```typescript
+POST /api/admin/en/pages
+{
+  "slug": "about",
+  "title": "About Us",
+  "type": "generic",
+  "content": "...",
+  "seoId": 42  // ⚠️ Legacy, но работает
+}
+```
+
+### Файлы:
+
+- `src/modules/pages/dto/create-page.dto.ts` - добавлено поле `seo`
+- `src/modules/pages/pages.service.ts` - обновлён метод `create()`
+- `docs/frontend-related/PAGES_API_GUIDE.md` - обновлена документация
+- `docs/frontend-related/PAGES_SEO_UPDATE_GUIDE.md` - новое руководство для фронтенда
+- `CHANGELOG.md` - обновлён
+
+### Преимущества:
+
+✅ Атомарная операция (создание страницы + SEO в одном запросе)
+✅ Упрощает работу фронтенда
+✅ Единообразие с `UpdatePageDto` (который уже поддерживал `seo`)
+✅ Обратная совместимость с legacy способом (`seoId`)
+
+---
+
+## 2025-11-03 — 📋 ДОКУМЕНТАЦИЯ: Диагностика проблемы "SEO Settings не сохраняются"
 
 **СТАТУС**: ✅ Документировано
 

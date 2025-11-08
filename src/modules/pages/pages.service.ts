@@ -82,6 +82,27 @@ export class PagesService {
   }
 
   async create(dto: CreatePageDto, language: Language) {
+    // Handle SEO: if dto.seo is provided, create SEO entity first
+    let finalSeoId = dto.seoId;
+    if (dto.seo) {
+      // Check if SEO fields are not all null/undefined
+      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+      if (hasSeoData) {
+        // Create new SEO entity
+        const newSeo = await this.prisma.seo.create({
+          data: dto.seo,
+        });
+        finalSeoId = newSeo.id;
+      }
+    } else if (dto.seoId !== undefined && dto.seoId !== null) {
+      // Legacy: seoId provided directly - validate it exists
+      const seo = await this.prisma.seo.findUnique({ where: { id: dto.seoId } });
+      if (!seo) {
+        throw new BadRequestException('SEO entity not found for provided seoId');
+      }
+      finalSeoId = dto.seoId;
+    }
+
     try {
       return await this.prisma.page.create({
         data: {
@@ -90,7 +111,7 @@ export class PagesService {
           type: dto.type,
           content: dto.content,
           language,
-          seoId: dto.seoId ?? null,
+          seoId: finalSeoId ?? null,
         },
         include: { seo: true },
       });
