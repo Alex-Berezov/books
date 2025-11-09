@@ -23,11 +23,65 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
 import { PageResponse, PaginatedPagesResponse } from './dto/page-response.dto';
+import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
 
 @ApiTags('pages')
 @Controller()
 export class PagesController {
   constructor(private readonly service: PagesService) {}
+
+  // ⚠️ КРИТИЧЕСКИ ВАЖНО: check-slug должен быть ПЕРВЫМ, перед ВСЕМИ другими роутами
+  // иначе будет конфликт с admin/pages/:id (NestJS думает что "check-slug" - это UUID)
+  @Get('admin/pages/check-slug')
+  @ApiOperation({
+    summary: 'Проверить уникальность slug для страницы',
+    description:
+      'Быстрая проверка доступности slug. Возвращает информацию о существующей странице и предлагает уникальный вариант если slug занят.',
+  })
+  @ApiQuery({
+    name: 'lang',
+    enum: Object.values(Language),
+    description: 'Язык страницы',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Результат проверки slug',
+    type: CheckPageSlugResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Невалидный формат slug',
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckPageSlugResponseDto> {
+    // lang is already validated by class-validator in CheckSlugQueryDto
+    const lang = query.lang as Language;
+
+    const existingPage = await this.service.checkSlugExists(query.slug, lang, query.excludeId);
+
+    if (!existingPage) {
+      // Slug is available
+      return {
+        exists: false,
+      };
+    }
+
+    // Slug is taken - generate suggestion
+    const suggestedSlug = await this.service.generateUniqueSuggestedSlug(query.slug, lang);
+
+    return {
+      exists: true,
+      suggestedSlug,
+      existingPage: {
+        id: existingPage.id,
+        title: existingPage.title,
+        status: existingPage.status,
+      },
+    };
+  }
 
   // Public: get page by slug (only published)
   @Get('pages/:slug')
@@ -43,7 +97,18 @@ export class PagesController {
     return this.service.getPublicBySlugWithPolicy(slug, lang, acceptLanguage);
   }
 
-  // Admin listing (with drafts)
+  @Get('admin/pages/:id')
+  @ApiOperation({ summary: 'Получить страницу по ID (админ): любой статус' })
+  @ApiParam({ name: 'id', description: 'UUID страницы' })
+  @ApiResponse({ status: 200, type: PageResponse })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  findById(@Param('id') id: string): Promise<PageResponse> {
+    return this.service.findById(id);
+  }
+
+  // ⚠️ ВАЖНО: admin/:lang/pages ПОСЛЕ всех статических admin/pages/* роутов
+  // иначе `:lang` может съесть статические сегменты типа "check-slug"
   @Get('admin/:lang/pages')
   @ApiOperation({ summary: 'Листинг страниц (админ): draft+published' })
   @ApiQuery({ name: 'page', required: false })
@@ -84,16 +149,6 @@ export class PagesController {
       ? (headerLang as Language)
       : lang;
     return this.service.create(dto, effLang);
-  }
-
-  @Get('admin/pages/:id')
-  @ApiOperation({ summary: 'Получить страницу по ID (админ): любой статус' })
-  @ApiParam({ name: 'id', description: 'UUID страницы' })
-  @ApiResponse({ status: 200, type: PageResponse })
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.Admin, Role.ContentManager)
-  findById(@Param('id') id: string): Promise<PageResponse> {
-    return this.service.findById(id);
   }
 
   @Patch('admin/:lang/pages/:id')

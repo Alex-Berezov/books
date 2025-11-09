@@ -212,4 +212,46 @@ export class PagesService {
     await this.prisma.page.delete({ where: { id } });
     return { success: true };
   }
+
+  /**
+   * Check if a slug exists for a given language.
+   * @param slug - The slug to check
+   * @param language - The language context
+   * @param excludeId - Optional page ID to exclude (when editing)
+   * @returns The existing page or null if slug is available
+   */
+  async checkSlugExists(slug: string, language: Language, excludeId?: string) {
+    const where: Prisma.PageWhereInput = {
+      slug,
+      language,
+    };
+
+    if (excludeId) {
+      where.NOT = { id: excludeId };
+    }
+
+    return this.prisma.page.findFirst({
+      where,
+      select: { id: true, title: true, status: true },
+    });
+  }
+
+  /**
+   * Generate a unique slug by appending a numeric suffix.
+   * @param baseSlug - The base slug to make unique
+   * @param language - The language context
+   * @returns A unique slug with numeric suffix (e.g., "about-us-2")
+   */
+  async generateUniqueSuggestedSlug(baseSlug: string, language: Language): Promise<string> {
+    let suffix = 2;
+    let candidateSlug = `${baseSlug}-${suffix}`;
+
+    // Find first available suffix
+    while (await this.checkSlugExists(candidateSlug, language)) {
+      suffix++;
+      candidateSlug = `${baseSlug}-${suffix}`;
+    }
+
+    return candidateSlug;
+  }
 }

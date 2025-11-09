@@ -21,11 +21,63 @@ import { SLUG_PATTERN } from '../../shared/validators/slug';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+import { CheckBookSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckBookSlugResponseDto } from './dto/check-slug-response.dto';
 
 @ApiTags('books')
 @Controller('books')
 export class BookController {
   constructor(private readonly bookService: BookService) {}
+
+  // ⚠️ КРИТИЧЕСКИ ВАЖНО: check-slug должен быть ПЕРВЫМ GET роутом
+  // иначе роуты с динамическими параметрами (`:slug/overview`) могут съесть его
+  @Get('check-slug')
+  @ApiOperation({
+    summary: 'Проверить уникальность slug для книги',
+    description:
+      'Быстрая проверка доступности slug. Возвращает информацию о существующей книге и предлагает уникальный вариант если slug занят.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Результат проверки slug',
+    type: CheckBookSlugResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Невалидный формат slug',
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async checkSlug(@Query() query: CheckBookSlugQueryDto): Promise<CheckBookSlugResponseDto> {
+    try {
+      const existingBook = await this.bookService.checkSlugExists(query.slug, query.excludeId);
+
+      if (!existingBook) {
+        // Slug is available
+        return {
+          exists: false,
+        };
+      }
+
+      // Slug is taken - generate suggestion
+      const suggestedSlug = await this.bookService.generateUniqueSuggestedSlug(query.slug);
+
+      return {
+        exists: true,
+        suggestedSlug,
+        existingBook: {
+          id: existingBook.id,
+          slug: existingBook.slug,
+        },
+      };
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to check slug', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 
   @Post()
   @ApiOperation({ summary: 'Create new book' })

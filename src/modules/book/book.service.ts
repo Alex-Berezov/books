@@ -165,4 +165,43 @@ export class BookService {
 
     return this.prisma.book.delete({ where: { id } });
   }
+
+  /**
+   * Check if a slug exists for books.
+   * @param slug - The slug to check
+   * @param excludeId - Optional book ID to exclude (when editing)
+   * @returns The existing book or null if slug is available
+   */
+  async checkSlugExists(slug: string, excludeId?: string) {
+    const where: { slug: string; NOT?: { id: string } } = {
+      slug,
+    };
+
+    if (excludeId) {
+      where.NOT = { id: excludeId };
+    }
+
+    return this.prisma.book.findFirst({
+      where,
+      select: { id: true, slug: true },
+    });
+  }
+
+  /**
+   * Generate a unique slug by appending a numeric suffix.
+   * @param baseSlug - The base slug to make unique
+   * @returns A unique slug with numeric suffix (e.g., "harry-potter-2")
+   */
+  async generateUniqueSuggestedSlug(baseSlug: string): Promise<string> {
+    let suffix = 2;
+    let candidateSlug = `${baseSlug}-${suffix}`;
+
+    // Find first available suffix
+    while (await this.checkSlugExists(candidateSlug)) {
+      suffix++;
+      candidateSlug = `${baseSlug}-${suffix}`;
+    }
+
+    return candidateSlug;
+  }
 }
