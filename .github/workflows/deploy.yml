@@ -3,9 +3,9 @@ name: 📦 Production Deployment
 on:
   push:
     tags:
-      - 'v*' # Срабатывает на теги вида v1.0.0, v2.1.3, etc.
+      - 'v*' # Triggers on tags like v1.0.0, v2.1.3, etc.
     branches:
-      - main # Автодеплой с main ветки (опционально)
+      - main # Auto-deploy from main branch (optional)
   workflow_dispatch:
     inputs:
       version:
@@ -26,7 +26,7 @@ on:
         type: boolean
         default: false
 
-# Глобальные permissions для workflow
+# Global workflow permissions
 permissions:
   contents: read
   packages: write
@@ -40,7 +40,7 @@ env:
 
 jobs:
   # =====================================================
-  # ТЕСТИРОВАНИЕ И ПРОВЕРКИ
+  # TESTING AND QUALITY CHECKS
   # =====================================================
 
   test:
@@ -77,7 +77,7 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Для semantic versioning
+          fetch-depth: 0 # For semantic versioning
 
       - name: 📦 Setup Node.js
         uses: actions/setup-node@v4
@@ -117,7 +117,7 @@ jobs:
           REDIS_PORT: 6379
 
   # =====================================================
-  # СБОРКА DOCKER ОБРАЗА
+  # DOCKER IMAGE BUILD
   # =====================================================
 
   build:
@@ -193,7 +193,7 @@ jobs:
 
       - name: 📋 Generate SBOM
         uses: anchore/sbom-action@v0
-        continue-on-error: true # Не блокируем деплой при ошибках SBOM
+        continue-on-error: true # Don't block deployment on SBOM errors
         with:
           image: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:${{ steps.version.outputs.version }}
           artifact-name: sbom-${{ steps.version.outputs.version }}.spdx.json
@@ -201,13 +201,13 @@ jobs:
 
       - name: 🔍 Security Scan
         uses: anchore/scan-action@v3
-        continue-on-error: true # Не блокируем деплой при ошибках сканирования
+        continue-on-error: true # Don't block deployment on scan errors
         with:
           image: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:${{ steps.version.outputs.version }}
-          fail-build: false # Не останавливаем деплой при средних уязвимостях
+          fail-build: false # Don't stop deployment on medium vulnerabilities
 
   # =====================================================
-  # ДЕПЛОЙ В PRODUCTION
+  # PRODUCTION DEPLOYMENT
   # =====================================================
 
   deploy:
@@ -244,17 +244,17 @@ jobs:
 
       - name: 🚀 Deploy to Server
         run: |
-          # Lowercase repository name для Docker
+          # Lowercase repository name for Docker
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
-          # Подключение к серверу и выполнение деплоя
+          # Connect to server and execute deployment
           ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << EOF
             set -euo pipefail
             
             echo "🔄 Preparing deployment environment..."
             cd /opt/books/app/src
             
-            # Сохранение локальных изменений и обновление кода
+            # Save local changes and update code
             if [[ -d ".git" ]]; then
               echo "📦 Stashing local changes..."
               git stash --include-untracked || true
@@ -269,7 +269,7 @@ jobs:
               chmod +x scripts/deploy_production.sh
             fi
             
-            # Создание .env.prod из секретов
+            # Create .env.prod from secrets
             echo "📝 Creating .env.prod from secrets..."
             cat > .env.prod << 'ENVEOF'
           ${{ secrets.ENV_PROD }}
@@ -277,7 +277,7 @@ jobs:
             chmod 600 .env.prod
             echo "✅ .env.prod created successfully"
             
-            # Логин в registry для pull образа
+            # Login to registry to pull image
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             
             echo "🚀 Starting deployment..."
@@ -296,7 +296,7 @@ jobs:
         run: |
           echo "🏥 Running post-deployment health checks..."
 
-          # Ожидание готовности сервиса
+          # Wait for service readiness
           max_attempts=20
           attempt=0
 
@@ -320,14 +320,14 @@ jobs:
         run: |
           echo "📊 Verifying deployment..."
 
-          # Проверка версии API
+          # Check API version
           api_response=$(curl -sf "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness")
           api_version=$(echo "$api_response" | jq -r '.version // "unknown"')
 
           echo "🔍 API Version: $api_version"
           echo "🎯 Expected Version: ${{ needs.build.outputs.version }}"
 
-          # Проверка основных endpoints
+          # Check main endpoints
           endpoints=(
             "/api/health/readiness"
             "/api/metrics"
@@ -345,7 +345,7 @@ jobs:
           echo "✅ All verifications passed!"
 
   # =====================================================
-  # УВЕДОМЛЕНИЯ
+  # NOTIFICATIONS
   # =====================================================
 
   notify:
@@ -363,7 +363,7 @@ jobs:
           echo "Environment: ${{ github.event.inputs.environment || 'production' }}"
           echo "URL: https://${{ vars.PRODUCTION_DOMAIN }}"
 
-          # Здесь можно добавить интеграции с:
+          # Here you can add integrations with:
           # - Slack (webhook)
           # - Discord
           # - Telegram
@@ -377,7 +377,7 @@ jobs:
           echo "Check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
   # =====================================================
-  # ОТКАТ (Manual trigger)
+  # ROLLBACK (Manual trigger)
   # =====================================================
 
   rollback:

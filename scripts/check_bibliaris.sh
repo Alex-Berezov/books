@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# Скрипт проверки доступности bibliaris.com после настройки DNS и Caddy
-# Можно запускать с локальной машины или сервера
+# Script to verify bibliaris.com availability after DNS and Caddy setup
+# Can be run from a local machine or the server
 
 set -euo pipefail
 
 DOMAIN="bibliaris.com"
 SERVER_IP="209.74.88.183"
 
-echo "🔍 Проверка доступности $DOMAIN"
+echo "🔍 Checking availability of $DOMAIN"
 echo "================================"
 
-# Функция логирования
+# Logging helpers
 log() {
     echo "$(date '+%H:%M:%S') [INFO] $*"
 }
@@ -28,106 +28,106 @@ log_warning() {
     echo "$(date '+%H:%M:%S') [⚠️] $*"
 }
 
-# Проверка DNS
+# DNS check
 check_dns() {
-    log "Проверка DNS записей..."
+    log "Checking DNS records..."
     
-    # Проверка A-record
+    # Check A-record
     dns_result=$(dig +short $DOMAIN A 2>/dev/null || echo "")
     
     if [[ "$dns_result" == "$SERVER_IP" ]]; then
-        log_success "DNS A-record корректен: $DOMAIN → $SERVER_IP"
+        log_success "DNS A-record correct: $DOMAIN → $SERVER_IP"
         return 0
     elif [[ -n "$dns_result" ]]; then
-        log_error "DNS A-record неверен: $DOMAIN → $dns_result (ожидался $SERVER_IP)"
+        log_error "DNS A-record incorrect: $DOMAIN → $dns_result (expected $SERVER_IP)"
         return 1
     else
-        log_error "DNS A-record не найден для $DOMAIN"
+        log_error "DNS A-record not found for $DOMAIN"
         return 1
     fi
 }
 
-# Проверка портов на сервере
+# Check server ports
 check_ports() {
-    log "Проверка портов на сервере $SERVER_IP..."
+    log "Checking ports on server $SERVER_IP..."
     
-    # Проверка порта 80 (HTTP)
+    # Check port 80 (HTTP)
     if nc -z -w3 $SERVER_IP 80 2>/dev/null; then
-        log_success "Порт 80 (HTTP) открыт"
+        log_success "Port 80 (HTTP) open"
     else
-        log_error "Порт 80 (HTTP) недоступен"
+        log_error "Port 80 (HTTP) unavailable"
         return 1
     fi
     
-    # Проверка порта 443 (HTTPS)
+    # Check port 443 (HTTPS)
     if nc -z -w3 $SERVER_IP 443 2>/dev/null; then
-        log_success "Порт 443 (HTTPS) открыт"
+        log_success "Port 443 (HTTPS) open"
     else
-        log_error "Порт 443 (HTTPS) недоступен"
+        log_error "Port 443 (HTTPS) unavailable"
         return 1
     fi
     
     return 0
 }
 
-# Проверка HTTP доступности
+# Check HTTP availability
 check_http() {
-    log "Проверка HTTP доступности..."
+    log "Checking HTTP availability..."
     
-    # Проверка HTTP (должен перенаправлять на HTTPS)
+    # Check HTTP (should redirect to HTTPS)
     http_response=$(curl -s -o /dev/null -w "%{http_code}" -L http://$DOMAIN/api/health/liveness 2>/dev/null || echo "000")
     
     if [[ "$http_response" == "200" ]]; then
-        log_success "HTTP доступность: $http_response"
+        log_success "HTTP availability: $http_response"
     else
-        log_warning "HTTP ответ: $http_response"
+        log_warning "HTTP response: $http_response"
     fi
 }
 
-# Проверка HTTPS доступности
+# Check HTTPS availability
 check_https() {
-    log "Проверка HTTPS доступности..."
+    log "Checking HTTPS availability..."
     
-    # Проверка HTTPS health endpoint
+    # Check HTTPS health endpoint
     https_response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN/api/health/liveness 2>/dev/null || echo "000")
     
     if [[ "$https_response" == "200" ]]; then
-        log_success "HTTPS API работает: $https_response"
+        log_success "HTTPS API is working: $https_response"
     else
-        log_error "HTTPS API недоступен: $https_response"
+        log_error "HTTPS API unavailable: $https_response"
         return 1
     fi
     
-    # Проверка основной страницы
+    # Check main page
     main_response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN/ 2>/dev/null || echo "000")
-    log "Главная страница: $main_response"
+    log "Main page: $main_response"
     
     return 0
 }
 
-# Проверка SSL сертификата
+# Check SSL certificate
 check_ssl() {
-    log "Проверка SSL сертификата..."
+    log "Checking SSL certificate..."
     
-    # Получение информации о сертификате
+    # Retrieve certificate info
     ssl_info=$(echo | openssl s_client -servername $DOMAIN -connect $DOMAIN:443 2>/dev/null | openssl x509 -noout -issuer -dates 2>/dev/null || echo "")
     
     if [[ -n "$ssl_info" ]]; then
-        log_success "SSL сертификат найден:"
+        log_success "SSL certificate found:"
         echo "$ssl_info" | while IFS= read -r line; do
             echo "   $line"
         done
     else
-        log_error "SSL сертификат недоступен"
+        log_error "SSL certificate unavailable"
         return 1
     fi
     
     return 0
 }
 
-# Проверка конкретных endpoints
+# Check specific endpoints
 check_endpoints() {
-    log "Проверка API endpoints..."
+    log "Checking API endpoints..."
     
     endpoints=(
         "/api/health/liveness"
@@ -144,29 +144,29 @@ check_endpoints() {
     done
 }
 
-# Проверка времени ответа
+# Check response time
 check_performance() {
-    log "Проверка производительности..."
+    log "Checking performance..."
     
     response_time=$(curl -o /dev/null -s -w "%{time_total}s" https://$DOMAIN/api/health/liveness 2>/dev/null || echo "timeout")
     
     if [[ "$response_time" != "timeout" ]]; then
-        log "Время ответа API: $response_time"
+        log "API response time: $response_time"
     else
-        log_warning "Timeout при проверке времени ответа"
+        log_warning "Timeout while checking response time"
     fi
 }
 
-# Основная функция проверки
+# Main check function
 main() {
     local errors=0
     
-    echo "🌐 Домен: $DOMAIN"
-    echo "🖥️ Сервер: $SERVER_IP"
-    echo "⏰ Время: $(date)"
+    echo "🌐 Domain: $DOMAIN"
+    echo "🖥️ Server: $SERVER_IP"
+    echo "⏰ Time: $(date)"
     echo ""
     
-    # Выполнение всех проверок
+    # Run all checks
     check_dns || errors=$((errors + 1))
     echo ""
     
@@ -188,22 +188,22 @@ main() {
     check_performance
     echo ""
     
-    # Финальный результат
+    # Final result
     if [[ $errors -eq 0 ]]; then
-        log_success "Все проверки пройдены успешно! 🎉"
+        log_success "All checks passed! 🎉"
         echo ""
-        echo "✅ bibliaris.com полностью функционален"
-        echo "🔗 API доступен по адресу: https://bibliaris.com/"
+        echo "✅ bibliaris.com is fully functional"
+        echo "🔗 API available at: https://bibliaris.com/"
     else
-        log_error "Обнаружено $errors ошибок"
+        log_error "$errors error(s) detected"
         echo ""
-        echo "📋 Возможные причины:"
-        echo "  - DNS изменения еще не вступили в силу (подождите до 48 часов)"
-        echo "  - Caddy не запущен на сервере"
-        echo "  - Firewall блокирует порты 80/443"
-        echo "  - Приложение не работает на localhost:5000"
+        echo "📋 Possible causes:"
+        echo "  - DNS changes haven't propagated yet (wait up to 48 hours)"
+        echo "  - Caddy is not running on the server"
+        echo "  - Firewall blocks ports 80/443"
+        echo "  - Application not running on localhost:5000"
         echo ""
-        echo "🔍 Для диагностики на сервере:"
+        echo "🔍 For server-side diagnostics:"
         echo "  systemctl status caddy"
         echo "  journalctl -u caddy -n 20"
         echo "  curl -I http://localhost:5000/api/health/liveness"
@@ -212,7 +212,7 @@ main() {
     fi
 }
 
-# Проверка зависимостей
+# Dependency check
 check_dependencies() {
     local missing_deps=()
     
@@ -223,12 +223,12 @@ check_dependencies() {
     done
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        log_error "Не найдены необходимые утилиты: ${missing_deps[*]}"
-        log "Установите их командой: sudo apt install dnsutils curl netcat-openbsd openssl"
+        log_error "Required utilities not found: ${missing_deps[*]}"
+        log "Install them with: sudo apt install dnsutils curl netcat-openbsd openssl"
         exit 1
     fi
 }
 
-# Запуск
+# Run
 check_dependencies
 main "$@"

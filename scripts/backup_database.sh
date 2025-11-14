@@ -1,14 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Цвета для вывода
+# Colors for terminal output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Функции логирования
+# Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
 }
@@ -25,7 +25,7 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
 }
 
-# Конфигурация по умолчанию
+# Default configuration
 BACKUP_DIR="/opt/books/backups"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 COMPRESS_BACKUPS="${COMPRESS_BACKUPS:-true}"
@@ -34,108 +34,108 @@ LOG_FILE="${BACKUP_DIR}/backup.log"
 UPLOADS_DIR="/opt/books/uploads"
 INCLUDE_UPLOADS="${INCLUDE_UPLOADS:-true}"
 
-# PostgreSQL настройки (могут быть переопределены через переменные окружения)
+# PostgreSQL settings (can be overridden via environment variables)
 POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_DB="${POSTGRES_DB:-books}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
 
-# Настройки для Docker окружения
+# Docker environment settings
 DOCKER_COMPOSE_FILE="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
 DOCKER_POSTGRES_SERVICE="${DOCKER_POSTGRES_SERVICE:-postgres}"
 USE_DOCKER="${USE_DOCKER:-auto}"
 
-# Функция для определения способа подключения к PostgreSQL
+# Function to detect how to connect to PostgreSQL
 detect_postgres_connection() {
     if [[ "$USE_DOCKER" == "auto" ]]; then
         if docker ps --format "table {{.Names}}" | grep -q postgres; then
             USE_DOCKER="true"
-            log_info "Обнаружен PostgreSQL в Docker контейнере"
+            log_info "Detected PostgreSQL in Docker container"
         elif command -v psql &> /dev/null; then
             USE_DOCKER="false"
-            log_info "Обнаружен локальный PostgreSQL"
+            log_info "Detected local PostgreSQL"
         else
-            log_error "PostgreSQL не найден ни локально, ни в Docker"
+            log_error "PostgreSQL not found locally or in Docker"
             exit 1
         fi
     fi
 }
 
-# Функция проверки подключения к БД
+# Function to test PostgreSQL connection
 test_postgres_connection() {
-    log_info "Проверка подключения к PostgreSQL..."
+    log_info "Checking connection to PostgreSQL..."
     
     if [[ "$USE_DOCKER" == "true" ]]; then
-        # Тест через Docker
+    # Test via Docker
         if docker exec "$(docker ps -qf name=postgres)" pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
-            log_success "Подключение к PostgreSQL в Docker успешно"
+            log_success "Connection to PostgreSQL in Docker succeeded"
             return 0
         else
-            log_error "Не удается подключиться к PostgreSQL в Docker"
+            log_error "Failed to connect to PostgreSQL in Docker"
             return 1
         fi
     else
-        # Тест локального подключения
+    # Test local connection
         if PGPASSWORD="$POSTGRES_PASSWORD" pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" >/dev/null 2>&1; then
-            log_success "Подключение к локальному PostgreSQL успешно"
+            log_success "Connection to local PostgreSQL succeeded"
             return 0
         else
-            log_error "Не удается подключиться к локальному PostgreSQL"
+            log_error "Failed to connect to local PostgreSQL"
             return 1
         fi
     fi
 }
 
-# Функция создания директорий
+# Function to create backup directories
 setup_backup_directories() {
-    log_info "Создание директорий для бэкапов..."
+    log_info "Creating backup directories..."
     
-    # Создаем основную директорию бэкапов
+    # Create main backup directory
     mkdir -p "$BACKUP_DIR"
     
-    # Создаем поддиректории по датам (для организации)
+    # Create subdirectories by backup type (organization)
     mkdir -p "$BACKUP_DIR/daily"
     mkdir -p "$BACKUP_DIR/weekly"
     mkdir -p "$BACKUP_DIR/monthly"
     
-    # Проверяем права доступа
+    # Check write permissions
     if [[ ! -w "$BACKUP_DIR" ]]; then
-        log_error "Нет прав на запись в директорию бэкапов: $BACKUP_DIR"
+    log_error "No write permissions for backup directory: $BACKUP_DIR"
         exit 1
     fi
     
-    log_success "Директории бэкапов готовы"
+    log_success "Backup directories ready"
 }
 
-# Функция создания бэкапа базы данных
+# Function to create database backup
 backup_database() {
     local backup_type="${1:-daily}"
     local timestamp=$(date '+%Y%m%d_%H%M%S')
     local backup_file="${BACKUP_DIR}/${backup_type}/${BACKUP_PREFIX}_${timestamp}.sql"
     
-    log_info "Создание бэкапа базы данных (тип: $backup_type)..."
+    log_info "Creating database backup (type: $backup_type)..."
     
     if [[ "$USE_DOCKER" == "true" ]]; then
-        # Найти PostgreSQL контейнер
+    # Find PostgreSQL container
         local postgres_container=$(docker ps -qf name=postgres)
         
         if [[ -z "$postgres_container" ]]; then
-            log_error "PostgreSQL контейнер не найден"
+            log_error "PostgreSQL container not found"
             return 1
         fi
         
-        # Получить переменные окружения из контейнера
+    # Get environment variables from container
         local container_user=$(docker exec "$postgres_container" env | grep "^POSTGRES_USER=" | cut -d= -f2)
         local container_db=$(docker exec "$postgres_container" env | grep "^POSTGRES_DB=" | cut -d= -f2)
         
-        # Использовать переменные из контейнера, если они не пусты
+    # Use container variables if present
         local db_user="${container_user:-$POSTGRES_USER}"
         local db_name="${container_db:-$POSTGRES_DB}"
         
-        log_info "Используем БД: $db_name, пользователь: $db_user"
+    log_info "Using database: $db_name, user: $db_user"
         
-        # Бэкап через Docker
+    # Backup via Docker
         docker exec "$postgres_container" pg_dump \
             -h localhost \
             -p 5432 \
@@ -146,7 +146,7 @@ backup_database() {
             --verbose \
             > "$backup_file" 2>>"$LOG_FILE"
     else
-        # Локальный бэкап
+    # Local backup
         PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
             -h "$POSTGRES_HOST" \
             -p "$POSTGRES_PORT" \
@@ -159,249 +159,249 @@ backup_database() {
     fi
     
     if [[ $? -eq 0 && -f "$backup_file" && -s "$backup_file" ]]; then
-        log_success "Бэкап базы данных создан: $(basename "$backup_file")"
+    log_success "Database backup created: $(basename "$backup_file")"
         
-        # Сжатие бэкапа
+    # Compress backup
         if [[ "$COMPRESS_BACKUPS" == "true" ]]; then
-            log_info "Сжатие бэкапа..."
+            log_info "Compressing backup..."
             gzip "$backup_file"
             backup_file="${backup_file}.gz"
-            log_success "Бэкап сжат: $(basename "$backup_file")"
+            log_success "Backup compressed: $(basename "$backup_file")"
         fi
         
-        # Проверка размера файла
+    # Check backup file size
         local file_size=$(du -h "$backup_file" | cut -f1)
-        log_info "Размер бэкапа: $file_size"
+    log_info "Backup size: $file_size"
         
         echo "$backup_file"
     else
-        log_error "Ошибка создания бэкапа базы данных"
+    log_error "Error creating database backup"
         return 1
     fi
 }
 
-# Функция создания бэкапа медиафайлов
+# Function to create uploads/media backup
 backup_uploads() {
     local backup_type="${1:-daily}"
     local timestamp=$(date '+%Y%m%d_%H%M%S')
     local backup_file="${BACKUP_DIR}/${backup_type}/uploads_${timestamp}.tar.gz"
     
     if [[ "$INCLUDE_UPLOADS" != "true" ]]; then
-        log_info "Бэкап медиафайлов отключен"
+    log_info "Uploads/media backup disabled"
         return 0
     fi
     
     if [[ ! -d "$UPLOADS_DIR" ]]; then
-        log_warning "Директория uploads не найдена: $UPLOADS_DIR"
+    log_warning "Uploads directory not found: $UPLOADS_DIR"
         return 0
     fi
     
-    log_info "Создание бэкапа медиафайлов..."
+    log_info "Creating uploads/media backup..."
     
-    # Подсчет файлов для бэкапа
+    # Count files for backup
     local file_count=$(find "$UPLOADS_DIR" -type f | wc -l)
-    log_info "Найдено файлов для бэкапа: $file_count"
+    log_info "Files found for backup: $file_count"
     
     if [[ $file_count -eq 0 ]]; then
-        log_warning "Нет файлов для бэкапа в $UPLOADS_DIR"
+    log_warning "No files to backup in $UPLOADS_DIR"
         return 0
     fi
     
-    # Создание архива
+    # Create archive
     tar -czf "$backup_file" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")" 2>>"$LOG_FILE"
     
     if [[ $? -eq 0 && -f "$backup_file" ]]; then
         local file_size=$(du -h "$backup_file" | cut -f1)
-        log_success "Бэкап медиафайлов создан: $(basename "$backup_file") (размер: $file_size)"
+    log_success "Uploads/media backup created: $(basename "$backup_file") (size: $file_size)"
         echo "$backup_file"
     else
-        log_error "Ошибка создания бэкапа медиафайлов"
+    log_error "Error creating uploads/media backup"
         return 1
     fi
 }
 
-# Функция ротации старых бэкапов
+# Function to rotate (clean up) old backups
 cleanup_old_backups() {
     local backup_type="${1:-daily}"
     local retention_days="$BACKUP_RETENTION_DAYS"
     
-    log_info "Очистка старых бэкапов (старше $retention_days дней)..."
+    log_info "Cleaning up old backups (older than $retention_days days)..."
     
     local cleanup_dir="${BACKUP_DIR}/${backup_type}"
     local deleted_count=0
     
     if [[ -d "$cleanup_dir" ]]; then
-        # Удаляем файлы старше указанного количества дней
+    # Delete files older than retention period
         while IFS= read -r -d '' file; do
             rm "$file"
             ((deleted_count++))
-            log_info "Удален старый бэкап: $(basename "$file")"
+            log_info "Deleted old backup: $(basename "$file")"
         done < <(find "$cleanup_dir" -type f \( -name "*.sql" -o -name "*.sql.gz" -o -name "*.tar.gz" \) -mtime +$retention_days -print0 2>/dev/null)
     fi
     
     if [[ $deleted_count -gt 0 ]]; then
-        log_success "Удалено старых бэкапов: $deleted_count"
+    log_success "Old backups deleted: $deleted_count"
     else
-        log_info "Старые бэкапы не найдены"
+    log_info "No old backups found"
     fi
 }
 
-# Функция генерации отчета
+# Function to generate backup report
 generate_backup_report() {
     local db_backup_file="$1"
     local uploads_backup_file="$2"
     local backup_type="${3:-daily}"
     
-    log_info "Генерация отчета о бэкапе..."
+    log_info "Generating backup report..."
     
     local report_file="${BACKUP_DIR}/backup_report_$(date '+%Y%m%d_%H%M%S').txt"
     
     {
-        echo "=== Отчет о создании бэкапа ==="
-        echo "Дата и время: $(date)"
-        echo "Тип бэкапа: $backup_type"
-        echo "Хост: $(hostname)"
+    echo "=== Backup Creation Report ==="
+    echo "Date & Time: $(date)"
+    echo "Backup type: $backup_type"
+    echo "Host: $(hostname)"
         echo ""
         
-        echo "=== База данных ==="
+    echo "=== Database ==="
         if [[ -n "$db_backup_file" && -f "$db_backup_file" ]]; then
-            echo "Файл: $(basename "$db_backup_file")"
-            echo "Размер: $(du -h "$db_backup_file" | cut -f1)"
-            echo "Путь: $db_backup_file"
-            echo "Статус: Успешно"
+            echo "File: $(basename "$db_backup_file")"
+            echo "Size: $(du -h "$db_backup_file" | cut -f1)"
+            echo "Path: $db_backup_file"
+            echo "Status: Success"
         else
-            echo "Статус: Ошибка"
+            echo "Status: Error"
         fi
         echo ""
         
-        echo "=== Медиафайлы ==="
+    echo "=== Media Uploads ==="
         if [[ "$INCLUDE_UPLOADS" == "true" ]]; then
             if [[ -n "$uploads_backup_file" && -f "$uploads_backup_file" ]]; then
-                echo "Файл: $(basename "$uploads_backup_file")"
-                echo "Размер: $(du -h "$uploads_backup_file" | cut -f1)"
-                echo "Путь: $uploads_backup_file"
-                echo "Статус: Успешно"
+                echo "File: $(basename "$uploads_backup_file")"
+                echo "Size: $(du -h "$uploads_backup_file" | cut -f1)"
+                echo "Path: $uploads_backup_file"
+                echo "Status: Success"
             else
-                echo "Статус: Ошибка или нет файлов"
+                echo "Status: Error or no files"
             fi
         else
-            echo "Статус: Отключено"
+            echo "Status: Disabled"
         fi
         echo ""
         
-        echo "=== Конфигурация ==="
-        echo "Retention: $BACKUP_RETENTION_DAYS дней"
-        echo "Сжатие: $COMPRESS_BACKUPS"
-        echo "PostgreSQL: $POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB"
-        echo "Метод подключения: $([ "$USE_DOCKER" == "true" ] && echo "Docker" || echo "Локально")"
+    echo "=== Configuration ==="
+    echo "Retention: $BACKUP_RETENTION_DAYS days"
+    echo "Compression: $COMPRESS_BACKUPS"
+    echo "PostgreSQL: $POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB"
+    echo "Connection method: $([ "$USE_DOCKER" == "true" ] && echo "Docker" || echo "Local")"
     } > "$report_file"
     
-    log_success "Отчет создан: $(basename "$report_file")"
+    log_success "Report created: $(basename "$report_file")"
     
-    # Выводим краткий отчет в консоль
+    # Print concise summary to console
     echo ""
-    echo "=== ИТОГОВЫЙ ОТЧЕТ ==="
+    echo "=== FINAL SUMMARY ==="
     if [[ -n "$db_backup_file" && -f "$db_backup_file" ]]; then
-        echo -e "${GREEN}✓${NC} База данных: $(basename "$db_backup_file") ($(du -h "$db_backup_file" | cut -f1))"
+    echo -e "${GREEN}✓${NC} Database: $(basename "$db_backup_file") ($(du -h "$db_backup_file" | cut -f1))"
     else
-        echo -e "${RED}✗${NC} База данных: Ошибка"
+    echo -e "${RED}✗${NC} Database: Error"
     fi
     
     if [[ "$INCLUDE_UPLOADS" == "true" ]]; then
         if [[ -n "$uploads_backup_file" && -f "$uploads_backup_file" ]]; then
-            echo -e "${GREEN}✓${NC} Медиафайлы: $(basename "$uploads_backup_file") ($(du -h "$uploads_backup_file" | cut -f1))"
+            echo -e "${GREEN}✓${NC} Media uploads: $(basename "$uploads_backup_file") ($(du -h "$uploads_backup_file" | cut -f1))"
         else
-            echo -e "${YELLOW}!${NC} Медиафайлы: Пропущено или ошибка"
+            echo -e "${YELLOW}!${NC} Media uploads: Skipped or error"
         fi
     fi
 }
 
-# Основная функция
+# Main function
 main() {
     local backup_type="${1:-daily}"
     
-    # Инициализация логирования
+    # Initialize logging
     mkdir -p "$(dirname "$LOG_FILE")"
     
     {
-        echo "=== Начало создания бэкапа ==="
-        echo "Дата: $(date)"
-        echo "Тип: $backup_type"
+    echo "=== Backup creation started ==="
+    echo "Date: $(date)"
+    echo "Type: $backup_type"
         echo "PID: $$"
     } >> "$LOG_FILE"
     
-    log_info "=== Создание бэкапа Books App (тип: $backup_type) ==="
+    log_info "=== Creating Books App backup (type: $backup_type) ==="
     
-    # Проверки и подготовка
+    # Checks and preparation
     detect_postgres_connection
     
     if ! test_postgres_connection; then
-        log_error "Не удается подключиться к PostgreSQL"
+    log_error "Cannot connect to PostgreSQL"
         exit 1
     fi
     
     setup_backup_directories
     
-    # Создание бэкапов
+    # Creating backups
     local db_backup_file=""
     local uploads_backup_file=""
     
-    # Бэкап базы данных
+    # Database backup
     if db_backup_file=$(backup_database "$backup_type"); then
-        log_success "Бэкап базы данных завершен"
+    log_success "Database backup completed"
     else
-        log_error "Ошибка создания бэкапа базы данных"
+    log_error "Error creating database backup"
         exit 1
     fi
     
-    # Бэкап медиафайлов
+    # Media (uploads) backup
     if uploads_backup_file=$(backup_uploads "$backup_type"); then
-        log_success "Бэкап медиафайлов завершен"
+    log_success "Uploads/media backup completed"
     fi
     
-    # Очистка старых бэкапов
+    # Cleanup old backups
     cleanup_old_backups "$backup_type"
     
-    # Генерация отчета
+    # Generate report
     generate_backup_report "$db_backup_file" "$uploads_backup_file" "$backup_type"
     
-    log_success "=== Создание бэкапа завершено успешно ==="
+    log_success "=== Backup creation completed successfully ==="
     
     {
-        echo "=== Конец создания бэкапа ==="
-        echo "Статус: Успешно"
-        echo "Дата окончания: $(date)"
+    echo "=== Backup creation finished ==="
+    echo "Status: Success"
+    echo "End time: $(date)"
         echo ""
     } >> "$LOG_FILE"
 }
 
-# Проверка аргументов и справка
+# Argument parsing and help section
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    echo "Использование: $0 [тип_бэкапа]"
+    echo "Usage: $0 [backup_type]"
     echo
-    echo "Типы бэкапов:"
-    echo "  daily   - ежедневный бэкап (по умолчанию)"
-    echo "  weekly  - еженедельный бэкап"  
-    echo "  monthly - ежемесячный бэкап"
+    echo "Backup types:"
+    echo "  daily   - daily backup (default)"
+    echo "  weekly  - weekly backup"  
+    echo "  monthly - monthly backup"
     echo
-    echo "Переменные окружения:"
-    echo "  BACKUP_DIR              - директория бэкапов (/opt/books/backups)"
-    echo "  BACKUP_RETENTION_DAYS   - срок хранения в днях (14)"
-    echo "  COMPRESS_BACKUPS        - сжимать бэкапы (true/false)"
-    echo "  INCLUDE_UPLOADS         - включать медиафайлы (true/false)"
-    echo "  USE_DOCKER              - использовать Docker (true/false/auto)"
-    echo "  POSTGRES_HOST           - хост PostgreSQL (localhost)"
-    echo "  POSTGRES_PORT           - порт PostgreSQL (5432)"
-    echo "  POSTGRES_DB             - имя БД (books)"
-    echo "  POSTGRES_USER           - пользователь PostgreSQL (postgres)"
-    echo "  POSTGRES_PASSWORD       - пароль PostgreSQL"
+    echo "Environment variables:"
+    echo "  BACKUP_DIR              - backup directory (/opt/books/backups)"
+    echo "  BACKUP_RETENTION_DAYS   - retention period in days (14)"
+    echo "  COMPRESS_BACKUPS        - compress backups (true/false)"
+    echo "  INCLUDE_UPLOADS         - include uploads/media files (true/false)"
+    echo "  USE_DOCKER              - use Docker (true/false/auto)"
+    echo "  POSTGRES_HOST           - PostgreSQL host (localhost)"
+    echo "  POSTGRES_PORT           - PostgreSQL port (5432)"
+    echo "  POSTGRES_DB             - database name (books)"
+    echo "  POSTGRES_USER           - PostgreSQL user (postgres)"
+    echo "  POSTGRES_PASSWORD       - PostgreSQL password"
     echo
-    echo "Примеры:"
-    echo "  $0                      # ежедневный бэкап"
-    echo "  $0 weekly               # еженедельный бэкап"
-    echo "  INCLUDE_UPLOADS=false $0  # без медиафайлов"
+    echo "Examples:"
+    echo "  $0                      # daily backup"
+    echo "  $0 weekly               # weekly backup"
+    echo "  INCLUDE_UPLOADS=false $0  # without media uploads"
     exit 0
 fi
 
-# Запуск основной функции
+# Run main function
 main "${1:-daily}"

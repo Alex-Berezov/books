@@ -1,20 +1,20 @@
 #!/bin/bash
 
-# Скрипт настройки Caddy для домена bibliaris.com
-# Выполняется на production сервере 209.74.88.183
+# Script to configure Caddy for domain bibliaris.com
+# Run on the production server 209.74.88.183
 
 set -euo pipefail
 
-echo "🌐 Настройка Caddy для bibliaris.com"
+echo "🌐 Setting up Caddy for bibliaris.com"
 echo "===================================="
 
-# Проверка прав root/sudo
+# Root/sudo check
 if [[ $EUID -ne 0 ]]; then
-   echo "❌ Скрипт должен запускаться с правами sudo"
+    echo "❌ This script must be run with sudo"
    exit 1
 fi
 
-# Функция логирования
+# Logging functions
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $*"
 }
@@ -23,61 +23,61 @@ log_error() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $*" >&2
 }
 
-# Проверка что приложение работает
+# Ensure the application is running
 check_app() {
-    log "Проверка работы приложения..."
+    log "Checking application status..."
     
     if curl -sf http://localhost:5000/api/health/liveness > /dev/null; then
-        log "✅ Приложение работает на порту 5000"
+        log "✅ Application is running on port 5000"
     else
-        log_error "❌ Приложение не отвечает на localhost:5000"
-        log_error "Запустите приложение перед установкой Caddy"
+        log_error "❌ Application is not responding on localhost:5000"
+        log_error "Start the application before installing Caddy"
         exit 1
     fi
 }
 
-# Установка Caddy
+# Install Caddy
 install_caddy() {
-    log "Проверка установки Caddy..."
+    log "Checking Caddy installation..."
     
     if command -v caddy &> /dev/null; then
-        log "✅ Caddy уже установлен ($(caddy version))"
+        log "✅ Caddy already installed ($(caddy version))"
         return 0
     fi
     
-    log "📦 Установка Caddy..."
+    log "📦 Installing Caddy..."
     
-    # Установка зависимостей
+    # Install dependencies
     apt update
     apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
     
-    # Добавление репозитория Caddy
+    # Add Caddy repository
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
     
-    # Установка Caddy
+    # Install Caddy
     apt update
     apt install -y caddy
     
-    log "✅ Caddy установлен: $(caddy version)"
+    log "✅ Caddy installed: $(caddy version)"
 }
 
-# Настройка Caddyfile
+# Configure Caddyfile
 setup_caddyfile() {
-    log "⚙️ Настройка Caddyfile..."
+    log "⚙️ Configuring Caddyfile..."
     
-    # Создание директории для логов
+    # Create logs directory
     mkdir -p /var/log/caddy
     chown caddy:caddy /var/log/caddy
     
-    # Создание Caddyfile
+    # Create Caddyfile
     cat > /etc/caddy/Caddyfile << 'EOF'
 bibliaris.com {
     reverse_proxy localhost:5000
 
-    # Заголовки безопасности
+    # Security headers
     header {
-        # Скрыть информацию о сервере
+        # Hide server information
         -Server
 
         # Security headers
@@ -88,92 +88,92 @@ bibliaris.com {
         Referrer-Policy "strict-origin-when-cross-origin"
     }
 
-    # Логирование
+    # Logging
     log {
         output file /var/log/caddy/bibliaris.com.log
         format json
     }
 }
 
-# Редирект с www
+# Redirect from www
 www.bibliaris.com {
     redir https://bibliaris.com{uri} permanent
 }
 EOF
     
-    log "✅ Caddyfile создан"
+    log "✅ Caddyfile created"
 }
 
-# Настройка firewall
+# Configure firewall
 setup_firewall() {
-    log "🔥 Настройка firewall..."
+    log "🔥 Configuring firewall..."
     
-    # Установка UFW если не установлен
+    # Install UFW if missing
     if ! command -v ufw &> /dev/null; then
         apt install -y ufw
     fi
     
-    # Открытие портов для HTTP/HTTPS
+    # Open HTTP/HTTPS ports
     ufw allow 80/tcp
     ufw allow 443/tcp
     
-    log "✅ Порты 80/443 открыты"
+    log "✅ Ports 80/443 opened"
 }
 
-# Проверка конфигурации и запуск
+# Validate configuration and start
 start_caddy() {
-    log "🔧 Проверка конфигурации Caddy..."
+    log "🔧 Validating Caddy configuration..."
     
     if caddy validate --config /etc/caddy/Caddyfile; then
-        log "✅ Конфигурация валидна"
+        log "✅ Configuration valid"
     else
-        log_error "❌ Ошибка в конфигурации Caddy"
+        log_error "❌ Caddy configuration error"
         exit 1
     fi
     
-    log "🚀 Запуск Caddy..."
+    log "🚀 Starting Caddy..."
     
-    # Включение и запуск сервиса
+    # Enable and start service
     systemctl enable caddy
     systemctl restart caddy
     
-    # Проверка статуса
+    # Check status
     if systemctl is-active --quiet caddy; then
-        log "✅ Caddy запущен успешно"
+        log "✅ Caddy started successfully"
     else
-        log_error "❌ Ошибка запуска Caddy"
+        log_error "❌ Caddy failed to start"
         systemctl status caddy
         exit 1
     fi
 }
 
-# Финальная проверка
+# Final check
 final_check() {
-    log "🧪 Финальная проверка..."
+    log "🧪 Final verification..."
     
-    sleep 5  # Дать время на запуск
+    sleep 5  # Give time to start
     
-    # Проверка портов
+    # Check ports
     if ss -tlnp | grep -q ":80 "; then
-        log "✅ Caddy слушает порт 80"
+        log "✅ Caddy is listening on port 80"
     else
-        log_error "❌ Порт 80 не слушается"
+        log_error "❌ Port 80 not listening"
     fi
     
     if ss -tlnp | grep -q ":443 "; then
-        log "✅ Caddy слушает порт 443"
+        log "✅ Caddy is listening on port 443"
     else
-        log_error "❌ Порт 443 не слушается"
+        log_error "❌ Port 443 not listening"
     fi
     
-    # Показать логи
-    log "📋 Последние логи Caddy:"
+    # Show logs
+    log "📋 Latest Caddy logs:"
     journalctl -u caddy --no-pager -n 5
 }
 
-# Основная логика
+# Main logic
 main() {
-    log "Начало настройки Caddy для bibliaris.com"
+    log "Starting Caddy setup for bibliaris.com"
     
     check_app
     install_caddy
@@ -183,19 +183,19 @@ main() {
     final_check
     
     echo ""
-    echo "🎉 Caddy успешно настроен для bibliaris.com!"
+    echo "🎉 Caddy successfully configured for bibliaris.com!"
     echo ""
-    echo "📋 Следующие шаги:"
-    echo "1. Настройте DNS A-record: bibliaris.com → 209.74.88.183"
-    echo "2. Удалите URL Forward в Namecheap"
-    echo "3. Дождитесь DNS propagation (до 48 часов)"
-    echo "4. Проверьте доступность: https://bibliaris.com"
+    echo "📋 Next steps:"
+    echo "1. Configure DNS A-record: bibliaris.com → 209.74.88.183"
+    echo "2. Remove URL Forward in Namecheap"
+    echo "3. Wait for DNS propagation (up to 48 hours)"
+    echo "4. Verify availability: https://bibliaris.com"
     echo ""
-    echo "🔍 Для проверки статуса:"
+    echo "🔍 For status checks:"
     echo "  systemctl status caddy"
     echo "  journalctl -u caddy -f"
     echo "  curl -I https://bibliaris.com/api/health/liveness"
 }
 
-# Запуск
+# Run
 main "$@"

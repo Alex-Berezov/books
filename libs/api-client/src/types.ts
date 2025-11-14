@@ -63,7 +63,7 @@ export interface paths {
     };
     /**
      * Get book overview by slug
-     * @description Агрегированный обзор книги: доступные языки, наличие текста/аудио/пересказа, ID версий и SEO-бандл. Публично показывает только опубликованные версии.
+     * @description Aggregated book overview: available languages, presence of text/audio/summary, version IDs, and SEO bundle. Publicly shows only published versions.
      */
     get: operations['BookController_overview'];
     put?: never;
@@ -275,13 +275,13 @@ export interface paths {
     };
     /**
      * List versions for a book (public)
-     * @description Публичный список версий книги. Возвращает только опубликованные версии (status=published).
+     * @description Public list of book versions. Returns only published versions (status=published).
      */
     get: operations['BookVersionController_list'];
     put?: never;
     /**
      * Create book version
-     * @description Создаёт версию книги в статусе draft. Опубликовать можно через PATCH /versions/:id/publish.
+     * @description Creates a book version with draft status. Can be published via PATCH /versions/:id/publish.
      */
     post: operations['BookVersionController_create'];
     delete?: never;
@@ -599,7 +599,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Публичный список версий книги по категории (без префикса языка) */
+    /** Public list of book versions by category (without language prefix) */
     get: operations['CategoryController_publicBySlug'];
     put?: never;
     post?: never;
@@ -616,7 +616,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Публичный список версий книги по локализованной категории */
+    /** Public list of book versions by localized category */
     get: operations['PublicController_categoriesBySlug'];
     put?: never;
     post?: never;
@@ -983,7 +983,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Сгенерировать тестовую ошибку для проверки интеграции Sentry */
+    /** Generate a test error to verify Sentry integration */
     post: operations['StatusController_sentryTest'];
     delete?: never;
     options?: never;
@@ -1034,7 +1034,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Публичный список версий книги по тегу (без префикса языка) */
+    /** Public list of book versions by tag (without language prefix) */
     get: operations['TagsController_publicBySlug'];
     put?: never;
     post?: never;
@@ -1121,7 +1121,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Публичная страница по slug (только published) */
+    /** Public page by slug (only published) */
     get: operations['PagesController_getPublic'];
     put?: never;
     post?: never;
@@ -1138,10 +1138,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Листинг страниц (админ): draft+published */
+    /** List pages (admin): draft+published */
     get: operations['PagesController_adminList'];
     put?: never;
-    /** Создать страницу (админ) */
+    /** Create page (admin) */
     post: operations['PagesController_create'];
     delete?: never;
     options?: never;
@@ -1159,11 +1159,11 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    /** Удалить страницу (админ) */
+    /** Delete page (admin) */
     delete: operations['PagesController_remove'];
     options?: never;
     head?: never;
-    /** Обновить страницу (админ) */
+    /** Update page (admin) */
     patch: operations['PagesController_update'];
     trace?: never;
   };
@@ -1180,7 +1180,7 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
-    /** Опубликовать страницу */
+    /** Publish page */
     patch: operations['PagesController_publish'];
     trace?: never;
   };
@@ -1197,7 +1197,7 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
-    /** Снять страницу с публикации */
+    /** Unpublish page */
     patch: operations['PagesController_unpublish'];
     trace?: never;
   };
@@ -1276,7 +1276,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Публичный обзор книги с префиксом языка */
+    /** Public book overview with language prefix */
     get: operations['PublicController_overview'];
     put?: never;
     post?: never;
@@ -1293,7 +1293,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Публичная CMS-страница с префиксом языка */
+    /** Public CMS page with language prefix */
     get: operations['PublicController_getPage'];
     put?: never;
     post?: never;
@@ -1310,7 +1310,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Публичный список версий книги по локализованному тегу */
+    /** Public list of book versions by localized tag */
     get: operations['PublicController_tagsBySlug'];
     put?: never;
     post?: never;
@@ -1478,14 +1478,14 @@ export interface components {
   schemas: {
     CreateBookDto: {
       /**
-       * @description Уникальный slug книги. Нижний регистр: латиница и цифры, разделитель — дефис. Без пробелов, без двойных/крайних дефисов. Примеры: "harry-potter", "book-123"
+       * @description Unique book slug. Lowercase: Latin letters and digits, separator is hyphen. No spaces, no double/trailing hyphens. Examples: "harry-potter", "book-123"
        * @example harry-potter
        */
       slug: string;
     };
     UpdateBookDto: {
       /**
-       * @description Уникальный slug книги. Нижний регистр: латиница и цифры, разделитель — дефис. Без пробелов, без двойных/крайних дефисов. Примеры: "harry-potter", "book-123"
+       * @description Unique book slug. Lowercase: Latin letters and digits, separator is hyphen. No spaces, no double/trailing hyphens. Examples: "harry-potter", "book-123"
        * @example harry-potter-updated
        */
       slug?: string;
@@ -1499,54 +1499,54 @@ export interface components {
     UpdateMeDto: Record<string, never>;
     CreateBookVersionDto: {
       /**
-       * @description Язык версии книги
+       * @description Book version language
        * @example en
        * @enum {string}
        */
       language: 'en' | 'es' | 'fr' | 'pt';
       /**
-       * @description Заголовок
+       * @description Title
        * @example Harry Potter and the Philosopher's Stone
        */
       title: string;
       /**
-       * @description Автор
+       * @description Author
        * @example J.K. Rowling
        */
       author: string;
       /**
-       * @description Описание
+       * @description Description
        * @example First book of the series
        */
       description: string;
       /**
-       * @description URL обложки
+       * @description Cover URL
        * @example https://cdn.example.com/covers/hp1.jpg
        */
       coverImageUrl: string;
       /**
-       * @description Тип контента
+       * @description Content type
        * @example text
        * @enum {string}
        */
       type: 'text' | 'audio' | 'referral';
       /**
-       * @description Бесплатная ли версия
+       * @description Is version free
        * @example true
        */
       isFree: boolean;
       /**
-       * @description Реферальная ссылка
+       * @description Referral link
        * @example https://amazon.com/ref123
        */
       referralUrl?: string;
       /**
-       * @description Опциональные SEO metaTitle
+       * @description Optional SEO metaTitle
        * @example Harry Potter — Summary
        */
       seoMetaTitle?: string;
       /**
-       * @description Опциональные SEO metaDescription
+       * @description Optional SEO metaDescription
        * @example Overview, themes and details about the book
        */
       seoMetaDescription?: string;
@@ -1581,65 +1581,65 @@ export interface components {
     };
     CreateChapterDto: {
       /**
-       * @description Порядковый номер главы внутри версии
+       * @description Chapter number within version
        * @example 1
        */
       number: number;
       /**
-       * @description Заголовок главы
+       * @description Chapter title
        * @example Chapter 1. The Boy Who Lived
        */
       title: string;
       /**
-       * @description Контент главы (markdown/html/plain)
+       * @description Chapter content (markdown/html/plain)
        * @example Once upon a time...
        */
       content: string;
     };
     UpdateChapterDto: {
       /**
-       * @description Порядковый номер главы
+       * @description Chapter number
        * @example 2
        */
       number?: number;
-      /** @description Заголовок главы */
+      /** @description Chapter title */
       title?: string;
-      /** @description Контент главы */
+      /** @description Chapter content */
       content?: string;
     };
     CreateAudioChapterDto: {
       /**
-       * @description Порядковый номер аудио-главы внутри версии
+       * @description Audio chapter number within version
        * @example 1
        */
       number: number;
       /**
-       * @description Заголовок аудио-главы
+       * @description Audio chapter title
        * @example Chapter 1. The Beginning
        */
       title: string;
       /**
-       * @description URL аудио файла
+       * @description Audio file URL
        * @example https://cdn.example.com/audio/1.mp3
        */
       audioUrl: string;
       /**
-       * @description Длительность в секундах
+       * @description Duration in seconds
        * @example 360
        */
       duration: number;
     };
     UpdateAudioChapterDto: {
       /**
-       * @description Порядковый номер аудио-главы
+       * @description Audio chapter number
        * @example 2
        */
       number?: number;
-      /** @description Заголовок аудио-главы */
+      /** @description Audio chapter title */
       title?: string;
-      /** @description URL аудио файла */
+      /** @description Audio file URL */
       audioUrl?: string;
-      /** @description Длительность в секундах */
+      /** @description Duration in seconds */
       duration?: number;
     };
     UpdateBookSummaryDto: {
@@ -1662,51 +1662,51 @@ export interface components {
     };
     CreateCategoryDto: {
       /**
-       * @description Тип категории
+       * @description Category type
        * @enum {string}
        */
       type: 'genre' | 'author' | 'popular' | 'etc';
       /**
-       * @description Название категории
+       * @description Category name
        * @example Fantasy
        */
       name: string;
       /**
-       * @description Slug категории
+       * @description Category slug
        * @example fantasy
        */
       slug: string;
-      /** @description Родительская категория (необязательно) */
+      /** @description Parent category (optional) */
       parentId?: Record<string, never> | null;
     };
     UpdateCategoryDto: {
       /** @enum {string} */
       type?: 'genre' | 'author' | 'popular' | 'etc';
-      /** @description Название категории */
+      /** @description Category name */
       name?: string;
-      /** @description Slug категории */
+      /** @description Category slug */
       slug?: string;
-      /** @description Родительская категория */
+      /** @description Parent category */
       parentId?: Record<string, never> | null;
     };
     CreateCategoryTranslationDto: {
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt';
-      /** @description Локализованное имя категории */
+      /** @description Localized category name */
       name: string;
-      /** @description Локализованный slug категории */
+      /** @description Localized category slug */
       slug: string;
     };
     UpdateCategoryTranslationDto: {
       /** @enum {string} */
       language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @description Локализованное имя категории */
+      /** @description Localized category name */
       name?: string;
-      /** @description Локализованный slug категории */
+      /** @description Localized category slug */
       slug?: string;
     };
     AttachCategoryDto: {
-      /** @description ID категории */
+      /** @description Category ID */
       categoryId: string;
     };
     BookVersionDto: {
@@ -1891,71 +1891,71 @@ export interface components {
     };
     CreateTagDto: {
       /**
-       * @description Название тега
+       * @description Tag name
        * @example Motivation
        */
       name: string;
       /**
-       * @description Slug тега
+       * @description Tag slug
        * @example motivation
        */
       slug: string;
     };
     UpdateTagDto: {
-      /** @description Название тега */
+      /** @description Tag name */
       name?: string;
-      /** @description Slug тега */
+      /** @description Tag slug */
       slug?: string;
     };
     AttachTagDto: {
-      /** @description ID тега */
+      /** @description Tag ID */
       tagId: string;
     };
     CreateTagTranslationDto: {
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt';
-      /** @description Локализованное имя тега */
+      /** @description Localized tag name */
       name: string;
-      /** @description Локализованный slug тега */
+      /** @description Localized tag slug */
       slug: string;
     };
     UpdateTagTranslationDto: {
       /** @enum {string} */
       language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @description Локализованное имя тега */
+      /** @description Localized tag name */
       name?: string;
-      /** @description Локализованный slug тега */
+      /** @description Localized tag slug */
       slug?: string;
     };
     CreatePageDto: {
-      /** @description Slug страницы */
+      /** @description Page slug */
       slug: string;
-      /** @description Заголовок страницы */
+      /** @description Page title */
       title: string;
       /** @enum {string} */
       type: 'generic' | 'category_index' | 'author_index';
-      /** @description Контент страницы (markdown/HTML/текст) */
+      /** @description Page content (markdown/HTML/text) */
       content: string;
       /** @enum {string} */
       language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @description ID SEO сущности */
+      /** @description SEO entity ID */
       seoId?: Record<string, never> | null;
     };
     UpdatePageDto: {
-      /** @description Slug страницы */
+      /** @description Page slug */
       slug?: string;
-      /** @description Заголовок страницы */
+      /** @description Page title */
       title?: string;
       /** @enum {string} */
       type?: 'generic' | 'category_index' | 'author_index';
-      /** @description Контент страницы (markdown/HTML/текст) */
+      /** @description Page content (markdown/HTML/text) */
       content?: string;
       /** @enum {string} */
       language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @description ID SEO сущности */
+      /** @description SEO entity ID */
       seoId?: Record<string, never> | null;
       /**
-       * @description Статус публикации
+       * @description Publication status
        * @enum {string}
        */
       status?: 'draft' | 'published';
@@ -2097,7 +2097,7 @@ export interface operations {
   BookController_overview: {
     parameters: {
       query?: {
-        /** @description Запрошенный язык (en|es|fr|pt) */
+        /** @description Requested language (en|es|fr|pt) */
         lang?: string;
       };
       header: {
@@ -2542,12 +2542,12 @@ export interface operations {
         language?: string;
         type?: string;
         isFree?: boolean;
-        /** @description Только для админов/контент-менеджеров (требует авторизации и ролей). Если true — возвращает также черновики. */
+        /** @description For admins/content managers only (requires authorization and roles). If true - returns drafts as well. */
         includeDrafts?: boolean;
       };
       header: {
         'accept-language': string;
-        /** @description RFC 7231 header. Используется только если параметр language не задан: выбирает ближайший доступный язык из опубликованных версий. */
+        /** @description RFC 7231 header. Used only if language parameter is not set: selects the nearest available language from published versions. */
         'Accept-Language'?: string;
       };
       path: {
@@ -2622,7 +2622,7 @@ export interface operations {
       query?: never;
       header: {
         'x-admin-language': string;
-        /** @description Приоритетнее языка пути */
+        /** @description Higher priority than path language */
         'X-Admin-Language'?: string;
       };
       path: {
@@ -3275,7 +3275,7 @@ export interface operations {
   CategoryController_publicBySlug: {
     parameters: {
       query?: {
-        /** @description Опциональный язык (?lang=...) */
+        /** @description Optional language (?lang=...) */
         lang?: string;
       };
       header: {
@@ -3302,7 +3302,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Язык пути */
+        /** @description Path language */
         lang: 'en' | 'es' | 'fr' | 'pt';
         slug: string;
       };
@@ -4052,7 +4052,7 @@ export interface operations {
   TagsController_publicBySlug: {
     parameters: {
       query?: {
-        /** @description Опциональный язык (?lang=...) */
+        /** @description Optional language (?lang=...) */
         lang?: string;
       };
       header: {
@@ -4209,7 +4209,7 @@ export interface operations {
   PagesController_getPublic: {
     parameters: {
       query?: {
-        /** @description Запрошенный язык (en|es|fr|pt) */
+        /** @description Requested language (en|es|fr|pt) */
         lang?: string;
       };
       header: {
@@ -4241,7 +4241,7 @@ export interface operations {
       };
       header: {
         'x-admin-language': string;
-        /** @description Приоритетнее языка пути */
+        /** @description Higher priority than path language */
         'X-Admin-Language'?: string;
       };
       path: {
@@ -4264,7 +4264,7 @@ export interface operations {
       query?: never;
       header: {
         'x-admin-language': string;
-        /** @description Приоритетнее языка пути */
+        /** @description Higher priority than path language */
         'X-Admin-Language'?: string;
       };
       path: {
@@ -4465,17 +4465,17 @@ export interface operations {
   PublicController_overview: {
     parameters: {
       query?: {
-        /** @description Опциональный query lang (игнорируется, если задан язык пути) */
+        /** @description Optional query lang (ignored if path language is set) */
         lang?: string;
       };
       header: {
         'accept-language': string;
-        /** @description RFC 7231 header. При наличии языка в пути — имеет меньший приоритет. */
+        /** @description RFC 7231 header. When path language is present - has lower priority. */
         'Accept-Language'?: string;
       };
       path: {
         slug: string;
-        /** @description Язык пути */
+        /** @description Path language */
         lang: 'en' | 'es' | 'fr' | 'pt';
       };
       cookie?: never;
@@ -4495,7 +4495,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Язык пути */
+        /** @description Path language */
         lang: 'en' | 'es' | 'fr' | 'pt';
         slug: string;
       };
@@ -4516,7 +4516,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description Язык пути */
+        /** @description Path language */
         lang: 'en' | 'es' | 'fr' | 'pt';
         slug: string;
       };

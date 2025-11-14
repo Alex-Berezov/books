@@ -1,97 +1,97 @@
 #!/bin/bash
 
-# Скрипт установки и настройки Caddy для продакшена
-# Запускать от sudo на продакшн сервере
+# Script to install and configure Caddy for production
+# Run with sudo on the production server
 
-echo "🚀 Установка и настройка Caddy reverse proxy"
+echo "🚀 Installing and configuring Caddy reverse proxy"
 echo "============================================="
 
-# Проверка что запущен от root/sudo
+# Ensure running as root/sudo
 if [[ $EUID -ne 0 ]]; then
-   echo "❌ Этот скрипт должен запускаться от sudo"
+    echo "❌ This script must be run with sudo"
    exit 1
 fi
 
-# Шаг 1: Установка Caddy
-echo "📦 Установка Caddy..."
+# Step 1: Install Caddy
+echo "📦 Installing Caddy..."
 
-# Добавить ключи и репозиторий Caddy
+# Add Caddy keys and repository
 apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
 
-# Обновить пакеты и установить Caddy
+# Update packages and install Caddy
 apt update
 apt install -y caddy
 
-# Шаг 2: Создать директории
-echo "📁 Создание директорий..."
+# Step 2: Create directories
+echo "📁 Creating directories..."
 mkdir -p /var/log/caddy
 chown caddy:caddy /var/log/caddy
 
-# Шаг 3: Копирование конфигурации
-echo "⚙️ Настройка конфигурации..."
+# Step 3: Copy configuration
+echo "⚙️ Configuring..."
 
-# Проверить что конфигурационный файл существует
+# Ensure configuration file exists
 if [ ! -f "/opt/books/app/src/configs/Caddyfile.prod" ]; then
-    echo "❌ Файл конфигурации не найден: /opt/books/app/src/configs/Caddyfile.prod"
-    echo "   Скопируйте файл из репозитория в configs/Caddyfile.prod"
+    echo "❌ Configuration file not found: /opt/books/app/src/configs/Caddyfile.prod"
+    echo "   Copy the file from the repository to configs/Caddyfile.prod"
     exit 1
 fi
 
-# Копировать конфигурацию
+# Copy configuration
 cp /opt/books/app/src/configs/Caddyfile.prod /etc/caddy/Caddyfile
 
-# Шаг 4: Настройка файрвола
-echo "🔥 Настройка файрвола..."
+# Step 4: Configure firewall
+echo "🔥 Configuring firewall..."
 
-# Установить ufw если не установлен
+# Install ufw if not present
 if ! command -v ufw &> /dev/null; then
     apt install -y ufw
 fi
 
-# Открыть порты HTTP и HTTPS
+# Open HTTP and HTTPS ports
 ufw allow 80/tcp
 ufw allow 443/tcp
 
-# Показать статус файрвола
-echo "📋 Текущие правила файрвола:"
+# Show firewall status
+echo "📋 Current firewall rules:"
 ufw status
 
-# Шаг 5: Проверка конфигурации
-echo "✅ Проверка конфигурации Caddy..."
+# Step 5: Validate configuration
+echo "✅ Validating Caddy configuration..."
 caddy validate --config /etc/caddy/Caddyfile
 
 if [ $? -ne 0 ]; then
-    echo "❌ Ошибка в конфигурации Caddy!"
+    echo "❌ Caddy configuration error!"
     exit 1
 fi
 
-# Шаг 6: Запуск сервисов
-echo "🚀 Запуск Caddy..."
+# Step 6: Start services
+echo "🚀 Starting Caddy..."
 
-# Включить автозапуск
+# Enable autostart
 systemctl enable caddy
 
-# Перезапустить с новой конфигурацией
+# Restart with new configuration
 systemctl restart caddy
 
-# Проверить статус
+# Check status
 sleep 2
 systemctl status caddy --no-pager -l
 
 echo ""
-echo "✅ Установка Caddy завершена!"
+echo "✅ Caddy installation completed!"
 echo ""
-echo "🔍 Для проверки:"
+echo "🔍 For verification:"
 echo "   systemctl status caddy"
 echo "   journalctl -u caddy -f"
 echo "   curl -I https://api.example.com/api/health/liveness"
 echo ""
-echo "📋 Логи Caddy:"
+echo "📋 Caddy logs:"
 echo "   /var/log/caddy/api.log"
 echo ""
-echo "⚠️ Не забудьте:"
-echo "   1. Настроить DNS A-запись api.example.com → IP сервера"
-echo "   2. Обновить CORS_ORIGIN в .env.prod"
-echo "   3. Обновить LOCAL_PUBLIC_BASE_URL в .env.prod"
+echo "⚠️ Don't forget:"
+echo "   1. Set DNS A-record api.example.com → server IP"
+echo "   2. Update CORS_ORIGIN in .env.prod"
+echo "   3. Update LOCAL_PUBLIC_BASE_URL in .env.prod"

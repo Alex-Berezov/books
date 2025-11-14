@@ -1,37 +1,37 @@
 #!/bin/bash
-# Скрипт для локального тестирования prod настроек
+# Script to locally test production settings
 
-echo "🧪 Тестирование продакшн настроек локально"
-echo "=========================================="
+echo "🧪 Testing production settings locally"
+echo "======================================"
 
-# Сохранить оригинальный .env
+# Backup original .env
 if [ -f .env ]; then
     cp .env .env.backup
-    echo "✅ Сохранен .env как .env.backup"
+    echo "✅ Saved .env as .env.backup"
 fi
 
-# Временно заменить .env на .env.prod для тестирования
+# Create a temporary env from .env.prod for testing
 cp .env.prod .env.temp
-echo "✅ Создан временный .env.temp из .env.prod"
+echo "✅ Created temporary .env.temp from .env.prod"
 
-# Модифицировать DATABASE_URL для локального тестирования
+# Adjust DATABASE_URL for local testing
 sed 's/postgres:5432/localhost:5432/g' .env.temp > .env.test_prod
 
-echo "✅ Создан .env.test_prod для локального тестирования"
+echo "✅ Created .env.test_prod for local testing"
 echo ""
-echo "📝 Настройки для продакшна:"
+echo "📝 Production settings:"
 echo "   - NODE_ENV=production"
 echo "   - SWAGGER_ENABLED=0"
 echo "   - RATE_LIMIT_GLOBAL_ENABLED=1"
 echo "   - TRUST_PROXY=1"
-echo "   - JWT секреты обновлены"
+echo "   - JWT secrets updated"
 echo ""
-echo "ℹ️  Для тестирования используйте:"
+echo "ℹ️  To test, run:"
 echo "   NODE_ENV=production ENV_FILE=.env.test_prod yarn start"
 echo ""
-echo "🧹 Для очистки:"
+echo "🧹 To clean up:"
 echo "   rm .env.temp .env.test_prod"
 
 if [ -f .env.backup ]; then
-    echo "   mv .env.backup .env  # Восстановить оригинал"
+    echo "   mv .env.backup .env  # Restore original"
 fi

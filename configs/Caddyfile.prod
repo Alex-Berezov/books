@@ -1,43 +1,43 @@
-# Caddy конфигурация для продакшена
-# Файл: /etc/caddy/Caddyfile
+# Caddy configuration for production
+# File: /etc/caddy/Caddyfile
 
 # ============================================
 # API Backend
 # ============================================
 api.bibliaris.com {
-    # Проксирование на внутренний порт приложения
+    # Proxy to internal application port
     reverse_proxy localhost:5000
 
-    # Базовые заголовки безопасности
+    # Basic security headers
     header {
-        # Убрать информацию о сервере
+        # Remove server information
         -Server
 
-        # Заголовки безопасности
+        # Security headers
         X-Content-Type-Options nosniff
         X-Frame-Options SAMEORIGIN
         X-XSS-Protection "1; mode=block"
         Referrer-Policy strict-origin-when-cross-origin
         
-        # HSTS (HTTPS принудительно)
+        # HSTS (enforce HTTPS)
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         
-        # CORS заголовки (NestJS тоже устанавливает, но дополнительный слой защиты)
+        # CORS headers (NestJS also sets these, but provides an additional layer of protection)
         Access-Control-Allow-Credentials "true"
     }
 }
 
 # ============================================
-# Frontend (будущее)
+# Frontend (future)
 # ============================================
 bibliaris.com {
-    # Временно: редирект на API docs
-    # После деплоя фронтенда заменить на file_server
+    # Temporary: redirect to API docs
+    # After frontend deployment, replace with file_server
     redir https://api.bibliaris.com/docs permanent
 }
 
 # ============================================
-# Редиректы с www
+# WWW redirects
 # ============================================
 www.bibliaris.com {
     redir https://bibliaris.com{uri} permanent

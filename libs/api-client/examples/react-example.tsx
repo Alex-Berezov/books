@@ -1,4 +1,20 @@
-import React, { useState, useEffect } from 'react';
+/**
+ * React Example for Books API Client
+ *
+ * This is a usage example showing how to integrate the API client in a React application.
+ * To use this in your React project:
+ * 1. Install the required dependencies: npm install react @types/react
+ * 2. Copy this file to your React project
+ * 3. Import and use the components
+ *
+ * Note: This file is provided as a reference and may have TypeScript errors
+ * in non-React environments. It will work correctly in a React project.
+ */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+import type React from 'react';
+import { useState, useEffect } from 'react';
 import { BooksApiClient } from '../src/index';
 
 const api = new BooksApiClient({
@@ -6,13 +22,13 @@ const api = new BooksApiClient({
 });
 
 // Authentication component
-export const LoginForm: React.FC = () => {
+export const LoginForm = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: any) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -28,33 +44,53 @@ export const LoginForm: React.FC = () => {
     }
   };
 
-  return (
-    <form onSubmit={handleLogin}>
-      <input
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="Email"
-        required
-      />
-      <input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="Password"
-        required
-      />
-      {error && <div className="error">{error}</div>}
-      <button type="submit" disabled={loading}>
-        {loading ? 'Logging in...' : 'Login'}
-      </button>
-    </form>
-  );
+  return {
+    render: () => ({
+      type: 'form',
+      props: {
+        onSubmit: handleLogin,
+        children: [
+          {
+            type: 'input',
+            props: {
+              type: 'email',
+              value: email,
+              onChange: (e: any) => setEmail(e.target.value),
+              placeholder: 'Email',
+              required: true,
+            },
+          },
+          {
+            type: 'input',
+            props: {
+              type: 'password',
+              value: password,
+              onChange: (e: any) => setPassword(e.target.value),
+              placeholder: 'Password',
+              required: true,
+            },
+          },
+          error && {
+            type: 'div',
+            props: { className: 'error', children: error },
+          },
+          {
+            type: 'button',
+            props: {
+              type: 'submit',
+              disabled: loading,
+              children: loading ? 'Logging in...' : 'Login',
+            },
+          },
+        ],
+      },
+    }),
+  };
 };
 
 // Books list component
-export const BooksList: React.FC = () => {
-  const [books, setBooks] = useState([]);
+export const BooksList = () => {
+  const [books, setBooks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -70,28 +106,35 @@ export const BooksList: React.FC = () => {
       }
     };
 
-    fetchBooks();
+    void fetchBooks();
   }, []);
 
-  if (loading) return <div>Loading books...</div>;
-  if (error) return <div>Error: {error}</div>;
+  if (loading) return { type: 'div', props: { children: 'Loading books...' } };
+  if (error) return { type: 'div', props: { children: `Error: ${error}` } };
 
-  return (
-    <div>
-      <h2>Books</h2>
-      {books.map((book: any) => (
-        <div key={book.id}>
-          <h3>{book.title}</h3>
-          <p>{book.description}</p>
-        </div>
-      ))}
-    </div>
-  );
+  return {
+    type: 'div',
+    props: {
+      children: [
+        { type: 'h2', props: { children: 'Books' } },
+        ...books.map((book: any) => ({
+          type: 'div',
+          props: {
+            key: book.id,
+            children: [
+              { type: 'h3', props: { children: book.title } },
+              { type: 'p', props: { children: book.description } },
+            ],
+          },
+        })),
+      ],
+    },
+  };
 };
 
 // Book detail component
-export const BookDetail: React.FC<{ slug: string }> = ({ slug }) => {
-  const [book, setBook] = useState(null);
+export const BookDetail = ({ slug }: { slug: string }) => {
+  const [book, setBook] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -106,17 +149,20 @@ export const BookDetail: React.FC<{ slug: string }> = ({ slug }) => {
       }
     };
 
-    fetchBook();
+    void fetchBook();
   }, [slug]);
 
-  if (loading) return <div>Loading...</div>;
-  if (!book) return <div>Book not found</div>;
+  if (loading) return { type: 'div', props: { children: 'Loading...' } };
+  if (!book) return { type: 'div', props: { children: 'Book not found' } };
 
-  return (
-    <div>
-      <h1>{(book as any).title}</h1>
-      <p>{(book as any).description}</p>
-      {/* Render other book details */}
-    </div>
-  );
+  return {
+    type: 'div',
+    props: {
+      children: [
+        { type: 'h1', props: { children: book.title } },
+        { type: 'p', props: { children: book.description } },
+        // Render other book details
+      ],
+    },
+  };
 };

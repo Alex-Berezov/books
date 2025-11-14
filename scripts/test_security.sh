@@ -1,19 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-# Цвета для вывода
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Счетчики
+# Counters
 CHECKS_PASSED=0
 CHECKS_FAILED=0
 CHECKS_WARNING=0
 
-# Функции логирования
+# Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -33,290 +33,290 @@ log_warning() {
     ((CHECKS_WARNING++))
 }
 
-# Проверка SSH конфигурации
+# SSH configuration check
 check_ssh_security() {
-    log_info "Проверка настроек SSH..."
+    log_info "Checking SSH settings..."
     
-    # Проверка отключения root логина
+    # Root login disabled?
     if grep -q "^PermitRootLogin no" /etc/ssh/sshd_config; then
-        log_pass "Root логин отключен"
+        log_pass "Root login disabled"
     else
-        log_fail "Root логин не отключен"
+        log_fail "Root login not disabled"
     fi
     
-    # Проверка отключения парольной аутентификации
+    # Password authentication disabled?
     if grep -q "^PasswordAuthentication no" /etc/ssh/sshd_config; then
-        log_pass "Парольная аутентификация отключена"
+        log_pass "Password authentication disabled"
     else
-        log_fail "Парольная аутентификация включена"
+        log_fail "Password authentication enabled"
     fi
     
-    # Проверка включения ключевой аутентификации
+    # Public key authentication enabled?
     if grep -q "^PubkeyAuthentication yes" /etc/ssh/sshd_config; then
-        log_pass "Ключевая аутентификация включена"
+        log_pass "Public key authentication enabled"
     else
-        log_fail "Ключевая аутентификация отключена"
+        log_fail "Public key authentication disabled"
     fi
     
-    # Проверка дополнительных настроек
+    # Max authentication attempts limited?
     if grep -q "MaxAuthTries 3" /etc/ssh/sshd_config; then
-        log_pass "Максимальное количество попыток аутентификации ограничено"
+        log_pass "Max authentication attempts limited"
     else
-        log_warning "Максимальное количество попыток аутентификации не ограничено"
+        log_warning "Max authentication attempts not limited"
     fi
 }
 
-# Проверка UFW
+# UFW check
 check_ufw() {
-    log_info "Проверка UFW firewall..."
+    log_info "Checking UFW firewall..."
     
     if command -v ufw &> /dev/null; then
         if ufw status | grep -q "Status: active"; then
-            log_pass "UFW активен"
+            log_pass "UFW active"
             
-            # Проверка разрешенных портов
+            # Check allowed ports
             if ufw status | grep -q "22/tcp"; then
-                log_pass "SSH (порт 22) разрешен"
+                log_pass "SSH (port 22) allowed"
             else
-                log_fail "SSH (порт 22) не разрешен"
+                log_fail "SSH (port 22) not allowed"
             fi
             
             if ufw status | grep -q "80/tcp"; then
-                log_pass "HTTP (порт 80) разрешен"
+                log_pass "HTTP (port 80) allowed"
             else
-                log_warning "HTTP (порт 80) не разрешен"
+                log_warning "HTTP (port 80) not allowed"
             fi
             
             if ufw status | grep -q "443/tcp"; then
-                log_pass "HTTPS (порт 443) разрешен"
+                log_pass "HTTPS (port 443) allowed"
             else
-                log_warning "HTTPS (порт 443) не разрешен"
+                log_warning "HTTPS (port 443) not allowed"
             fi
         else
-            log_fail "UFW не активен"
+            log_fail "UFW not active"
         fi
     else
-        log_fail "UFW не установлен"
+        log_fail "UFW not installed"
     fi
 }
 
-# Проверка fail2ban
+# fail2ban check
 check_fail2ban() {
-    log_info "Проверка fail2ban..."
+    log_info "Checking fail2ban..."
     
     if command -v fail2ban-client &> /dev/null; then
         if systemctl is-active fail2ban &> /dev/null; then
-            log_pass "fail2ban активен"
+            log_pass "fail2ban active"
             
-            # Проверка jail для SSH
+            # Check SSH jail configured
             if fail2ban-client status | grep -q "sshd"; then
-                log_pass "SSH jail настроен"
+                log_pass "SSH jail configured"
             else
-                log_warning "SSH jail не найден"
+                log_warning "SSH jail not found"
             fi
         else
-            log_fail "fail2ban не запущен"
+            log_fail "fail2ban not running"
         fi
     else
-        log_fail "fail2ban не установлен"
+        log_fail "fail2ban not installed"
     fi
 }
 
-# Проверка автоматических обновлений
+# Automatic updates check
 check_unattended_upgrades() {
-    log_info "Проверка автоматических обновлений..."
+    log_info "Checking automatic updates..."
     
     if command -v unattended-upgrades &> /dev/null; then
-        log_pass "unattended-upgrades установлен"
+        log_pass "unattended-upgrades installed"
         
         if systemctl is-active unattended-upgrades &> /dev/null; then
-            log_pass "unattended-upgrades активен"
+            log_pass "unattended-upgrades active"
         else
-            log_warning "unattended-upgrades не запущен"
+            log_warning "unattended-upgrades not running"
         fi
         
         if [[ -f "/etc/apt/apt.conf.d/50unattended-upgrades" ]]; then
-            log_pass "Конфигурация unattended-upgrades найдена"
+            log_pass "unattended-upgrades configuration found"
         else
-            log_fail "Конфигурация unattended-upgrades не найдена"
+            log_fail "unattended-upgrades configuration not found"
         fi
     else
-        log_fail "unattended-upgrades не установлен"
+        log_fail "unattended-upgrades not installed"
     fi
 }
 
-# Проверка пользователя deploy
+# Deploy user check
 check_deploy_user() {
-    log_info "Проверка пользователя deploy..."
+    log_info "Checking deploy user..."
     
     if id "deploy" &>/dev/null; then
-        log_pass "Пользователь deploy существует"
+        log_pass "User deploy exists"
         
-        # Проверка домашней директории
+    # Check home directory
         if [[ -d "/home/deploy" ]]; then
-            log_pass "Домашняя директория пользователя deploy существует"
+            log_pass "Home directory for deploy exists"
         else
-            log_fail "Домашняя директория пользователя deploy не найдена"
+            log_fail "Home directory for deploy not found"
         fi
         
-        # Проверка SSH директории
+    # Check SSH directory
         if [[ -d "/home/deploy/.ssh" ]]; then
-            log_pass "SSH директория для пользователя deploy существует"
+            log_pass "SSH directory for deploy exists"
             
-            # Проверка authorized_keys
+            # Check authorized_keys
             if [[ -f "/home/deploy/.ssh/authorized_keys" ]]; then
                 if [[ -s "/home/deploy/.ssh/authorized_keys" ]]; then
-                    log_pass "SSH ключи для пользователя deploy настроены"
+                    log_pass "SSH keys for deploy configured"
                 else
-                    log_warning "Файл authorized_keys пуст - добавьте SSH ключи"
+                    log_warning "authorized_keys file is empty - add SSH keys"
                 fi
             else
-                log_warning "Файл authorized_keys не найден"
+                log_warning "authorized_keys file not found"
             fi
         else
-            log_fail "SSH директория для пользователя deploy не найдена"
+            log_fail "SSH directory for deploy not found"
         fi
         
-        # Проверка прав sudo
+    # Check sudo privileges
         if groups deploy | grep -q sudo; then
-            log_pass "Пользователь deploy имеет права sudo"
+            log_pass "User deploy has sudo privileges"
         else
-            log_fail "Пользователь deploy не имеет прав sudo"
+            log_fail "User deploy lacks sudo privileges"
         fi
     else
-        log_fail "Пользователь deploy не существует"
+        log_fail "User deploy does not exist"
     fi
 }
 
-# Проверка директорий проекта
+# Project directories check
 check_project_directories() {
-    log_info "Проверка директорий проекта..."
+    log_info "Checking project directories..."
     
     if [[ -d "/opt/books" ]]; then
-        log_pass "Базовая директория /opt/books существует"
+        log_pass "Base directory /opt/books exists"
         
         for dir in app uploads backups logs; do
             if [[ -d "/opt/books/$dir" ]]; then
-                log_pass "Директория /opt/books/$dir существует"
+                log_pass "Directory /opt/books/$dir exists"
             else
-                log_fail "Директория /opt/books/$dir не найдена"
+                log_fail "Directory /opt/books/$dir not found"
             fi
         done
         
-        # Проверка владельца
+    # Check directory owner
         if [[ "$(stat -c %U /opt/books)" == "deploy" ]]; then
-            log_pass "Владелец /opt/books - пользователь deploy"
+            log_pass "Owner of /opt/books is deploy"
         else
-            log_warning "Владелец /opt/books не пользователь deploy"
+            log_warning "Owner of /opt/books is not deploy"
         fi
     else
-        log_fail "Базовая директория /opt/books не найдена"
+        log_fail "Base directory /opt/books not found"
     fi
 }
 
-# Проверка системных настроек
+# System settings check
 check_system_settings() {
-    log_info "Проверка системных настроек..."
+    log_info "Checking system settings..."
     
-    # Проверка sysctl настроек
+    # Check sysctl settings
     if sysctl net.ipv4.tcp_syncookies | grep -q "= 1"; then
-        log_pass "SYN cookies включены"
+        log_pass "SYN cookies enabled"
     else
-        log_warning "SYN cookies не включены"
+        log_warning "SYN cookies not enabled"
     fi
     
     if sysctl net.ipv4.conf.all.accept_redirects | grep -q "= 0"; then
-        log_pass "ICMP redirects отключены"
+        log_pass "ICMP redirects disabled"
     else
-        log_warning "ICMP redirects включены"
+        log_warning "ICMP redirects enabled"
     fi
     
-    # Проверка лимитов
+    # Check resource limits
     if grep -q "deploy.*nofile.*65536" /etc/security/limits.conf; then
-        log_pass "Лимиты файловых дескрипторов для deploy настроены"
+        log_pass "File descriptor limits for deploy configured"
     else
-        log_warning "Лимиты файловых дескрипторов для deploy не настроены"
+        log_warning "File descriptor limits for deploy not configured"
     fi
 }
 
-# Проверка сетевых портов
+# Network ports check
 check_network_ports() {
-    log_info "Проверка открытых портов..."
+    log_info "Checking open ports..."
     
-    # Получаем список открытых портов
+    # Get list of open ports
     OPEN_PORTS=$(netstat -tuln | grep LISTEN | awk '{print $4}' | cut -d: -f2 | sort -nu)
     
-    log_info "Открытые порты: $(echo $OPEN_PORTS | tr '\n' ' ')"
+    log_info "Open ports: $(echo $OPEN_PORTS | tr '\n' ' ')"
     
-    # Проверка критически важных портов
+    # Check critical ports
     if echo "$OPEN_PORTS" | grep -q "^22$"; then
-        log_pass "SSH порт (22) открыт"
+        log_pass "SSH port (22) open"
     else
-        log_fail "SSH порт (22) не открыт"
+        log_fail "SSH port (22) not open"
     fi
     
-    # Предупреждения о потенциально небезопасных портах
+    # Warnings for potentially unsafe database ports
     for port in 3306 5432 6379 27017; do
         if echo "$OPEN_PORTS" | grep -q "^$port$"; then
-            log_warning "Обнаружен открытый порт базы данных ($port) - убедитесь в безопасности"
+            log_warning "Open database port detected ($port) - ensure it's secured"
         fi
     done
 }
 
-# Проверка обновлений системы
+# System updates check
 check_system_updates() {
-    log_info "Проверка состояния обновлений..."
+    log_info "Checking update status..."
     
-    # Обновляем списки пакетов
+    # Refresh package lists
     apt update -qq 2>/dev/null || true
     
-    # Проверяем доступные обновления
+    # Check available updates
     UPDATES=$(apt list --upgradable 2>/dev/null | grep -c upgradable || echo "0")
     SECURITY_UPDATES=$(apt list --upgradable 2>/dev/null | grep -c security || echo "0")
     
     if [[ "$UPDATES" -eq 0 ]]; then
-        log_pass "Система обновлена"
+        log_pass "System up to date"
     else
         if [[ "$SECURITY_UPDATES" -gt 0 ]]; then
-            log_fail "Доступно $SECURITY_UPDATES критических обновлений безопасности"
+            log_fail "$SECURITY_UPDATES critical security updates available"
         else
-            log_warning "Доступно $UPDATES обновлений"
+            log_warning "$UPDATES updates available"
         fi
     fi
 }
 
-# Проверка логов безопасности
+# Security logs check
 check_security_logs() {
-    log_info "Проверка последних событий безопасности..."
+    log_info "Checking recent security events..."
     
-    # Проверка последних неудачных SSH подключений
+    # Check recent failed SSH logins
     SSH_FAILURES=$(grep "Failed password" /var/log/auth.log 2>/dev/null | tail -5 | wc -l || echo "0")
     if [[ "$SSH_FAILURES" -gt 0 ]]; then
-        log_warning "Обнаружено $SSH_FAILURES неудачных SSH подключений в последних записях"
+        log_warning "$SSH_FAILURES failed SSH login attempts found in recent entries"
     else
-        log_pass "Неудачные SSH подключения не обнаружены"
+        log_pass "No failed SSH login attempts detected"
     fi
     
-    # Проверка fail2ban банов
+    # Check fail2ban bans
     if command -v fail2ban-client &> /dev/null; then
         BANNED_IPS=$(fail2ban-client status sshd 2>/dev/null | grep "Banned IP list" | wc -w || echo "0")
-        if [[ "$BANNED_IPS" -gt 2 ]]; then # 2 слова в "Banned IP"
-            log_warning "fail2ban заблокировал несколько IP адресов"
+        if [[ "$BANNED_IPS" -gt 2 ]]; then # More than header words means IPs listed
+            log_warning "fail2ban blocked multiple IP addresses"
         else
-            log_pass "Нет заблокированных IP адресов"
+            log_pass "No blocked IP addresses"
         fi
     fi
 }
 
-# Основная функция проверки
+# Main audit function
 main() {
-    echo "=== Проверка безопасности продакшн сервера ==="
-    echo "Дата проверки: $(date)"
-    echo "Хост: $(hostname)"
-    echo "ОС: $(lsb_release -d 2>/dev/null | cut -f2 || echo 'Unknown')"
+    echo "=== Production server security audit ==="
+    echo "Audit date: $(date)"
+    echo "Host: $(hostname)"
+    echo "OS: $(lsb_release -d 2>/dev/null | cut -f2 || echo 'Unknown')"
     echo
 
-    # Выполнение всех проверок
+    # Execute all checks
     check_ssh_security
     echo
     check_ufw
@@ -338,45 +338,45 @@ main() {
     check_security_logs
     
     echo
-    echo "=== Результаты проверки ==="
-    echo -e "${GREEN}Пройдено: $CHECKS_PASSED${NC}"
-    echo -e "${YELLOW}Предупреждений: $CHECKS_WARNING${NC}"
-    echo -e "${RED}Ошибок: $CHECKS_FAILED${NC}"
+    echo "=== Audit results ==="
+    echo -e "${GREEN}Passed: $CHECKS_PASSED${NC}"
+    echo -e "${YELLOW}Warnings: $CHECKS_WARNING${NC}"
+    echo -e "${RED}Failures: $CHECKS_FAILED${NC}"
     
     if [[ $CHECKS_FAILED -eq 0 ]]; then
-        echo -e "\n${GREEN}✓ Общая оценка: Безопасность настроена корректно${NC}"
+        echo -e "\n${GREEN}✓ Overall: Security configuration is sound${NC}"
         if [[ $CHECKS_WARNING -gt 0 ]]; then
-            echo -e "${YELLOW}! Рекомендуется устранить предупреждения${NC}"
+            echo -e "${YELLOW}! Recommended to address warnings${NC}"
         fi
         exit 0
     else
-        echo -e "\n${RED}✗ Общая оценка: Обнаружены критические проблемы безопасности${NC}"
-        echo -e "${RED}Необходимо устранить ошибки перед развертыванием в продакшене${NC}"
+        echo -e "\n${RED}✗ Overall: Critical security issues detected${NC}"
+        echo -e "${RED}Resolve errors before production deployment${NC}"
         exit 1
     fi
 }
 
-# Проверка аргументов
+# Arguments check
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    echo "Использование: $0"
+    echo "Usage: $0"
     echo
-    echo "Этот скрипт проверяет настройки безопасности продакшн сервера:"
-    echo "- SSH конфигурация"
+    echo "This script audits production server security configuration:"
+    echo "- SSH configuration"
     echo "- UFW firewall"
     echo "- fail2ban"
-    echo "- Автоматические обновления"
-    echo "- Пользователь deploy"
-    echo "- Директории проекта"
-    echo "- Системные настройки"
-    echo "- Открытые порты"
-    echo "- Состояние обновлений"
-    echo "- Логи безопасности"
+    echo "- Automatic updates"
+    echo "- Deploy user"
+    echo "- Project directories"
+    echo "- System settings"
+    echo "- Open ports"
+    echo "- Update status"
+    echo "- Security logs"
     echo
-    echo "Коды возврата:"
-    echo "  0 - Все проверки пройдены успешно"
-    echo "  1 - Обнаружены критические проблемы"
+    echo "Exit codes:"
+    echo "  0 - All checks passed"
+    echo "  1 - Critical issues found"
     exit 0
 fi
 
-# Запуск основной функции
+# Run main function
 main "$@"

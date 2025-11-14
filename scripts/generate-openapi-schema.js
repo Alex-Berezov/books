@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 
 /**
- * Скрипт для скачивания OpenAPI JSON схемы с API
+ * Script to download the OpenAPI JSON schema from the API
  *
  * Usage:
  *   node scripts/generate-openapi-schema.js [URL]
@@ -47,15 +47,15 @@ client
 
     res.on('end', () => {
       try {
-        // Проверяем, что получили валидный JSON
+        // Ensure the response is valid JSON
         const json = JSON.parse(data);
 
-        // Создаем директорию если не существует
+        // Create output directory if it doesn't exist
         if (!fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
         }
 
-        // Сохраняем с красивым форматированием
+        // Save with pretty formatting
         fs.writeFileSync(outputFile, JSON.stringify(json, null, 2), 'utf8');
 
         console.log(`✅ OpenAPI schema saved to: ${outputFile}`);

@@ -9,7 +9,7 @@ generator client {
 }
 
 // =====================
-// Основные сущности
+// Main entities
 // =====================
 
 model Book {
@@ -31,7 +31,7 @@ model BookVersion {
   type            BookType
   isFree          Boolean
   referralUrl     String?
-  // Публикация
+  // Publication
   status          PublicationStatus @default(published)
   publishedAt     DateTime?
   createdAt       DateTime          @default(now())
@@ -152,8 +152,8 @@ model Comment {
 model Like {
   id            String       @id @default(uuid())
   userId        String
-  bookVersionId String? // FK на BookVersion
-  commentId     String? // FK на Comment
+  bookVersionId String? // FK to BookVersion
+  commentId     String? // FK to Comment
   createdAt     DateTime     @default(now())
   user          User         @relation(fields: [userId], references: [id])
   bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id])
@@ -171,7 +171,7 @@ model Category {
   name  String
   slug  String
   books BookCategory[]
-  // Иерархия категорий (self-relation)
+  // Category hierarchy (self-relation)
   parentId String?
   parent   Category?     @relation("CategoryToCategory", fields: [parentId], references: [id])
   children Category[]    @relation("CategoryToCategory")
@@ -282,7 +282,7 @@ model Page {
 }
 
 // =====================
-// Seo модель
+// SEO model
 // =====================
 
 model Seo {
@@ -290,7 +290,7 @@ model Seo {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // === Основные мета-теги ===
+  // === Main meta tags ===
   metaTitle       String?
   metaDescription String?
   canonicalUrl    String?
@@ -309,7 +309,7 @@ model Seo {
   twitterSite    String?
   twitterCreator String?
 
-  // === Разметка событий (schema.org/Event) ===
+  // === Event markup (schema.org/Event) ===
   eventName            String?
   eventDescription     String?
   eventStartDate       DateTime?
@@ -323,10 +323,10 @@ model Seo {
   eventLocationPostal  String?
   eventLocationCountry String?
 
-  // Связь с BookVersion (1:1)
+  // Relation to BookVersion (1:1)
   bookVersion BookVersion? @relation("SeoForBookVersion")
 
-  // Связь с Page (1:1)
+  // Relation to Page (1:1)
   page Page? @relation("SeoForPage")
 }
 
@@ -365,7 +365,7 @@ enum ViewSource {
   referral
 }
 
-// Типы CMS-страниц
+// CMS page types
 enum PageType {
   generic
   category_index

@@ -1,43 +1,43 @@
-# UFW Firewall Rules для Books App Production Server
-# Этот файл содержит описание правил firewall для продакшн сервера
+# UFW Firewall Rules for Books App Production Server
+# This file contains firewall rules description for production server
 
 # ============================================================================
-# БАЗОВЫЕ ПОЛИТИКИ
+# BASIC POLICIES
 # ============================================================================
 
-# Политика по умолчанию: запретить входящие, разрешить исходящие
+# Default policy: deny incoming, allow outgoing
 ufw default deny incoming
 ufw default allow outgoing
 
 # ============================================================================
-# РАЗРЕШЕННЫЕ ВХОДЯЩИЕ ПОДКЛЮЧЕНИЯ
+# ALLOWED INCOMING CONNECTIONS
 # ============================================================================
 
-# SSH доступ (обязательно для администрирования)
+# SSH access (required for administration)
 ufw allow 22/tcp comment 'SSH'
 
-# HTTP трафик (для Caddy reverse proxy)
+# HTTP traffic (for Caddy reverse proxy)
 ufw allow 80/tcp comment 'HTTP'
 
-# HTTPS трафик (для Caddy reverse proxy с TLS)
+# HTTPS traffic (for Caddy reverse proxy with TLS)
 ufw allow 443/tcp comment 'HTTPS'
 
 # ============================================================================
-# ЗАБЛОКИРОВАННЫЕ ПОРТЫ (явно запрещены)
+# BLOCKED PORTS (explicitly denied)
 # ============================================================================
 
-# Базы данных - НЕ должны быть доступны извне
+# Databases - should NOT be accessible from outside
 # PostgreSQL
 ufw deny 5432/tcp comment 'Block PostgreSQL'
 
 # Redis
 ufw deny 6379/tcp comment 'Block Redis'
 
-# Приложение - доступ только через reverse proxy
-# NestJS App (внутренний порт)
+# Application - accessible only through reverse proxy
+# NestJS App (internal port)
 ufw deny 5000/tcp comment 'Block direct app access'
 
-# Мониторинг - доступ только локально
+# Monitoring - accessible only locally
 # Prometheus
 ufw deny 9090/tcp comment 'Block Prometheus'
 
@@ -51,100 +51,100 @@ ufw deny 9093/tcp comment 'Block AlertManager'
 ufw deny 9100/tcp comment 'Block Node Exporter'
 
 # ============================================================================
-# СПЕЦИАЛЬНЫЕ ПРАВИЛА
+# SPECIAL RULES
 # ============================================================================
 
-# Разрешить loopback интерфейс (локальные подключения)
+# Allow loopback interface (local connections)
 ufw allow in on lo
 ufw allow out on lo
 
-# Разрешить установленные соединения и связанный трафик
-# (это правило обычно включено по умолчанию, но для ясности)
+# Allow established connections and related traffic
+# (this rule is usually enabled by default, but included for clarity)
 # ufw allow in on any to any port 22 proto tcp from any
 
 # ============================================================================
-# ПРАВИЛА ДЛЯ РАЗРАБОТКИ (временные, удалить в продакшене)
+# DEVELOPMENT RULES (temporary, remove in production)
 # ============================================================================
 
-# Если нужен временный доступ к Grafana для настройки (удалить после настройки)
+# If temporary Grafana access is needed for setup (remove after configuration)
 # ufw allow from YOUR_IP_ADDRESS to any port 3000 proto tcp comment 'Temp Grafana access'
 
 # ============================================================================
-# ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ БЕЗОПАСНОСТИ
+# ADDITIONAL SECURITY SETTINGS
 # ============================================================================
 
-# Ограничение скорости соединений SSH (защита от брутфорса)
-# Это правило разрешает максимум 6 попыток подключения за 30 секунд
+# SSH connection rate limiting (protection against brute force)
+# This rule allows a maximum of 6 connection attempts per 30 seconds
 ufw limit ssh comment 'Rate limit SSH'
 
 # ============================================================================
-# ПРИМЕНЕНИЕ ПРАВИЛ
+# APPLYING RULES
 # ============================================================================
 
-# Включить firewall (выполнится автоматически скриптом setup_security.sh)
+# Enable firewall (will be executed automatically by setup_security.sh script)
 # ufw --force enable
 
 # ============================================================================
-# КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ
+# MANAGEMENT COMMANDS
 # ============================================================================
 
-# Просмотр статуса и правил:
+# View status and rules:
 # ufw status verbose
 
-# Просмотр нумерованных правил:
+# View numbered rules:
 # ufw status numbered
 
-# Удаление правила по номеру:
-# ufw delete [номер]
+# Delete rule by number:
+# ufw delete [number]
 
-# Сброс всех правил:
+# Reset all rules:
 # ufw --force reset
 
-# Отключение firewall:
+# Disable firewall:
 # ufw disable
 
 # ============================================================================
-# ЛОГИРОВАНИЕ
+# LOGGING
 # ============================================================================
 
-# Включить логирование UFW (medium level)
+# Enable UFW logging (medium level)
 # ufw logging medium
 
-# Логи UFW сохраняются в:
+# UFW logs are saved to:
 # /var/log/ufw.log
 
 # ============================================================================
-# МОНИТОРИНГ И АЛЕРТЫ
+# MONITORING AND ALERTS
 # ============================================================================
 
-# Для мониторинга заблокированных соединений можно использовать:
+# To monitor blocked connections, you can use:
 # tail -f /var/log/ufw.log | grep BLOCK
 
-# Или настроить алерты в системе мониторинга на основе логов UFW
+# Or configure alerts in your monitoring system based on UFW logs
 
 # ============================================================================
-# РЕЗЕРВНОЕ КОПИРОВАНИЕ КОНФИГУРАЦИИ
+# CONFIGURATION BACKUP
 # ============================================================================
 
-# Экспорт текущих правил:
+# Export current rules:
 # ufw show added > /opt/books/backups/ufw-rules-backup-$(date +%Y%m%d).txt
 
 # ============================================================================
-# ПРИМЕЧАНИЯ ПО БЕЗОПАСНОСТИ
+# SECURITY NOTES
 # ============================================================================
 
-# 1. Порты баз данных (5432, 6379) должны быть доступны ТОЛЬКО локально
-#    или через Docker network, никогда не открывайте их в интернет
+# 1. Database ports (5432, 6379) should be accessible ONLY locally
+#    or through Docker network, never expose them to the internet
 
-# 2. Приложение (порт 5000) доступно только через reverse proxy (Caddy)
-#    который обрабатывает TLS и дополнительную безопасность
+# 2. Application (port 5000) is accessible only through reverse proxy (Caddy)
+#    which handles TLS and additional security
 
-# 3. SSH доступ с ограничением скорости + fail2ban для дополнительной защиты
+# 3. SSH access with rate limiting + fail2ban for additional protection
 
-# 4. Мониторинг доступен только локально, для внешнего доступа используйте
-#    SSH туннель: ssh -L 3000:localhost:3000 deploy@your-server.com
+# 4. Monitoring is accessible only locally, for external access use
+#    SSH tunnel: ssh -L 3000:localhost:3000 deploy@your-server.com
 
-# 5. Регулярно проверяйте логи UFW на предмет подозрительной активности
+# 5. Regularly check UFW logs for suspicious activity
 
-# 6. В случае компрометации сервера, первым делом заблокируйте все порты:
+# 6. In case of server compromise, first block all ports:
 #    ufw --force reset && ufw default deny incoming && ufw allow 22/tcp && ufw --force enable

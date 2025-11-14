@@ -1,70 +1,70 @@
 #!/bin/bash
-# Простой скрипт применения настроек api.bibliaris.com
-# Запуск: sudo bash apply-subdomain-simple.sh
+# Simple script to apply settings for api.bibliaris.com
+# Run: sudo bash apply-subdomain-simple.sh
 
 set -e
 
-echo "=== Применение настроек api.bibliaris.com ==="
+echo "=== Applying settings for api.bibliaris.com ==="
 echo ""
 
-# 1. Создать бэкап Caddyfile
-echo "▶ Создание бэкапа Caddyfile..."
+# 1. Create a backup of Caddyfile
+echo "▶ Creating Caddyfile backup..."
 BACKUP_FILE="/etc/caddy/Caddyfile.backup.$(date +%Y%m%d_%H%M%S)"
 cp /etc/caddy/Caddyfile "$BACKUP_FILE"
-echo "✓ Бэкап создан: $BACKUP_FILE"
+echo "✓ Backup created: $BACKUP_FILE"
 echo ""
 
-# 2. Обновить Caddyfile
-echo "▶ Обновление Caddyfile..."
+# 2. Update Caddyfile
+echo "▶ Updating Caddyfile..."
 cp ~/Caddyfile.new /etc/caddy/Caddyfile
-echo "✓ Caddyfile обновлён"
+echo "✓ Caddyfile updated"
 echo ""
 
-# 3. Проверить синтаксис Caddy
-echo "▶ Проверка синтаксиса Caddy..."
+# 3. Validate Caddy syntax
+echo "▶ Validating Caddy syntax..."
 caddy validate --config /etc/caddy/Caddyfile
-echo "✓ Синтаксис корректен"
+echo "✓ Syntax is valid"
 echo ""
 
-# 4. Перезапустить Caddy
-echo "▶ Перезапуск Caddy..."
+# 4. Reload Caddy
+echo "▶ Reloading Caddy..."
 systemctl reload caddy
-echo "✓ Caddy перезапущен"
+echo "✓ Caddy reloaded"
 echo ""
 
-# 5. Обновить .env.prod
-echo "▶ Обновление .env.prod..."
+# 5. Update .env.prod
+echo "▶ Updating .env.prod..."
 cd /opt/books/app/src
 
-# Бэкап .env.prod
+# Backup .env.prod
 cp .env.prod .env.prod.backup.$(date +%Y%m%d_%H%M%S)
 
-# Обновить переменные
+# Update environment variables
 sed -i 's|LOCAL_PUBLIC_BASE_URL=.*|LOCAL_PUBLIC_BASE_URL=https://api.bibliaris.com|' .env.prod
 sed -i 's|CORS_ORIGIN=.*|CORS_ORIGIN=https://bibliaris.com,http://localhost:3000,http://localhost:3001|' .env.prod
 
-echo "✓ .env.prod обновлён"
+echo "✓ .env.prod updated"
 echo ""
 
-# 6. Перезапустить приложение
-echo "▶ Перезапуск приложения..."
+# 6. Restart application
+echo "▶ Restarting application..."
 docker compose -f docker-compose.prod.yml restart app
-echo "✓ Приложение перезапущено"
+echo "✓ Application restarted"
 echo ""
 
-# 7. Ожидание готовности
-echo "▶ Ожидание готовности приложения (30 секунд)..."
+# 7. Wait for readiness
+echo "▶ Waiting for application to be ready (30 seconds)..."
 sleep 30
 echo ""
 
-# 8. Проверка статуса
-echo "▶ Проверка статуса контейнеров..."
+# 8. Check container status
+echo "▶ Checking containers status..."
 docker compose -f docker-compose.prod.yml ps
 echo ""
 
-echo "=== ✓ Настройка завершена успешно! ==="
+echo "=== ✓ Setup completed successfully! ==="
 echo ""
-echo "Проверьте endpoints:"
+echo "Verify endpoints:"
 echo "  curl https://api.bibliaris.com/api/health/liveness"
 echo "  curl https://api.bibliaris.com/docs"
 echo "  curl https://api.bibliaris.com/metrics"

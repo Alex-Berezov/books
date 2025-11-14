@@ -3,24 +3,24 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
-// Скрипт для проверки конфигурации продакшна
+// Script to check production configuration
 const fs = require('fs');
 const path = require('path');
 
-console.log('🔍 Проверка конфигурации продакшна');
+console.log('🔍 Checking production configuration');
 console.log('==================================\n');
 
-// Загрузить .env.prod
+// Load .env.prod
 const envPath = path.join(__dirname, '.env.prod');
 if (!fs.existsSync(envPath)) {
-  console.error('❌ Файл .env.prod не найден');
+  console.error('❌ .env.prod file not found');
   process.exit(1);
 }
 
 const envContent = fs.readFileSync(envPath, 'utf8');
 const envVars = {};
 
-// Парсить .env файл
+// Parse .env file
 envContent.split('\n').forEach((line) => {
   const match = line.match(/^([^#][^=]*)=(.*)$/);
   if (match) {
@@ -28,7 +28,7 @@ envContent.split('\n').forEach((line) => {
   }
 });
 
-// Проверить критические настройки
+// Check critical settings
 const checks = [
   {
     name: 'NODE_ENV',
@@ -94,20 +94,20 @@ checks.forEach((check) => {
   }
 });
 
-console.log('\n📊 Дополнительная информация:');
+console.log('\n📊 Additional information:');
 
-// Проверить длину JWT секретов
+// Check JWT secrets length
 if (envVars.JWT_ACCESS_SECRET) {
   const length = envVars.JWT_ACCESS_SECRET.length;
-  console.log(`🔑 JWT_ACCESS_SECRET length: ${length} символов ${length >= 32 ? '✅' : '⚠️'}`);
+  console.log(`🔑 JWT_ACCESS_SECRET length: ${length} characters ${length >= 32 ? '✅' : '⚠️'}`);
 }
 
 if (envVars.JWT_REFRESH_SECRET) {
   const length = envVars.JWT_REFRESH_SECRET.length;
-  console.log(`🔑 JWT_REFRESH_SECRET length: ${length} символов ${length >= 32 ? '✅' : '⚠️'}`);
+  console.log(`🔑 JWT_REFRESH_SECRET length: ${length} characters ${length >= 32 ? '✅' : '⚠️'}`);
 }
 
-// Проверить DATABASE_URL format
+// Check DATABASE_URL format
 if (envVars.DATABASE_URL) {
   const urlStr = envVars.DATABASE_URL;
   const isPostgres = urlStr.startsWith('postgresql://') || urlStr.startsWith('postgres://');
@@ -119,20 +119,20 @@ if (envVars.DATABASE_URL) {
     console.log(`🔌 DATABASE_URL port: ${port} ${portOk ? '✅' : '❌'}`);
     if (!portOk) {
       console.error(
-        '   ↳ Порт должен быть числом. Убедитесь, что вы не используете переменные в URL (напр. ${POSTGRES_PORT}) и нет комментариев в строке.',
+        '   ↳ Port must be a number. Ensure you are not using variables in the URL (e.g., ${POSTGRES_PORT}) and there are no comments in the line.',
       );
     }
     if (u.password && /[@/:]/.test(decodeURIComponent(u.password))) {
       console.log(
-        '🔐 DATABASE_URL password: содержит спецсимволы — убедитесь, что он URL-кодирован (%2F, %40, %3A, %3D и т.д.) ⚠️',
+        '🔐 DATABASE_URL password: contains special characters — ensure it is URL-encoded (%2F, %40, %3A, %3D, etc.) ⚠️',
       );
     }
   } catch {
-    console.error('❌ DATABASE_URL: некорректный URL, не удалось распарсить');
+    console.error('❌ DATABASE_URL: invalid URL, failed to parse');
   }
 }
 
-// Проверить файл docker-compose.prod.yml
+// Check docker-compose.prod.yml file
 const dockerComposePath = path.join(__dirname, 'docker-compose.prod.yml');
 if (fs.existsSync(dockerComposePath)) {
   const composeContent = fs.readFileSync(dockerComposePath, 'utf8');
@@ -151,10 +151,10 @@ if (fs.existsSync(dockerComposePath)) {
 console.log('\n' + '='.repeat(50));
 
 if (allPassed) {
-  console.log('🎉 Все критические настройки корректны!');
-  console.log('✅ Готов к развертыванию в продакшене');
+  console.log('🎉 All critical settings are correct!');
+  console.log('✅ Ready for production deployment');
 } else {
-  console.log('❌ Есть критические проблемы конфигурации');
-  console.log('🔧 Исправьте ошибки перед развертыванием');
+  console.log('❌ There are critical configuration issues');
+  console.log('🔧 Fix errors before deployment');
   process.exit(1);
 }

@@ -1,14 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Цвета для вывода
+# Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Функции логирования
+# Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -25,74 +25,74 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Конфигурация по умолчанию
+# Default configuration
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_SCRIPT="$SCRIPT_DIR/backup_database.sh"
 TEST_SCRIPT="$SCRIPT_DIR/test_backup.sh"
 
-# Настройки расписания по умолчанию
-DAILY_TIME="${DAILY_TIME:-02:00}"      # Ежедневные бэкапы в 2:00
-WEEKLY_DAY="${WEEKLY_DAY:-0}"          # Воскресенье (0-6, где 0=воскресенье)
-WEEKLY_TIME="${WEEKLY_TIME:-03:00}"    # Еженедельные бэкапы в 3:00
-MONTHLY_DAY="${MONTHLY_DAY:-1}"        # 1-е число месяца
-MONTHLY_TIME="${MONTHLY_TIME:-04:00}"  # Ежемесячные бэкапы в 4:00
-TEST_TIME="${TEST_TIME:-06:00}"        # Проверка целостности в 6:00
+# Default schedule settings
+DAILY_TIME="${DAILY_TIME:-02:00}"      # Daily backups at 02:00
+WEEKLY_DAY="${WEEKLY_DAY:-0}"          # Sunday (0-6, where 0=Sunday)
+WEEKLY_TIME="${WEEKLY_TIME:-03:00}"    # Weekly backups at 03:00
+MONTHLY_DAY="${MONTHLY_DAY:-1}"        # 1st day of month
+MONTHLY_TIME="${MONTHLY_TIME:-04:00}"  # Monthly backups at 04:00
+TEST_TIME="${TEST_TIME:-06:00}"        # Integrity test at 06:00
 
-# Email для уведомлений
+# Email for notifications
 NOTIFICATION_EMAIL="${NOTIFICATION_EMAIL:-}"
 
-# Пользователь для выполнения бэкапов
+# User performing backups
 BACKUP_USER="${BACKUP_USER:-deploy}"
 
-# Функция проверки существования пользователя
+# Function to verify backup user exists
 check_backup_user() {
     if ! id "$BACKUP_USER" &>/dev/null; then
-        log_error "Пользователь $BACKUP_USER не существует"
-        log_info "Создайте пользователя или измените BACKUP_USER"
+    log_error "User $BACKUP_USER does not exist"
+    log_info "Create the user or change BACKUP_USER"
         exit 1
     fi
     
-    log_info "Бэкапы будут выполняться от имени пользователя: $BACKUP_USER"
+    log_info "Backups will run as user: $BACKUP_USER"
 }
 
-# Функция проверки скриптов бэкапов
+# Function to verify backup scripts
 check_backup_scripts() {
-    log_info "Проверка скриптов бэкапов..."
+    log_info "Checking backup scripts..."
     
     if [[ ! -f "$BACKUP_SCRIPT" ]]; then
-        log_error "Скрипт бэкапа не найден: $BACKUP_SCRIPT"
+    log_error "Backup script not found: $BACKUP_SCRIPT"
         exit 1
     fi
     
     if [[ ! -x "$BACKUP_SCRIPT" ]]; then
-        log_warning "Скрипт бэкапа не исполняемый, исправляем..."
+    log_warning "Backup script not executable, fixing permissions..."
         chmod +x "$BACKUP_SCRIPT"
     fi
     
-    log_success "Скрипт бэкапа найден: $BACKUP_SCRIPT"
+    log_success "Backup script found: $BACKUP_SCRIPT"
     
     if [[ -f "$TEST_SCRIPT" ]]; then
         if [[ ! -x "$TEST_SCRIPT" ]]; then
             chmod +x "$TEST_SCRIPT"
         fi
-        log_success "Скрипт проверки найден: $TEST_SCRIPT"
+    log_success "Integrity test script found: $TEST_SCRIPT"
     else
-        log_warning "Скрипт проверки не найден: $TEST_SCRIPT"
+    log_warning "Integrity test script not found: $TEST_SCRIPT"
     fi
 }
 
-# Функция проверки сервиса cron
+# Function to check cron service
 check_cron_service() {
-    log_info "Проверка сервиса cron..."
+    log_info "Checking cron service..."
     
     if systemctl is-active cron >/dev/null 2>&1; then
-        log_success "Сервис cron активен"
+    log_success "cron service active"
     elif systemctl is-active crond >/dev/null 2>&1; then
-        log_success "Сервис crond активен"
+    log_success "crond service active"
     else
-        log_error "Сервис cron не активен"
-        log_info "Запуск сервиса cron..."
+    log_error "cron service inactive"
+    log_info "Attempting to start cron service..."
         
         if command -v systemctl &>/dev/null; then
             systemctl enable cron 2>/dev/null || systemctl enable crond 2>/dev/null || true
@@ -102,29 +102,29 @@ check_cron_service() {
         sleep 2
         
         if systemctl is-active cron >/dev/null 2>&1 || systemctl is-active crond >/dev/null 2>&1; then
-            log_success "Сервис cron успешно запущен"
+            log_success "cron service started successfully"
         else
-            log_error "Не удалось запустить сервис cron"
+            log_error "Failed to start cron service"
             exit 1
         fi
     fi
 }
 
-# Функция создания cron задач для пользователя
+# Function to create user crontab entries
 setup_user_cron() {
-    log_info "Настройка cron задач для пользователя $BACKUP_USER..."
+    log_info "Configuring cron jobs for user $BACKUP_USER..."
     
-    # Получаем текущий crontab
+    # Fetch current crontab
     local current_cron=""
     if sudo -u "$BACKUP_USER" crontab -l 2>/dev/null; then
         current_cron=$(sudo -u "$BACKUP_USER" crontab -l 2>/dev/null)
     fi
     
-    # Создаем временный файл с новыми задачами
+    # Create temporary file with new jobs
     local temp_cron="/tmp/books_backup_cron_$$"
     
     {
-        # Сохраняем существующие задачи (исключая наши)
+    # Preserve existing jobs (excluding our managed entries)
         if [[ -n "$current_cron" ]]; then
             echo "$current_cron" | grep -v "backup_database.sh\|test_backup.sh\|# Books App Backup"
         fi
@@ -134,22 +134,22 @@ setup_user_cron() {
         echo "# Do not edit manually - use setup_backup_cron.sh to modify"
         echo ""
         
-        # Ежедневные бэкапы
+    # Daily backups
         local daily_hour=$(echo "$DAILY_TIME" | cut -d: -f1)
         local daily_minute=$(echo "$DAILY_TIME" | cut -d: -f2)
         echo "$daily_minute $daily_hour * * * $BACKUP_SCRIPT daily >/dev/null 2>&1"
         
-        # Еженедельные бэкапы
+    # Weekly backups
         local weekly_hour=$(echo "$WEEKLY_TIME" | cut -d: -f1)
         local weekly_minute=$(echo "$WEEKLY_TIME" | cut -d: -f2)
         echo "$weekly_minute $weekly_hour * * $WEEKLY_DAY $BACKUP_SCRIPT weekly >/dev/null 2>&1"
         
-        # Ежемесячные бэкапы
+    # Monthly backups
         local monthly_hour=$(echo "$MONTHLY_TIME" | cut -d: -f1)
         local monthly_minute=$(echo "$MONTHLY_TIME" | cut -d: -f2)
         echo "$monthly_minute $monthly_hour $MONTHLY_DAY * * $BACKUP_SCRIPT monthly >/dev/null 2>&1"
         
-        # Проверка целостности (если скрипт существует)
+    # Weekly integrity check (if script exists)
         if [[ -f "$TEST_SCRIPT" ]]; then
             local test_hour=$(echo "$TEST_TIME" | cut -d: -f1)
             local test_minute=$(echo "$TEST_TIME" | cut -d: -f2)
@@ -160,11 +160,11 @@ setup_user_cron() {
         
     } > "$temp_cron"
     
-    # Применяем новый crontab
+    # Apply new crontab
     if sudo -u "$BACKUP_USER" crontab "$temp_cron"; then
-        log_success "Cron задачи успешно настроены для пользователя $BACKUP_USER"
+    log_success "Cron jobs configured successfully for user $BACKUP_USER"
     else
-        log_error "Ошибка настройки cron задач"
+    log_error "Failed to configure cron jobs"
         rm -f "$temp_cron"
         exit 1
     fi
@@ -172,9 +172,9 @@ setup_user_cron() {
     rm -f "$temp_cron"
 }
 
-# Функция создания системного cron файла (альтернативный метод)
+# Function to create system-level cron file (alternative method)
 setup_system_cron() {
-    log_info "Настройка системного cron файла..."
+    log_info "Configuring system cron file..."
     
     local system_cron="/etc/cron.d/books_backup"
     
@@ -197,7 +197,7 @@ $(echo "$MONTHLY_TIME" | awk -F: '{print $2 " " $1}') $MONTHLY_DAY * * $BACKUP_U
 
 EOF
 
-    # Добавляем проверку целостности если скрипт существует
+    # Add integrity check if script exists
     if [[ -f "$TEST_SCRIPT" ]]; then
         cat >> "$system_cron" << EOF
 # Weekly integrity check on Monday at ${TEST_TIME}
@@ -206,14 +206,14 @@ $(echo "$TEST_TIME" | awk -F: '{print $2 " " $1}') * * 1 $BACKUP_USER $TEST_SCRI
 EOF
     fi
     
-    # Устанавливаем правильные права
+    # Set correct permissions
     chmod 644 "$system_cron"
     chown root:root "$system_cron"
     
-    log_success "Системный cron файл создан: $system_cron"
+    log_success "System cron file created: $system_cron"
 }
 
-# Функция создания скрипта для ручного тестирования
+# Function to create manual test wrapper script
 create_test_wrapper() {
     local test_wrapper="/opt/books/app/run_backup_test.sh"
     
@@ -250,12 +250,12 @@ EOF
     chmod +x "$test_wrapper"
     chown "$BACKUP_USER:$BACKUP_USER" "$test_wrapper" 2>/dev/null || true
     
-    log_success "Скрипт ручного тестирования создан: $test_wrapper"
+    log_success "Manual backup test script created: $test_wrapper"
 }
 
-# Функция настройки переменных окружения
+# Function to configure backup environment variables
 setup_environment() {
-    log_info "Настройка переменных окружения для бэкапов..."
+    log_info "Configuring environment variables for backups..."
     
     local env_file="/opt/books/app/.env.backup"
     
@@ -287,13 +287,13 @@ EOF
     chmod 600 "$env_file"
     chown "$BACKUP_USER:$BACKUP_USER" "$env_file" 2>/dev/null || true
     
-    log_success "Файл переменных окружения создан: $env_file"
-    log_warning "Не забудьте настроить POSTGRES_PASSWORD в $env_file"
+    log_success "Environment variable file created: $env_file"
+    log_warning "Don't forget to set POSTGRES_PASSWORD in $env_file"
 }
 
-# Функция настройки логирования
+# Function to configure backup logging
 setup_logging() {
-    log_info "Настройка логирования бэкапов..."
+    log_info "Configuring backup logging (logrotate)..."
     
     local logrotate_config="/etc/logrotate.d/books_backup"
     
@@ -322,91 +322,91 @@ setup_logging() {
 }
 EOF
     
-    log_success "Настройка logrotate создана: $logrotate_config"
+    log_success "logrotate configuration created: $logrotate_config"
 }
 
-# Функция проверки настроек
+# Function to verify backup setup
 verify_setup() {
-    log_info "Проверка настроек бэкапов..."
+    log_info "Verifying backup configuration..."
     
-    # Проверяем cron задачи
+    # Check user cron jobs
     if sudo -u "$BACKUP_USER" crontab -l 2>/dev/null | grep -q "backup_database.sh"; then
-        log_success "Cron задачи настроены корректно"
+    log_success "Cron jobs detected"
         
-        echo "Расписание бэкапов:"
+    echo "Backup schedule:"
         sudo -u "$BACKUP_USER" crontab -l 2>/dev/null | grep -E "backup_database.sh|test_backup.sh" | while read -r line; do
             log_info "  $line"
         done
     else
-        log_warning "Cron задачи не найдены в crontab пользователя"
+    log_warning "No backup cron jobs found in user crontab"
     fi
     
-    # Проверяем системный cron файл
+    # Check system cron file
     if [[ -f "/etc/cron.d/books_backup" ]]; then
-        log_success "Системный cron файл существует"
+    log_success "System cron file present"
     fi
     
-    # Проверяем права на директории
+    # Check directory permissions
     if [[ -d "/opt/books/backups" ]]; then
         local backup_owner=$(stat -c %U "/opt/books/backups")
         if [[ "$backup_owner" == "$BACKUP_USER" ]]; then
-            log_success "Права на директорию бэкапов корректны"
+            log_success "Backup directory ownership correct"
         else
-            log_warning "Владелец директории бэкапов: $backup_owner (ожидается: $BACKUP_USER)"
+            log_warning "Backup directory owner: $backup_owner (expected: $BACKUP_USER)"
         fi
     else
-        log_warning "Директория бэкапов не существует (будет создана при первом запуске)"
+    log_warning "Backup directory does not exist (will be created on first run)"
     fi
 }
 
-# Функция показа статуса
+# Function to show backup system status
 show_status() {
     echo
-    echo "=== Статус системы бэкапов ==="
+    echo "=== Backup System Status ==="
     
-    echo "Расписание:"
-    echo "  Ежедневные бэкапы: каждый день в $DAILY_TIME"
-    echo "  Еженедельные бэкапы: каждое $(case $WEEKLY_DAY in 0) echo "воскресенье";; 1) echo "понедельник";; 2) echo "вторник";; 3) echo "среду";; 4) echo "четверг";; 5) echo "пятницу";; 6) echo "субботу";; esac) в $WEEKLY_TIME"
-    echo "  Ежемесячные бэкапы: ${MONTHLY_DAY}-го числа в $MONTHLY_TIME"
+    echo "Schedule:"
+    echo "  Daily backups: every day at $DAILY_TIME"
+    echo "  Weekly backups: every $(case $WEEKLY_DAY in 0) echo Sunday;; 1) echo Monday;; 2) echo Tuesday;; 3) echo Wednesday;; 4) echo Thursday;; 5) echo Friday;; 6) echo Saturday;; esac) at $WEEKLY_TIME"
+    echo "  Monthly backups: on day ${MONTHLY_DAY} at $MONTHLY_TIME"
     if [[ -f "$TEST_SCRIPT" ]]; then
-        echo "  Проверка целостности: каждый понедельник в $TEST_TIME"
+    echo "  Integrity check: every Monday at $TEST_TIME"
     fi
     
     echo
-    echo "Файлы конфигурации:"
-    echo "  Скрипт бэкапа: $BACKUP_SCRIPT"
+    echo "Configuration files:"
+    echo "  Backup script: $BACKUP_SCRIPT"
     if [[ -f "$TEST_SCRIPT" ]]; then
-        echo "  Скрипт проверки: $TEST_SCRIPT"
+    echo "  Integrity script: $TEST_SCRIPT"
     fi
-    echo "  Переменные окружения: /opt/books/app/.env.backup"
+    echo "  Environment file: /opt/books/app/.env.backup"
     
     echo
-    echo "Команды для управления:"
-    echo "  Ручной бэкап: sudo -u $BACKUP_USER $BACKUP_SCRIPT"
-    echo "  Проверка целостности: sudo -u $BACKUP_USER $TEST_SCRIPT"
-    echo "  Просмотр cron задач: sudo -u $BACKUP_USER crontab -l"
-    echo "  Логи бэкапов: tail -f /opt/books/backups/backup.log"
+    echo "Management commands:"
+    echo "  Manual backup: sudo -u $BACKUP_USER $BACKUP_SCRIPT"
+    echo "  Integrity check: sudo -u $BACKUP_USER $TEST_SCRIPT"
+    echo "  View cron jobs: sudo -u $BACKUP_USER crontab -l"
+    echo "  Backup logs: tail -f /opt/books/backups/backup.log"
 }
 
-# Основная функция
+# Main function
 main() {
     local setup_type="${1:-user}"
     
-    log_info "=== Настройка автоматических бэкапов Books App ==="
+    log_info "=== Configuring automatic backups for Books App ==="
     
-    # Проверка прав root для системных настроек
+    # Root permission check for system setup
     if [[ "$setup_type" == "system" && $EUID -ne 0 ]]; then
-        log_error "Для системной настройки требуются права root"
-        log_info "Запустите: sudo $0 system"
+    log_error "Root privileges required for system setup"
+    log_info "Run: sudo $0 system"
         exit 1
     fi
     
-    # Основные проверки
+    # Primary checks
     check_backup_user
     check_backup_scripts
     check_cron_service
     
-    # Настройка в зависимости от типа
+    # Setup based on selected type
     if [[ "$setup_type" == "system" ]]; then
         setup_system_cron
         setup_logging
@@ -414,55 +414,55 @@ main() {
         setup_user_cron
     fi
     
-    # Дополнительные настройки
+    # Additional setup
     setup_environment
     create_test_wrapper
     
-    # Проверка результата
+    # Verify result
     verify_setup
     
-    log_success "=== Настройка автоматических бэкапов завершена ==="
+    log_success "=== Automatic backup configuration complete ==="
     
     show_status
     
     echo
-    log_info "Следующие шаги:"
-    echo "1. Проверьте и отредактируйте /opt/books/app/.env.backup"
-    echo "2. Запустите тестовый бэкап: sudo -u $BACKUP_USER $BACKUP_SCRIPT"
-    echo "3. Проверьте целостность: sudo -u $BACKUP_USER $TEST_SCRIPT"
+    log_info "Next steps:"
+    echo "1. Review and edit /opt/books/app/.env.backup"
+    echo "2. Run a test backup: sudo -u $BACKUP_USER $BACKUP_SCRIPT"
+    echo "3. Run integrity check: sudo -u $BACKUP_USER $TEST_SCRIPT"
     
     if [[ -n "$NOTIFICATION_EMAIL" ]]; then
-        echo "4. Настройте почтовые уведомления для $NOTIFICATION_EMAIL"
+    echo "4. Configure email notifications for $NOTIFICATION_EMAIL"
     else
-        echo "4. Рассмотрите настройку email уведомлений (NOTIFICATION_EMAIL)"
+    echo "4. Consider enabling email notifications (NOTIFICATION_EMAIL)"
     fi
 }
 
-# Проверка аргументов и справка
+# Arguments & help
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    echo "Использование: $0 [user|system]"
+    echo "Usage: $0 [user|system]"
     echo
-    echo "Типы установки:"
-    echo "  user   - настройка через crontab пользователя (по умолчанию)"
-    echo "  system - настройка через системный cron (требует root)"
+    echo "Installation types:"
+    echo "  user   - user crontab setup (default)"
+    echo "  system - system cron setup (requires root)"
     echo
-    echo "Переменные окружения для настройки расписания:"
-    echo "  DAILY_TIME         - время ежедневных бэкапов (02:00)"
-    echo "  WEEKLY_DAY         - день недели для еженедельных (0=вс, 1=пн, ..., 6=сб)"
-    echo "  WEEKLY_TIME        - время еженедельных бэкапов (03:00)" 
-    echo "  MONTHLY_DAY        - день месяца для ежемесячных (1)"
-    echo "  MONTHLY_TIME       - время ежемесячных бэкапов (04:00)"
-    echo "  TEST_TIME          - время проверки целостности (06:00)"
-    echo "  BACKUP_USER        - пользователь для выполнения бэкапов (deploy)"
-    echo "  NOTIFICATION_EMAIL - email для уведомлений"
+    echo "Environment variables (schedule configuration):"
+    echo "  DAILY_TIME         - daily backup time (default 02:00)"
+    echo "  WEEKLY_DAY         - weekday for weekly backup (0=Sun .. 6=Sat)"
+    echo "  WEEKLY_TIME        - weekly backup time (default 03:00)" 
+    echo "  MONTHLY_DAY        - day of month for monthly backup (default 1)"
+    echo "  MONTHLY_TIME       - monthly backup time (default 04:00)"
+    echo "  TEST_TIME          - integrity check time (default 06:00)"
+    echo "  BACKUP_USER        - user executing backups (default deploy)"
+    echo "  NOTIFICATION_EMAIL - email for notifications (optional)"
     echo
-    echo "Примеры:"
-    echo "  $0                                    # настройка для пользователя"
-    echo "  sudo $0 system                       # системная настройка"
-    echo "  DAILY_TIME=01:30 $0                  # ежедневные бэкапы в 1:30"
+    echo "Examples:"
+    echo "  $0                                    # user setup"
+    echo "  sudo $0 system                       # system setup"
+    echo "  DAILY_TIME=01:30 $0                  # daily backups at 01:30"
     echo "  NOTIFICATION_EMAIL=admin@example.com sudo $0 system"
     exit 0
 fi
 
-# Запуск основной функции
+# Run main function
 main "${1:-user}"

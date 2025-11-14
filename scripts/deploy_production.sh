@@ -1,25 +1,25 @@
 #!/bin/bash
 
-# Production Deployment Script  
+# Production Deployment Script
 # ============================
-# Автоматический деплой Books App Backend в production
+# Automated deployment of Books App Backend to production
 #
-# Использование:
+# Usage:
 #   ./scripts/deploy_production.sh [OPTIONS]
 #
-# Опции:
-#   --version VERSION    Версия для деплоя (git tag, branch, commit)
-#   --registry REGISTRY  Docker registry (по умолчанию: localhost)
-#   --no-backup         Не создавать бэкап перед деплоем
-#   --no-migrate        Не выполнять миграции
-#   --force             Не спрашивать подтверждение
-#   --rollback          Откат к предыдущей версии
-#   --dry-run           Показать команды без выполнения
-#   -h, --help          Показать эту справку
+# Options:
+#   --version VERSION    Version to deploy (git tag, branch, commit)
+#   --registry REGISTRY  Docker registry (default: localhost)
+#   --no-backup          Skip creating backup before deployment
+#   --no-migrate         Skip running database migrations
+#   --force              Do not ask for confirmation
+#   --rollback           Roll back to previous version
+#   --dry-run            Show commands without executing
+#   -h, --help           Show this help
 
 set -euo pipefail
 
-# Цветовая схема
+# Color scheme
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -29,7 +29,7 @@ CYAN='\033[0;36m'
 GRAY='\033[0;37m'
 NC='\033[0m'
 
-# Переменные по умолчанию
+# Default variables
 VERSION=""
 IMAGE_TAG=""
 REGISTRY="localhost"
@@ -41,16 +41,16 @@ DRY_RUN=false
 SKIP_GIT_UPDATE=false
 PULL_IMAGE=false
 
-# Пути
+# Paths
 DEPLOY_DIR="/opt/books/app/src"
 BACKUP_DIR="/opt/books/backups"
 LOG_DIR="/opt/books/logs"
 
-# Файлы состояния
+# State files
 STATE_FILE="$DEPLOY_DIR/.deployment_state"
 ROLLBACK_FILE="$DEPLOY_DIR/.rollback_info"
 
-# Логирование
+# Logging
 log() {
     echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}" | tee -a "$LOG_DIR/deployment.log"
 }
@@ -71,57 +71,57 @@ log_info() {
     echo -e "${CYAN}ℹ️  $1${NC}" | tee -a "$LOG_DIR/deployment.log"
 }
 
-# Показать справку
+# Show help / usage
 show_help() {
     cat << EOF
 Production Deployment Script
 ============================
 
-Автоматический деплой Books App Backend в production окружение.
+Automated deployment of Books App Backend to production environment.
 
-ИСПОЛЬЗОВАНИЕ:
+USAGE:
     ./scripts/deploy_production.sh --version v1.2.3 [OPTIONS]
 
-ПАРАМЕТРЫ:
-    --version VERSION    Версия для деплоя (git tag, branch, commit)
-                        Примеры: v1.2.3, main, abc1234
-    --image-tag TAG     Docker image tag (если отличается от version)
-    --registry REGISTRY  Docker registry (по умолчанию: localhost)
-    --skip-git-update   Не обновлять Git репозиторий (уже обновлен в CI)
-    --pull              Pull образ из registry вместо локальной сборки
-    --no-backup         Пропустить создание бэкапа
-    --no-migrate        Пропустить выполнение миграций
-    --force             Не спрашивать подтверждение
-    --rollback          Откат к предыдущей версии
-    --dry-run           Показать команды без выполнения
-    -h, --help          Показать эту справку
+PARAMETERS:
+    --version VERSION    Version to deploy (git tag, branch, commit)
+                         Examples: v1.2.3, main, abc1234
+    --image-tag TAG      Docker image tag (if different from version)
+    --registry REGISTRY  Docker registry (default: localhost)
+    --skip-git-update    Skip Git repository update (already updated in CI)
+    --pull               Pull image from registry instead of local build
+    --no-backup          Skip creating a backup
+    --no-migrate         Skip running migrations
+    --force              Do not ask for confirmation
+    --rollback           Roll back to previous version
+    --dry-run            Show commands without executing
+    -h, --help           Show this help
 
-ПРИМЕРЫ:
-    # Деплой новой версии (локальная сборка)
+EXAMPLES:
+    # Deploy new version (local build)
     ./scripts/deploy_production.sh --version v1.2.3
     
-    # Деплой с пропуском бэкапа
+    # Deploy skipping backup
     ./scripts/deploy_production.sh --version main --no-backup
     
-    # Деплой из CI (Git уже обновлен, pull образа)
+    # Deploy from CI (Git already updated, pull image)
     ./scripts/deploy_production.sh --image-tag main-abc1234 --skip-git-update --pull
     
-    # Откат к предыдущей версии
+    # Rollback to previous version
     ./scripts/deploy_production.sh --rollback
     
-    # Dry run для проверки
+    # Dry run to verify
     ./scripts/deploy_production.sh --version v1.2.3 --dry-run
 
-ТРЕБОВАНИЯ:
-    - Docker и Docker Compose
-    - Git репозиторий в $DEPLOY_DIR
-    - Права пользователя deploy
-    - Настроенная среда (/opt/books структура)
+REQUIREMENTS:
+    - Docker and Docker Compose
+    - Git repository in $DEPLOY_DIR
+    - deploy user permissions
+    - Prepared environment (/opt/books directory structure)
 
 EOF
 }
 
-# Парсинг аргументов
+# Argument parsing
 while [[ $# -gt 0 ]]; do
     case $1 in
         --version)
@@ -169,180 +169,180 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            log_error "Неизвестный параметр: $1"
-            echo "Используйте --help для справки"
+            log_error "Unknown parameter: $1"
+            echo "Use --help for usage information"
             exit 1
             ;;
     esac
 done
 
-# Автоопределение IMAGE_TAG если не задан
+# Auto-detect IMAGE_TAG if not provided
 if [[ -z "$IMAGE_TAG" && -n "$VERSION" ]]; then
     IMAGE_TAG="$VERSION"
 fi
 
-# Проверка параметров
+# Parameter validation
 if [[ "$ROLLBACK" == false && -z "$IMAGE_TAG" ]]; then
-    log_error "Не указан image tag. Используйте --image-tag, --version или --rollback"
-    echo "Используйте --help для справки"
+    log_error "Image tag not specified. Use --image-tag, --version or --rollback"
+    echo "Use --help for usage information"
     exit 1
 fi
 
-# Функция выполнения команд
+# Command execution helper
 execute() {
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "${GRAY}[DRY-RUN] $1${NC}"
     else
-        log "Выполнение: $1"
+    log "Executing: $1"
         eval "$1"
     fi
 }
 
-# Проверка окружения
+# Environment checks
 check_environment() {
-    log "Проверка окружения..."
+    log "Checking environment..."
     
-    # Проверка пользователя
+    # User check
     if [[ $(whoami) != "deploy" ]] && [[ $(whoami) != "root" ]]; then
-        log_warning "Рекомендуется запускать под пользователем deploy"
+    log_warning "Recommended to run as user 'deploy'"
     fi
     
-    # Проверка каталогов
+    # Directory checks
     local required_dirs=("$DEPLOY_DIR" "$BACKUP_DIR" "$LOG_DIR")
     for dir in "${required_dirs[@]}"; do
         if [[ ! -d "$dir" ]]; then
-            log_error "Каталог не найден: $dir"
+            log_error "Directory not found: $dir"
             exit 1
         fi
     done
     
-    # Проверка Docker
+    # Docker checks
     if ! command -v docker &> /dev/null; then
-        log_error "Docker не установлен"
+    log_error "Docker not installed"
         exit 1
     fi
     
     if ! docker compose version &> /dev/null; then
-        log_error "Docker Compose не доступен"
+    log_error "Docker Compose not available"
         exit 1
     fi
     
-    # Проверка Git репозитория
+    # Git repository check
     if [[ ! -d "$DEPLOY_DIR/.git" ]]; then
-        log_error "Git репозиторий не найден в $DEPLOY_DIR"
+    log_error "Git repository not found in $DEPLOY_DIR"
         exit 1
     fi
     
-    log_success "Окружение проверено"
+    log_success "Environment validated"
 }
 
-# Валидация .env.prod и DATABASE_URL
+# Validation of .env.prod and DATABASE_URL
 validate_env() {
-    log "Проверка .env.prod и DATABASE_URL..."
+    log "Validating .env.prod and DATABASE_URL..."
     local envfile="$DEPLOY_DIR/.env.prod"
     if [[ ! -f "$envfile" ]]; then
-        log_error ".env.prod не найден в $DEPLOY_DIR"
-        log_info "Создайте .env.prod на основе .env.prod.template"
+    log_error ".env.prod not found in $DEPLOY_DIR"
+    log_info "Create .env.prod based on .env.prod.template"
         exit 1
     fi
-    # Извлекаем DATABASE_URL (убираем кавычки если есть)
+    # Extract DATABASE_URL (strip quotes if present)
     local raw_db_url
     raw_db_url=$(grep -E '^DATABASE_URL=' "$envfile" | sed 's/^DATABASE_URL=//' | sed 's/^\"\|\"$//g' | sed "s/^'\|'$//g") || true
     if [[ -z "$raw_db_url" ]]; then
-        log_error "DATABASE_URL не задан в .env.prod"
+    log_error "DATABASE_URL not set in .env.prod"
         exit 1
     fi
     
-    # Проверка пароля на проблемные символы
+    # Check password for problematic characters
     if [[ "$raw_db_url" =~ postgresql://[^:]+:([^@]+)@ ]]; then
         local password="${BASH_REMATCH[1]}"
-        # Если пароль содержит / или = БЕЗ URL-кодирования - это ошибка
+    # If password contains / or = WITHOUT URL encoding - that's an error
         if [[ "$password" == *"/"* || "$password" == *"="* ]] && [[ "$password" != *"%"* ]]; then
-            log_error "❌ ОШИБКА: Пароль БД содержит символы / или = без URL-кодирования!"
-            log_error "Prisma не может парсить такой URL."
-            log_info "Решения:"
-            log_info "  1. Используйте пароль без спецсимволов (рекомендуется)"
-            log_info "  2. URL-кодируйте пароль: / → %2F, = → %3D"
-            log_info "Текущий пароль содержит проблемные символы: $password"
+            log_error "❌ ERROR: Database password contains / or = without URL encoding!"
+            log_error "Prisma cannot parse such URL."
+            log_info "Solutions:"
+            log_info "  1. Use password without special symbols (recommended)"
+            log_info "  2. URL encode password: / → %2F, = → %3D"
+            log_info "Current password has problematic characters: $password"
             exit 1
         fi
     fi
     
-    # Если есть плейсхолдеры вида ${VAR}, пытаемся развернуть их из .env.prod
+    # If there are placeholders like ${VAR}, attempt to expand them using .env.prod
     local db_url_to_check="$raw_db_url"
     if [[ "$raw_db_url" == *'${'* ]]; then
         db_url_to_check=$(bash -c "set -a; source '$envfile'; set +a; eval echo \"$raw_db_url\"")
     fi
-    # Базовая проверка схемы
+    # Basic scheme validation
     case "$db_url_to_check" in
       postgres://*|postgresql://*) : ;; 
       *)
-        log_error "DATABASE_URL должен начинаться с postgres:// или postgresql://"
+    log_error "DATABASE_URL must start with postgres:// or postgresql://"
         exit 1
         ;;
     esac
-    # Извлечь host:port
+    # Extract host:port
     local without_scheme="${db_url_to_check#*://}"
-    local after_at="${without_scheme##*@}"        # убираем креды, если есть
-    local hostport="${after_at%%/*}"              # до первого '/'
+    local after_at="${without_scheme##*@}"        # remove credentials if present
+    local hostport="${after_at%%/*}"              # up to first '/'
     local port=""
     if [[ "$hostport" == *:* ]]; then
         port="${hostport##*:}"
     fi
     if [[ -n "$port" && ! "$port" =~ ^[0-9]+$ ]]; then
-        log_error "DATABASE_URL имеет невалидный порт. Проверьте формат host:port и URL-кодирование пароля."
-        log_info "Пример корректного URL: postgresql://user:pass@postgres:5432/db?schema=public"
+    log_error "DATABASE_URL has invalid port. Check host:port format and password URL encoding."
+    log_info "Example valid URL: postgresql://user:pass@postgres:5432/db?schema=public"
         exit 1
     fi
-    # Сохраняем расширенный URL для дальнейших шагов (миграции)
+    # Store expanded URL for subsequent steps (migrations)
     export DEPLOY_EXPANDED_DATABASE_URL="$db_url_to_check"
-    # Логируем маскированный URL (скрываем креды)
+    # Log masked URL (hide credentials)
     local safe_url="$db_url_to_check"
     if [[ "$safe_url" == *"@"* ]]; then
         safe_url="***@${after_at}"
-        # Добавим схему обратно
+    # Add scheme back
         safe_url="${db_url_to_check%%://*}://$safe_url"
     fi
-    log_success "DATABASE_URL валиден: $safe_url"
+    log_success "DATABASE_URL valid: $safe_url"
 }
 
-# Проверка состояния сервисов
+# Service state check
 check_services() {
-    log "Проверка состояния сервисов..."
+    log "Checking services state..."
     
     cd "$DEPLOY_DIR"
     
-    # Проверка запущенных контейнеров
+    # Check running containers
     if docker compose -f docker-compose.prod.yml ps --format json | jq -e '.State == "running"' &> /dev/null; then
-        log_info "Приложение запущено"
+    log_info "Application is running"
         return 0
     else
-        log_warning "Приложение не запущено или частично недоступно"
+    log_warning "Application not running or partially unavailable"
         return 1
     fi
 }
 
-# Создание бэкапа
+# Backup creation
 create_backup() {
     if [[ "$NO_BACKUP" == true ]]; then
-        log_info "Пропуск создания бэкапа (--no-backup)"
+        log_info "Skipping backup creation (--no-backup)"
         return 0
     fi
     
-    log "Создание бэкапа перед деплоем..."
+    log "Creating backup before deployment..."
     
     if [[ -f "./scripts/backup_database.sh" ]]; then
         execute "./scripts/backup_database.sh daily --tag pre-deploy-$(date +%Y%m%d-%H%M%S)"
-        log_success "Бэкап создан"
+    log_success "Backup created"
     else
-        log_error "Скрипт backup_database.sh не найден"
+    log_error "backup_database.sh script not found"
         exit 1
     fi
 }
 
-# Сохранение текущего состояния для отката
+# Save current state for rollback
 save_current_state() {
-    log "Сохранение текущего состояния..."
+    log "Saving current state..."
     
     cd "$DEPLOY_DIR"
     
@@ -363,47 +363,47 @@ save_current_state() {
 }
 EOF
     
-    log_success "Состояние сохранено для отката"
+    log_success "State saved for rollback"
 }
 
-# Обновление кода
+# Code update
 update_code() {
     if [[ "$SKIP_GIT_UPDATE" == true ]]; then
-        log_info "Пропуск обновления Git (--skip-git-update)"
+        log_info "Skipping Git update (--skip-git-update)"
         cd "$DEPLOY_DIR"
         local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
         local current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-        log_info "Текущая версия Git: $current_branch @ $current_commit"
+    log_info "Current Git version: $current_branch @ $current_commit"
         return 0
     fi
     
-    log "Обновление кода до версии: $VERSION"
+    log "Updating code to version: $VERSION"
     
     cd "$DEPLOY_DIR"
     
-    # Получение последних изменений
+    # Fetch latest changes
     execute "git fetch --all --tags"
     
-    # Переключение на нужную версию
+    # Switch to desired version
     if git rev-parse --verify "refs/tags/$VERSION" &>/dev/null; then
-        log_info "Переключение на тег: $VERSION"
+    log_info "Switching to tag: $VERSION"
         execute "git checkout tags/$VERSION"
     elif git rev-parse --verify "origin/$VERSION" &>/dev/null; then
-        log_info "Переключение на ветку: $VERSION"
+    log_info "Switching to branch: $VERSION"
         execute "git checkout origin/$VERSION"
     elif git rev-parse --verify "$VERSION" &>/dev/null; then
-        log_info "Переключение на коммит: $VERSION"
+    log_info "Switching to commit: $VERSION"
         execute "git checkout $VERSION"
     else
-        log_error "Версия не найдена: $VERSION"
+    log_error "Version not found: $VERSION"
         exit 1
     fi
     
     local new_commit=$(git rev-parse HEAD)
-    log_success "Код обновлен до коммита: $new_commit"
+    log_success "Code updated to commit: $new_commit"
 }
 
-# Сборка/pull образа
+# Build or pull image
 build_image() {
     cd "$DEPLOY_DIR"
     
@@ -411,18 +411,18 @@ build_image() {
     local full_image_tag="$image_tag"
     
     if [[ "$REGISTRY" != "localhost" ]]; then
-        # Registry уже содержит полный путь включая repository name
-        # Например: ghcr.io/alex-berezov/books
+    # Registry already contains full path including repository name
+    # For example: ghcr.io/alex-berezov/books
         full_image_tag="$REGISTRY:$IMAGE_TAG"
     fi
     
     if [[ "$PULL_IMAGE" == true ]]; then
-        log "Pull Docker образа из registry..."
+    log "Pulling Docker image from registry..."
         
-        # Pull образа из registry
+    # Pull image from registry
         execute "docker pull $full_image_tag"
         
-        # Тегируем для локального использования
+    # Tag for local use
         if [[ "$REGISTRY" != "localhost" ]]; then
             execute "docker tag $full_image_tag $image_tag"
             execute "docker tag $full_image_tag books-app:latest"
@@ -430,11 +430,11 @@ build_image() {
             execute "docker tag $full_image_tag books-app:prod"
         fi
         
-        log_success "Образ получен: $full_image_tag"
+    log_success "Image pulled: $full_image_tag"
     else
-        log "Сборка Docker образа..."
+    log "Building Docker image..."
         
-        # Локальная сборка с многоступенчатым кэшированием
+    # Local build with multi-stage caching
         execute "docker build \
             --target runner \
             --tag $image_tag \
@@ -444,108 +444,108 @@ build_image() {
             --build-arg VERSION=$IMAGE_TAG \
             ."
         
-        log_success "Образ собран: $image_tag"
+    log_success "Image built: $image_tag"
     fi
 }
 
-# Выполнение миграций
+# Running migrations
 run_migrations() {
     if [[ "$NO_MIGRATE" == true ]]; then
-        log_info "Пропуск миграций (--no-migrate)"
+        log_info "Skipping migrations (--no-migrate)"
         return 0
     fi
     
-    log "Выполнение миграций базы данных..."
+    log "Running database migrations..."
     
     cd "$DEPLOY_DIR"
     
-    # Запуск временного контейнера для миграций
-    # Запускаем миграции, обходя entrypoint, чтобы не запускать приложение
-    # Передаем явно DATABASE_URL (расширенный), чтобы Prisma не увидел нечисловой порт
+    # Start temporary container for migrations
+    # Run migrations bypassing entrypoint to avoid starting the full application
+    # Pass expanded DATABASE_URL explicitly so Prisma doesn't misinterpret a non-numeric port
     local dburl="${DEPLOY_EXPANDED_DATABASE_URL:-}"
     if [[ -z "$dburl" ]]; then
-        # подстраховка
+    # fallback safeguard
         dburl=$(grep -E '^DATABASE_URL=' "$DEPLOY_DIR/.env.prod" | sed 's/^DATABASE_URL=//' | sed 's/^\"\|\"$//g' | sed "s/^'\|'$//g" || true)
     fi
     
-    # URL-кодирование пароля для Prisma (если пароль содержит спецсимволы)
-    # Извлекаем части URL: protocol://user:password@host:port/db?params
+    # URL-encode password for Prisma if it contains special symbols
+    # Extract URL parts: protocol://user:password@host:port/db?params
     if [[ "$dburl" =~ ^([^:]+)://([^:]+):([^@]+)@(.+)$ ]]; then
         local protocol="${BASH_REMATCH[1]}"
         local user="${BASH_REMATCH[2]}"
         local password="${BASH_REMATCH[3]}"
         local rest="${BASH_REMATCH[4]}"
         
-        # URL-кодируем пароль (только если содержит /, = или другие спецсимволы)
+    # URL-encode password only if it contains /, = or other special symbols
         if [[ "$password" == *[/=]* ]]; then
-            # Используем Python для корректного URL-кодирования
+            # Use Python for accurate URL encoding
             local encoded_password
             encoded_password=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$password', safe=''))")
             dburl="${protocol}://${user}:${encoded_password}@${rest}"
-            log_info "Пароль БД содержит спецсимволы - выполнено URL-кодирование"
+            log_info "Database password contains special symbols - URL encoded"
         fi
     fi
     
     execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL=\"$dburl\" app npx prisma migrate deploy"
     
-    log_success "Миграции выполнены"
+    log_success "Migrations applied"
 }
 
-# Развертывание сервисов
+# Service deployment
 deploy_services() {
-    log "Развертывание сервисов..."
+    log "Deploying services..."
     
     cd "$DEPLOY_DIR"
     
-    # Остановка текущих сервисов
+    # Stopping current services
     execute "docker compose -f docker-compose.prod.yml down --timeout 30"
     
-    # Запуск новых сервисов
+    # Starting new services
     execute "docker compose -f docker-compose.prod.yml up -d"
     
-    # Ожидание готовности
-    log "Ожидание готовности сервисов..."
+    # Waiting for readiness
+    log "Waiting for services to become ready..."
     
-    # Начальная задержка для старта приложения и первого healthcheck
-    log_info "Ожидание 15 секунд для запуска приложения..."
+    # Initial delay for application startup and first health check
+    log_info "Waiting 15 seconds for application startup..."
     sleep 15
     
-    local max_attempts=60  # Увеличено с 30 до 60 попыток (5 минут максимум)
+    local max_attempts=60  # Increased from 30 to 60 attempts (maximum 5 minutes)
     local attempt=0
     
     while [[ $attempt -lt $max_attempts ]]; do
         if [[ "$DRY_RUN" == true ]]; then
-            log_info "[DRY-RUN] Проверка здоровья сервиса"
+            log_info "[DRY-RUN] Service health check"
             break
         fi
         
-        # Проверяем Docker healthcheck статус контейнера app
+    # Checking Docker healthcheck status of the 'app' container
         local health_status
         health_status=$(docker compose -f docker-compose.prod.yml ps --format json app 2>/dev/null | jq -r '.Health // "none"')
         
         if [[ "$health_status" == "healthy" ]]; then
-            log_success "Сервис готов к работе"
+            log_success "Service is healthy"
             return 0
         fi
         
         ((attempt++))
-        log_info "Попытка $attempt/$max_attempts (статус: $health_status)..."
+    log_info "Attempt $attempt/$max_attempts (status: $health_status)..."
         sleep 5
     done
     
-    log_error "Сервис не готов после $max_attempts попыток"
-    # Показываем логи для диагностики
-    log_info "Последние логи контейнера:"
+    log_error "Service not healthy after $max_attempts attempts"
+    # Show logs for diagnostics
+    log_info "Last container logs:"
     docker compose -f docker-compose.prod.yml logs --tail=20 app || true
     return 1
 }
 
-# Проверка деплоя
+# Deployment verification
 verify_deployment() {
-    log "Проверка деплоя..."
+    log "Verifying deployment..."
     
     if [[ "$DRY_RUN" == true ]]; then
-        log_info "[DRY-RUN] Проверки пропущены"
+    log_info "[DRY-RUN] Checks skipped"
         return 0
     fi
     
@@ -556,65 +556,65 @@ verify_deployment() {
     local app_container
     app_container=$(docker compose -f docker-compose.prod.yml ps -q app)
     
-    # 1. Проверка запущенных контейнеров
+    # 1. Check that containers are running
     if docker compose -f docker-compose.prod.yml ps --format json | jq -e '.State == "running"' &> /dev/null; then
-        log_success "✓ Контейнеры запущены"
+    log_success "✓ Containers running"
         ((checks_passed++))
     else
-        log_error "✗ Контейнеры не запущены"
+    log_error "✗ Containers not running"
     fi
     
-    # 2. Проверка healthcheck через node (wget может отсутствовать в образе)
+    # 2. Health check via Node (wget may be missing in the image)
     if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/health/liveness',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
-        log_success "✓ Health check прошел"
+    log_success "✓ Health check passed"
         ((checks_passed++))
     else
-        log_error "✗ Health check не прошел"
+    log_error "✗ Health check failed"
     fi
     
-    # 3. Проверка базы данных через readiness
+    # 3. Database readiness check
     if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/health/readiness',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
-        log_success "✓ База данных подключена"
+    log_success "✓ Database connected"
         ((checks_passed++))
     else
-        log_error "✗ База данных недоступна"
+    log_error "✗ Database not reachable"
     fi
     
-    # 4. Проверка метрик
+    # 4. Metrics endpoint check
     if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/metrics',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
-        log_success "✓ Метрики доступны"
+    log_success "✓ Metrics accessible"
         ((checks_passed++))
     else
-        log_error "✗ Метрики недоступны"
+    log_error "✗ Metrics not accessible"
     fi
     
-    # 5. Проверка версии API через Docker healthcheck статус
+    # 5. API version / container health via Docker healthcheck status
     local health_status
     health_status=$(docker compose -f docker-compose.prod.yml ps --format json app 2>/dev/null | jq -r '.Health // "none"')
     if [[ "$health_status" == "healthy" ]]; then
-        log_success "✓ Docker healthcheck: $health_status"
+    log_success "✓ Docker healthcheck: $health_status"
         ((checks_passed++))
     else
-        log_warning "? Docker healthcheck: $health_status"
+    log_warning "? Docker healthcheck: $health_status"
     fi
     
-    # Результат
-    log_info "Пройдено проверок: $checks_passed/$total_checks"
+    # Result summary
+    log_info "Checks passed: $checks_passed/$total_checks"
     
     if [[ $checks_passed -eq $total_checks ]]; then
         return 0
     elif [[ $checks_passed -ge 3 ]]; then
-        log_warning "Деплой выполнен с предупреждениями"
+    log_warning "Deployment completed with warnings"
         return 0
     else
-        log_error "Деплой не прошел критические проверки"
+    log_error "Deployment failed critical checks"
         return 1
     fi
 }
 
-# Сохранение состояния деплоя
+# Saving deployment state
 save_deployment_state() {
-    log "Сохранение состояния деплоя..."
+    log "Saving deployment state..."
     
     cd "$DEPLOY_DIR"
     
@@ -635,25 +635,25 @@ save_deployment_state() {
 }
 EOF
     
-    log_success "Состояние деплоя сохранено"
+    log_success "Deployment state saved"
 }
 
-# Откат к предыдущей версии
+# Rollback to previous version
 perform_rollback() {
-    log "Выполнение отката..."
+    log "Performing rollback..."
     
     if [[ ! -f "$ROLLBACK_FILE" ]]; then
-        log_error "Файл отката не найден: $ROLLBACK_FILE"
+    log_error "Rollback file not found: $ROLLBACK_FILE"
         exit 1
     fi
     
     local rollback_version=$(jq -r '.commit // .tag' "$ROLLBACK_FILE" 2>/dev/null)
     if [[ -z "$rollback_version" || "$rollback_version" == "null" ]]; then
-        log_error "Не удалось определить версию для отката"
+    log_error "Could not determine version for rollback"
         exit 1
     fi
     
-    log_info "Откат к версии: $rollback_version"
+    log_info "Rolling back to version: $rollback_version"
     
     VERSION="$rollback_version"
     update_code
@@ -661,41 +661,41 @@ perform_rollback() {
     deploy_services
     
     if verify_deployment; then
-        log_success "Откат выполнен успешно"
+    log_success "Rollback successful"
     else
-        log_error "Откат не прошел проверки"
+    log_error "Rollback failed checks"
         exit 1
     fi
 }
 
-# Очистка старых образов
+# Cleaning up old images
 cleanup_old_images() {
-    log "Очистка старых Docker образов..."
+    log "Cleaning up old Docker images..."
     
-    # Оставляем последние 3 образа
+    # Keep only the latest 3 images
     execute "docker images books-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.CreatedAt}}' | tail -n +2 | sort -k3 -r | tail -n +4 | awk '{print \$1\":\"\$2}' | xargs -r docker rmi || true"
     
-    # Очистка неиспользуемых образов
+    # Remove dangling/unused images
     execute "docker image prune -f"
     
-    log_success "Очистка завершена"
+    log_success "Cleanup completed"
 }
 
-# Отправка уведомлений (заглушка для будущей интеграции)
+# Sending notifications (stub for future integration)
 send_notification() {
     local status=$1
     local message=$2
     
-    log_info "Уведомление: $status - $message"
+    log_info "Notification: $status - $message"
     
-    # Здесь можно добавить интеграции:
+    # Possible future integrations:
     # - Slack webhook
     # - Email
     # - Telegram bot
     # - Discord webhook
 }
 
-# Основная функция
+# Main entrypoint
 main() {
     echo -e "${PURPLE}"
     echo "========================================"
@@ -704,7 +704,7 @@ main() {
     echo -e "${NC}"
     
     if [[ "$ROLLBACK" == true ]]; then
-        echo "Режим: ОТКАТ к предыдущей версии"
+    echo "Mode: ROLLBACK to previous version"
     else
         echo "Image Tag: $IMAGE_TAG"
         if [[ -n "$VERSION" && "$VERSION" != "$IMAGE_TAG" ]]; then
@@ -712,37 +712,37 @@ main() {
         fi
         echo "Registry: $REGISTRY"
     fi
-    echo "Режим выполнения: $([ "$DRY_RUN" == true ] && echo "DRY RUN" || echo "РЕАЛЬНЫЙ ДЕПЛОЙ")"
+    echo "Execution mode: $([ "$DRY_RUN" == true ] && echo "DRY RUN" || echo "LIVE DEPLOY")"
     echo ""
     
     if [[ "$FORCE" == false && "$DRY_RUN" == false ]]; then
         if [[ "$ROLLBACK" == true ]]; then
-            read -p "Выполнить откат? (y/N): " -n 1 -r
+            read -p "Perform rollback? (y/N): " -n 1 -r
         else
-            read -p "Выполнить деплой образа $IMAGE_TAG? (y/N): " -n 1 -r
+            read -p "Deploy image $IMAGE_TAG? (y/N): " -n 1 -r
         fi
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Деплой отменен пользователем"
+            log_info "Deployment cancelled by user"
             exit 0
         fi
     fi
     
-    # Инициализация
+    # Initialization
     mkdir -p "$LOG_DIR"
     
-    log "Начало деплоя образа $IMAGE_TAG"
-    send_notification "START" "Начат деплой образа $IMAGE_TAG"
+    log "Starting deployment of image $IMAGE_TAG"
+    send_notification "START" "Deployment of image $IMAGE_TAG started"
     
-    # Проверки
+    # Pre-deployment checks
     check_environment
     validate_env
     
     if [[ "$ROLLBACK" == true ]]; then
         perform_rollback
-        send_notification "SUCCESS" "Откат выполнен успешно"
+    send_notification "SUCCESS" "Rollback completed successfully"
     else
-        # Основной деплой
+    # Main deployment sequence
         create_backup
         save_current_state
         update_code
@@ -750,34 +750,34 @@ main() {
         run_migrations
         deploy_services
         
-        if verify_deployment; then
+    if verify_deployment; then
             save_deployment_state
             cleanup_old_images
             
             echo ""
             echo -e "${GREEN}"
             echo "========================================"
-            echo "✅ Деплой выполнен успешно!"
+            echo "✅ Deployment successful!"
             echo "========================================"
             echo -e "${NC}"
             echo "Image Tag: $IMAGE_TAG"
             if [[ -n "$VERSION" && "$VERSION" != "$IMAGE_TAG" ]]; then
                 echo "Git Version: $VERSION"
             fi
-            echo "Время: $(date)"
-            echo "Логи: $LOG_DIR/deployment.log"
+            echo "Time: $(date)"
+            echo "Logs: $LOG_DIR/deployment.log"
             
-            send_notification "SUCCESS" "Деплой образа $IMAGE_TAG выполнен успешно"
+            send_notification "SUCCESS" "Image $IMAGE_TAG deployed successfully"
         else
-            log_error "Деплой не прошел проверки"
-            send_notification "FAILURE" "Деплой образа $IMAGE_TAG не прошел проверки"
+            log_error "Deployment did not pass verification checks"
+            send_notification "FAILURE" "Image $IMAGE_TAG failed verification checks"
             
             if [[ "$FORCE" == false ]]; then
-                read -p "Выполнить автоматический откат? (Y/n): " -n 1 -r
+                read -p "Perform automatic rollback? (Y/n): " -n 1 -r
                 echo
                 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
                     perform_rollback
-                    send_notification "ROLLBACK" "Выполнен автоматический откат после неудачного деплоя"
+                    send_notification "ROLLBACK" "Automatic rollback performed after failed deployment"
                 fi
             fi
             
@@ -786,8 +786,8 @@ main() {
     fi
 }
 
-# Обработка ошибок
-trap 'log_error "Ошибка в строке $LINENO. Код выхода: $?"; send_notification "ERROR" "Ошибка деплоя в строке $LINENO"' ERR
+# Error handling
+trap 'log_error "Error at line $LINENO. Exit code: $?"; send_notification "ERROR" "Deployment error at line $LINENO"' ERR
 
-# Запуск
+# Execute script
 main "$@"

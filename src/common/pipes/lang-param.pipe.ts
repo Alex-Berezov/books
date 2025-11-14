@@ -8,7 +8,7 @@ export class LangParamPipe implements PipeTransform<string, Language> {
   transform(value: string): Language {
     const v = (value || '').toLowerCase();
     if (this.allowed.has(v)) return v as Language;
-    // 404, чтобы не раскрывать структуру маршрутов
+    // 404 to avoid exposing route structure
     throw new NotFoundException('Route not found');
   }
 }

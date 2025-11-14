@@ -2,22 +2,22 @@
 
 # Pre-Deployment Health Check Script
 # ==================================
-# Комплексная проверка готовности к production деплою
+# Comprehensive readiness verification before production deployment
 #
-# Использование:
+# Usage:
 #   ./scripts/health_check.sh [OPTIONS]
 #
-# Опции:
-#   --url URL          URL для проверки (по умолчанию: http://localhost:5000)
-#   --timeout SECONDS  Таймаут для HTTP запросов (по умолчанию: 10)
-#   --detailed         Подробный вывод результатов
-#   --format FORMAT    Формат вывода: text, json (по умолчанию: text)
-#   --save FILE        Сохранить результат в файл
-#   -h, --help         Показать справку
+# Options:
+#   --url URL          URL to check (default: http://localhost:5000)
+#   --timeout SECONDS  Timeout for HTTP requests (default: 10)
+#   --detailed         Show detailed results
+#   --format FORMAT    Output format: text, json (default: text)
+#   --save FILE        Save result to file
+#   -h, --help         Show help
 
 set -euo pipefail
 
-# Цветовая схема
+# Color palette
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -27,62 +27,62 @@ CYAN='\033[0;36m'
 GRAY='\033[0;37m'
 NC='\033[0m'
 
-# Переменные по умолчанию
+# Default variables
 BASE_URL="http://localhost:5000"
 TIMEOUT=10
 DETAILED=false
 FORMAT="text"
 SAVE_FILE=""
 
-# Результаты проверок
+# Check results tracking
 declare -A RESULTS
 TOTAL_CHECKS=0
 PASSED_CHECKS=0
 FAILED_CHECKS=0
 WARNING_CHECKS=0
 
-# Показать справку
+# Show help
 show_help() {
     cat << EOF
 Pre-Deployment Health Check Script
 ==================================
 
-Комплексная проверка готовности Books App к production деплою.
+Comprehensive readiness verification of Books App before production deployment.
 
-ИСПОЛЬЗОВАНИЕ:
+USAGE:
     ./scripts/health_check.sh [OPTIONS]
 
-ОПЦИИ:
-    --url URL          URL для проверки (по умолчанию: http://localhost:5000)
-    --timeout SECONDS  Таймаут для HTTP запросов (по умолчанию: 10)
-    --detailed         Подробный вывод результатов
-    --format FORMAT    Формат вывода: text, json (по умолчанию: text)
-    --save FILE        Сохранить результат в файл
-    -h, --help         Показать эту справку
+OPTIONS:
+    --url URL          URL to check (default: http://localhost:5000)
+    --timeout SECONDS  Timeout for HTTP requests (default: 10)
+    --detailed         Show detailed results
+    --format FORMAT    Output format: text, json (default: text)
+    --save FILE        Save result to file
+    -h, --help         Show this help
 
-ПРИМЕРЫ:
-    # Локальная проверка
+EXAMPLES:
+    # Local check
     ./scripts/health_check.sh
     
-    # Проверка production сервера
+    # Check production server
     ./scripts/health_check.sh --url https://api.example.com
     
-    # Детальная проверка с сохранением в JSON
+    # Detailed check saving JSON
     ./scripts/health_check.sh --detailed --format json --save health_report.json
 
-ПРОВЕРКИ:
+CHECKS:
     ✓ API Health Endpoints
     ✓ Database Connection
     ✓ Configuration Validation  
     ✓ Security Headers
     ✓ Performance Metrics
     ✓ Docker Container Status
-    ✓ SSL Certificate (если HTTPS)
+    ✓ SSL Certificate (if HTTPS)
 
 EOF
 }
 
-# Парсинг аргументов
+# Argument parsing
 while [[ $# -gt 0 ]]; do
     case $1 in
         --url)
@@ -110,14 +110,14 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            echo "Неизвестный параметр: $1"
-            echo "Используйте --help для справки"
+            echo "Unknown parameter: $1"
+            echo "Use --help for usage information"
             exit 1
             ;;
     esac
 done
 
-# Логирование
+# Logging helpers
 log() {
     if [[ "$FORMAT" == "text" ]]; then
         echo -e "${BLUE}[$(date +'%H:%M:%S')] $1${NC}"
@@ -148,7 +148,7 @@ log_info() {
     fi
 }
 
-# HTTP запрос с таймаутом
+# HTTP request with timeout
 http_request() {
     local url=$1
     local expected_status=${2:-200}
@@ -166,7 +166,7 @@ http_request() {
     echo "$body|$status|$time"
 }
 
-# Добавить результат проверки
+# Add a check result
 add_result() {
     local check_name=$1
     local status=$2  # PASS, FAIL, WARNING
@@ -193,9 +193,9 @@ add_result() {
     fi
 }
 
-# 1. Проверка API Health Endpoints
+# 1. API Health Endpoints check
 check_api_health() {
-    log "Проверка API Health endpoints..."
+    log "Checking API Health endpoints..."
     
     # Liveness probe
     local liveness=$(http_request "$BASE_URL/api/health/liveness")
@@ -205,27 +205,27 @@ check_api_health() {
     
     if [[ "$liveness_status" == "200" ]]; then
         local version=$(echo "$liveness_body" | jq -r '.version // "unknown"' 2>/dev/null || echo "unknown")
-        add_result "liveness" "PASS" "Сервис доступен (${liveness_time}s)" "Version: $version"
+    add_result "liveness" "PASS" "Service available (${liveness_time}s)" "Version: $version"
     else
-        add_result "liveness" "FAIL" "Сервис недоступен (HTTP $liveness_status)"
+    add_result "liveness" "FAIL" "Service unavailable (HTTP $liveness_status)"
         return 1
     fi
     
-    # Readiness probe  
+    # Readiness probe
     local readiness=$(http_request "$BASE_URL/api/health/readiness")
     local readiness_status=$(echo "$readiness" | cut -d'|' -f2)
     local readiness_time=$(echo "$readiness" | cut -d'|' -f3)
     
     if [[ "$readiness_status" == "200" ]]; then
-        add_result "readiness" "PASS" "Сервис готов к работе (${readiness_time}s)"
+    add_result "readiness" "PASS" "Service ready (${readiness_time}s)"
     else
-        add_result "readiness" "FAIL" "Сервис не готов (HTTP $readiness_status)"
+    add_result "readiness" "FAIL" "Service not ready (HTTP $readiness_status)"
     fi
 }
 
-# 2. Проверка базы данных
+# 2. Database connectivity check
 check_database() {
-    log "Проверка подключения к базе данных..."
+    log "Checking database connection..."
     
     local readiness=$(http_request "$BASE_URL/api/health/readiness")
     local readiness_body=$(echo "$readiness" | cut -d'|' -f1)
@@ -234,51 +234,51 @@ check_database() {
     if [[ "$readiness_status" == "200" ]]; then
         local db_status=$(echo "$readiness_body" | jq -r '.database // "unknown"' 2>/dev/null || echo "unknown")
         if [[ "$db_status" == "connected" ]] || [[ "$db_status" == "healthy" ]]; then
-            add_result "database" "PASS" "База данных подключена"
+            add_result "database" "PASS" "Database connected"
         else
-            add_result "database" "WARNING" "Статус БД неопределен: $db_status"
+            add_result "database" "WARNING" "Database status indeterminate: $db_status"
         fi
     else
-        add_result "database" "FAIL" "Не удалось проверить статус БД"
+    add_result "database" "FAIL" "Failed to check database status"
     fi
 }
 
-# 3. Проверка конфигурации безопасности
+# 3. Security configuration check
 check_security_config() {
-    log "Проверка настроек безопасности..."
+    log "Checking security configuration..."
     
-    # Проверка что Swagger отключен в production
+    # Verify Swagger is disabled in production
     local swagger=$(http_request "$BASE_URL/api/docs" "404")
     local swagger_status=$(echo "$swagger" | cut -d'|' -f2)
     
     if [[ "$swagger_status" == "404" ]]; then
-        add_result "swagger" "PASS" "Swagger отключен в production"
+    add_result "swagger" "PASS" "Swagger disabled in production"
     else
-        add_result "swagger" "WARNING" "Swagger доступен (HTTP $swagger_status) - не рекомендуется для production"
+    add_result "swagger" "WARNING" "Swagger accessible (HTTP $swagger_status) - not recommended for production"
     fi
     
-    # Проверка метрик (должны быть доступны только локально в production)
+    # Metrics endpoint (should be local-only in production)
     local metrics=$(http_request "$BASE_URL/api/metrics")
     local metrics_status=$(echo "$metrics" | cut -d'|' -f2)
     
     if [[ "$BASE_URL" =~ ^https?://localhost ]] || [[ "$BASE_URL" =~ ^http://127\.0\.0\.1 ]]; then
         if [[ "$metrics_status" == "200" ]]; then
-            add_result "metrics" "PASS" "Метрики доступны локально"
+            add_result "metrics" "PASS" "Metrics accessible locally"
         else
-            add_result "metrics" "FAIL" "Метрики недоступны (HTTP $metrics_status)"
+            add_result "metrics" "FAIL" "Metrics not accessible (HTTP $metrics_status)"
         fi
     else
         if [[ "$metrics_status" == "403" ]] || [[ "$metrics_status" == "404" ]]; then
-            add_result "metrics" "PASS" "Метрики защищены от внешнего доступа"
+            add_result "metrics" "PASS" "Metrics protected from external access"
         else
-            add_result "metrics" "WARNING" "Метрики могут быть доступны извне (HTTP $metrics_status)"
+            add_result "metrics" "WARNING" "Metrics may be externally accessible (HTTP $metrics_status)"
         fi
     fi
 }
 
-# 4. Проверка заголовков безопасности
+# 4. Security headers check
 check_security_headers() {
-    log "Проверка заголовков безопасности..."
+    log "Checking security headers..."
     
     local headers=$(curl -s -I "$BASE_URL/api/health/liveness" --max-time "$TIMEOUT" 2>/dev/null || echo "")
     
@@ -296,34 +296,34 @@ check_security_headers() {
     done
     
     if [[ $found_headers -eq ${#required_headers[@]} ]]; then
-        add_result "security_headers" "PASS" "Все заголовки безопасности присутствуют"
+    add_result "security_headers" "PASS" "All required security headers present"
     elif [[ $found_headers -gt 0 ]]; then
-        add_result "security_headers" "WARNING" "Найдено $found_headers/${#required_headers[@]} заголовков безопасности"
+    add_result "security_headers" "WARNING" "$found_headers/${#required_headers[@]} security headers found"
     else
-        add_result "security_headers" "FAIL" "Заголовки безопасности отсутствуют"
+    add_result "security_headers" "FAIL" "Security headers missing"
     fi
 }
 
-# 5. Проверка производительности
+# 5. Performance check
 check_performance() {
-    log "Проверка производительности..."
+    log "Checking performance..."
     
     local liveness=$(http_request "$BASE_URL/api/health/liveness")
     local response_time=$(echo "$liveness" | cut -d'|' -f3)
     
     if (( $(echo "$response_time < 1.0" | bc -l) )); then
-        add_result "response_time" "PASS" "Время отклика: ${response_time}s (отлично)"
+    add_result "response_time" "PASS" "Response time: ${response_time}s (excellent)"
     elif (( $(echo "$response_time < 2.0" | bc -l) )); then
-        add_result "response_time" "WARNING" "Время отклика: ${response_time}s (приемлемо)"
+    add_result "response_time" "WARNING" "Response time: ${response_time}s (acceptable)"
     else
-        add_result "response_time" "FAIL" "Время отклика: ${response_time}s (медленно)"
+    add_result "response_time" "FAIL" "Response time: ${response_time}s (slow)"
     fi
 }
 
-# 6. Проверка SSL сертификата (если HTTPS)
+# 6. SSL certificate check (if HTTPS)
 check_ssl_certificate() {
     if [[ "$BASE_URL" =~ ^https:// ]]; then
-        log "Проверка SSL сертификата..."
+    log "Checking SSL certificate..."
         
         local domain=$(echo "$BASE_URL" | sed 's|https://||' | sed 's|/.*||')
         local ssl_info=$(echo | openssl s_client -connect "$domain:443" -servername "$domain" 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo "")
@@ -335,24 +335,24 @@ check_ssl_certificate() {
             local days_left=$(( (expiry_date - current_date) / 86400 ))
             
             if [[ $days_left -gt 30 ]]; then
-                add_result "ssl_certificate" "PASS" "SSL сертификат действителен ($days_left дней до истечения)"
+                add_result "ssl_certificate" "PASS" "SSL certificate valid ($days_left days until expiry)"
             elif [[ $days_left -gt 7 ]]; then
-                add_result "ssl_certificate" "WARNING" "SSL сертификат истекает через $days_left дней"
+                add_result "ssl_certificate" "WARNING" "SSL certificate expires in $days_left days"
             else
-                add_result "ssl_certificate" "FAIL" "SSL сертификат истекает через $days_left дней"
+                add_result "ssl_certificate" "FAIL" "SSL certificate expires in $days_left days"
             fi
         else
-            add_result "ssl_certificate" "FAIL" "Не удалось получить информацию о SSL сертификате"
+            add_result "ssl_certificate" "FAIL" "Could not retrieve SSL certificate information"
         fi
     else
-        add_result "ssl_certificate" "WARNING" "HTTP соединение - SSL не используется"
+    add_result "ssl_certificate" "WARNING" "HTTP connection - SSL not in use"
     fi
 }
 
-# 7. Проверка Docker контейнеров (если доступен)
+# 7. Docker containers check (if available)
 check_docker_status() {
     if command -v docker &> /dev/null && [[ "$BASE_URL" =~ ^https?://localhost ]] || [[ "$BASE_URL" =~ ^http://127\.0\.0\.1 ]]; then
-        log "Проверка Docker контейнеров..."
+    log "Checking Docker containers..."
         
         if [[ -f "docker-compose.prod.yml" ]]; then
             local containers=$(docker compose -f docker-compose.prod.yml ps --format json 2>/dev/null || echo "[]")
@@ -360,44 +360,44 @@ check_docker_status() {
             local total_containers=$(echo "$containers" | jq 'length' 2>/dev/null || echo "0")
             
             if [[ $running_containers -eq $total_containers && $total_containers -gt 0 ]]; then
-                add_result "docker_containers" "PASS" "Все контейнеры запущены ($running_containers/$total_containers)"
+                add_result "docker_containers" "PASS" "All containers running ($running_containers/$total_containers)"
             elif [[ $running_containers -gt 0 ]]; then
-                add_result "docker_containers" "WARNING" "Частично запущено контейнеров ($running_containers/$total_containers)"
+                add_result "docker_containers" "WARNING" "Partially running containers ($running_containers/$total_containers)"
             else
-                add_result "docker_containers" "FAIL" "Контейнеры не запущены"
+                add_result "docker_containers" "FAIL" "Containers not running"
             fi
         else
-            add_result "docker_containers" "WARNING" "docker-compose.prod.yml не найден"
+            add_result "docker_containers" "WARNING" "docker-compose.prod.yml not found"
         fi
     else
-        add_result "docker_containers" "WARNING" "Docker недоступен или удаленная проверка"
+    add_result "docker_containers" "WARNING" "Docker unavailable or remote check"
     fi
 }
 
-# 8. Проверка API функциональности
+# 8. API functionality check
 check_api_functionality() {
-    log "Проверка функциональности API..."
+    log "Checking API functionality..."
     
-    # Проверка публичного эндпоинта (если есть)
+    # Public endpoint check (if exists)
     local books=$(http_request "$BASE_URL/api/books?limit=1")
     local books_status=$(echo "$books" | cut -d'|' -f2)
     
     if [[ "$books_status" == "200" ]]; then
-        add_result "api_books" "PASS" "API книг доступен"
+    add_result "api_books" "PASS" "Books API accessible"
     else
-        add_result "api_books" "WARNING" "API книг недоступен (HTTP $books_status)"
+    add_result "api_books" "WARNING" "Books API not accessible (HTTP $books_status)"
     fi
     
-    # Проверка CORS заголовков
+    # CORS headers check
     local cors_headers=$(curl -s -I -H "Origin: https://example.com" "$BASE_URL/api/health/liveness" --max-time "$TIMEOUT" 2>/dev/null || echo "")
     if echo "$cors_headers" | grep -qi "access-control-allow-origin"; then
-        add_result "cors" "PASS" "CORS заголовки настроены"
+    add_result "cors" "PASS" "CORS headers configured"
     else
-        add_result "cors" "WARNING" "CORS заголовки не обнаружены"
+    add_result "cors" "WARNING" "CORS headers not detected"
     fi
 }
 
-# Генерация отчета в JSON
+# Generate JSON report
 generate_json_report() {
     local json_results="{"
     json_results+='"timestamp":"'$(date -Iseconds)'",'
@@ -431,34 +431,34 @@ generate_json_report() {
     echo "$json_results"
 }
 
-# Генерация отчета в текстовом формате
+# Generate text report
 generate_text_report() {
     echo ""
     echo "========================================"
-    echo "📊 ИТОГОВЫЙ ОТЧЕТ ПРОВЕРКИ ГОТОВНОСТИ"
+    echo "📊 FINAL READINESS CHECK REPORT"
     echo "========================================"
     echo "URL: $BASE_URL"
-    echo "Время: $(date)"
+    echo "Time: $(date)"
     echo ""
-    echo "📈 СТАТИСТИКА:"
-    echo "  Всего проверок: $TOTAL_CHECKS"
-    echo "  Пройдено: $PASSED_CHECKS"
-    echo "  Предупреждения: $WARNING_CHECKS" 
-    echo "  Неудач: $FAILED_CHECKS"
-    echo "  Успешность: $(echo "scale=1; $PASSED_CHECKS * 100 / $TOTAL_CHECKS" | bc)%"
+    echo "📈 STATISTICS:"
+    echo "  Total checks: $TOTAL_CHECKS"
+    echo "  Passed: $PASSED_CHECKS"
+    echo "  Warnings: $WARNING_CHECKS" 
+    echo "  Failures: $FAILED_CHECKS"
+    echo "  Success rate: $(echo "scale=1; $PASSED_CHECKS * 100 / $TOTAL_CHECKS" | bc)%"
     echo ""
     
     if [[ $FAILED_CHECKS -eq 0 && $WARNING_CHECKS -eq 0 ]]; then
-        echo -e "${GREEN}🎉 ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ - ГОТОВ К ДЕПЛОЮ!${NC}"
+    echo -e "${GREEN}🎉 ALL CHECKS PASSED - READY FOR DEPLOYMENT!${NC}"
     elif [[ $FAILED_CHECKS -eq 0 ]]; then
-        echo -e "${YELLOW}⚠️  Есть предупреждения, но можно деплоить${NC}"
+    echo -e "${YELLOW}⚠️  Warnings present, but deployment acceptable${NC}"
     else
-        echo -e "${RED}❌ Есть критические проблемы - деплой НЕ РЕКОМЕНДУЕТСЯ${NC}"
+    echo -e "${RED}❌ Critical issues found - deployment NOT RECOMMENDED${NC}"
     fi
     echo ""
     
     if [[ "$DETAILED" == true ]]; then
-        echo "🔍 ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:"
+    echo "🔍 DETAILED RESULTS:"
         for check_name in "${!RESULTS[@]}"; do
             local result_data="${RESULTS[$check_name]}"
             local status=$(echo "$result_data" | cut -d'|' -f1)
@@ -476,7 +476,7 @@ generate_text_report() {
     fi
 }
 
-# Основная функция
+# Main function
 main() {
     if [[ "$FORMAT" == "text" ]]; then
         echo -e "${PURPLE}"
@@ -489,7 +489,7 @@ main() {
         echo ""
     fi
     
-    # Выполнение проверок
+    # Run checks
     check_api_health
     check_database  
     check_security_config
@@ -499,7 +499,7 @@ main() {
     check_docker_status
     check_api_functionality
     
-    # Генерация отчета
+    # Generate report
     local report=""
     if [[ "$FORMAT" == "json" ]]; then
         report=$(generate_json_report)
@@ -507,15 +507,15 @@ main() {
         report=$(generate_text_report)
     fi
     
-    # Вывод или сохранение
+    # Output or save
     if [[ -n "$SAVE_FILE" ]]; then
         echo "$report" > "$SAVE_FILE"
-        [[ "$FORMAT" == "text" ]] && echo "📁 Отчет сохранен: $SAVE_FILE"
+    [[ "$FORMAT" == "text" ]] && echo "📁 Report saved: $SAVE_FILE"
     else
         echo "$report"
     fi
     
-    # Код возврата
+    # Exit code
     if [[ $FAILED_CHECKS -eq 0 ]]; then
         exit 0
     else
@@ -523,16 +523,16 @@ main() {
     fi
 }
 
-# Обработка ошибок
-trap 'echo "❌ Ошибка в строке $LINENO"' ERR
+# Error trap
+trap 'echo "❌ Error at line $LINENO"' ERR
 
-# Проверка зависимостей
+# Dependency check
 for cmd in curl jq bc; do
     if ! command -v $cmd &> /dev/null; then
-        echo "❌ Требуется команда: $cmd"
+    echo "❌ Required command missing: $cmd"
         exit 1
     fi
 done
 
-# Запуск
+# Execute
 main "$@"

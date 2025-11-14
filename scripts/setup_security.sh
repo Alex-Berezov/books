@@ -1,14 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Цвета для вывода
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Функции логирования
+# Logging helpers
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -25,88 +25,88 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Проверка прав суперпользователя
+# Root privileges check
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        log_error "Этот скрипт должен запускаться от имени root"
-        log_info "Запустите: sudo $0"
+        log_error "This script must be run as root"
+        log_info "Run: sudo $0"
         exit 1
     fi
 }
 
-# Обновление системы
+# System update
 update_system() {
-    log_info "Обновление системы..."
+    log_info "Updating system..."
     apt update -y
     apt upgrade -y
     apt autoremove -y
-    log_success "Система обновлена"
+    log_success "System updated"
 }
 
-# Настройка SSH
+# SSH hardening
 setup_ssh() {
-    log_info "Настройка SSH безопасности..."
+    log_info "Configuring SSH security..."
     
-    # Бэкап оригинального конфига
+    # Backup original config
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup.$(date +%Y%m%d_%H%M%S)
     
-    # Настройки SSH
+    # SSH settings
     sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
     sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
     sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
     sed -i 's/#AuthorizedKeysFile/AuthorizedKeysFile/' /etc/ssh/sshd_config
     
-    # Добавляем дополнительные настройки безопасности
+    # Additional hardening
     grep -q "Protocol 2" /etc/ssh/sshd_config || echo "Protocol 2" >> /etc/ssh/sshd_config
     grep -q "X11Forwarding no" /etc/ssh/sshd_config || echo "X11Forwarding no" >> /etc/ssh/sshd_config
     grep -q "MaxAuthTries 3" /etc/ssh/sshd_config || echo "MaxAuthTries 3" >> /etc/ssh/sshd_config
     grep -q "ClientAliveInterval 300" /etc/ssh/sshd_config || echo "ClientAliveInterval 300" >> /etc/ssh/sshd_config
     grep -q "ClientAliveCountMax 2" /etc/ssh/sshd_config || echo "ClientAliveCountMax 2" >> /etc/ssh/sshd_config
     
-    # Перезапуск SSH
+    # Reload SSH
     systemctl reload sshd
-    log_success "SSH настроен (отключены пароли, только ключи)"
+    log_success "SSH configured (passwords disabled, keys only)"
 }
 
-# Настройка UFW (Uncomplicated Firewall)
+# UFW setup (Uncomplicated Firewall)
 setup_ufw() {
-    log_info "Настройка UFW firewall..."
+    log_info "Configuring UFW firewall..."
     
-    # Установка UFW если не установлен
+    # Install UFW if not present
     if ! command -v ufw &> /dev/null; then
         apt install -y ufw
     fi
     
-    # Сброс правил
+    # Reset rules
     ufw --force reset
     
-    # Базовые политики
+    # Default policies
     ufw default deny incoming
     ufw default allow outgoing
     
-    # Разрешенные порты
+    # Allowed ports
     ufw allow 22/tcp    # SSH
     ufw allow 80/tcp    # HTTP
     ufw allow 443/tcp   # HTTPS
     
-    # Включение UFW
+    # Enable UFW
     ufw --force enable
     
-    log_success "UFW настроен (разрешены порты: 22, 80, 443)"
+    log_success "UFW configured (allowed ports: 22, 80, 443)"
 }
 
-# Установка и настройка fail2ban
+# Install and configure fail2ban
 setup_fail2ban() {
-    log_info "Установка и настройка fail2ban..."
+    log_info "Installing and configuring fail2ban..."
     
-    # Установка fail2ban
+    # Install fail2ban
     apt install -y fail2ban
     
-    # Создание локального конфига
+    # Create local config
     cat > /etc/fail2ban/jail.local << 'EOF'
 [DEFAULT]
-# Банить на 1 час после 5 неудачных попыток за 10 минут
+# Ban for 1 hour after 5 failed attempts within 10 minutes
 bantime = 3600
 findtime = 600
 maxretry = 5
@@ -137,21 +137,21 @@ filter = nginx-botsearch
 logpath = /var/log/nginx/access.log
 EOF
     
-    # Запуск и включение fail2ban
+    # Enable and restart fail2ban
     systemctl enable fail2ban
     systemctl restart fail2ban
     
-    log_success "fail2ban установлен и настроен"
+    log_success "fail2ban installed and configured"
 }
 
-# Настройка автоматических обновлений безопасности
+# Configure unattended security upgrades
 setup_unattended_upgrades() {
-    log_info "Настройка автоматических обновлений безопасности..."
+    log_info "Configuring unattended security upgrades..."
     
-    # Установка пакета
+    # Install packages
     apt install -y unattended-upgrades apt-listchanges
     
-    # Создание конфигурации
+    # Create configuration
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
 Unattended-Upgrade::Allowed-Origins {
     "${distro_id}:${distro_codename}";
@@ -172,59 +172,59 @@ Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
 Unattended-Upgrade::Automatic-Reboot-Time "02:00";
 EOF
     
-    # Включение автоматических обновлений
+    # Enable auto updates
     echo 'APT::Periodic::Update-Package-Lists "1";' > /etc/apt/apt.conf.d/20auto-upgrades
     echo 'APT::Periodic::Unattended-Upgrade "1";' >> /etc/apt/apt.conf.d/20auto-upgrades
     echo 'APT::Periodic::AutocleanInterval "7";' >> /etc/apt/apt.conf.d/20auto-upgrades
     
-    # Запуск сервиса
+    # Enable and restart service
     systemctl enable unattended-upgrades
     systemctl restart unattended-upgrades
     
-    log_success "Автоматические обновления безопасности настроены"
+    log_success "Unattended security upgrades configured"
 }
 
-# Создание пользователя deploy
+# Create deploy user
 create_deploy_user() {
-    log_info "Создание пользователя deploy..."
+    log_info "Creating user 'deploy'..."
     
     if id "deploy" &>/dev/null; then
-        log_warning "Пользователь deploy уже существует"
+        log_warning "User 'deploy' already exists"
     else
-        # Создание пользователя
+        # Create user
         useradd -m -s /bin/bash deploy
         usermod -aG sudo deploy
         
-        # Создание директории для SSH ключей
+        # Create SSH keys directory
         mkdir -p /home/deploy/.ssh
         chmod 700 /home/deploy/.ssh
         touch /home/deploy/.ssh/authorized_keys
         chmod 600 /home/deploy/.ssh/authorized_keys
         chown -R deploy:deploy /home/deploy/.ssh
         
-        log_success "Пользователь deploy создан"
-        log_warning "Не забудьте добавить SSH ключ в /home/deploy/.ssh/authorized_keys"
+        log_success "User 'deploy' created"
+        log_warning "Don't forget to add your SSH public key to /home/deploy/.ssh/authorized_keys"
     fi
 }
 
-# Настройка директорий для проекта
+# Create project directories
 setup_project_directories() {
-    log_info "Создание директорий для проекта..."
+    log_info "Creating project directories..."
     
-    # Создание базовых директорий
+    # Create base directories
     mkdir -p /opt/books/{app,uploads,backups,logs}
     
-    # Установка владельца
+    # Ownership and permissions
     chown -R deploy:deploy /opt/books
     chmod 755 /opt/books
     chmod 775 /opt/books/{uploads,backups,logs}
     
-    log_success "Директории проекта созданы в /opt/books"
+    log_success "Project directories created at /opt/books"
 }
 
-# Установка базовых пакетов безопасности
+# Install base security/ops packages
 install_security_packages() {
-    log_info "Установка базовых пакетов безопасности..."
+    log_info "Installing base security/ops packages..."
     
     apt install -y \
         curl \
@@ -241,25 +241,25 @@ install_security_packages() {
         cron \
         acl
     
-    log_success "Базовые пакеты установлены"
+    log_success "Base packages installed"
 }
 
-# Настройка системных лимитов
+# Configure system limits
 setup_system_limits() {
-    log_info "Настройка системных лимитов..."
+    log_info "Configuring system limits..."
     
-    # Настройка limits.conf для пользователя deploy
+    # limits.conf for user 'deploy'
     cat >> /etc/security/limits.conf << 'EOF'
-# Лимиты для пользователя deploy
+# Limits for user deploy
 deploy soft nofile 65536
 deploy hard nofile 65536
 deploy soft nproc 32768
 deploy hard nproc 32768
 EOF
     
-    # Настройка sysctl
+    # sysctl settings
     cat >> /etc/sysctl.conf << 'EOF'
-# Настройки безопасности сети
+# Network security settings
 net.ipv4.conf.default.rp_filter = 1
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.all.accept_redirects = 0
@@ -269,33 +269,33 @@ net.ipv4.conf.all.accept_source_route = 0
 net.ipv6.conf.all.accept_source_route = 0
 net.ipv4.conf.all.log_martians = 1
 
-# Защита от SYN flood атак
+# Protection against SYN flood attacks
 net.ipv4.tcp_syncookies = 1
 net.ipv4.tcp_max_syn_backlog = 2048
 net.ipv4.tcp_synack_retries = 2
 net.ipv4.tcp_syn_retries = 5
 
-# Настройки памяти для production
+# Memory tuning for production
 vm.swappiness = 10
 vm.vfs_cache_pressure = 50
 vm.dirty_ratio = 15
 vm.dirty_background_ratio = 5
 EOF
     
-    # Применение настроек sysctl
+    # Apply sysctl
     sysctl -p
     
-    log_success "Системные лимиты настроены"
+    log_success "System limits configured"
 }
 
-# Основная функция
+# Main
 main() {
-    log_info "=== Настройка безопасности продакшн сервера ==="
-    log_info "Начинаем установку компонентов безопасности..."
+    log_info "=== Production server security hardening ==="
+    log_info "Starting security components setup..."
     
     check_root
     
-    # Выполнение всех настроек
+    # Execute all steps
     update_system
     install_security_packages
     create_deploy_user
@@ -306,32 +306,32 @@ main() {
     setup_project_directories
     setup_system_limits
     
-    log_success "=== Настройка безопасности завершена! ==="
+    log_success "=== Security hardening completed! ==="
     echo
-    log_info "Следующие шаги:"
-    echo "1. Добавьте ваш SSH ключ в /home/deploy/.ssh/authorized_keys"
-    echo "2. Перелогиньтесь и проверьте доступ под пользователем deploy"
-    echo "3. Запустите ./test_security.sh для проверки настроек"
-    echo "4. Настройте Docker и развертывание приложения"
+    log_info "Next steps:"
+    echo "1. Add your SSH public key to /home/deploy/.ssh/authorized_keys"
+    echo "2. Re-login and verify access as user 'deploy'"
+    echo "3. Run ./test_security.sh to validate the configuration"
+    echo "4. Set up Docker and deploy the application"
     echo
-    log_warning "ВНИМАНИЕ: Убедитесь, что у вас есть доступ по SSH ключу перед отключением от сервера!"
+    log_warning "WARNING: Make sure you have SSH key-based access before disconnecting from the server!"
 }
 
-# Проверка аргументов
+# Arguments
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    echo "Использование: $0"
+    echo "Usage: $0"
     echo
-    echo "Этот скрипт настраивает базовую безопасность для продакшн сервера:"
-    echo "- Отключение SSH паролей, только ключи"
-    echo "- Настройка UFW firewall (порты 22, 80, 443)"
-    echo "- Установка и настройка fail2ban"
-    echo "- Автоматические обновления безопасности"
-    echo "- Создание пользователя deploy"
-    echo "- Системные настройки безопасности"
+    echo "This script sets up baseline security for a production server:"
+    echo "- Disable SSH passwords (keys only)"
+    echo "- Configure UFW firewall (ports 22, 80, 443)"
+    echo "- Install and configure fail2ban"
+    echo "- Enable unattended security updates"
+    echo "- Create 'deploy' user"
+    echo "- Apply system-level security settings"
     echo
-    echo "Запуск: sudo $0"
+    echo "Run: sudo $0"
     exit 0
 fi
 
-# Запуск основной функции
+# Run main function
 main "$@"

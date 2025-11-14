@@ -1,39 +1,39 @@
-# API Client Types для Frontend
+# API Client Types for Frontend
 
-Автогенерированные TypeScript типы из OpenAPI спецификации backend API.
+Auto-generated TypeScript types from backend API OpenAPI specification.
 
-## 📦 Что здесь находится
+## 📦 What's Inside
 
-- `types.ts` - TypeScript типы для всех API endpoints (автогенерированный)
-- `api-schema.json` - OpenAPI JSON схема (опциональный, для кэша)
-- `.gitignore` - исключает сгенерированные файлы из Git (если настроен)
+- `types.ts` - TypeScript types for all API endpoints (auto-generated)
+- `api-schema.json` - OpenAPI JSON schema (optional, for caching)
+- `.gitignore` - excludes generated files from Git (if configured)
 
-## 🚀 Использование во фронтенде
+## 🚀 Frontend Usage
 
-### 1. Генерация типов
+### 1. Generate Types
 
 ```bash
-# В корне backend проекта
+# In the backend project root
 
-# Вариант А: Генерация из локального API (dev сервер должен быть запущен)
+# Option A: Generate from local API (dev server must be running)
 yarn openapi:types
 
-# Вариант Б: Генерация из production API
+# Option B: Generate from production API
 yarn openapi:types:prod
 
-# Вариант В: Сначала скачать схему, потом сгенерировать типы
-yarn openapi:schema        # или yarn openapi:schema:prod
+# Option C: Download schema first, then generate types
+yarn openapi:schema        # or yarn openapi:schema:prod
 yarn openapi:types:from-schema
 ```
 
-### 2. Копирование в фронтенд проект
+### 2. Copy to Frontend Project
 
 ```bash
-# Из корня backend проекта
+# From backend project root
 cp libs/api-client/types.ts ../frontend/src/types/api.ts
 ```
 
-Или создайте npm script в фронтенде:
+Or create an npm script in your frontend:
 
 ```json
 {
@@ -43,7 +43,7 @@ cp libs/api-client/types.ts ../frontend/src/types/api.ts
 }
 ```
 
-### 3. Использование в коде
+### 3. Use in Code
 
 ```typescript
 import { paths, components } from '@/types/api';
@@ -55,7 +55,7 @@ type LoginResponse =
 type BookDTO = components['schemas']['BookDto'];
 type UserDTO = components['schemas']['UserDto'];
 
-// Пример с fetch
+// Example with fetch
 const login = async (email: string, password: string): Promise<LoginResponse> => {
   const response = await fetch('https://api.bibliaris.com/api/auth/login', {
     method: 'POST',
@@ -71,19 +71,19 @@ const login = async (email: string, password: string): Promise<LoginResponse> =>
 };
 ```
 
-## 🔄 Автоматическое обновление типов
+## 🔄 Automatic Type Updates
 
-### В CI/CD фронтенда
+### In Frontend CI/CD
 
-Добавьте шаг обновления типов в GitHub Actions:
+Add a type update step to GitHub Actions:
 
 ```yaml
 name: Update API Types
 
 on:
   schedule:
-    - cron: '0 2 * * *' # Каждый день в 2:00
-  workflow_dispatch: # Ручной запуск
+    - cron: '0 2 * * *' # Every day at 2:00 AM
+  workflow_dispatch: # Manual trigger
 
 jobs:
   update-types:
@@ -103,17 +103,17 @@ jobs:
           branch: 'update-api-types'
 ```
 
-## 📚 Дополнительные инструменты
+## 📚 Additional Tools
 
 ### RTK Query Code Generation
 
-Если используете Redux Toolkit Query:
+If using Redux Toolkit Query:
 
 ```bash
-# Установка
+# Installation
 yarn add -D @rtk-query/codegen-openapi
 
-# Конфигурация: rtk-query-codegen.config.ts
+# Configuration: rtk-query-codegen.config.ts
 import type { ConfigFile } from '@rtk-query/codegen-openapi';
 
 const config: ConfigFile = {
@@ -127,7 +127,7 @@ const config: ConfigFile = {
 
 export default config;
 
-# Генерация
+# Generation
 yarn rtk-query-codegen rtk-query-codegen.config.ts
 ```
 
@@ -158,34 +158,34 @@ export async function apiRequest<P extends ApiPath, M extends ApiMethod<P>>(
 }
 ```
 
-## 🔗 Полезные ссылки
+## 🔗 Useful Links
 
 - **Production API**: https://api.bibliaris.com
 - **Swagger UI**: https://api.bibliaris.com/docs
 - **OpenAPI JSON**: https://api.bibliaris.com/api/docs-json
 - **Health Check**: https://api.bibliaris.com/api/health/liveness
 
-## 📖 Документация API
+## 📖 API Documentation
 
-Полная документация для интеграции фронтенда:
+Complete documentation for frontend integration:
 
 - [Frontend Integration Guide](../../docs/FRONTEND_INTEGRATION.md)
 - [API Examples](../../docs/examples/frontend-examples.ts)
 
 ## 🛠️ Troubleshooting
 
-### Ошибка: "Cannot find module '@/types/api'"
+### Error: "Cannot find module '@/types/api'"
 
-Убедитесь, что:
+Make sure:
 
-1. Типы сгенерированы: `yarn openapi:types` (в backend)
-2. Файл скопирован в фронтенд проект
-3. TypeScript alias `@` настроен в `tsconfig.json`
+1. Types are generated: `yarn openapi:types` (in backend)
+2. File is copied to frontend project
+3. TypeScript alias `@` is configured in `tsconfig.json`
 
-### Ошибка: "Error fetching schema"
+### Error: "Error fetching schema"
 
-Проверьте:
+Check:
 
-1. API сервер запущен (для локальной генерации)
-2. Доступность `/docs-json` endpoint (Swagger всегда включен)
-3. Доступность production URL (для prod генерации)
+1. API server is running (for local generation)
+2. `/docs-json` endpoint is accessible (Swagger is always enabled)
+3. Production URL is accessible (for prod generation)
