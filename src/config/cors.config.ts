@@ -1,13 +1,13 @@
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 
 /**
- * CORS Configuration для API
+ * CORS Configuration for the API
  *
- * Настраивает Cross-Origin Resource Sharing для работы с фронтенд-приложениями
+ * Configures Cross-Origin Resource Sharing for interaction with frontend applications.
  *
  * Environment Variables:
- * - CORS_ORIGIN: Разрешенные origins (через запятую). По умолчанию: '*'
- * - CORS_CREDENTIALS: Разрешить cookies/credentials (0 или 1). По умолчанию: 0
+ * - CORS_ORIGIN: Allowed origins (comma-separated). Default: '*'
+ * - CORS_CREDENTIALS: Allow cookies/credentials (0 or 1). Default: 0
  *
  * @example
  * # Production
@@ -25,26 +25,26 @@ export function getCorsConfig(): CorsOptions {
 
   const allowCredentials = process.env.CORS_CREDENTIALS === '1';
 
-  // Если указан wildcard, используем simple CORS
+  // If wildcard '*' is present, use simple CORS
   if (allowedOrigins.includes('*')) {
     return {
       origin: '*',
-      credentials: false, // credentials не работает с wildcard origin
+      credentials: false, // credentials do not work with a wildcard origin
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Language', 'Accept-Language'],
     };
   }
 
-  // Для конкретных origins используем функцию для проверки
+  // For specific origins use a function-based check
   return {
     origin: (origin, callback) => {
-      // Разрешаем запросы без Origin (например, server-to-server или curl)
+      // Allow requests without Origin (e.g., server-to-server or curl)
       if (!origin) {
         callback(null, true);
         return;
       }
 
-      // Проверяем, что Origin в whitelist
+      // Verify Origin is whitelisted
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -64,14 +64,14 @@ export function getCorsConfig(): CorsOptions {
       'X-Requested-With',
     ],
     exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
-    maxAge: 86400, // 24 hours - кэширование preflight запросов
+    maxAge: 86400, // 24 hours - cache preflight requests
   };
 }
 
 /**
- * Проверка корректности CORS конфигурации
+ * Inspect current CORS configuration.
  *
- * @returns Информация о текущей конфигурации CORS
+ * @returns Information about the current CORS configuration.
  */
 export function getCorsConfigInfo() {
   const corsOrigin = process.env.CORS_ORIGIN || '*';
@@ -82,7 +82,7 @@ export function getCorsConfigInfo() {
     credentials: corsCredentials,
     warning:
       corsOrigin === '*' && corsCredentials
-        ? 'CORS credentials не работает с wildcard origin (*). Используйте конкретные домены.'
+        ? 'CORS credentials do not work with wildcard origin (*). Use explicit domains.'
         : null,
   };
 }

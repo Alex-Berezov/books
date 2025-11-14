@@ -10,19 +10,19 @@ export class UpdateCategoryDto implements Partial<CreateCategoryDto> {
   @IsEnum(PrismaCategoryType)
   type?: PrismaCategoryType;
 
-  @ApiPropertyOptional({ description: 'Название категории' })
+  @ApiPropertyOptional({ description: 'Category name' })
   @IsOptional()
   @IsString()
   @MinLength(2)
   name?: string;
 
-  @ApiPropertyOptional({ description: 'Slug категории', pattern: SLUG_PATTERN })
+  @ApiPropertyOptional({ description: 'Category slug', pattern: SLUG_PATTERN })
   @IsOptional()
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;
 
-  @ApiPropertyOptional({ description: 'Родительская категория', nullable: true })
+  @ApiPropertyOptional({ description: 'Parent category', nullable: true })
   @IsOptional()
   @IsString()
   parentId?: string | null;

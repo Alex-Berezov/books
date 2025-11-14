@@ -4,22 +4,22 @@ import { CategoryType as PrismaCategoryType } from '@prisma/client';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
 export class CreateCategoryDto {
-  @ApiProperty({ enum: Object.values(PrismaCategoryType), description: 'Тип категории' })
+  @ApiProperty({ enum: Object.values(PrismaCategoryType), description: 'Category type' })
   @IsEnum(PrismaCategoryType)
   type!: PrismaCategoryType;
 
-  @ApiProperty({ description: 'Название категории', example: 'Fantasy' })
+  @ApiProperty({ description: 'Category name', example: 'Fantasy' })
   @IsString()
   @MinLength(2)
   name!: string;
 
-  @ApiProperty({ description: 'Slug категории', example: 'fantasy', pattern: SLUG_PATTERN })
+  @ApiProperty({ description: 'Category slug', example: 'fantasy', pattern: SLUG_PATTERN })
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug!: string;
 
   @ApiProperty({
-    description: 'Родительская категория (необязательно)',
+    description: 'Parent category (optional)',
     required: false,
     nullable: true,
   })

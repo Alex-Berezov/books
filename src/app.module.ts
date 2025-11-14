@@ -75,7 +75,7 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     HealthModule,
     MetricsModule,
     QueueModule,
-    // ...другие модули
+    // ...other modules
   ],
   controllers: [AppController],
   providers: [

@@ -8,12 +8,12 @@ export class CreateCategoryTranslationDto {
   @IsEnum(Language)
   language!: Language;
 
-  @ApiProperty({ description: 'Локализованное имя категории' })
+  @ApiProperty({ description: 'Localized category name' })
   @IsString()
   @MinLength(2)
   name!: string;
 
-  @ApiProperty({ description: 'Локализованный slug категории', pattern: SLUG_PATTERN })
+  @ApiProperty({ description: 'Localized category slug', pattern: SLUG_PATTERN })
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug!: string;

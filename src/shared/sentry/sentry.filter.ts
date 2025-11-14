@@ -4,8 +4,8 @@ import type { Request } from 'express';
 import * as Sentry from '@sentry/node';
 
 /**
- * Глобальный фильтр исключений, который отправляет 5xx ошибки в Sentry.
- * 4xx (400/401/403/404/429) умышленно игнорируются, чтобы не шуметь.
+ * Global exception filter that reports 5xx errors to Sentry.
+ * 4xx (400/401/403/404/429) are deliberately ignored to reduce noise.
  */
 @Catch()
 export class SentryExceptionFilter extends BaseExceptionFilter {
@@ -67,11 +67,11 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
         }
       }
     } catch (e) {
-      // Никогда не ломаем обработку исключений из-за проблем с Sentry
+      // Never break exception handling due to Sentry issues
       this.logger.debug(`Sentry capture failed: ${String(e)}`);
     }
 
-    // Продолжаем стандартную обработку Nest
+    // Continue standard Nest exception handling
     return super.catch(exception, host);
   }
 
@@ -84,7 +84,7 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
     if (!this.isPlainObject(body)) return body;
     const src = body;
     const clone: Record<string, unknown> = { ...src };
-    // Маскируем потенциально чувствительные поля
+    // Mask potentially sensitive fields
     for (const key of Object.keys(clone)) {
       if (/password|token|authorization|secret|cookie/i.test(key)) {
         clone[key] = '[Filtered]';
@@ -98,7 +98,7 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
   }
 
   private getRoutePath(req: Request): string | undefined {
-    // Express добавляет route.path на объект req; тайпинги этого не включают
+    // Express adds route.path to req; types do not expose it
     const maybeWithRoute = req as unknown as { route?: { path?: unknown } };
     const p = maybeWithRoute.route?.path;
     return typeof p === 'string' ? p : undefined;

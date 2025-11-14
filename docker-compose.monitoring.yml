@@ -96,4 +96,3 @@ networks:
     driver: bridge
   books-network:
     external: true
-    # Подключаемся к существующей сети основного приложения

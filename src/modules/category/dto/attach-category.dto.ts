@@ -2,7 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsString } from 'class-validator';
 
 export class AttachCategoryDto {
-  @ApiProperty({ description: 'ID категории' })
+  @ApiProperty({ description: 'Category ID' })
   @IsString()
   categoryId!: string;
 }

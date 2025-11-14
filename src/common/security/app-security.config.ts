@@ -22,7 +22,7 @@ export function configureSecurity(app: INestApplication): void {
     }),
   );
 
-  // CORS: использует централизованную конфигурацию из cors.config.ts
+  // CORS: uses centralized configuration from cors.config.ts
   const corsConfig = getCorsConfig();
   const corsInfo = getCorsConfigInfo();
   console.log('[Security] CORS Configuration:', {

@@ -19,7 +19,7 @@ describe('Queues (BullMQ) e2e', () => {
     );
     await app.init();
 
-    // Проверяем фактическую доступность очередей через API
+    // Check actual queue availability via API
     const token = await getAdminToken();
     const statusRes = await request(http())
       .get('/queues/status')
@@ -47,7 +47,7 @@ describe('Queues (BullMQ) e2e', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect(typeof res.body.enabled).toBe('boolean');
-    // Проверяем что значение соответствует фактической доступности
+    // Ensure value matches actual availability
     expect(res.body.enabled).toBe(queuesEnabled);
   });
 

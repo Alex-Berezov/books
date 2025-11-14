@@ -40,7 +40,7 @@ async function bootstrap() {
       tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0),
       profilesSampleRate: Number(process.env.SENTRY_PROFILES_SAMPLE_RATE ?? 0),
       integrations: [],
-      // отключаем autoSessionTracking — API не использует браузерные сессии
+      // disable autoSessionTracking — the API does not use browser sessions
       autoSessionTracking: false,
     });
     const httpAdapterHost = app.get(HttpAdapterHost);

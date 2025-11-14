@@ -12,16 +12,16 @@ import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.in
 /**
  * Auth Rate Limit Guard
  *
- * Применяет строгие лимиты для auth endpoints для защиты от брутфорса
+ * Applies strict rate limits for auth endpoints to protect against brute force.
  *
  * Environment Variables:
- * - RATE_LIMIT_AUTH_ENABLED: Включить лимиты (0/1), по умолчанию 1
- * - RATE_LIMIT_LOGIN_MAX: Максимальное количество попыток логина, по умолчанию 5
- * - RATE_LIMIT_LOGIN_WINDOW_MS: Окно для лимита логина, по умолчанию 60000 (1 мин)
- * - RATE_LIMIT_REGISTER_MAX: Максимальное количество регистраций, по умолчанию 3
- * - RATE_LIMIT_REGISTER_WINDOW_MS: Окно для лимита регистрации, по умолчанию 300000 (5 мин)
- * - RATE_LIMIT_REFRESH_MAX: Максимальное количество обновлений токена, по умолчанию 10
- * - RATE_LIMIT_REFRESH_WINDOW_MS: Окно для лимита обновления токена, по умолчанию 60000 (1 мин)
+ * - RATE_LIMIT_AUTH_ENABLED: Enable limits (0/1), default 1
+ * - RATE_LIMIT_LOGIN_MAX: Max login attempts, default 5
+ * - RATE_LIMIT_LOGIN_WINDOW_MS: Login limit window, default 60000 (1 min)
+ * - RATE_LIMIT_REGISTER_MAX: Max registrations, default 3
+ * - RATE_LIMIT_REGISTER_WINDOW_MS: Registration limit window, default 300000 (5 min)
+ * - RATE_LIMIT_REFRESH_MAX: Max token refresh operations, default 10
+ * - RATE_LIMIT_REFRESH_WINDOW_MS: Refresh limit window, default 60000 (1 min)
  */
 @Injectable()
 export class AuthRateLimitGuard implements CanActivate {
@@ -70,7 +70,7 @@ export class AuthRateLimitGuard implements CanActivate {
     const path = req.path || req.originalUrl || '';
     const email = req.body?.email || '';
 
-    // Определяем тип операции и применяем соответствующие лимиты
+    // Determine operation type and apply matching limits
     let operation: 'login' | 'register' | 'refresh' | null = null;
     let maxPoints: number;
     let windowMs: number;
@@ -80,22 +80,22 @@ export class AuthRateLimitGuard implements CanActivate {
       operation = 'login';
       maxPoints = this.loginMax;
       windowMs = this.loginWindowMs;
-      // Ключ: IP + email (если указан) для более точного отслеживания брутфорса
+      // Key: IP + email (if present) for finer brute-force detection
       key = email ? `auth:login:${req.ip}:${email}` : `auth:login:${req.ip}`;
     } else if (path.includes('/register')) {
       operation = 'register';
       maxPoints = this.registerMax;
       windowMs = this.registerWindowMs;
-      // Ключ: IP для предотвращения спама регистраций
+      // Key: IP to prevent registration spam
       key = `auth:register:${req.ip}`;
     } else if (path.includes('/refresh')) {
       operation = 'refresh';
       maxPoints = this.refreshMax;
       windowMs = this.refreshWindowMs;
-      // Ключ: IP для refresh токена
+      // Key: IP for refresh token operations
       key = `auth:refresh:${req.ip}`;
     } else {
-      // Неизвестный endpoint - пропускаем
+      // Unknown endpoint – allow request
       return true;
     }
 
