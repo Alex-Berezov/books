@@ -22,7 +22,7 @@ export class BookshelfService {
         where: { userId },
         orderBy: { addedAt: 'desc' },
         skip,
-        take: limit + 1, // +1 чтобы вычислить hasNext без второго запроса
+        take: limit + 1, // +1 to compute hasNext without a second query
         include: { bookVersion: true },
       }),
       this.prisma.bookshelf.count({ where: { userId } }),

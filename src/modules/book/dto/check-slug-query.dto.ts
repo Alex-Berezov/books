@@ -4,7 +4,7 @@ import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug
 
 export class CheckBookSlugQueryDto {
   @ApiProperty({
-    description: 'Slug для проверки уникальности',
+    description: 'Slug to check for uniqueness',
     example: 'harry-potter',
     pattern: SLUG_PATTERN,
   })
@@ -16,7 +16,7 @@ export class CheckBookSlugQueryDto {
   slug!: string;
 
   @ApiPropertyOptional({
-    description: 'ID книги для исключения из проверки (при редактировании)',
+    description: 'Book ID to exclude from the check (when editing)',
     example: '550e8400-e29b-41d4-a716-446655440000',
   })
   @IsOptional()

@@ -31,28 +31,28 @@ import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
 export class PagesController {
   constructor(private readonly service: PagesService) {}
 
-  // ⚠️ КРИТИЧЕСКИ ВАЖНО: check-slug должен быть ПЕРВЫМ, перед ВСЕМИ другими роутами
-  // иначе будет конфликт с admin/pages/:id (NestJS думает что "check-slug" - это UUID)
+  // ⚠️ CRITICAL: check-slug must be FIRST, before ALL other routes
+  // otherwise it will conflict with admin/pages/:id (NestJS may treat "check-slug" as a UUID)
   @Get('admin/pages/check-slug')
   @ApiOperation({
-    summary: 'Проверить уникальность slug для страницы',
+    summary: 'Check slug uniqueness for a page',
     description:
-      'Быстрая проверка доступности slug. Возвращает информацию о существующей странице и предлагает уникальный вариант если slug занят.',
+      'Quick availability check for a slug. Returns info about an existing page and suggests a unique option if the slug is taken.',
   })
   @ApiQuery({
     name: 'lang',
     enum: Object.values(Language),
-    description: 'Язык страницы',
+    description: 'Page language',
     required: true,
   })
   @ApiResponse({
     status: 200,
-    description: 'Результат проверки slug',
+    description: 'Slug check result',
     type: CheckPageSlugResponseDto,
   })
   @ApiResponse({
     status: 400,
-    description: 'Невалидный формат slug',
+    description: 'Invalid slug format',
   })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -85,9 +85,9 @@ export class PagesController {
 
   // Public: get page by slug (only published)
   @Get('pages/:slug')
-  @ApiOperation({ summary: 'Публичная страница по slug (только published)' })
+  @ApiOperation({ summary: 'Public page by slug (published only)' })
   @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
+  @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
   getPublic(
     @Param('slug') slug: string,
@@ -98,8 +98,8 @@ export class PagesController {
   }
 
   @Get('admin/pages/:id')
-  @ApiOperation({ summary: 'Получить страницу по ID (админ): любой статус' })
-  @ApiParam({ name: 'id', description: 'UUID страницы' })
+  @ApiOperation({ summary: 'Get page by ID (admin): any status' })
+  @ApiParam({ name: 'id', description: 'Page UUID' })
   @ApiResponse({ status: 200, type: PageResponse })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -107,14 +107,18 @@ export class PagesController {
     return this.service.findById(id);
   }
 
-  // ⚠️ ВАЖНО: admin/:lang/pages ПОСЛЕ всех статических admin/pages/* роутов
-  // иначе `:lang` может съесть статические сегменты типа "check-slug"
+  // ⚠️ IMPORTANT: admin/:lang/pages must come AFTER all static admin/pages/* routes
+  // otherwise `:lang` may swallow static segments like "check-slug"
   @Get('admin/:lang/pages')
-  @ApiOperation({ summary: 'Листинг страниц (админ): draft+published' })
+  @ApiOperation({ summary: 'List pages (admin): draft+published' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
-  @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
+  @ApiHeader({
+    name: 'X-Admin-Language',
+    required: false,
+    description: 'Takes precedence over path language',
+  })
   @ApiResponse({ status: 200, type: PaginatedPagesResponse })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -133,9 +137,13 @@ export class PagesController {
   }
 
   @Post('admin/:lang/pages')
-  @ApiOperation({ summary: 'Создать страницу (админ)' })
+  @ApiOperation({ summary: 'Create page (admin)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
-  @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
+  @ApiHeader({
+    name: 'X-Admin-Language',
+    required: false,
+    description: 'Takes precedence over the path language',
+  })
   @ApiResponse({ status: 201, type: PageResponse })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -152,7 +160,7 @@ export class PagesController {
   }
 
   @Patch('admin/:lang/pages/:id')
-  @ApiOperation({ summary: 'Обновить страницу (админ)' })
+  @ApiOperation({ summary: 'Update page (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -167,7 +175,7 @@ export class PagesController {
 
   @Delete('admin/:lang/pages/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Удалить страницу (админ)' })
+  @ApiOperation({ summary: 'Delete page (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -177,7 +185,7 @@ export class PagesController {
   }
 
   @Patch('admin/:lang/pages/:id/publish')
-  @ApiOperation({ summary: 'Опубликовать страницу' })
+  @ApiOperation({ summary: 'Publish page' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -187,7 +195,7 @@ export class PagesController {
   }
 
   @Patch('admin/:lang/pages/:id/unpublish')
-  @ApiOperation({ summary: 'Снять страницу с публикации' })
+  @ApiOperation({ summary: 'Unpublish page' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @UseGuards(JwtAuthGuard, RolesGuard)

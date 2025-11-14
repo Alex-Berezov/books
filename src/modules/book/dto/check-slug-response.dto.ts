@@ -2,13 +2,13 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ExistingBookDto {
   @ApiProperty({
-    description: 'UUID книги',
+    description: 'Book UUID',
     example: '660e8400-e29b-41d4-a716-446655440001',
   })
   id!: string;
 
   @ApiProperty({
-    description: 'Slug книги',
+    description: 'Book slug',
     example: 'harry-potter',
   })
   slug!: string;
@@ -16,19 +16,19 @@ export class ExistingBookDto {
 
 export class CheckBookSlugResponseDto {
   @ApiProperty({
-    description: 'true если slug уже занят',
+    description: 'true if the slug is already taken',
     example: false,
   })
   exists!: boolean;
 
   @ApiPropertyOptional({
-    description: 'Предлагаемый уникальный slug (если exists = true)',
+    description: 'Suggested unique slug (if exists = true)',
     example: 'harry-potter-2',
   })
   suggestedSlug?: string;
 
   @ApiPropertyOptional({
-    description: 'Информация о существующей книге (если exists = true)',
+    description: 'Information about the existing book (if exists = true)',
     type: ExistingBookDto,
   })
   existingBook?: ExistingBookDto;

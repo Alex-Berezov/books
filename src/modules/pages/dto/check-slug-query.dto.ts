@@ -4,7 +4,7 @@ import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug
 
 export class CheckSlugQueryDto {
   @ApiProperty({
-    description: 'Slug для проверки уникальности',
+    description: 'Slug to check for uniqueness',
     example: 'about-us',
     pattern: SLUG_PATTERN,
   })
@@ -16,7 +16,7 @@ export class CheckSlugQueryDto {
   slug!: string;
 
   @ApiProperty({
-    description: 'Язык страницы',
+    description: 'Page language',
     example: 'en',
     enum: ['en', 'es', 'fr', 'pt'],
   })
@@ -25,7 +25,7 @@ export class CheckSlugQueryDto {
   lang!: string;
 
   @ApiPropertyOptional({
-    description: 'ID страницы для исключения из проверки (при редактировании)',
+    description: 'Page ID to exclude from the check (when editing)',
     example: '550e8400-e29b-41d4-a716-446655440000',
   })
   @IsOptional()

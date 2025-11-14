@@ -29,22 +29,22 @@ import { CheckBookSlugResponseDto } from './dto/check-slug-response.dto';
 export class BookController {
   constructor(private readonly bookService: BookService) {}
 
-  // ⚠️ КРИТИЧЕСКИ ВАЖНО: check-slug должен быть ПЕРВЫМ GET роутом
-  // иначе роуты с динамическими параметрами (`:slug/overview`) могут съесть его
+  // ⚠️ CRITICAL: check-slug must be the FIRST GET route
+  // otherwise dynamic routes (`:slug/overview`) may consume it
   @Get('check-slug')
   @ApiOperation({
-    summary: 'Проверить уникальность slug для книги',
+    summary: 'Check slug uniqueness for a book',
     description:
-      'Быстрая проверка доступности slug. Возвращает информацию о существующей книге и предлагает уникальный вариант если slug занят.',
+      'Quick availability check for a slug. Returns info about an existing book and suggests a unique option if the slug is taken.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Результат проверки slug',
+    description: 'Slug check result',
     type: CheckBookSlugResponseDto,
   })
   @ApiResponse({
     status: 400,
-    description: 'Невалидный формат slug',
+    description: 'Invalid slug format',
   })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -121,10 +121,10 @@ export class BookController {
   @ApiOperation({
     summary: 'Get book overview by slug',
     description:
-      'Агрегированный обзор книги: доступные языки, наличие текста/аудио/пересказа, ID версий и SEO-бандл. Публично показывает только опубликованные версии.',
+      'Aggregated overview of a book: available languages, presence of text/audio/summary, version IDs, and an SEO bundle. Only published versions are shown publicly.',
   })
   @ApiParam({ name: 'slug', description: 'Unique book slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Запрошенный язык (en|es|fr|pt)' })
+  @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
   @ApiResponse({ status: 200, description: 'Overview returned' })
   @ApiHeader({
     name: 'Accept-Language',

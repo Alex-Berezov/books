@@ -22,7 +22,7 @@ class AuthResponse {
 
 @ApiTags('auth')
 @Controller('auth')
-@UseGuards(AuthRateLimitGuard) // Применяем rate limiting ко всем auth endpoints
+@UseGuards(AuthRateLimitGuard) // Apply rate limiting to all auth endpoints
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 

@@ -67,12 +67,12 @@ export class TagsController {
     return this.service.remove(id);
   }
 
-  // Note: публичный путь теперь обрабатывается в PublicController (/:lang/tags/:slug/books)
-  // Публичный путь без префикса языка (обратная совместимость)
+  // Note: the public path is now handled in PublicController (/:lang/tags/:slug/books)
+  // Public path without language prefix (backward compatibility)
   @Get('tags/:slug/books')
-  @ApiOperation({ summary: 'Публичный список версий книги по тегу (без префикса языка)' })
+  @ApiOperation({ summary: 'Public list of book versions by tag (without language prefix)' })
   @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Опциональный язык (?lang=...)' })
+  @ApiQuery({ name: 'lang', required: false, description: 'Optional language (?lang=...)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
   publicBySlug(
     @Param('slug') slug: string,

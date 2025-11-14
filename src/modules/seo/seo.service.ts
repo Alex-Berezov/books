@@ -14,7 +14,7 @@ export class SeoService {
   constructor(private prisma: PrismaService) {
     const raw = process.env.SEO_CACHE_TTL_MS;
     const parsed = raw ? Number(raw) : NaN;
-    this.ttlMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 60 * 1000; // 5 минут по умолчанию
+    this.ttlMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 60 * 1000; // 5 minutes by default
   }
 
   private getCache(key: string): Seo | null | undefined {

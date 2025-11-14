@@ -22,18 +22,18 @@ export class PublicController {
 
   // Localized book overview
   @Get('books/:slug/overview')
-  @ApiOperation({ summary: 'Публичный обзор книги с префиксом языка' })
-  @ApiParam({ name: 'lang', description: 'Язык пути', enum: PrismaLanguage })
+  @ApiOperation({ summary: 'Public book overview with language prefix' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   @ApiQuery({
     name: 'lang',
     required: false,
-    description: 'Опциональный query lang (игнорируется, если задан язык пути)',
+    description: 'Optional query lang (ignored when a path language is provided)',
   })
   @ApiHeader({
     name: 'Accept-Language',
     required: false,
-    description: 'RFC 7231 header. При наличии языка в пути — имеет меньший приоритет.',
+    description: 'RFC 7231 header. When a path language is present, this has lower priority.',
   })
   overview(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
@@ -41,15 +41,15 @@ export class PublicController {
     @Query('lang') _queryLang?: string,
     @Headers('accept-language') acceptLanguage?: string,
   ) {
-    // Язык из пути имеет наивысший приоритет
-    // Также доступен reqLanguage, если нужно (резолв из guard)
+    // The language from the path has the highest priority
+    // reqLanguage is also available if needed (resolved by guard)
     return this.books.getOverview(slug, pathLang, acceptLanguage);
   }
 
   // Localized page by slug
   @Get('pages/:slug')
-  @ApiOperation({ summary: 'Публичная CMS-страница с префиксом языка' })
-  @ApiParam({ name: 'lang', description: 'Язык пути', enum: PrismaLanguage })
+  @ApiOperation({ summary: 'Public CMS page with language prefix' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   getPage(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Param('slug') slug: string) {
     return this.pages.getPublicBySlug(slug, pathLang);
@@ -57,8 +57,8 @@ export class PublicController {
 
   // Localized categories by translation slug
   @Get('categories/:slug/books')
-  @ApiOperation({ summary: 'Публичный список версий книги по локализованной категории' })
-  @ApiParam({ name: 'lang', description: 'Язык пути', enum: PrismaLanguage })
+  @ApiOperation({ summary: 'Public list of book versions by localized category' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   categoriesBySlug(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
@@ -69,8 +69,8 @@ export class PublicController {
 
   // Localized tags by translation slug
   @Get('tags/:slug/books')
-  @ApiOperation({ summary: 'Публичный список версий книги по локализованному тегу' })
-  @ApiParam({ name: 'lang', description: 'Язык пути', enum: PrismaLanguage })
+  @ApiOperation({ summary: 'Public list of book versions by localized tag' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   tagsBySlug(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Param('slug') slug: string) {
     return this.tags.versionsByTagLangSlug(pathLang, slug);

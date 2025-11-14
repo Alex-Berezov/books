@@ -29,7 +29,7 @@ function buildConnectionOpts(config: ConfigService): RedisOptions | string | nul
     host,
     port,
     password,
-    // BullMQ требует maxRetriesPerRequest: null для блокирующих операций (Worker, QueueEvents)
+    // BullMQ requires maxRetriesPerRequest: null for blocking operations (Worker, QueueEvents)
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
   };
@@ -43,7 +43,7 @@ const redisProvider: Provider = {
     const opts = buildConnectionOpts(config);
     if (!opts) return undefined;
     if (typeof opts === 'string') {
-      // BullMQ требует maxRetriesPerRequest: null для блокирующих операций
+      // BullMQ requires maxRetriesPerRequest: null for blocking operations
       return new IORedis(opts, { maxRetriesPerRequest: null });
     }
 
@@ -124,7 +124,7 @@ export class QueueModule implements OnModuleDestroy {
   ) {}
 
   async onModuleDestroy() {
-    // Graceful shutdown: закрываем воркер, очередь, события и Redis подключение
+    // Graceful shutdown: close worker, queue, events, and Redis connection
     if (this.worker) {
       await this.worker.close();
     }

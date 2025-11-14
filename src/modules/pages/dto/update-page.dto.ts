@@ -5,13 +5,13 @@ import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug
 import { SeoInputDto } from './seo-input.dto';
 
 export class UpdatePageDto {
-  @ApiPropertyOptional({ description: 'Slug страницы', pattern: SLUG_PATTERN })
+  @ApiPropertyOptional({ description: 'Page slug', pattern: SLUG_PATTERN })
   @IsOptional()
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;
 
-  @ApiPropertyOptional({ description: 'Заголовок страницы' })
+  @ApiPropertyOptional({ description: 'Page title' })
   @IsOptional()
   @IsString()
   @MinLength(2)
@@ -22,7 +22,7 @@ export class UpdatePageDto {
   @IsIn(['generic', 'category_index', 'author_index'])
   type?: 'generic' | 'category_index' | 'author_index';
 
-  @ApiPropertyOptional({ description: 'Контент страницы (markdown/HTML/текст)' })
+  @ApiPropertyOptional({ description: 'Page content (markdown/HTML/text)' })
   @IsOptional()
   @IsString()
   content?: string;
@@ -32,13 +32,13 @@ export class UpdatePageDto {
   @IsIn(['en', 'es', 'fr', 'pt'])
   language?: 'en' | 'es' | 'fr' | 'pt';
 
-  @ApiPropertyOptional({ description: 'ID SEO сущности', nullable: true })
+  @ApiPropertyOptional({ description: 'SEO entity ID', nullable: true })
   @IsOptional()
   @Type(() => Number)
   seoId?: number | null;
 
   @ApiPropertyOptional({
-    description: 'SEO данные (автоматически создаёт/обновляет SEO entity)',
+    description: 'SEO data (automatically creates/updates the SEO entity)',
     type: SeoInputDto,
   })
   @IsOptional()
@@ -46,7 +46,7 @@ export class UpdatePageDto {
   @Type(() => SeoInputDto)
   seo?: SeoInputDto;
 
-  @ApiPropertyOptional({ description: 'Статус публикации', enum: ['draft', 'published'] })
+  @ApiPropertyOptional({ description: 'Publication status', enum: ['draft', 'published'] })
   @IsOptional()
   @IsIn(['draft', 'published'])
   status?: 'draft' | 'published';

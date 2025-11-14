@@ -187,7 +187,7 @@ export class TagsService {
       where: { bookVersionId: versionId, tagId },
       select: { id: true },
     });
-    if (exists) return exists; // идемпотентность
+    if (exists) return exists; // idempotency
 
     try {
       return await this.prisma.bookTag.create({ data: { bookVersionId: versionId, tagId } });

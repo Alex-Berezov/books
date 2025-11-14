@@ -34,7 +34,7 @@ export class StatusController {
   }
 
   @Post('sentry-test')
-  @ApiOperation({ summary: 'Сгенерировать тестовую ошибку для проверки интеграции Sentry' })
+  @ApiOperation({ summary: 'Generate a test error to verify Sentry integration' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin)

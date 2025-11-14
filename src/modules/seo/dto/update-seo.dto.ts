@@ -2,7 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsISO8601, IsOptional, IsString, IsUrl } from 'class-validator';
 
 export class UpdateSeoDto {
-  // === Основные мета-теги ===
+  // === Primary meta tags ===
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

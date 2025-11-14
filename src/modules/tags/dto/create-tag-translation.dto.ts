@@ -8,12 +8,12 @@ export class CreateTagTranslationDto {
   @IsEnum(Language)
   language!: Language;
 
-  @ApiProperty({ description: 'Локализованное имя тега' })
+  @ApiProperty({ description: 'Localized tag name' })
   @IsString()
   @MinLength(2)
   name!: string;
 
-  @ApiProperty({ description: 'Локализованный slug тега', pattern: SLUG_PATTERN })
+  @ApiProperty({ description: 'Localized tag slug', pattern: SLUG_PATTERN })
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug!: string;

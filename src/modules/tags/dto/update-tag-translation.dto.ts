@@ -9,13 +9,13 @@ export class UpdateTagTranslationDto {
   @IsEnum(Language)
   language?: Language;
 
-  @ApiPropertyOptional({ description: 'Локализованное имя тега' })
+  @ApiPropertyOptional({ description: 'Localized tag name' })
   @IsOptional()
   @IsString()
   @MinLength(2)
   name?: string;
 
-  @ApiPropertyOptional({ description: 'Локализованный slug тега', pattern: SLUG_PATTERN })
+  @ApiPropertyOptional({ description: 'Localized tag slug', pattern: SLUG_PATTERN })
   @IsOptional()
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })

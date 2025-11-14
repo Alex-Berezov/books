@@ -3,19 +3,19 @@ import { PublicationStatus } from '@prisma/client';
 
 export class ExistingPageDto {
   @ApiProperty({
-    description: 'UUID страницы',
+    description: 'Page UUID',
     example: '550e8400-e29b-41d4-a716-446655440000',
   })
   id!: string;
 
   @ApiProperty({
-    description: 'Название страницы',
+    description: 'Page title',
     example: 'About Us',
   })
   title!: string;
 
   @ApiProperty({
-    description: 'Статус публикации',
+    description: 'Publication status',
     enum: PublicationStatus,
     example: 'published',
   })
@@ -24,19 +24,19 @@ export class ExistingPageDto {
 
 export class CheckPageSlugResponseDto {
   @ApiProperty({
-    description: 'true если slug уже занят',
+    description: 'true if the slug is already taken',
     example: false,
   })
   exists!: boolean;
 
   @ApiPropertyOptional({
-    description: 'Предлагаемый уникальный slug (если exists = true)',
+    description: 'Suggested unique slug (if exists = true)',
     example: 'about-us-2',
   })
   suggestedSlug?: string;
 
   @ApiPropertyOptional({
-    description: 'Информация о существующей странице (если exists = true)',
+    description: 'Information about the existing page (if exists = true)',
     type: ExistingPageDto,
   })
   existingPage?: ExistingPageDto;

@@ -64,7 +64,7 @@ class ListUsersQueryDto {
   @IsStringCls()
   q?: string;
 
-  // 'only' — только сотрудники (admin|content_manager); 'exclude' — исключить сотрудников
+  // 'only' — only staff (admin|content_manager); 'exclude' — exclude staff
   @IsOptionalCls()
   @IsStringCls()
   staff?: 'only' | 'exclude';

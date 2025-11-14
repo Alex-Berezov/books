@@ -104,11 +104,11 @@ export class CategoryController {
     return this.service.remove(id);
   }
 
-  // Публичный путь без префикса языка (для обратной совместимости)
+  // Public route without language prefix (for backward compatibility)
   @Get('categories/:slug/books')
-  @ApiOperation({ summary: 'Публичный список версий книги по категории (без префикса языка)' })
+  @ApiOperation({ summary: 'Public list of book versions by category (without language prefix)' })
   @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Опциональный язык (?lang=...)' })
+  @ApiQuery({ name: 'lang', required: false, description: 'Optional language (?lang=...)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
   publicBySlug(
     @Param('slug') slug: string,
@@ -118,9 +118,9 @@ export class CategoryController {
     return this.service.getBySlugWithBooks(slug, queryLang, acceptLanguage);
   }
 
-  // Публичный путь с префиксом языка
+  // Public route with a language prefix
   @Get(':lang/categories/:slug/books')
-  @ApiOperation({ summary: 'Публичный список версий книги по категории (с префиксом языка)' })
+  @ApiOperation({ summary: 'Public list of book versions by category (with language prefix)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiParam({ name: 'slug' })
   publicByLangSlug(@Param('lang') lang: Language, @Param('slug') slug: string) {
