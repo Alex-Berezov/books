@@ -102,10 +102,18 @@ export class BookVersionService {
   async getAdmin(id: string) {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      include: {
+        seo: { select: { metaTitle: true, metaDescription: true } },
+        book: { select: { slug: true } },
+      },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
-    return version;
+
+    // Добавляем bookSlug к результату
+    return {
+      ...version,
+      bookSlug: version.book.slug,
+    };
   }
 
   async update(id: string, dto: UpdateBookVersionDto) {

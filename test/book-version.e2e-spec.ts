@@ -27,6 +27,7 @@ describe('BookVersions e2e', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let bookId: string;
+  let bookSlug: string;
   let adminToken: string;
 
   beforeAll(async () => {
@@ -39,8 +40,10 @@ describe('BookVersions e2e', () => {
     await app.init();
 
     process.env.ADMIN_EMAILS = 'admin@example.com';
-    const book = await prisma.book.create({ data: { slug: `book-${Date.now()}` } });
+    const slug = `book-${Date.now()}`;
+    const book = await prisma.book.create({ data: { slug } });
     bookId = book.id;
+    bookSlug = slug;
 
     // ensure admin auth
     const email = 'admin@example.com';
@@ -100,6 +103,7 @@ describe('BookVersions e2e', () => {
     expect(adminGetDraft.body.id).toBe(versionId);
     expect(adminGetDraft.body.status).toBe('draft');
     expect(adminGetDraft.body.title).toBe('Title EN');
+    expect(adminGetDraft.body.bookSlug).toBe(bookSlug); // Проверяем, что bookSlug возвращается
 
     // Publish -> public should see now
     await request(http())
