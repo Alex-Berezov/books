@@ -2,6 +2,36 @@
 
 > **Для ИИ-агента бэкенда:** Краткая шпаргалка по миграции документации
 
+## ⚠️ ВАЖНО: Backend развернут на Production VPS!
+
+**🌐 Production API:** https://api.bibliaris.com
+
+**❌ НЕ запускай миграции локально!**
+
+- Backend работает на VPS (bibliaris.com)
+- База данных находится на production сервере
+- Все миграции Prisma нужно применять через SSH на сервере
+
+**✅ Для применения миграций Prisma:**
+
+```bash
+# 1. SSH на production сервер
+ssh deploy@bibliaris.com
+
+# 2. Перейти в директорию приложения
+cd /opt/books-app
+
+# 3. Применить миграцию
+docker compose --profile prod -f docker-compose.prod.yml exec app yarn prisma migrate deploy
+```
+
+**См. также:**
+
+- [Production Deployment Guide](deployment/production.md)
+- [Production Quick Commands](deployment/quick-commands.md)
+
+---
+
 ## 🎯 Задача
 
 Перенести документацию из `books-app-back/docs/` в `books-app-docs/backend/` и настроить MCP.
@@ -9,12 +39,14 @@
 ## ⚡ Команды для выполнения
 
 ### 1. Клонировать books-app-docs
+
 ```bash
 cd ~/Dev
 git clone git@github.com:Alex-Berezov/books-app-docs.git
 ```
 
-### 2. Создать структуру папок  
+### 2. Создать структуру папок
+
 ```bash
 cd books-app-docs
 mkdir -p backend/{api,architecture,deployment,guides,troubleshooting}
@@ -22,6 +54,7 @@ mkdir -p backend/api/examples
 ```
 
 ### 3. Скопировать документацию
+
 ```bash
 # Из бэкенд репо (адаптируй пути)
 cp ../books-app-back/docs/ENDPOINTS.md backend/api/endpoints.md
@@ -31,6 +64,7 @@ cp ../books-app-back/docs/PRODUCTION_DEPLOYMENT_GUIDE.md backend/deployment/prod
 ```
 
 ### 4. Очистить бэкенд репо
+
 ```bash
 cd ../books-app-back
 echo "docs/" >> .gitignore
@@ -42,6 +76,7 @@ git push
 ```
 
 ### 5. Настроить MCP (если не настроен)
+
 ```bash
 mkdir -p ~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings
 
@@ -51,7 +86,7 @@ cat > ~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mc
     "filesystem-bibliaris-docs": {
       "command": "npx",
       "args": [
-        "-y", 
+        "-y",
         "@modelcontextprotocol/server-filesystem",
         "/home/aleber/Dev/books-app-docs"
       ],
@@ -66,6 +101,7 @@ JSON
 ```
 
 ### 6. Коммитнуть в books-app-docs
+
 ```bash
 cd ~/Dev/books-app-docs
 git add backend/
@@ -76,6 +112,7 @@ git push origin main
 ## ✅ Проверка работы
 
 После перезапуска VS Code спроси у ИИ-агента:
+
 ```
 "Покажи структуру API для книг"
 ```
@@ -88,7 +125,7 @@ git push origin main
 - [ ] Создал структуру папок в backend/
 - [ ] Скопировал все .md файлы из books-app-back/docs/
 - [ ] Очистил books-app-back (gitignore + git rm)
-- [ ] Настроил MCP конфигурацию  
+- [ ] Настроил MCP конфигурацию
 - [ ] Перезапустил VS Code
 - [ ] Протестировал доступ к документации через ИИ
 - [ ] Закоммитил изменения в оба репо

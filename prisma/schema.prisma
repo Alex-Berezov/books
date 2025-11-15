@@ -36,7 +36,7 @@ model BookVersion {
   publishedAt     DateTime?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
-  book            Book              @relation(fields: [bookId], references: [id])
+  book            Book              @relation(fields: [bookId], references: [id], onDelete: Cascade)
   summaries       BookSummary[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
@@ -62,7 +62,7 @@ model BookSummary {
   themes        String?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
-  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
 }
 
 model Chapter {
@@ -72,7 +72,7 @@ model Chapter {
   title         String
   content       String
   createdAt     DateTime    @default(now())
-  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   comments      Comment[]
 
   @@unique([bookVersionId, number])
@@ -86,7 +86,7 @@ model AudioChapter {
   audioUrl      String
   duration      Int
   createdAt     DateTime    @default(now())
-  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   comments      Comment[]
 
   @@unique([bookVersionId, number])
@@ -118,7 +118,7 @@ model Bookshelf {
   bookVersionId String
   addedAt       DateTime    @default(now())
   user          User        @relation(fields: [userId], references: [id])
-  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
 
   @@unique([userId, bookVersionId])
 }
@@ -136,9 +136,9 @@ model Comment {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   user           User          @relation(fields: [userId], references: [id])
-  bookVersion    BookVersion?  @relation(fields: [bookVersionId], references: [id])
-  chapter        Chapter?      @relation(fields: [chapterId], references: [id])
-  audioChapter   AudioChapter? @relation(fields: [audioChapterId], references: [id])
+  bookVersion    BookVersion?  @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+  chapter        Chapter?      @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  audioChapter   AudioChapter? @relation(fields: [audioChapterId], references: [id], onDelete: Cascade)
   parent         Comment?      @relation("CommentParent", fields: [parentId], references: [id])
   children       Comment[]     @relation("CommentParent")
   likes          Like[]
@@ -156,8 +156,8 @@ model Like {
   commentId     String? // FK to Comment
   createdAt     DateTime     @default(now())
   user          User         @relation(fields: [userId], references: [id])
-  bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id])
-  comment       Comment?     @relation(fields: [commentId], references: [id])
+  bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+  comment       Comment?     @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
   @@unique([userId, commentId])
   @@unique([userId, bookVersionId])
@@ -184,7 +184,7 @@ model BookCategory {
   id            String      @id @default(uuid())
   bookVersionId String
   categoryId    String
-  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   category      Category    @relation(fields: [categoryId], references: [id])
 
   @@unique([bookVersionId, categoryId])
@@ -202,7 +202,7 @@ model BookTag {
   id            String      @id @default(uuid())
   bookVersionId String
   tagId         String
-  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   tag           Tag         @relation(fields: [tagId], references: [id])
 
   @@unique([bookVersionId, tagId])
@@ -216,7 +216,7 @@ model ViewStat {
   userId        String?
   source        ViewSource
   timestamp     DateTime    @default(now())
-  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   user          User?       @relation(fields: [userId], references: [id])
 
   @@index([bookVersionId, timestamp])
@@ -232,7 +232,7 @@ model ReadingProgress {
   position           Float
   updatedAt          DateTime    @updatedAt
   user               User        @relation(fields: [userId], references: [id])
-  bookVersion        BookVersion @relation(fields: [bookVersionId], references: [id])
+  bookVersion        BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
 
   @@unique([userId, bookVersionId])
 }
