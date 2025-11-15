@@ -159,7 +159,7 @@ describe('Books: Check Slug (e2e)', () => {
 
       // ValidationPipe returns the custom message from @Matches decorator
       expect(JSON.stringify((response.body as { message: unknown }).message)).toContain(
-        'Нижний регистр',
+        'Lowercase',
       );
     });
 

@@ -151,7 +151,7 @@ describe('Pages: Check Slug (e2e)', () => {
         .expect(400);
 
       // ValidationPipe returns the custom message from @Matches decorator
-      expect(JSON.stringify(response.body.message)).toContain('Нижний регистр');
+      expect(JSON.stringify(response.body.message)).toContain('Lowercase');
     });
 
     it('should return 401 without auth token', async () => {
