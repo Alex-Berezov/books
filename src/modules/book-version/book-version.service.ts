@@ -26,7 +26,7 @@ export class BookVersionService {
       const all = await this.prisma.bookVersion.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+        include: { seo: true },
       });
       const available = Array.from(new Set(all.map((v) => v.language)));
       const { resolveRequestedLanguage } = await import('../../shared/language/language.util');
@@ -78,7 +78,7 @@ export class BookVersionService {
             seoId,
             status: 'draft',
           },
-          include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+          include: { seo: true },
         });
       });
     } catch (e: any) {
@@ -92,7 +92,7 @@ export class BookVersionService {
   async getPublic(id: string) {
     const version = await this.prisma.bookVersion.findFirst({
       where: { id, status: 'published' },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      include: { seo: true },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
     return version;
@@ -103,7 +103,7 @@ export class BookVersionService {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id },
       include: {
-        seo: { select: { metaTitle: true, metaDescription: true } },
+        seo: true,
         book: { select: { slug: true } },
       },
     });
@@ -150,7 +150,7 @@ export class BookVersionService {
             ...updateData,
             seoId,
           },
-          include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+          include: { seo: true },
         });
         return updated;
       });
@@ -167,7 +167,7 @@ export class BookVersionService {
     if (!existing) throw new NotFoundException('BookVersion not found');
     return this.prisma.bookVersion.delete({
       where: { id },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      include: { seo: true },
     });
   }
 
@@ -177,7 +177,7 @@ export class BookVersionService {
     return this.prisma.bookVersion.update({
       where: { id },
       data: { status: 'published', publishedAt: new Date() },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      include: { seo: true },
     });
   }
 
@@ -187,7 +187,7 @@ export class BookVersionService {
     return this.prisma.bookVersion.update({
       where: { id },
       data: { status: 'draft', publishedAt: null },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      include: { seo: true },
     });
   }
 
@@ -205,7 +205,7 @@ export class BookVersionService {
     return this.prisma.bookVersion.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      include: { seo: true },
     });
   }
 }
