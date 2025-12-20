@@ -18,6 +18,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiQuery,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { CategoryTreeNodeDto } from './dto/category-tree-node.dto';
@@ -32,11 +33,50 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 import { Language } from '@prisma/client';
+import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
 
 @ApiTags('categories')
 @Controller()
 export class CategoryController {
   constructor(private readonly service: CategoryService) {}
+
+  @Get('categories/check-slug')
+  @ApiOperation({
+    summary: 'Check slug uniqueness for a category',
+    description:
+      'Quick availability check for a slug. Returns info about an existing category and suggests a unique option if the slug is taken.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Slug check result',
+    type: CheckCategorySlugResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid slug format',
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckCategorySlugResponseDto> {
+    const existingCategory = await this.service.checkSlugExists(query.slug, query.excludeId);
+
+    if (!existingCategory) {
+      return { exists: false };
+    }
+
+    const suggestedSlug = await this.service.generateUniqueSuggestedSlug(query.slug);
+
+    return {
+      exists: true,
+      suggestedSlug,
+      existingCategory: {
+        id: existingCategory.id,
+        name: existingCategory.name,
+        slug: existingCategory.slug,
+      },
+    };
+  }
 
   @Get('categories')
   @ApiOperation({ summary: 'List categories' })

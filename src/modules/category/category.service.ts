@@ -331,4 +331,31 @@ export class CategoryService {
     }
     return false;
   }
+
+  async checkSlugExists(slug: string, excludeId?: string) {
+    const where: Prisma.CategoryWhereInput = { slug };
+    if (excludeId) {
+      where.id = { not: excludeId };
+    }
+    return this.prisma.category.findFirst({
+      where,
+      select: { id: true, name: true, slug: true },
+    });
+  }
+
+  async generateUniqueSuggestedSlug(baseSlug: string): Promise<string> {
+    let counter = 1;
+    let candidate = baseSlug;
+
+    // Check if base slug exists
+    let exists = await this.prisma.category.findFirst({ where: { slug: candidate } });
+
+    while (exists) {
+      counter++;
+      candidate = `${baseSlug}-${counter}`;
+      exists = await this.prisma.category.findFirst({ where: { slug: candidate } });
+    }
+
+    return candidate;
+  }
 }
