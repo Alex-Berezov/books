@@ -1,4 +1,7 @@
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 /*
   Cleanup duplicate (bookId, language) BookVersion rows keeping earliest createdAt.
@@ -7,7 +10,10 @@ import { PrismaClient } from '@prisma/client';
     APPLY=1 ts-node prisma/scripts/cleanup-duplicate-book-versions.ts    # perform deletions
 */
 async function main() {
-  const prisma = new PrismaClient();
+  const connectionString = process.env.DATABASE_URL;
+  const pool = new Pool({ connectionString });
+  const adapter = new PrismaPg(pool);
+  const prisma = new PrismaClient({ adapter });
   const apply = process.env.APPLY === '1';
 
   const duplicates = await prisma.$queryRaw<{ bookId: string; language: string; ids: string[] }[]>`

@@ -38,16 +38,32 @@ export default function globalSetup(): void {
 
   // Create database (ignore if exists just in case reruns)
   const createSql = `CREATE DATABASE "${dbName}";`;
-  const createCmd = `npx prisma db execute --url="${adminUrl}" --stdin`;
+  const createCmd = `npx prisma db execute --stdin`;
   try {
-    execSync(createCmd, { input: createSql, stdio: ['pipe', 'inherit', 'inherit'] });
+    execSync(createCmd, {
+      input: createSql,
+      stdio: ['pipe', 'inherit', 'inherit'],
+      env: { ...process.env, DATABASE_URL: adminUrl },
+    });
   } catch {
     // If creation fails because it exists, drop and recreate to ensure a clean slate
     const terminateSql = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}';`;
     const dropSql = `DROP DATABASE IF EXISTS "${dbName}";`;
-    execSync(createCmd, { input: terminateSql, stdio: ['pipe', 'inherit', 'inherit'] });
-    execSync(createCmd, { input: dropSql, stdio: ['pipe', 'inherit', 'inherit'] });
-    execSync(createCmd, { input: createSql, stdio: ['pipe', 'inherit', 'inherit'] });
+    execSync(createCmd, {
+      input: terminateSql,
+      stdio: ['pipe', 'inherit', 'inherit'],
+      env: { ...process.env, DATABASE_URL: adminUrl },
+    });
+    execSync(createCmd, {
+      input: dropSql,
+      stdio: ['pipe', 'inherit', 'inherit'],
+      env: { ...process.env, DATABASE_URL: adminUrl },
+    });
+    execSync(createCmd, {
+      input: createSql,
+      stdio: ['pipe', 'inherit', 'inherit'],
+      env: { ...process.env, DATABASE_URL: adminUrl },
+    });
   }
 
   // Point Prisma to the temporary database and apply migrations + seed

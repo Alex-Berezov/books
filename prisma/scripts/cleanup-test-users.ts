@@ -5,9 +5,15 @@
   - Dry-run by default; set APPLY=1 to actually delete
 */
 
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
 
-const prisma = new PrismaClient();
+const connectionString = process.env.DATABASE_URL;
+const pool = new Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 // Adjust patterns if needed
 const EMAIL_PREFIXES = [

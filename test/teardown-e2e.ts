@@ -10,9 +10,17 @@ export default function globalTeardown(): void {
     // Terminate connections and drop the temporary database
     const terminateSql = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}';`;
     const dropSql = `DROP DATABASE IF EXISTS "${dbName}";`;
-    const cmd = `npx prisma db execute --url="${adminUrl}" --stdin`;
-    execSync(cmd, { input: terminateSql, stdio: ['pipe', 'inherit', 'inherit'] });
-    execSync(cmd, { input: dropSql, stdio: ['pipe', 'inherit', 'inherit'] });
+    const cmd = `npx prisma db execute --stdin`;
+    execSync(cmd, {
+      input: terminateSql,
+      stdio: ['pipe', 'inherit', 'inherit'],
+      env: { ...process.env, DATABASE_URL: adminUrl },
+    });
+    execSync(cmd, {
+      input: dropSql,
+      stdio: ['pipe', 'inherit', 'inherit'],
+      env: { ...process.env, DATABASE_URL: adminUrl },
+    });
   } catch {
     // ignore
   }
