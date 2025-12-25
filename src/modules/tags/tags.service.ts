@@ -11,9 +11,42 @@ import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 export class TagsService {
   constructor(private prisma: PrismaService) {}
 
-  list(page = 1, limit = 20) {
+  async list(page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    return this.prisma.tag.findMany({ orderBy: { name: 'asc' }, skip, take: limit });
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.tag.count(),
+      this.prisma.tag.findMany({
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+        include: {
+          translations: {
+            select: {
+              language: true,
+              name: true,
+              slug: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const data = items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      slug: item.slug,
+      translations: item.translations,
+    }));
+
+    return {
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async create(dto: CreateTagDto) {

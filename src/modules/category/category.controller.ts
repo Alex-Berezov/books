@@ -35,6 +35,7 @@ import { UpdateCategoryTranslationDto } from './dto/update-category-translation.
 import { Language } from '@prisma/client';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
+import { PaginatedCategoriesResponse } from './dto/category-response.dto';
 
 @ApiTags('categories')
 @Controller()
@@ -80,9 +81,10 @@ export class CategoryController {
 
   @Get('categories')
   @ApiOperation({ summary: 'List categories' })
+  @ApiResponse({ status: 200, type: PaginatedCategoriesResponse })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  list(@Query() pagination?: PaginationDto) {
+  list(@Query() pagination?: PaginationDto): Promise<PaginatedCategoriesResponse> {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
     return this.service.list(page, limit);

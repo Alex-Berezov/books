@@ -12,7 +12,7 @@ import {
   UseGuards,
   Headers,
 } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags, ApiResponse } from '@nestjs/swagger';
 import { TagsService } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -24,6 +24,7 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { Language } from '@prisma/client';
+import { PaginatedTagsResponse } from './dto/tag-response.dto';
 
 @ApiTags('tags')
 @Controller()
@@ -32,9 +33,10 @@ export class TagsController {
 
   @Get('tags')
   @ApiOperation({ summary: 'List tags' })
+  @ApiResponse({ status: 200, type: PaginatedTagsResponse })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  list(@Query() pagination?: PaginationDto) {
+  list(@Query() pagination?: PaginationDto): Promise<PaginatedTagsResponse> {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
     return this.service.list(page, limit);
