@@ -489,7 +489,17 @@ run_migrations() {
     # Create a temporary .env file for migration
     echo "DATABASE_URL=\"$dburl\"" > .env.migration
     
-    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' --env-file .env.migration app npx prisma migrate deploy"
+    # Use --env-file if supported (docker compose v2), otherwise fallback to -e
+    if docker compose version | grep -q "v2"; then
+         # Try to use --env-file, but some older v2 versions might not support it for 'run' command
+         # So we will use the safe -e method but with the value from the file to avoid shell expansion issues
+         # Actually, let's stick to the most compatible way: export the variable and pass it
+         export DATABASE_URL="$dburl"
+         execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL app npx prisma migrate deploy"
+    else
+         # Fallback for older versions
+         execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL=\"$dburl\" app npx prisma migrate deploy"
+    fi
     
     rm -f .env.migration
     
