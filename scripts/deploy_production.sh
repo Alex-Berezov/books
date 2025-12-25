@@ -486,25 +486,21 @@ run_migrations() {
         fi
     fi
     
-    # Create a temporary .env file for migration
-    echo "DATABASE_URL=\"$dburl\"" > .env.migration
+    # We need to pass DATABASE_URL to the container.
+    # Using -e DATABASE_URL="..." can be problematic with special characters.
+    # Using --env-file is not supported in all docker compose versions.
+    # Best approach: Write to a temporary env file and tell docker compose to use it as the MAIN env file for this run.
+    # But we can't easily replace .env.prod.
     
-    # Use --env-file if supported (docker compose v2), otherwise fallback to -e
-    if docker compose version | grep -q "v2"; then
-         # Try to use --env-file, but some older v2 versions might not support it for 'run' command
-         # So we will use the safe -e method but with the value from the file to avoid shell expansion issues
-         # Actually, let's stick to the most compatible way: export the variable and pass it
-         export DATABASE_URL="$dburl"
-         # Note: When using -e VAR without value, docker compose looks up the value in the shell environment
-         # However, sudo or other context switches might clear it.
-         # Let's try passing it explicitly but quoted properly to avoid shell expansion of special chars
-         execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL=\"$dburl\" app npx prisma migrate deploy"
-    else
-         # Fallback for older versions
-         execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL=\"$dburl\" app npx prisma migrate deploy"
-    fi
+    # Alternative: Use the fact that we are running 'sh -c' inside the container?
+    # No, we are running 'npx prisma migrate deploy'.
     
-    rm -f .env.migration
+    # Let's try to use the environment variable from the shell, but ensure it is exported and available.
+    # And use -e DATABASE_URL (without value) to pass it through.
+    # To make this work, we must ensure the variable is in the environment of the 'docker compose' command.
+    
+    export DATABASE_URL="$dburl"
+    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL app npx prisma migrate deploy"
     
     log_success "Migrations applied"
 }
