@@ -486,7 +486,12 @@ run_migrations() {
         fi
     fi
     
-    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' -e DATABASE_URL=\"$dburl\" app npx prisma migrate deploy"
+    # Create a temporary .env file for migration
+    echo "DATABASE_URL=\"$dburl\"" > .env.migration
+    
+    execute "docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint '' --env-file .env.migration app npx prisma migrate deploy"
+    
+    rm -f .env.migration
     
     log_success "Migrations applied"
 }
