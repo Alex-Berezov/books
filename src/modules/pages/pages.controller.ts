@@ -217,4 +217,17 @@ export class PagesController {
   unpublish(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
     return this.service.setStatus(id, 'draft');
   }
+
+  @Get('admin/pages/group/:groupId')
+  @ApiOperation({ summary: 'Get all pages in a translation group' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of pages in the group',
+    type: [PageResponse],
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async findByGroup(@Param('groupId') groupId: string) {
+    return this.service.findByGroupId(groupId);
+  }
 }

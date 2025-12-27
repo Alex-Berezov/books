@@ -331,4 +331,12 @@ export class PagesService {
 
     return candidateSlug;
   }
+
+  async findByGroupId(translationGroupId: string) {
+    return this.prisma.page.findMany({
+      where: { translationGroupId },
+      include: { seo: true },
+      orderBy: { language: 'asc' },
+    });
+  }
 }
