@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Language, Prisma, PublicationStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
@@ -72,13 +73,85 @@ export class PagesService {
     };
   }
 
+  async adminListGrouped(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    // 1. Get unique translationGroupIds (pagination base)
+    // We only consider pages that have a translationGroupId.
+    // Pages without it (legacy) should ideally be migrated, but here we'll just ignore them or handle separately if needed.
+    // For now, assuming migration filled them or they are new.
+    const groups = await this.prisma.page.groupBy({
+      by: ['translationGroupId'],
+      where: { translationGroupId: { not: null } },
+      _max: { updatedAt: true },
+      orderBy: {
+        _max: { updatedAt: 'desc' },
+      },
+      skip,
+      take: limit,
+    });
+
+    const totalGroups = (
+      await this.prisma.page.groupBy({
+        by: ['translationGroupId'],
+        where: { translationGroupId: { not: null } },
+      })
+    ).length;
+
+    // 2. Fetch all pages for these groups
+    const groupIds = groups
+      .map((g): string | null => g.translationGroupId)
+      .filter((id): id is string => id !== null);
+
+    const pages = await this.prisma.page.findMany({
+      where: {
+        translationGroupId: { in: groupIds },
+      },
+      include: { seo: true },
+      orderBy: { language: 'asc' }, // Consistent order within group
+    });
+
+    // 3. Group them in memory
+    const groupedData = groupIds.map((groupId) => ({
+      translationGroupId: groupId,
+      pages: pages.filter((p) => p.translationGroupId === groupId),
+    }));
+
+    return {
+      data: groupedData,
+      meta: {
+        page,
+        limit,
+        total: totalGroups,
+        totalPages: Math.ceil(totalGroups / limit),
+      },
+    };
+  }
+
   async findById(id: string) {
     const page = await this.prisma.page.findUnique({
       where: { id },
       include: { seo: true },
     });
     if (!page) throw new NotFoundException('Page not found');
-    return page;
+
+    let translations: any[] = [];
+    if (page.translationGroupId) {
+      translations = await this.prisma.page.findMany({
+        where: {
+          translationGroupId: page.translationGroupId,
+          id: { not: page.id },
+        },
+        select: {
+          id: true,
+          language: true,
+          slug: true,
+          title: true,
+        },
+      });
+    }
+
+    return { ...page, translations };
   }
 
   async create(dto: CreatePageDto, language: Language) {
@@ -103,6 +176,8 @@ export class PagesService {
       finalSeoId = dto.seoId;
     }
 
+    const translationGroupId = dto.translationGroupId || randomUUID();
+
     try {
       return await this.prisma.page.create({
         data: {
@@ -111,11 +186,13 @@ export class PagesService {
           type: dto.type,
           content: dto.content,
           language,
-          seoId: finalSeoId ?? null,
+          status: 'draft',
+          seoId: finalSeoId,
+          translationGroupId,
         },
         include: { seo: true },
       });
-    } catch (e: any) {
+    } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         // Composite unique violation (language, slug)
         throw new BadRequestException('Page with same slug already exists for this language');

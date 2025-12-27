@@ -25,6 +25,7 @@ import { Language } from '@prisma/client';
 import { PageResponse, PaginatedPagesResponse } from './dto/page-response.dto';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
+import { PaginatedPageGroupsResponse } from './dto/page-group-response.dto';
 
 @ApiTags('pages')
 @Controller()
@@ -81,6 +82,19 @@ export class PagesController {
         status: existingPage.status,
       },
     };
+  }
+
+  @Get('admin/pages')
+  @ApiOperation({ summary: 'Get all pages grouped by translation group (language agnostic)' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of page groups',
+    type: PaginatedPageGroupsResponse,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async findAllGrouped(@Query() query: PaginationDto) {
+    return this.service.adminListGrouped(query.page, query.limit);
   }
 
   // Public: get page by slug (only published)

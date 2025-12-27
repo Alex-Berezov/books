@@ -51,6 +51,20 @@ export class SeoResponse {
   updatedAt!: Date;
 }
 
+export class PageTranslation {
+  @ApiProperty({ example: 'uuid-here' })
+  id!: string;
+
+  @ApiProperty({ enum: Object.values(Language), example: 'fr' })
+  language!: Language;
+
+  @ApiProperty({ example: 'a-propos' })
+  slug!: string;
+
+  @ApiProperty({ example: 'À propos' })
+  title!: string;
+}
+
 export class PageResponse {
   @ApiProperty({ example: 'uuid-here' })
   id!: string;
@@ -84,6 +98,12 @@ export class PageResponse {
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   updatedAt!: Date;
+
+  @ApiProperty({ required: false, nullable: true, example: 'uuid-group' })
+  translationGroupId!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, type: [PageTranslation] })
+  translations?: PageTranslation[];
 }
 
 export class PaginationMeta {

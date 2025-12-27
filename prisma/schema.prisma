@@ -270,6 +270,7 @@ model Page {
   content   String
   status    PublicationStatus @default(draft)
   language  Language
+  translationGroupId String? @map("translation_group_id") @db.Uuid
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
   // Optional SEO one-to-one
@@ -278,6 +279,7 @@ model Page {
 
   @@unique([language, slug])
   @@index([language])
+  @@index([translationGroupId])
 }
 
 // =====================

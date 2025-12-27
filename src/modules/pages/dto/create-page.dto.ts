@@ -1,6 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsOptional, IsString, Matches, MinLength, ValidateNested } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateNested,
+  IsUUID,
+} from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from './seo-input.dto';
 
@@ -46,4 +54,9 @@ export class CreatePageDto {
   @ValidateNested()
   @Type(() => SeoInputDto)
   seo?: SeoInputDto;
+
+  @ApiPropertyOptional({ description: 'Translation Group ID (UUID) to link translations' })
+  @IsOptional()
+  @IsUUID()
+  translationGroupId?: string;
 }
