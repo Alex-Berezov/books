@@ -14,7 +14,7 @@ export class LocalStorageService implements StorageService {
     const configured = process.env.LOCAL_UPLOADS_DIR || './var/uploads';
     this.baseDir = resolve(configured);
     // Default to 5000 to match dev server port; can be overridden via env
-    this.publicBaseUrl = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:5000/static';
+    this.publicBaseUrl = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:5000';
   }
 
   private resolvePath(key: string) {

@@ -1,7 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import helmet from 'helmet';
 import * as express from 'express';
-import { join } from 'node:path';
 import { getCorsConfig, getCorsConfigInfo } from '../../config/cors.config';
 
 /**
@@ -40,10 +39,4 @@ export function configureSecurity(app: INestApplication): void {
 
   // Raw body middleware for direct uploads (local driver)
   app.use('/api/uploads/direct', express.raw({ type: '*/*', limit: '110mb' }));
-
-  // Ensure static serving for local uploads (in addition to ServeStaticModule)
-  const uploadsRoot = process.env.LOCAL_UPLOADS_DIR
-    ? join(process.cwd(), process.env.LOCAL_UPLOADS_DIR)
-    : join(process.cwd(), 'var', 'uploads');
-  app.use('/static', express.static(uploadsRoot));
 }

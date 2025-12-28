@@ -11,7 +11,7 @@ describe('Uploads e2e (local driver)', () => {
 
   beforeAll(async () => {
     process.env.ADMIN_EMAILS = 'admin@example.com';
-    process.env.LOCAL_PUBLIC_BASE_URL = 'http://localhost:5000/static';
+    process.env.LOCAL_PUBLIC_BASE_URL = 'http://localhost:5000';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
@@ -55,7 +55,7 @@ describe('Uploads e2e (local driver)', () => {
       .set('content-type', 'image/png')
       .send(buf)
       .expect(201);
-    expect(direct.body.publicUrl).toContain('/static/');
+    expect(direct.body.publicUrl).toContain(pres.body.key);
 
     // confirm
     const confirm = await request(app.getHttpServer())

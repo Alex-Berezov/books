@@ -431,7 +431,7 @@ make e2e-serial   # yarn test:e2e:serial
 - HOST — адрес прослушивания (по умолчанию 0.0.0.0)
 - DEFAULT_LANGUAGE — язык по умолчанию для i18n-политики (по умолчанию `en`)
 - LOCAL_UPLOADS_DIR — каталог для локальных загрузок (по умолчанию `var/uploads`)
-- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес для генерации ссылок. Если не задан — по умолчанию `http://localhost:3000` в SEO/Sitemap, и `http://localhost:5000/static` для локального стораджа. Рекомендуется для dev ставить `http://localhost:5000/static`.
+- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес для генерации ссылок. Если не задан — по умолчанию `http://localhost:3000` в SEO/Sitemap, и `http://localhost:5000` для локального стораджа. Рекомендуется для dev ставить `http://localhost:5000`.
 - CORS_ORIGIN — разрешённый Origin для CORS (по умолчанию `*`).
 - BODY_LIMIT_JSON — лимит для JSON-тел (по умолчанию `1mb`).
 - BODY_LIMIT_URLENCODED — лимит для urlencoded-тел (по умолчанию `1mb`).
@@ -609,10 +609,10 @@ yarn test:e2e -- tags.e2e-spec.ts
   - GitHub: `.github/workflows/ci.yml` — вызывает `yarn ci`.
   - GitLab: `.gitlab-ci.yml` — stage `ci`, также вызывает `yarn ci`.
 
-## Статические файлы (/static) и локальные загрузки
+## Статические файлы и локальные загрузки
 
 - Локальные загрузки сохраняются в каталог `LOCAL_UPLOADS_DIR` (по умолчанию `var/uploads`).
-- Файлы автоматически отдаются по пути `/static`, пример: `http://localhost:5000/static/<relative-path>`.
+- Файлы автоматически отдаются от корня, пример: `http://localhost:5000/<relative-path>`.
 - Прямые загрузки (локальный драйвер): POST `/api/uploads/direct` (лимит ~110 МБ, см. `main.ts`).
 - Переиспользование файлов через Media Library:
 

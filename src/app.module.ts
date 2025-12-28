@@ -48,7 +48,7 @@ const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/upl
     PrismaModule,
     SecurityModule,
     // Static files for local uploads
-    ServeStaticModule.forRoot({ rootPath: staticRoot, serveRoot: '/static' }),
+    ServeStaticModule.forRoot({ rootPath: staticRoot, serveRoot: '/' }),
     CacheModule,
     RateLimitModule,
     BookModule,

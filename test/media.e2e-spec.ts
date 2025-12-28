@@ -48,7 +48,7 @@ describe('Media e2e', () => {
   it('confirm, list, delete', async () => {
     // Simulate that file was uploaded via /uploads
     const key = `covers/2025/08/26/${Date.now()}.jpg`;
-    const url = `http://localhost:3000/static/${key}`;
+    const url = `http://localhost:3000/${key}`;
 
     // Confirm
     const confirmRes = await request(http())
