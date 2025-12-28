@@ -12,6 +12,8 @@ services:
       PORT: ${PORT:-5000}
       HOST: 0.0.0.0
     # Port 5000 is accessible only on localhost for the Caddy reverse proxy
+    volumes:
+      - uploads_data_prod:/app/var/uploads
     ports:
       - '127.0.0.1:${PORT:-5000}:5000'
     depends_on:
@@ -44,3 +46,4 @@ services:
 
 volumes:
   postgres_data_prod:
+  uploads_data_prod:

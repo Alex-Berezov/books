@@ -37,6 +37,7 @@ import { PrismaModule } from './shared/prisma/prisma.module';
 import { SecurityModule } from './shared/security/security.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
+console.log(`[AppModule] Serving static files from: ${staticRoot}`);
 
 @Module({
   imports: [

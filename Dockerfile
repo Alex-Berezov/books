@@ -31,5 +31,6 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN mkdir -p var/uploads
 EXPOSE 5000
 CMD ["/usr/local/bin/docker-entrypoint.sh"]
