@@ -31,6 +31,8 @@ import {
   Min,
   Max,
 } from 'class-validator';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 interface RequestUser {
   userId: string;
@@ -41,6 +43,9 @@ class PublicUserDto {
   id!: string;
   email!: string;
   name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  isActive?: boolean;
   avatarUrl?: string | null;
   languagePreference!: string;
   createdAt!: Date;
@@ -176,5 +181,21 @@ export class UsersController {
   @Delete(':id/roles/:role')
   revokeRole(@Param('id') id: string, @Param('role') role: RoleName) {
     return this.users.revokeRole(id, role);
+  }
+
+  @ApiOperation({ summary: 'Create user (admin only)' })
+  @ApiOkResponse({ type: PublicUserDto })
+  @Roles(Role.Admin)
+  @Post()
+  create(@Body() dto: CreateUserDto) {
+    return this.users.create(dto);
+  }
+
+  @ApiOperation({ summary: 'Update user (admin only)' })
+  @ApiOkResponse({ type: PublicUserDto })
+  @Roles(Role.Admin)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+    return this.users.update(id, dto);
   }
 }

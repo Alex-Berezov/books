@@ -24,6 +24,6 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
   ],
   controllers: [AuthController],
   providers: [AuthService, PrismaService, JwtStrategy],
-  exports: [AuthService],
+  exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

@@ -93,11 +93,11 @@ export class AuthService {
         });
     }
 
-    const tokens = await this.signTokens(user.id, user.email);
+    const roles = await this.computeRoles(user);
+    const tokens = await this.signTokens(user.id, user.email, roles);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
 
     // Include roles in register response
-    const roles = await this.computeRoles(user);
     return { user: { ...this.publicUser(user), roles }, ...tokens };
   }
 
@@ -112,11 +112,11 @@ export class AuthService {
     const valid = await argon2.verify(user.passwordHash, dto.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    const tokens = await this.signTokens(user.id, user.email);
+    const roles = await this.computeRoles(user);
+    const tokens = await this.signTokens(user.id, user.email, roles);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
 
     // Include roles in login response
-    const roles = await this.computeRoles(user);
     return { user: { ...this.publicUser(user), roles }, ...tokens };
   }
 
@@ -125,7 +125,12 @@ export class AuthService {
     const payload = await this.jwt.verifyAsync<{ sub: string; email: string }>(dto.refreshToken, {
       secret: refreshSecret,
     });
-    const tokens = await this.signTokens(payload.sub, payload.email);
+
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const roles = await this.computeRoles(user);
+    const tokens = await this.signTokens(payload.sub, payload.email, roles);
     return tokens;
   }
 
@@ -136,21 +141,18 @@ export class AuthService {
   private async signTokens(
     userId: string,
     email: string,
+    roles: RoleName[],
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const accessSecret = this.config.get<string>('JWT_ACCESS_SECRET') || 'dev_access_secret';
     const refreshSecret = this.config.get<string>('JWT_REFRESH_SECRET') || 'dev_refresh_secret';
     const accessExpiresIn = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
     const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
 
+    const payload = { sub: userId, email, roles };
+
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwt.signAsync(
-        { sub: userId, email },
-        { secret: accessSecret, expiresIn: accessExpiresIn },
-      ),
-      this.jwt.signAsync(
-        { sub: userId, email },
-        { secret: refreshSecret, expiresIn: refreshExpiresIn },
-      ),
+      this.jwt.signAsync(payload, { secret: accessSecret, expiresIn: accessExpiresIn }),
+      this.jwt.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExpiresIn }),
     ]);
     return { accessToken, refreshToken };
   }
@@ -160,6 +162,9 @@ export class AuthService {
       id: user.id,
       email: user.email,
       name: user.name,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      isActive: user.isActive,
       avatarUrl: user.avatarUrl,
       languagePreference: user.languagePreference,
       createdAt: user.createdAt,

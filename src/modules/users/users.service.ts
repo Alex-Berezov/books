@@ -1,7 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { User, Language as PrismaLanguage, RoleName, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
+import * as argon2 from 'argon2';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 type PublicUser = Omit<User, 'passwordHash'>;
 
@@ -20,6 +28,9 @@ export class UsersService {
       id: user.id,
       email: user.email,
       name: user.name,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      isActive: user.isActive,
       avatarUrl: user.avatarUrl,
       languagePreference: user.languagePreference,
       createdAt: user.createdAt,
@@ -44,6 +55,9 @@ export class UsersService {
       id: user.id,
       email: user.email,
       name: user.name,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      isActive: user.isActive,
       avatarUrl: user.avatarUrl,
       languagePreference: user.languagePreference,
       createdAt: user.createdAt,
@@ -102,6 +116,9 @@ export class UsersService {
       id: deleted.id,
       email: deleted.email,
       name: deleted.name,
+      firstName: deleted.firstName,
+      lastName: deleted.lastName,
+      isActive: deleted.isActive,
       avatarUrl: deleted.avatarUrl,
       languagePreference: deleted.languagePreference,
       createdAt: deleted.createdAt,
@@ -275,6 +292,9 @@ export class UsersService {
         id: u.id,
         email: u.email,
         name: u.name,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        isActive: u.isActive,
         avatarUrl: u.avatarUrl,
         languagePreference: u.languagePreference,
         createdAt: u.createdAt,
@@ -284,5 +304,87 @@ export class UsersService {
     );
 
     return { items, total, page, limit };
+  }
+
+  async create(dto: CreateUserDto): Promise<PublicUser & { roles: RoleName[] }> {
+    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (existing) throw new ConflictException('Email already in use');
+
+    const passwordHash = await argon2.hash(dto.password);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        passwordHash,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        name: [dto.firstName, dto.lastName].filter(Boolean).join(' ') || undefined,
+        isActive: dto.isActive ?? true,
+        languagePreference: PrismaLanguage.en, // Default
+        roles: {
+          create: (dto.roles || [RoleName.user]).map((role) => ({
+            role: { connect: { name: role } },
+          })),
+        },
+      },
+      include: { roles: { include: { role: true } } },
+    });
+
+    const roles = user.roles.map((ur) => ur.role.name);
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      isActive: user.isActive,
+      avatarUrl: user.avatarUrl,
+      languagePreference: user.languagePreference,
+      createdAt: user.createdAt,
+      lastLogin: user.lastLogin,
+      roles,
+    };
+  }
+
+  async update(id: string, dto: UpdateUserDto): Promise<PublicUser & { roles: RoleName[] }> {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const { password, ...rest } = dto;
+    const data: Prisma.UserUpdateInput = {
+      ...rest,
+    };
+
+    if (dto.firstName !== undefined || dto.lastName !== undefined) {
+      const newFirstName = dto.firstName ?? user.firstName;
+      const newLastName = dto.lastName ?? user.lastName;
+      data.name = [newFirstName, newLastName].filter(Boolean).join(' ') || null;
+    }
+
+    if (password) {
+      data.passwordHash = await argon2.hash(password);
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data,
+    });
+
+    const roles = await this.computeRoles(updatedUser);
+
+    return {
+      id: updatedUser.id,
+      email: updatedUser.email,
+      name: updatedUser.name,
+      firstName: updatedUser.firstName,
+      lastName: updatedUser.lastName,
+      isActive: updatedUser.isActive,
+      avatarUrl: updatedUser.avatarUrl,
+      languagePreference: updatedUser.languagePreference,
+      createdAt: updatedUser.createdAt,
+      lastLogin: updatedUser.lastLogin,
+      roles,
+    };
   }
 }
