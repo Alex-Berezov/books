@@ -122,6 +122,8 @@ describe('AuthService (unit)', () => {
 
   it('refresh: verifies refresh token and returns new pair', async () => {
     jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email });
+    prisma.user.findUnique.mockResolvedValueOnce(user);
+    prisma.userRole.findMany.mockResolvedValue([]); // no DB roles
     jwt.signAsync = jest.fn().mockResolvedValueOnce('a3').mockResolvedValueOnce('r3');
     const res = await service.refresh({ refreshToken: 'tok' });
     expect(res.accessToken).toBe('a3');
