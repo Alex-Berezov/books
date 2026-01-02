@@ -131,6 +131,9 @@ export class CategoryService {
     // Detach all books first
     await this.prisma.bookCategory.deleteMany({ where: { categoryId: id } });
 
+    // Delete translations
+    await this.prisma.categoryTranslation.deleteMany({ where: { categoryId: id } });
+
     return this.prisma.category.delete({ where: { id } });
   }
 
