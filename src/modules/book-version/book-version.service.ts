@@ -92,10 +92,18 @@ export class BookVersionService {
   async getPublic(id: string) {
     const version = await this.prisma.bookVersion.findFirst({
       where: { id, status: 'published' },
-      include: { seo: true },
+      include: {
+        seo: true,
+        categories: {
+          include: { category: true },
+        },
+      },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
-    return version;
+    return {
+      ...version,
+      categories: version.categories.map((c) => c.category),
+    };
   }
 
   // Админский доступ — любая версия
@@ -105,6 +113,9 @@ export class BookVersionService {
       include: {
         seo: true,
         book: { select: { slug: true } },
+        categories: {
+          include: { category: true },
+        },
       },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
@@ -113,6 +124,7 @@ export class BookVersionService {
     return {
       ...version,
       bookSlug: version.book.slug,
+      categories: version.categories.map((c) => c.category),
     };
   }
 

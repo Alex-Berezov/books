@@ -128,6 +128,9 @@ export class CategoryService {
     if (childrenCount > 0) {
       throw new BadRequestException('Cannot delete category with children');
     }
+    // Detach all books first
+    await this.prisma.bookCategory.deleteMany({ where: { categoryId: id } });
+
     return this.prisma.category.delete({ where: { id } });
   }
 

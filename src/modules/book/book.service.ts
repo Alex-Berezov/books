@@ -41,27 +41,55 @@ export class BookService {
   async findOne(id: string) {
     const book = await this.prisma.book.findUnique({
       where: { id },
-      include: { versions: true },
+      include: {
+        versions: {
+          include: {
+            categories: {
+              include: { category: true },
+            },
+          },
+        },
+      },
     });
 
     if (!book) {
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
 
-    return book;
+    return {
+      ...book,
+      versions: book.versions.map((v) => ({
+        ...v,
+        categories: v.categories.map((c) => c.category),
+      })),
+    };
   }
 
   async findBySlug(slug: string) {
     const book = await this.prisma.book.findUnique({
       where: { slug },
-      include: { versions: true },
+      include: {
+        versions: {
+          include: {
+            categories: {
+              include: { category: true },
+            },
+          },
+        },
+      },
     });
 
     if (!book) {
       throw new NotFoundException(`Book with slug ${slug} not found`);
     }
 
-    return book;
+    return {
+      ...book,
+      versions: book.versions.map((v) => ({
+        ...v,
+        categories: v.categories.map((c) => c.category),
+      })),
+    };
   }
 
   // Overview aggregation for frontend
