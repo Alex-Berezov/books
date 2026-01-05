@@ -63,6 +63,13 @@ export class TagsService {
   async remove(id: string) {
     const exists = await this.prisma.tag.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Tag not found');
+
+    // Detach from books
+    await this.prisma.bookTag.deleteMany({ where: { tagId: id } });
+
+    // Delete translations
+    await this.prisma.tagTranslation.deleteMany({ where: { tagId: id } });
+
     return this.prisma.tag.delete({ where: { id } });
   }
 
