@@ -47,6 +47,9 @@ export class BookService {
             categories: {
               include: { category: true },
             },
+            tags: {
+              include: { tag: true },
+            },
           },
         },
       },
@@ -61,6 +64,7 @@ export class BookService {
       versions: book.versions.map((v) => ({
         ...v,
         categories: v.categories.map((c) => c.category),
+        tags: v.tags.map((t) => t.tag),
       })),
     };
   }
@@ -73,6 +77,9 @@ export class BookService {
           include: {
             categories: {
               include: { category: true },
+            },
+            tags: {
+              include: { tag: true },
             },
           },
         },
@@ -88,6 +95,7 @@ export class BookService {
       versions: book.versions.map((v) => ({
         ...v,
         categories: v.categories.map((c) => c.category),
+        tags: v.tags.map((t) => t.tag),
       })),
     };
   }

@@ -97,12 +97,16 @@ export class BookVersionService {
         categories: {
           include: { category: true },
         },
+        tags: {
+          include: { tag: true },
+        },
       },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
     return {
       ...version,
       categories: version.categories.map((c) => c.category),
+      tags: version.tags.map((t) => t.tag),
     };
   }
 
@@ -116,6 +120,9 @@ export class BookVersionService {
         categories: {
           include: { category: true },
         },
+        tags: {
+          include: { tag: true },
+        },
       },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
@@ -125,6 +132,7 @@ export class BookVersionService {
       ...version,
       bookSlug: version.book.slug,
       categories: version.categories.map((c) => c.category),
+      tags: version.tags.map((t) => t.tag),
     };
   }
 
