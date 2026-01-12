@@ -11,11 +11,22 @@ import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 export class TagsService {
   constructor(private prisma: PrismaService) {}
 
-  async list(page = 1, limit = 20) {
+  async list(page = 1, limit = 20, search?: string) {
     const skip = (page - 1) * limit;
+    const where: Prisma.TagWhereInput = search
+      ? {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { slug: { contains: search, mode: 'insensitive' } },
+            { translations: { some: { name: { contains: search, mode: 'insensitive' } } } },
+          ],
+        }
+      : {};
+
     const [total, items] = await this.prisma.$transaction([
-      this.prisma.tag.count(),
+      this.prisma.tag.count({ where }),
       this.prisma.tag.findMany({
+        where,
         orderBy: { name: 'asc' },
         skip,
         take: limit,

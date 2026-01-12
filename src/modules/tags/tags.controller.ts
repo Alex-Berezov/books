@@ -17,7 +17,7 @@ import { TagsService } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { AttachTagDto } from './dto/attach-tag.dto';
-import { PaginationDto } from '../../shared/dto/pagination.dto';
+import { ListTagsDto } from './dto/list-tags.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -36,10 +36,11 @@ export class TagsController {
   @ApiResponse({ status: 200, type: PaginatedTagsResponse })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  list(@Query() pagination?: PaginationDto): Promise<PaginatedTagsResponse> {
-    const page = pagination?.page ?? 1;
-    const limit = pagination?.limit ?? 20;
-    return this.service.list(page, limit);
+  @ApiQuery({ name: 'q', required: false, type: String })
+  list(@Query() query?: ListTagsDto): Promise<PaginatedTagsResponse> {
+    const page = query?.page ?? 1;
+    const limit = query?.limit ?? 20;
+    return this.service.list(page, limit, query?.q);
   }
 
   @Post('tags')
