@@ -13,7 +13,6 @@ import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/
 import { ChapterService } from './chapter.service';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
-import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -26,13 +25,20 @@ export class ChapterController {
   constructor(private readonly service: ChapterService) {}
 
   @Get('versions/:bookVersionId/chapters')
-  @ApiOperation({ summary: 'List chapters by book version' })
+  @ApiOperation({
+    summary:
+      'List chapters by book version (returns all by default; pass page & limit for pagination)',
+  })
   @ApiParam({ name: 'bookVersionId' })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  list(@Param('bookVersionId') bookVersionId: string, @Query() pagination?: PaginationDto) {
-    const page = pagination?.page ?? 1;
-    const limit = pagination?.limit ?? 10;
+  list(
+    @Param('bookVersionId') bookVersionId: string,
+    @Query('page') rawPage?: string,
+    @Query('limit') rawLimit?: string,
+  ) {
+    const page = rawPage ? parseInt(rawPage, 10) : undefined;
+    const limit = rawLimit ? parseInt(rawLimit, 10) : undefined;
     return this.service.listByVersion(bookVersionId, page, limit);
   }
 

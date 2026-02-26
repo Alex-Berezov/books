@@ -34,13 +34,23 @@ describe('ChapterService', () => {
     service = new ChapterService(prisma as unknown as PrismaService);
   });
 
-  it('lists chapters by version ordered by number', async () => {
+  it('lists all chapters by version when no pagination', async () => {
     (prisma.chapter.findMany as jest.Mock).mockResolvedValue([
       { id: 'c1', number: 1 },
       { id: 'c2', number: 2 },
     ]);
-    const res = await service.listByVersion('v1', 1, 10);
+    const res = await service.listByVersion('v1');
     expect(res.length).toBe(2);
+    expect(prisma.chapter.findMany).toHaveBeenCalledWith({
+      where: { bookVersionId: 'v1' },
+      orderBy: { number: 'asc' },
+    });
+  });
+
+  it('lists chapters with pagination when page and limit provided', async () => {
+    (prisma.chapter.findMany as jest.Mock).mockResolvedValue([{ id: 'c1', number: 1 }]);
+    const res = await service.listByVersion('v1', 1, 10);
+    expect(res.length).toBe(1);
     expect(prisma.chapter.findMany).toHaveBeenCalledWith({
       where: { bookVersionId: 'v1' },
       orderBy: { number: 'asc' },
@@ -54,6 +64,29 @@ describe('ChapterService', () => {
     (prisma.chapter.create as jest.Mock).mockResolvedValue({ id: 'c1' });
     const res = await service.create('v1', { number: 1, title: 'T', content: 'C' });
     expect(res.id).toBe('c1');
+  });
+
+  it('auto-assigns next chapter number when number is omitted', async () => {
+    // First findFirst call (auto-assign): returns last chapter with number 5
+    // Second findFirst call (uniqueness check): returns null (no conflict)
+    (prisma.chapter.findFirst as jest.Mock)
+      .mockResolvedValueOnce({ number: 5 }) // last chapter
+      .mockResolvedValueOnce(null); // uniqueness check
+    (prisma.chapter.create as jest.Mock).mockResolvedValue({ id: 'c2', number: 6 });
+    const res = await service.create('v1', { title: 'T', content: 'C' });
+    expect(res.number).toBe(6);
+    expect(prisma.chapter.create).toHaveBeenCalledWith({
+      data: { bookVersionId: 'v1', number: 6, title: 'T', content: 'C' },
+    });
+  });
+
+  it('auto-assigns number 1 when no chapters exist and number is omitted', async () => {
+    (prisma.chapter.findFirst as jest.Mock)
+      .mockResolvedValueOnce(null) // no last chapter
+      .mockResolvedValueOnce(null); // uniqueness check
+    (prisma.chapter.create as jest.Mock).mockResolvedValue({ id: 'c1', number: 1 });
+    const res = await service.create('v1', { title: 'T', content: 'C' });
+    expect(res.number).toBe(1);
   });
 
   it('rejects duplicate number', async () => {

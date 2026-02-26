@@ -1,11 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateChapterDto {
-  @ApiProperty({ description: 'Chapter order number within the version', example: 1 })
+  @ApiProperty({
+    description: 'Chapter order number within the version (auto-assigned if omitted)',
+    example: 1,
+    required: false,
+  })
+  @IsOptional()
   @IsInt()
   @Min(1)
-  number!: number;
+  number?: number;
 
   @ApiProperty({ description: 'Chapter title', example: 'Chapter 1. The Boy Who Lived' })
   @IsString()

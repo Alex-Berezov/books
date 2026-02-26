@@ -8,19 +8,37 @@ import { Prisma } from '@prisma/client';
 export class ChapterService {
   constructor(private prisma: PrismaService) {}
 
-  listByVersion(bookVersionId: string, page = 1, limit = 10) {
-    const skip = (page - 1) * limit;
+  listByVersion(bookVersionId: string, page?: number, limit?: number) {
+    if (page && limit) {
+      const skip = (page - 1) * limit;
+      return this.prisma.chapter.findMany({
+        where: { bookVersionId },
+        orderBy: { number: 'asc' },
+        skip,
+        take: limit,
+      });
+    }
     return this.prisma.chapter.findMany({
       where: { bookVersionId },
       orderBy: { number: 'asc' },
-      skip,
-      take: limit,
     });
   }
 
   async create(bookVersionId: string, dto: CreateChapterDto) {
+    let chapterNumber = dto.number;
+
+    // Auto-assign number if not provided
+    if (chapterNumber === undefined || chapterNumber === null) {
+      const last = await this.prisma.chapter.findFirst({
+        where: { bookVersionId },
+        orderBy: { number: 'desc' },
+        select: { number: true },
+      });
+      chapterNumber = last ? last.number + 1 : 1;
+    }
+
     const exists = await this.prisma.chapter.findFirst({
-      where: { bookVersionId, number: dto.number },
+      where: { bookVersionId, number: chapterNumber },
       select: { id: true },
     });
     if (exists) {
@@ -28,7 +46,7 @@ export class ChapterService {
     }
     try {
       return await this.prisma.chapter.create({
-        data: { bookVersionId, number: dto.number, title: dto.title, content: dto.content },
+        data: { bookVersionId, number: chapterNumber, title: dto.title, content: dto.content },
       });
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
