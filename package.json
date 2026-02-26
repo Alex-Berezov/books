@@ -30,7 +30,7 @@
     "cleanup:bookVersions:apply": "APPLY=1 ts-node prisma/scripts/cleanup-duplicate-book-versions.ts",
     "cleanup:testUsers": "ts-node prisma/scripts/cleanup-test-users.ts",
     "cleanup:testUsers:apply": "APPLY=1 ts-node prisma/scripts/cleanup-test-users.ts",
-    "prepare": "husky && chmod +x .husky/pre-commit || true",
+    "prepare": "husky || exit 0",
     "ci": "bash scripts/ci.sh",
     "openapi:schema": "node scripts/generate-openapi-schema.js",
     "openapi:schema:prod": "node scripts/generate-openapi-schema.js https://api.bibliaris.com/docs-json",
