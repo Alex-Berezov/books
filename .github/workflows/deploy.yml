@@ -214,6 +214,7 @@ jobs:
     name: 🚀 Deploy to Production
     runs-on: ubuntu-22.04
     needs: [build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://${{ vars.PRODUCTION_DOMAIN }}
