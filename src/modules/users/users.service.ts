@@ -351,7 +351,7 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
 
-    const { password, ...rest } = dto;
+    const { password, roles: rolesDto, ...rest } = dto;
     const data: Prisma.UserUpdateInput = {
       ...rest,
     };
@@ -366,9 +366,24 @@ export class UsersService {
       data.passwordHash = await argon2.hash(password);
     }
 
-    const updatedUser = await this.prisma.user.update({
-      where: { id },
-      data,
+    const updatedUser = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({ where: { id }, data });
+
+      if (rolesDto) {
+        const desired = Array.from(new Set(rolesDto));
+        const dbRoles = await tx.role.findMany({ where: { name: { in: desired } } });
+        if (dbRoles.length !== desired.length) {
+          throw new NotFoundException('One or more roles not found');
+        }
+        // Replace role set: remove all, then create desired
+        await tx.userRole.deleteMany({ where: { userId: id } });
+        await tx.userRole.createMany({
+          data: dbRoles.map((r) => ({ userId: id, roleId: r.id })),
+          skipDuplicates: true,
+        });
+      }
+
+      return u;
     });
 
     const roles = await this.computeRoles(updatedUser);
