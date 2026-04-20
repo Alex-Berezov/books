@@ -57,57 +57,61 @@ export class SeoController {
 
   @Get('seo/resolve')
   @ApiOperation({ summary: 'Resolve SEO bundle (meta/OG/Twitter/canonical) with fallbacks' })
-  @ApiQuery({ name: 'type', enum: ['book', 'version', 'page'] })
+  @ApiQuery({ name: 'type', enum: ['book', 'version', 'page', 'category', 'tag'] })
   @ApiQuery({
     name: 'id',
     description: 'Entity identifier or slug (book/page). For version: id only.',
   })
+  @ApiQuery({ name: 'slug', required: false, description: 'Translation slug (for category/tag)' })
   @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
   @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
   resolve(
     @Query('type') typeRaw: string,
     @Query('id') idRaw: string,
+    @Query('slug') slug?: string,
     @Query('lang') queryLang?: string,
     @Headers('accept-language') acceptLanguage?: string,
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = ['book', 'version', 'page'] as const;
+    const allowed = ['book', 'version', 'page', 'category', 'tag'] as const;
     const isAllowed = (val: string): val is (typeof allowed)[number] =>
       (allowed as readonly string[]).includes(val);
     if (!isAllowed(t)) {
       throw new BadRequestException('Invalid type');
     }
-    return this.service.resolvePublic(t, id, { queryLang, acceptLanguage });
+    return this.service.resolvePublic(t, id, { queryLang, acceptLanguage, slug });
   }
 
   // Language-prefixed public resolver (prefix has higher priority than query/header)
   @Get(':lang/seo/resolve')
   @ApiOperation({ summary: 'Resolve SEO bundle (public) for specific language (by path prefix)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
-  @ApiQuery({ name: 'type', enum: ['book', 'version', 'page'] })
+  @ApiQuery({ name: 'type', enum: ['book', 'version', 'page', 'category', 'tag'] })
   @ApiQuery({
     name: 'id',
     description: 'Entity identifier or slug (book/page). For version: id only.',
   })
+  @ApiQuery({ name: 'slug', required: false, description: 'Translation slug (for category/tag)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
   @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
   resolveWithLang(
     @Param('lang', LangParamPipe) pathLang: Language,
     @Query('type') typeRaw: string,
     @Query('id') idRaw: string,
+    @Query('slug') slug?: string,
     @Query('lang') queryLang?: string,
     @Headers('accept-language') acceptLanguage?: string,
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = ['book', 'version', 'page'] as const;
+    const allowed = ['book', 'version', 'page', 'category', 'tag'] as const;
     const isAllowed = (val: string): val is (typeof allowed)[number] =>
       (allowed as readonly string[]).includes(val);
     if (!isAllowed(t)) {
       throw new BadRequestException('Invalid type');
     }
-    return this.service.resolvePublic(t, id, { pathLang, queryLang, acceptLanguage });
+    return this.service.resolvePublic(t, id, { pathLang, queryLang, acceptLanguage, slug });
   }
 }

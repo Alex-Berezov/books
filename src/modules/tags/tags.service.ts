@@ -139,13 +139,14 @@ export class TagsService {
     pathLang: Language,
     slug: string,
   ): Promise<{
-    tag: Tag & { translation: TagTranslation | null };
+    tag: Tag & { translation: TagTranslation | null; description: string | null };
+    seo: Record<string, unknown> | null;
     versions: BookVersion[];
     availableLanguages: Language[];
   }> {
     const trans = await this.prisma.tagTranslation.findUnique({
       where: { language_slug: { language: pathLang, slug } },
-      include: { tag: true },
+      include: { tag: true, seo: true },
     });
     let tagId: string | null = null;
     let baseTag: Tag | null = null;
@@ -175,28 +176,55 @@ export class TagsService {
       ),
     );
     return {
-      tag: { ...baseTag, translation: (trans as TagTranslation) ?? null },
+      tag: {
+        ...baseTag,
+        translation: (trans as TagTranslation) ?? null,
+        description: trans?.description ?? null,
+      },
+      seo: trans?.seo ?? null,
       versions,
       availableLanguages,
     };
   }
 
   // ===== Translations (Admin) =====
-  listTranslations(tagId: string): Promise<TagTranslation[]> {
+  listTranslations(tagId: string): Promise<any[]> {
     return this.prisma.tagTranslation.findMany({
       where: { tagId },
       orderBy: { language: 'asc' },
+      include: { seo: true },
     });
   }
 
   async createTranslation(tagId: string, dto: CreateTagTranslationDto) {
     const exists = await this.prisma.tag.findUnique({ where: { id: tagId } });
     if (!exists) throw new NotFoundException('Tag not found');
+
+    let seoId: number | undefined;
+    if (dto.seo) {
+      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+      if (hasSeoData) {
+        const newSeo = await this.prisma.seo.create({ data: dto.seo });
+        seoId = newSeo.id;
+      }
+    }
+
     try {
       return await this.prisma.tagTranslation.create({
-        data: { tagId, language: dto.language, name: dto.name, slug: dto.slug },
+        data: {
+          tagId,
+          language: dto.language,
+          name: dto.name,
+          slug: dto.slug,
+          description: dto.description ?? null,
+          ...(seoId !== undefined ? { seoId } : {}),
+        },
+        include: { seo: true },
       });
     } catch (e: any) {
+      if (seoId) {
+        await this.prisma.seo.delete({ where: { id: seoId } }).catch(() => {});
+      }
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Translation with same (language, slug) already exists');
       }
@@ -209,9 +237,41 @@ export class TagsService {
       where: { tagId_language: { tagId, language } },
     });
     if (!tr) throw new NotFoundException('Translation not found');
+
+    if (dto.slug) {
+      const dup = await this.prisma.tagTranslation.findFirst({
+        where: { language, slug: dto.slug, NOT: { id: tr.id } },
+      });
+      if (dup)
+        throw new BadRequestException('Translation with same (language, slug) already exists');
+    }
+
+    let finalSeoId: number | null | undefined = undefined;
+    if (dto.seo) {
+      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+      if (hasSeoData) {
+        if (tr.seoId) {
+          await this.prisma.seo.update({ where: { id: tr.seoId }, data: dto.seo });
+          finalSeoId = tr.seoId;
+        } else {
+          const newSeo = await this.prisma.seo.create({ data: dto.seo });
+          finalSeoId = newSeo.id;
+        }
+      } else if (tr.seoId) {
+        finalSeoId = null;
+        await this.prisma.seo.delete({ where: { id: tr.seoId } });
+      }
+    }
+
     return this.prisma.tagTranslation.update({
       where: { tagId_language: { tagId, language } },
-      data: { name: dto.name, slug: dto.slug },
+      data: {
+        name: dto.name,
+        slug: dto.slug,
+        ...(dto.description !== undefined ? { description: dto.description } : {}),
+        ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
+      },
+      include: { seo: true },
     });
   }
 
@@ -220,9 +280,16 @@ export class TagsService {
       where: { tagId_language: { tagId, language } },
     });
     if (!tr) return { success: true };
-    await this.prisma.tagTranslation.delete({
-      where: { tagId_language: { tagId, language } },
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tagTranslation.delete({
+        where: { tagId_language: { tagId, language } },
+      });
+      if (tr.seoId) {
+        await tx.seo.delete({ where: { id: tr.seoId } });
+      }
     });
+
     return { success: true };
   }
 

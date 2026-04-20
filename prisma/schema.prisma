@@ -332,6 +332,12 @@ model Seo {
 
   // Relation to Page (1:1)
   page Page? @relation("SeoForPage")
+
+  // Relation to CategoryTranslation (1:1)
+  categoryTranslation CategoryTranslation? @relation("SeoForCategoryTranslation")
+
+  // Relation to TagTranslation (1:1)
+  tagTranslation TagTranslation? @relation("SeoForTagTranslation")
 }
 
 // =====================
@@ -386,7 +392,12 @@ model CategoryTranslation {
   language   Language
   name       String
   slug       String
-  category   Category @relation(fields: [categoryId], references: [id])
+  description String?  @db.Text
+  seoId      Int?     @unique
+  seo        Seo?     @relation("SeoForCategoryTranslation", fields: [seoId], references: [id], onDelete: SetNull)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@unique([language, slug])
   @@unique([categoryId, language])
@@ -395,12 +406,17 @@ model CategoryTranslation {
 }
 
 model TagTranslation {
-  id       String   @id @default(uuid())
-  tagId    String
-  language Language
-  name     String
-  slug     String
-  tag      Tag      @relation(fields: [tagId], references: [id])
+  id          String   @id @default(uuid())
+  tagId       String
+  language    Language
+  name        String
+  slug        String
+  description String?  @db.Text
+  seoId       Int?     @unique
+  seo         Seo?     @relation("SeoForTagTranslation", fields: [seoId], references: [id], onDelete: SetNull)
+  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@unique([language, slug])
   @@unique([tagId, language])

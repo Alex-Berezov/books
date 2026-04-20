@@ -186,7 +186,7 @@ export class CategoryService {
   async getByLangSlugWithBooks(pathLang: Language, slug: string) {
     const trans = await this.prisma.categoryTranslation.findUnique({
       where: { language_slug: { language: pathLang, slug } },
-      include: { category: true },
+      include: { category: true, seo: true },
     });
     let category: PrismaCategory | null =
       trans && 'category' in trans ? ((trans.category as PrismaCategory | null) ?? null) : null;
@@ -216,7 +216,17 @@ export class CategoryService {
       ),
     );
 
-    return { category: { ...category, translation: trans ?? null }, versions, availableLanguages };
+    return {
+      category: {
+        ...category,
+        translation: trans ? { ...trans, category: undefined } : null,
+        description: trans?.description ?? null,
+        language: pathLang,
+      },
+      seo: trans?.seo ?? null,
+      versions,
+      availableLanguages,
+    };
   }
 
   // ===== Translations (Admin) =====
@@ -224,17 +234,39 @@ export class CategoryService {
     return this.prisma.categoryTranslation.findMany({
       where: { categoryId },
       orderBy: { language: 'asc' },
+      include: { seo: true },
     });
   }
 
   async createTranslation(categoryId: string, dto: CreateCategoryTranslationDto) {
     const exists = await this.prisma.category.findUnique({ where: { id: categoryId } });
     if (!exists) throw new NotFoundException('Category not found');
+
+    let seoId: number | undefined;
+    if (dto.seo) {
+      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+      if (hasSeoData) {
+        const newSeo = await this.prisma.seo.create({ data: dto.seo });
+        seoId = newSeo.id;
+      }
+    }
+
     try {
-      return this.prisma.categoryTranslation.create({
-        data: { categoryId, language: dto.language, name: dto.name, slug: dto.slug },
+      return await this.prisma.categoryTranslation.create({
+        data: {
+          categoryId,
+          language: dto.language,
+          name: dto.name,
+          slug: dto.slug,
+          description: dto.description ?? null,
+          ...(seoId !== undefined ? { seoId } : {}),
+        },
+        include: { seo: true },
       });
     } catch (e: any) {
+      if (seoId) {
+        await this.prisma.seo.delete({ where: { id: seoId } }).catch(() => {});
+      }
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Translation with same (language, slug) already exists');
       }
@@ -252,9 +284,40 @@ export class CategoryService {
     });
     if (!tr) throw new NotFoundException('Translation not found');
 
+    if (dto.slug) {
+      const dup = await this.prisma.categoryTranslation.findFirst({
+        where: { language, slug: dto.slug, NOT: { id: tr.id } },
+      });
+      if (dup)
+        throw new BadRequestException('Translation with same (language, slug) already exists');
+    }
+
+    let finalSeoId: number | null | undefined = undefined;
+    if (dto.seo) {
+      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+      if (hasSeoData) {
+        if (tr.seoId) {
+          await this.prisma.seo.update({ where: { id: tr.seoId }, data: dto.seo });
+          finalSeoId = tr.seoId;
+        } else {
+          const newSeo = await this.prisma.seo.create({ data: dto.seo });
+          finalSeoId = newSeo.id;
+        }
+      } else if (tr.seoId) {
+        finalSeoId = null;
+        await this.prisma.seo.delete({ where: { id: tr.seoId } });
+      }
+    }
+
     return this.prisma.categoryTranslation.update({
       where: { categoryId_language: { categoryId, language } },
-      data: { name: dto.name, slug: dto.slug },
+      data: {
+        name: dto.name,
+        slug: dto.slug,
+        ...(dto.description !== undefined ? { description: dto.description } : {}),
+        ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
+      },
+      include: { seo: true },
     });
   }
 
@@ -263,9 +326,16 @@ export class CategoryService {
       where: { categoryId_language: { categoryId, language } },
     });
     if (!tr) return { success: true };
-    await this.prisma.categoryTranslation.delete({
-      where: { categoryId_language: { categoryId, language } },
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.categoryTranslation.delete({
+        where: { categoryId_language: { categoryId, language } },
+      });
+      if (tr.seoId) {
+        await tx.seo.delete({ where: { id: tr.seoId } });
+      }
     });
+
     return { success: true };
   }
 

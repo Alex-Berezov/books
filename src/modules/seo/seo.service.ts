@@ -274,9 +274,9 @@ export class SeoService {
    * For type="book" and type="page" canonical is prefixed with effective language.
    */
   async resolvePublic(
-    type: ResolveSeoType | 'book' | 'version' | 'page',
+    type: ResolveSeoType | 'book' | 'version' | 'page' | 'category' | 'tag',
     id: string,
-    opts?: { pathLang?: Language; queryLang?: string; acceptLanguage?: string },
+    opts?: { pathLang?: Language; queryLang?: string; acceptLanguage?: string; slug?: string },
   ): Promise<any> {
     const publicBase = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:3000';
 
@@ -469,7 +469,92 @@ export class SeoService {
       return buildBundle(base, seo || undefined);
     }
 
+    if (t === 'category') {
+      const effLang = opts?.pathLang ?? pickEffectiveLanguage();
+      // Try finding by slug or by categoryId
+      const slugVal = opts?.slug || id;
+      let trans = await this.prisma.categoryTranslation.findUnique({
+        where: { language_slug: { language: effLang, slug: slugVal } },
+        include: { seo: true, category: { include: { parent: true } } },
+      });
+      // If not found by slug, try by categoryId
+      if (!trans) {
+        trans = await this.prisma.categoryTranslation.findUnique({
+          where: { categoryId_language: { categoryId: id, language: effLang } },
+          include: { seo: true, category: { include: { parent: true } } },
+        });
+      }
+      if (!trans) throw new NotFoundException('Category translation not found');
+
+      const seo = trans.seo;
+      const plainDesc = trans.description
+        ? trans.description.replace(/<[^>]*>/g, '').substring(0, 160)
+        : undefined;
+      const base = {
+        title: trans.name,
+        description: plainDesc,
+        canonicalPath: `/${effLang}/categories/${trans.slug}`,
+        imageUrl: undefined,
+      } as const;
+      const bundle = buildBundle(base, seo || undefined) as Record<string, unknown>;
+
+      // Build breadcrumbPath
+      try {
+        const path: Array<{ id: string; slug: string; name: string }> = [];
+        let currentParentId: string | null = trans.category?.parentId ?? null;
+        while (currentParentId) {
+          const parentTrans = await this.prisma.categoryTranslation.findUnique({
+            where: { categoryId_language: { categoryId: currentParentId, language: effLang } },
+            select: { name: true, slug: true },
+          });
+          const parentCat = await this.prisma.category.findUnique({
+            where: { id: currentParentId },
+            select: { id: true, name: true, slug: true, parentId: true },
+          });
+          if (!parentCat) break;
+          path.push({
+            id: parentCat.id,
+            slug: parentTrans?.slug ?? parentCat.slug,
+            name: parentTrans?.name ?? parentCat.name,
+          });
+          currentParentId = parentCat.parentId;
+        }
+        bundle.breadcrumbPath = path.reverse();
+      } catch {
+        // ignore breadcrumb errors
+      }
+      return bundle;
+    }
+
+    if (t === 'tag') {
+      const effLang = opts?.pathLang ?? pickEffectiveLanguage();
+      const slugVal = opts?.slug || id;
+      let trans = await this.prisma.tagTranslation.findUnique({
+        where: { language_slug: { language: effLang, slug: slugVal } },
+        include: { seo: true },
+      });
+      if (!trans) {
+        trans = await this.prisma.tagTranslation.findUnique({
+          where: { tagId_language: { tagId: id, language: effLang } },
+          include: { seo: true },
+        });
+      }
+      if (!trans) throw new NotFoundException('Tag translation not found');
+
+      const seo = trans.seo;
+      const plainDesc = trans.description
+        ? trans.description.replace(/<[^>]*>/g, '').substring(0, 160)
+        : undefined;
+      const base = {
+        title: trans.name,
+        description: plainDesc,
+        canonicalPath: `/${effLang}/tags/${trans.slug}`,
+        imageUrl: undefined,
+      } as const;
+      return buildBundle(base, seo || undefined);
+    }
+
     // Fallback: use original behavior
-    return this.resolveByParams(type, id);
+    return this.resolveByParams(type as 'book' | 'version' | 'page', id);
   }
 }
