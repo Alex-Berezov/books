@@ -28,13 +28,13 @@ describe('Media jobs e2e', () => {
     );
     await app.init();
 
-    await request(http()).post('/api/auth/register').send({
+    await request(http()).post('/auth/register').send({
       email: 'admin@example.com',
       password: 'Password1!',
       name: 'Admin',
     });
     const adminLogin = await request(http())
-      .post('/api/auth/login')
+      .post('/auth/login')
       .send({ email: 'admin@example.com', password: 'Password1!' });
     adminAccess = adminLogin.body.accessToken as string;
   });
@@ -76,7 +76,7 @@ describe('Media jobs e2e', () => {
 
   it('POST /admin/media/reprobe returns 202 with enqueued count', async () => {
     const res = await request(http())
-      .post('/api/admin/media/reprobe')
+      .post('/admin/media/reprobe')
       .set('Authorization', `Bearer ${adminAccess}`);
     expect([200, 202]).toContain(res.status);
     expect(typeof res.body.enqueued).toBe('number');
@@ -93,7 +93,7 @@ describe('Media jobs e2e', () => {
       },
     });
     const res = await request(http())
-      .post('/api/admin/media/cleanup-orphans?dryRun=true&softDays=7&hardDays=30')
+      .post('/admin/media/cleanup-orphans?dryRun=true&softDays=7&hardDays=30')
       .set('Authorization', `Bearer ${adminAccess}`);
     expect(res.status).toBe(200);
     expect(res.body.softDeletedCandidates).toEqual(expect.arrayContaining([orphan.id]));

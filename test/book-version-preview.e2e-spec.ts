@@ -22,13 +22,13 @@ describe('BookVersion preview e2e', () => {
     );
     await app.init();
 
-    await request(http()).post('/api/auth/register').send({
+    await request(http()).post('/auth/register').send({
       email: 'admin@example.com',
       password: 'Password1!',
       name: 'Admin',
     });
     const adminLogin = await request(http())
-      .post('/api/auth/login')
+      .post('/auth/login')
       .send({ email: 'admin@example.com', password: 'Password1!' });
     adminAccess = adminLogin.body.accessToken as string;
   });
@@ -53,7 +53,7 @@ describe('BookVersion preview e2e', () => {
         publishedAt: new Date(),
       },
     });
-    const res = await request(http()).get(`/api/versions/${version.id}/preview`);
+    const res = await request(http()).get(`/versions/${version.id}/preview`);
     expect(res.status).toBe(404);
   });
 
@@ -92,18 +92,18 @@ describe('BookVersion preview e2e', () => {
     });
 
     const bad = await request(http())
-      .patch(`/api/admin/versions/${version.id}`)
+      .patch(`/versions/${version.id}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .send({ previewMediaId: image.id });
     expect(bad.status).toBe(400);
 
     const ok = await request(http())
-      .patch(`/api/admin/versions/${version.id}`)
+      .patch(`/versions/${version.id}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .send({ previewMediaId: audio.id });
     expect(ok.status).toBe(200);
 
-    const preview = await request(http()).get(`/api/versions/${version.id}/preview`);
+    const preview = await request(http()).get(`/versions/${version.id}/preview`);
     expect(preview.status).toBe(200);
     expect(preview.body.previewUrl).toBe(audio.url);
     expect(preview.body.duration).toBe(30);
