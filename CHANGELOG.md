@@ -6,6 +6,115 @@
 
 ---
 
+## 2026-04-21 — ✨ НОВОЕ: AudioChapter API — admin endpoints, reorder, новые поля, upload limits
+
+**СТАТУС**: ✅ Реализовано (Iteration 1 per BACKEND_TZ.md)
+
+### Изменения в модели `AudioChapter`
+
+**Prisma schema** (`prisma/schema.prisma`):
+
+- Добавлено поле `description String?` (до 5000 символов) — краткое описание главы.
+- Добавлено поле `transcript String?` — полный транскрипт (markdown).
+- Добавлено поле `mediaId String?` + FK на `MediaAsset(id)` с `ON DELETE SET NULL` — связь с Media Library.
+- Добавлено поле `updatedAt DateTime @updatedAt`.
+- Индекс `AudioChapter_mediaId_idx`.
+
+**Миграция:** `prisma/migrations/20260421100000_add_audio_chapter_fields/migration.sql`
+
+### Новые эндпоинты
+
+| Method | Path                                              | Доступ                   | Назначение                                             |
+| ------ | ------------------------------------------------- | ------------------------ | ------------------------------------------------------ |
+| GET    | `/admin/versions/:bookVersionId/audio-chapters`   | admin \| content_manager | Список глав для любого статуса версии (включая draft). |
+| GET    | `/admin/audio-chapters/:id`                       | admin \| content_manager | Получить главу вне зависимости от статуса версии.      |
+| POST   | `/versions/:bookVersionId/audio-chapters/reorder` | admin \| content_manager | Атомарное переупорядочивание по массиву id.            |
+| GET    | `/uploads/limits`                                 | public                   | Публичные лимиты аплоадов (maxSize, MIME).             |
+
+### Breaking changes
+
+1. **Формат ответа `GET /versions/:bookVersionId/audio-chapters`** — теперь пагинированный объект:
+
+   ```json
+   {
+     "items": [...],
+     "total": 17,
+     "page": 1,
+     "limit": 50,
+     "totalPages": 1
+   }
+   ```
+
+   Ранее возвращался голый массив.
+
+2. **Default `limit`** поднят с `10` до `50` (максимум `100`).
+
+3. **Публичные `GET` эндпоинты** (`/versions/:id/audio-chapters` и `/audio-chapters/:id`) теперь возвращают `404`, если родительская `BookVersion.status !== 'published'`. Для работы с draft-версиями используйте admin-эндпоинты выше.
+
+4. **Конфликт `number`** теперь возвращает **`409 Conflict`** (ранее `400 Bad Request`):
+
+   ```json
+   {
+     "statusCode": 409,
+     "error": "Conflict",
+     "message": "Audio chapter with number 1 already exists in this version",
+     "field": "number"
+   }
+   ```
+
+5. **Uploads** — неподдерживаемый MIME теперь возвращает `415 Unsupported Media Type` (ранее `400`), превышение лимита — `413 Payload Too Large`.
+
+### Новые поля в Create/Update DTO
+
+```ts
+{
+  description?: string;  // ≤ 5000
+  transcript?: string;   // markdown
+  mediaId?: string;      // UUID, FK на MediaAsset
+}
+```
+
+### Валидация
+
+- `number`: integer ≥ 1, unique per `bookVersionId` → `409 Conflict`.
+- `title`: 1..255 символов.
+- `audioUrl`: http/https URL, required.
+- `duration`: integer 0..86400 (до 24 часов).
+- `description`: ≤ 5000 символов.
+- `mediaId`: UUID, существующий непомеченный-удалённым `MediaAsset`.
+
+### Upload limits (env-driven)
+
+| Env переменная             | Default                                                                     | Описание                         |
+| -------------------------- | --------------------------------------------------------------------------- | -------------------------------- |
+| `UPLOADS_MAX_IMAGE_MB`     | `5`                                                                         | Максимальный размер изображений. |
+| `UPLOADS_MAX_AUDIO_MB`     | **`200`** (было 100)                                                        | Максимальный размер аудио.       |
+| `UPLOADS_ALLOWED_IMAGE_CT` | `image/jpeg,image/png,image/webp`                                           | Whitelist.                       |
+| `UPLOADS_ALLOWED_AUDIO_CT` | `audio/mpeg,audio/mp4,audio/aac,audio/x-m4a,audio/ogg,audio/wav,audio/webm` | Whitelist (расширен).            |
+
+### Файлы
+
+- `prisma/schema.prisma` — модель `AudioChapter` + relation на `MediaAsset`.
+- `prisma/migrations/20260421100000_add_audio_chapter_fields/migration.sql` — миграция.
+- `src/modules/audio-chapter/audio-chapter.controller.ts` — admin endpoints, reorder.
+- `src/modules/audio-chapter/audio-chapter.service.ts` — published-фильтр, 409, пагинация, reorder, media FK.
+- `src/modules/audio-chapter/dto/create-audio-chapter.dto.ts` — новые поля, валидация.
+- `src/modules/audio-chapter/dto/update-audio-chapter.dto.ts` — новые поля, валидация.
+- `src/modules/audio-chapter/dto/reorder-audio-chapters.dto.ts` — NEW.
+- `src/modules/uploads/uploads.service.ts` — 413/415, расширенный audio MIME whitelist, `getLimits()`.
+- `src/modules/uploads/uploads.controller.ts` — `GET /uploads/limits`.
+- `src/modules/media/media.controller.ts` — multer limit = `UPLOADS_MAX_AUDIO_MB`.
+- `test/audio-chapter.e2e-spec.ts` — обновлено + новые тесты (409, description/transcript, reorder, admin-endpoints, draft 404).
+- `src/modules/uploads/uploads.service.spec.ts` — обновлено под 415/413.
+
+### Что осталось на Iteration 2
+
+- `ffprobe` → `duration` в `MediaAsset` при загрузке аудио.
+- Orphan media cleanup при `DELETE /audio-chapters/:id`.
+- Preview audio для платных книг.
+
+---
+
 ## 2025-11-18 — 🔧 ИСПРАВЛЕНИЕ: Все SEO поля теперь возвращаются API
 
 **СТАТУС**: ✅ Реализовано и протестировано

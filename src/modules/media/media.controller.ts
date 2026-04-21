@@ -91,7 +91,9 @@ export class MediaController {
       'file',
       ((): MulterOptions => ({
         storage: memoryStorage(),
-        limits: { fileSize: 110 * 1024 * 1024 }, // ~110MB, как в /uploads/direct
+        limits: {
+          fileSize: Number(process.env.UPLOADS_MAX_AUDIO_MB || 200) * 1024 * 1024 + 5 * 1024 * 1024,
+        },
       }))(),
     ),
   )

@@ -1,4 +1,9 @@
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  PayloadTooLargeException,
+  UnauthorizedException,
+  UnsupportedMediaTypeException,
+} from '@nestjs/common';
 import { UploadsService } from './uploads.service';
 import { UploadType } from './dto/presign.dto';
 
@@ -59,14 +64,14 @@ describe('UploadsService (unit)', () => {
     it('rejects unsupported content type', async () => {
       await expect(
         service.presign({ type: UploadType.cover, contentType: 'image/bmp', size: 100 }, 'u'),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toBeInstanceOf(UnsupportedMediaTypeException);
     });
 
     it('rejects too large image', async () => {
       const tooBig = 6 * 1024 * 1024; // default max 5MB
       await expect(
         service.presign({ type: UploadType.cover, contentType: 'image/png', size: tooBig }, 'u'),
-      ).rejects.toThrow('Image too large');
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
     });
 
     it('accepts audio and generates proper extension', async () => {

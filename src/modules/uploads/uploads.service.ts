@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  PayloadTooLargeException,
+  UnauthorizedException,
+  UnsupportedMediaTypeException,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { CACHE_SERVICE, CacheService } from '../../shared/cache/cache.interface';
 import { Inject } from '@nestjs/common';
@@ -8,7 +14,7 @@ import { PresignRequestDto, PresignResponseDto, UploadType } from './dto/presign
 @Injectable()
 export class UploadsService {
   private readonly maxImageMb = Number(process.env.UPLOADS_MAX_IMAGE_MB || 5);
-  private readonly maxAudioMb = Number(process.env.UPLOADS_MAX_AUDIO_MB || 100);
+  private readonly maxAudioMb = Number(process.env.UPLOADS_MAX_AUDIO_MB || 200);
   private readonly ttlSec = Number(process.env.UPLOADS_PRESIGN_TTL_SEC || 600);
   private readonly allowedImage = (
     process.env.UPLOADS_ALLOWED_IMAGE_CT || 'image/jpeg,image/png,image/webp'
@@ -17,7 +23,8 @@ export class UploadsService {
     .map((s) => s.trim())
     .filter(Boolean);
   private readonly allowedAudio = (
-    process.env.UPLOADS_ALLOWED_AUDIO_CT || 'audio/mpeg,audio/mp4,audio/aac,audio/ogg'
+    process.env.UPLOADS_ALLOWED_AUDIO_CT ||
+    'audio/mpeg,audio/mp4,audio/aac,audio/x-m4a,audio/ogg,audio/wav,audio/webm'
   )
     .split(',')
     .map((s) => s.trim())
@@ -31,7 +38,8 @@ export class UploadsService {
   async presign(input: PresignRequestDto, userId: string): Promise<PresignResponseDto> {
     const { type, contentType, size } = input;
     const { allowed, ext } = this.validate(type, contentType, size);
-    if (!allowed) throw new BadRequestException('Unsupported content type');
+    if (!allowed)
+      throw new UnsupportedMediaTypeException(`Unsupported content type: ${contentType}`);
 
     const key = this.generateKey(type, ext);
     const token = randomUUID();
@@ -77,18 +85,32 @@ export class UploadsService {
     return this.storage.getPublicUrl(key);
   }
 
+  getLimits() {
+    return {
+      image: {
+        maxSizeMb: this.maxImageMb,
+        allowedContentTypes: this.allowedImage,
+      },
+      audio: {
+        maxSizeMb: this.maxAudioMb,
+        allowedContentTypes: this.allowedAudio,
+      },
+      presignTtlSec: this.ttlSec,
+    };
+  }
+
   private validate(type: UploadType, contentType: string, size: number) {
     const mb = 1024 * 1024;
     if (type === UploadType.cover) {
       const allowed = this.allowedImage.includes(contentType);
       const maxMb = this.maxImageMb;
-      if (size > maxMb * mb) throw new BadRequestException(`Image too large. Max ${maxMb}MB`);
+      if (size > maxMb * mb) throw new PayloadTooLargeException(`Image too large. Max ${maxMb}MB`);
       const ext = this.mimeToExt(contentType);
       return { allowed, maxMb, ext };
     } else {
       const allowed = this.allowedAudio.includes(contentType);
       const maxMb = this.maxAudioMb;
-      if (size > maxMb * mb) throw new BadRequestException(`Audio too large. Max ${maxMb}MB`);
+      if (size > maxMb * mb) throw new PayloadTooLargeException(`Audio too large. Max ${maxMb}MB`);
       const ext = this.mimeToExt(contentType);
       return { allowed, maxMb, ext };
     }
@@ -105,11 +127,16 @@ export class UploadsService {
       case 'audio/mpeg':
         return 'mp3';
       case 'audio/mp4':
+      case 'audio/x-m4a':
         return 'm4a';
       case 'audio/aac':
         return 'aac';
       case 'audio/ogg':
         return 'ogg';
+      case 'audio/wav':
+        return 'wav';
+      case 'audio/webm':
+        return 'webm';
       default:
         return 'bin';
     }

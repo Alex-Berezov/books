@@ -84,11 +84,17 @@ model AudioChapter {
   title         String
   audioUrl      String
   duration      Int
+  description   String?
+  transcript    String?
+  mediaId       String?
   createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @default(now()) @updatedAt
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+  media         MediaAsset? @relation(fields: [mediaId], references: [id], onDelete: SetNull)
   comments      Comment[]
 
   @@unique([bookVersionId, number])
+  @@index([mediaId])
 }
 
 model User {
@@ -256,6 +262,7 @@ model MediaAsset {
   createdById  String?
   createdBy    User?    @relation(fields: [createdById], references: [id])
   isDeleted    Boolean  @default(false)
+  audioChapters AudioChapter[]
 
   @@index([createdAt])
   @@index([hash])

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   Headers,
   Post,
   Query,
@@ -21,6 +22,14 @@ import { UploadsService } from './uploads.service';
 @Controller('uploads')
 export class UploadsController {
   constructor(private readonly uploads: UploadsService) {}
+
+  @ApiOperation({
+    summary: 'Public upload limits (max size, allowed content types)',
+  })
+  @Get('limits')
+  limits() {
+    return this.uploads.getLimits();
+  }
 
   @ApiOperation({ summary: 'Get a presigned direct-upload token and URL' })
   @ApiBearerAuth()
