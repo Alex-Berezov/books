@@ -1,6 +1,6 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Queue, Worker } from 'bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
 import { probeDuration } from './ffprobe.util';
@@ -18,7 +18,7 @@ export interface MediaProbeJobResult {
 }
 
 @Injectable()
-export class MediaProbeService implements OnModuleDestroy {
+export class MediaProbeService {
   private readonly logger = new Logger(MediaProbeService.name);
   private probeJobsCompleted = 0;
   private probeJobsFailed = 0;
@@ -29,21 +29,7 @@ export class MediaProbeService implements OnModuleDestroy {
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     @Inject(ConfigService) private readonly config: ConfigService,
     @Optional() @Inject(MEDIA_PROBE_QUEUE) private readonly queue?: Queue,
-    @Optional() @Inject(MEDIA_PROBE_WORKER) private readonly worker?: Worker,
   ) {}
-
-  async onModuleDestroy() {
-    try {
-      if (this.worker) await this.worker.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      if (this.queue) await this.queue.close();
-    } catch {
-      /* ignore */
-    }
-  }
 
   /**
    * Enqueue a probe job. If queue is unavailable (no Redis), falls back to

@@ -1,4 +1,4 @@
-import { Module, Provider } from '@nestjs/common';
+import { Module, Provider, OnModuleDestroy, Inject, Optional } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Queue, QueueOptions, Worker, WorkerOptions } from 'bullmq';
 import IORedis from 'ioredis';
@@ -15,6 +15,8 @@ import { MediaJobsController } from './media-jobs.controller';
 
 const PROBE_QUEUE_NAME_DEFAULT = 'media-probe';
 const CLEANUP_QUEUE_NAME_DEFAULT = 'media-cleanup';
+const MEDIA_CLEANUP_QUEUE = Symbol('MEDIA_CLEANUP_QUEUE');
+const MEDIA_CLEANUP_WORKER = Symbol('MEDIA_CLEANUP_WORKER');
 
 const probeQueueProvider: Provider = {
   provide: MEDIA_PROBE_QUEUE,
@@ -54,14 +56,13 @@ const probeWorkerProvider: Provider = {
 };
 
 /** Repeatable cleanup job wiring. Adds a daily repeatable job; worker runs inline. */
-const cleanupBootstrapProvider: Provider = {
-  provide: 'MEDIA_CLEANUP_BOOTSTRAP',
-  inject: [REDIS_CONNECTION, ConfigService, MediaCleanupService],
+const cleanupQueueProvider: Provider = {
+  provide: MEDIA_CLEANUP_QUEUE,
+  inject: [REDIS_CONNECTION, ConfigService],
   useFactory: async (
     connection: IORedis | undefined,
     config: ConfigService,
-    cleanup: MediaCleanupService,
-  ): Promise<{ queue: Queue; worker: Worker } | undefined> => {
+  ): Promise<Queue | undefined> => {
     if (!connection) return undefined;
     const enabled = !/^(0|false)$/i.test(config.get<string>('MEDIA_CLEANUP_ENABLED') ?? 'true');
     if (!enabled) return undefined;
@@ -69,30 +70,47 @@ const cleanupBootstrapProvider: Provider = {
     const queue = new Queue(name, {
       connection: connection as unknown as QueueOptions['connection'],
     });
-    // Schedule repeatable job (default every 24h at 03:15 UTC)
     const pattern = config.get<string>('MEDIA_CLEANUP_CRON') || '15 3 * * *';
-    await queue.add(
-      'cleanup',
-      {},
-      {
-        repeat: { pattern },
-        jobId: 'media-cleanup-repeatable',
-        removeOnComplete: 100,
-        removeOnFail: 100,
-      },
-    );
+    try {
+      await queue.add(
+        'cleanup',
+        {},
+        {
+          repeat: { pattern },
+          jobId: 'media-cleanup-repeatable',
+          removeOnComplete: 100,
+          removeOnFail: 100,
+        },
+      );
+    } catch {
+      /* best-effort scheduling */
+    }
+    return queue;
+  },
+};
+
+const cleanupWorkerProvider: Provider = {
+  provide: MEDIA_CLEANUP_WORKER,
+  inject: [REDIS_CONNECTION, ConfigService, MediaCleanupService],
+  useFactory: (
+    connection: IORedis | undefined,
+    config: ConfigService,
+    cleanup: MediaCleanupService,
+  ): Worker | undefined => {
+    if (!connection) return undefined;
+    const enabled = !/^(0|false)$/i.test(config.get<string>('MEDIA_CLEANUP_ENABLED') ?? 'true');
+    if (!enabled) return undefined;
     const flag = config.get<string>('BULLMQ_IN_PROCESS_WORKER');
     const inProcess = flag === undefined ? true : !/^(0|false)$/i.test(flag);
-    const worker = inProcess
-      ? new Worker(
-          name,
-          async () => {
-            await cleanup.cleanup();
-          },
-          { connection: connection as unknown as WorkerOptions['connection'], concurrency: 1 },
-        )
-      : (undefined as unknown as Worker);
-    return { queue, worker };
+    if (!inProcess) return undefined;
+    const name = config.get<string>('BULLMQ_MEDIA_CLEANUP_QUEUE') || CLEANUP_QUEUE_NAME_DEFAULT;
+    return new Worker(
+      name,
+      async () => {
+        await cleanup.cleanup();
+      },
+      { connection: connection as unknown as WorkerOptions['connection'], concurrency: 1 },
+    );
   },
 };
 
@@ -103,9 +121,34 @@ const cleanupBootstrapProvider: Provider = {
     MediaCleanupService,
     probeQueueProvider,
     probeWorkerProvider,
-    cleanupBootstrapProvider,
+    cleanupQueueProvider,
+    cleanupWorkerProvider,
   ],
   controllers: [MediaJobsController],
   exports: [MediaProbeService, MediaCleanupService],
 })
-export class MediaJobsModule {}
+export class MediaJobsModule implements OnModuleDestroy {
+  constructor(
+    @Optional() @Inject(MEDIA_PROBE_QUEUE) private readonly probeQueue?: Queue,
+    @Optional() @Inject(MEDIA_PROBE_WORKER) private readonly probeWorker?: Worker,
+    @Optional() @Inject(MEDIA_CLEANUP_QUEUE) private readonly cleanupQueue?: Queue,
+    @Optional() @Inject(MEDIA_CLEANUP_WORKER) private readonly cleanupWorker?: Worker,
+  ) {}
+
+  async onModuleDestroy() {
+    for (const resource of [this.probeWorker, this.cleanupWorker]) {
+      try {
+        if (resource) await resource.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const resource of [this.probeQueue, this.cleanupQueue]) {
+      try {
+        if (resource) await resource.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
