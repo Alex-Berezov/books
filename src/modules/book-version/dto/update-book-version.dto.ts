@@ -1,6 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateBookVersionDto } from './create-book-version.dto';
-import { IsBoolean, IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUrl,
+  IsUUID,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
 export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
@@ -54,4 +63,14 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @IsOptional()
   @IsString()
   seoMetaDescription?: string;
+
+  @ApiPropertyOptional({
+    description: 'Media asset id for audio preview (short audio sample). Pass null to clear.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  previewMediaId?: string | null;
 }

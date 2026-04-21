@@ -283,6 +283,29 @@ export class BookVersionController {
     return this.service.getPublic(id);
   }
 
+  @Get('versions/:id/preview')
+  @ApiOperation({
+    summary: 'Get preview audio for a version (public)',
+    description:
+      'Возвращает URL и длительность preview-аудио для версии. 404, если preview не задан или версия не опубликована.',
+  })
+  @ApiParam({ name: 'id' })
+  @ApiResponse({
+    status: 200,
+    description: 'Preview metadata',
+    schema: {
+      type: 'object',
+      properties: {
+        previewUrl: { type: 'string', example: 'https://cdn.example.com/previews/hp1-en.mp3' },
+        duration: { type: 'integer', nullable: true, example: 45 },
+        contentType: { type: 'string', example: 'audio/mpeg' },
+      },
+    },
+  })
+  getPreview(@Param('id') id: string) {
+    return this.service.getPreview(id);
+  }
+
   @Get('admin/versions/:id')
   @ApiOperation({
     summary: 'Admin: Get version by id (any status)',

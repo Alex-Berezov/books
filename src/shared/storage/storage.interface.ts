@@ -15,6 +15,11 @@ export interface StorageService {
   exists(key: string): Promise<boolean>;
   stat(key: string): Promise<StorageStat | null>;
   getPublicUrl(key: string): string;
+  /**
+   * Returns absolute local filesystem path for a key, when available.
+   * Non-local drivers (S3 etc.) may return null.
+   */
+  getLocalPath?(key: string): string | null;
 }
 
 export const STORAGE_SERVICE = Symbol('STORAGE_SERVICE');

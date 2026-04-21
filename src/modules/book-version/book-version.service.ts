@@ -139,6 +139,18 @@ export class BookVersionService {
   async update(id: string, dto: UpdateBookVersionDto) {
     const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('BookVersion not found');
+    if (dto.previewMediaId) {
+      const media = await this.prisma.mediaAsset.findUnique({
+        where: { id: dto.previewMediaId },
+        select: { id: true, contentType: true, isDeleted: true },
+      });
+      if (!media || media.isDeleted) {
+        throw new BadRequestException('previewMediaId references a non-existent MediaAsset');
+      }
+      if (!media.contentType || !media.contentType.startsWith('audio/')) {
+        throw new BadRequestException('previewMediaId must reference an audio MediaAsset');
+      }
+    }
     try {
       return await this.prisma.$transaction(async (tx) => {
         let seoId = existing.seoId;
@@ -180,6 +192,30 @@ export class BookVersionService {
       }
       throw e;
     }
+  }
+
+  async getPreview(id: string) {
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        previewMediaId: true,
+        previewMedia: {
+          select: { url: true, duration: true, contentType: true, isDeleted: true },
+        },
+      },
+    });
+    if (!version || version.status !== 'published') {
+      throw new NotFoundException('Version not found');
+    }
+    if (!version.previewMediaId || !version.previewMedia || version.previewMedia.isDeleted) {
+      throw new NotFoundException('Preview not available');
+    }
+    return {
+      previewUrl: version.previewMedia.url,
+      duration: version.previewMedia.duration,
+      contentType: version.previewMedia.contentType,
+    };
   }
 
   async remove(id: string) {

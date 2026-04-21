@@ -48,9 +48,12 @@ model BookVersion {
   readingProgress ReadingProgress[]
   seo             Seo?              @relation("SeoForBookVersion", fields: [seoId], references: [id])
   seoId           Int?              @unique
+  previewMedia    MediaAsset?       @relation("VersionPreviewMedia", fields: [previewMediaId], references: [id], onDelete: SetNull)
+  previewMediaId  String?
 
   @@unique([bookId, language])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
+  @@index([previewMediaId])
 }
 
 model BookSummary {
@@ -257,15 +260,19 @@ model MediaAsset {
   size         Int?
   width        Int?
   height       Int?
+  duration     Int?
   hash         String?
   createdAt    DateTime @default(now())
   createdById  String?
   createdBy    User?    @relation(fields: [createdById], references: [id])
   isDeleted    Boolean  @default(false)
+  deletedAt    DateTime?
   audioChapters AudioChapter[]
+  previewVersions BookVersion[] @relation("VersionPreviewMedia")
 
   @@index([createdAt])
   @@index([hash])
+  @@index([isDeleted, deletedAt])
 }
 
 // =====================

@@ -1,15 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfirmMediaDto, MediaListQueryDto } from './dto/create-media.dto';
 import { Inject } from '@nestjs/common';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
+import { MediaProbeService } from '../media-jobs/media-probe.service';
 
 @Injectable()
 export class MediaService {
   constructor(
     private prisma: PrismaService,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
+    @Optional() private readonly probe?: MediaProbeService,
   ) {}
 
   async confirm(dto: ConfirmMediaDto, userId: string) {
@@ -19,12 +21,22 @@ export class MediaService {
     const url = dto.url || resolvedUrl;
     if (!url.startsWith('http')) throw new BadRequestException('Invalid url');
 
+    const afterCommit = async (assetId: string) => {
+      if (dto.contentType?.startsWith('audio/') && this.probe) {
+        try {
+          await this.probe.enqueueProbe(assetId);
+        } catch {
+          /* best-effort */
+        }
+      }
+    };
+
     try {
       // идемпотентность по key
       const existing = await this.prisma.mediaAsset.findUnique({ where: { key: dto.key } });
       if (existing) {
         // update metadata if changed
-        return this.prisma.mediaAsset.update({
+        const updated = await this.prisma.mediaAsset.update({
           where: { id: existing.id },
           data: {
             url,
@@ -36,8 +48,10 @@ export class MediaService {
             isDeleted: false,
           },
         });
+        await afterCommit(updated.id);
+        return updated;
       }
-      return await this.prisma.mediaAsset.create({
+      const created = await this.prisma.mediaAsset.create({
         data: {
           key: dto.key,
           url,
@@ -49,6 +63,8 @@ export class MediaService {
           createdById: userId,
         },
       });
+      await afterCommit(created.id);
+      return created;
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         const found = await this.prisma.mediaAsset.findUnique({ where: { key: dto.key } });

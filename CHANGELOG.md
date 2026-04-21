@@ -6,6 +6,73 @@
 
 ---
 
+## 2026-04-21 — ✨ НОВОЕ: Media pipeline — ffprobe duration, orphan cleanup, preview audio
+
+**СТАТУС**: ✅ Реализовано (Iteration 2 per BACKEND_TZ.md)
+
+### Schema
+
+**Prisma** (`prisma/schema.prisma`):
+
+- `MediaAsset.duration Int?` — длительность аудио/видео в секундах (заполняется асинхронно).
+- `MediaAsset.deletedAt DateTime?` + составной индекс `(isDeleted, deletedAt)` — для двухстадийной очистки.
+- `BookVersion.previewMediaId String?` + FK на `MediaAsset(id)` `ON DELETE SET NULL` — аудио preview для версии.
+- Индекс `BookVersion_previewMediaId_idx`.
+
+**Миграция:** `prisma/migrations/20260421120000_add_media_duration_and_preview/migration.sql`
+
+### Новый модуль `media-jobs`
+
+`src/modules/media-jobs/`:
+
+- `MediaProbeService` — BullMQ-очередь `media-probe`. Воркер вызывает локальный `ffprobe` (через `@ffprobe-installer/ffprobe`) и пишет `duration` в `MediaAsset`. Если Redis недоступен — fallback на inline probe.
+- `MediaCleanupService` — двухстадийная очистка:
+  1. **Soft-delete** `MediaAsset` без ссылок (ни из `AudioChapter.mediaId`, ни из `BookVersion.previewMediaId`) старше `MEDIA_CLEANUP_SOFT_DAYS` (по умолчанию 7 дней).
+  2. **Hard-delete** soft-deleted рядов старше `MEDIA_CLEANUP_HARD_DAYS` (30 дней) + удаление файла из storage.
+- Repeatable job по cron `MEDIA_CLEANUP_CRON` (по умолчанию `15 3 * * *`).
+- `MediaService.confirm()` для `contentType: audio/*` автоматически enqueue probe-job (best-effort).
+
+### Новые эндпоинты
+
+| Method | Path                                                             | Доступ | Назначение                                                  |
+| ------ | ---------------------------------------------------------------- | ------ | ----------------------------------------------------------- |
+| POST   | `/admin/media/reprobe`                                           | admin  | Enqueue probe для всех audio-MediaAsset без `duration`.     |
+| POST   | `/admin/media/probe?id=<id>`                                     | admin  | Enqueue probe для одного MediaAsset.                        |
+| POST   | `/admin/media/cleanup-orphans?dryRun=<bool>&softDays=&hardDays=` | admin  | Ручной запуск очистки; `dryRun=true` возвращает кандидатов. |
+| GET    | `/versions/:id/preview`                                          | public | Возвращает `{ previewUrl, duration, contentType }` или 404. |
+
+### DTO
+
+- `UpdateBookVersionDto.previewMediaId?: string | null` (UUID) — валидируется:
+  - MediaAsset должен существовать и не быть soft-deleted.
+  - `contentType` должен начинаться с `audio/`.
+
+### Environment variables
+
+| Переменная                       | Default         | Описание                                          |
+| -------------------------------- | --------------- | ------------------------------------------------- |
+| `BULLMQ_MEDIA_PROBE_QUEUE`       | `media-probe`   | Имя BullMQ-очереди для probe-job.                 |
+| `BULLMQ_MEDIA_PROBE_CONCURRENCY` | `2`             | Параллелизм воркера probe.                        |
+| `MEDIA_PROBE_ATTEMPTS`           | `3`             | Количество попыток probe-job.                     |
+| `BULLMQ_MEDIA_CLEANUP_QUEUE`     | `media-cleanup` | Имя BullMQ-очереди для cleanup.                   |
+| `MEDIA_CLEANUP_ENABLED`          | `true`          | Включить repeatable cleanup-job.                  |
+| `MEDIA_CLEANUP_CRON`             | `15 3 * * *`    | Cron pattern для cleanup.                         |
+| `MEDIA_CLEANUP_SOFT_DAYS`        | `7`             | Дней до soft-delete неиспользуемого ассета.       |
+| `MEDIA_CLEANUP_HARD_DAYS`        | `30`            | Дней до hard-delete после soft.                   |
+| `BULLMQ_IN_PROCESS_WORKER`       | `true`          | Если `false`, воркеры не стартуют в API-процессе. |
+
+### Зависимости
+
+- Добавлено: `@ffprobe-installer/ffprobe` (статический бинарь ffprobe).
+
+### Operational notes для prod
+
+1. После деплоя: `docker compose --profile prod -f docker-compose.prod.yml exec app yarn prisma migrate deploy`.
+2. Одноразово: `POST /admin/media/reprobe` для backfill длительностей существующих аудио.
+3. Убедиться, что `client_max_body_size` / `request_body.max_size` в reverse-proxy ≥ `UPLOADS_MAX_AUDIO_MB`.
+
+---
+
 ## 2026-04-21 — ✨ НОВОЕ: AudioChapter API — admin endpoints, reorder, новые поля, upload limits
 
 **СТАТУС**: ✅ Реализовано (Iteration 1 per BACKEND_TZ.md)

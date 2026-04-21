@@ -78,4 +78,8 @@ export class LocalStorageService implements StorageService {
     const safeKey = key.replace(/^\/+/, '');
     return `${base}/${safeKey}`;
   }
+
+  getLocalPath(key: string): string {
+    return this.resolvePath(key);
+  }
 }

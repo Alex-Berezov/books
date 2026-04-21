@@ -33,6 +33,7 @@ import { GlobalRateLimitGuard } from './common/guards/global-rate-limit.guard';
 import { HealthModule } from './modules/health/health.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { QueueModule } from './modules/queue/queue.module';
+import { MediaJobsModule } from './modules/media-jobs/media-jobs.module';
 import { PrismaModule } from './shared/prisma/prisma.module';
 import { SecurityModule } from './shared/security/security.module';
 
@@ -76,6 +77,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     HealthModule,
     MetricsModule,
     QueueModule,
+    MediaJobsModule,
     // ...other modules
   ],
   controllers: [AppController],
