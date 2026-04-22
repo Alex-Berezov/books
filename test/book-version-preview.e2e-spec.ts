@@ -22,15 +22,22 @@ describe('BookVersion preview e2e', () => {
     );
     await app.init();
 
-    await request(http()).post('/auth/register').send({
-      email: 'admin@example.com',
-      password: 'Password1!',
-      name: 'Admin',
-    });
-    const adminLogin = await request(http())
-      .post('/auth/login')
-      .send({ email: 'admin@example.com', password: 'Password1!' });
-    adminAccess = adminLogin.body.accessToken as string;
+    const adminEmail = 'admin@example.com';
+    const password = 'password123';
+    const regAdmin = await request(http())
+      .post('/auth/register')
+      .send({ email: adminEmail, password });
+    if (regAdmin.status === 201) {
+      adminAccess = regAdmin.body.accessToken as string;
+    } else if (regAdmin.status === 409) {
+      const login = await request(http())
+        .post('/auth/login')
+        .send({ email: adminEmail, password })
+        .expect(200);
+      adminAccess = login.body.accessToken as string;
+    } else {
+      throw new Error(`Admin register failed: ${regAdmin.status}`);
+    }
   });
 
   afterAll(async () => {
