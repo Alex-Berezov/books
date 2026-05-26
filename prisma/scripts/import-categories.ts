@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { PrismaClient, Language, CategoryType } from '@prisma/client';
 import * as path from 'path';
-import * as xlsx from 'xlsx';
+import { readFile, utils } from 'xlsx';
+import type { WorkBook } from 'xlsx';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 
@@ -54,9 +55,9 @@ async function main() {
   );
 
   // 1. Read Excel workbook
-  let workbook: xlsx.WorkBook;
+  let workbook: WorkBook;
   try {
-    workbook = xlsx.readFile(EXCEL_FILE_PATH);
+    workbook = readFile(EXCEL_FILE_PATH);
   } catch (err) {
     console.error(`❌ Failed to read Excel file at ${EXCEL_FILE_PATH}:`, err);
     process.exit(1);
@@ -71,8 +72,8 @@ async function main() {
     process.exit(1);
   }
 
-  const rawHierarchy = xlsx.utils.sheet_to_json<any>(hierarchySheet);
-  const rawTranslations = xlsx.utils.sheet_to_json<any>(translationsSheet);
+  const rawHierarchy = utils.sheet_to_json<any>(hierarchySheet);
+  const rawTranslations = utils.sheet_to_json<any>(translationsSheet);
 
   console.log(`📊 Found ${rawHierarchy.length} categories in Hierarchy sheet.`);
   console.log(`📊 Found ${rawTranslations.length} translations in Translations sheet.`);
