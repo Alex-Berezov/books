@@ -30,6 +30,7 @@
     "cleanup:bookVersions:apply": "APPLY=1 ts-node prisma/scripts/cleanup-duplicate-book-versions.ts",
     "cleanup:testUsers": "ts-node prisma/scripts/cleanup-test-users.ts",
     "cleanup:testUsers:apply": "APPLY=1 ts-node prisma/scripts/cleanup-test-users.ts",
+    "db:import-categories": "ts-node prisma/scripts/import-categories.ts",
     "prepare": "husky || exit 0",
     "ci": "bash scripts/ci.sh",
     "openapi:schema": "node scripts/generate-openapi-schema.js",
@@ -66,7 +67,8 @@
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
