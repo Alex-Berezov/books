@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { PrismaClient, Language, CategoryType } from '@prisma/client';
 import * as path from 'path';
-import { readFile, utils } from 'xlsx';
+import xlsx from 'xlsx';
+const { readFile, utils } = xlsx;
 import type { WorkBook } from 'xlsx';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
