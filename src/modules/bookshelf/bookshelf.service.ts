@@ -23,7 +23,13 @@ export class BookshelfService {
         orderBy: { addedAt: 'desc' },
         skip,
         take: limit + 1, // +1 to compute hasNext without a second query
-        include: { bookVersion: true },
+        include: {
+          bookVersion: {
+            include: {
+              book: true,
+            },
+          },
+        },
       }),
       this.prisma.bookshelf.count({ where: { userId } }),
     ]);
@@ -31,7 +37,10 @@ export class BookshelfService {
     const items = itemsRaw.slice(0, limit).map((i) => ({
       id: i.id,
       addedAt: i.addedAt,
-      bookVersion: i.bookVersion,
+      bookVersion: {
+        ...i.bookVersion,
+        book: i.bookVersion.book,
+      },
     }));
     return { items, page, limit, total, hasNext };
   }
