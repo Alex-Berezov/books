@@ -32,9 +32,30 @@ describe('BookService.getOverview', () => {
   it('returns aggregated overview with languages, flags and SEO (happy path)', async () => {
     prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
     prisma.bookVersion.findMany.mockResolvedValue([
-      { id: 'v-text-en', language: Language.en, type: BookType.text, isFree: true, seoId: 1 },
-      { id: 'v-audio-es', language: Language.es, type: BookType.audio, isFree: false, seoId: 2 },
-      { id: 'v-ref-fr', language: Language.fr, type: BookType.referral, isFree: true, seoId: null },
+      {
+        id: 'v-text-en',
+        language: Language.en,
+        type: BookType.text,
+        isFree: true,
+        seoId: 1,
+        _count: { chapters: 5, audioChapters: 0, summaries: 1 },
+      },
+      {
+        id: 'v-audio-es',
+        language: Language.es,
+        type: BookType.audio,
+        isFree: false,
+        seoId: 2,
+        _count: { chapters: 0, audioChapters: 3, summaries: 0 },
+      },
+      {
+        id: 'v-ref-fr',
+        language: Language.fr,
+        type: BookType.referral,
+        isFree: true,
+        seoId: null,
+        _count: { chapters: 0, audioChapters: 0, summaries: 0 },
+      },
     ]);
     prisma.bookSummary.findFirst.mockResolvedValue({ id: 's1' });
     prisma.seo.findUnique.mockImplementation((args: { where: { id: number } }) => {
@@ -77,8 +98,22 @@ describe('BookService.getOverview', () => {
   it('prefers same-language version when available', async () => {
     prisma.book.findUnique.mockResolvedValue({ id: 'b3', slug: 'book-3' });
     prisma.bookVersion.findMany.mockResolvedValue([
-      { id: 'v-text-en', language: Language.en, type: BookType.text, isFree: true, seoId: 1 },
-      { id: 'v-text-es', language: Language.es, type: BookType.text, isFree: true, seoId: 2 },
+      {
+        id: 'v-text-en',
+        language: Language.en,
+        type: BookType.text,
+        isFree: true,
+        seoId: 1,
+        _count: { chapters: 3, audioChapters: 0, summaries: 1 },
+      },
+      {
+        id: 'v-text-es',
+        language: Language.es,
+        type: BookType.text,
+        isFree: true,
+        seoId: 2,
+        _count: { chapters: 4, audioChapters: 0, summaries: 1 },
+      },
     ]);
     prisma.bookSummary.findFirst.mockResolvedValue({ id: 's2' });
     prisma.seo.findUnique.mockResolvedValue({
