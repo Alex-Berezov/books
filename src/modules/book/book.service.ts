@@ -108,17 +108,14 @@ export class BookService {
     // All published versions for this book
     const versions = await this.prisma.bookVersion.findMany({
       where: { bookId: book.id, status: 'published' },
-      select: {
-        id: true,
-        language: true,
-        type: true,
-        isFree: true,
-        seoId: true,
-        title: true,
-        author: true,
-        description: true,
-        coverImageUrl: true,
-        publishedAt: true,
+      include: {
+        _count: {
+          select: {
+            chapters: true,
+            audioChapters: true,
+            summaries: true,
+          },
+        },
       },
     });
 
@@ -130,30 +127,38 @@ export class BookService {
       available: availableLanguages,
     });
 
-    // Pick versions by type (closest to requested lang, fallback to first available)
-    const pickByType = (type: BookType) => {
-      const sameLang = versions.find((v) => v.type === type && v.language === preferredLang);
-      if (sameLang) return sameLang;
-      return versions.find((v) => v.type === type) || null;
-    };
+    // We can read it if it is preferredLang and has chapters OR has type text, or fallback to first version with chapters/text
+    const textVersion =
+      versions.find(
+        (v) => v.language === preferredLang && (v._count.chapters > 0 || v.type === BookType.text),
+      ) ||
+      versions.find((v) => v._count.chapters > 0 || v.type === BookType.text) ||
+      null;
 
-    const textVersion = pickByType(BookType.text);
-    const audioVersion = pickByType(BookType.audio);
-    const referralVersion = pickByType(BookType.referral);
+    // We can listen if it is preferredLang and has audioChapters OR has type audio, or fallback to first version with audioChapters/audio
+    const audioVersion =
+      versions.find(
+        (v) =>
+          v.language === preferredLang && (v._count.audioChapters > 0 || v.type === BookType.audio),
+      ) ||
+      versions.find((v) => v._count.audioChapters > 0 || v.type === BookType.audio) ||
+      null;
+
+    // Pick referral version
+    const referralVersion =
+      versions.find((v) => v.language === preferredLang && v.type === BookType.referral) ||
+      versions.find((v) => v.type === BookType.referral) ||
+      null;
 
     // Check features
-    const hasText = !!textVersion;
-    const hasAudio = !!audioVersion;
+    const hasText =
+      !!textVersion && (textVersion._count.chapters > 0 || textVersion.type === BookType.text);
+    const hasAudio =
+      !!audioVersion &&
+      (audioVersion._count.audioChapters > 0 || audioVersion.type === BookType.audio);
 
-    // Summary exists if BookSummary row exists for any selected version
-    const summaryForVersionId = textVersion?.id ?? audioVersion?.id ?? referralVersion?.id;
-    const summary = summaryForVersionId
-      ? await this.prisma.bookSummary.findFirst({
-          where: { bookVersionId: summaryForVersionId },
-          select: { id: true },
-        })
-      : null;
-    const hasSummary = !!summary;
+    // Summary exists if BookSummary row exists for any version
+    const hasSummary = versions.some((v) => v._count.summaries > 0);
 
     const loadSeo = async (versionId: string | null | undefined) => {
       if (!versionId) return null;
