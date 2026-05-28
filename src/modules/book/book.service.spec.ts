@@ -7,6 +7,8 @@ interface PrismaStub {
   bookVersion: { findMany: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock };
+  bookCategory: { findMany: jest.Mock };
+  bookTag: { findMany: jest.Mock };
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -14,6 +16,8 @@ const createPrismaStub = (): PrismaStub => ({
   bookVersion: { findMany: jest.fn() },
   bookSummary: { findFirst: jest.fn() },
   seo: { findUnique: jest.fn() },
+  bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
+  bookTag: { findMany: jest.fn().mockResolvedValue([]) },
 });
 
 describe('BookService.getOverview', () => {

@@ -114,6 +114,11 @@ export class BookService {
         type: true,
         isFree: true,
         seoId: true,
+        title: true,
+        author: true,
+        description: true,
+        coverImageUrl: true,
+        publishedAt: true,
       },
     });
 
@@ -170,7 +175,52 @@ export class BookService {
       summary: (await loadSeo(textVersion?.id)) ?? (await loadSeo(audioVersion?.id)) ?? null,
     } as const;
 
+    const activeVersion = textVersion || audioVersion || referralVersion;
+
+    // Fetch categories and tags for the active version
+    const categoriesRelation =
+      activeVersion && this.prisma.bookCategory
+        ? await this.prisma.bookCategory.findMany({
+            where: { bookVersionId: activeVersion.id },
+            include: { category: { include: { translations: true } } },
+          })
+        : [];
+    const tagsRelation =
+      activeVersion && this.prisma.bookTag
+        ? await this.prisma.bookTag.findMany({
+            where: { bookVersionId: activeVersion.id },
+            include: { tag: { include: { translations: true } } },
+          })
+        : [];
+
+    const categories = categoriesRelation.map((c) => ({
+      ...c.category,
+    }));
+    const tags = tagsRelation.map((t) => ({
+      ...t.tag,
+    }));
+
     return {
+      id: book.id,
+      slug: book.slug,
+      title: activeVersion?.title || '',
+      author: activeVersion?.author || '',
+      description: activeVersion?.description || '',
+      coverUrl: activeVersion?.coverImageUrl || '',
+      rating: 5.0, // Default rating for book overview
+      publicationYear: activeVersion?.publishedAt
+        ? new Date(activeVersion.publishedAt).getFullYear()
+        : null,
+      language: preferredLang,
+      categories,
+      tags,
+      versions: versions.map((v) => ({
+        ...v,
+        coverUrl: v.coverImageUrl, // compatibility alias
+      })),
+      createdAt: book.createdAt,
+      updatedAt: book.updatedAt,
+      // Keep legacy structure properties for compatibility
       book: { id: book.id, slug: book.slug },
       availableLanguages,
       hasText,
@@ -181,7 +231,7 @@ export class BookService {
         audio: audioVersion?.id ?? null,
       },
       seo,
-    } as const;
+    };
   }
 
   async update(id: string, data: UpdateBookDto) {
