@@ -20,7 +20,21 @@ export class BookService {
 
     const [books, total] = await Promise.all([
       this.prisma.book.findMany({
-        include: { versions: true },
+        include: {
+          versions: {
+            include: {
+              tags: {
+                include: {
+                  tag: {
+                    include: {
+                      translations: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
         skip,
         take: limit,
       }),
