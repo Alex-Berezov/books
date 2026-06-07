@@ -27,6 +27,9 @@ export class BookshelfService {
           bookVersion: {
             include: {
               book: true,
+              _count: {
+                select: { chapters: true },
+              },
             },
           },
         },
@@ -39,6 +42,7 @@ export class BookshelfService {
       addedAt: i.addedAt,
       bookVersion: {
         ...i.bookVersion,
+        chaptersCount: i.bookVersion._count?.chapters || 0,
         book: i.bookVersion.book,
       },
     }));
