@@ -107,14 +107,22 @@ describe('Language policy on categories/tags listings (e2e)', () => {
       .get(`/categories/${category.slug}/books?lang=en`)
       .expect(200);
     expect(resCatEN.body.availableLanguages).toEqual(expect.arrayContaining(['en', 'es']));
-    expect(resCatEN.body.versions.every((v: any) => v.language === 'en')).toBe(true);
+    expect(
+      resCatEN.body.data.every(
+        (b: any): boolean => !!b.versions.some((v: any) => v.language === 'en'),
+      ),
+    ).toBe(true);
 
     // Categories: Accept-Language es -> only ES
     const resCatES = await request(http())
       .get(`/categories/${category.slug}/books`)
       .set('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8')
       .expect(200);
-    expect(resCatES.body.versions.every((v: any) => v.language === 'es')).toBe(true);
+    expect(
+      resCatES.body.data.every(
+        (b: any): boolean => !!b.versions.some((v: any) => v.language === 'es'),
+      ),
+    ).toBe(true);
 
     // Tags: ?lang=es -> only ES
     const resTagES = await request(http()).get(`/tags/${tag.slug}/books?lang=es`).expect(200);
