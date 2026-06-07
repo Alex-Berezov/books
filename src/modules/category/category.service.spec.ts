@@ -92,49 +92,72 @@ describe('CategoryService', () => {
     prisma.categoryTranslation.findUnique.mockResolvedValue(null);
     prisma.category.findFirst.mockResolvedValue({ id: 'cat1', name: 'Cat', slug: 'cat' });
     const now = new Date();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    (prisma as any).book = {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: 'b1',
+          slug: 'b1',
+          createdAt: now,
+          updatedAt: now,
+          versions: [
+            {
+              id: 'v-es',
+              bookId: 'b1',
+              language: Language.es,
+              title: 'T2',
+              author: 'A',
+              description: 'D',
+              coverImageUrl: 'u',
+              type: 'text',
+              isFree: true,
+              referralUrl: null,
+              createdAt: now,
+              updatedAt: now,
+              status: 'published',
+              publishedAt: now,
+              seoId: undefined,
+              seo: null,
+            },
+          ],
+        },
+        {
+          id: 'b2',
+          slug: 'b2',
+          createdAt: now,
+          updatedAt: now,
+          versions: [
+            {
+              id: 'v-en',
+              bookId: 'b2',
+              language: Language.en,
+              title: 'T',
+              author: 'A',
+              description: 'D',
+              coverImageUrl: 'u',
+              type: 'text',
+              isFree: true,
+              referralUrl: null,
+              createdAt: now,
+              updatedAt: now,
+              status: 'published',
+              publishedAt: now,
+              seoId: undefined,
+              seo: null,
+            },
+          ],
+        },
+      ]),
+    };
     prisma.bookVersion.findMany.mockResolvedValue([
-      {
-        id: 'v-en',
-        bookId: 'b1',
-        language: Language.en,
-        title: 'T',
-        author: 'A',
-        description: 'D',
-        coverImageUrl: 'u',
-        type: 'text',
-        isFree: true,
-        referralUrl: null,
-        createdAt: now,
-        updatedAt: now,
-        status: 'published',
-        publishedAt: now,
-        seoId: undefined,
-        seo: null,
-      },
-      {
-        id: 'v-es',
-        bookId: 'b1',
-        language: Language.es,
-        title: 'T2',
-        author: 'A',
-        description: 'D',
-        coverImageUrl: 'u',
-        type: 'text',
-        isFree: true,
-        referralUrl: null,
-        createdAt: now,
-        updatedAt: now,
-        status: 'published',
-        publishedAt: now,
-        seoId: undefined,
-        seo: null,
-      },
+      { language: Language.en },
+      { language: Language.es },
     ]);
 
     const res = await service.getBySlugWithBooks('cat', undefined, 'es, en;q=0.8');
     expect(res.availableLanguages.sort()).toEqual([Language.en, Language.es].sort());
-    expect(res.versions).toHaveLength(1);
-    expect(res.versions[0].language).toBe(Language.es);
+    expect(res.data).toHaveLength(1);
+    expect(res.data[0].versions[0].language).toBe(Language.es);
     expect(res.category.translation).toBeNull();
   });
 

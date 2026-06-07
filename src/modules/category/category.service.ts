@@ -158,26 +158,52 @@ export class CategoryService {
     }
 
     // Public endpoint: only published versions
-    const versions = await this.prisma.bookVersion.findMany({
+    const books = await this.prisma.book.findMany({
       where: {
-        status: 'published',
-        categories: { some: { categoryId: category.id } },
+        versions: {
+          some: {
+            status: 'published',
+            categories: { some: { categoryId: category.id } },
+          },
+        },
+      },
+      include: {
+        versions: {
+          include: {
+            tags: {
+              include: {
+                tag: {
+                  include: {
+                    translations: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
     });
 
-    const availableLanguages: Language[] = Array.from(new Set(versions.map((v) => v.language)));
+    const allVersions = books.flatMap((b) => b.versions);
+    const availableLanguages: Language[] = Array.from(new Set(allVersions.map((v) => v.language)));
     const effective = resolveRequestedLanguage({
       queryLang,
       acceptLanguage: acceptLanguageHeader || null,
       available: availableLanguages,
     });
-    const filtered = effective ? versions.filter((v) => v.language === effective) : versions;
+
+    const filteredBooks = effective
+      ? books.filter((b) => b.versions.some((v) => v.language === effective))
+      : books;
 
     return {
       category: { ...category, translation: trans ?? null },
-      versions: filtered,
+      data: filteredBooks,
+      total: filteredBooks.length,
+      page: 1,
+      limit: 100,
+      totalPages: 1,
       availableLanguages,
     };
   }
@@ -211,15 +237,34 @@ export class CategoryService {
       });
     }
 
-    const versions = await this.prisma.bookVersion.findMany({
+    const books = await this.prisma.book.findMany({
       where: {
-        status: 'published',
-        language: pathLang,
-        categories: { some: { categoryId: category.id } },
+        versions: {
+          some: {
+            status: 'published',
+            language: pathLang,
+            categories: { some: { categoryId: category.id } },
+          },
+        },
+      },
+      include: {
+        versions: {
+          include: {
+            tags: {
+              include: {
+                tag: {
+                  include: {
+                    translations: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
     });
+
     const availableLanguages: Language[] = Array.from(
       new Set(
         (
@@ -239,7 +284,11 @@ export class CategoryService {
         language: pathLang,
       },
       seo: trans?.seo ?? null,
-      versions,
+      data: books,
+      total: books.length,
+      page: 1,
+      limit: 100,
+      totalPages: 1,
       availableLanguages,
     };
   }
