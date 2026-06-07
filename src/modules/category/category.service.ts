@@ -184,16 +184,31 @@ export class CategoryService {
 
   // Public resolver by path language and translation slug (/:lang/categories/:slug/books)
   async getByLangSlugWithBooks(pathLang: Language, slug: string) {
-    const trans = await this.prisma.categoryTranslation.findUnique({
+    let trans = await this.prisma.categoryTranslation.findUnique({
       where: { language_slug: { language: pathLang, slug } },
       include: { category: true, seo: true },
     });
     let category: PrismaCategory | null =
       trans && 'category' in trans ? ((trans.category as PrismaCategory | null) ?? null) : null;
     if (!category) {
-      // Fallback to base category by slug if translation not present
-      category = await this.prisma.category.findFirst({ where: { slug } });
+      // Fallback to base category by slug OR id if slug is a UUID
+      category = await this.prisma.category.findFirst({
+        where: {
+          OR: [
+            { slug },
+            ...(slug.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+              ? [{ id: slug }]
+              : []),
+          ],
+        },
+      });
       if (!category) throw new NotFoundException('Category not found');
+
+      // Fetch the translation using the category ID we just resolved
+      trans = await this.prisma.categoryTranslation.findFirst({
+        where: { categoryId: category.id, language: pathLang },
+        include: { category: true, seo: true },
+      });
     }
 
     const versions = await this.prisma.bookVersion.findMany({
