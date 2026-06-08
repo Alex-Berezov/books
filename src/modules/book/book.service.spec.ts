@@ -1,6 +1,7 @@
 import { BookService } from './book.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BookType, Language } from '@prisma/client';
+import { NotFoundException } from '@nestjs/common';
 
 interface PrismaStub {
   book: { findUnique: jest.Mock };
@@ -9,7 +10,7 @@ interface PrismaStub {
   seo: { findUnique: jest.Mock };
   bookCategory: { findMany: jest.Mock };
   bookTag: { findMany: jest.Mock };
-  bookRating: { aggregate: jest.Mock };
+  bookRating: { aggregate: jest.Mock; upsert: jest.Mock };
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -19,7 +20,10 @@ const createPrismaStub = (): PrismaStub => ({
   seo: { findUnique: jest.fn() },
   bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
   bookTag: { findMany: jest.fn().mockResolvedValue([]) },
-  bookRating: { aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }) },
+  bookRating: {
+    aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }),
+    upsert: jest.fn(),
+  },
 });
 
 describe('BookService.getOverview', () => {
@@ -125,5 +129,30 @@ describe('BookService.getOverview', () => {
 
     const res = await service.getOverview('book-3', 'es');
     expect(res.versionIds.text).toBe('v-text-es');
+  });
+
+  describe('rateBook', () => {
+    it('throws NotFoundException if book does not exist', async () => {
+      prisma.book.findUnique.mockResolvedValue(null);
+      await expect(service.rateBook('u1', 'b-none', 5)).rejects.toThrow(NotFoundException);
+    });
+
+    it('upserts rating when book exists', async () => {
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1' });
+      prisma.bookRating.upsert.mockResolvedValue({
+        id: 'r1',
+        userId: 'u1',
+        bookId: 'b1',
+        score: 5,
+      });
+
+      const res = await service.rateBook('u1', 'b1', 5);
+      expect(res.score).toBe(5);
+      expect(prisma.bookRating.upsert).toHaveBeenCalledWith({
+        where: { userId_bookId: { userId: 'u1', bookId: 'b1' } },
+        create: { userId: 'u1', bookId: 'b1', score: 5 },
+        update: { score: 5 },
+      });
+    });
   });
 });
