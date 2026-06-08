@@ -14,6 +14,25 @@ export class BookService {
     return this.prisma.book.create({ data });
   }
 
+  async rateBook(userId: string, bookId: string, score: number) {
+    const book = await this.prisma.book.findUnique({ where: { id: bookId } });
+    if (!book) throw new NotFoundException(`Book with ID ${bookId} not found`);
+
+    return this.prisma.bookRating.upsert({
+      where: { userId_bookId: { userId, bookId } },
+      create: { userId, bookId, score },
+      update: { score },
+    });
+  }
+
+  private async getAverageRating(bookId: string): Promise<number> {
+    const agg = await this.prisma.bookRating.aggregate({
+      where: { bookId },
+      _avg: { score: true },
+    });
+    return agg._avg.score || 5.0;
+  }
+
   async findAll(paginationDto?: PaginationDto) {
     const { page = 1, limit = 10 } = paginationDto || {};
     const skip = (page - 1) * limit;
@@ -41,8 +60,18 @@ export class BookService {
       this.prisma.book.count(),
     ]);
 
+    const data = await Promise.all(
+      books.map(async (book) => {
+        const rating = await this.getAverageRating(book.id);
+        return {
+          ...book,
+          rating,
+        };
+      }),
+    );
+
     return {
-      data: books,
+      data,
       meta: {
         total,
         page,
@@ -73,8 +102,11 @@ export class BookService {
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
 
+    const rating = await this.getAverageRating(book.id);
+
     return {
       ...book,
+      rating,
       versions: book.versions.map((v) => ({
         ...v,
         categories: v.categories.map((c) => c.category),
@@ -104,8 +136,11 @@ export class BookService {
       throw new NotFoundException(`Book with slug ${slug} not found`);
     }
 
+    const rating = await this.getAverageRating(book.id);
+
     return {
       ...book,
+      rating,
       versions: book.versions.map((v) => ({
         ...v,
         categories: v.categories.map((c) => c.category),
@@ -226,7 +261,7 @@ export class BookService {
       author: activeVersion?.author || '',
       description: activeVersion?.description || '',
       coverUrl: activeVersion?.coverImageUrl || '',
-      rating: 5.0, // Default rating for book overview
+      rating: await this.getAverageRating(book.id),
       publicationYear: activeVersion?.publishedAt
         ? new Date(activeVersion.publishedAt).getFullYear()
         : null,

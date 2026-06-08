@@ -11,11 +11,22 @@ import {
   Query,
   UseGuards,
   Headers,
+  Req,
+  HttpCode,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiHeader } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiHeader,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { BookService } from './book.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
+import { RateBookDto } from './dto/rate-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { SLUG_PATTERN } from '../../shared/validators/slug';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -23,6 +34,11 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CheckBookSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckBookSlugResponseDto } from './dto/check-slug-response.dto';
+
+interface RequestUser {
+  userId: string;
+  email: string;
+}
 
 @ApiTags('books')
 @Controller('books')
@@ -241,6 +257,32 @@ export class BookController {
       if (err instanceof HttpException) throw err;
       throw new HttpException(
         { message: 'Failed to delete book', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post(':id/rate')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rate a book' })
+  @ApiParam({ name: 'id', description: 'Unique book ID' })
+  @ApiResponse({ status: 200, description: 'Book successfully rated' })
+  @ApiResponse({ status: 400, description: 'Invalid rating score' })
+  @ApiResponse({ status: 404, description: 'Book not found' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async rate(
+    @Param('id') bookId: string,
+    @Req() req: { user: RequestUser },
+    @Body() dto: RateBookDto,
+  ) {
+    try {
+      return await this.bookService.rateBook(req.user.userId, bookId, dto.score);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to rate book', details: (err as Error).message },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
