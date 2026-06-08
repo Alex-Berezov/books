@@ -9,6 +9,7 @@ interface PrismaStub {
   seo: { findUnique: jest.Mock };
   bookCategory: { findMany: jest.Mock };
   bookTag: { findMany: jest.Mock };
+  bookRating: { aggregate: jest.Mock };
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -18,6 +19,7 @@ const createPrismaStub = (): PrismaStub => ({
   seo: { findUnique: jest.fn() },
   bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
   bookTag: { findMany: jest.fn().mockResolvedValue([]) },
+  bookRating: { aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }) },
 });
 
 describe('BookService.getOverview', () => {
