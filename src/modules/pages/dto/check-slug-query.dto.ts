@@ -18,10 +18,10 @@ export class CheckSlugQueryDto {
   @ApiProperty({
     description: 'Page language',
     example: 'en',
-    enum: ['en', 'es', 'fr', 'pt'],
+    enum: ['en', 'es', 'fr', 'pt', 'ru'],
   })
   @IsString()
-  @IsIn(['en', 'es', 'fr', 'pt'], { message: 'Language must be one of: en, es, fr, pt' })
+  @IsIn(['en', 'es', 'fr', 'pt', 'ru'], { message: 'Language must be one of: en, es, fr, pt, ru' })
   lang!: string;
 
   @ApiPropertyOptional({

@@ -33,10 +33,10 @@ export class CreatePageDto {
 
   // Note: language for admin endpoints is derived from admin context (/:lang or X-Admin-Language)
   // The field remains optional for backward compatibility, but the controller ignores it.
-  @ApiProperty({ enum: ['en', 'es', 'fr', 'pt'], required: false })
+  @ApiProperty({ enum: ['en', 'es', 'fr', 'pt', 'ru'], required: false })
   @IsOptional()
-  @IsIn(['en', 'es', 'fr', 'pt'])
-  language?: 'en' | 'es' | 'fr' | 'pt';
+  @IsIn(['en', 'es', 'fr', 'pt', 'ru'])
+  language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
 
   @ApiPropertyOptional({
     description: 'SEO entity ID (legacy, use seo instead)',

@@ -365,6 +365,7 @@ enum Language {
   es
   fr
   pt
+  ru
 }
 
 enum BookType {

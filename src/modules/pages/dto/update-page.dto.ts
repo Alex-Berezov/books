@@ -27,10 +27,10 @@ export class UpdatePageDto {
   @IsString()
   content?: string;
 
-  @ApiPropertyOptional({ enum: ['en', 'es', 'fr', 'pt'] })
+  @ApiPropertyOptional({ enum: ['en', 'es', 'fr', 'pt', 'ru'] })
   @IsOptional()
-  @IsIn(['en', 'es', 'fr', 'pt'])
-  language?: 'en' | 'es' | 'fr' | 'pt';
+  @IsIn(['en', 'es', 'fr', 'pt', 'ru'])
+  language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
 
   @ApiPropertyOptional({ description: 'SEO entity ID', nullable: true })
   @IsOptional()
