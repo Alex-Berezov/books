@@ -4,7 +4,7 @@ import { BookType, Language } from '@prisma/client';
 import { NotFoundException } from '@nestjs/common';
 
 interface PrismaStub {
-  book: { findUnique: jest.Mock };
+  book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
   bookVersion: { findMany: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock };
@@ -14,7 +14,7 @@ interface PrismaStub {
 }
 
 const createPrismaStub = (): PrismaStub => ({
-  book: { findUnique: jest.fn() },
+  book: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   bookVersion: { findMany: jest.fn() },
   bookSummary: { findFirst: jest.fn() },
   seo: { findUnique: jest.fn() },
@@ -153,6 +153,71 @@ describe('BookService.getOverview', () => {
         create: { userId: 'u1', bookId: 'b1', score: 5 },
         update: { score: 5 },
       });
+    });
+  });
+
+  describe('findAll', () => {
+    it('returns list of books with ratings, hasText, hasAudio, hasSummary flags', async () => {
+      prisma.book.count.mockResolvedValue(1);
+      prisma.book.findMany.mockResolvedValue([
+        {
+          id: 'b1',
+          slug: 'slug-1',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          versions: [
+            {
+              id: 'v1',
+              language: Language.en,
+              type: BookType.text,
+              status: 'published',
+              _count: { chapters: 5, audioChapters: 2, summaries: 1 },
+            },
+          ],
+        },
+      ]);
+
+      const res = await service.findAll({ page: 1, limit: 10 });
+
+      expect(res.meta.total).toBe(1);
+      expect(res.data[0].id).toBe('b1');
+      expect(res.data[0].hasText).toBe(true);
+      expect(res.data[0].hasAudio).toBe(true);
+      expect(res.data[0].hasSummary).toBe(true);
+    });
+
+    it('sets hasText/hasAudio to false if no chapters or drafts only', async () => {
+      prisma.book.count.mockResolvedValue(1);
+      prisma.book.findMany.mockResolvedValue([
+        {
+          id: 'b2',
+          slug: 'slug-2',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          versions: [
+            {
+              id: 'v2',
+              language: Language.en,
+              type: BookType.text,
+              status: 'draft',
+              _count: { chapters: 5, audioChapters: 2, summaries: 1 },
+            },
+            {
+              id: 'v3',
+              language: Language.es,
+              type: BookType.referral,
+              status: 'published',
+              _count: { chapters: 0, audioChapters: 0, summaries: 0 },
+            },
+          ],
+        },
+      ]);
+
+      const res = await service.findAll({ page: 1, limit: 10 });
+
+      expect(res.data[0].hasText).toBe(false);
+      expect(res.data[0].hasAudio).toBe(false);
+      expect(res.data[0].hasSummary).toBe(false);
     });
   });
 });
