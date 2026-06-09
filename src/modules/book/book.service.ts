@@ -42,6 +42,13 @@ export class BookService {
         include: {
           versions: {
             include: {
+              _count: {
+                select: {
+                  chapters: true,
+                  audioChapters: true,
+                  summaries: true,
+                },
+              },
               tags: {
                 include: {
                   tag: {
@@ -63,9 +70,22 @@ export class BookService {
     const data = await Promise.all(
       books.map(async (book) => {
         const rating = await this.getAverageRating(book.id);
+        const hasText = book.versions.some(
+          (v) => v.status === 'published' && (v._count?.chapters > 0 || v.type === 'text'),
+        );
+        const hasAudio = book.versions.some(
+          (v) => v.status === 'published' && (v._count?.audioChapters > 0 || v.type === 'audio'),
+        );
+        const hasSummary = book.versions.some(
+          (v) => v.status === 'published' && v._count?.summaries > 0,
+        );
+
         return {
           ...book,
           rating,
+          hasText,
+          hasAudio,
+          hasSummary,
         };
       }),
     );
