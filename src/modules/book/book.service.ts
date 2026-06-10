@@ -224,8 +224,10 @@ export class BookService {
       !!audioVersion &&
       (audioVersion._count.audioChapters > 0 || audioVersion.type === BookType.audio);
 
-    // Summary exists if BookSummary row exists for any version
-    const hasSummary = versions.some((v) => v._count.summaries > 0);
+    // Summary exists if BookSummary row exists for the resolved text or audio version
+    const hasSummary =
+      (!!textVersion && textVersion._count.summaries > 0) ||
+      (!!audioVersion && audioVersion._count.summaries > 0);
 
     const loadSeo = async (versionId: string | null | undefined) => {
       if (!versionId) return null;
