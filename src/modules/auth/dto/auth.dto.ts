@@ -30,3 +30,24 @@ export class RefreshDto {
   @IsString()
   refreshToken!: string;
 }
+
+export class SocialLoginDto {
+  @IsEmail()
+  email!: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  avatarUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  provider?: string;
+
+  @IsOptional()
+  @IsIn(Object.values(PrismaLanguage))
+  languagePreference?: PrismaLanguage;
+}

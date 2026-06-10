@@ -2,7 +2,7 @@ import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs
 import { ApiOperation, ApiTags, ApiOkResponse, ApiCreatedResponse } from '@nestjs/swagger';
 import { AuthRateLimitGuard } from '../../common/guards/auth-rate-limit.guard';
 import { AuthService } from './auth.service';
-import { LoginDto, RefreshDto, RegisterDto } from './dto/auth.dto';
+import { LoginDto, RefreshDto, RegisterDto, SocialLoginDto } from './dto/auth.dto';
 
 class AuthUserResponse {
   id!: string;
@@ -39,6 +39,14 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto);
+  }
+
+  @ApiOperation({ summary: 'Login or Register via OAuth (Google, Facebook)' })
+  @ApiOkResponse({ type: AuthResponse })
+  @HttpCode(HttpStatus.OK)
+  @Post('social')
+  socialLogin(@Body() dto: SocialLoginDto) {
+    return this.auth.socialLogin(dto);
   }
 
   @ApiOperation({ summary: 'Refresh tokens' })

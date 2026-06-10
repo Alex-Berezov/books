@@ -104,7 +104,7 @@ model AudioChapter {
 model User {
   id                 String            @id @default(uuid())
   email              String            @unique
-  passwordHash       String
+  passwordHash       String?
   name               String?
   firstName          String?
   lastName           String?
