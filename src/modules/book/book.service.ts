@@ -204,14 +204,12 @@ export class BookService {
       versions.find((v) => v._count.chapters > 0 || v.type === BookType.text) ||
       null;
 
-    // We can listen if it is preferredLang and has audioChapters OR has type audio, or fallback to first version with audioChapters/audio
+    // We can listen if it is preferredLang and has audioChapters OR has type audio
     const audioVersion =
       versions.find(
         (v) =>
           v.language === preferredLang && (v._count.audioChapters > 0 || v.type === BookType.audio),
-      ) ||
-      versions.find((v) => v._count.audioChapters > 0 || v.type === BookType.audio) ||
-      null;
+      ) || null;
 
     // Pick referral version
     const referralVersion =
