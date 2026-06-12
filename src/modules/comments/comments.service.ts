@@ -44,7 +44,13 @@ export class CommentsService {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          children: true,
+          children: {
+            include: {
+              user: {
+                select: { id: true, email: true, name: true, nickname: true, avatarUrl: true },
+              },
+            },
+          },
           rating: true,
           user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
         },
