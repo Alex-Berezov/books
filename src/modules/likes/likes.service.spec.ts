@@ -116,7 +116,7 @@ describe('LikesService', () => {
 
   describe('count()', () => {
     it('returns cached value if present', async () => {
-      const cachedRes = { likes: 3, dislikes: 1 };
+      const cachedRes = { likes: 3, dislikes: 1, count: 3 };
       cache.get.mockResolvedValueOnce(cachedRes);
       const res = await service.count({ target: 'comment', targetId: 'c1' });
       expect(res).toEqual(cachedRes);
@@ -128,7 +128,7 @@ describe('LikesService', () => {
       prisma.like.count.mockResolvedValueOnce(5); // likes count
       prisma.like.count.mockResolvedValueOnce(2); // dislikes count
       const res = await service.count({ target: 'comment', targetId: 'c1' });
-      expect(res).toEqual({ likes: 5, dislikes: 2 });
+      expect(res).toEqual({ likes: 5, dislikes: 2, count: 5 });
     });
   });
 
@@ -141,7 +141,7 @@ describe('LikesService', () => {
       prisma.like.count.mockResolvedValueOnce(0); // likes
       prisma.like.count.mockResolvedValueOnce(0); // dislikes
       const res1 = await service.toggle('u1', { commentId: 'c1', isLike: true });
-      expect(res1).toEqual({ liked: false, isLike: true, likes: 0, dislikes: 0 });
+      expect(res1).toEqual({ liked: false, isLike: true, likes: 0, dislikes: 0, count: 0 });
 
       // switch type => update
       prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
@@ -151,7 +151,7 @@ describe('LikesService', () => {
       prisma.like.count.mockResolvedValueOnce(0); // likes
       prisma.like.count.mockResolvedValueOnce(1); // dislikes
       const res2 = await service.toggle('u1', { commentId: 'c1', isLike: false });
-      expect(res2).toEqual({ liked: true, isLike: false, likes: 0, dislikes: 1 });
+      expect(res2).toEqual({ liked: true, isLike: false, likes: 0, dislikes: 1, count: 0 });
     });
   });
 });
