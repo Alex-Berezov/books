@@ -129,14 +129,14 @@ export class LikesService {
         this.prisma.like.count({ where: { commentId: q.targetId, isLike: true } }),
         this.prisma.like.count({ where: { commentId: q.targetId, isLike: false } }),
       ]);
-      const res = { likes, dislikes };
+      const res = { likes, dislikes, count: likes };
       await this.cache.set(key, res, 5_000); // 5s TTL
       return res;
     } else {
       const count = await this.prisma.like.count({
         where: { bookVersionId: q.targetId, isLike: true },
       });
-      const res = { likes: count, dislikes: 0 };
+      const res = { likes: count, dislikes: 0, count };
       await this.cache.set(key, res, 5_000);
       return res;
     }

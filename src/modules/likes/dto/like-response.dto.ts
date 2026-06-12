@@ -26,6 +26,9 @@ export class LikeCountDto {
 
   @ApiProperty()
   dislikes!: number;
+
+  @ApiPropertyOptional()
+  count?: number;
 }
 
 export class ToggleLikeResponseDto {
