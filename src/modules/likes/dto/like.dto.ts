@@ -14,6 +14,10 @@ export class LikeRequestDto {
   @IsOptional()
   @IsString()
   bookVersionId?: string;
+
+  @ApiPropertyOptional({ description: 'True for like, false for dislike', default: true })
+  @IsOptional()
+  isLike?: boolean = true;
 }
 
 export class LikeCountQueryDto {

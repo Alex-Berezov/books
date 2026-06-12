@@ -30,6 +30,7 @@ export class UsersService {
       name: user.name,
       firstName: user.firstName,
       lastName: user.lastName,
+      nickname: user.nickname,
       isActive: user.isActive,
       avatarUrl: user.avatarUrl,
       languagePreference: user.languagePreference,
@@ -45,8 +46,25 @@ export class UsersService {
 
   async updateMe(
     userId: string,
-    data: { name?: string; avatarUrl?: string; languagePreference?: PrismaLanguage },
+    data: {
+      name?: string;
+      nickname?: string;
+      avatarUrl?: string;
+      languagePreference?: PrismaLanguage;
+    },
   ): Promise<PublicUser> {
+    if (data.nickname) {
+      const existing = await this.prisma.user.findFirst({
+        where: {
+          nickname: { equals: data.nickname, mode: 'insensitive' },
+          id: { not: userId },
+        },
+      });
+      if (existing) {
+        throw new ConflictException('Nickname is already in use');
+      }
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
       data,
@@ -57,6 +75,7 @@ export class UsersService {
       name: user.name,
       firstName: user.firstName,
       lastName: user.lastName,
+      nickname: user.nickname,
       isActive: user.isActive,
       avatarUrl: user.avatarUrl,
       languagePreference: user.languagePreference,
@@ -118,6 +137,7 @@ export class UsersService {
       name: deleted.name,
       firstName: deleted.firstName,
       lastName: deleted.lastName,
+      nickname: deleted.nickname,
       isActive: deleted.isActive,
       avatarUrl: deleted.avatarUrl,
       languagePreference: deleted.languagePreference,
@@ -294,6 +314,7 @@ export class UsersService {
         name: u.name,
         firstName: u.firstName,
         lastName: u.lastName,
+        nickname: u.nickname,
         isActive: u.isActive,
         avatarUrl: u.avatarUrl,
         languagePreference: u.languagePreference,
@@ -338,6 +359,7 @@ export class UsersService {
       name: user.name,
       firstName: user.firstName,
       lastName: user.lastName,
+      nickname: user.nickname,
       isActive: user.isActive,
       avatarUrl: user.avatarUrl,
       languagePreference: user.languagePreference,
@@ -394,6 +416,7 @@ export class UsersService {
       name: updatedUser.name,
       firstName: updatedUser.firstName,
       lastName: updatedUser.lastName,
+      nickname: updatedUser.nickname,
       isActive: updatedUser.isActive,
       avatarUrl: updatedUser.avatarUrl,
       languagePreference: updatedUser.languagePreference,
@@ -401,5 +424,104 @@ export class UsersService {
       lastLogin: updatedUser.lastLogin,
       roles,
     };
+  }
+
+  async getActivities(userId: string) {
+    const comments = await this.prisma.comment.findMany({
+      where: { userId, isDeleted: false },
+      include: {
+        parent: {
+          include: {
+            user: {
+              select: { id: true, email: true, name: true, nickname: true, avatarUrl: true },
+            },
+          },
+        },
+        children: {
+          where: { isDeleted: false },
+          include: {
+            user: {
+              select: { id: true, email: true, name: true, nickname: true, avatarUrl: true },
+            },
+          },
+        },
+        bookVersion: {
+          select: {
+            id: true,
+            title: true,
+            author: true,
+            coverImageUrl: true,
+            book: { select: { slug: true } },
+          },
+        },
+        chapter: {
+          include: {
+            bookVersion: {
+              select: {
+                id: true,
+                title: true,
+                author: true,
+                coverImageUrl: true,
+                book: { select: { slug: true } },
+              },
+            },
+          },
+        },
+        audioChapter: {
+          include: {
+            bookVersion: {
+              select: {
+                id: true,
+                title: true,
+                author: true,
+                coverImageUrl: true,
+                book: { select: { slug: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return comments.map((comment) => {
+      let bookVersion = comment.bookVersion;
+      if (!bookVersion && comment.chapter?.bookVersion) {
+        bookVersion = comment.chapter.bookVersion;
+      }
+      if (!bookVersion && comment.audioChapter?.bookVersion) {
+        bookVersion = comment.audioChapter.bookVersion;
+      }
+
+      return {
+        id: comment.id,
+        text: comment.text,
+        createdAt: comment.createdAt,
+        parentId: comment.parentId,
+        bookVersion: bookVersion
+          ? {
+              id: bookVersion.id,
+              title: bookVersion.title,
+              author: bookVersion.author,
+              coverImageUrl: bookVersion.coverImageUrl,
+              slug: bookVersion.book.slug,
+            }
+          : null,
+        parent: comment.parent
+          ? {
+              id: comment.parent.id,
+              text: comment.parent.text,
+              createdAt: comment.parent.createdAt,
+              user: comment.parent.user,
+            }
+          : null,
+        replies: comment.children.map((child) => ({
+          id: child.id,
+          text: child.text,
+          createdAt: child.createdAt,
+          user: child.user,
+        })),
+      };
+    });
   }
 }

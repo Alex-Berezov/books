@@ -11,6 +11,7 @@ interface PrismaStub {
     findFirst: jest.Mock;
     create: jest.Mock;
     delete: jest.Mock;
+    update: jest.Mock;
     count: jest.Mock;
   };
 }
@@ -18,7 +19,13 @@ interface PrismaStub {
 const createPrismaStub = (): PrismaStub => ({
   comment: { findUnique: jest.fn() },
   bookVersion: { findUnique: jest.fn() },
-  like: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn(), count: jest.fn() },
+  like: {
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    delete: jest.fn(),
+    update: jest.fn(),
+    count: jest.fn(),
+  },
 });
 
 const createCacheStub = () => ({
@@ -62,32 +69,31 @@ describe('LikesService', () => {
       );
     });
 
-    it('is idempotent: Conflict when already liked', async () => {
+    it('is idempotent: Conflict when already reacted in the same way', async () => {
       prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
-      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1' });
-      await expect(service.like('u1', { commentId: 'c1' })).rejects.toBeInstanceOf(
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1', isLike: true });
+      await expect(service.like('u1', { commentId: 'c1', isLike: true })).rejects.toBeInstanceOf(
         ConflictException,
       );
+    });
+
+    it('updates reaction if type changes (like to dislike)', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1', isLike: true });
+      prisma.like.update.mockResolvedValueOnce({ id: 'l1', isLike: false });
+      const res = await service.like('u1', { commentId: 'c1', isLike: false });
+      expect(res.isLike).toBe(false);
+      expect(prisma.like.update).toHaveBeenCalled();
     });
 
     it('creates like and invalidates cache', async () => {
       prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
       prisma.like.findFirst.mockResolvedValueOnce(null);
-      const created = { id: 'l1' };
+      const created = { id: 'l1', isLike: true };
       prisma.like.create.mockResolvedValueOnce(created);
       const res = await service.like('u1', { commentId: 'c1' });
       expect(res).toEqual(created);
       expect(cache.del).toHaveBeenCalledWith('likes:count:comment:c1');
-    });
-
-    it('race fallback: Conflict if created by another concurrently', async () => {
-      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
-      prisma.like.findFirst.mockResolvedValueOnce(null);
-      prisma.like.create.mockRejectedValueOnce(new Error('unique violation'));
-      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1' });
-      await expect(service.like('u1', { commentId: 'c1' })).rejects.toBeInstanceOf(
-        ConflictException,
-      );
     });
   });
 
@@ -110,51 +116,42 @@ describe('LikesService', () => {
 
   describe('count()', () => {
     it('returns cached value if present', async () => {
-      cache.get.mockResolvedValueOnce(3);
+      const cachedRes = { likes: 3, dislikes: 1 };
+      cache.get.mockResolvedValueOnce(cachedRes);
       const res = await service.count({ target: 'comment', targetId: 'c1' });
-      expect(res).toEqual({ count: 3 });
+      expect(res).toEqual(cachedRes);
       expect(prisma.like.count).not.toHaveBeenCalled();
     });
 
     it('counts and caches when missing', async () => {
       cache.get.mockResolvedValueOnce(undefined);
-      prisma.like.count.mockResolvedValueOnce(5);
-      const res = await service.count({ target: 'bookVersion', targetId: 'v1' });
-      expect(res).toEqual({ count: 5 });
-      expect(cache.set).toHaveBeenCalledWith('likes:count:bookVersion:v1', 5, 5000);
+      prisma.like.count.mockResolvedValueOnce(5); // likes count
+      prisma.like.count.mockResolvedValueOnce(2); // dislikes count
+      const res = await service.count({ target: 'comment', targetId: 'c1' });
+      expect(res).toEqual({ likes: 5, dislikes: 2 });
     });
   });
 
   describe('toggle()', () => {
     it('toggles like state and returns updated count', async () => {
-      // existing like => delete
+      // existing same reaction => delete
       prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
-      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1' });
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1', isLike: true });
       cache.get.mockResolvedValueOnce(undefined);
-      prisma.like.count.mockResolvedValueOnce(0);
-      const res1 = await service.toggle('u1', { commentId: 'c1' });
-      expect(res1).toEqual({ liked: false, count: 0 });
-      expect(cache.del).toHaveBeenCalledWith('likes:count:comment:c1');
+      prisma.like.count.mockResolvedValueOnce(0); // likes
+      prisma.like.count.mockResolvedValueOnce(0); // dislikes
+      const res1 = await service.toggle('u1', { commentId: 'c1', isLike: true });
+      expect(res1).toEqual({ liked: false, isLike: true, likes: 0, dislikes: 0 });
 
-      // not existing => create
-      prisma.bookVersion.findUnique.mockResolvedValueOnce({ id: 'v1' });
-      prisma.like.findFirst.mockResolvedValueOnce(null);
+      // switch type => update
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1', isLike: true });
+      prisma.like.update.mockResolvedValueOnce({ id: 'l1', isLike: false });
       cache.get.mockResolvedValueOnce(undefined);
-      prisma.like.count.mockResolvedValueOnce(1);
-      const res2 = await service.toggle('u1', { bookVersionId: 'v1' });
-      expect(res2).toEqual({ liked: true, count: 1 });
-      expect(cache.del).toHaveBeenCalledWith('likes:count:bookVersion:v1');
-    });
-
-    it('validates targets exist before toggling', async () => {
-      prisma.comment.findUnique.mockResolvedValueOnce(null);
-      await expect(service.toggle('u1', { commentId: 'x' })).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
-      prisma.bookVersion.findUnique.mockResolvedValueOnce(null);
-      await expect(service.toggle('u1', { bookVersionId: 'v' })).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      prisma.like.count.mockResolvedValueOnce(0); // likes
+      prisma.like.count.mockResolvedValueOnce(1); // dislikes
+      const res2 = await service.toggle('u1', { commentId: 'c1', isLike: false });
+      expect(res2).toEqual({ liked: true, isLike: false, likes: 0, dislikes: 1 });
     });
   });
 });

@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CommentUserDto } from './comment-user.dto';
 
 export class CommentDto {
@@ -16,6 +16,15 @@ export class CommentDto {
 
   @ApiProperty({ nullable: true })
   audioChapterId?: string | null;
+
+  @ApiProperty({ nullable: true })
+  ratingId?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Rating score associated with this review (1-5)',
+  })
+  ratingScore?: number | null;
 
   @ApiProperty()
   text!: string;

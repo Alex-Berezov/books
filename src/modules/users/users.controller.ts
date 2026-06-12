@@ -20,7 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUrl, MinLength, Matches } from 'class-validator';
 import { Language as PrismaLanguage, RoleName } from '@prisma/client';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -45,6 +45,7 @@ class PublicUserDto {
   name?: string | null;
   firstName?: string | null;
   lastName?: string | null;
+  nickname?: string | null;
   isActive?: boolean;
   avatarUrl?: string | null;
   languagePreference!: string;
@@ -89,6 +90,14 @@ class UpdateMeDto {
   name?: string;
 
   @IsOptional()
+  @IsString()
+  @Matches(/^[a-zA-Z0-9_]+$/, {
+    message: 'Nickname must contain only letters, numbers, and underscores',
+  })
+  @MinLength(3)
+  nickname?: string;
+
+  @IsOptional()
   @IsUrl()
   avatarUrl?: string;
 
@@ -109,6 +118,12 @@ export class UsersController {
   @Get('me')
   me(@Req() req: { user: RequestUser }) {
     return this.users.me(req.user.userId);
+  }
+
+  @ApiOperation({ summary: 'Get current user activities (comments & replies)' })
+  @Get('me/activities')
+  meActivities(@Req() req: { user: RequestUser }) {
+    return this.users.getActivities(req.user.userId);
   }
 
   @ApiOperation({ summary: 'List users (admin only)' })
@@ -133,6 +148,13 @@ export class UsersController {
       q: query.q?.trim() || undefined,
       staff: query.staff,
     });
+  }
+
+  @ApiOperation({ summary: 'Update current user profile (alternative profile path)' })
+  @ApiOkResponse({ type: PublicUserDto })
+  @Patch('profile')
+  updateProfile(@Req() req: { user: RequestUser }, @Body() dto: UpdateMeDto) {
+    return this.users.updateMe(req.user.userId, dto);
   }
 
   @ApiOperation({ summary: 'Update current user profile' })

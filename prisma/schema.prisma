@@ -108,6 +108,7 @@ model User {
   name               String?
   firstName          String?
   lastName           String?
+  nickname           String?           @unique
   isActive           Boolean           @default(true)
   avatarUrl          String?
   languagePreference Language
@@ -143,6 +144,7 @@ model Comment {
   chapterId      String?
   audioChapterId String?
   parentId       String?
+  ratingId       String?       @unique
   text           String
   isDeleted      Boolean       @default(false)
   isHidden       Boolean       @default(false)
@@ -152,6 +154,7 @@ model Comment {
   bookVersion    BookVersion?  @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   chapter        Chapter?      @relation(fields: [chapterId], references: [id], onDelete: Cascade)
   audioChapter   AudioChapter? @relation(fields: [audioChapterId], references: [id], onDelete: Cascade)
+  rating         BookRating?   @relation(fields: [ratingId], references: [id], onDelete: SetNull)
   parent         Comment?      @relation("CommentParent", fields: [parentId], references: [id])
   children       Comment[]     @relation("CommentParent")
   likes          Like[]
@@ -167,6 +170,7 @@ model Like {
   userId        String
   bookVersionId String? // FK to BookVersion
   commentId     String? // FK to Comment
+  isLike        Boolean      @default(true)
   createdAt     DateTime     @default(now())
   user          User         @relation(fields: [userId], references: [id])
   bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
@@ -484,6 +488,7 @@ model BookRating {
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  comment   Comment?
 
   @@unique([userId, bookId])
   @@index([bookId])

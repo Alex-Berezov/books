@@ -32,6 +32,7 @@ export class LikesService {
 
   async like(userId: string, dto: LikeRequestDto) {
     this.ensureSingleTarget(dto);
+    const isLike = dto.isLike !== false;
 
     if (dto.commentId) {
       const existing = await this.prisma.comment.findUnique({ where: { id: dto.commentId } });
@@ -45,7 +46,7 @@ export class LikesService {
       if (!existing) throw new NotFoundException('BookVersion not found');
     }
 
-    // idempotent create
+    // idempotent create/update
     const liked = await this.prisma.like.findFirst({
       where: {
         userId,
@@ -53,11 +54,24 @@ export class LikesService {
         bookVersionId: dto.bookVersionId ?? undefined,
       },
     });
-    if (liked) throw new ConflictException('Already liked');
+
+    if (liked) {
+      if (liked.isLike === isLike) {
+        throw new ConflictException('Already reacted in this way');
+      }
+      const updated = await this.prisma.like.update({
+        where: { id: liked.id },
+        data: { isLike },
+      });
+      if (dto.commentId) await this.cache.del(this.countCacheKey('comment', dto.commentId));
+      if (dto.bookVersionId)
+        await this.cache.del(this.countCacheKey('bookVersion', dto.bookVersionId));
+      return updated;
+    }
 
     try {
       const created = await this.prisma.like.create({
-        data: { userId, commentId: dto.commentId, bookVersionId: dto.bookVersionId },
+        data: { userId, commentId: dto.commentId, bookVersionId: dto.bookVersionId, isLike },
       });
       // invalidate cache
       if (dto.commentId) await this.cache.del(this.countCacheKey('comment', dto.commentId));
@@ -73,7 +87,14 @@ export class LikesService {
           bookVersionId: dto.bookVersionId ?? undefined,
         },
       });
-      if (again) throw new ConflictException('Already liked');
+      if (again) {
+        if (again.isLike === isLike) throw new ConflictException('Already reacted in this way');
+        const updated = await this.prisma.like.update({
+          where: { id: again.id },
+          data: { isLike },
+        });
+        return updated;
+      }
       throw new BadRequestException('Unable to like');
     }
   }
@@ -100,26 +121,34 @@ export class LikesService {
 
   async count(q: LikeCountQueryDto): Promise<LikeCountDto> {
     const key = this.countCacheKey(q.target, q.targetId);
-    const cached = await this.cache.get<number>(key);
-    if (typeof cached === 'number') return { count: cached };
+    const cached = await this.cache.get<LikeCountDto>(key);
+    if (cached) return cached;
 
-    const where =
-      q.target === 'comment' ? { commentId: q.targetId } : { bookVersionId: q.targetId };
-    const count = await this.prisma.like.count({ where });
-    await this.cache.set(key, count, 5_000); // 5s TTL in-memory
-    return { count };
+    if (q.target === 'comment') {
+      const [likes, dislikes] = await Promise.all([
+        this.prisma.like.count({ where: { commentId: q.targetId, isLike: true } }),
+        this.prisma.like.count({ where: { commentId: q.targetId, isLike: false } }),
+      ]);
+      const res = { likes, dislikes };
+      await this.cache.set(key, res, 5_000); // 5s TTL
+      return res;
+    } else {
+      const count = await this.prisma.like.count({
+        where: { bookVersionId: q.targetId, isLike: true },
+      });
+      const res = { likes: count, dislikes: 0 };
+      await this.cache.set(key, res, 5_000);
+      return res;
+    }
   }
 
   async toggle(userId: string, dto: LikeRequestDto): Promise<ToggleLikeResponseDto> {
     this.ensureSingleTarget(dto);
+    const isLike = dto.isLike !== false;
 
-    const where = {
-      userId,
-      commentId: dto.commentId ?? undefined,
-      bookVersionId: dto.bookVersionId ?? undefined,
-    } as const;
+    const target: 'comment' | 'bookVersion' = dto.commentId ? 'comment' : 'bookVersion';
+    const targetId = dto.commentId ?? (dto.bookVersionId as string);
 
-    // Ensure targets exist like in like()
     if (dto.commentId) {
       const existing = await this.prisma.comment.findUnique({ where: { id: dto.commentId } });
       if (!existing || (existing as any).isDeleted)
@@ -132,22 +161,35 @@ export class LikesService {
       if (!existing) throw new NotFoundException('BookVersion not found');
     }
 
-    const existingLike = await this.prisma.like.findFirst({ where });
-    let liked: boolean;
+    const existingLike = await this.prisma.like.findFirst({
+      where: {
+        userId,
+        commentId: dto.commentId ?? undefined,
+        bookVersionId: dto.bookVersionId ?? undefined,
+      },
+    });
+
+    let liked = false;
     if (existingLike) {
-      await this.prisma.like.delete({ where: { id: existingLike.id } });
-      liked = false;
+      if (existingLike.isLike === isLike) {
+        await this.prisma.like.delete({ where: { id: existingLike.id } });
+        liked = false;
+      } else {
+        await this.prisma.like.update({
+          where: { id: existingLike.id },
+          data: { isLike },
+        });
+        liked = true;
+      }
     } else {
       await this.prisma.like.create({
-        data: { userId, commentId: dto.commentId, bookVersionId: dto.bookVersionId },
+        data: { userId, commentId: dto.commentId, bookVersionId: dto.bookVersionId, isLike },
       });
       liked = true;
     }
 
-    const target: 'comment' | 'bookVersion' = dto.commentId ? 'comment' : 'bookVersion';
-    const targetId = dto.commentId ?? (dto.bookVersionId as string);
     await this.cache.del(this.countCacheKey(target, targetId));
-    const { count } = await this.count({ target, targetId });
-    return { liked, count };
+    const counts = await this.count({ target, targetId });
+    return { liked, isLike, ...counts };
   }
 }

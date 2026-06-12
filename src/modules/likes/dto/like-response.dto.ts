@@ -13,13 +13,19 @@ export class LikeDto {
   @ApiPropertyOptional({ nullable: true })
   commentId?: string;
 
+  @ApiProperty()
+  isLike!: boolean;
+
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date | string;
 }
 
 export class LikeCountDto {
   @ApiProperty()
-  count!: number;
+  likes!: number;
+
+  @ApiProperty()
+  dislikes!: number;
 }
 
 export class ToggleLikeResponseDto {
@@ -27,5 +33,11 @@ export class ToggleLikeResponseDto {
   liked!: boolean;
 
   @ApiProperty()
-  count!: number;
+  isLike!: boolean;
+
+  @ApiProperty()
+  likes!: number;
+
+  @ApiProperty()
+  dislikes!: number;
 }

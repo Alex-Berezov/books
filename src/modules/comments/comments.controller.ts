@@ -45,12 +45,13 @@ export class CommentsController {
   @ApiOperation({ summary: 'List comments by target' })
   @ApiQuery({ name: 'target', required: true, enum: ['version', 'chapter', 'audio'] })
   @ApiQuery({ name: 'targetId', required: true })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['date', 'popularity'] })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiOkResponse({ type: CommentListDto })
   list(@Query() q: ListCommentsQueryDto) {
-    const { target, targetId, page = 1, limit = 10 } = q;
-    return this.service.list({ target, targetId, page, limit });
+    const { target, targetId, sortBy = 'date', page = 1, limit = 10 } = q;
+    return this.service.list({ target, targetId, sortBy, page, limit });
   }
 
   @Post('comments')

@@ -13,6 +13,11 @@ export class ListCommentsQueryDto extends PaginationDto {
   @IsUUID()
   targetId!: string;
 
+  @ApiProperty({ enum: ['date', 'popularity'], default: 'date', required: false })
+  @IsOptional()
+  @IsIn(['date', 'popularity'])
+  sortBy?: 'date' | 'popularity' = 'date';
+
   @IsOptional()
   declare page?: number;
 

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MinLength, IsInt, Min, Max } from 'class-validator';
 import { Xor } from '../../../shared/validators/xor.decorator';
 import { ExactlyOne } from '../../../shared/validators/exactly-one.decorator';
 import { msgExactlyOne, msgExactlyOneOf } from '../../../shared/constants/validation';
@@ -44,4 +44,11 @@ export class CreateCommentDto {
   @IsString()
   @MinLength(1)
   text!: string;
+
+  @ApiPropertyOptional({ description: 'Book rating score (1-5)', minimum: 1, maximum: 5 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  rating?: number;
 }

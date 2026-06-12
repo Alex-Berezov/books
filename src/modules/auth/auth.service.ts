@@ -262,6 +262,7 @@ export class AuthService {
       name: user.name,
       firstName: user.firstName,
       lastName: user.lastName,
+      nickname: user.nickname,
       isActive: user.isActive,
       avatarUrl: user.avatarUrl,
       languagePreference: user.languagePreference,

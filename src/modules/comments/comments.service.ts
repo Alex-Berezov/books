@@ -1,5 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -18,9 +22,10 @@ export class CommentsService {
     targetId: string;
     page: number;
     limit: number;
+    sortBy?: 'date' | 'popularity';
     includeHidden?: boolean;
   }) {
-    const { target, targetId, page, limit, includeHidden } = params;
+    const { target, targetId, page, limit, sortBy = 'date', includeHidden } = params;
     const whereBase: Prisma.CommentWhereInput = {
       isDeleted: false,
       ...(includeHidden ? {} : { isHidden: false }),
@@ -29,30 +34,45 @@ export class CommentsService {
       ...(target === 'audio' ? { audioChapterId: targetId } : {}),
     };
 
+    const orderBy: Prisma.CommentOrderByWithRelationInput =
+      sortBy === 'popularity' ? { likes: { _count: 'desc' } } : { createdAt: 'desc' };
+
     const [items, total] = await this.prisma.$transaction([
       this.prisma.comment.findMany({
         where: whereBase,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
-        include: { children: true, user: { select: { id: true, email: true, name: true } } },
+        include: {
+          children: true,
+          rating: true,
+          user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+        },
       }),
       this.prisma.comment.count({ where: whereBase }),
     ]);
-    return { items, total, page, limit, hasNext: page * limit < total };
+
+    const mappedItems = items.map((item) => ({
+      ...item,
+      ratingScore: item.rating?.score || null,
+    }));
+
+    return { items: mappedItems, total, page, limit, hasNext: page * limit < total };
   }
 
   async create(userId: string, dto: CreateCommentDto) {
     if (dto.parentId) {
       const parent = await this.prisma.comment.findUnique({ where: { id: dto.parentId } });
-      if (!parent || (parent as any).isDeleted) {
+      if (!parent || parent.isDeleted) {
         throw new NotFoundException('Parent comment not found');
       }
     }
 
+    let bookId: string | undefined;
     if (dto.bookVersionId) {
       const exist = await this.prisma.bookVersion.findUnique({ where: { id: dto.bookVersionId } });
       if (!exist) throw new NotFoundException('BookVersion not found');
+      bookId = exist.bookId;
     }
     if (dto.chapterId) {
       const exist = await this.prisma.chapter.findUnique({ where: { id: dto.chapterId } });
@@ -65,32 +85,83 @@ export class CommentsService {
       if (!exist) throw new NotFoundException('AudioChapter not found');
     }
 
-    return this.prisma.comment.create({
-      data: {
-        userId,
-        bookVersionId: dto.bookVersionId,
-        chapterId: dto.chapterId,
-        audioChapterId: dto.audioChapterId,
-        parentId: dto.parentId,
-        text: dto.text,
-      },
+    if (dto.rating) {
+      if (!dto.bookVersionId) {
+        throw new BadRequestException('Rating can only be attached to root book version comments');
+      }
+    }
+
+    const comment = await this.prisma.$transaction(async (tx) => {
+      let ratingId: string | undefined;
+
+      if (dto.rating && bookId) {
+        const rating = await tx.bookRating.upsert({
+          where: {
+            userId_bookId: { userId, bookId },
+          },
+          create: {
+            userId,
+            bookId,
+            score: dto.rating,
+          },
+          update: {
+            score: dto.rating,
+          },
+        });
+        ratingId = rating.id;
+      }
+
+      return tx.comment.create({
+        data: {
+          userId,
+          bookVersionId: dto.bookVersionId,
+          chapterId: dto.chapterId,
+          audioChapterId: dto.audioChapterId,
+          parentId: dto.parentId,
+          text: dto.text,
+          ratingId,
+        },
+        include: {
+          rating: true,
+          user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+          children: true,
+        },
+      });
     });
+
+    return {
+      ...comment,
+      ratingScore: comment.rating?.score || null,
+    };
   }
 
   async get(id: string) {
-    const comment = await this.prisma.comment.findUnique({ where: { id } });
-    if (!comment || (comment as any).isDeleted) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id },
+      include: {
+        rating: true,
+        user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+        children: true,
+      },
+    });
+    if (!comment || comment.isDeleted) {
       throw new NotFoundException('Comment not found');
     }
-    return comment;
+    return {
+      ...comment,
+      ratingScore: comment.rating?.score || null,
+    };
   }
 
   async update(id: string, actor: { userId: string; email: string }, dto: UpdateCommentDto) {
-    const existing = await this.prisma.comment.findUnique({ where: { id } });
-    if (!existing || (existing as any).isDeleted) throw new NotFoundException('Comment not found');
+    const existing = await this.prisma.comment.findUnique({
+      where: { id },
+      include: { rating: true },
+    });
+    if (!existing || existing.isDeleted) throw new NotFoundException('Comment not found');
 
     const canModerate = await this.isModerator(actor.email, actor.userId);
-    const data: any = {};
+    const data: Prisma.CommentUpdateInput = {};
     if (dto.text !== undefined) {
       if (existing.userId !== actor.userId && !canModerate)
         throw new ForbiddenException('Not allowed to edit this comment');
@@ -100,8 +171,27 @@ export class CommentsService {
       if (!canModerate) throw new ForbiddenException('Not allowed to moderate');
       data.isHidden = dto.isHidden;
     }
-    if (Object.keys(data).length === 0) return existing;
-    return this.prisma.comment.update({ where: { id }, data });
+    if (Object.keys(data).length === 0) {
+      return {
+        ...existing,
+        ratingScore: existing.rating?.score || null,
+      };
+    }
+
+    const updated = await this.prisma.comment.update({
+      where: { id },
+      data,
+      include: {
+        rating: true,
+        user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+        children: true,
+      },
+    });
+
+    return {
+      ...updated,
+      ratingScore: updated.rating?.score || null,
+    };
   }
 
   private async isModerator(email: string, userId: string): Promise<boolean> {
@@ -129,7 +219,7 @@ export class CommentsService {
 
   async remove(id: string, actor: { userId: string; email: string }) {
     const existing = await this.prisma.comment.findUnique({ where: { id } });
-    if (!existing || (existing as any).isDeleted) return; // idempotent
+    if (!existing || existing.isDeleted) return; // idempotent
     if (existing.userId !== actor.userId) {
       const can = await this.isModerator(actor.email, actor.userId);
       if (!can) throw new ForbiddenException('Not allowed to delete this comment');

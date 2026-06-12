@@ -25,6 +25,7 @@ describe('UsersService (unit)', () => {
     prismaMock = {
       user: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
         update: jest.fn(),
         findMany: jest.fn(),
         delete: jest.fn(),
@@ -205,5 +206,61 @@ describe('UsersService (unit)', () => {
     expect(res.items.length).toBe(2);
     const adminItem = res.items.find((i) => i.email === 'admin@example.com')!;
     expect(adminItem.roles).toContain('admin');
+  });
+
+  describe('updateMe (nickname)', () => {
+    it('throws ConflictException if nickname is already taken', async () => {
+      prismaMock.user.findFirst.mockResolvedValueOnce({ id: 'u2', nickname: 'taken_nick' });
+      await expect(service.updateMe('u1', { nickname: 'taken_nick' })).rejects.toThrow(
+        'Nickname is already in use',
+      );
+    });
+
+    it('updates nickname successfully if not taken', async () => {
+      prismaMock.user.findFirst.mockResolvedValueOnce(null);
+      prismaMock.user.update.mockResolvedValueOnce({ ...baseUser, nickname: 'new_nick' });
+      const res = await service.updateMe('u1', { nickname: 'new_nick' });
+      expect(res.nickname).toBe('new_nick');
+    });
+  });
+
+  describe('getActivities', () => {
+    it('returns comment threads with book version details', async () => {
+      const mockComment = {
+        id: 'c1',
+        text: 'hello',
+        createdAt: new Date(),
+        parentId: null,
+        parent: null,
+        children: [
+          {
+            id: 'c2',
+            text: 'reply',
+            createdAt: new Date(),
+            user: { id: 'u2', name: 'Replier' },
+          },
+        ],
+        bookVersion: {
+          id: 'v1',
+          title: 'Book Title',
+          author: 'Author Name',
+          coverImageUrl: 'cover.jpg',
+          book: { slug: 'book-slug' },
+        },
+      };
+      prismaMock.comment.findMany.mockResolvedValueOnce([mockComment]);
+      const res = await service.getActivities('u1');
+      expect(res.length).toBe(1);
+      expect(res[0].text).toBe('hello');
+      expect(res[0].bookVersion).toEqual({
+        id: 'v1',
+        title: 'Book Title',
+        author: 'Author Name',
+        coverImageUrl: 'cover.jpg',
+        slug: 'book-slug',
+      });
+      expect(res[0].replies.length).toBe(1);
+      expect(res[0].replies[0].text).toBe('reply');
+    });
   });
 });
