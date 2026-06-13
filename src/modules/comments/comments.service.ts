@@ -234,6 +234,11 @@ export class CommentsService {
       const can = await this.isModerator(actor.email, actor.userId);
       if (!can) throw new ForbiddenException('Not allowed to delete this comment');
     }
-    await this.prisma.comment.update({ where: { id }, data: { isDeleted: true } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.comment.update({ where: { id }, data: { isDeleted: true } });
+      if (existing.ratingId) {
+        await tx.bookRating.delete({ where: { id: existing.ratingId } });
+      }
+    });
   }
 }

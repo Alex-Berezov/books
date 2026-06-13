@@ -250,6 +250,38 @@ describe('CommentsService', () => {
       await service.remove('c1', { userId: 'mod', email: 'm@x' });
       expect(prisma.comment.update).toHaveBeenCalled();
     });
+
+    it('deletes rating if comment has ratingId', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({
+        id: 'c1',
+        isDeleted: false,
+        userId: 'u1',
+        ratingId: 'r1',
+      });
+
+      const txMock = {
+        comment: {
+          update: jest.fn().mockResolvedValueOnce({ id: 'c1', isDeleted: true }),
+        },
+        bookRating: {
+          delete: jest.fn().mockResolvedValueOnce({ id: 'r1' }),
+        },
+      };
+
+      prisma.$transaction.mockImplementationOnce((arg: any) => {
+        return Promise.resolve((arg as (tx: any) => any)(txMock));
+      });
+
+      await service.remove('c1', { userId: 'u1', email: 'x' });
+
+      expect(txMock.comment.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { isDeleted: true },
+      });
+      expect(txMock.bookRating.delete).toHaveBeenCalledWith({
+        where: { id: 'r1' },
+      });
+    });
   });
 
   describe('list()', () => {
