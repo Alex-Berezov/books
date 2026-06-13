@@ -236,6 +236,7 @@ export class CommentsService {
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.comment.update({ where: { id }, data: { isDeleted: true } });
+      await tx.comment.updateMany({ where: { parentId: id }, data: { isDeleted: true } });
       if (existing.ratingId) {
         await tx.bookRating.delete({ where: { id: existing.ratingId } });
       }

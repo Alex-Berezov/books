@@ -484,7 +484,9 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return comments.map((comment) => {
+    const activeComments = comments.filter((c) => !c.parent || !c.parent.isDeleted);
+
+    return activeComments.map((comment) => {
       let bookVersion = comment.bookVersion;
       if (!bookVersion && comment.chapter?.bookVersion) {
         bookVersion = comment.chapter.bookVersion;

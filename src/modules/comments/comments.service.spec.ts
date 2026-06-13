@@ -13,6 +13,7 @@ interface PrismaStub {
     count: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
   userRole: { findMany: jest.Mock };
   bookVersion: { findUnique: jest.Mock };
@@ -39,6 +40,7 @@ const createPrismaStub = (): PrismaStub => {
       count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     userRole: { findMany: jest.fn() },
     bookVersion: { findUnique: jest.fn() },
@@ -262,6 +264,7 @@ describe('CommentsService', () => {
       const txMock = {
         comment: {
           update: jest.fn().mockResolvedValueOnce({ id: 'c1', isDeleted: true }),
+          updateMany: jest.fn().mockResolvedValueOnce({ count: 0 }),
         },
         bookRating: {
           delete: jest.fn().mockResolvedValueOnce({ id: 'r1' }),
@@ -276,6 +279,10 @@ describe('CommentsService', () => {
 
       expect(txMock.comment.update).toHaveBeenCalledWith({
         where: { id: 'c1' },
+        data: { isDeleted: true },
+      });
+      expect(txMock.comment.updateMany).toHaveBeenCalledWith({
+        where: { parentId: 'c1' },
         data: { isDeleted: true },
       });
       expect(txMock.bookRating.delete).toHaveBeenCalledWith({
