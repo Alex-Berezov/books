@@ -46,6 +46,7 @@ export class CommentsService {
         take: limit,
         include: {
           children: {
+            where: { isDeleted: false },
             include: {
               user: {
                 select: { id: true, email: true, name: true, nickname: true, avatarUrl: true },
@@ -148,7 +149,9 @@ export class CommentsService {
       include: {
         rating: true,
         user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
-        children: true,
+        children: {
+          where: { isDeleted: false },
+        },
       },
     });
     if (!comment || comment.isDeleted) {
