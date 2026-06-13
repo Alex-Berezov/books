@@ -10,7 +10,7 @@ interface PrismaStub {
   seo: { findUnique: jest.Mock };
   bookCategory: { findMany: jest.Mock };
   bookTag: { findMany: jest.Mock };
-  bookRating: { aggregate: jest.Mock; upsert: jest.Mock };
+  bookRating: { aggregate: jest.Mock; upsert: jest.Mock; findUnique: jest.Mock };
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -23,6 +23,7 @@ const createPrismaStub = (): PrismaStub => ({
   bookRating: {
     aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }),
     upsert: jest.fn(),
+    findUnique: jest.fn(),
   },
 });
 
@@ -153,6 +154,30 @@ describe('BookService.getOverview', () => {
         create: { userId: 'u1', bookId: 'b1', score: 5 },
         update: { score: 5 },
       });
+    });
+  });
+
+  describe('getUserRating', () => {
+    it('returns score when rating exists', async () => {
+      prisma.bookRating.findUnique.mockResolvedValue({
+        id: 'r1',
+        userId: 'u1',
+        bookId: 'b1',
+        score: 4,
+      });
+
+      const res = await service.getUserRating('u1', 'b1');
+      expect(res).toEqual({ score: 4 });
+      expect(prisma.bookRating.findUnique).toHaveBeenCalledWith({
+        where: { userId_bookId: { userId: 'u1', bookId: 'b1' } },
+      });
+    });
+
+    it('returns null score when rating does not exist', async () => {
+      prisma.bookRating.findUnique.mockResolvedValue(null);
+
+      const res = await service.getUserRating('u1', 'b1');
+      expect(res).toEqual({ score: null });
     });
   });
 

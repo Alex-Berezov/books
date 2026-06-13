@@ -25,6 +25,13 @@ export class BookService {
     });
   }
 
+  async getUserRating(userId: string, bookId: string): Promise<{ score: number | null }> {
+    const rating = await this.prisma.bookRating.findUnique({
+      where: { userId_bookId: { userId, bookId } },
+    });
+    return { score: rating?.score ?? null };
+  }
+
   private async getAverageRating(bookId: string): Promise<number> {
     const agg = await this.prisma.bookRating.aggregate({
       where: { bookId },

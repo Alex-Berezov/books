@@ -287,4 +287,27 @@ export class BookController {
       );
     }
   }
+
+  @Get(':id/my-rating')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get current user rating for a book' })
+  @ApiParam({ name: 'id', description: 'Unique book ID' })
+  @ApiResponse({ status: 200, description: 'User rating score (1-5 or null)' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async getMyRating(
+    @Param('id') bookId: string,
+    @Req() req: { user: RequestUser },
+  ): Promise<{ score: number | null }> {
+    try {
+      return await this.bookService.getUserRating(req.user.userId, bookId);
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { message: 'Failed to get user rating', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
