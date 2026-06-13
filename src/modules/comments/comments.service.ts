@@ -28,6 +28,7 @@ export class CommentsService {
     const { target, targetId, page, limit, sortBy = 'date', includeHidden } = params;
     const whereBase: Prisma.CommentWhereInput = {
       isDeleted: false,
+      parentId: null,
       ...(includeHidden ? {} : { isHidden: false }),
       ...(target === 'version' ? { bookVersionId: targetId } : {}),
       ...(target === 'chapter' ? { chapterId: targetId } : {}),
