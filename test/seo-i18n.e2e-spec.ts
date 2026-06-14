@@ -78,7 +78,7 @@ describe('SEO resolve i18n (/:lang prefix) (e2e)', () => {
       .expect(200);
 
     expect(r.body.meta.title).toBeDefined();
-    expect(r.body.meta.canonicalUrl).toMatch(new RegExp(`/es/books/${slug}$`));
+    expect(r.body.meta.canonicalUrl).toMatch(new RegExp(`/es/book/${slug}$`));
     expect(r.body.openGraph.title).toBeDefined();
   });
 

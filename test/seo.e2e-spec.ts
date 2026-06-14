@@ -189,7 +189,7 @@ describe('Seo e2e', () => {
       .query({ type: 'book', id: book.slug })
       .expect(200);
     expect(typeof r2.body.meta.title).toBe('string');
-    expect(r2.body.meta.canonicalUrl).toContain(`/books/${book.slug}`);
+    expect(r2.body.meta.canonicalUrl).toContain(`/book/${book.slug}`);
     expect(Array.isArray(r2.body.breadcrumbPath)).toBe(true);
     expect(r2.body.breadcrumbPath.length).toBeGreaterThanOrEqual(1);
     expect(r2.body.breadcrumbPath[0].slug).toBe(rootSlug);
