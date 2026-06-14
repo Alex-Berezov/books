@@ -12,6 +12,7 @@ import { configureSecurity } from './common/security/app-security.config';
 import * as Sentry from '@sentry/node';
 import { HttpAdapterHost } from '@nestjs/core';
 import { SentryExceptionFilter } from './shared/sentry/sentry.filter';
+import { RedirectExceptionFilter } from './common/filters/redirect-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -30,6 +31,7 @@ async function bootstrap() {
   configureSecurity(app);
 
   // Sentry init (optional, controlled by env SENTRY_DSN). Disabled in dev unless explicitly enabled.
+  const redirectFilter = new RedirectExceptionFilter();
   const dsn = process.env.SENTRY_DSN;
   const sentryEnabled = Boolean(dsn) && (process.env.SENTRY_ENABLED ?? '1') !== '0';
   if (sentryEnabled) {
@@ -44,7 +46,9 @@ async function bootstrap() {
       autoSessionTracking: false,
     });
     const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new SentryExceptionFilter(httpAdapterHost, true));
+    app.useGlobalFilters(redirectFilter, new SentryExceptionFilter(httpAdapterHost, true));
+  } else {
+    app.useGlobalFilters(redirectFilter);
   }
 
   // Set up global ValidationPipe:

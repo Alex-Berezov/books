@@ -8,6 +8,10 @@ type PrismaStub = {
   bookVersion: { findUnique: jest.Mock; findMany: jest.Mock; findFirst: jest.Mock };
   page: { findFirst: jest.Mock; findMany: jest.Mock; findUnique: jest.Mock };
   seo: { findUnique: jest.Mock };
+  bookCategory: { findMany: jest.Mock };
+  bookRating: { findMany: jest.Mock };
+  categoryTranslation: { findUnique: jest.Mock; findFirst: jest.Mock };
+  category: { findUnique: jest.Mock };
 };
 
 const createPrismaStub = (): PrismaStub => ({
@@ -15,6 +19,10 @@ const createPrismaStub = (): PrismaStub => ({
   bookVersion: { findUnique: jest.fn(), findMany: jest.fn(), findFirst: jest.fn() },
   page: { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
   seo: { findUnique: jest.fn() },
+  bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
+  bookRating: { findMany: jest.fn().mockResolvedValue([]) },
+  categoryTranslation: { findUnique: jest.fn(), findFirst: jest.fn() },
+  category: { findUnique: jest.fn() },
 });
 
 describe('SeoService (unit)', () => {
@@ -23,7 +31,7 @@ describe('SeoService (unit)', () => {
   const ORIGINAL_ENV = process.env;
   type SeoBundle = {
     meta: { canonicalUrl: string; title: string; description?: string | null };
-    openGraph: { image?: { url: string; alt?: string } };
+    openGraph: { image?: { url: string; alt?: string }; type?: string };
     twitter: { card: string };
     schema?: {
       event?: {
@@ -65,6 +73,9 @@ describe('SeoService (unit)', () => {
         description: 'Desc',
         coverImageUrl: 'http://img/cover.jpg',
         seoId: 10,
+        status: 'published',
+        type: 'text',
+        language: 'en',
       });
       prisma.seo.findUnique.mockResolvedValueOnce({
         id: 10,
@@ -73,10 +84,10 @@ describe('SeoService (unit)', () => {
 
       const bundle = (await service.resolvePublic('version', 'v1')) as unknown as SeoBundle;
       expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/versions/v1');
-      expect(bundle.meta.title).toBe('Title — Author');
+      expect(bundle.meta.title).toBe('Title by Author | Read & Listen Free | Bibliaris');
       expect(bundle.openGraph.image).toEqual({
         url: 'http://img/cover.jpg',
-        alt: 'Title — Author',
+        alt: 'Title by Author | Read & Listen Free | Bibliaris',
       });
       expect(bundle.twitter.card).toBe('summary_large_image');
     });
@@ -91,25 +102,34 @@ describe('SeoService (unit)', () => {
 
   describe('resolvePublic(book)', () => {
     beforeEach(() => {
+      prisma.bookVersion.findFirst.mockResolvedValue(null);
       prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
       prisma.bookVersion.findMany.mockResolvedValue([
         {
           id: 'v-en',
+          bookId: 'b1',
           language: 'en',
           title: 'T EN',
           author: 'A',
           description: 'D EN',
           coverImageUrl: 'http://img/en.jpg',
           seoId: null,
+          slug: 't-en',
+          status: 'published',
+          type: 'text',
         },
         {
           id: 'v-es',
+          bookId: 'b1',
           language: 'es',
           title: 'T ES',
           author: 'A',
           description: 'D ES',
           coverImageUrl: 'http://img/es.jpg',
           seoId: null,
+          slug: 't-es',
+          status: 'published',
+          type: 'text',
         },
       ]);
     });
@@ -118,24 +138,24 @@ describe('SeoService (unit)', () => {
       const bundle = (await service.resolvePublic('book', 'book-slug', {
         pathLang: 'es' as Language,
       })) as unknown as SeoBundle;
-      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/es/books/book-slug');
-      expect(bundle.meta.title).toBe('T ES — A');
+      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/es/book/t-es');
+      expect(bundle.meta.title).toBe('T ES de A | Leer y escuchar gratis');
     });
 
     it('uses query lang when path lang is not provided', async () => {
       const bundle = (await service.resolvePublic('book', 'book-slug', {
         queryLang: 'en',
       })) as unknown as SeoBundle;
-      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/books/book-slug');
-      expect(bundle.meta.title).toBe('T EN — A');
+      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/t-en');
+      expect(bundle.meta.title).toBe('T EN by A | Read & Listen Free | Bibliaris');
     });
 
     it('falls back to Accept-Language if query missing', async () => {
       const bundle = (await service.resolvePublic('book', 'book-slug', {
         acceptLanguage: 'es;q=0.9,en;q=0.8',
       })) as unknown as SeoBundle;
-      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/es/books/book-slug');
-      expect(bundle.meta.title).toBe('T ES — A');
+      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/es/book/t-es');
+      expect(bundle.meta.title).toBe('T ES de A | Leer y escuchar gratis');
     });
 
     it('handles no versions by using default language and book slug title', async () => {
@@ -143,7 +163,7 @@ describe('SeoService (unit)', () => {
       const bundle = (await service.resolvePublic('book', 'book-slug', {
         pathLang: 'en' as Language,
       })) as unknown as SeoBundle;
-      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/books/book-slug');
+      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/book-slug');
       expect(bundle.meta.title).toBe('Book book-slug');
     });
   });
@@ -151,21 +171,23 @@ describe('SeoService (unit)', () => {
   describe('resolvePublic(page)', () => {
     it('chooses page by effective language and prefixes canonical', async () => {
       prisma.page.findMany.mockResolvedValueOnce([
-        { id: 'p-en', language: 'en' },
-        { id: 'p-es', language: 'es' },
+        { id: 'p-en', language: 'en', slug: 'about' },
+        { id: 'p-es', language: 'es', slug: 'about' },
       ]);
       prisma.page.findUnique.mockResolvedValueOnce({
         id: 'p-es',
         slug: 'about',
         title: 'Sobre',
+        content: 'Content',
         seoId: null,
+        status: 'published',
       });
 
       const bundle = (await service.resolvePublic('page', 'about', {
         pathLang: 'es' as Language,
       })) as unknown as SeoBundle;
       expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/es/pages/about');
-      expect(bundle.meta.title).toBe('Sobre');
+      expect(bundle.meta.title).toBe('Sobre | Bibliaris');
     });
 
     it('throws when no published pages found', async () => {
@@ -176,12 +198,14 @@ describe('SeoService (unit)', () => {
     });
 
     it('includes schema.event when SEO contains event fields', async () => {
-      prisma.page.findMany.mockResolvedValueOnce([{ id: 'p-en', language: 'en' }]);
+      prisma.page.findMany.mockResolvedValueOnce([{ id: 'p-en', language: 'en', slug: 'event' }]);
       prisma.page.findUnique.mockResolvedValueOnce({
         id: 'p-en',
         slug: 'event',
         title: 'Event page',
+        content: 'Event Content',
         seoId: 77,
+        status: 'published',
       });
       prisma.seo.findUnique.mockResolvedValueOnce({
         id: 77,

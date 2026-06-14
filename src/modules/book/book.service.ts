@@ -3,8 +3,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
-import { BookType } from '@prisma/client';
+import { BookType, Language } from '@prisma/client';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
+import { RedirectException } from '../../common/exceptions/redirect.exception';
 
 @Injectable()
 export class BookService {
@@ -143,8 +144,15 @@ export class BookService {
   }
 
   async findBySlug(slug: string) {
-    const book = await this.prisma.book.findUnique({
+    const version = await this.prisma.bookVersion.findFirst({
       where: { slug },
+      select: { bookId: true },
+    });
+
+    const bookId = version?.bookId;
+
+    const book = await this.prisma.book.findFirst({
+      where: bookId ? { id: bookId } : { slug },
       include: {
         versions: {
           include: {
@@ -178,12 +186,36 @@ export class BookService {
 
   // Overview aggregation for frontend
   async getOverview(slug: string, lang?: string, acceptLanguageHeader?: string) {
-    const book = await this.prisma.book.findUnique({ where: { slug } });
-    if (!book) throw new NotFoundException(`Book with slug ${slug} not found`);
+    const prismaLangs = Object.values(Language);
+    const isPathLang = lang && prismaLangs.includes(lang as any);
 
-    // All published versions for this book
+    // 1. Try to find the version by slug
+    const matchedVersion = await this.prisma.bookVersion.findFirst({
+      where: { slug, status: 'published' },
+      select: { bookId: true, language: true, id: true },
+    });
+
+    let bookId: string | null = null;
+    if (matchedVersion) {
+      bookId = matchedVersion.bookId;
+    } else {
+      // Fallback to legacy Book.slug search
+      const legacyBook = await this.prisma.book.findUnique({
+        where: { slug },
+        select: { id: true },
+      });
+      if (legacyBook) {
+        bookId = legacyBook.id;
+      }
+    }
+
+    if (!bookId) {
+      throw new NotFoundException(`Book with slug "${slug}" not found`);
+    }
+
+    // Load all published versions for this book
     const versions = await this.prisma.bookVersion.findMany({
-      where: { bookId: book.id, status: 'published' },
+      where: { bookId, status: 'published' },
       include: {
         _count: {
           select: {
@@ -202,6 +234,20 @@ export class BookService {
       acceptLanguage: acceptLanguageHeader || null,
       available: availableLanguages,
     });
+
+    // Check if we need to redirect due to slug/language mismatch
+    // (e.g. requested slug is Portuguese but language context is English, or requested slug is legacy Book.slug)
+    const targetVersion = versions.find((v) => v.language === preferredLang) || versions[0];
+    if (targetVersion && targetVersion.slug && targetVersion.slug !== slug) {
+      // Perform 301 Redirect
+      let redirectUrl = '';
+      if (isPathLang) {
+        redirectUrl = `/api/${preferredLang}/books/${targetVersion.slug}/overview`;
+      } else {
+        redirectUrl = `/api/books/${targetVersion.slug}/overview?lang=${preferredLang}`;
+      }
+      throw new RedirectException(redirectUrl);
+    }
 
     // We can read it if it is preferredLang and has chapters OR has type text, or fallback to first version with chapters/text
     const textVersion =
@@ -281,14 +327,16 @@ export class BookService {
       ...t.tag,
     }));
 
+    const book = await this.prisma.book.findUnique({ where: { id: bookId } });
+
     return {
-      id: book.id,
-      slug: book.slug,
+      id: bookId,
+      slug: targetVersion?.slug || slug,
       title: activeVersion?.title || '',
       author: activeVersion?.author || '',
       description: activeVersion?.description || '',
       coverUrl: activeVersion?.coverImageUrl || '',
-      rating: await this.getAverageRating(book.id),
+      rating: await this.getAverageRating(bookId),
       publicationYear: activeVersion?.publishedAt
         ? new Date(activeVersion.publishedAt).getFullYear()
         : null,
@@ -299,10 +347,10 @@ export class BookService {
         ...v,
         coverUrl: v.coverImageUrl, // compatibility alias
       })),
-      createdAt: book.createdAt,
-      updatedAt: book.updatedAt,
+      createdAt: book?.createdAt || new Date(),
+      updatedAt: book?.updatedAt || new Date(),
       // Keep legacy structure properties for compatibility
-      book: { id: book.id, slug: book.slug },
+      book: { id: bookId, slug: targetVersion?.slug || slug },
       availableLanguages,
       hasText,
       hasAudio,

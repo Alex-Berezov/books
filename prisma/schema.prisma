@@ -31,6 +31,7 @@ model BookVersion {
   type            BookType
   isFree          Boolean
   referralUrl     String?
+  slug            String?
   // Publication
   status          PublicationStatus @default(published)
   publishedAt     DateTime?
@@ -53,6 +54,7 @@ model BookVersion {
   previewMediaId  String?
 
   @@unique([bookId, language])
+  @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
   @@index([previewMediaId])
 }

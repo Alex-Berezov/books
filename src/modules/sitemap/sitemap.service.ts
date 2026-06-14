@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Language, PublicationStatus } from '@prisma/client';
+import { generateRobotsTxt } from '../seo/robots/generateRobotsTxt';
+import { generateSitemapIndex } from '../seo/sitemap/generateSitemapIndex';
+import { getCanonicalUrl } from '../seo/canonical/getCanonicalUrl';
 
 @Injectable()
 export class SitemapService {
@@ -11,10 +14,6 @@ export class SitemapService {
     const raw = process.env.SITEMAP_CACHE_TTL_MS;
     const parsed = raw ? Number(raw) : NaN;
     this.ttlMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 60 * 1000; // 60s default
-  }
-
-  private get publicBase(): string {
-    return process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:3000';
   }
 
   private getCache(key: string) {
@@ -33,9 +32,7 @@ export class SitemapService {
     const cached = this.getCache(cacheKey);
     if (cached) return cached;
 
-    const base = this.publicBase.replace(/\/$/, '');
-    const lines = ['User-agent: *', 'Allow: /', `Sitemap: ${base}/sitemap.xml`];
-    const body = lines.join('\n') + '\n';
+    const body = generateRobotsTxt();
     const value = { body, contentType: 'text/plain; charset=utf-8' };
     this.setCache(cacheKey, value);
     return value;
@@ -46,16 +43,9 @@ export class SitemapService {
     const cached = this.getCache(cacheKey);
     if (cached) return cached;
 
-    const base = this.publicBase.replace(/\/$/, '');
     const langs = Object.values(Language);
-    const urls = langs.map((lang) => `${base}/sitemap-${lang}.xml`);
-    const xml = [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-      ...urls.map((u) => `  <sitemap><loc>${u}</loc></sitemap>`),
-      '</sitemapindex>',
-      '',
-    ].join('\n');
+    const paths = langs.map((lang) => `/sitemap-${lang}.xml`);
+    const xml = generateSitemapIndex(paths);
 
     const value = { body: xml, contentType: 'application/xml; charset=utf-8' };
     this.setCache(cacheKey, value);
@@ -67,35 +57,62 @@ export class SitemapService {
     const cached = this.getCache(cacheKey);
     if (cached) return cached;
 
-    const base = this.publicBase.replace(/\/$/, '');
-
     // Pages (published) for this lang
     const pages = await this.prisma.page.findMany({
       where: { status: 'published', language: lang },
-      select: { slug: true },
+      select: { slug: true, updatedAt: true },
     });
 
-    // Books (published versions for this lang) — list unique book slugs
+    // Books (published versions for this lang)
     const versions = await this.prisma.bookVersion.findMany({
       where: { status: PublicationStatus.published, language: lang },
-      select: { book: { select: { slug: true } } },
+      select: { slug: true, updatedAt: true, publishedAt: true },
     });
-    const bookSlugs = Array.from(new Set(versions.map((v) => v.book.slug)));
+
+    // Categories (genres) translations for this lang
+    const categories = await this.prisma.categoryTranslation.findMany({
+      where: { language: lang },
+      select: { slug: true, updatedAt: true },
+    });
 
     const urls: string[] = [];
-    // Pages URLs
+
+    const addUrlNode = (loc: string, lastmod: Date) => {
+      const dateStr = lastmod.toISOString();
+      urls.push(
+        ['  <url>', `    <loc>${loc}</loc>`, `    <lastmod>${dateStr}</lastmod>`, '  </url>'].join(
+          '\n',
+        ),
+      );
+    };
+
+    // 1. Static Layout pages
+    const now = new Date();
+    addUrlNode(getCanonicalUrl('static', '', lang), now);
+    addUrlNode(getCanonicalUrl('static', 'books', lang), now);
+    addUrlNode(getCanonicalUrl('static', 'genres', lang), now);
+
+    // 2. CMS Pages
     for (const p of pages) {
-      urls.push(`${base}/${lang}/pages/${p.slug}`);
+      addUrlNode(getCanonicalUrl('page', p.slug, lang), p.updatedAt);
     }
-    // Books canonical URLs include lang prefix
-    for (const slug of bookSlugs) {
-      urls.push(`${base}/${lang}/books/${slug}`);
+
+    // 3. Books
+    for (const v of versions) {
+      if (v.slug) {
+        addUrlNode(getCanonicalUrl('book', v.slug, lang), v.updatedAt || v.publishedAt || now);
+      }
+    }
+
+    // 4. Genres / Categories
+    for (const c of categories) {
+      addUrlNode(getCanonicalUrl('category', c.slug, lang), c.updatedAt || now);
     }
 
     const xml = [
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-      ...urls.map((u) => `  <url><loc>${u}</loc></url>`),
+      ...urls,
       '</urlset>',
       '',
     ].join('\n');

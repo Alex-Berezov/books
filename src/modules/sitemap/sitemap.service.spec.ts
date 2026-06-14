@@ -5,11 +5,13 @@ import { Language } from '@prisma/client';
 type PrismaStub = {
   page: { findMany: jest.Mock };
   bookVersion: { findMany: jest.Mock };
+  categoryTranslation: { findMany: jest.Mock };
 };
 
 const createPrismaStub = (): PrismaStub => ({
   page: { findMany: jest.fn() },
   bookVersion: { findMany: jest.fn() },
+  categoryTranslation: { findMany: jest.fn() },
 });
 
 describe('SitemapService (unit)', () => {
@@ -53,20 +55,38 @@ describe('SitemapService (unit)', () => {
   });
 
   it('perLanguage builds urls for pages and books and respects cache TTL', async () => {
-    prisma.page.findMany.mockResolvedValueOnce([{ slug: 'about' }, { slug: 'contacts' }]);
+    prisma.page.findMany.mockResolvedValueOnce([
+      { slug: 'about', updatedAt: new Date('2025-09-06T12:00:00Z') },
+      { slug: 'contacts', updatedAt: new Date('2025-09-06T12:00:00Z') },
+    ]);
     prisma.bookVersion.findMany.mockResolvedValueOnce([
-      { book: { slug: 'first-book' } },
-      { book: { slug: 'second-book' } },
-      // duplicate slug to ensure Set uniqueness
-      { book: { slug: 'first-book' } },
+      {
+        slug: 'first-book',
+        updatedAt: new Date('2025-09-06T12:00:00Z'),
+        publishedAt: new Date('2025-09-06T12:00:00Z'),
+      },
+      {
+        slug: 'second-book',
+        updatedAt: new Date('2025-09-06T12:00:00Z'),
+        publishedAt: new Date('2025-09-06T12:00:00Z'),
+      },
+      {
+        slug: 'first-book',
+        updatedAt: new Date('2025-09-06T12:00:00Z'),
+        publishedAt: new Date('2025-09-06T12:00:00Z'),
+      },
+    ]);
+    prisma.categoryTranslation.findMany.mockResolvedValueOnce([
+      { slug: 'genre-1', updatedAt: new Date('2025-09-06T12:00:00Z') },
     ]);
 
     const first = await service.perLanguage('en');
     expect(first.body).toContain('<urlset');
     expect(first.body).toContain('http://localhost:5000/static/en/pages/about');
     expect(first.body).toContain('http://localhost:5000/static/en/pages/contacts');
-    expect(first.body).toContain('http://localhost:5000/static/en/books/first-book');
-    expect(first.body).toContain('http://localhost:5000/static/en/books/second-book');
+    expect(first.body).toContain('http://localhost:5000/static/en/book/first-book');
+    expect(first.body).toContain('http://localhost:5000/static/en/book/second-book');
+    expect(first.body).toContain('http://localhost:5000/static/en/categories/genre-1');
 
     // Cached: second call without advancing time returns same object
     const second = await service.perLanguage('en');
@@ -76,8 +96,11 @@ describe('SitemapService (unit)', () => {
     // Advance beyond default 60s TTL to invalidate cache
     jest.setSystemTime(new Date('2025-09-06T12:01:01Z'));
 
-    prisma.page.findMany.mockResolvedValueOnce([{ slug: 'updated' }]);
+    prisma.page.findMany.mockResolvedValueOnce([
+      { slug: 'updated', updatedAt: new Date('2025-09-06T12:01:01Z') },
+    ]);
     prisma.bookVersion.findMany.mockResolvedValueOnce([]);
+    prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
     const third = await service.perLanguage('en');
     expect(third.body).not.toBe(first.body);
     expect(third.body).toContain('http://localhost:5000/static/en/pages/updated');
@@ -88,17 +111,26 @@ describe('SitemapService (unit)', () => {
     process.env = { ...ORIGINAL_ENV };
     delete process.env.LOCAL_PUBLIC_BASE_URL;
     const fresh = new SitemapService(prisma as unknown as PrismaService);
-    prisma.page.findMany.mockResolvedValueOnce([{ slug: 'home' }]);
-    prisma.bookVersion.findMany.mockResolvedValueOnce([{ book: { slug: 'book' } }]);
+    prisma.page.findMany.mockResolvedValueOnce([
+      { slug: 'home', updatedAt: new Date('2025-09-06T12:00:00Z') },
+    ]);
+    prisma.bookVersion.findMany.mockResolvedValueOnce([
+      {
+        slug: 'book',
+        updatedAt: new Date('2025-09-06T12:00:00Z'),
+        publishedAt: new Date('2025-09-06T12:00:00Z'),
+      },
+    ]);
+    prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
 
     const robots = fresh.robots();
-    expect(robots.body).toContain('Sitemap: http://localhost:3000/sitemap.xml');
+    expect(robots.body).toContain('Sitemap: https://bibliaris.com/sitemap.xml');
 
     const index = fresh.sitemapIndex();
-    expect(index.body).toContain('http://localhost:3000/sitemap-en.xml');
+    expect(index.body).toContain('https://bibliaris.com/sitemap-en.xml');
 
     const per = await fresh.perLanguage('en');
-    expect(per.body).toContain('http://localhost:3000/en/pages/home');
-    expect(per.body).toContain('http://localhost:3000/en/books/book');
+    expect(per.body).toContain('https://bibliaris.com/en/pages/home');
+    expect(per.body).toContain('https://bibliaris.com/en/book/book');
   });
 });

@@ -5,7 +5,7 @@ import { NotFoundException } from '@nestjs/common';
 
 interface PrismaStub {
   book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
-  bookVersion: { findMany: jest.Mock };
+  bookVersion: { findMany: jest.Mock; findFirst: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock };
   bookCategory: { findMany: jest.Mock };
@@ -15,7 +15,7 @@ interface PrismaStub {
 
 const createPrismaStub = (): PrismaStub => ({
   book: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
-  bookVersion: { findMany: jest.fn() },
+  bookVersion: { findMany: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
   bookSummary: { findFirst: jest.fn() },
   seo: { findUnique: jest.fn() },
   bookCategory: { findMany: jest.fn().mockResolvedValue([]) },

@@ -97,6 +97,7 @@ async function main() {
           {
             language: Language.en,
             title: "Harry Potter and the Philosopher's Stone",
+            slug: 'harry-potter-and-the-philosophers-stone',
             author: 'J.K. Rowling',
             description: 'First book of the Harry Potter series',
             coverImageUrl: 'https://example.com/harry.jpg',

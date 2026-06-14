@@ -1,10 +1,33 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Seo } from '@prisma/client';
+import { Language, Seo } from '@prisma/client';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoQueryDto, ResolveSeoType } from './dto/resolve-seo.dto';
-import { Language } from '@prisma/client';
 import { getDefaultLanguage, resolveRequestedLanguage } from '../../shared/language/language.util';
+
+// Modular SEO helpers
+import { detectIndexability } from './utils/detectIndexability';
+import { buildAbsoluteUrl } from './utils/buildAbsoluteUrl';
+import { getCanonicalUrl } from './canonical/getCanonicalUrl';
+import { generateHreflangLinks } from './hreflang/generateHreflangLinks';
+import { generateBookMeta } from './metadata/generateBookMeta';
+import { generateGenreMeta } from './metadata/generateGenreMeta';
+import { generateStaticPageMeta } from './metadata/generateStaticPageMeta';
+import { generateBookSchema } from './schema/generateBookSchema';
+import { generateBreadcrumbSchema } from './schema/generateBreadcrumbSchema';
+import { generateWebSiteSchema } from './schema/generateWebSiteSchema';
+import { generateCollectionPageSchema } from './schema/generateCollectionPageSchema';
+
+interface CategoryWithParent {
+  id: string;
+  name: string;
+  slug: string;
+  parentId: string | null;
+}
+
+interface BookCategoryLink {
+  category: CategoryWithParent;
+}
 
 @Injectable()
 export class SeoService {
@@ -26,10 +49,6 @@ export class SeoService {
 
   private setCache(key: string, value: Seo | null) {
     this.cache.set(key, { value, expires: Date.now() + this.ttlMs });
-  }
-
-  private invalidate(key: string) {
-    this.cache.delete(key);
   }
 
   async getByVersion(bookVersionId: string) {
@@ -124,235 +143,41 @@ export class SeoService {
     };
   }
 
-  // === Resolve SEO bundle ===
-  async resolveByParams(type: ResolveSeoType | 'book' | 'version' | 'page', id: string) {
-    const publicBase = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:3000';
-    const t = String(type) as 'book' | 'version' | 'page';
-
-    const buildBundle = (
-      base: {
-        title: string;
-        description?: string | null;
-        canonicalPath: string;
-        imageUrl?: string | null;
-      },
-      seo?: Seo | null,
-      opts?: { allowCanonicalOverride?: boolean },
-    ) => {
-      const allowOverride = opts?.allowCanonicalOverride ?? true;
-      const canonicalUrl = allowOverride
-        ? seo?.canonicalUrl || `${publicBase}${base.canonicalPath}`
-        : `${publicBase}${base.canonicalPath}`;
-      const metaTitle = seo?.metaTitle || base.title;
-      const metaDescription = seo?.metaDescription || base.description || undefined;
-      const ogTitle = seo?.ogTitle || metaTitle;
-      const ogDescription = seo?.ogDescription || metaDescription;
-      const ogUrl = seo?.ogUrl || canonicalUrl;
-      const ogImageUrl = seo?.ogImageUrl || base.imageUrl || undefined;
-      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
-
-      return {
-        meta: {
-          title: metaTitle,
-          description: metaDescription,
-          robots: seo?.robots || undefined,
-          canonicalUrl,
-        },
-        openGraph: {
-          title: ogTitle,
-          description: ogDescription,
-          type: seo?.ogType || 'website',
-          url: ogUrl,
-          image: ogImageUrl
-            ? { url: ogImageUrl, alt: seo?.ogImageAlt || metaTitle || undefined }
-            : undefined,
-        },
-        twitter: {
-          card: twitterCard,
-          site: seo?.twitterSite || undefined,
-          creator: seo?.twitterCreator || undefined,
-          image: ogImageUrl || undefined,
-        },
-        schema: {
-          event: seo?.eventName
-            ? {
-                name: seo.eventName,
-                description: seo.eventDescription || undefined,
-                startDate: seo.eventStartDate?.toISOString(),
-                endDate: seo.eventEndDate?.toISOString(),
-                url: seo.eventUrl || undefined,
-                image: seo.eventImageUrl || undefined,
-                location: seo.eventLocationName
-                  ? {
-                      name: seo.eventLocationName,
-                      street: seo.eventLocationStreet || undefined,
-                      city: seo.eventLocationCity || undefined,
-                      region: seo.eventLocationRegion || undefined,
-                      postal: seo.eventLocationPostal || undefined,
-                      country: seo.eventLocationCountry || undefined,
-                    }
-                  : undefined,
-              }
-            : undefined,
-        },
-      } as const;
-    };
-    if (t === 'version') {
-      const v = await this.prisma.bookVersion.findUnique({ where: { id } });
-      if (!v) throw new NotFoundException('BookVersion not found');
-      const seo = v.seoId ? await this.prisma.seo.findUnique({ where: { id: v.seoId } }) : null;
-      const base = {
-        title: `${v.title} — ${v.author}`,
-        description: v.description,
-        canonicalPath: `/versions/${v.id}`,
-        imageUrl: v.coverImageUrl || undefined,
-      } as const;
-      // For version, canonical must always be the version route
-      return buildBundle(base, seo, { allowCanonicalOverride: false });
-    }
-    if (t === 'book') {
-      // Book identified by slug
-      const book = await this.prisma.book.findUnique({ where: { slug: id } });
-      if (!book) throw new NotFoundException('Book not found');
-      // Try find any version with SEO to reuse
-      const version = await this.prisma.bookVersion.findFirst({
-        where: { bookId: book.id, status: 'published' },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          title: true,
-          author: true,
-          description: true,
-          coverImageUrl: true,
-          seoId: true,
-        },
-      });
-      const seo = version?.seoId
-        ? await this.prisma.seo.findUnique({ where: { id: version.seoId } })
-        : null;
-      const base = {
-        title: version ? `${version.title} — ${version.author}` : `Book ${book.slug}`,
-        description: version?.description || null,
-        canonicalPath: `/books/${book.slug}`,
-        imageUrl: version?.coverImageUrl || undefined,
-      } as const;
-      return buildBundle(base, seo || undefined);
-    }
-    if (t === 'page') {
-      // Page identified by slug
-      const page = await this.prisma.page.findFirst({
-        where: { slug: id, status: 'published' },
-      });
-      if (!page) throw new NotFoundException('Page not found');
-      const seo = page.seoId
-        ? await this.prisma.seo.findUnique({ where: { id: page.seoId } })
-        : null;
-      const base = {
-        title: page.title,
-        description: null,
-        canonicalPath: `/pages/${page.slug}`,
-        imageUrl: undefined,
-      } as const;
-      return buildBundle(base, seo || undefined);
-    }
-
-    throw new NotFoundException('Unsupported type');
+  // Backwards compatible fallback resolver
+  async resolve(query: ResolveSeoQueryDto): Promise<unknown> {
+    return this.resolvePublic(query.type, query.id, { slug: query.slug });
   }
 
-  async resolve(query: ResolveSeoQueryDto) {
-    return this.resolveByParams(query.type, query.id);
+  // Multilingual home breadcrumb helper
+  private getHomeName(lang: Language): string {
+    switch (lang) {
+      case Language.ru:
+        return 'Главная';
+      case Language.es:
+        return 'Inicio';
+      case Language.pt:
+        return 'Início';
+      case Language.fr:
+        return 'Accueil';
+      case Language.en:
+      default:
+        return 'Home';
+    }
   }
 
   /**
-   * Public resolver with language awareness. Priority:
-   * 1) Path language (if provided and available for the entity)
-   * 2) query ?lang
-   * 3) Accept-Language
-   * 4) DEFAULT_LANGUAGE
-   *
-   * For type="version" canonical remains non-prefixed (/versions/:id).
-   * For type="book" and type="page" canonical is prefixed with effective language.
+   * Public resolver with language awareness.
    */
   async resolvePublic(
     type: ResolveSeoType | 'book' | 'version' | 'page' | 'category' | 'tag',
     id: string,
     opts?: { pathLang?: Language; queryLang?: string; acceptLanguage?: string; slug?: string },
-  ): Promise<any> {
-    const publicBase = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:3000';
-
-    const buildBundle = (
-      base: {
-        title: string;
-        description?: string | null;
-        canonicalPath: string;
-        imageUrl?: string | null;
-      },
-      seo?: Seo | null,
-      opts2?: { allowCanonicalOverride?: boolean },
-    ) => {
-      const allowOverride = opts2?.allowCanonicalOverride ?? true;
-      const canonicalUrl = allowOverride
-        ? seo?.canonicalUrl || `${publicBase}${base.canonicalPath}`
-        : `${publicBase}${base.canonicalPath}`;
-      const metaTitle = seo?.metaTitle || base.title;
-      const metaDescription = seo?.metaDescription || base.description || undefined;
-      const ogTitle = seo?.ogTitle || metaTitle;
-      const ogDescription = seo?.ogDescription || metaDescription;
-      const ogUrl = seo?.ogUrl || canonicalUrl;
-      const ogImageUrl = seo?.ogImageUrl || base.imageUrl || undefined;
-      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
-
-      return {
-        meta: {
-          title: metaTitle,
-          description: metaDescription,
-          robots: seo?.robots || undefined,
-          canonicalUrl,
-        },
-        openGraph: {
-          title: ogTitle,
-          description: ogDescription,
-          type: seo?.ogType || 'website',
-          url: ogUrl,
-          image: ogImageUrl
-            ? { url: ogImageUrl, alt: seo?.ogImageAlt || metaTitle || undefined }
-            : undefined,
-        },
-        twitter: {
-          card: twitterCard,
-          site: seo?.twitterSite || undefined,
-          creator: seo?.twitterCreator || undefined,
-          image: ogImageUrl || undefined,
-        },
-        schema: {
-          event: seo?.eventName
-            ? {
-                name: seo.eventName,
-                description: seo.eventDescription || undefined,
-                startDate: seo.eventStartDate?.toISOString(),
-                endDate: seo.eventEndDate?.toISOString(),
-                url: seo.eventUrl || undefined,
-                image: seo.eventImageUrl || undefined,
-                location: seo.eventLocationName
-                  ? {
-                      name: seo.eventLocationName,
-                      street: seo.eventLocationStreet || undefined,
-                      city: seo.eventLocationCity || undefined,
-                      region: seo.eventLocationRegion || undefined,
-                      postal: seo.eventLocationPostal || undefined,
-                      country: seo.eventLocationCountry || undefined,
-                    }
-                  : undefined,
-              }
-            : undefined,
-        },
-      } as const;
-    };
-
+  ): Promise<Record<string, unknown>> {
     const pickEffectiveLanguage = (available?: Language[]): Language => {
       const availableArr = available && available.length > 0 ? available : undefined;
-      if (availableArr && opts?.pathLang && availableArr.includes(opts.pathLang))
+      if (availableArr && opts?.pathLang && availableArr.includes(opts.pathLang)) {
         return opts.pathLang;
+      }
       const resolved = resolveRequestedLanguage({
         queryLang: opts?.queryLang,
         acceptLanguage: opts?.acceptLanguage,
@@ -361,200 +186,699 @@ export class SeoService {
       return resolved ?? getDefaultLanguage();
     };
 
-    const t = String(type) as 'book' | 'version' | 'page';
+    const t = String(type) as 'book' | 'version' | 'page' | 'category' | 'tag';
+
     if (t === 'version') {
-      const v = await this.prisma.bookVersion.findUnique({ where: { id } });
+      const v = await this.prisma.bookVersion.findUnique({
+        where: { id },
+      });
       if (!v) throw new NotFoundException('BookVersion not found');
-      const seo = v.seoId ? await this.prisma.seo.findUnique({ where: { id: v.seoId } }) : null;
-      const base = {
-        title: `${v.title} — ${v.author}`,
+
+      const baseMeta = generateBookMeta({
+        title: v.title,
+        author: v.author,
         description: v.description,
-        canonicalPath: `/versions/${v.id}`,
-        imageUrl: v.coverImageUrl || undefined,
-      } as const;
-      return buildBundle(base, seo, { allowCanonicalOverride: false });
+        language: v.language,
+      });
+
+      const seo = v.seoId ? await this.prisma.seo.findUnique({ where: { id: v.seoId } }) : null;
+      const metaTitle = seo?.metaTitle || baseMeta.title;
+      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
+      const canonicalUrl = getCanonicalUrl('version', v.id);
+      const robotsStatus = detectIndexability(v.status, canonicalUrl, seo?.robots);
+
+      const ogTitle = seo?.ogTitle || metaTitle;
+      const ogDescription = seo?.ogDescription || metaDescription;
+      const ogUrl = seo?.ogUrl || canonicalUrl;
+      const ogImageUrl = seo?.ogImageUrl || v.coverImageUrl || undefined;
+      const ogImageAlt = seo?.ogImageAlt || metaTitle;
+      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+      // Breadcrumbs
+      const breadcrumbItems = [
+        { name: this.getHomeName(v.language), url: getCanonicalUrl('static', '', v.language) },
+        { name: v.title, url: canonicalUrl },
+      ];
+      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+      const bookSchema = generateBookSchema({
+        slug: v.slug || v.id,
+        title: v.title,
+        authorName: v.author,
+        language: v.language,
+        genres: [],
+        coverImageUrl: v.coverImageUrl,
+        description: metaDescription,
+        textAvailable: v.type === 'text',
+        audioAvailable: v.type === 'audio',
+      });
+
+      return {
+        meta: {
+          title: metaTitle,
+          description: metaDescription,
+          robots: robotsStatus,
+          canonicalUrl,
+        },
+        openGraph: {
+          title: ogTitle,
+          description: ogDescription,
+          type: 'book',
+          url: ogUrl,
+          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+        },
+        twitter: {
+          card: twitterCard,
+          site: seo?.twitterSite || undefined,
+          creator: seo?.twitterCreator || undefined,
+          image: ogImageUrl || undefined,
+        },
+        schema: {
+          '@context': 'https://schema.org',
+          '@graph': [
+            {
+              '@type': 'WebPage',
+              '@id': `${canonicalUrl}#webpage`,
+              url: canonicalUrl,
+              name: metaTitle,
+              description: metaDescription,
+              inLanguage: v.language.toLowerCase(),
+              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+            },
+            breadcrumbSchema,
+            bookSchema,
+          ],
+        },
+      };
     }
 
     if (t === 'book') {
-      const book = await this.prisma.book.findUnique({ where: { slug: id } });
-      if (!book) throw new NotFoundException('Book not found');
-      const versions = await this.prisma.bookVersion.findMany({
-        where: { bookId: book.id, status: 'published' },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          language: true,
-          title: true,
-          author: true,
-          description: true,
-          coverImageUrl: true,
-          seoId: true,
-        },
+      // Find version by slug or book by slug
+      const targetVersion = await this.prisma.bookVersion.findFirst({
+        where: { slug: id, status: 'published' },
       });
+
+      let bookId: string | null = null;
+      if (targetVersion) {
+        bookId = targetVersion.bookId;
+      } else {
+        const legacyBook = await this.prisma.book.findUnique({
+          where: { slug: id },
+        });
+        if (legacyBook) {
+          bookId = legacyBook.id;
+        }
+      }
+
+      if (!bookId) {
+        throw new NotFoundException(`Book not found for slug or id "${id}"`);
+      }
+
+      const versions = await this.prisma.bookVersion.findMany({
+        where: { bookId, status: 'published' },
+      });
+
       const available = versions.map((v) => v.language);
       const effLang = pickEffectiveLanguage(available);
       const chosen = versions.find((v) => v.language === effLang) ?? versions[0];
-      const seo = chosen?.seoId
+
+      if (!chosen) {
+        // Fallback if book has no published versions
+        const canonicalUrl = getCanonicalUrl('book', id, effLang);
+        return {
+          meta: {
+            title: `Book ${id}`,
+            description: undefined,
+            robots: 'noindex, follow',
+            canonicalUrl,
+          },
+          openGraph: {
+            title: `Book ${id}`,
+            description: undefined,
+            type: 'book',
+            url: canonicalUrl,
+          },
+          twitter: {
+            card: 'summary',
+          },
+          schema: {
+            '@context': 'https://schema.org',
+            '@graph': [generateWebSiteSchema(effLang)],
+          },
+        };
+      }
+
+      const baseMeta = generateBookMeta({
+        title: chosen.title,
+        author: chosen.author,
+        description: chosen.description,
+        language: effLang,
+      });
+
+      const seo = chosen.seoId
         ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
         : null;
-      const base = {
-        title: chosen ? `${chosen.title} — ${chosen.author}` : `Book ${book.slug}`,
-        description: chosen?.description || null,
-        canonicalPath: `/${effLang}/books/${book.slug}`,
-        imageUrl: chosen?.coverImageUrl || undefined,
-      } as const;
-      const bundle = buildBundle(base, seo || undefined) as {
-        meta: unknown;
-        openGraph: unknown;
-        twitter: unknown;
-        schema: unknown;
-      } & { breadcrumbPath?: Array<{ id: string; name: string; slug: string }> };
+      const metaTitle = seo?.metaTitle || baseMeta.title;
+      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
+      const canonicalUrl = getCanonicalUrl('book', chosen.slug || id, effLang);
+      const robotsStatus = detectIndexability(chosen.status, canonicalUrl, seo?.robots);
+
+      const ogTitle = seo?.ogTitle || metaTitle;
+      const ogDescription = seo?.ogDescription || metaDescription;
+      const ogUrl = seo?.ogUrl || canonicalUrl;
+      const ogImageUrl = seo?.ogImageUrl || chosen.coverImageUrl || undefined;
+      const ogImageAlt = seo?.ogImageAlt || metaTitle;
+      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+      // Hreflang alternate links
+      const slugsMap: Record<string, string> = {};
+      for (const v of versions) {
+        if (v.slug) {
+          slugsMap[v.language.toLowerCase()] = v.slug;
+        }
+      }
+      const hreflangLinks = generateHreflangLinks('book', slugsMap);
+
+      // Breadcrumbs
+      const breadcrumbItems = [
+        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+      ];
+
+      // Add Category breadcrumbs
       try {
-        if (chosen?.id) {
-          const links = await this.prisma.bookCategory.findMany({
-            where: { bookVersionId: chosen.id },
-            select: { category: { select: { id: true, name: true, slug: true, parentId: true } } },
-          });
-          const cat = links[0]?.category;
-          if (cat) {
-            const path: Array<{ id: string; name: string; slug: string }> = [];
-            let current: {
-              id: string;
-              name: string;
-              slug: string;
-              parentId: string | null;
-            } | null = cat;
-            while (current?.parentId) {
-              const parent: {
-                id: string;
-                name: string;
-                slug: string;
-                parentId: string | null;
-              } | null = await this.prisma.category.findUnique({
+        const rawLinks = await this.prisma.bookCategory.findMany({
+          where: { bookVersionId: chosen.id },
+          select: { category: { select: { id: true, name: true, slug: true, parentId: true } } },
+        });
+        const links = rawLinks as unknown as BookCategoryLink[];
+        const cat = links[0]?.category;
+        if (cat) {
+          const catPath: Array<{ name: string; slug: string }> = [];
+          let current: CategoryWithParent | null = cat;
+          while (current) {
+            const trans = await this.prisma.categoryTranslation.findUnique({
+              where: { categoryId_language: { categoryId: current.id, language: effLang } },
+            });
+            catPath.push({
+              name: trans?.name || current.name,
+              slug: trans?.slug || current.slug,
+            });
+            if (current.parentId) {
+              const parent = await this.prisma.category.findUnique({
                 where: { id: current.parentId },
                 select: { id: true, name: true, slug: true, parentId: true },
               });
-              if (!parent) break;
-              path.push({ id: parent.id, name: parent.name, slug: parent.slug });
-              current = parent;
+              current = parent as CategoryWithParent | null;
+            } else {
+              current = null;
             }
-            bundle.breadcrumbPath = path.reverse();
           }
+          catPath.reverse().forEach((p) => {
+            breadcrumbItems.push({
+              name: p.name,
+              url: getCanonicalUrl('category', p.slug, effLang),
+            });
+          });
         }
       } catch {
-        // ignore breadcrumb errors
+        // Ignore breadcrumb categories errors
       }
-      return bundle;
+
+      breadcrumbItems.push({ name: chosen.title, url: canonicalUrl });
+      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+
+      // Ratings
+      let ratingAverage: number | null = null;
+      let ratingCount = 0;
+      try {
+        const ratings = await this.prisma.bookRating.findMany({
+          where: { bookId: chosen.bookId },
+          select: { score: true },
+        });
+        ratingCount = ratings.length;
+        if (ratingCount > 0) {
+          const sum = ratings.reduce((acc, r) => acc + r.score, 0);
+          ratingAverage = parseFloat((sum / ratingCount).toFixed(2));
+        }
+      } catch {
+        // ignore rating errors
+      }
+
+      const bookSchema = generateBookSchema({
+        slug: chosen.slug || id,
+        title: chosen.title,
+        authorName: chosen.author,
+        language: effLang,
+        genres: [],
+        coverImageUrl: chosen.coverImageUrl,
+        description: metaDescription,
+        textAvailable: chosen.type === 'text',
+        audioAvailable: chosen.type === 'audio',
+        ratingAverage,
+        ratingCount,
+      });
+
+      return {
+        meta: {
+          title: metaTitle,
+          description: metaDescription,
+          robots: robotsStatus,
+          canonicalUrl,
+        },
+        openGraph: {
+          title: ogTitle,
+          description: ogDescription,
+          type: 'book',
+          url: ogUrl,
+          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+        },
+        twitter: {
+          card: twitterCard,
+          site: seo?.twitterSite || undefined,
+          creator: seo?.twitterCreator || undefined,
+          image: ogImageUrl || undefined,
+        },
+        schema: {
+          '@context': 'https://schema.org',
+          '@graph': [
+            {
+              '@type': 'WebPage',
+              '@id': `${canonicalUrl}#webpage`,
+              url: canonicalUrl,
+              name: metaTitle,
+              description: metaDescription,
+              inLanguage: effLang.toLowerCase(),
+              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+            },
+            generateWebSiteSchema(effLang),
+            breadcrumbSchema,
+            bookSchema,
+          ],
+        },
+        hreflangs: hreflangLinks,
+        // Compatibility field for legacy tests
+        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
+          name: item.name,
+          slug: item.url.split('/').pop() || '',
+        })),
+      };
     }
 
     if (t === 'page') {
       const candidates = await this.prisma.page.findMany({
         where: { slug: id, status: 'published' },
-        select: { id: true, language: true },
       });
       if (candidates.length === 0) throw new NotFoundException('Page not found');
+
       const available = candidates.map((c) => c.language);
       const effLang = pickEffectiveLanguage(available);
-      const pick = candidates.find((c) => c.language === effLang) ?? candidates[0];
-      const page = await this.prisma.page.findUnique({ where: { id: pick.id } });
-      const seo = page?.seoId
+      const chosen = candidates.find((c) => c.language === effLang) ?? candidates[0];
+
+      const page = await this.prisma.page.findUnique({
+        where: { id: chosen.id },
+      });
+      if (!page) throw new NotFoundException('Page not found');
+
+      const baseMeta = generateStaticPageMeta({
+        title: page.title,
+        content: page.content,
+        language: effLang,
+      });
+
+      const seo = page.seoId
         ? await this.prisma.seo.findUnique({ where: { id: page.seoId } })
         : null;
-      const base = {
-        title: page!.title,
-        description: null,
-        canonicalPath: `/${effLang}/pages/${page!.slug}`,
-        imageUrl: undefined,
-      } as const;
-      return buildBundle(base, seo || undefined);
+      const metaTitle = seo?.metaTitle || baseMeta.title;
+      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
+      const canonicalUrl = getCanonicalUrl('page', page.slug, effLang);
+      const robotsStatus = detectIndexability(page.status, canonicalUrl, seo?.robots);
+
+      const ogTitle = seo?.ogTitle || metaTitle;
+      const ogDescription = seo?.ogDescription || metaDescription;
+      const ogUrl = seo?.ogUrl || canonicalUrl;
+      const ogImageUrl = seo?.ogImageUrl || undefined;
+      const ogImageAlt = seo?.ogImageAlt || metaTitle;
+      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+      // Hreflangs
+      const slugsMap: Record<string, string> = {};
+      const pagesInGroup = page.translationGroupId
+        ? await this.prisma.page.findMany({
+            where: { translationGroupId: page.translationGroupId, status: 'published' },
+          })
+        : candidates;
+
+      for (const p of pagesInGroup) {
+        slugsMap[p.language.toLowerCase()] = p.slug;
+      }
+      const hreflangLinks = generateHreflangLinks('page', slugsMap);
+
+      // Breadcrumbs
+      const breadcrumbItems = [
+        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+        { name: page.title, url: canonicalUrl },
+      ];
+      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+
+      // Event Schema (optional support for old tests)
+      const eventSchema = seo?.eventName
+        ? {
+            '@type': 'Event',
+            name: seo.eventName,
+            description: seo.eventDescription || undefined,
+            startDate: seo.eventStartDate?.toISOString(),
+            endDate: seo.eventEndDate?.toISOString(),
+            url: seo.eventUrl || undefined,
+            image: seo.eventImageUrl || undefined,
+            location: seo.eventLocationName
+              ? {
+                  '@type': 'Place',
+                  name: seo.eventLocationName,
+                  address: {
+                    '@type': 'PostalAddress',
+                    streetAddress: seo.eventLocationStreet || undefined,
+                    addressLocality: seo.eventLocationCity || undefined,
+                    addressRegion: seo.eventLocationRegion || undefined,
+                    postalCode: seo.eventLocationPostal || undefined,
+                    addressCountry: seo.eventLocationCountry || undefined,
+                  },
+                }
+              : undefined,
+          }
+        : undefined;
+
+      const graph: Record<string, unknown>[] = [
+        {
+          '@type': 'WebPage',
+          '@id': `${canonicalUrl}#webpage`,
+          url: canonicalUrl,
+          name: metaTitle,
+          description: metaDescription,
+          inLanguage: effLang.toLowerCase(),
+          isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+          breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+        },
+        generateWebSiteSchema(effLang),
+        breadcrumbSchema,
+      ];
+      if (eventSchema) {
+        graph.push(eventSchema);
+      }
+
+      const result: {
+        meta: Record<string, unknown>;
+        openGraph: Record<string, unknown>;
+        twitter: Record<string, unknown>;
+        schema: { '@context': string; '@graph': Record<string, unknown>[]; event?: unknown };
+        hreflangs: unknown[];
+      } = {
+        meta: {
+          title: metaTitle,
+          description: metaDescription,
+          robots: robotsStatus,
+          canonicalUrl,
+        },
+        openGraph: {
+          title: ogTitle,
+          description: ogDescription,
+          type: 'website',
+          url: ogUrl,
+          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+        },
+        twitter: {
+          card: twitterCard,
+          site: seo?.twitterSite || undefined,
+          creator: seo?.twitterCreator || undefined,
+          image: ogImageUrl || undefined,
+        },
+        schema: {
+          '@context': 'https://schema.org',
+          '@graph': graph,
+        },
+        hreflangs: hreflangLinks,
+      };
+
+      // Compatibility for legacy tests checking schema.event directly
+      if (seo?.eventName) {
+        result.schema.event = {
+          name: seo.eventName,
+          description: seo.eventDescription || undefined,
+          startDate: seo.eventStartDate?.toISOString(),
+          endDate: seo.eventEndDate?.toISOString(),
+          url: seo.eventUrl || undefined,
+          image: seo.eventImageUrl || undefined,
+          location: seo.eventLocationName
+            ? {
+                name: seo.eventLocationName,
+                street: seo.eventLocationStreet || undefined,
+                city: seo.eventLocationCity || undefined,
+                region: seo.eventLocationRegion || undefined,
+                postal: seo.eventLocationPostal || undefined,
+                country: seo.eventLocationCountry || undefined,
+              }
+            : undefined,
+        };
+      }
+
+      return result;
     }
 
     if (t === 'category') {
       const effLang = opts?.pathLang ?? pickEffectiveLanguage();
-      // Try finding by slug or by categoryId
       const slugVal = opts?.slug || id;
-      let trans = await this.prisma.categoryTranslation.findUnique({
-        where: { language_slug: { language: effLang, slug: slugVal } },
-        include: { seo: true, category: { include: { parent: true } } },
+
+      const transCandidates = await this.prisma.categoryTranslation.findMany({
+        where: {
+          OR: [{ slug: slugVal }, { categoryId: id }],
+        },
+        include: { category: true },
       });
-      // If not found by slug, try by categoryId
-      if (!trans) {
-        trans = await this.prisma.categoryTranslation.findUnique({
-          where: { categoryId_language: { categoryId: id, language: effLang } },
-          include: { seo: true, category: { include: { parent: true } } },
-        });
+
+      if (transCandidates.length === 0) {
+        throw new NotFoundException('Category translation not found');
       }
-      if (!trans) throw new NotFoundException('Category translation not found');
 
-      const seo = trans.seo;
-      const plainDesc = trans.description
-        ? trans.description.replace(/<[^>]*>/g, '').substring(0, 160)
-        : undefined;
-      const base = {
-        title: trans.name,
-        description: plainDesc,
-        canonicalPath: `/${effLang}/categories/${trans.slug}`,
-        imageUrl: undefined,
-      } as const;
-      const bundle = buildBundle(base, seo || undefined) as Record<string, unknown>;
+      const chosen = transCandidates.find((t) => t.language === effLang) ?? transCandidates[0];
 
-      // Build breadcrumbPath
+      const baseMeta = generateGenreMeta({
+        name: chosen.name,
+        description: chosen.description,
+        language: effLang,
+      });
+
+      const seo = chosen.seoId
+        ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
+        : null;
+      const metaTitle = seo?.metaTitle || baseMeta.title;
+      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
+      const canonicalUrl = getCanonicalUrl('category', chosen.slug, effLang);
+      const robotsStatus = detectIndexability('published', canonicalUrl, seo?.robots);
+
+      const ogTitle = seo?.ogTitle || metaTitle;
+      const ogDescription = seo?.ogDescription || metaDescription;
+      const ogUrl = seo?.ogUrl || canonicalUrl;
+      const ogImageUrl = seo?.ogImageUrl || undefined;
+      const ogImageAlt = seo?.ogImageAlt || metaTitle;
+      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+      // Hreflangs
+      const slugsMap: Record<string, string> = {};
+      for (const t of transCandidates) {
+        slugsMap[t.language.toLowerCase()] = t.slug;
+      }
+      const hreflangLinks = generateHreflangLinks('category', slugsMap);
+
+      // Breadcrumbs
+      const breadcrumbItems = [
+        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+      ];
+
+      // Add parent categories
       try {
-        const path: Array<{ id: string; slug: string; name: string }> = [];
-        let currentParentId: string | null = trans.category?.parentId ?? null;
+        let currentParentId = chosen.category?.parentId ?? null;
+        const catPath: Array<{ name: string; slug: string }> = [];
         while (currentParentId) {
           const parentTrans = await this.prisma.categoryTranslation.findUnique({
             where: { categoryId_language: { categoryId: currentParentId, language: effLang } },
-            select: { name: true, slug: true },
           });
           const parentCat = await this.prisma.category.findUnique({
             where: { id: currentParentId },
-            select: { id: true, name: true, slug: true, parentId: true },
           });
           if (!parentCat) break;
-          path.push({
-            id: parentCat.id,
-            slug: parentTrans?.slug ?? parentCat.slug,
-            name: parentTrans?.name ?? parentCat.name,
+          catPath.push({
+            name: parentTrans?.name || parentCat.name,
+            slug: parentTrans?.slug || parentCat.slug,
           });
           currentParentId = parentCat.parentId;
         }
-        bundle.breadcrumbPath = path.reverse();
+        catPath.reverse().forEach((p) => {
+          breadcrumbItems.push({
+            name: p.name,
+            url: getCanonicalUrl('category', p.slug, effLang),
+          });
+        });
       } catch {
-        // ignore breadcrumb errors
+        // Ignore parent breadcrumbs errors
       }
-      return bundle;
+
+      breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
+      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+      const collectionSchema = generateCollectionPageSchema(
+        'category',
+        chosen.slug,
+        effLang,
+        chosen.name,
+        metaDescription || '',
+        [],
+      );
+
+      return {
+        meta: {
+          title: metaTitle,
+          description: metaDescription,
+          robots: robotsStatus,
+          canonicalUrl,
+        },
+        openGraph: {
+          title: ogTitle,
+          description: ogDescription,
+          type: 'website',
+          url: ogUrl,
+          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+        },
+        twitter: {
+          card: twitterCard,
+          site: seo?.twitterSite || undefined,
+          creator: seo?.twitterCreator || undefined,
+          image: ogImageUrl || undefined,
+        },
+        schema: {
+          '@context': 'https://schema.org',
+          '@graph': [
+            {
+              '@type': 'WebPage',
+              '@id': `${canonicalUrl}#webpage`,
+              url: canonicalUrl,
+              name: metaTitle,
+              description: metaDescription,
+              inLanguage: effLang.toLowerCase(),
+              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+            },
+            generateWebSiteSchema(effLang),
+            breadcrumbSchema,
+            collectionSchema,
+          ],
+        },
+        hreflangs: hreflangLinks,
+        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
+          name: item.name,
+          slug: item.url.split('/').pop() || '',
+        })),
+      };
     }
 
     if (t === 'tag') {
       const effLang = opts?.pathLang ?? pickEffectiveLanguage();
       const slugVal = opts?.slug || id;
-      let trans = await this.prisma.tagTranslation.findUnique({
-        where: { language_slug: { language: effLang, slug: slugVal } },
-        include: { seo: true },
-      });
-      if (!trans) {
-        trans = await this.prisma.tagTranslation.findUnique({
-          where: { tagId_language: { tagId: id, language: effLang } },
-          include: { seo: true },
-        });
-      }
-      if (!trans) throw new NotFoundException('Tag translation not found');
 
-      const seo = trans.seo;
-      const plainDesc = trans.description
-        ? trans.description.replace(/<[^>]*>/g, '').substring(0, 160)
-        : undefined;
-      const base = {
-        title: trans.name,
-        description: plainDesc,
-        canonicalPath: `/${effLang}/tags/${trans.slug}`,
-        imageUrl: undefined,
-      } as const;
-      return buildBundle(base, seo || undefined);
+      const transCandidates = await this.prisma.tagTranslation.findMany({
+        where: {
+          OR: [{ slug: slugVal }, { tagId: id }],
+        },
+      });
+
+      if (transCandidates.length === 0) {
+        throw new NotFoundException('Tag translation not found');
+      }
+
+      const chosen = transCandidates.find((t) => t.language === effLang) ?? transCandidates[0];
+
+      const baseMeta = generateGenreMeta({
+        name: chosen.name,
+        description: chosen.description,
+        language: effLang,
+      });
+
+      const seo = chosen.seoId
+        ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
+        : null;
+      const metaTitle = seo?.metaTitle || baseMeta.title;
+      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
+      const canonicalUrl = getCanonicalUrl('tag', chosen.slug, effLang);
+      const robotsStatus = detectIndexability('published', canonicalUrl, seo?.robots);
+
+      const ogTitle = seo?.ogTitle || metaTitle;
+      const ogDescription = seo?.ogDescription || metaDescription;
+      const ogUrl = seo?.ogUrl || canonicalUrl;
+      const ogImageUrl = seo?.ogImageUrl || undefined;
+      const ogImageAlt = seo?.ogImageAlt || metaTitle;
+      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+      // Hreflangs
+      const slugsMap: Record<string, string> = {};
+      for (const t of transCandidates) {
+        slugsMap[t.language.toLowerCase()] = t.slug;
+      }
+      const hreflangLinks = generateHreflangLinks('tag', slugsMap);
+
+      // Breadcrumbs
+      const breadcrumbItems = [
+        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+        { name: chosen.name, url: canonicalUrl },
+      ];
+      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+      const collectionSchema = generateCollectionPageSchema(
+        'tag',
+        chosen.slug,
+        effLang,
+        chosen.name,
+        metaDescription || '',
+        [],
+      );
+
+      return {
+        meta: {
+          title: metaTitle,
+          description: metaDescription,
+          robots: robotsStatus,
+          canonicalUrl,
+        },
+        openGraph: {
+          title: ogTitle,
+          description: ogDescription,
+          type: 'website',
+          url: ogUrl,
+          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+        },
+        twitter: {
+          card: twitterCard,
+          site: seo?.twitterSite || undefined,
+          creator: seo?.twitterCreator || undefined,
+          image: ogImageUrl || undefined,
+        },
+        schema: {
+          '@context': 'https://schema.org',
+          '@graph': [
+            {
+              '@type': 'WebPage',
+              '@id': `${canonicalUrl}#webpage`,
+              url: canonicalUrl,
+              name: metaTitle,
+              description: metaDescription,
+              inLanguage: effLang.toLowerCase(),
+              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+            },
+            generateWebSiteSchema(effLang),
+            breadcrumbSchema,
+            collectionSchema,
+          ],
+        },
+        hreflangs: hreflangLinks,
+      };
     }
 
-    // Fallback: use original behavior
-    return this.resolveByParams(type as 'book' | 'version' | 'page', id);
+    throw new NotFoundException('Unsupported type');
   }
 }
