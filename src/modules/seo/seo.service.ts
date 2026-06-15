@@ -13,6 +13,7 @@ import { generateHreflangLinks } from './hreflang/generateHreflangLinks';
 import { generateBookMeta } from './metadata/generateBookMeta';
 import { generateGenreMeta } from './metadata/generateGenreMeta';
 import { generateStaticPageMeta } from './metadata/generateStaticPageMeta';
+import { generateCatalogMeta } from './metadata/generateCatalogMeta';
 import { generateBookSchema } from './schema/generateBookSchema';
 import { generateBreadcrumbSchema } from './schema/generateBreadcrumbSchema';
 import { generateWebSiteSchema } from './schema/generateWebSiteSchema';
@@ -169,7 +170,7 @@ export class SeoService {
    * Public resolver with language awareness.
    */
   async resolvePublic(
-    type: ResolveSeoType | 'book' | 'version' | 'page' | 'category' | 'tag',
+    type: ResolveSeoType | 'book' | 'version' | 'page' | 'category' | 'tag' | 'catalog',
     id: string,
     opts?: { pathLang?: Language; queryLang?: string; acceptLanguage?: string; slug?: string },
   ): Promise<Record<string, unknown>> {
@@ -186,7 +187,7 @@ export class SeoService {
       return resolved ?? getDefaultLanguage();
     };
 
-    const t = String(type) as 'book' | 'version' | 'page' | 'category' | 'tag';
+    const t = String(type) as 'book' | 'version' | 'page' | 'category' | 'tag' | 'catalog';
 
     if (t === 'version') {
       const v = await this.prisma.bookVersion.findUnique({
@@ -882,6 +883,78 @@ export class SeoService {
             generateWebSiteSchema(effLang),
             breadcrumbSchema,
             collectionSchema,
+          ],
+        },
+        hreflangs: hreflangLinks,
+      };
+    }
+
+    if (t === 'catalog') {
+      const effLang = opts?.pathLang ?? pickEffectiveLanguage();
+      const baseMeta = generateCatalogMeta({ language: effLang });
+
+      const canonicalUrl = getCanonicalUrl('static', 'catalog', effLang);
+
+      // Hreflangs
+      const slugsMap = {
+        en: 'catalog',
+        es: 'catalog',
+        pt: 'catalog',
+        fr: 'catalog',
+        ru: 'catalog',
+      };
+      const hreflangLinks = generateHreflangLinks('static', slugsMap);
+
+      // Breadcrumbs
+      const breadcrumbItems = [
+        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+        {
+          name:
+            effLang === 'ru'
+              ? 'Каталог'
+              : effLang === 'es'
+                ? 'Catálogo'
+                : effLang === 'pt'
+                  ? 'Catálogo'
+                  : effLang === 'fr'
+                    ? 'Catalogue'
+                    : 'Catalog',
+          url: canonicalUrl,
+        },
+      ];
+      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+
+      return {
+        meta: {
+          title: baseMeta.title,
+          description: baseMeta.description,
+          robots: 'index, follow',
+          canonicalUrl,
+        },
+        openGraph: {
+          title: baseMeta.title,
+          description: baseMeta.description,
+          type: 'website',
+          url: canonicalUrl,
+        },
+        twitter: {
+          card: 'summary',
+        },
+        schema: {
+          '@context': 'https://schema.org',
+          '@graph': [
+            {
+              '@type': 'CollectionPage',
+              '@id': `${canonicalUrl}#webpage`,
+              url: canonicalUrl,
+              name: baseMeta.title,
+              description: baseMeta.description,
+              inLanguage: effLang.toLowerCase(),
+              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+            },
+            generateWebSiteSchema(effLang),
+            breadcrumbSchema,
           ],
         },
         hreflangs: hreflangLinks,

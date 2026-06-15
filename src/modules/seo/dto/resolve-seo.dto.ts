@@ -7,6 +7,7 @@ export enum ResolveSeoType {
   page = 'page',
   category = 'category',
   tag = 'tag',
+  catalog = 'catalog',
 }
 
 export class ResolveSeoQueryDto {
