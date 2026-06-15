@@ -147,7 +147,7 @@ export class CategoryService {
 
     const trans = await this.prisma.categoryTranslation.findUnique({
       where: { language_slug: { language: preferred ?? Language.en, slug } },
-      include: { category: true },
+      include: { category: true, seo: true },
     });
     let category: PrismaCategory | null =
       trans && 'category' in trans ? ((trans.category as PrismaCategory | null) ?? null) : null;
@@ -198,7 +198,12 @@ export class CategoryService {
       : books;
 
     return {
-      category: { ...category, translation: trans ?? null },
+      category: {
+        ...category,
+        translation: trans ?? null,
+        description: trans?.description ?? null,
+      },
+      seo: trans?.seo ?? null,
       data: filteredBooks,
       total: filteredBooks.length,
       page: 1,

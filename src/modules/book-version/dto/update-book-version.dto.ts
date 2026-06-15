@@ -73,4 +73,14 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   previewMediaId?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'ID основной категории книги для хлебных крошек. Pass null to clear.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  primaryCategoryId?: string | null;
 }

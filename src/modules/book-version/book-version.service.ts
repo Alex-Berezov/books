@@ -77,6 +77,7 @@ export class BookVersionService {
             referralUrl: dto.referralUrl,
             seoId,
             status: 'draft',
+            primaryCategoryId: dto.primaryCategoryId,
           },
           include: { seo: true },
         });

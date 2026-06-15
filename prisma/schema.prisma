@@ -52,11 +52,14 @@ model BookVersion {
   seoId           Int?              @unique
   previewMedia    MediaAsset?       @relation("VersionPreviewMedia", fields: [previewMediaId], references: [id], onDelete: SetNull)
   previewMediaId  String?
+  primaryCategoryId String?
+  primaryCategory   Category?       @relation("BookVersionPrimaryCategory", fields: [primaryCategoryId], references: [id], onDelete: SetNull)
 
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
   @@index([previewMediaId])
+  @@index([primaryCategoryId])
 }
 
 model BookSummary {
@@ -195,6 +198,7 @@ model Category {
   parent   Category?     @relation("CategoryToCategory", fields: [parentId], references: [id])
   children Category[]    @relation("CategoryToCategory")
   translations CategoryTranslation[]
+  primaryCategoryVersions BookVersion[] @relation("BookVersionPrimaryCategory")
 
   @@index([parentId])
 }

@@ -3,7 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
-import { BookType, Language } from '@prisma/client';
+import { BookType, Language, Category, CategoryTranslation } from '@prisma/client';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
 
@@ -329,6 +329,15 @@ export class BookService {
 
     const book = await this.prisma.book.findUnique({ where: { id: bookId } });
 
+    let primaryCategory: (Category & { translations: CategoryTranslation[] }) | null = null;
+    const primaryCategoryId = activeVersion?.primaryCategoryId;
+    if (primaryCategoryId) {
+      primaryCategory = await this.prisma.category.findUnique({
+        where: { id: primaryCategoryId },
+        include: { translations: true },
+      });
+    }
+
     return {
       id: bookId,
       slug: targetVersion?.slug || slug,
@@ -343,6 +352,8 @@ export class BookService {
       language: preferredLang,
       categories,
       tags,
+      primaryCategoryId: primaryCategoryId ?? null,
+      primaryCategory,
       versions: versions.map((v) => ({
         ...v,
         coverUrl: v.coverImageUrl, // compatibility alias

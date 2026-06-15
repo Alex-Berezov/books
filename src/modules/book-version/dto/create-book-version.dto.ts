@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, IsUrl, IsUUID, MinLength } from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
 export class CreateBookVersionDto {
@@ -44,6 +44,14 @@ export class CreateBookVersionDto {
   @IsOptional()
   @IsUrl()
   referralUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'ID основной категории книги для хлебных крошек',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @IsOptional()
+  @IsUUID()
+  primaryCategoryId?: string | null;
 
   @ApiPropertyOptional({
     description: 'Опциональные SEO metaTitle',

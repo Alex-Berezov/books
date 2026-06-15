@@ -365,12 +365,21 @@ export class SeoService {
 
       // Add Category breadcrumbs
       try {
-        const rawLinks = await this.prisma.bookCategory.findMany({
-          where: { bookVersionId: chosen.id },
-          select: { category: { select: { id: true, name: true, slug: true, parentId: true } } },
-        });
-        const links = rawLinks as unknown as BookCategoryLink[];
-        const cat = links[0]?.category;
+        let cat: CategoryWithParent | null = null;
+        if (chosen.primaryCategoryId) {
+          cat = await this.prisma.category.findUnique({
+            where: { id: chosen.primaryCategoryId },
+            select: { id: true, name: true, slug: true, parentId: true },
+          });
+        }
+        if (!cat) {
+          const rawLinks = await this.prisma.bookCategory.findMany({
+            where: { bookVersionId: chosen.id },
+            select: { category: { select: { id: true, name: true, slug: true, parentId: true } } },
+          });
+          const links = rawLinks as unknown as BookCategoryLink[];
+          cat = links[0]?.category ?? null;
+        }
         if (cat) {
           const catPath: Array<{ name: string; slug: string }> = [];
           let current: CategoryWithParent | null = cat;

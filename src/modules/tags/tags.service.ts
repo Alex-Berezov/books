@@ -89,7 +89,8 @@ export class TagsService {
     queryLang?: string,
     acceptLanguageHeader?: string,
   ): Promise<{
-    tag: Tag & { translation: TagTranslation | null };
+    tag: Tag & { translation: TagTranslation | null; description: string | null };
+    seo: Record<string, unknown> | null;
     versions: BookVersion[];
     availableLanguages: Language[];
   }> {
@@ -101,7 +102,7 @@ export class TagsService {
     });
     const trans = await this.prisma.tagTranslation.findUnique({
       where: { language_slug: { language: preferred ?? Language.en, slug } },
-      include: { tag: true },
+      include: { tag: true, seo: true },
     });
     let tagId: string | null = null;
     let baseTag: Tag | null = null;
@@ -129,7 +130,12 @@ export class TagsService {
     });
     const filtered = effective ? versions.filter((v) => v.language === effective) : versions;
     return {
-      tag: { ...baseTag, translation: (trans as TagTranslation) ?? null },
+      tag: {
+        ...baseTag,
+        translation: (trans as TagTranslation) ?? null,
+        description: trans?.description ?? null,
+      },
+      seo: trans?.seo ?? null,
       versions: filtered,
       availableLanguages,
     };
