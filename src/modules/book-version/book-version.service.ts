@@ -78,6 +78,8 @@ export class BookVersionService {
             seoId,
             status: 'draft',
             primaryCategoryId: dto.primaryCategoryId,
+            firstPublishedYear: dto.firstPublishedYear,
+            editionPublishedYear: dto.editionPublishedYear,
           },
           include: { seo: true },
         });

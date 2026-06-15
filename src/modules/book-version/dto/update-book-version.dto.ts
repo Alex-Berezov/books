@@ -9,6 +9,9 @@ import {
   IsUUID,
   MinLength,
   ValidateIf,
+  IsInt,
+  Min,
+  Max,
 } from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
@@ -83,4 +86,28 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   primaryCategoryId?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Год первой публикации книги. Pass null to clear.',
+    example: 1890,
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsInt()
+  @Min(1)
+  @Max(2100)
+  firstPublishedYear?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Год публикации данного издания. Pass null to clear.',
+    example: 1891,
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsInt()
+  @Min(1)
+  @Max(2100)
+  editionPublishedYear?: number | null;
 }

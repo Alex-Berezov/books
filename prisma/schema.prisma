@@ -54,6 +54,8 @@ model BookVersion {
   previewMediaId  String?
   primaryCategoryId String?
   primaryCategory   Category?       @relation("BookVersionPrimaryCategory", fields: [primaryCategoryId], references: [id], onDelete: SetNull)
+  firstPublishedYear    Int?
+  editionPublishedYear  Int?
 
   @@unique([bookId, language])
   @@unique([language, slug])

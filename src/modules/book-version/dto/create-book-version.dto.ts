@@ -1,5 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsOptional, IsString, IsUrl, IsUUID, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUrl,
+  IsUUID,
+  MinLength,
+  IsInt,
+  Min,
+  Max,
+} from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
 export class CreateBookVersionDto {
@@ -52,6 +63,20 @@ export class CreateBookVersionDto {
   @IsOptional()
   @IsUUID()
   primaryCategoryId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Год первой публикации книги', example: 1890 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2100)
+  firstPublishedYear?: number | null;
+
+  @ApiPropertyOptional({ description: 'Год публикации данного издания', example: 1891 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2100)
+  editionPublishedYear?: number | null;
 
   @ApiPropertyOptional({
     description: 'Опциональные SEO metaTitle',

@@ -346,9 +346,15 @@ export class BookService {
       description: activeVersion?.description || '',
       coverUrl: activeVersion?.coverImageUrl || '',
       rating: await this.getAverageRating(bookId),
-      publicationYear: activeVersion?.publishedAt
-        ? new Date(activeVersion.publishedAt).getFullYear()
-        : null,
+      firstPublishedYear: activeVersion?.firstPublishedYear ?? null,
+      editionPublishedYear: activeVersion?.editionPublishedYear ?? null,
+      publicationYear: activeVersion?.firstPublishedYear
+        ? activeVersion.firstPublishedYear
+        : activeVersion?.editionPublishedYear
+          ? activeVersion.editionPublishedYear
+          : activeVersion?.publishedAt
+            ? new Date(activeVersion.publishedAt).getFullYear()
+            : null,
       language: preferredLang,
       categories,
       tags,
