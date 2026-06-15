@@ -187,7 +187,7 @@ export class BookService {
   // Overview aggregation for frontend
   async getOverview(slug: string, lang?: string, acceptLanguageHeader?: string) {
     const prismaLangs = Object.values(Language);
-    const isPathLang = lang && prismaLangs.includes(lang as any);
+    const isPathLang = lang && prismaLangs.includes(lang as Language);
 
     // 1. Try to find the version by slug
     const matchedVersion = await this.prisma.bookVersion.findFirst({
@@ -302,7 +302,17 @@ export class BookService {
       summary: (await loadSeo(textVersion?.id)) ?? (await loadSeo(audioVersion?.id)) ?? null,
     } as const;
 
-    const activeVersion = textVersion || audioVersion || referralVersion;
+    const activeVersion = (textVersion || audioVersion || referralVersion) as {
+      id: string;
+      title: string;
+      author: string;
+      description: string;
+      coverImageUrl: string;
+      primaryCategoryId: string | null;
+      firstPublishedYear: number | null;
+      editionPublishedYear: number | null;
+      publishedAt: Date | null;
+    } | null;
 
     // Fetch categories and tags for the active version
     const categoriesRelation =

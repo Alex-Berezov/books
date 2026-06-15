@@ -416,6 +416,23 @@ export class SeoService {
       breadcrumbItems.push({ name: chosen.title, url: canonicalUrl });
       const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
 
+      // Add genres
+      const genresList: string[] = [];
+      try {
+        const bookCategories = await this.prisma.bookCategory.findMany({
+          where: { bookVersionId: chosen.id },
+          include: { category: { include: { translations: true } } },
+        });
+        for (const bc of bookCategories) {
+          const trans =
+            bc.category.translations.find((t) => t.language === effLang) ||
+            bc.category.translations[0];
+          if (trans) genresList.push(trans.name);
+        }
+      } catch {
+        // ignore errors
+      }
+
       // Ratings
       let ratingAverage: number | null = null;
       let ratingCount = 0;
@@ -433,18 +450,43 @@ export class SeoService {
         // ignore rating errors
       }
 
+      // Retrieve published comments for schema.org review
+      let bookComments: Array<{
+        text: string;
+        createdAt: Date;
+        user: { name: string | null } | null;
+      }> = [];
+      try {
+        bookComments = await this.prisma.comment.findMany({
+          where: { bookVersionId: chosen.id, isDeleted: false, isHidden: false, parentId: null },
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+          include: { user: { select: { name: true } } },
+        });
+      } catch {
+        // ignore comment errors
+      }
+
       const bookSchema = generateBookSchema({
         slug: chosen.slug || id,
         title: chosen.title,
         authorName: chosen.author,
+        authorSlug: encodeURIComponent(
+          (chosen.author || '').trim().toLowerCase().replace(/\s+/g, '-'),
+        ),
         language: effLang,
-        genres: [],
+        genres: genresList,
         coverImageUrl: chosen.coverImageUrl,
         description: metaDescription,
         textAvailable: chosen.type === 'text',
         audioAvailable: chosen.type === 'audio',
         ratingAverage,
         ratingCount,
+        reviews: bookComments.map((c) => ({
+          authorName: c.user?.name || 'Anonymous',
+          reviewBody: c.text,
+          datePublished: c.createdAt.toISOString(),
+        })),
       });
 
       return {

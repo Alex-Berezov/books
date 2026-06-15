@@ -14,6 +14,11 @@ export interface BookSchemaData {
   audioAvailable?: boolean;
   ratingAverage?: number | null;
   ratingCount?: number;
+  reviews?: Array<{
+    authorName: string;
+    reviewBody: string;
+    datePublished: string;
+  }>;
 }
 
 export function generateBookSchema(data: BookSchemaData): Record<string, unknown> {
@@ -84,6 +89,18 @@ export function generateBookSchema(data: BookSchemaData): Record<string, unknown
       bestRating: '5',
       worstRating: '1',
     };
+  }
+
+  if (data.reviews && data.reviews.length > 0) {
+    schema.review = data.reviews.map((r) => ({
+      '@type': 'Review',
+      author: {
+        '@type': 'Person',
+        name: r.authorName,
+      },
+      datePublished: r.datePublished,
+      reviewBody: r.reviewBody,
+    }));
   }
 
   return schema;
