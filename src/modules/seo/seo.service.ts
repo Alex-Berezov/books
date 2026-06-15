@@ -7,6 +7,7 @@ import { getDefaultLanguage, resolveRequestedLanguage } from '../../shared/langu
 
 // Modular SEO helpers
 import { detectIndexability } from './utils/detectIndexability';
+import { cleanDescription } from './utils/cleanDescription';
 import { buildAbsoluteUrl } from './utils/buildAbsoluteUrl';
 import { getCanonicalUrl } from './canonical/getCanonicalUrl';
 import { generateHreflangLinks } from './hreflang/generateHreflangLinks';
@@ -328,10 +329,19 @@ export class SeoService {
         };
       }
 
+      const cleanedDesc = await cleanDescription(
+        this.prisma,
+        chosen.id,
+        chosen.title,
+        chosen.author,
+        effLang,
+        chosen.description,
+      );
+
       const baseMeta = generateBookMeta({
         title: chosen.title,
         author: chosen.author,
-        description: chosen.description,
+        description: cleanedDesc,
         language: effLang,
       });
 

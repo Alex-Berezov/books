@@ -5,6 +5,7 @@ import { UpdateBookDto } from './dto/update-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { BookType, Language, Category, CategoryTranslation } from '@prisma/client';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
+import { cleanDescription } from '../seo/utils/cleanDescription';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
 
 @Injectable()
@@ -348,12 +349,23 @@ export class BookService {
       });
     }
 
+    const cleanedDesc = activeVersion
+      ? await cleanDescription(
+          this.prisma,
+          activeVersion.id,
+          activeVersion.title,
+          activeVersion.author,
+          preferredLang || 'en',
+          activeVersion.description,
+        )
+      : '';
+
     return {
       id: bookId,
       slug: targetVersion?.slug || slug,
       title: activeVersion?.title || '',
       author: activeVersion?.author || '',
-      description: activeVersion?.description || '',
+      description: cleanedDesc,
       coverUrl: activeVersion?.coverImageUrl || '',
       rating: await this.getAverageRating(bookId),
       firstPublishedYear: activeVersion?.firstPublishedYear ?? null,
