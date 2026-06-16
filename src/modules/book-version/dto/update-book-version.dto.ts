@@ -12,6 +12,7 @@ import {
   IsInt,
   Min,
   Max,
+  IsArray,
 } from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
@@ -110,4 +111,60 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @Min(1)
   @Max(2100)
   editionPublishedYear?: number | null;
+
+  @ApiPropertyOptional({ description: 'Оригинальный язык книги', example: 'en', nullable: true })
+  @IsOptional()
+  @IsString()
+  originalLanguage?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Статус авторских прав',
+    example: 'public_domain',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  copyrightStatus?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Ссылка на страницу автора',
+    example: 'https://example.com/author/oscar-wilde',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  authorPageUrl?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Персонажи книги',
+    example: [{ name: 'Dorian Gray', description: 'Main character' }],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsArray()
+  characters?: any;
+
+  @ApiPropertyOptional({
+    description: 'Цитаты из книги',
+    example: [{ text: 'To live is the rarest thing in the world.', author: 'Oscar Wilde' }],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsArray()
+  quotes?: any;
+
+  @ApiPropertyOptional({
+    description: 'FAQ по книге',
+    example: [{ question: 'What is the genre?', answer: 'Gothic fiction' }],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsArray()
+  faq?: any;
+
+  @ApiPropertyOptional({ description: 'Темы книги', example: ['Art', 'Morality'], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  themes?: string[];
 }

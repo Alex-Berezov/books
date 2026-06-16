@@ -3,7 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
-import { BookType, Language, Category, CategoryTranslation } from '@prisma/client';
+import { BookType, Language, Category, CategoryTranslation, Prisma } from '@prisma/client';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { cleanDescription } from '../seo/utils/cleanDescription';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
@@ -457,5 +457,35 @@ export class BookService {
     }
 
     return candidateSlug;
+  }
+
+  /**
+   * Get all unique themes across all book versions.
+   */
+  async getAllThemes(): Promise<string[]> {
+    const versions = await this.prisma.bookVersion.findMany({
+      where: {
+        NOT: {
+          themes: {
+            equals: Prisma.DbNull,
+          },
+        },
+      },
+      select: {
+        themes: true,
+      },
+    });
+
+    const uniqueThemes = new Set<string>();
+    for (const v of versions) {
+      if (Array.isArray(v.themes)) {
+        for (const t of v.themes) {
+          if (typeof t === 'string' && t.trim()) {
+            uniqueThemes.add(t.trim());
+          }
+        }
+      }
+    }
+    return Array.from(uniqueThemes).sort();
   }
 }

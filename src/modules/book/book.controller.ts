@@ -133,6 +133,23 @@ export class BookController {
     }
   }
 
+  @Get('themes')
+  @ApiOperation({
+    summary: 'Get list of all unique themes',
+    description: 'Returns a list of all unique themes used in book versions.',
+  })
+  @ApiResponse({ status: 200, description: 'List of themes returned' })
+  async getThemes() {
+    try {
+      return await this.bookService.getAllThemes();
+    } catch (err: any) {
+      throw new HttpException(
+        { message: 'Failed to retrieve themes list', details: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get(':slug/overview')
   @ApiOperation({
     summary: 'Get book overview by slug',

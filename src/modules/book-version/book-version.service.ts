@@ -80,6 +80,13 @@ export class BookVersionService {
             primaryCategoryId: dto.primaryCategoryId,
             firstPublishedYear: dto.firstPublishedYear,
             editionPublishedYear: dto.editionPublishedYear,
+            originalLanguage: dto.originalLanguage,
+            copyrightStatus: dto.copyrightStatus,
+            authorPageUrl: dto.authorPageUrl,
+            characters: (dto.characters as Prisma.JsonValue) ?? undefined,
+            quotes: (dto.quotes as Prisma.JsonValue) ?? undefined,
+            faq: (dto.faq as Prisma.JsonValue) ?? undefined,
+            themes: (dto.themes as Prisma.JsonValue) ?? undefined,
           },
           include: { seo: true },
         });

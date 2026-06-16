@@ -56,6 +56,13 @@ model BookVersion {
   primaryCategory   Category?       @relation("BookVersionPrimaryCategory", fields: [primaryCategoryId], references: [id], onDelete: SetNull)
   firstPublishedYear    Int?
   editionPublishedYear  Int?
+  originalLanguage      String?
+  copyrightStatus       String?
+  authorPageUrl         String?
+  characters            Json?
+  quotes                Json?
+  faq                   Json?
+  themes                Json?
 
   @@unique([bookId, language])
   @@unique([language, slug])

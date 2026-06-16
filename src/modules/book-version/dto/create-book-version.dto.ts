@@ -10,6 +10,7 @@ import {
   IsInt,
   Min,
   Max,
+  IsArray,
 } from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
@@ -93,4 +94,52 @@ export class CreateBookVersionDto {
   @IsOptional()
   @IsString()
   seoMetaDescription?: string;
+
+  @ApiPropertyOptional({ description: 'Оригинальный язык книги', example: 'en' })
+  @IsOptional()
+  @IsString()
+  originalLanguage?: string | null;
+
+  @ApiPropertyOptional({ description: 'Статус авторских прав', example: 'public_domain' })
+  @IsOptional()
+  @IsString()
+  copyrightStatus?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Ссылка на страницу автора',
+    example: 'https://example.com/author/oscar-wilde',
+  })
+  @IsOptional()
+  @IsString()
+  authorPageUrl?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Персонажи книги',
+    example: [{ name: 'Dorian Gray', description: 'Main character' }],
+  })
+  @IsOptional()
+  @IsArray()
+  characters?: any;
+
+  @ApiPropertyOptional({
+    description: 'Цитаты из книги',
+    example: [{ text: 'To live is the rarest thing in the world.', author: 'Oscar Wilde' }],
+  })
+  @IsOptional()
+  @IsArray()
+  quotes?: any;
+
+  @ApiPropertyOptional({
+    description: 'FAQ по книге',
+    example: [{ question: 'What is the genre?', answer: 'Gothic fiction' }],
+  })
+  @IsOptional()
+  @IsArray()
+  faq?: any;
+
+  @ApiPropertyOptional({ description: 'Темы книги', example: ['Art', 'Morality'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  themes?: string[];
 }
