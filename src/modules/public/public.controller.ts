@@ -46,6 +46,25 @@ export class PublicController {
     return this.books.getOverview(slug, pathLang, acceptLanguage);
   }
 
+  // Localized books list
+  @Get('books')
+  @ApiOperation({ summary: 'Public books list with language prefix' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  findAll(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    // Forward to bookService.findAll (passing the resolved language/pagination params if service supports lang filtering, or just passing page/limit)
+    // Note: paginationDto has { page, limit }. Let's build a PaginationDto parameter format.
+    return this.books.findAll({
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
   // Localized page by slug
   @Get('pages/:slug')
   @ApiOperation({ summary: 'Public CMS page with language prefix' })
