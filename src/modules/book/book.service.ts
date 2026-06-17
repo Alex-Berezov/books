@@ -488,4 +488,58 @@ export class BookService {
     }
     return Array.from(uniqueThemes).sort();
   }
+
+  /**
+   * Get Reader bootstrap data in a single request.
+   */
+  async getReaderBootstrap(slug: string, lang: string, userId?: string) {
+    const overview = await this.getOverview(slug, lang);
+    const textVersionId = overview.versionIds.text;
+
+    if (!textVersionId) {
+      throw new NotFoundException(`No text version found for book slug "${slug}"`);
+    }
+
+    // Fetch chapters
+    const chapters = await this.prisma.chapter.findMany({
+      where: { bookVersionId: textVersionId },
+      orderBy: { number: 'asc' },
+      select: {
+        id: true,
+        number: true,
+        title: true,
+        content: true,
+      },
+    });
+
+    // Fetch progress if userId is provided
+    let lastProgressChapterNumber: number | null = null;
+    let lastProgressPosition = 0;
+    let hasProgress = false;
+
+    if (userId) {
+      const progress = await this.prisma.readingProgress.findFirst({
+        where: { userId, bookVersionId: textVersionId },
+      });
+      if (progress) {
+        lastProgressChapterNumber = progress.chapterNumber;
+        lastProgressPosition = progress.position;
+        hasProgress = true;
+      }
+    }
+
+    return {
+      bookId: overview.id,
+      versionId: textVersionId,
+      title: overview.title,
+      author: overview.author,
+      chapters,
+      lastProgress: hasProgress
+        ? {
+            chapterNumber: lastProgressChapterNumber,
+            position: lastProgressPosition,
+          }
+        : null,
+    };
+  }
 }

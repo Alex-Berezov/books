@@ -65,6 +65,20 @@ export class PublicController {
     });
   }
 
+  // Localized reader bootstrap endpoint
+  @Get('books/:slug/reader-bootstrap')
+  @ApiOperation({ summary: 'Get reader bootstrap info in a single query' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiParam({ name: 'slug' })
+  @ApiQuery({ name: 'userId', required: false })
+  getReaderBootstrap(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('slug') slug: string,
+    @Query('userId') userId?: string,
+  ) {
+    return this.books.getReaderBootstrap(slug, pathLang, userId);
+  }
+
   // Localized page by slug
   @Get('pages/:slug')
   @ApiOperation({ summary: 'Public CMS page with language prefix' })
