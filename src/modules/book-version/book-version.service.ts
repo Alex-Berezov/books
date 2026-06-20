@@ -87,6 +87,12 @@ export class BookVersionService {
             quotes: (dto.quotes as Prisma.JsonValue) ?? undefined,
             faq: (dto.faq as Prisma.JsonValue) ?? undefined,
             themes: (dto.themes as Prisma.JsonValue) ?? undefined,
+            originalTitle: dto.originalTitle,
+            alternativeTitles: (dto.alternativeTitles as Prisma.JsonValue) ?? undefined,
+            shortDescription: dto.shortDescription,
+            summaryShort: dto.summaryShort,
+            symbols: (dto.symbols as Prisma.JsonValue) ?? undefined,
+            coverAlt: dto.coverAlt,
           },
           include: { seo: true },
         });

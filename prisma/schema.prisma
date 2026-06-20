@@ -63,6 +63,12 @@ model BookVersion {
   quotes                Json?
   faq                   Json?
   themes                Json?
+  originalTitle         String?
+  alternativeTitles     Json?
+  shortDescription      String?
+  summaryShort          String?
+  symbols               Json?
+  coverAlt              String?
 
   @@unique([bookId, language])
   @@unique([language, slug])

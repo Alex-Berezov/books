@@ -127,6 +127,60 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   copyrightStatus?: string | null;
 
   @ApiPropertyOptional({
+    description: 'Оригинальное название книги',
+    example: 'The Picture of Dorian Gray',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  originalTitle?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Альтернативные названия книги',
+    example: ['Dorian Gray'],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsArray()
+  alternativeTitles?: any;
+
+  @ApiPropertyOptional({
+    description: 'Краткое описание книги',
+    example: 'A classic story of youth...',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  shortDescription?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Краткое содержание книги',
+    example: 'The story follows Dorian...',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  summaryShort?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Символы в книге',
+    example: [{ title: 'Portrait', description: 'Represents the soul' }],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsArray()
+  symbols?: any;
+
+  @ApiPropertyOptional({
+    description: 'Альт-текст обложки',
+    example: 'Vintage cover art',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  coverAlt?: string | null;
+
+  @ApiPropertyOptional({
     description: 'Ссылка на страницу автора',
     example: 'https://example.com/author/oscar-wilde',
     nullable: true,

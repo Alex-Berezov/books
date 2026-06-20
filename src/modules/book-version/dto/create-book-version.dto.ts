@@ -106,6 +106,54 @@ export class CreateBookVersionDto {
   copyrightStatus?: string | null;
 
   @ApiPropertyOptional({
+    description: 'Оригинальное название книги',
+    example: 'The Picture of Dorian Gray',
+  })
+  @IsOptional()
+  @IsString()
+  originalTitle?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Альтернативные названия книги',
+    example: ['Dorian Gray'],
+  })
+  @IsOptional()
+  @IsArray()
+  alternativeTitles?: any;
+
+  @ApiPropertyOptional({
+    description: 'Краткое описание книги',
+    example: 'A classic story of youth...',
+  })
+  @IsOptional()
+  @IsString()
+  shortDescription?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Краткое содержание книги',
+    example: 'The story follows Dorian...',
+  })
+  @IsOptional()
+  @IsString()
+  summaryShort?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Символы в книге',
+    example: [{ title: 'Portrait', description: 'Represents the soul' }],
+  })
+  @IsOptional()
+  @IsArray()
+  symbols?: any;
+
+  @ApiPropertyOptional({
+    description: 'Альт-текст обложки',
+    example: 'Vintage cover art',
+  })
+  @IsOptional()
+  @IsString()
+  coverAlt?: string | null;
+
+  @ApiPropertyOptional({
     description: 'Ссылка на страницу автора',
     example: 'https://example.com/author/oscar-wilde',
   })
