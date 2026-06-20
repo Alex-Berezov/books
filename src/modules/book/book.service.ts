@@ -510,7 +510,34 @@ export class BookService {
         throw err;
       }
     }
-    const textVersionId = overview.versionIds.text;
+    let textVersionId = overview.versionIds.text;
+    let lastProgressChapterNumber: number | null = null;
+    let lastProgressPosition = 0;
+    let hasProgress = false;
+
+    if (userId) {
+      // Find any reading progress for this book's versions
+      const allVersionIds = overview.versions.map((v) => v.id);
+      const progress = await this.prisma.readingProgress.findFirst({
+        where: {
+          userId,
+          bookVersionId: { in: allVersionIds },
+        },
+        include: {
+          bookVersion: true,
+        },
+      });
+
+      if (progress) {
+        // Prioritize the version the user has progress in, as long as it has chapters or matches text type
+        if (progress.bookVersion.type === BookType.text) {
+          textVersionId = progress.bookVersionId;
+          lastProgressChapterNumber = progress.chapterNumber;
+          lastProgressPosition = progress.position;
+          hasProgress = true;
+        }
+      }
+    }
 
     if (!textVersionId) {
       throw new NotFoundException(`No text version found for book slug "${slug}"`);
@@ -527,22 +554,6 @@ export class BookService {
         content: true,
       },
     });
-
-    // Fetch progress if userId is provided
-    let lastProgressChapterNumber: number | null = null;
-    let lastProgressPosition = 0;
-    let hasProgress = false;
-
-    if (userId) {
-      const progress = await this.prisma.readingProgress.findFirst({
-        where: { userId, bookVersionId: textVersionId },
-      });
-      if (progress) {
-        lastProgressChapterNumber = progress.chapterNumber;
-        lastProgressPosition = progress.position;
-        hasProgress = true;
-      }
-    }
 
     return {
       bookId: overview.id,
