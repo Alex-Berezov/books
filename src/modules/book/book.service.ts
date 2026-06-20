@@ -493,7 +493,23 @@ export class BookService {
    * Get Reader bootstrap data in a single request.
    */
   async getReaderBootstrap(slug: string, lang: string, userId?: string) {
-    const overview = await this.getOverview(slug, lang);
+    let overview: Awaited<ReturnType<BookService['getOverview']>>;
+    try {
+      overview = await this.getOverview(slug, lang);
+    } catch (err) {
+      if (err instanceof RedirectException) {
+        // The RedirectException url has format: /api/[lang]/books/[targetSlug]/overview or /api/books/[targetSlug]/overview?lang=...
+        // We can extract the target slug from the URL to bypass redirection
+        const match = err.url.match(/\/books\/([^/]+)\/overview/);
+        if (match && match[1]) {
+          overview = await this.getOverview(match[1], lang);
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
     const textVersionId = overview.versionIds.text;
 
     if (!textVersionId) {
