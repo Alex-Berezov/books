@@ -23,6 +23,11 @@ export class CreateBookVersionDto {
   @IsIn(Object.values(PrismaLanguage))
   language!: PrismaLanguage;
 
+  @ApiPropertyOptional({ description: 'Слаг версии книги', example: 'harry-potter' })
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
   @ApiProperty({ description: 'Заголовок', example: "Harry Potter and the Philosopher's Stone" })
   @IsString()
   @MinLength(2)

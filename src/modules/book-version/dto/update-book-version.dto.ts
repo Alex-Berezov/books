@@ -22,6 +22,11 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @IsIn(Object.values(PrismaLanguage))
   language?: PrismaLanguage;
 
+  @ApiPropertyOptional({ description: 'Слаг версии книги', example: 'harry-potter' })
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
   @ApiPropertyOptional({ example: "Harry Potter and the Sorcerer's Stone" })
   @IsOptional()
   @IsString()

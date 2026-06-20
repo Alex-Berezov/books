@@ -77,6 +77,7 @@ export class BookVersionService {
             referralUrl: dto.referralUrl,
             seoId,
             status: 'draft',
+            slug: dto.slug,
             primaryCategoryId: dto.primaryCategoryId,
             firstPublishedYear: dto.firstPublishedYear,
             editionPublishedYear: dto.editionPublishedYear,
