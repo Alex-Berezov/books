@@ -510,30 +510,43 @@ export class BookService {
         throw err;
       }
     }
-    let textVersionId = overview.versionIds.text;
+    const textVersionId = overview.versionIds.text;
     let lastProgressChapterNumber: number | null = null;
     let lastProgressPosition = 0;
     let hasProgress = false;
 
-    if (userId) {
-      // Find any reading progress for this book's versions
-      const allVersionIds = overview.versions.map((v) => v.id);
+    if (userId && textVersionId) {
+      // 1. Try to find progress for the requested language version first
       const progress = await this.prisma.readingProgress.findFirst({
         where: {
           userId,
-          bookVersionId: { in: allVersionIds },
-        },
-        include: {
-          bookVersion: true,
+          bookVersionId: textVersionId,
         },
       });
 
       if (progress) {
-        // Prioritize the version the user has progress in, as long as it has chapters or matches text type
-        if (progress.bookVersion.type === BookType.text) {
-          textVersionId = progress.bookVersionId;
-          lastProgressChapterNumber = progress.chapterNumber;
-          lastProgressPosition = progress.position;
+        lastProgressChapterNumber = progress.chapterNumber;
+        lastProgressPosition = progress.position;
+        hasProgress = true;
+      } else {
+        // 2. Fallback: find progress in any other version of this book, ordered by latest updated
+        const allVersionIds = overview.versions.map((v) => v.id);
+        const fallbackProgress = await this.prisma.readingProgress.findFirst({
+          where: {
+            userId,
+            bookVersionId: { in: allVersionIds },
+          },
+          include: {
+            bookVersion: true,
+          },
+          orderBy: {
+            updatedAt: 'desc',
+          },
+        });
+
+        if (fallbackProgress && fallbackProgress.bookVersion.type === BookType.text) {
+          lastProgressChapterNumber = fallbackProgress.chapterNumber;
+          lastProgressPosition = fallbackProgress.position;
           hasProgress = true;
         }
       }
