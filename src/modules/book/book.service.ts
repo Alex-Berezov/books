@@ -571,6 +571,7 @@ export class BookService {
     return {
       bookId: overview.id,
       versionId: textVersionId,
+      slug: overview.slug,
       title: overview.title,
       author: overview.author,
       chapters,
