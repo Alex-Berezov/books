@@ -531,9 +531,7 @@ export class BookService {
       if (progress) {
         // Prioritize the version the user has progress in, as long as it has chapters or matches text type
         if (progress.bookVersion.type === BookType.text) {
-          if (progress.bookVersion.language === overview.language) {
-            textVersionId = progress.bookVersionId;
-          }
+          textVersionId = progress.bookVersionId;
           lastProgressChapterNumber = progress.chapterNumber;
           lastProgressPosition = progress.position;
           hasProgress = true;
