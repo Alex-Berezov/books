@@ -84,6 +84,7 @@ export class BookVersionService {
             originalLanguage: dto.originalLanguage,
             copyrightStatus: dto.copyrightStatus,
             authorPageUrl: dto.authorPageUrl,
+            authorId: dto.authorId,
             characters: (dto.characters as Prisma.JsonValue) ?? undefined,
             quotes: (dto.quotes as Prisma.JsonValue) ?? undefined,
             faq: (dto.faq as Prisma.JsonValue) ?? undefined,

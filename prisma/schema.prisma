@@ -59,6 +59,8 @@ model BookVersion {
   originalLanguage      String?
   copyrightStatus       String?
   authorPageUrl         String?
+  authorId              String?
+  authorRelation        Author?           @relation(fields: [authorId], references: [id], onDelete: SetNull)
   characters            Json?
   quotes                Json?
   faq                   Json?
@@ -75,6 +77,7 @@ model BookVersion {
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
   @@index([previewMediaId])
   @@index([primaryCategoryId])
+  @@index([authorId])
 }
 
 model BookSummary {
@@ -379,6 +382,35 @@ model Seo {
 
   // Relation to TagTranslation (1:1)
   tagTranslation TagTranslation? @relation("SeoForTagTranslation")
+}
+
+model Author {
+  id            String              @id @default(uuid())
+  slug          String              @unique
+  birthDate     String?             // Формат YYYY-MM-DD
+  deathDate     String?             // Формат YYYY-MM-DD
+  wikidataUrl   String?
+  wikipediaUrl  String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  
+  translations  AuthorTranslation[]
+  bookVersions  BookVersion[]
+}
+
+model AuthorTranslation {
+  id            String   @id @default(uuid())
+  authorId      String
+  language      Language
+  name          String
+  biography     String?  @db.Text
+  quotes        Json?    // Массив цитат: [{ text: "...", source: "..." }]
+  faq           Json?    // Массив вопросов и ответов: [{ question: "...", answer: "..." }]
+  similarSlugs  Json?    // Массив слагов похожих авторов: ["oscar-wilde", ...]
+
+  author        Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@unique([authorId, language])
 }
 
 // =====================

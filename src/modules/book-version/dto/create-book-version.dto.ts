@@ -167,6 +167,14 @@ export class CreateBookVersionDto {
   authorPageUrl?: string | null;
 
   @ApiPropertyOptional({
+    description: 'Идентификатор автора (UUID)',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsOptional()
+  @IsString()
+  authorId?: string | null;
+
+  @ApiPropertyOptional({
     description: 'Персонажи книги',
     example: [{ name: 'Dorian Gray', description: 'Main character' }],
   })

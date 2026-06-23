@@ -7,6 +7,7 @@ import { LanguageResolverGuard } from '../../common/guards/language-resolver.gua
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { CategoryService } from '../category/category.service';
 import { TagsService } from '../tags/tags.service';
+import { AuthorService } from '../author/author.service';
 
 @Module({
   controllers: [PublicController],
@@ -15,6 +16,7 @@ import { TagsService } from '../tags/tags.service';
     PagesService,
     CategoryService,
     TagsService,
+    AuthorService,
     PrismaService,
     LanguageResolverGuard,
     LangParamPipe,

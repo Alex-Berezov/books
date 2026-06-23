@@ -4,6 +4,7 @@ import { BookService } from '../book/book.service';
 import { PagesService } from '../pages/pages.service';
 import { CategoryService } from '../category/category.service';
 import { TagsService } from '../tags/tags.service';
+import { AuthorService } from '../author/author.service';
 import { Language as PrismaLanguage } from '@prisma/client';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { LanguageResolverGuard } from '../../common/guards/language-resolver.guard';
@@ -18,6 +19,7 @@ export class PublicController {
     private readonly pages: PagesService,
     private readonly categories: CategoryService,
     private readonly tags: TagsService,
+    private readonly authors: AuthorService,
   ) {}
 
   // Localized book overview
@@ -107,5 +109,17 @@ export class PublicController {
   @ApiParam({ name: 'slug' })
   tagsBySlug(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Param('slug') slug: string) {
     return this.tags.versionsByTagLangSlug(pathLang, slug);
+  }
+
+  // Localized author details by slug
+  @Get('authors/:slug')
+  @ApiOperation({ summary: 'Public author details by slug with language prefix' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiParam({ name: 'slug' })
+  authorBySlug(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('slug') slug: string,
+  ) {
+    return this.authors.getPublicBySlug(slug, pathLang);
   }
 }
