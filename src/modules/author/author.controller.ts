@@ -34,11 +34,13 @@ export class AuthorController {
     if (!existing) {
       return { exists: false };
     }
+    const authorId: string = existing.authorId;
+    const authorSlug: string = existing.slug;
     return {
       exists: true,
       existingAuthor: {
-        id: existing.id,
-        slug: existing.slug,
+        id: authorId,
+        slug: authorSlug,
       },
     };
   }

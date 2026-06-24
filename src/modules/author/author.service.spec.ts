@@ -18,6 +18,7 @@ interface PrismaStub {
     createMany: jest.Mock;
     findMany: jest.Mock;
     create: jest.Mock;
+    findFirst: jest.Mock;
   };
   seo: {
     deleteMany: jest.Mock;
@@ -44,6 +45,7 @@ const createPrismaStub = (): PrismaStub => {
       createMany: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
+      findFirst: jest.fn(),
     },
     seo: {
       deleteMany: jest.fn(),
@@ -76,26 +78,26 @@ describe('AuthorService', () => {
 
   describe('create', () => {
     it('creates author successfully', async () => {
-      prisma.author.findUnique.mockResolvedValue(null);
-      prisma.author.create.mockResolvedValue({ id: 'auth1', slug: 'oscar-wilde' });
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.create.mockResolvedValue({ id: 'auth1', translations: [] });
 
       const dto = {
-        slug: 'oscar-wilde',
-        translations: [{ language: Language.en, name: 'Oscar Wilde' }],
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' }],
       };
 
       const result = await service.create(dto);
-      expect(prisma.author.findUnique).toHaveBeenCalledWith({ where: { slug: 'oscar-wilde' } });
+      expect(prisma.authorTranslation.findFirst).toHaveBeenCalledWith({
+        where: { language: Language.en, slug: 'oscar-wilde' },
+      });
       expect(prisma.author.create).toHaveBeenCalled();
       expect(result).toBeDefined();
     });
 
-    it('throws BadRequestException if slug exists', async () => {
-      prisma.author.findUnique.mockResolvedValue({ id: 'auth1', slug: 'oscar-wilde' });
+    it('throws BadRequestException if translation slug exists', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue({ id: 'trans1', slug: 'oscar-wilde' });
 
       const dto = {
-        slug: 'oscar-wilde',
-        translations: [{ language: Language.en, name: 'Oscar Wilde' }],
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' }],
       };
 
       await expect(service.create(dto)).rejects.toThrow(BadRequestException);
@@ -104,15 +106,13 @@ describe('AuthorService', () => {
 
   describe('update', () => {
     it('updates author successfully', async () => {
-      prisma.author.findUnique
-        .mockResolvedValueOnce({ id: 'auth1', slug: 'oscar-wilde' }) // findUnique check in service
-        .mockResolvedValueOnce({ id: 'auth1', slug: 'oscar-wilde', translations: [] }); // transaction findUnique return
-      prisma.author.update.mockResolvedValue({ id: 'auth1', slug: 'oscar-wilde' });
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' }); // findUnique check in service
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.update.mockResolvedValue({ id: 'auth1' });
       prisma.authorTranslation.findMany.mockResolvedValue([]);
 
       const dto = {
-        slug: 'oscar-wilde',
-        translations: [{ language: Language.en, name: 'Oscar Wilde' }],
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' }],
       };
 
       const result = await service.update('auth1', dto);
@@ -122,7 +122,7 @@ describe('AuthorService', () => {
     it('throws NotFoundException if author does not exist', async () => {
       prisma.author.findUnique.mockResolvedValue(null);
 
-      await expect(service.update('auth1', { slug: 'new-slug' })).rejects.toThrow(
+      await expect(service.update('auth1', { translations: [] })).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -146,21 +146,21 @@ describe('AuthorService', () => {
 
   describe('getPublicBySlug', () => {
     it('returns author public view data with translated books', async () => {
-      prisma.author.findUnique.mockResolvedValue({
-        id: 'auth1',
+      prisma.authorTranslation.findFirst.mockResolvedValue({
+        id: 'trans1',
+        authorId: 'auth1',
         slug: 'oscar-wilde',
-        birthDate: '1854-10-16',
-        deathDate: '1900-11-30',
-        translations: [
-          {
-            language: Language.en,
-            name: 'Oscar Wilde',
-            biography: 'Bio text',
-            quotes: [],
-            faq: [],
-            similarSlugs: [],
-          },
-        ],
+        language: Language.en,
+        name: 'Oscar Wilde',
+        biography: 'Bio text',
+        quotes: [],
+        faq: [],
+        similarSlugs: [],
+        author: {
+          id: 'auth1',
+          birthDate: '1854-10-16',
+          deathDate: '1900-11-30',
+        },
       });
 
       prisma.bookVersion.findMany.mockResolvedValue([
@@ -185,12 +185,8 @@ describe('AuthorService', () => {
       expect(result.books[0].title).toBe('The Picture of Dorian Gray');
     });
 
-    it('throws NotFoundException if no translation is found', async () => {
-      prisma.author.findUnique.mockResolvedValue({
-        id: 'auth1',
-        slug: 'oscar-wilde',
-        translations: [],
-      });
+    it('throws NotFoundException if no translation is found by slug', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
 
       await expect(service.getPublicBySlug('oscar-wilde', Language.en)).rejects.toThrow(
         NotFoundException,

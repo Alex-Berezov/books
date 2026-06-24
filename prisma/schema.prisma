@@ -389,12 +389,8 @@ model Seo {
 
 model Author {
   id            String              @id @default(uuid())
-  slug          String              @unique
   birthDate     String?             // Формат YYYY-MM-DD
   deathDate     String?             // Формат YYYY-MM-DD
-  wikidataUrl   String?
-  wikipediaUrl  String?
-  photoUrl      String?
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   
@@ -406,8 +402,12 @@ model AuthorTranslation {
   id            String   @id @default(uuid())
   authorId      String
   language      Language
+  slug          String
   name          String
   biography     String?  @db.Text
+  wikidataUrl   String?
+  wikipediaUrl  String?
+  photoUrl      String?
   quotes        Json?    // Массив цитат: [{ text: "...", source: "..." }]
   faq           Json?    // Массив вопросов и ответов: [{ question: "...", answer: "..." }]
   similarSlugs  Json?    // Массив слагов похожих авторов: ["oscar-wilde", ...]
@@ -418,6 +418,7 @@ model AuthorTranslation {
   author        Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
   @@unique([authorId, language])
+  @@unique([language, slug])
 }
 
 // =====================
