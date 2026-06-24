@@ -382,6 +382,9 @@ model Seo {
 
   // Relation to TagTranslation (1:1)
   tagTranslation TagTranslation? @relation("SeoForTagTranslation")
+
+  // Relation to AuthorTranslation (1:1)
+  authorTranslation AuthorTranslation? @relation("SeoForAuthorTranslation")
 }
 
 model Author {
@@ -391,6 +394,7 @@ model Author {
   deathDate     String?             // Формат YYYY-MM-DD
   wikidataUrl   String?
   wikipediaUrl  String?
+  photoUrl      String?
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   
@@ -407,6 +411,9 @@ model AuthorTranslation {
   quotes        Json?    // Массив цитат: [{ text: "...", source: "..." }]
   faq           Json?    // Массив вопросов и ответов: [{ question: "...", answer: "..." }]
   similarSlugs  Json?    // Массив слагов похожих авторов: ["oscar-wilde", ...]
+
+  seoId         Int?     @unique
+  seo           Seo?     @relation("SeoForAuthorTranslation", fields: [seoId], references: [id], onDelete: SetNull)
 
   author        Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
 

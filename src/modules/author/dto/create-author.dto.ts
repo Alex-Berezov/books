@@ -36,6 +36,14 @@ export class CreateAuthorDto {
   @IsString()
   wikipediaUrl?: string;
 
+  @ApiPropertyOptional({
+    description: 'Author photo URL',
+    example: 'https://example.com/author.jpg',
+  })
+  @IsOptional()
+  @IsString()
+  photoUrl?: string;
+
   @ApiProperty({ description: 'Author translations', type: [AuthorTranslationDto] })
   @IsArray()
   @ValidateNested({ each: true })

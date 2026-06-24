@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import { IsEnum, IsString, MinLength, IsOptional, IsArray, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { UpdateSeoDto } from '../../seo/dto/update-seo.dto';
 
 export class AuthorQuoteDto {
   @ApiProperty({ description: 'Text of the quote' })
@@ -58,4 +59,10 @@ export class AuthorTranslationDto {
   @IsArray()
   @IsString({ each: true })
   similarSlugs?: string[];
+
+  @ApiPropertyOptional({ description: 'SEO metadata for this language', type: UpdateSeoDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateSeoDto)
+  seo?: UpdateSeoDto;
 }

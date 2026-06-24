@@ -16,6 +16,11 @@ interface PrismaStub {
   authorTranslation: {
     deleteMany: jest.Mock;
     createMany: jest.Mock;
+    findMany: jest.Mock;
+    create: jest.Mock;
+  };
+  seo: {
+    deleteMany: jest.Mock;
   };
   bookVersion: {
     findMany: jest.Mock;
@@ -37,6 +42,11 @@ const createPrismaStub = (): PrismaStub => {
     authorTranslation: {
       deleteMany: jest.fn(),
       createMany: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+    },
+    seo: {
+      deleteMany: jest.fn(),
     },
     bookVersion: {
       findMany: jest.fn(),
@@ -98,6 +108,7 @@ describe('AuthorService', () => {
         .mockResolvedValueOnce({ id: 'auth1', slug: 'oscar-wilde' }) // findUnique check in service
         .mockResolvedValueOnce({ id: 'auth1', slug: 'oscar-wilde', translations: [] }); // transaction findUnique return
       prisma.author.update.mockResolvedValue({ id: 'auth1', slug: 'oscar-wilde' });
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
 
       const dto = {
         slug: 'oscar-wilde',

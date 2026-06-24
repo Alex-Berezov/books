@@ -18,7 +18,9 @@ export class AuthorService {
         skip,
         take: limit,
         include: {
-          translations: true,
+          translations: {
+            include: { seo: true },
+          },
           _count: {
             select: { bookVersions: true },
           },
@@ -34,6 +36,7 @@ export class AuthorService {
         deathDate: item.deathDate,
         wikidataUrl: item.wikidataUrl,
         wikipediaUrl: item.wikipediaUrl,
+        photoUrl: item.photoUrl,
         translations: item.translations,
         booksCount: item._count.bookVersions,
       })),
@@ -61,6 +64,7 @@ export class AuthorService {
           deathDate: dto.deathDate,
           wikidataUrl: dto.wikidataUrl,
           wikipediaUrl: dto.wikipediaUrl,
+          photoUrl: dto.photoUrl,
           translations: {
             create: dto.translations.map((t) => ({
               language: t.language,
@@ -69,11 +73,28 @@ export class AuthorService {
               quotes: t.quotes as unknown as Prisma.InputJsonValue,
               faq: t.faq as unknown as Prisma.InputJsonValue,
               similarSlugs: t.similarSlugs as unknown as Prisma.InputJsonValue,
+              seo: t.seo
+                ? {
+                    create: {
+                      metaTitle: t.seo.metaTitle,
+                      metaDescription: t.seo.metaDescription,
+                      canonicalUrl: t.seo.canonicalUrl,
+                      robots: t.seo.robots,
+                      ogTitle: t.seo.ogTitle,
+                      ogDescription: t.seo.ogDescription,
+                      ogImageUrl: t.seo.ogImageUrl,
+                      ogImageAlt: t.seo.ogImageAlt,
+                      twitterCard: t.seo.twitterCard,
+                    },
+                  }
+                : undefined,
             })),
           },
         },
         include: {
-          translations: true,
+          translations: {
+            include: { seo: true },
+          },
         },
       });
     } catch (error) {
@@ -105,31 +126,67 @@ export class AuthorService {
             deathDate: dto.deathDate,
             wikidataUrl: dto.wikidataUrl,
             wikipediaUrl: dto.wikipediaUrl,
+            photoUrl: dto.photoUrl,
           },
         });
 
         // Update translations if provided
         if (dto.translations) {
-          // Delete existing translations
+          // Find old translation's seoIds to delete them to avoid orphans
+          const oldTranslations = await tx.authorTranslation.findMany({
+            where: { authorId: id },
+            select: { seoId: true },
+          });
+          const seoIdsToDelete = oldTranslations
+            .map((t) => t.seoId)
+            .filter((sid): sid is number => sid !== null);
+
+          // Delete existing translations (which sets their relations to null)
           await tx.authorTranslation.deleteMany({ where: { authorId: id } });
 
+          // Clean up old Seo records
+          if (seoIdsToDelete.length > 0) {
+            await tx.seo.deleteMany({ where: { id: { in: seoIdsToDelete } } });
+          }
+
           // Re-create translations
-          await tx.authorTranslation.createMany({
-            data: dto.translations.map((t) => ({
-              authorId: id,
-              language: t.language,
-              name: t.name,
-              biography: t.biography,
-              quotes: t.quotes as unknown as Prisma.InputJsonValue,
-              faq: t.faq as unknown as Prisma.InputJsonValue,
-              similarSlugs: t.similarSlugs as unknown as Prisma.InputJsonValue,
-            })),
-          });
+          for (const t of dto.translations) {
+            await tx.authorTranslation.create({
+              data: {
+                author: { connect: { id } },
+                language: t.language,
+                name: t.name,
+                biography: t.biography,
+                quotes: t.quotes as unknown as Prisma.InputJsonValue,
+                faq: t.faq as unknown as Prisma.InputJsonValue,
+                similarSlugs: t.similarSlugs as unknown as Prisma.InputJsonValue,
+                seo: t.seo
+                  ? {
+                      create: {
+                        metaTitle: t.seo.metaTitle,
+                        metaDescription: t.seo.metaDescription,
+                        canonicalUrl: t.seo.canonicalUrl,
+                        robots: t.seo.robots,
+                        ogTitle: t.seo.ogTitle,
+                        ogDescription: t.seo.ogDescription,
+                        ogImageUrl: t.seo.ogImageUrl,
+                        ogImageAlt: t.seo.ogImageAlt,
+                        twitterCard: t.seo.twitterCard,
+                      },
+                    }
+                  : undefined,
+              },
+            });
+          }
         }
 
         return tx.author.findUnique({
           where: { id },
-          include: { translations: true },
+          include: {
+            translations: {
+              include: { seo: true },
+            },
+          },
         });
       });
     } catch (error) {
@@ -160,6 +217,7 @@ export class AuthorService {
       include: {
         translations: {
           where: { language },
+          include: { seo: true },
         },
       },
     });
@@ -220,10 +278,12 @@ export class AuthorService {
       deathDate: author.deathDate,
       wikidataUrl: author.wikidataUrl,
       wikipediaUrl: author.wikipediaUrl,
+      photoUrl: author.photoUrl,
       name: translation.name,
       biography: translation.biography,
       quotes: translation.quotes,
       faq: translation.faq,
+      seo: translation.seo,
       similarAuthors,
       books: bookVersions.map((bv) => ({
         id: bv.id,
