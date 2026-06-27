@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "books-docs-mcp": {
+      "command": "node",
+      "args": ["d:/newDev/books-docs-mcp/dist/index.js"],
+      "env": {
+        "DOCS_PATH": "d:/newDev/books-app-docs"
+      }
+    }
+  }
+}

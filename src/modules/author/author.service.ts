@@ -326,6 +326,7 @@ export class AuthorService {
         title: bv.title,
         author: bv.author,
         coverImageUrl: bv.coverImageUrl,
+        coverUrl: bv.coverImageUrl,
         type: bv.type,
         isFree: bv.isFree,
         rating: 4.8, // Fallback if ratings are calculated
@@ -334,6 +335,8 @@ export class AuthorService {
             language: bv.language,
             status: bv.status,
             type: bv.type,
+            coverImageUrl: bv.coverImageUrl,
+            coverUrl: bv.coverImageUrl,
           },
         ],
       })),
