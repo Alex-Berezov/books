@@ -17,6 +17,9 @@ export class CategoryTreeNodeDto {
   @ApiProperty({ type: 'string', nullable: true, required: false })
   parentId?: string | null;
 
+  @ApiProperty({ description: 'Number of books in this category' })
+  booksCount!: number;
+
   @ApiProperty({ type: () => [CategoryTreeNodeDto] })
   children!: CategoryTreeNodeDto[];
 }

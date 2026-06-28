@@ -13,6 +13,7 @@ export type CategoryTreeNode = {
   slug: string;
   type: PrismaCategory['type'];
   parentId: string | null;
+  booksCount: number;
   children: CategoryTreeNode[];
 };
 
@@ -449,12 +450,38 @@ export class CategoryService {
   // ===== Hierarchy helpers =====
   async getTree(): Promise<CategoryTreeNode[]> {
     type CategoryNode = CategoryTreeNode;
-    const all: Array<Omit<CategoryNode, 'children'>> = await this.prisma.category.findMany({
+    type CategoryWithCount = {
+      id: string;
+      name: string;
+      slug: string;
+      type: PrismaCategory['type'];
+      parentId: string | null;
+      _count: { books: number };
+    };
+    const all: CategoryWithCount[] = await this.prisma.category.findMany({
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, slug: true, type: true, parentId: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        type: true,
+        parentId: true,
+        _count: { select: { books: true } },
+      },
     });
     const byId = new Map<string, CategoryNode>(
-      all.map((c) => [c.id, { ...c, children: [] } as CategoryNode]),
+      all.map((c) => [
+        c.id,
+        {
+          id: c.id,
+          name: c.name,
+          slug: c.slug,
+          type: c.type,
+          parentId: c.parentId,
+          booksCount: c._count.books,
+          children: [],
+        } as CategoryNode,
+      ]),
     );
     const roots: CategoryNode[] = [];
     for (const c of byId.values()) {
