@@ -4,6 +4,7 @@ import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
 import { Prisma } from '@prisma/client';
 import { Language, BookType } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class BookVersionService {
@@ -64,7 +65,23 @@ export class BookVersionService {
           });
           seoId = seo.id;
         }
-        return tx.bookVersion.create({
+
+        // Search for any existing sibling version of this book to copy tags/categories from
+        const siblingVersion = await tx.bookVersion.findFirst({
+          where: { bookId },
+          select: {
+            id: true,
+            primaryCategoryId: true,
+            categories: { select: { categoryId: true } },
+            tags: { select: { tagId: true } },
+          },
+          orderBy: { createdAt: 'asc' }, // Prefer the oldest one (e.g. English) as the source
+        });
+
+        const effectivePrimaryCategoryId =
+          dto.primaryCategoryId || siblingVersion?.primaryCategoryId || undefined;
+
+        const newVersion = await tx.bookVersion.create({
           data: {
             bookId,
             language: effectiveLanguage,
@@ -78,7 +95,7 @@ export class BookVersionService {
             seoId,
             status: 'draft',
             slug: dto.slug,
-            primaryCategoryId: dto.primaryCategoryId,
+            primaryCategoryId: effectivePrimaryCategoryId,
             firstPublishedYear: dto.firstPublishedYear,
             editionPublishedYear: dto.editionPublishedYear,
             originalLanguage: dto.originalLanguage,
@@ -98,6 +115,30 @@ export class BookVersionService {
           },
           include: { seo: true },
         });
+
+        // Copy categories and tags if sibling version exists
+        if (siblingVersion) {
+          if (siblingVersion.categories.length > 0) {
+            await tx.bookCategory.createMany({
+              data: siblingVersion.categories.map((c) => ({
+                id: randomUUID(),
+                bookVersionId: newVersion.id,
+                categoryId: c.categoryId,
+              })),
+            });
+          }
+          if (siblingVersion.tags.length > 0) {
+            await tx.bookTag.createMany({
+              data: siblingVersion.tags.map((t) => ({
+                id: randomUUID(),
+                bookVersionId: newVersion.id,
+                tagId: t.tagId,
+              })),
+            });
+          }
+        }
+
+        return newVersion;
       });
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {

@@ -25,6 +25,16 @@ interface PrismaStub {
     ) => Promise<{ id: number; metaTitle: string | null; metaDescription: string | null }>;
     update: (args: Prisma.SeoUpdateArgs) => Promise<{ id: number }>;
   };
+  bookCategory: {
+    createMany: (args: {
+      data: Array<{ id: string; bookVersionId: string; categoryId: string }>;
+    }) => Promise<{ count: number }>;
+  };
+  bookTag: {
+    createMany: (args: {
+      data: Array<{ id: string; bookVersionId: string; tagId: string }>;
+    }) => Promise<{ count: number }>;
+  };
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
 
@@ -56,6 +66,12 @@ const createPrismaStub = (): PrismaStub => {
         [Prisma.SeoCreateArgs]
       >(),
       update: jest.fn<Promise<{ id: number }>, [Prisma.SeoUpdateArgs]>(),
+    },
+    bookCategory: {
+      createMany: jest.fn(),
+    },
+    bookTag: {
+      createMany: jest.fn(),
     },
     $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
   } as PrismaStub;
@@ -304,5 +320,68 @@ describe('BookVersionService', () => {
     ]);
     const res = await service.listAdmin('b1', {});
     expect(res.map((r) => r.id)).toEqual(['v-pub', 'v-draft']);
+  });
+
+  it('copies categories and tags from sibling version if exists', async () => {
+    const mockFindFirst = prisma.bookVersion.findFirst as jest.Mock;
+    mockFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 'sibling-v',
+      primaryCategoryId: 'cat-sibling',
+      categories: [{ categoryId: 'cat1' }],
+      tags: [{ tagId: 'tag1' }],
+    });
+
+    const now = new Date();
+    (prisma.bookVersion.create as jest.Mock).mockResolvedValue({
+      id: 'new-v',
+      bookId: 'b1',
+      language: Language.es,
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+      createdAt: now,
+      updatedAt: now,
+      primaryCategoryId: 'cat-sibling',
+    });
+
+    const dto: CreateBookVersionDto = {
+      language: Language.es,
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+    };
+
+    const res = await service.create('b1', dto);
+
+    expect(res.id).toBe('new-v');
+    expect(res.primaryCategoryId).toBe('cat-sibling');
+    expect(prisma.bookCategory.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            bookVersionId: 'new-v',
+            categoryId: 'cat1',
+          }),
+        ]),
+      }),
+    );
+    expect(prisma.bookTag.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            bookVersionId: 'new-v',
+            tagId: 'tag1',
+          }),
+        ]),
+      }),
+    );
   });
 });
