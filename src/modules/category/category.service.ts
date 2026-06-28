@@ -37,19 +37,29 @@ export class CategoryService {
               slug: true,
             },
           },
-          _count: {
-            select: { books: true },
-          },
         },
       }),
     ]);
+
+    // Get distinct book counts for these categories
+    const categoryIds = items.map((item) => item.id);
+    const bookCounts = await this.prisma.$queryRaw<
+      Array<{ categoryId: string; booksCount: number }>
+    >`
+      SELECT bc."categoryId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
+      FROM "BookCategory" bc
+      JOIN "BookVersion" bv ON bc."bookVersionId" = bv.id
+      WHERE bc."categoryId" IN (${Prisma.join(categoryIds)})
+      GROUP BY bc."categoryId"
+    `;
+    const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
 
     const data = items.map((item) => ({
       id: item.id,
       name: item.name,
       slug: item.slug,
       type: item.type,
-      booksCount: item._count.books,
+      booksCount: countMap.get(item.id) || 0,
       translations: item.translations,
     }));
 
@@ -450,15 +460,9 @@ export class CategoryService {
   // ===== Hierarchy helpers =====
   async getTree(): Promise<CategoryTreeNode[]> {
     type CategoryNode = CategoryTreeNode;
-    type CategoryWithCount = {
-      id: string;
-      name: string;
-      slug: string;
-      type: PrismaCategory['type'];
-      parentId: string | null;
-      _count: { books: number };
-    };
-    const all: CategoryWithCount[] = await this.prisma.category.findMany({
+
+    // Fetch all categories
+    const allCategories = await this.prisma.category.findMany({
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -466,11 +470,23 @@ export class CategoryService {
         slug: true,
         type: true,
         parentId: true,
-        _count: { select: { books: true } },
       },
     });
+
+    // Count distinct books per category (not versions)
+    const bookCounts = await this.prisma.$queryRaw<
+      Array<{ categoryId: string; booksCount: number }>
+    >`
+      SELECT bc."categoryId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
+      FROM "BookCategory" bc
+      JOIN "BookVersion" bv ON bc."bookVersionId" = bv.id
+      GROUP BY bc."categoryId"
+    `;
+
+    const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
+
     const byId = new Map<string, CategoryNode>(
-      all.map((c) => [
+      allCategories.map((c) => [
         c.id,
         {
           id: c.id,
@@ -478,7 +494,7 @@ export class CategoryService {
           slug: c.slug,
           type: c.type,
           parentId: c.parentId,
-          booksCount: c._count.books,
+          booksCount: countMap.get(c.id) || 0,
           children: [],
         } as CategoryNode,
       ]),
