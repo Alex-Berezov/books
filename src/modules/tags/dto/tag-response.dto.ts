@@ -15,19 +15,19 @@ export class TagTranslationResponse {
   description?: string | null;
 
   @ApiPropertyOptional()
-  h1?: string;
+  h1?: string | null;
 
   @ApiPropertyOptional()
   shortDescription?: string | null;
 
   @ApiPropertyOptional()
-  metaTitle?: string;
+  metaTitle?: string | null;
 
   @ApiPropertyOptional()
   metaDescription?: string | null;
 
   @ApiPropertyOptional()
-  ogTitle?: string;
+  ogTitle?: string | null;
 
   @ApiPropertyOptional()
   ogDescription?: string | null;
@@ -36,13 +36,13 @@ export class TagTranslationResponse {
   ogImageUrl?: string | null;
 
   @ApiPropertyOptional()
-  ogImageAlt?: string;
+  ogImageAlt?: string | null;
 
   @ApiPropertyOptional()
-  canonicalUrl?: string;
+  canonicalUrl?: string | null;
 
   @ApiPropertyOptional({ example: 'index, follow' })
-  robots?: string;
+  robots?: string | null;
 
   @ApiPropertyOptional({ default: true })
   indexable?: boolean;
@@ -51,16 +51,16 @@ export class TagTranslationResponse {
     type: Array,
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
-  faq?: Array<{ question: string; answer: string }>;
+  faq?: object | null;
 
   @ApiPropertyOptional({ type: [String], example: ['aestheticism', 'beauty'] })
-  relatedTagSlugs?: string[];
+  relatedTagSlugs?: object | null;
 
   @ApiPropertyOptional({
     type: [String],
     example: ['classic-literature', 'philosophical-fiction'],
   })
-  relatedGenreSlugs?: string[];
+  relatedGenreSlugs?: object | null;
 }
 
 export class TagResponse {
