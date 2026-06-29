@@ -488,17 +488,31 @@ model CategoryTranslation {
 }
 
 model TagTranslation {
-  id          String   @id @default(uuid())
-  tagId       String
-  language    Language
-  name        String
-  slug        String
-  description String?  @db.Text
-  seoId       Int?     @unique
-  seo         Seo?     @relation("SeoForTagTranslation", fields: [seoId], references: [id], onDelete: SetNull)
-  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(uuid())
+  tagId            String
+  language         Language
+  name             String
+  slug             String
+  description      String?  @db.Text
+  h1               String?
+  shortDescription String?  @db.Text
+  metaTitle        String?
+  metaDescription  String?  @db.Text
+  ogTitle          String?
+  ogDescription    String?  @db.Text
+  ogImageUrl       String?
+  ogImageAlt       String?
+  canonicalUrl     String?
+  robots           String?  @default("index, follow")
+  indexable        Boolean  @default(true)
+  faq              Json?    // [{question: string, answer: string}]
+  relatedTagSlugs  Json?    // string[]
+  relatedGenreSlugs Json?   // string[]
+  seoId            Int?     @unique
+  seo              Seo?     @relation("SeoForTagTranslation", fields: [seoId], references: [id], onDelete: SetNull)
+  tag              Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@unique([language, slug])
   @@unique([tagId, language])

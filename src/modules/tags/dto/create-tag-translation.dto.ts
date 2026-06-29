@@ -1,6 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, Matches, MinLength, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
@@ -24,6 +33,92 @@ export class CreateTagTranslationDto {
   @IsOptional()
   @IsString()
   description?: string | null;
+
+  @ApiPropertyOptional({ description: 'H1 heading for the tag page' })
+  @IsOptional()
+  @IsString()
+  h1?: string;
+
+  @ApiPropertyOptional({ description: 'Short description for cards/lists' })
+  @IsOptional()
+  @IsString()
+  shortDescription?: string | null;
+
+  @ApiPropertyOptional({ description: 'Meta title for SEO' })
+  @IsOptional()
+  @IsString()
+  metaTitle?: string;
+
+  @ApiPropertyOptional({ description: 'Meta description for SEO' })
+  @IsOptional()
+  @IsString()
+  metaDescription?: string | null;
+
+  @ApiPropertyOptional({ description: 'Open Graph title' })
+  @IsOptional()
+  @IsString()
+  ogTitle?: string;
+
+  @ApiPropertyOptional({ description: 'Open Graph description' })
+  @IsOptional()
+  @IsString()
+  ogDescription?: string | null;
+
+  @ApiPropertyOptional({ description: 'Open Graph image URL' })
+  @IsOptional()
+  @IsString()
+  ogImageUrl?: string | null;
+
+  @ApiPropertyOptional({ description: 'Open Graph image alt text' })
+  @IsOptional()
+  @IsString()
+  ogImageAlt?: string;
+
+  @ApiPropertyOptional({ description: 'Canonical URL' })
+  @IsOptional()
+  @IsString()
+  canonicalUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Robots directive', example: 'index, follow' })
+  @IsOptional()
+  @IsString()
+  robots?: string;
+
+  @ApiPropertyOptional({ description: 'Whether this tag should be indexed', default: true })
+  @IsOptional()
+  @IsBoolean()
+  indexable?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'FAQ items',
+    type: Array,
+    example: [{ question: 'What is this?', answer: 'This is...' }],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => Object)
+  faq?: Array<{ question: string; answer: string }>;
+
+  @ApiPropertyOptional({
+    description: 'Related tag slugs',
+    type: [String],
+    example: ['aestheticism', 'beauty'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  relatedTagSlugs?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Related genre/category slugs',
+    type: [String],
+    example: ['classic-literature', 'philosophical-fiction'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  relatedGenreSlugs?: string[];
 
   @ApiPropertyOptional({ description: 'SEO metadata', type: SeoInputDto })
   @IsOptional()

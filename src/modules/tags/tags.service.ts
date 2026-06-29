@@ -7,6 +7,11 @@ import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 
+interface TagWithCount extends Tag {
+  translations: TagTranslation[];
+  _count: { books: number };
+}
+
 @Injectable()
 export class TagsService {
   constructor(private prisma: PrismaService) {}
@@ -36,18 +41,26 @@ export class TagsService {
               language: true,
               name: true,
               slug: true,
+              description: true,
             },
+          },
+          _count: {
+            select: { books: true },
           },
         },
       }),
     ]);
 
-    const data = items.map((item) => ({
-      id: item.id,
-      name: item.name,
-      slug: item.slug,
-      translations: item.translations,
-    }));
+    const data = items.map((item) => {
+      const tagged = item as TagWithCount;
+      return {
+        id: tagged.id,
+        name: tagged.name,
+        slug: tagged.slug,
+        translations: tagged.translations,
+        booksCount: tagged._count?.books || 0,
+      };
+    });
 
     return {
       data,
