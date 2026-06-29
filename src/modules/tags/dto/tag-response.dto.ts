@@ -51,16 +51,16 @@ export class TagTranslationResponse {
     type: Array,
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
-  faq?: object | null;
+  faq?: unknown;
 
   @ApiPropertyOptional({ type: [String], example: ['aestheticism', 'beauty'] })
-  relatedTagSlugs?: object | null;
+  relatedTagSlugs?: unknown;
 
   @ApiPropertyOptional({
     type: [String],
     example: ['classic-literature', 'philosophical-fiction'],
   })
-  relatedGenreSlugs?: object | null;
+  relatedGenreSlugs?: unknown;
 }
 
 export class TagResponse {
