@@ -29,7 +29,7 @@ export function getCanonicalUrl(
       path = lang ? `/${lang}/category/${slug}` : `/category/${slug}`;
       break;
     case 'tag':
-      path = lang ? `/${lang}/tags/${slug}` : `/tags/${slug}`;
+      path = lang ? `/${lang}/tag/${slug}` : `/tag/${slug}`;
       break;
     case 'static':
       path = lang ? `/${lang}/${slug}` : `/${slug}`;

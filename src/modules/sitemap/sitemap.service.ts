@@ -69,8 +69,20 @@ export class SitemapService {
       select: { slug: true, updatedAt: true, publishedAt: true },
     });
 
-    // Categories (genres) translations for this lang
-    const categories = await this.prisma.categoryTranslation.findMany({
+    // Categories (type=category) translations for this lang
+    const categoryTranslations = await this.prisma.categoryTranslation.findMany({
+      where: { language: lang, category: { type: 'category' } },
+      select: { slug: true, updatedAt: true },
+    });
+
+    // Genres (type=genre) translations for this lang
+    const genreTranslations = await this.prisma.categoryTranslation.findMany({
+      where: { language: lang, category: { type: 'genre' } },
+      select: { slug: true, updatedAt: true },
+    });
+
+    // Tags translations for this lang
+    const tagTranslations = await this.prisma.tagTranslation.findMany({
       where: { language: lang },
       select: { slug: true, updatedAt: true },
     });
@@ -89,8 +101,10 @@ export class SitemapService {
     // 1. Static Layout pages
     const now = new Date();
     addUrlNode(getCanonicalUrl('static', '', lang), now);
-    addUrlNode(getCanonicalUrl('static', 'books', lang), now);
+    addUrlNode(getCanonicalUrl('static', 'catalog', lang), now);
+    addUrlNode(getCanonicalUrl('static', 'categories', lang), now);
     addUrlNode(getCanonicalUrl('static', 'genres', lang), now);
+    addUrlNode(getCanonicalUrl('static', 'tags', lang), now);
 
     // 2. CMS Pages
     for (const p of pages) {
@@ -104,9 +118,19 @@ export class SitemapService {
       }
     }
 
-    // 4. Genres / Categories
-    for (const c of categories) {
+    // 4. Categories
+    for (const c of categoryTranslations) {
       addUrlNode(getCanonicalUrl('category', c.slug, lang), c.updatedAt || now);
+    }
+
+    // 5. Genres
+    for (const g of genreTranslations) {
+      addUrlNode(getCanonicalUrl('genre', g.slug, lang), g.updatedAt || now);
+    }
+
+    // 6. Tags
+    for (const t of tagTranslations) {
+      addUrlNode(getCanonicalUrl('tag', t.slug, lang), t.updatedAt || now);
     }
 
     const xml = [
