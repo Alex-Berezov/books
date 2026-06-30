@@ -66,7 +66,7 @@ async function main() {
 
   const categories = await Promise.all([
     getOrCreateCategory('fantasy', 'Fantasy', CategoryType.genre),
-    getOrCreateCategory('bestsellers', 'Bestsellers', CategoryType.popular),
+    getOrCreateCategory('bestsellers', 'Bestsellers', CategoryType.collection),
   ]);
 
   // Ensure default translations for seeded categories (idempotent)
