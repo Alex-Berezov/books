@@ -86,7 +86,7 @@ describe('SitemapService (unit)', () => {
     expect(first.body).toContain('http://localhost:5000/static/en/pages/contacts');
     expect(first.body).toContain('http://localhost:5000/static/en/book/first-book');
     expect(first.body).toContain('http://localhost:5000/static/en/book/second-book');
-    expect(first.body).toContain('http://localhost:5000/static/en/categories/genre-1');
+    expect(first.body).toContain('http://localhost:5000/static/en/category/genre-1');
 
     // Cached: second call without advancing time returns same object
     const second = await service.perLanguage('en');
