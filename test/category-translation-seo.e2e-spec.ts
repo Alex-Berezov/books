@@ -63,7 +63,7 @@ describe('Category Translation Content & SEO (e2e)', () => {
     const catRes = await request(http())
       .post('/categories')
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ type: 'genre', name: 'Fiction', slug: `fiction-seo-${Date.now()}` })
+      .send({ type: 'category', name: 'Fiction', slug: `fiction-seo-${Date.now()}` })
       .expect(201);
     categoryId = catRes.body.id as string;
 
