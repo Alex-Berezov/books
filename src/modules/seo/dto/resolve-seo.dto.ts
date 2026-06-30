@@ -6,6 +6,7 @@ export enum ResolveSeoType {
   version = 'version',
   page = 'page',
   category = 'category',
+  genre = 'genre',
   tag = 'tag',
   catalog = 'catalog',
 }

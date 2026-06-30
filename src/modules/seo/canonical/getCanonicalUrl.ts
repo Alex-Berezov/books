@@ -26,7 +26,7 @@ export function getCanonicalUrl(
       path = lang ? `/${lang}/genre/${slug}` : `/genre/${slug}`;
       break;
     case 'category':
-      path = lang ? `/${lang}/categories/${slug}` : `/categories/${slug}`;
+      path = lang ? `/${lang}/category/${slug}` : `/category/${slug}`;
       break;
     case 'tag':
       path = lang ? `/${lang}/tags/${slug}` : `/tags/${slug}`;

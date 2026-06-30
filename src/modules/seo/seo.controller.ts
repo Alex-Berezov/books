@@ -57,12 +57,19 @@ export class SeoController {
 
   @Get('seo/resolve')
   @ApiOperation({ summary: 'Resolve SEO bundle (meta/OG/Twitter/canonical) with fallbacks' })
-  @ApiQuery({ name: 'type', enum: ['book', 'version', 'page', 'category', 'tag'] })
+  @ApiQuery({
+    name: 'type',
+    enum: ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'],
+  })
   @ApiQuery({
     name: 'id',
     description: 'Entity identifier or slug (book/page). For version: id only.',
   })
-  @ApiQuery({ name: 'slug', required: false, description: 'Translation slug (for category/tag)' })
+  @ApiQuery({
+    name: 'slug',
+    required: false,
+    description: 'Translation slug (for category/genre/tag)',
+  })
   @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
   @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
@@ -75,7 +82,7 @@ export class SeoController {
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = ['book', 'version', 'page', 'category', 'tag'] as const;
+    const allowed = ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'] as const;
     const isAllowed = (val: string): val is (typeof allowed)[number] =>
       (allowed as readonly string[]).includes(val);
     if (!isAllowed(t)) {
@@ -88,12 +95,19 @@ export class SeoController {
   @Get(':lang/seo/resolve')
   @ApiOperation({ summary: 'Resolve SEO bundle (public) for specific language (by path prefix)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
-  @ApiQuery({ name: 'type', enum: ['book', 'version', 'page', 'category', 'tag'] })
+  @ApiQuery({
+    name: 'type',
+    enum: ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'],
+  })
   @ApiQuery({
     name: 'id',
     description: 'Entity identifier or slug (book/page). For version: id only.',
   })
-  @ApiQuery({ name: 'slug', required: false, description: 'Translation slug (for category/tag)' })
+  @ApiQuery({
+    name: 'slug',
+    required: false,
+    description: 'Translation slug (for category/genre/tag)',
+  })
   @ApiHeader({ name: 'Accept-Language', required: false })
   @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
   resolveWithLang(
@@ -106,7 +120,7 @@ export class SeoController {
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = ['book', 'version', 'page', 'category', 'tag'] as const;
+    const allowed = ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'] as const;
     const isAllowed = (val: string): val is (typeof allowed)[number] =>
       (allowed as readonly string[]).includes(val);
     if (!isAllowed(t)) {
