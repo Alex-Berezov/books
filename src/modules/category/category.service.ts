@@ -14,6 +14,14 @@ export type CategoryTreeNode = {
   type: PrismaCategory['type'];
   parentId: string | null;
   booksCount: number;
+  indexable: boolean;
+  isVisible: boolean;
+  sortOrder: number;
+  translations?: Array<{
+    language: string;
+    name: string;
+    slug: string;
+  }>;
   children: CategoryTreeNode[];
 };
 
@@ -21,12 +29,17 @@ export type CategoryTreeNode = {
 export class CategoryService {
   constructor(private prisma: PrismaService) {}
 
-  async list(page = 1, limit = 20) {
+  async list(page = 1, limit = 20, type?: PrismaCategory['type']) {
+    const where: Prisma.CategoryWhereInput = {};
+    if (type) {
+      where.type = type;
+    }
     const skip = (page - 1) * limit;
     const [total, items] = await this.prisma.$transaction([
-      this.prisma.category.count(),
+      this.prisma.category.count({ where }),
       this.prisma.category.findMany({
-        orderBy: { name: 'asc' },
+        where,
+        orderBy: [{ sortOrder: 'asc' } as any, { name: 'asc' }],
         skip,
         take: limit,
         include: {
@@ -54,12 +67,15 @@ export class CategoryService {
     `;
     const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
 
-    const data = items.map((item) => ({
+    const data = items.map((item: any) => ({
       id: item.id,
       name: item.name,
       slug: item.slug,
       type: item.type,
       booksCount: countMap.get(item.id) || 0,
+      indexable: item.indexable ?? true,
+      isVisible: item.isVisible ?? true,
+      sortOrder: item.sortOrder ?? 0,
       translations: item.translations,
     }));
 
@@ -78,6 +94,11 @@ export class CategoryService {
     if (dto.parentId) {
       const parent = await this.prisma.category.findUnique({ where: { id: dto.parentId } });
       if (!parent) throw new BadRequestException('Parent category not found');
+      if (parent.type !== dto.type) {
+        throw new BadRequestException(
+          'Parent category type mismatch: parent and child must have the same type',
+        );
+      }
     }
     try {
       return await this.prisma.category.create({
@@ -85,6 +106,9 @@ export class CategoryService {
           type: dto.type,
           name: dto.name,
           slug: dto.slug,
+          ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+          ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
           ...(dto.parentId ? { parent: { connect: { id: dto.parentId } } } : {}),
         },
       });
@@ -111,6 +135,13 @@ export class CategoryService {
       if (dto.parentId) {
         const parent = await this.prisma.category.findUnique({ where: { id: dto.parentId } });
         if (!parent) throw new BadRequestException('Parent category not found');
+        // check type consistency
+        const effectiveType = dto.type || exists.type;
+        if (parent.type !== effectiveType) {
+          throw new BadRequestException(
+            'Parent category type mismatch: parent and child must have the same type',
+          );
+        }
         // check cycle: parent cannot be a descendant of current node
         const hasCycle = await this.isDescendant(dto.parentId, id);
         if (hasCycle) throw new BadRequestException('Cycle detected in category hierarchy');
@@ -123,6 +154,9 @@ export class CategoryService {
         type: dto.type,
         name: dto.name,
         slug: dto.slug,
+        ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+        ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         ...(typeof dto.parentId === 'undefined'
           ? {}
           : dto.parentId
@@ -339,6 +373,15 @@ export class CategoryService {
           name: dto.name,
           slug: dto.slug,
           description: dto.description ?? null,
+          ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
+          ...(dto.shortDescription !== undefined ? { shortDescription: dto.shortDescription } : {}),
+          ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
+          ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
+          ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
+          ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
+          ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
+          ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
+          ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
           ...(seoId !== undefined ? { seoId } : {}),
         },
         include: { seo: true },
@@ -395,6 +438,15 @@ export class CategoryService {
         name: dto.name,
         slug: dto.slug,
         ...(dto.description !== undefined ? { description: dto.description } : {}),
+        ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
+        ...(dto.shortDescription !== undefined ? { shortDescription: dto.shortDescription } : {}),
+        ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
+        ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
+        ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
+        ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
+        ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
+        ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
+        ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
         ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
       },
       include: { seo: true },
@@ -458,18 +510,36 @@ export class CategoryService {
   }
 
   // ===== Hierarchy helpers =====
-  async getTree(): Promise<CategoryTreeNode[]> {
+  async getTree(type?: PrismaCategory['type']): Promise<CategoryTreeNode[]> {
     type CategoryNode = CategoryTreeNode;
 
+    // Build where clause for optional type filter
+    const where: Prisma.CategoryWhereInput = {};
+    if (type) {
+      where.type = type;
+    }
+
     // Fetch all categories
+
     const allCategories = await this.prisma.category.findMany({
-      orderBy: { name: 'asc' },
+      where,
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       select: {
         id: true,
         name: true,
         slug: true,
         type: true,
         parentId: true,
+        indexable: true,
+        isVisible: true,
+        sortOrder: true,
+        translations: {
+          select: {
+            language: true,
+            name: true,
+            slug: true,
+          },
+        },
       },
     });
 
@@ -486,7 +556,7 @@ export class CategoryService {
     const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
 
     const byId = new Map<string, CategoryNode>(
-      allCategories.map((c) => [
+      allCategories.map((c: any) => [
         c.id,
         {
           id: c.id,
@@ -495,6 +565,10 @@ export class CategoryService {
           type: c.type,
           parentId: c.parentId,
           booksCount: countMap.get(c.id) || 0,
+          indexable: c.indexable ?? true,
+          isVisible: c.isVisible ?? true,
+          sortOrder: c.sortOrder ?? 0,
+          translations: c.translations,
           children: [],
         } as CategoryNode,
       ]),

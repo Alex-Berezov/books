@@ -21,6 +21,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { CategoryType, Language } from '@prisma/client';
 import { CategoryTreeNodeDto } from './dto/category-tree-node.dto';
 import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -32,7 +33,6 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
-import { Language } from '@prisma/client';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
 import { PaginatedCategoriesResponse } from './dto/category-response.dto';
@@ -80,24 +80,39 @@ export class CategoryController {
   }
 
   @Get('categories')
-  @ApiOperation({ summary: 'List categories' })
+  @ApiOperation({ summary: 'List categories (optionally filtered by type)' })
   @ApiResponse({ status: 200, type: PaginatedCategoriesResponse })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  list(@Query() pagination?: PaginationDto): Promise<PaginatedCategoriesResponse> {
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    enum: CategoryType,
+    description: 'Filter by category type',
+  })
+  list(
+    @Query() pagination?: PaginationDto,
+    @Query('type') type?: CategoryType,
+  ): Promise<PaginatedCategoriesResponse> {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
-    return this.service.list(page, limit);
+    return this.service.list(page, limit, type);
   }
 
   @Get('categories/tree')
-  @ApiOperation({ summary: 'Get full categories tree (root nodes with nested children)' })
+  @ApiOperation({ summary: 'Get categories tree (optionally filtered by type)' })
   @ApiOkResponse({
     description: 'Array of root categories with nested children',
     type: [CategoryTreeNodeDto],
   })
-  tree() {
-    return this.service.getTree();
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    enum: CategoryType,
+    description: 'Filter by category type (category|genre|collection)',
+  })
+  tree(@Query('type') type?: CategoryType) {
+    return this.service.getTree(type);
   }
 
   @Get('categories/:id/children')

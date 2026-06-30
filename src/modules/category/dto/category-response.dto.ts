@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CategoryType, Language } from '@prisma/client';
 
 export class CategoryTranslationResponse {
@@ -10,6 +10,36 @@ export class CategoryTranslationResponse {
 
   @ApiProperty()
   slug: string;
+
+  @ApiPropertyOptional()
+  h1?: string | null;
+
+  @ApiPropertyOptional()
+  shortDescription?: string | null;
+
+  @ApiPropertyOptional()
+  description?: string | null;
+
+  @ApiPropertyOptional()
+  metaTitle?: string | null;
+
+  @ApiPropertyOptional()
+  metaDescription?: string | null;
+
+  @ApiPropertyOptional()
+  ogTitle?: string | null;
+
+  @ApiPropertyOptional()
+  ogDescription?: string | null;
+
+  @ApiPropertyOptional()
+  ogImageUrl?: string | null;
+
+  @ApiPropertyOptional()
+  ogImageAlt?: string | null;
+
+  @ApiPropertyOptional()
+  faq?: Record<string, unknown> | null;
 }
 
 export class CategoryResponse {
@@ -27,6 +57,15 @@ export class CategoryResponse {
 
   @ApiProperty()
   booksCount: number;
+
+  @ApiPropertyOptional({ default: true })
+  indexable?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  isVisible?: boolean;
+
+  @ApiPropertyOptional({ default: 0 })
+  sortOrder?: number;
 
   @ApiProperty({ type: [CategoryTranslationResponse] })
   translations: CategoryTranslationResponse[];

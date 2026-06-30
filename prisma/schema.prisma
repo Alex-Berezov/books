@@ -206,15 +206,18 @@ model Like {
 }
 
 model Category {
-  id    String         @id @default(uuid())
-  type  CategoryType
-  name  String
-  slug  String
-  books BookCategory[]
+  id          String         @id @default(uuid())
+  type        CategoryType
+  name        String
+  slug        String
+  indexable   Boolean        @default(true)
+  isVisible   Boolean        @default(true)
+  sortOrder   Int            @default(0)
+  books       BookCategory[]
   // Category hierarchy (self-relation)
-  parentId String?
-  parent   Category?     @relation("CategoryToCategory", fields: [parentId], references: [id])
-  children Category[]    @relation("CategoryToCategory")
+  parentId    String?
+  parent      Category?       @relation("CategoryToCategory", fields: [parentId], references: [id])
+  children    Category[]      @relation("CategoryToCategory")
   translations CategoryTranslation[]
   primaryCategoryVersions BookVersion[] @relation("BookVersionPrimaryCategory")
 
@@ -225,10 +228,14 @@ model BookCategory {
   id            String      @id @default(uuid())
   bookVersionId String
   categoryId    String
+  isPrimary     Boolean     @default(false)
+  sortOrder     Int         @default(0)
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   category      Category    @relation(fields: [categoryId], references: [id])
 
   @@unique([bookVersionId, categoryId])
+  @@index([bookVersionId])
+  @@index([categoryId])
 }
 
 model Tag {
@@ -445,10 +452,9 @@ enum LikeTarget {
 }
 
 enum CategoryType {
+  category
   genre
-  author
-  popular
-  etc
+  collection
 }
 
 enum ViewSource {
@@ -469,17 +475,29 @@ enum PageType {
 // =====================
 
 model CategoryTranslation {
-  id         String   @id @default(uuid())
-  categoryId String
-  language   Language
-  name       String
-  slug       String
-  description String?  @db.Text
-  seoId      Int?     @unique
-  seo        Seo?     @relation("SeoForCategoryTranslation", fields: [seoId], references: [id], onDelete: SetNull)
-  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id               String   @id @default(uuid())
+  categoryId       String
+  language         Language
+  name             String
+  slug             String
+  description      String?  @db.Text
+
+  // SEO fields
+  h1               String?
+  shortDescription String?  @db.Text
+  metaTitle        String?
+  metaDescription  String?  @db.Text
+  ogTitle          String?
+  ogDescription    String?  @db.Text
+  ogImageUrl       String?
+  ogImageAlt       String?
+  faq              Json?
+
+  seoId            Int?     @unique
+  seo              Seo?     @relation("SeoForCategoryTranslation", fields: [seoId], references: [id], onDelete: SetNull)
+  category         Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@unique([language, slug])
   @@unique([categoryId, language])

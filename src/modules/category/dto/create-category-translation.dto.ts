@@ -1,6 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, Matches, MinLength, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsObject,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
@@ -24,6 +33,52 @@ export class CreateCategoryTranslationDto {
   @IsOptional()
   @IsString()
   description?: string | null;
+
+  @ApiPropertyOptional({ description: 'H1 heading for the page' })
+  @IsOptional()
+  @IsString()
+  h1?: string;
+
+  @ApiPropertyOptional({ description: 'Short description for cards/lists' })
+  @IsOptional()
+  @IsString()
+  shortDescription?: string;
+
+  @ApiPropertyOptional({ description: 'Meta title for SEO' })
+  @IsOptional()
+  @IsString()
+  metaTitle?: string;
+
+  @ApiPropertyOptional({ description: 'Meta description for SEO' })
+  @IsOptional()
+  @IsString()
+  metaDescription?: string;
+
+  @ApiPropertyOptional({ description: 'Open Graph title' })
+  @IsOptional()
+  @IsString()
+  ogTitle?: string;
+
+  @ApiPropertyOptional({ description: 'Open Graph description' })
+  @IsOptional()
+  @IsString()
+  ogDescription?: string;
+
+  @ApiPropertyOptional({ description: 'Open Graph image URL' })
+  @IsOptional()
+  @IsString()
+  ogImageUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Open Graph image alt text' })
+  @IsOptional()
+  @IsString()
+  ogImageAlt?: string;
+
+  @ApiPropertyOptional({ description: 'FAQ items as JSON array' })
+  @IsOptional()
+  @IsArray()
+  @IsObject({ each: true })
+  faq?: Array<{ question: string; answer: string }>;
 
   @ApiPropertyOptional({ description: 'SEO metadata', type: SeoInputDto })
   @IsOptional()

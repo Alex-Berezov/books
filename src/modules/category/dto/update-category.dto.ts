@@ -1,5 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { CategoryType as PrismaCategoryType } from '@prisma/client';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { CreateCategoryDto } from './create-category.dto';
@@ -21,6 +30,22 @@ export class UpdateCategoryDto implements Partial<CreateCategoryDto> {
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;
+
+  @ApiPropertyOptional({ description: 'Whether the page is indexable by search engines' })
+  @IsOptional()
+  @IsBoolean()
+  indexable?: boolean;
+
+  @ApiPropertyOptional({ description: 'Whether the category is visible in public lists' })
+  @IsOptional()
+  @IsBoolean()
+  isVisible?: boolean;
+
+  @ApiPropertyOptional({ description: 'Sort order in lists' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sortOrder?: number;
 
   @ApiPropertyOptional({ description: 'Parent category', nullable: true })
   @IsOptional()
