@@ -86,6 +86,10 @@ describe('SitemapService (unit)', () => {
     prisma.categoryTranslation.findMany.mockResolvedValueOnce([
       { slug: 'gothic-fiction', updatedAt: new Date('2025-09-06T12:00:00Z') },
     ]);
+    // Third call: collections (type=collection)
+    prisma.categoryTranslation.findMany.mockResolvedValueOnce([
+      { slug: 'short-reads', updatedAt: new Date('2025-09-06T12:00:00Z') },
+    ]);
     // Tags
     prisma.tagTranslation.findMany.mockResolvedValueOnce([
       { slug: 'aestheticism', updatedAt: new Date('2025-09-06T12:00:00Z') },
@@ -98,6 +102,7 @@ describe('SitemapService (unit)', () => {
     expect(first.body).toContain('http://localhost:5000/static/en/categories');
     expect(first.body).toContain('http://localhost:5000/static/en/genres');
     expect(first.body).toContain('http://localhost:5000/static/en/tags');
+    expect(first.body).toContain('http://localhost:5000/static/en/collections');
     // Pages
     expect(first.body).toContain('http://localhost:5000/static/en/pages/about');
     expect(first.body).toContain('http://localhost:5000/static/en/pages/contacts');
@@ -110,6 +115,8 @@ describe('SitemapService (unit)', () => {
     expect(first.body).toContain('http://localhost:5000/static/en/genre/gothic-fiction');
     // Tags
     expect(first.body).toContain('http://localhost:5000/static/en/tag/aestheticism');
+    // Collections
+    expect(first.body).toContain('http://localhost:5000/static/en/collection/short-reads');
 
     // Cached: second call without advancing time returns same object
     const second = await service.perLanguage('en');
@@ -123,6 +130,7 @@ describe('SitemapService (unit)', () => {
       { slug: 'updated', updatedAt: new Date('2025-09-06T12:01:01Z') },
     ]);
     prisma.bookVersion.findMany.mockResolvedValueOnce([]);
+    prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
     prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
     prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
     prisma.tagTranslation.findMany.mockResolvedValueOnce([]);
@@ -148,6 +156,7 @@ describe('SitemapService (unit)', () => {
     ]);
     prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
     prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
+    prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
     prisma.tagTranslation.findMany.mockResolvedValueOnce([]);
 
     const robots = fresh.robots();
@@ -163,5 +172,6 @@ describe('SitemapService (unit)', () => {
     expect(per.body).toContain('https://bibliaris.com/en/categories');
     expect(per.body).toContain('https://bibliaris.com/en/genres');
     expect(per.body).toContain('https://bibliaris.com/en/tags');
+    expect(per.body).toContain('https://bibliaris.com/en/collections');
   });
 });
