@@ -16,7 +16,7 @@ ALTER TABLE "Category" ADD COLUMN "key" TEXT;
 UPDATE "Category" SET "key" = "slug" WHERE "key" IS NULL;
 
 -- Check for duplicate keys before adding unique constraint
-DO \$\$
+DO $$
 DECLARE
   dup_count INTEGER;
 BEGIN
@@ -26,7 +26,7 @@ BEGIN
   IF dup_count > 0 THEN
     RAISE EXCEPTION 'Duplicate keys found in Category table (%)', dup_count;
   END IF;
-END \$\$;
+END $$;
 
 ALTER TABLE "Category" ALTER COLUMN "key" SET NOT NULL;
 CREATE UNIQUE INDEX "Category_key_key" ON "Category"("key");
@@ -40,7 +40,7 @@ ALTER TABLE "Tag" ADD COLUMN "key" TEXT;
 UPDATE "Tag" SET "key" = "slug" WHERE "key" IS NULL;
 
 -- Check for duplicate keys before adding unique constraint
-DO \$\$
+DO $$
 DECLARE
   dup_count INTEGER;
 BEGIN
@@ -50,7 +50,7 @@ BEGIN
   IF dup_count > 0 THEN
     RAISE EXCEPTION 'Duplicate keys found in Tag table (%)', dup_count;
   END IF;
-END \$\$;
+END $$;
 
 ALTER TABLE "Tag" ALTER COLUMN "key" SET NOT NULL;
 CREATE UNIQUE INDEX "Tag_key_key" ON "Tag"("key");
