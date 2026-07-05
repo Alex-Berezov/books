@@ -83,6 +83,7 @@ describe('Categories: Check Slug (e2e)', () => {
           slug: 'test-cat-existing',
           name: 'Existing Category',
           type: 'genre',
+          key: 'test-cat-existing',
         },
       });
 

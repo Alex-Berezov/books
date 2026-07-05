@@ -63,7 +63,11 @@ describe('Tag Translation Content & SEO (e2e)', () => {
     const tagRes = await request(http())
       .post('/tags')
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ name: 'Bestseller', slug: `bestseller-seo-${Date.now()}` })
+      .send({
+        name: 'Bestseller',
+        slug: `bestseller-seo-${Date.now()}`,
+        key: `bestseller-seo-${Date.now()}`,
+      })
       .expect(201);
     tagId = tagRes.body.id as string;
 

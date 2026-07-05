@@ -68,7 +68,11 @@ describe('Tags e2e', () => {
     const createRes = await request(http())
       .post('/tags')
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ name: 'Motivation E2E', slug: `motivation-e2e-${Date.now()}` })
+      .send({
+        name: 'Motivation E2E',
+        slug: `motivation-e2e-${Date.now()}`,
+        key: `motivation-e2e-${Date.now()}`,
+      })
       .expect(201);
     tagId = createRes.body.id as string;
 

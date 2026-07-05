@@ -167,7 +167,7 @@ describe('Seo e2e', () => {
     const rootCat = await request(http())
       .post('/categories')
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ type: 'genre', name: 'Root', slug: rootSlug })
+      .send({ type: 'genre', name: 'Root', slug: rootSlug, key: rootSlug })
       .expect(201);
     const sub = await request(http())
       .post('/categories')
@@ -176,6 +176,7 @@ describe('Seo e2e', () => {
         type: 'genre',
         name: 'Sub',
         slug: `sub-${Date.now()}`,
+        key: `sub-${Date.now()}`,
         parentId: rootCat.body.id as string,
       })
       .expect(201);

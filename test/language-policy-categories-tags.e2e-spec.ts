@@ -90,14 +90,16 @@ describe('Language policy on categories/tags listings (e2e)', () => {
       .expect(200);
 
     // Create category and tag, attach to both versions
+    const catSlug = `lang-cat-${Date.now()}`;
     const category = await prisma.category.create({
-      data: { type: 'genre', name: `LangCat ${Date.now()}`, slug: `lang-cat-${Date.now()}` },
+      data: { type: 'genre', name: `LangCat ${Date.now()}`, slug: catSlug, key: catSlug },
     });
     await prisma.bookCategory.create({ data: { bookVersionId: vENid, categoryId: category.id } });
     await prisma.bookCategory.create({ data: { bookVersionId: vESid, categoryId: category.id } });
 
+    const tagSlug = `lang-tag-${Date.now()}`;
     const tag = await prisma.tag.create({
-      data: { name: `LangTag ${Date.now()}`, slug: `lang-tag-${Date.now()}` },
+      data: { name: `LangTag ${Date.now()}`, slug: tagSlug, key: tagSlug },
     });
     await prisma.bookTag.create({ data: { bookVersionId: vENid, tagId: tag.id } });
     await prisma.bookTag.create({ data: { bookVersionId: vESid, tagId: tag.id } });

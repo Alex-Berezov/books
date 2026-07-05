@@ -68,7 +68,12 @@ describe('Categories e2e', () => {
     const createRes = await request(http())
       .post('/categories')
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ type: 'genre', name: 'Fantasy E2E', slug: `fantasy-e2e-${Date.now()}` })
+      .send({
+        type: 'genre',
+        name: 'Fantasy E2E',
+        slug: `fantasy-e2e-${Date.now()}`,
+        key: `fantasy-e2e-${Date.now()}`,
+      })
       .expect(201);
     categoryId = createRes.body.id as string;
 
@@ -108,6 +113,7 @@ describe('Categories e2e', () => {
         type: 'genre',
         name: 'Dark Fantasy',
         slug: `dark-fantasy-e2e-${Date.now()}`,
+        key: `dark-fantasy-e2e-${Date.now()}`,
         parentId: categoryId,
       })
       .expect(201);
