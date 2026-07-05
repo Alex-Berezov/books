@@ -11,6 +11,7 @@ export type CategoryTreeNode = {
   id: string;
   name: string;
   slug: string;
+  key: string;
   type: PrismaCategory['type'];
   parentId: string | null;
   booksCount: number;
@@ -71,6 +72,7 @@ export class CategoryService {
       id: item.id,
       name: item.name,
       slug: item.slug,
+      key: item.key,
       type: item.type,
       booksCount: countMap.get(item.id) || 0,
       indexable: item.indexable ?? true,
@@ -106,6 +108,7 @@ export class CategoryService {
           type: dto.type,
           name: dto.name,
           slug: dto.slug,
+          key: dto.key || dto.slug,
           ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
           ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
           ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
@@ -154,6 +157,11 @@ export class CategoryService {
         type: dto.type,
         name: dto.name,
         slug: dto.slug,
+        ...(dto.key !== undefined
+          ? { key: dto.key }
+          : dto.slug !== undefined
+            ? { key: dto.slug }
+            : {}),
         ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
         ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
         ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
@@ -528,6 +536,7 @@ export class CategoryService {
         id: true,
         name: true,
         slug: true,
+        key: true,
         type: true,
         parentId: true,
         indexable: true,
@@ -562,6 +571,7 @@ export class CategoryService {
           id: c.id,
           name: c.name,
           slug: c.slug,
+          key: c.key,
           type: c.type,
           parentId: c.parentId,
           booksCount: countMap.get(c.id) || 0,

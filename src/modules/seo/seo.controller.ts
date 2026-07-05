@@ -82,7 +82,16 @@ export class SeoController {
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'] as const;
+    const allowed = [
+      'book',
+      'version',
+      'page',
+      'category',
+      'genre',
+      'tag',
+      'catalog',
+      'collection',
+    ] as const;
     const isAllowed = (val: string): val is (typeof allowed)[number] =>
       (allowed as readonly string[]).includes(val);
     if (!isAllowed(t)) {
@@ -97,7 +106,7 @@ export class SeoController {
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiQuery({
     name: 'type',
-    enum: ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'],
+    enum: ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog', 'collection'],
   })
   @ApiQuery({
     name: 'id',
@@ -120,7 +129,16 @@ export class SeoController {
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'] as const;
+    const allowed = [
+      'book',
+      'version',
+      'page',
+      'category',
+      'genre',
+      'tag',
+      'catalog',
+      'collection',
+    ] as const;
     const isAllowed = (val: string): val is (typeof allowed)[number] =>
       (allowed as readonly string[]).includes(val);
     if (!isAllowed(t)) {

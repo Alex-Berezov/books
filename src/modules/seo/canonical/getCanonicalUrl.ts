@@ -2,7 +2,16 @@ import { buildAbsoluteUrl } from '../utils/buildAbsoluteUrl';
 import { normalizeUrl } from './normalizeUrl';
 
 export function getCanonicalUrl(
-  type: 'book' | 'version' | 'page' | 'author' | 'genre' | 'category' | 'tag' | 'static',
+  type:
+    | 'book'
+    | 'version'
+    | 'page'
+    | 'author'
+    | 'genre'
+    | 'category'
+    | 'collection'
+    | 'tag'
+    | 'static',
   slug: string,
   locale?: string,
 ): string {
@@ -27,6 +36,9 @@ export function getCanonicalUrl(
       break;
     case 'category':
       path = lang ? `/${lang}/category/${slug}` : `/category/${slug}`;
+      break;
+    case 'collection':
+      path = lang ? `/${lang}/collection/${slug}` : `/collection/${slug}`;
       break;
     case 'tag':
       path = lang ? `/${lang}/tag/${slug}` : `/tag/${slug}`;

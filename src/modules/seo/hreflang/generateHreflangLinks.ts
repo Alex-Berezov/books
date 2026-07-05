@@ -7,7 +7,7 @@ export interface HreflangLink {
 }
 
 export function generateHreflangLinks(
-  type: 'book' | 'page' | 'author' | 'genre' | 'category' | 'tag' | 'static',
+  type: 'book' | 'page' | 'author' | 'genre' | 'category' | 'collection' | 'tag' | 'static',
   slugs: Record<string, string>,
 ): HreflangLink[] {
   const links: HreflangLink[] = [];

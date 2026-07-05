@@ -210,6 +210,7 @@ model Category {
   type        CategoryType
   name        String
   slug        String
+  key         String         @unique
   indexable   Boolean        @default(true)
   isVisible   Boolean        @default(true)
   sortOrder   Int            @default(0)
@@ -239,10 +240,14 @@ model BookCategory {
 }
 
 model Tag {
-  id    String    @id @default(uuid())
-  name  String
-  slug  String
-  books BookTag[]
+  id        String    @id @default(uuid())
+  name      String
+  slug      String
+  key       String    @unique
+  indexable Boolean   @default(true)
+  isVisible Boolean   @default(true)
+  sortOrder Int       @default(0)
+  books     BookTag[]
   translations TagTranslation[]
 }
 
@@ -526,6 +531,8 @@ model TagTranslation {
   faq              Json?    // [{question: string, answer: string}]
   relatedTagSlugs  Json?    // string[]
   relatedGenreSlugs Json?   // string[]
+  relatedCategorySlugs Json?   // string[]
+  relatedCollectionSlugs Json? // string[]
   seoId            Int?     @unique
   seo              Seo?     @relation("SeoForTagTranslation", fields: [seoId], references: [id], onDelete: SetNull)
   tag              Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)

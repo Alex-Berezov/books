@@ -29,6 +29,7 @@ import { MediaModule } from './modules/media/media.module';
 import { PublicModule } from './modules/public/public.module';
 import { SitemapModule } from './modules/sitemap/sitemap.module';
 import { AuthorModule } from './modules/author/author.module';
+import { ImportModule } from './modules/import/import.module';
 import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
 import { GlobalRateLimitGuard } from './common/guards/global-rate-limit.guard';
 import { HealthModule } from './modules/health/health.module';
@@ -80,6 +81,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     QueueModule,
     MediaJobsModule,
     AuthorModule,
+    ImportModule,
     // ...other modules
   ],
   controllers: [AppController],

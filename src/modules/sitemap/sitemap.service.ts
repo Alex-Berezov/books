@@ -71,19 +71,25 @@ export class SitemapService {
 
     // Categories (type=category) translations for this lang
     const categoryTranslations = await this.prisma.categoryTranslation.findMany({
-      where: { language: lang, category: { type: 'category' } },
+      where: { language: lang, category: { type: 'category', indexable: true, isVisible: true } },
       select: { slug: true, updatedAt: true },
     });
 
     // Genres (type=genre) translations for this lang
     const genreTranslations = await this.prisma.categoryTranslation.findMany({
-      where: { language: lang, category: { type: 'genre' } },
+      where: { language: lang, category: { type: 'genre', indexable: true, isVisible: true } },
+      select: { slug: true, updatedAt: true },
+    });
+
+    // Collections (type=collection) translations for this lang
+    const collectionTranslations = await this.prisma.categoryTranslation.findMany({
+      where: { language: lang, category: { type: 'collection', indexable: true, isVisible: true } },
       select: { slug: true, updatedAt: true },
     });
 
     // Tags translations for this lang
     const tagTranslations = await this.prisma.tagTranslation.findMany({
-      where: { language: lang },
+      where: { language: lang, tag: { indexable: true, isVisible: true } },
       select: { slug: true, updatedAt: true },
     });
 
@@ -105,6 +111,7 @@ export class SitemapService {
     addUrlNode(getCanonicalUrl('static', 'categories', lang), now);
     addUrlNode(getCanonicalUrl('static', 'genres', lang), now);
     addUrlNode(getCanonicalUrl('static', 'tags', lang), now);
+    addUrlNode(getCanonicalUrl('static', 'collections', lang), now);
 
     // 2. CMS Pages
     for (const p of pages) {
@@ -131,6 +138,11 @@ export class SitemapService {
     // 6. Tags
     for (const t of tagTranslations) {
       addUrlNode(getCanonicalUrl('tag', t.slug, lang), t.updatedAt || now);
+    }
+
+    // 7. Collections
+    for (const c of collectionTranslations) {
+      addUrlNode(getCanonicalUrl('collection', c.slug, lang), c.updatedAt || now);
     }
 
     const xml = [

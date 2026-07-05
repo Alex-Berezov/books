@@ -31,6 +31,13 @@ export class UpdateCategoryDto implements Partial<CreateCategoryDto> {
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;
 
+  @ApiPropertyOptional({ description: 'Stable unique key', pattern: SLUG_PATTERN })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
+  key?: string;
+
   @ApiPropertyOptional({ description: 'Whether the page is indexable by search engines' })
   @IsOptional()
   @IsBoolean()

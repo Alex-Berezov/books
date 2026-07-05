@@ -61,6 +61,12 @@ export class TagTranslationResponse {
     example: ['classic-literature', 'philosophical-fiction'],
   })
   relatedGenreSlugs?: unknown;
+
+  @ApiPropertyOptional({ type: [String], example: ['classic-literature', 'victorian-literature'] })
+  relatedCategorySlugs?: unknown;
+
+  @ApiPropertyOptional({ type: [String], example: ['short-reads', 'feel-good-books'] })
+  relatedCollectionSlugs?: unknown;
 }
 
 export class TagResponse {
@@ -72,6 +78,18 @@ export class TagResponse {
 
   @ApiProperty()
   slug: string;
+
+  @ApiProperty()
+  key: string;
+
+  @ApiPropertyOptional({ default: true })
+  indexable?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  isVisible?: boolean;
+
+  @ApiPropertyOptional({ default: 0 })
+  sortOrder?: number;
 
   @ApiProperty({ type: [TagTranslationResponse] })
   translations: TagTranslationResponse[];

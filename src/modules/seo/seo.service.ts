@@ -171,7 +171,16 @@ export class SeoService {
    * Public resolver with language awareness.
    */
   async resolvePublic(
-    type: ResolveSeoType | 'book' | 'version' | 'page' | 'category' | 'genre' | 'tag' | 'catalog',
+    type:
+      | ResolveSeoType
+      | 'book'
+      | 'version'
+      | 'page'
+      | 'category'
+      | 'genre'
+      | 'tag'
+      | 'catalog'
+      | 'collection',
     id: string,
     opts?: { pathLang?: Language; queryLang?: string; acceptLanguage?: string; slug?: string },
   ): Promise<Record<string, unknown>> {
@@ -195,7 +204,8 @@ export class SeoService {
       | 'category'
       | 'genre'
       | 'tag'
-      | 'catalog';
+      | 'catalog'
+      | 'collection';
 
     if (t === 'version') {
       const v = await this.prisma.bookVersion.findUnique({
@@ -742,7 +752,12 @@ export class SeoService {
       const metaTitle = seo?.metaTitle || baseMeta.title;
       const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
       const canonicalUrl = getCanonicalUrl('category', chosen.slug, effLang);
-      const robotsStatus = detectIndexability('published', canonicalUrl, seo?.robots);
+      const robotsStatus = detectIndexability(
+        'published',
+        canonicalUrl,
+        seo?.robots,
+        chosen.category.indexable,
+      );
 
       const ogTitle = seo?.ogTitle || metaTitle;
       const ogDescription = seo?.ogDescription || metaDescription;
@@ -848,6 +863,160 @@ export class SeoService {
       };
     }
 
+    if (t === 'collection') {
+      const effLang = opts?.pathLang ?? pickEffectiveLanguage();
+      const slugVal = opts?.slug || id;
+
+      const transCandidates = await this.prisma.categoryTranslation.findMany({
+        where: {
+          OR: [{ slug: slugVal }, { categoryId: id }],
+          category: { type: 'collection' },
+        },
+        include: { category: true },
+      });
+
+      if (transCandidates.length === 0) {
+        throw new NotFoundException('Collection not found');
+      }
+
+      const chosen = transCandidates.find((t) => t.language === effLang) ?? transCandidates[0];
+
+      const baseMeta = generateGenreMeta({
+        name: chosen.name,
+        description: chosen.description,
+        language: effLang,
+      });
+
+      const seo = chosen.seoId
+        ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
+        : null;
+      const metaTitle = seo?.metaTitle || baseMeta.title;
+      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
+      const canonicalUrl = getCanonicalUrl('collection', chosen.slug, effLang);
+      const robotsStatus = detectIndexability(
+        'published',
+        canonicalUrl,
+        seo?.robots,
+        chosen.category.indexable,
+      );
+
+      const ogTitle = seo?.ogTitle || metaTitle;
+      const ogDescription = seo?.ogDescription || metaDescription;
+      const ogUrl = seo?.ogUrl || canonicalUrl;
+      const ogImageUrl = seo?.ogImageUrl || undefined;
+      const ogImageAlt = seo?.ogImageAlt || metaTitle;
+      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+      // Hreflangs
+      const slugsMap: Record<string, string> = {};
+      for (const t of transCandidates) {
+        slugsMap[t.language.toLowerCase()] = t.slug;
+      }
+      const hreflangLinks = generateHreflangLinks('collection', slugsMap);
+
+      // Breadcrumbs
+      const breadcrumbItems = [
+        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+        {
+          name:
+            effLang === 'ru'
+              ? 'Подборки'
+              : effLang === 'es'
+                ? 'Colecciones'
+                : effLang === 'pt'
+                  ? 'Coleções'
+                  : effLang === 'fr'
+                    ? 'Collections'
+                    : 'Collections',
+          url: getCanonicalUrl('static', 'collections', effLang),
+        },
+      ];
+
+      // Add parent categories
+      try {
+        let currentParentId = chosen.category?.parentId ?? null;
+        const catPath: Array<{ name: string; slug: string }> = [];
+        while (currentParentId) {
+          const parentTrans = await this.prisma.categoryTranslation.findUnique({
+            where: { categoryId_language: { categoryId: currentParentId, language: effLang } },
+          });
+          const parentCat = await this.prisma.category.findUnique({
+            where: { id: currentParentId },
+          });
+          if (!parentCat) break;
+          catPath.push({
+            name: parentTrans?.name || parentCat.name,
+            slug: parentTrans?.slug || parentCat.slug,
+          });
+          currentParentId = parentCat.parentId;
+        }
+        catPath.reverse().forEach((p) => {
+          breadcrumbItems.push({
+            name: p.name,
+            url: getCanonicalUrl('collection', p.slug, effLang),
+          });
+        });
+      } catch {
+        // Ignore parent breadcrumbs errors
+      }
+
+      breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
+      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+      const collectionSchema = generateCollectionPageSchema(
+        'collection',
+        chosen.slug,
+        effLang,
+        chosen.name,
+        metaDescription || '',
+        [],
+      );
+
+      return {
+        meta: {
+          title: metaTitle,
+          description: metaDescription,
+          robots: robotsStatus,
+          canonicalUrl,
+        },
+        openGraph: {
+          title: ogTitle,
+          description: ogDescription,
+          type: 'website',
+          url: ogUrl,
+          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+        },
+        twitter: {
+          card: twitterCard,
+          site: seo?.twitterSite || undefined,
+          creator: seo?.twitterCreator || undefined,
+          image: ogImageUrl || undefined,
+        },
+        schema: {
+          '@context': 'https://schema.org',
+          '@graph': [
+            {
+              '@type': 'WebPage',
+              '@id': `${canonicalUrl}#webpage`,
+              url: canonicalUrl,
+              name: metaTitle,
+              description: metaDescription,
+              inLanguage: effLang.toLowerCase(),
+              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+            },
+            generateWebSiteSchema(effLang),
+            breadcrumbSchema,
+            collectionSchema,
+          ],
+        },
+        hreflangs: hreflangLinks,
+        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
+          name: item.name,
+          slug: item.url.split('/').pop() || '',
+        })),
+      };
+    }
+
     if (t === 'genre') {
       const effLang = opts?.pathLang ?? pickEffectiveLanguage();
       const slugVal = opts?.slug || id;
@@ -878,7 +1047,12 @@ export class SeoService {
       const metaTitle = seo?.metaTitle || baseMeta.title;
       const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
       const canonicalUrl = getCanonicalUrl('genre', chosen.slug, effLang);
-      const robotsStatus = detectIndexability('published', canonicalUrl, seo?.robots);
+      const robotsStatus = detectIndexability(
+        'published',
+        canonicalUrl,
+        seo?.robots,
+        chosen.category.indexable,
+      );
 
       const ogTitle = seo?.ogTitle || metaTitle;
       const ogDescription = seo?.ogDescription || metaDescription;
@@ -989,6 +1163,7 @@ export class SeoService {
         where: {
           OR: [{ slug: slugVal }, { tagId: id }],
         },
+        include: { tag: true },
       });
 
       if (transCandidates.length === 0) {
@@ -1009,7 +1184,13 @@ export class SeoService {
       const metaTitle = seo?.metaTitle || baseMeta.title;
       const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
       const canonicalUrl = getCanonicalUrl('tag', chosen.slug, effLang);
-      const robotsStatus = detectIndexability('published', canonicalUrl, seo?.robots);
+      const effectiveIndexable = chosen.tag?.indexable !== false && chosen.indexable !== false;
+      const robotsStatus = detectIndexability(
+        'published',
+        canonicalUrl,
+        seo?.robots,
+        effectiveIndexable,
+      );
 
       const ogTitle = seo?.ogTitle || metaTitle;
       const ogDescription = seo?.ogDescription || metaDescription;

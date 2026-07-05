@@ -52,6 +52,9 @@ export class CategoryResponse {
   @ApiProperty()
   slug: string;
 
+  @ApiProperty()
+  key: string;
+
   @ApiProperty({ enum: CategoryType })
   type: CategoryType;
 

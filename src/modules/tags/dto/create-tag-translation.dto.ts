@@ -120,6 +120,26 @@ export class CreateTagTranslationDto {
   @IsString({ each: true })
   relatedGenreSlugs?: string[];
 
+  @ApiPropertyOptional({
+    description: 'Related category slugs',
+    type: [String],
+    example: ['classic-literature', 'victorian-literature'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  relatedCategorySlugs?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Related collection slugs',
+    type: [String],
+    example: ['short-reads', 'feel-good-books'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  relatedCollectionSlugs?: string[];
+
   @ApiPropertyOptional({ description: 'SEO metadata', type: SeoInputDto })
   @IsOptional()
   @ValidateNested()

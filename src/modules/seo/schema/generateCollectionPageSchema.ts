@@ -6,7 +6,7 @@ export interface CollectionItem {
 }
 
 export function generateCollectionPageSchema(
-  type: 'category' | 'tag' | 'genre' | 'catalog',
+  type: 'category' | 'tag' | 'genre' | 'catalog' | 'collection',
   slug: string,
   language: string,
   name: string,

@@ -32,7 +32,7 @@ export class TagsService {
       this.prisma.tag.count({ where }),
       this.prisma.tag.findMany({
         where,
-        orderBy: { name: 'asc' },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
         skip,
         take: limit,
         include: {
@@ -42,6 +42,10 @@ export class TagsService {
               name: true,
               slug: true,
               description: true,
+              relatedTagSlugs: true,
+              relatedGenreSlugs: true,
+              relatedCategorySlugs: true,
+              relatedCollectionSlugs: true,
             },
           },
           _count: {
@@ -57,6 +61,10 @@ export class TagsService {
         id: tagged.id,
         name: tagged.name,
         slug: tagged.slug,
+        key: tagged.key,
+        indexable: tagged.indexable ?? true,
+        isVisible: tagged.isVisible ?? true,
+        sortOrder: tagged.sortOrder ?? 0,
         translations: tagged.translations,
         booksCount: tagged._count?.books || 0,
       };
@@ -74,14 +82,36 @@ export class TagsService {
   }
 
   async create(dto: CreateTagDto) {
-    // Base tag create (no unique slug constraint now). Translations are managed via separate endpoints.
-    return this.prisma.tag.create({ data: { name: dto.name, slug: dto.slug } });
+    return this.prisma.tag.create({
+      data: {
+        name: dto.name,
+        slug: dto.slug,
+        key: dto.key || dto.slug,
+        ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+        ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+      },
+    });
   }
 
   async update(id: string, dto: UpdateTagDto) {
     const exists = await this.prisma.tag.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Tag not found');
-    return this.prisma.tag.update({ where: { id }, data: { name: dto.name, slug: dto.slug } });
+    return this.prisma.tag.update({
+      where: { id },
+      data: {
+        name: dto.name,
+        slug: dto.slug,
+        ...(dto.key !== undefined
+          ? { key: dto.key }
+          : dto.slug !== undefined
+            ? { key: dto.slug }
+            : {}),
+        ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+        ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+      },
+    });
   }
 
   async remove(id: string) {
@@ -119,12 +149,15 @@ export class TagsService {
     });
     let tagId: string | null = null;
     let baseTag: Tag | null = null;
-    if (trans?.tag) {
+    if (trans?.tag && trans.tag.isVisible !== false) {
       tagId = trans.tag.id;
       baseTag = trans.tag;
-    } else {
+    }
+    if (!tagId) {
       // Fallback to base Tag by slug for backward compatibility
-      const found = await this.prisma.tag.findFirst({ where: { slug } });
+      const found = await this.prisma.tag.findFirst({
+        where: { slug, isVisible: true },
+      });
       if (!found) throw new NotFoundException('Tag not found');
       tagId = found.id;
       baseTag = found;
@@ -144,10 +177,16 @@ export class TagsService {
     const filtered = effective ? versions.filter((v) => v.language === effective) : versions;
     return {
       tag: {
-        ...baseTag,
+        id: baseTag!.id,
+        name: baseTag!.name,
+        slug: baseTag!.slug,
+        key: baseTag!.key,
+        indexable: baseTag!.indexable,
+        isVisible: baseTag!.isVisible,
+        sortOrder: baseTag!.sortOrder,
         translation: (trans as TagTranslation) ?? null,
         description: trans?.description ?? null,
-      },
+      } as Tag & { translation: TagTranslation | null; description: string | null },
       seo: trans?.seo ?? null,
       versions: filtered,
       availableLanguages,
@@ -169,12 +208,14 @@ export class TagsService {
     });
     let tagId: string | null = null;
     let baseTag: Tag | null = null;
-    if (trans?.tag) {
+    if (trans?.tag && trans.tag.isVisible !== false) {
       baseTag = trans.tag;
       tagId = trans.tag.id;
     } else {
       // Fallback to base Tag by slug for backward compatibility
-      const found = await this.prisma.tag.findFirst({ where: { slug } });
+      const found = await this.prisma.tag.findFirst({
+        where: { slug, isVisible: true },
+      });
       if (!found) throw new NotFoundException('Tag not found');
       tagId = found.id;
       baseTag = found;
@@ -236,6 +277,16 @@ export class TagsService {
           name: dto.name,
           slug: dto.slug,
           description: dto.description ?? null,
+          ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
+          ...(dto.relatedGenreSlugs !== undefined
+            ? { relatedGenreSlugs: dto.relatedGenreSlugs }
+            : {}),
+          ...(dto.relatedCategorySlugs !== undefined
+            ? { relatedCategorySlugs: dto.relatedCategorySlugs }
+            : {}),
+          ...(dto.relatedCollectionSlugs !== undefined
+            ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
+            : {}),
           ...(seoId !== undefined ? { seoId } : {}),
         },
         include: { seo: true },
@@ -288,6 +339,16 @@ export class TagsService {
         name: dto.name,
         slug: dto.slug,
         ...(dto.description !== undefined ? { description: dto.description } : {}),
+        ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
+        ...(dto.relatedGenreSlugs !== undefined
+          ? { relatedGenreSlugs: dto.relatedGenreSlugs }
+          : {}),
+        ...(dto.relatedCategorySlugs !== undefined
+          ? { relatedCategorySlugs: dto.relatedCategorySlugs }
+          : {}),
+        ...(dto.relatedCollectionSlugs !== undefined
+          ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
+          : {}),
         ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
       },
       include: { seo: true },

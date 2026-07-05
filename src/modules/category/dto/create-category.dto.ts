@@ -28,6 +28,12 @@ export class CreateCategoryDto {
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug!: string;
 
+  @ApiProperty({ description: 'Stable unique key', example: 'epic-fantasy', pattern: SLUG_PATTERN })
+  @IsString()
+  @MinLength(2)
+  @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
+  key!: string;
+
   @ApiPropertyOptional({
     description: 'Whether the page is indexable by search engines',
     default: true,
