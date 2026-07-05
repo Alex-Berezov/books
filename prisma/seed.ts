@@ -61,7 +61,7 @@ async function main() {
   ): Promise<{ id: string; slug: string; name: string }> => {
     const existing = await prisma.category.findFirst({ where: { slug } });
     if (existing) return existing;
-    return prisma.category.create({ data: { slug, name, type } });
+    return prisma.category.create({ data: { slug, name, type, key: slug } });
   };
 
   const categories = await Promise.all([
