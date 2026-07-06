@@ -198,7 +198,11 @@ export class ImportService {
         if (existingTr) {
           await this.prisma.categoryTranslation.update({
             where: { categoryId_language: { categoryId: existing.id, language } },
-            data: this.buildCategoryTranslationData(tr),
+            data: {
+              name: tr.name,
+              slug: tr.slug,
+              ...this.buildCategoryTranslationData(tr),
+            },
           });
         } else {
           await this.createCategoryTranslation(existing.id, language, tr);
@@ -283,7 +287,11 @@ export class ImportService {
         if (existingTr) {
           await this.prisma.tagTranslation.update({
             where: { tagId_language: { tagId: existing.id, language } },
-            data: this.buildTagTranslationData(tr),
+            data: {
+              name: tr.name,
+              slug: tr.slug,
+              ...this.buildTagTranslationData(tr),
+            },
           });
         } else {
           await this.createTagTranslation(existing.id, language, tr);
