@@ -322,19 +322,25 @@ model MediaAsset {
 // =====================
 
 model Page {
-  id        String      @id @default(uuid())
-  slug      String
-  title     String
-  type      PageType
-  content   String
-  status    PublicationStatus @default(draft)
-  language  Language
+  id               String      @id @default(uuid())
+  slug             String
+  title            String
+  type             PageType
+  content          String
+  status           PublicationStatus @default(draft)
+  language         Language
   translationGroupId String? @map("translation_group_id") @db.Uuid
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+
+  // SEO content fields
+  h1               String?
+  shortDescription String?   @db.Text
+  faq              Json?
+
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
   // Optional SEO one-to-one
-  seo       Seo?        @relation("SeoForPage", fields: [seoId], references: [id])
-  seoId     Int?        @unique
+  seo              Seo?       @relation("SeoForPage", fields: [seoId], references: [id])
+  seoId            Int?       @unique
 
   @@unique([language, slug])
   @@index([language])

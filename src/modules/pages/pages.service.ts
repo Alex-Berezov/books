@@ -185,6 +185,9 @@ export class PagesService {
           title: dto.title,
           type: dto.type,
           content: dto.content,
+          h1: dto.h1 ?? null,
+          shortDescription: dto.shortDescription ?? null,
+          faq: dto.faq ?? Prisma.JsonNull,
           language,
           status: 'draft',
           seoId: finalSeoId,
@@ -194,7 +197,6 @@ export class PagesService {
       });
     } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-        // Composite unique violation (language, slug)
         throw new BadRequestException('Page with same slug already exists for this language');
       }
       throw e;
@@ -258,13 +260,16 @@ export class PagesService {
           title: dto.title ?? undefined,
           type: dto.type ?? undefined,
           content: dto.content ?? undefined,
+          h1: dto.h1 !== undefined ? dto.h1 : undefined,
+          shortDescription: dto.shortDescription !== undefined ? dto.shortDescription : undefined,
+          faq: dto.faq !== undefined ? (dto.faq ?? Prisma.JsonNull) : undefined,
           language: dto.language ?? undefined,
           seoId: finalSeoId !== undefined ? finalSeoId : undefined,
           status: dto.status ?? undefined,
         },
         include: { seo: true },
       });
-    } catch (e: unknown) {
+    } catch (e) {
       const err = e as Prisma.PrismaClientKnownRequestError & { meta?: { constraint?: string } };
       if (err?.code === 'P2003' && err?.meta?.constraint === 'Page_seoId_fkey') {
         throw new BadRequestException('Invalid seoId: referenced SEO entity does not exist');

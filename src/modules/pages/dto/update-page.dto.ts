@@ -27,6 +27,29 @@ export class UpdatePageDto {
   @IsString()
   content?: string;
 
+  @ApiPropertyOptional({
+    description: 'SEO H1 heading (overrides title for display purposes)',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  h1?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Short description for overview cards/previews',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  shortDescription?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'FAQ structured data as JSON array of {question, answer}',
+    nullable: true,
+  })
+  @IsOptional()
+  faq?: Array<{ question: string; answer: string }> | null;
+
   @ApiPropertyOptional({ enum: ['en', 'es', 'fr', 'pt', 'ru'] })
   @IsOptional()
   @IsIn(['en', 'es', 'fr', 'pt', 'ru'])

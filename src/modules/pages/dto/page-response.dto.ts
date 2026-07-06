@@ -81,6 +81,23 @@ export class PageResponse {
   @ApiProperty({ example: 'Page content here...' })
   content!: string;
 
+  @ApiProperty({ required: false, nullable: true, example: 'Browse Book Categories' })
+  h1!: string | null;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    example: 'Explore book categories on Bibliaris.',
+  })
+  shortDescription!: string | null;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description: 'FAQ structured data as JSON array',
+  })
+  faq?: Record<string, unknown> | null;
+
   @ApiProperty({ enum: Object.values(Language), example: 'en' })
   language!: Language;
 

@@ -31,6 +31,22 @@ export class CreatePageDto {
   @IsString()
   content!: string;
 
+  @ApiPropertyOptional({ description: 'SEO H1 heading (overrides title for display purposes)' })
+  @IsOptional()
+  @IsString()
+  h1?: string;
+
+  @ApiPropertyOptional({ description: 'Short description for overview cards/previews' })
+  @IsOptional()
+  @IsString()
+  shortDescription?: string;
+
+  @ApiPropertyOptional({
+    description: 'FAQ structured data as JSON array of {question, answer}',
+  })
+  @IsOptional()
+  faq?: Array<{ question: string; answer: string }>;
+
   // Note: language for admin endpoints is derived from admin context (/:lang or X-Admin-Language)
   // The field remains optional for backward compatibility, but the controller ignores it.
   @ApiProperty({ enum: ['en', 'es', 'fr', 'pt', 'ru'], required: false })

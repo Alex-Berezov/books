@@ -117,7 +117,7 @@ export class PagesController {
   @ApiResponse({ status: 200, type: PageResponse })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  findById(@Param('id') id: string): Promise<PageResponse> {
+  findById(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
@@ -140,7 +140,7 @@ export class PagesController {
     @Param('lang', LangParamPipe) lang: Language,
     @Query() pagination?: PaginationDto,
     @Headers('x-admin-language') adminLangHeader?: string,
-  ): Promise<PaginatedPagesResponse> {
+  ) {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 20;
     const headerLang = (adminLangHeader || '').toLowerCase();
@@ -165,7 +165,7 @@ export class PagesController {
     @Param('lang', LangParamPipe) lang: Language,
     @Body() dto: CreatePageDto,
     @Headers('x-admin-language') adminLangHeader?: string,
-  ): Promise<PageResponse> {
+  ): Promise<any> {
     const headerLang = (adminLangHeader || '').toLowerCase();
     const effLang = (Object.values(Language) as string[]).includes(headerLang)
       ? (headerLang as Language)
