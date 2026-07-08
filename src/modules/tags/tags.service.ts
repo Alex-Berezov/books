@@ -196,10 +196,13 @@ export class TagsService {
   async versionsByTagLangSlug(
     pathLang: Language,
     slug: string,
+    page: number = 1,
+    limit: number = 20,
   ): Promise<{
     tag: Tag & { translation: TagTranslation | null; description: string | null };
     seo: Record<string, unknown> | null;
-    versions: BookVersion[];
+    data: BookVersion[];
+    meta: { page: number; limit: number; total: number; totalPages: number };
     availableLanguages: Language[];
   }> {
     const trans = await this.prisma.tagTranslation.findUnique({
@@ -220,11 +223,21 @@ export class TagsService {
       tagId = found.id;
       baseTag = found;
     }
-    const versions = await this.prisma.bookVersion.findMany({
-      where: { status: 'published', language: pathLang, tags: { some: { tagId } } },
-      orderBy: { createdAt: 'desc' },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
-    });
+    const where = {
+      status: 'published' as const,
+      language: pathLang,
+      tags: { some: { tagId } },
+    };
+    const [versions, total] = await Promise.all([
+      this.prisma.bookVersion.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      }),
+      this.prisma.bookVersion.count({ where }),
+    ]);
     const availableLanguages: Language[] = Array.from(
       new Set(
         (
@@ -242,7 +255,8 @@ export class TagsService {
         description: trans?.description ?? null,
       },
       seo: trans?.seo ?? null,
-      versions,
+      data: versions,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
       availableLanguages,
     };
   }

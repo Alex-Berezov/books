@@ -107,8 +107,13 @@ export class PublicController {
   @ApiOperation({ summary: 'Public list of book versions by localized tag' })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
-  tagsBySlug(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Param('slug') slug: string) {
-    return this.tags.versionsByTagLangSlug(pathLang, slug);
+  tagsBySlug(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('slug') slug: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.tags.versionsByTagLangSlug(pathLang, slug, page, limit);
   }
 
   // Localized author details by slug
