@@ -7,11 +7,6 @@ import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 
-interface TagWithCount extends Tag {
-  translations: TagTranslation[];
-  _count: { books: number };
-}
-
 @Injectable()
 export class TagsService {
   constructor(private prisma: PrismaService) {}
@@ -48,27 +43,35 @@ export class TagsService {
               relatedCollectionSlugs: true,
             },
           },
-          _count: {
-            select: { books: true },
-          },
         },
       }),
     ]);
 
-    const data = items.map((item) => {
-      const tagged = item as TagWithCount;
-      return {
-        id: tagged.id,
-        name: tagged.name,
-        slug: tagged.slug,
-        key: tagged.key,
-        indexable: tagged.indexable ?? true,
-        isVisible: tagged.isVisible ?? true,
-        sortOrder: tagged.sortOrder ?? 0,
-        translations: tagged.translations,
-        booksCount: tagged._count?.books || 0,
-      };
-    });
+    // Count distinct books per tag (via bookId, not BookVersion)
+    const tagIds = items.map((item) => item.id);
+    const bookCounts =
+      tagIds.length > 0
+        ? await this.prisma.$queryRaw<Array<{ tagId: string; booksCount: number }>>`
+          SELECT bt."tagId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
+          FROM "BookTag" bt
+          JOIN "BookVersion" bv ON bt."bookVersionId" = bv.id
+          WHERE bt."tagId" IN (${Prisma.join(tagIds)})
+          GROUP BY bt."tagId"
+        `
+        : [];
+    const countMap = new Map(bookCounts.map((row) => [row.tagId, row.booksCount]));
+
+    const data = items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      slug: item.slug,
+      key: item.key,
+      indexable: item.indexable ?? true,
+      isVisible: item.isVisible ?? true,
+      sortOrder: item.sortOrder ?? 0,
+      translations: item.translations,
+      booksCount: countMap.get(item.id) || 0,
+    }));
 
     return {
       data,
