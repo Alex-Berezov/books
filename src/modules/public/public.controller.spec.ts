@@ -44,6 +44,11 @@ describe('PublicController (unit)', () => {
     tags.versionsByTagLangSlug.mockResolvedValueOnce({ items: [] });
     const res = await controller.tagsBySlug(PrismaLanguage.pt, 'tag');
     expect(res).toEqual({ items: [] });
-    expect(tags.versionsByTagLangSlug).toHaveBeenCalledWith(PrismaLanguage.pt, 'tag');
+    expect(tags.versionsByTagLangSlug).toHaveBeenCalledWith(
+      PrismaLanguage.pt,
+      'tag',
+      undefined,
+      undefined,
+    );
   });
 });
