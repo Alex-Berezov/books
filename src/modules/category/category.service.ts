@@ -258,10 +258,12 @@ export class CategoryService {
       },
       seo: trans?.seo ?? null,
       data: filteredBooks,
-      total: filteredBooks.length,
-      page: 1,
-      limit: 100,
-      totalPages: 1,
+      meta: {
+        total: filteredBooks.length,
+        page: 1,
+        limit: 100,
+        totalPages: 1,
+      },
       availableLanguages,
     };
   }
@@ -343,10 +345,12 @@ export class CategoryService {
       },
       seo: trans?.seo ?? null,
       data: books,
-      total: books.length,
-      page: 1,
-      limit: 100,
-      totalPages: 1,
+      meta: {
+        total: books.length,
+        page: 1,
+        limit: 100,
+        totalPages: 1,
+      },
       availableLanguages,
     };
   }

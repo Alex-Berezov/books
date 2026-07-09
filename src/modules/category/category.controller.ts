@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -27,7 +29,6 @@ import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { AttachCategoryDto } from './dto/attach-category.dto';
-import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -90,12 +91,11 @@ export class CategoryController {
     enum: CategoryType,
     description: 'Filter by category type',
   })
-  list(
-    @Query() pagination?: PaginationDto,
+  async list(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
     @Query('type') type?: CategoryType,
   ): Promise<PaginatedCategoriesResponse> {
-    const page = pagination?.page ?? 1;
-    const limit = pagination?.limit ?? 20;
     return this.service.list(page, limit, type);
   }
 
