@@ -14,6 +14,16 @@ import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
 
+export class TagFaqDto {
+  @ApiProperty({ description: 'Question text' })
+  @IsString()
+  question!: string;
+
+  @ApiProperty({ description: 'Answer text' })
+  @IsString()
+  answer!: string;
+}
+
 export class CreateTagTranslationDto {
   @ApiProperty({ enum: Object.values(Language) })
   @IsEnum(Language)
@@ -91,14 +101,14 @@ export class CreateTagTranslationDto {
 
   @ApiPropertyOptional({
     description: 'FAQ items',
-    type: Array,
+    type: [TagFaqDto],
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => Object)
-  faq?: Array<{ question: string; answer: string }>;
+  @Type(() => TagFaqDto)
+  faq?: TagFaqDto[];
 
   @ApiPropertyOptional({
     description: 'Related tag slugs',
