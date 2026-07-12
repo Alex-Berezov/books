@@ -1,6 +1,6 @@
 import { INestApplication, Module, Controller, Post, Get, Body, Req } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import * as request from 'supertest';
+import request from 'supertest';
 import type { Request } from 'express';
 import { configureSecurity } from './app-security.config';
 

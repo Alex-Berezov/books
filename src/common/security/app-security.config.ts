@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import helmet from 'helmet';
-import * as express from 'express';
+import express from 'express';
 import { getCorsConfig, getCorsConfigInfo } from '../../config/cors.config';
 
 /**
