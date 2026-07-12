@@ -179,8 +179,6 @@ export class PagesService {
     const translationGroupId = dto.translationGroupId || randomUUID();
 
     try {
-      // TODO: Remove cast after prisma generate
-      /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment */
       const pageInput = {
         slug: dto.slug,
         title: dto.title,
@@ -191,13 +189,13 @@ export class PagesService {
         faq: dto.faq ?? Prisma.JsonNull,
         sections: dto.sections ?? Prisma.JsonNull,
         language,
-        status: 'draft',
+        status: 'draft' as const,
         seoId: finalSeoId,
         translationGroupId,
-      } as any;
+      };
       return await this.prisma.page.create({
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        data: pageInput,
+        data: pageInput as any,
         include: { seo: true },
       });
     } catch (e) {
@@ -272,9 +270,7 @@ export class PagesService {
       if (dto.status !== undefined) updateInput.status = dto.status;
       return await this.prisma.page.update({
         where: { id },
-        // TODO: Remove cast after prisma generate
-        /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment */
-        data: updateInput as any,
+        data: updateInput,
         include: { seo: true },
       });
     } catch (e) {
