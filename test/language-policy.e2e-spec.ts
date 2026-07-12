@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
@@ -76,8 +76,22 @@ describe('Language selection policy (e2e)', () => {
         isFree: false,
       })
       .expect(201);
+    const esVersionId = (vEs.body as { id: string }).id;
+
+    // Create audio chapters for the audio version
     await request(http())
-      .patch(`/versions/${(vEs.body as { id: string }).id}/publish`)
+      .post(`/versions/${esVersionId}/audio-chapters`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        number: 1,
+        title: 'Audio Chapter 1',
+        audioUrl: 'https://example.com/a/1.mp3',
+        duration: 100,
+      })
+      .expect(201);
+
+    await request(http())
+      .patch(`/versions/${esVersionId}/publish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 

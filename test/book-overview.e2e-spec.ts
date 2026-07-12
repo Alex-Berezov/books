@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
@@ -86,6 +86,18 @@ describe('Book Overview (e2e)', () => {
       })
       .expect(201);
     const versionAudioId = (createAudio.body as { id: string }).id;
+
+    // Create audio chapters for the audio version
+    await request(http())
+      .post(`/versions/${versionAudioId}/audio-chapters`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        number: 1,
+        title: 'Audio Chapter 1',
+        audioUrl: 'https://example.com/a/1.mp3',
+        duration: 100,
+      })
+      .expect(201);
 
     // Publish only text
     await request(http())
