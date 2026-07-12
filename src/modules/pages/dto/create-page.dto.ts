@@ -23,9 +23,9 @@ export class CreatePageDto {
   @MinLength(2)
   title!: string;
 
-  @ApiProperty({ enum: ['generic', 'category_index', 'author_index'] })
-  @IsIn(['generic', 'category_index', 'author_index'])
-  type!: 'generic' | 'category_index' | 'author_index';
+  @ApiProperty({ enum: ['generic', 'category_index', 'author_index', 'homepage'] })
+  @IsIn(['generic', 'category_index', 'author_index', 'homepage'])
+  type!: 'generic' | 'category_index' | 'author_index' | 'homepage';
 
   @ApiProperty({ description: 'Page content (markdown/HTML/text)' })
   @IsString()
@@ -70,6 +70,12 @@ export class CreatePageDto {
   @ValidateNested()
   @Type(() => SeoInputDto)
   seo?: SeoInputDto;
+
+  @ApiPropertyOptional({
+    description: 'Homepage sections configuration (JSON object with block data)',
+  })
+  @IsOptional()
+  sections?: Record<string, unknown>;
 
   @ApiPropertyOptional({ description: 'Translation Group ID (UUID) to link translations' })
   @IsOptional()

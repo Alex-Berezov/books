@@ -17,10 +17,10 @@ export class UpdatePageDto {
   @MinLength(2)
   title?: string;
 
-  @ApiPropertyOptional({ enum: ['generic', 'category_index', 'author_index'] })
+  @ApiPropertyOptional({ enum: ['generic', 'category_index', 'author_index', 'homepage'] })
   @IsOptional()
-  @IsIn(['generic', 'category_index', 'author_index'])
-  type?: 'generic' | 'category_index' | 'author_index';
+  @IsIn(['generic', 'category_index', 'author_index', 'homepage'])
+  type?: 'generic' | 'category_index' | 'author_index' | 'homepage';
 
   @ApiPropertyOptional({ description: 'Page content (markdown/HTML/text)' })
   @IsOptional()
@@ -68,6 +68,12 @@ export class UpdatePageDto {
   @ValidateNested()
   @Type(() => SeoInputDto)
   seo?: SeoInputDto;
+
+  @ApiPropertyOptional({
+    description: 'Homepage sections configuration (JSON object with block data)',
+  })
+  @IsOptional()
+  sections?: Record<string, unknown>;
 
   @ApiPropertyOptional({ description: 'Publication status', enum: ['draft', 'published'] })
   @IsOptional()

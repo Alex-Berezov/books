@@ -75,8 +75,8 @@ export class PageResponse {
   @ApiProperty({ example: 'About Us' })
   title!: string;
 
-  @ApiProperty({ enum: ['generic', 'category_index', 'author_index'] })
-  type!: 'generic' | 'category_index' | 'author_index';
+  @ApiProperty({ enum: ['generic', 'category_index', 'author_index', 'homepage'] })
+  type!: 'generic' | 'category_index' | 'author_index' | 'homepage';
 
   @ApiProperty({ example: 'Page content here...' })
   content!: string;
@@ -97,6 +97,13 @@ export class PageResponse {
     description: 'FAQ structured data as JSON array',
   })
   faq?: Record<string, unknown> | null;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description: 'Homepage sections configuration (JSON object with block data)',
+  })
+  sections?: Record<string, unknown> | null;
 
   @ApiProperty({ enum: Object.values(Language), example: 'en' })
   language!: Language;

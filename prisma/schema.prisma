@@ -336,6 +336,9 @@ model Page {
   shortDescription String?   @db.Text
   faq              Json?
 
+  // Homepage-specific sections data (JSON)
+  sections         Json?
+
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   // Optional SEO one-to-one
@@ -479,6 +482,7 @@ enum PageType {
   generic
   category_index
   author_index
+  homepage
 }
 
 // =====================

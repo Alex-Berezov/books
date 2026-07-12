@@ -179,20 +179,25 @@ export class PagesService {
     const translationGroupId = dto.translationGroupId || randomUUID();
 
     try {
+      // TODO: Remove cast after prisma generate
+      /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment */
+      const pageInput = {
+        slug: dto.slug,
+        title: dto.title,
+        type: dto.type,
+        content: dto.content,
+        h1: dto.h1 ?? null,
+        shortDescription: dto.shortDescription ?? null,
+        faq: dto.faq ?? Prisma.JsonNull,
+        sections: dto.sections ?? Prisma.JsonNull,
+        language,
+        status: 'draft',
+        seoId: finalSeoId,
+        translationGroupId,
+      } as any;
       return await this.prisma.page.create({
-        data: {
-          slug: dto.slug,
-          title: dto.title,
-          type: dto.type,
-          content: dto.content,
-          h1: dto.h1 ?? null,
-          shortDescription: dto.shortDescription ?? null,
-          faq: dto.faq ?? Prisma.JsonNull,
-          language,
-          status: 'draft',
-          seoId: finalSeoId,
-          translationGroupId,
-        },
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        data: pageInput,
         include: { seo: true },
       });
     } catch (e) {
@@ -253,20 +258,23 @@ export class PagesService {
     }
 
     try {
+      const updateInput: Record<string, unknown> = {};
+      if (dto.slug !== undefined) updateInput.slug = dto.slug;
+      if (dto.title !== undefined) updateInput.title = dto.title;
+      if (dto.type !== undefined) updateInput.type = dto.type;
+      if (dto.content !== undefined) updateInput.content = dto.content;
+      if (dto.h1 !== undefined) updateInput.h1 = dto.h1;
+      if (dto.shortDescription !== undefined) updateInput.shortDescription = dto.shortDescription;
+      if (dto.faq !== undefined) updateInput.faq = dto.faq ?? Prisma.JsonNull;
+      if (dto.sections !== undefined) updateInput.sections = dto.sections ?? Prisma.JsonNull;
+      if (dto.language !== undefined) updateInput.language = dto.language;
+      if (finalSeoId !== undefined) updateInput.seoId = finalSeoId;
+      if (dto.status !== undefined) updateInput.status = dto.status;
       return await this.prisma.page.update({
         where: { id },
-        data: {
-          slug: dto.slug ?? undefined,
-          title: dto.title ?? undefined,
-          type: dto.type ?? undefined,
-          content: dto.content ?? undefined,
-          h1: dto.h1 !== undefined ? dto.h1 : undefined,
-          shortDescription: dto.shortDescription !== undefined ? dto.shortDescription : undefined,
-          faq: dto.faq !== undefined ? (dto.faq ?? Prisma.JsonNull) : undefined,
-          language: dto.language ?? undefined,
-          seoId: finalSeoId !== undefined ? finalSeoId : undefined,
-          status: dto.status ?? undefined,
-        },
+        // TODO: Remove cast after prisma generate
+        /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment */
+        data: updateInput as any,
         include: { seo: true },
       });
     } catch (e) {
