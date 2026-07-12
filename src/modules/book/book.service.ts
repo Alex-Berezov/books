@@ -83,7 +83,7 @@ export class BookService {
           (v) => v.status === 'published' && (v._count?.chapters > 0 || v.type === 'text'),
         );
         const hasAudio = book.versions.some(
-          (v) => v.status === 'published' && (v._count?.audioChapters > 0 || v.type === 'audio'),
+          (v) => v.status === 'published' && v._count?.audioChapters > 0,
         );
         const hasSummary = book.versions.some(
           (v) => v.status === 'published' && v._count?.summaries > 0,
@@ -258,12 +258,9 @@ export class BookService {
       versions.find((v) => v._count.chapters > 0 || v.type === BookType.text) ||
       null;
 
-    // We can listen if it is preferredLang and has audioChapters OR has type audio
+    // We can listen if it is preferredLang and has audioChapters
     const audioVersion =
-      versions.find(
-        (v) =>
-          v.language === preferredLang && (v._count.audioChapters > 0 || v.type === BookType.audio),
-      ) || null;
+      versions.find((v) => v.language === preferredLang && v._count.audioChapters > 0) || null;
 
     // Pick referral version
     const referralVersion =
@@ -274,9 +271,7 @@ export class BookService {
     // Check features
     const hasText =
       !!textVersion && (textVersion._count.chapters > 0 || textVersion.type === BookType.text);
-    const hasAudio =
-      !!audioVersion &&
-      (audioVersion._count.audioChapters > 0 || audioVersion.type === BookType.audio);
+    const hasAudio = !!audioVersion;
 
     // Summary exists if BookSummary row exists for the resolved text or audio version
     const hasSummary =
