@@ -486,39 +486,62 @@ export class CategoryService {
 
   async attachCategoryToVersion(versionId: string, categoryId: string) {
     const [version, category] = await Promise.all([
-      this.prisma.bookVersion.findUnique({ where: { id: versionId } }),
+      this.prisma.bookVersion.findUnique({
+        where: { id: versionId },
+        select: { id: true, bookId: true },
+      }),
       this.prisma.category.findUnique({ where: { id: categoryId } }),
     ]);
     if (!version) throw new NotFoundException('BookVersion not found');
     if (!category) throw new NotFoundException('Category not found');
 
-    const exists = await this.prisma.bookCategory.findFirst({
-      where: { bookVersionId: versionId, categoryId },
+    const siblings = await this.prisma.bookVersion.findMany({
+      where: { bookId: version.bookId },
       select: { id: true },
     });
-    if (exists) return exists; // idempotent
 
-    try {
-      return await this.prisma.bookCategory.create({
-        data: { bookVersionId: versionId, categoryId },
-      });
-    } catch (e: any) {
-      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-        // unique(bookVersionId, categoryId)
-        return this.prisma.bookCategory.findFirst({
-          where: { bookVersionId: versionId, categoryId },
+    await this.prisma.$transaction(async (tx) => {
+      for (const sibling of siblings) {
+        const exists = await tx.bookCategory.findFirst({
+          where: { bookVersionId: sibling.id, categoryId },
+          select: { id: true },
         });
+        if (!exists) {
+          await tx.bookCategory.create({
+            data: { bookVersionId: sibling.id, categoryId },
+          });
+        }
       }
-      throw e;
-    }
+    });
+
+    return this.prisma.bookCategory.findFirst({
+      where: { bookVersionId: versionId, categoryId },
+    });
   }
 
   async detachCategoryFromVersion(versionId: string, categoryId: string) {
-    const link = await this.prisma.bookCategory.findFirst({
-      where: { bookVersionId: versionId, categoryId },
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: versionId },
+      select: { bookId: true },
     });
-    if (!link) throw new NotFoundException('Relation not found');
-    await this.prisma.bookCategory.delete({ where: { id: link.id } });
+    if (!version) throw new NotFoundException('BookVersion not found');
+
+    const siblings = await this.prisma.bookVersion.findMany({
+      where: { bookId: version.bookId },
+      select: { id: true },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const sibling of siblings) {
+        const link = await tx.bookCategory.findFirst({
+          where: { bookVersionId: sibling.id, categoryId },
+        });
+        if (link) {
+          await tx.bookCategory.delete({ where: { id: link.id } });
+        }
+      }
+    });
+
     return { success: true };
   }
 

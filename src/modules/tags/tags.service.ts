@@ -393,34 +393,60 @@ export class TagsService {
 
   async attach(versionId: string, tagId: string) {
     const [version, tag] = await Promise.all([
-      this.prisma.bookVersion.findUnique({ where: { id: versionId } }),
+      this.prisma.bookVersion.findUnique({
+        where: { id: versionId },
+        select: { id: true, bookId: true },
+      }),
       this.prisma.tag.findUnique({ where: { id: tagId } }),
     ]);
     if (!version) throw new NotFoundException('BookVersion not found');
     if (!tag) throw new NotFoundException('Tag not found');
 
-    const exists = await this.prisma.bookTag.findFirst({
-      where: { bookVersionId: versionId, tagId },
+    const siblings = await this.prisma.bookVersion.findMany({
+      where: { bookId: version.bookId },
       select: { id: true },
     });
-    if (exists) return exists; // idempotency
 
-    try {
-      return await this.prisma.bookTag.create({ data: { bookVersionId: versionId, tagId } });
-    } catch (e: any) {
-      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-        return this.prisma.bookTag.findFirst({ where: { bookVersionId: versionId, tagId } });
+    await this.prisma.$transaction(async (tx) => {
+      for (const sibling of siblings) {
+        const exists = await tx.bookTag.findFirst({
+          where: { bookVersionId: sibling.id, tagId },
+          select: { id: true },
+        });
+        if (!exists) {
+          await tx.bookTag.create({ data: { bookVersionId: sibling.id, tagId } });
+        }
       }
-      throw e;
-    }
+    });
+
+    return this.prisma.bookTag.findFirst({
+      where: { bookVersionId: versionId, tagId },
+    });
   }
 
   async detach(versionId: string, tagId: string) {
-    const link = await this.prisma.bookTag.findFirst({
-      where: { bookVersionId: versionId, tagId },
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: versionId },
+      select: { bookId: true },
     });
-    if (!link) return { success: true };
-    await this.prisma.bookTag.delete({ where: { id: link.id } });
+    if (!version) throw new NotFoundException('BookVersion not found');
+
+    const siblings = await this.prisma.bookVersion.findMany({
+      where: { bookId: version.bookId },
+      select: { id: true },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const sibling of siblings) {
+        const link = await tx.bookTag.findFirst({
+          where: { bookVersionId: sibling.id, tagId },
+        });
+        if (link) {
+          await tx.bookTag.delete({ where: { id: link.id } });
+        }
+      }
+    });
+
     return { success: true };
   }
 }
