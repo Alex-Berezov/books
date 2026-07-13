@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Language } from '@prisma/client';
 
 interface PrismaStub {
+  $transaction: jest.Mock;
   tag: { findUnique: jest.Mock; findFirst: jest.Mock };
   tagTranslation: { findUnique: jest.Mock };
   bookVersion: { findMany: jest.Mock; findUnique: jest.Mock };
@@ -10,6 +11,7 @@ interface PrismaStub {
 }
 
 const createPrismaStub = (): PrismaStub => ({
+  $transaction: jest.fn(),
   tag: { findUnique: jest.fn(), findFirst: jest.fn() },
   tagTranslation: { findUnique: jest.fn() },
   bookVersion: { findMany: jest.fn(), findUnique: jest.fn() },
@@ -22,6 +24,9 @@ describe('TagsService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (tx: PrismaStub) => unknown) => cb(prisma as unknown as PrismaStub));
     service = new TagsService(prisma as unknown as PrismaService);
   });
 
@@ -76,7 +81,8 @@ describe('TagsService', () => {
   });
 
   it('attach is idempotent and checks existence', async () => {
-    prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1' });
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
     prisma.tag.findUnique.mockResolvedValue({ id: 't1' });
     prisma.bookTag.findFirst.mockResolvedValue({ id: 'link1' });
     const res = await service.attach('v1', 't1');
@@ -85,7 +91,8 @@ describe('TagsService', () => {
   });
 
   it('detach is idempotent when link absent', async () => {
-    prisma.bookTag.findFirst.mockResolvedValue(null);
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
     const res = await service.detach('v1', 't1');
     expect(res).toEqual({ success: true });
   });

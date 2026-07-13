@@ -1,9 +1,10 @@
 import { CategoryService } from './category.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { Language } from '@prisma/client';
 
 interface PrismaStub {
+  $transaction: jest.Mock;
   category: {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
@@ -20,6 +21,7 @@ interface PrismaStub {
     delete: jest.Mock;
   };
   bookVersion: {
+    findUnique: jest.Mock;
     findMany: jest.Mock;
   };
   bookCategory: {
@@ -30,6 +32,7 @@ interface PrismaStub {
 }
 
 const createPrismaStub = (): PrismaStub => ({
+  $transaction: jest.fn(),
   category: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
@@ -45,7 +48,7 @@ const createPrismaStub = (): PrismaStub => ({
     update: jest.fn(),
     delete: jest.fn(),
   },
-  bookVersion: { findMany: jest.fn() },
+  bookVersion: { findUnique: jest.fn(), findMany: jest.fn() },
   bookCategory: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
 });
 
@@ -55,6 +58,9 @@ describe('CategoryService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (tx: PrismaStub) => unknown) => cb(prisma as unknown as PrismaStub));
     service = new CategoryService(prisma as unknown as PrismaService);
   });
 
@@ -161,10 +167,10 @@ describe('CategoryService', () => {
     expect(res.category.translation).toBeNull();
   });
 
-  it('detachCategoryFromVersion throws NotFound when relation missing', async () => {
-    prisma.bookCategory.findFirst.mockResolvedValue(null);
-    await expect(service.detachCategoryFromVersion('v1', 'c1')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+  it('detachCategoryFromVersion is idempotent when relation missing', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+    const res = await service.detachCategoryFromVersion('v1', 'c1');
+    expect(res).toEqual({ success: true });
   });
 });
