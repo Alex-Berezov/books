@@ -64,6 +64,7 @@ export class CategoryService {
       FROM "BookCategory" bc
       JOIN "BookVersion" bv ON bc."bookVersionId" = bv.id
       WHERE bc."categoryId" IN (${Prisma.join(categoryIds)})
+        AND bv.status = 'published'
       GROUP BY bc."categoryId"
     `;
     const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
@@ -563,6 +564,7 @@ export class CategoryService {
       SELECT bc."categoryId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
       FROM "BookCategory" bc
       JOIN "BookVersion" bv ON bc."bookVersionId" = bv.id
+      WHERE bv.status = 'published'
       GROUP BY bc."categoryId"
     `;
 

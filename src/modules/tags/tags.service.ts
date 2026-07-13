@@ -56,6 +56,7 @@ export class TagsService {
           FROM "BookTag" bt
           JOIN "BookVersion" bv ON bt."bookVersionId" = bv.id
           WHERE bt."tagId" IN (${Prisma.join(tagIds)})
+            AND bv.status = 'published'
           GROUP BY bt."tagId"
         `
         : [];
