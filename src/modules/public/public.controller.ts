@@ -116,6 +116,20 @@ export class PublicController {
     return this.tags.versionsByTagLangSlug(pathLang, slug, page, limit);
   }
 
+  // Localized authors list
+  @Get('authors')
+  @ApiOperation({ summary: 'Public authors list with language prefix' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  authorsList(
+    @Param('lang') _pathLang: PrismaLanguage,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.authors.list(page ? Number(page) : 1, limit ? Number(limit) : 50);
+  }
+
   // Localized author details by slug
   @Get('authors/:slug')
   @ApiOperation({ summary: 'Public author details by slug with language prefix' })
