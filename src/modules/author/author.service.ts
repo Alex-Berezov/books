@@ -319,27 +319,35 @@ export class AuthorService {
       faq,
       seo: translation.seo,
       similarAuthors,
-      books: bookVersions.map((bv) => ({
-        id: bv.id,
-        bookId: bv.bookId,
-        slug: bv.slug || bv.book.slug,
-        title: bv.title,
-        author: bv.author,
-        coverImageUrl: bv.coverImageUrl,
-        coverUrl: bv.coverImageUrl,
-        type: bv.type,
-        isFree: bv.isFree,
-        rating: 4.8, // Fallback if ratings are calculated
-        versions: [
-          {
-            language: bv.language,
-            status: bv.status,
-            type: bv.type,
+      books: await Promise.all(
+        bookVersions.map(async (bv) => {
+          const agg = await this.prisma.bookRating.aggregate({
+            where: { bookId: bv.bookId },
+            _avg: { score: true },
+          });
+          return {
+            id: bv.id,
+            bookId: bv.bookId,
+            slug: bv.slug || bv.book.slug,
+            title: bv.title,
+            author: bv.author,
             coverImageUrl: bv.coverImageUrl,
             coverUrl: bv.coverImageUrl,
-          },
-        ],
-      })),
+            type: bv.type,
+            isFree: bv.isFree,
+            rating: agg._avg.score ?? null,
+            versions: [
+              {
+                language: bv.language,
+                status: bv.status,
+                type: bv.type,
+                coverImageUrl: bv.coverImageUrl,
+                coverUrl: bv.coverImageUrl,
+              },
+            ],
+          };
+        }),
+      ),
     };
   }
 }

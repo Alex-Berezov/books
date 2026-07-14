@@ -34,12 +34,12 @@ export class BookService {
     return { score: rating?.score ?? null };
   }
 
-  private async getAverageRating(bookId: string): Promise<number> {
+  private async getAverageRating(bookId: string): Promise<number | null> {
     const agg = await this.prisma.bookRating.aggregate({
       where: { bookId },
       _avg: { score: true },
     });
-    return agg._avg.score || 5.0;
+    return agg._avg.score ?? null;
   }
 
   async findAll(paginationDto?: PaginationDto) {

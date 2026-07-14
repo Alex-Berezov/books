@@ -26,6 +26,9 @@ interface PrismaStub {
   bookVersion: {
     findMany: jest.Mock;
   };
+  bookRating: {
+    aggregate: jest.Mock;
+  };
   $transaction: jest.Mock;
 }
 
@@ -52,6 +55,9 @@ const createPrismaStub = (): PrismaStub => {
     },
     bookVersion: {
       findMany: jest.fn(),
+    },
+    bookRating: {
+      aggregate: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -178,6 +184,8 @@ describe('AuthorService', () => {
           book: { id: 'b1', slug: 'dorian-gray' },
         },
       ]);
+
+      prisma.bookRating.aggregate.mockResolvedValue({ _avg: { score: null } });
 
       const result = await service.getPublicBySlug('oscar-wilde', Language.en);
       expect(result.name).toBe('Oscar Wilde');
