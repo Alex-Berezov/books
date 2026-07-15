@@ -29,6 +29,9 @@ interface PrismaStub {
     create: jest.Mock;
     delete: jest.Mock;
   };
+  bookRating: {
+    groupBy: jest.Mock;
+  };
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -50,6 +53,7 @@ const createPrismaStub = (): PrismaStub => ({
   },
   bookVersion: { findUnique: jest.fn(), findMany: jest.fn() },
   bookCategory: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
+  bookRating: { groupBy: jest.fn() },
 });
 
 describe('CategoryService', () => {
@@ -159,6 +163,7 @@ describe('CategoryService', () => {
       { language: Language.en },
       { language: Language.es },
     ]);
+    prisma.bookRating.groupBy.mockResolvedValue([]);
 
     const res = await service.getBySlugWithBooks('cat', undefined, 'es, en;q=0.8');
     expect(res.availableLanguages.sort()).toEqual([Language.en, Language.es].sort());

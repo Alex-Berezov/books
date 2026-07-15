@@ -251,6 +251,16 @@ export class CategoryService {
       ? books.filter((b) => b.versions.some((v) => v.language === effective))
       : books;
 
+    const ratings = await this.prisma.bookRating.groupBy({
+      by: ['bookId'],
+      _avg: { score: true },
+    });
+    const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));
+    const data = filteredBooks.map((book) => ({
+      ...book,
+      rating: ratingMap.get(book.id) ?? null,
+    }));
+
     return {
       category: {
         ...category,
@@ -258,7 +268,7 @@ export class CategoryService {
         description: trans?.description ?? null,
       },
       seo: trans?.seo ?? null,
-      data: filteredBooks,
+      data,
       meta: {
         total: filteredBooks.length,
         page: 1,
@@ -337,6 +347,16 @@ export class CategoryService {
       ),
     );
 
+    const ratings = await this.prisma.bookRating.groupBy({
+      by: ['bookId'],
+      _avg: { score: true },
+    });
+    const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));
+    const data = books.map((book) => ({
+      ...book,
+      rating: ratingMap.get(book.id) ?? null,
+    }));
+
     return {
       category: {
         ...category,
@@ -345,7 +365,7 @@ export class CategoryService {
         language: pathLang,
       },
       seo: trans?.seo ?? null,
-      data: books,
+      data,
       meta: {
         total: books.length,
         page: 1,

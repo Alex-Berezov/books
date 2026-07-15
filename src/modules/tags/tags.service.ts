@@ -179,6 +179,19 @@ export class TagsService {
       available: availableLanguages,
     });
     const filtered = effective ? versions.filter((v) => v.language === effective) : versions;
+
+    const bookIds = [...new Set(filtered.map((v) => v.bookId))];
+    const ratings = await this.prisma.bookRating.groupBy({
+      by: ['bookId'],
+      where: { bookId: { in: bookIds } },
+      _avg: { score: true },
+    });
+    const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));
+    const enriched = filtered.map((v) => ({
+      ...v,
+      rating: ratingMap.get(v.bookId) ?? null,
+    }));
+
     return {
       tag: {
         id: baseTag!.id,
@@ -192,7 +205,7 @@ export class TagsService {
         description: trans?.description ?? null,
       } as Tag & { translation: TagTranslation | null; description: string | null },
       seo: trans?.seo ?? null,
-      versions: filtered,
+      versions: enriched,
       availableLanguages,
     };
   }
@@ -252,6 +265,18 @@ export class TagsService {
         ).map((v) => v.language),
       ),
     );
+    const bookIds = [...new Set(versions.map((v) => v.bookId))];
+    const ratings = await this.prisma.bookRating.groupBy({
+      by: ['bookId'],
+      where: { bookId: { in: bookIds } },
+      _avg: { score: true },
+    });
+    const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));
+    const data = versions.map((v) => ({
+      ...v,
+      rating: ratingMap.get(v.bookId) ?? null,
+    }));
+
     return {
       tag: {
         ...baseTag,
@@ -259,7 +284,7 @@ export class TagsService {
         description: trans?.description ?? null,
       },
       seo: trans?.seo ?? null,
-      data: versions,
+      data,
       meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
       availableLanguages,
     };

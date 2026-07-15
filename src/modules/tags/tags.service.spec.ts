@@ -8,6 +8,7 @@ interface PrismaStub {
   tagTranslation: { findUnique: jest.Mock };
   bookVersion: { findMany: jest.Mock; findUnique: jest.Mock };
   bookTag: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock };
+  bookRating: { groupBy: jest.Mock };
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -16,6 +17,7 @@ const createPrismaStub = (): PrismaStub => ({
   tagTranslation: { findUnique: jest.fn() },
   bookVersion: { findMany: jest.fn(), findUnique: jest.fn() },
   bookTag: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
+  bookRating: { groupBy: jest.fn() },
 });
 
 describe('TagsService', () => {
@@ -72,6 +74,7 @@ describe('TagsService', () => {
         seo: null,
       },
     ]);
+    prisma.bookRating.groupBy.mockResolvedValue([]);
 
     const res = await service.versionsByTagSlug('tag', undefined, 'es, en;q=0.8');
     expect(res.availableLanguages.sort()).toEqual([Language.en, Language.es].sort());
