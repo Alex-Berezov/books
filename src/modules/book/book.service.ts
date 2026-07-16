@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
+import { BookCardDto } from './dto/book-card.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { BookType, Language, Category, CategoryTranslation, Prisma } from '@prisma/client';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
@@ -394,6 +395,309 @@ export class BookService {
         audio: audioVersion?.id ?? null,
       },
       seo,
+    };
+  }
+
+  /**
+   * Find related books for a book page: same-author and similar-by-category cards.
+   *
+   * Returns a compact BookCardDto[] per block (no versions/translations/JSON content).
+   * - sameAuthor matched by stable `authorId` (NOT by localized author string); legacy fallback by
+   *   normalized author string only when authorId IS NULL.
+   * - similar matched by stable `categoryId`.
+   * - Rating fetched via a single `groupBy` (no N+1).
+   * - Stable sort: sameAuthor by publishedAt DESC, id ASC; similar by matched-categories count DESC,
+   *   rating DESC, publishedAt DESC, id ASC; fallback by rating DESC, publishedAt DESC, id ASC.
+   * - Dedup: current book excluded; a book cannot appear in both blocks; total <= limit.
+   *
+   * SQL count is bounded by a constant (does not grow with `limit`); no N+1.
+   */
+  async findRelated(
+    slug: string,
+    lang: Language,
+    limit = 8,
+  ): Promise<{
+    sameAuthor: BookCardDto[];
+    similar: BookCardDto[];
+  }> {
+    const effectiveLimit = Math.min(Math.max(limit, 1), 16);
+    const sameAuthorTake = Math.ceil(effectiveLimit / 2);
+
+    // 1. Resolve the current book's published version for this language
+    const currentVersion = await this.prisma.bookVersion.findFirst({
+      where: { slug, language: lang, status: 'published' },
+      select: {
+        bookId: true,
+        author: true,
+        authorId: true,
+      },
+    });
+
+    let currentBookId: string | null = currentVersion?.bookId ?? null;
+    let currentAuthor: string | null = currentVersion?.author ?? null;
+    let currentAuthorId: string | null = currentVersion?.authorId ?? null;
+    let currentCategoryIds: string[] = [];
+
+    if (!currentBookId) {
+      // Fallback: find by slug across any language, then check a version for the requested lang
+      const anyVersion = await this.prisma.bookVersion.findFirst({
+        where: { slug, status: 'published' },
+        select: { bookId: true },
+      });
+      currentBookId = anyVersion?.bookId ?? null;
+      if (currentBookId) {
+        const langVersion = await this.prisma.bookVersion.findFirst({
+          where: { bookId: currentBookId, language: lang, status: 'published' },
+          select: { author: true, authorId: true },
+        });
+        currentAuthor = langVersion?.author ?? null;
+        currentAuthorId = langVersion?.authorId ?? null;
+      }
+    }
+
+    if (!currentBookId) {
+      throw new NotFoundException(`Book with slug "${slug}" not found in language "${lang}"`);
+    }
+
+    // Gather all category IDs of the current book's version for this language
+    if (currentBookId) {
+      const currentLangVersion = await this.prisma.bookVersion.findFirst({
+        where: { bookId: currentBookId, language: lang, status: 'published' },
+        select: { id: true },
+      });
+      if (currentLangVersion) {
+        const cats = await this.prisma.bookCategory.findMany({
+          where: { bookVersionId: currentLangVersion.id },
+          select: { categoryId: true },
+        });
+        currentCategoryIds = cats.map((c) => c.categoryId);
+      }
+    }
+
+    // 2. sameAuthor: by stable authorId (preferred) or author string (legacy fallback)
+    const sameAuthorWhere: Prisma.BookVersionWhereInput = {
+      bookId: { not: currentBookId },
+      language: lang,
+      status: 'published',
+      ...(currentAuthorId
+        ? { authorId: currentAuthorId }
+        : currentAuthor
+          ? { author: { equals: currentAuthor, mode: 'insensitive' } }
+          : {}),
+    };
+
+    const sameAuthorVersions = await this.prisma.bookVersion.findMany({
+      where: sameAuthorWhere,
+      select: this.bookCardSelect(),
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+      take: sameAuthorTake,
+    });
+
+    const sameAuthorIds = sameAuthorVersions.map((v) => v.bookId);
+    const excludedFromSimilar = new Set<string>([currentBookId, ...sameAuthorIds]);
+
+    // 3. similar: by any shared category ID (stable), excluding sameAuthor + current.
+    //    Collect candidates first; rating sort applied after ratings are fetched (below).
+    let similarCandidates: { version: (typeof sameAuthorVersions)[number]; matched: number }[] = [];
+    if (currentCategoryIds.length > 0) {
+      const similarBookVersions = await this.prisma.bookCategory.findMany({
+        where: {
+          categoryId: { in: currentCategoryIds },
+          bookVersion: {
+            bookId: { notIn: Array.from(excludedFromSimilar) },
+            language: lang,
+            status: 'published',
+          },
+        },
+        select: {
+          bookVersion: { select: this.bookCardSelect() },
+          categoryId: true,
+        },
+      });
+
+      // Aggregate: count matched categories per bookId
+      const byBookId = new Map<
+        string,
+        { version: (typeof sameAuthorVersions)[number]; matched: number }
+      >();
+      for (const row of similarBookVersions) {
+        const v = row.bookVersion;
+        const existing = byBookId.get(v.bookId);
+        if (existing) {
+          existing.matched += 1;
+        } else {
+          byBookId.set(v.bookId, { version: v, matched: 1 });
+        }
+      }
+      similarCandidates = Array.from(byBookId.values());
+    }
+
+    // 4. fallback candidates: any published books in this language not yet selected
+    const similarCandidateBookIds = similarCandidates.map((c) => c.version.bookId);
+    const remainingSlots = effectiveLimit - sameAuthorVersions.length - similarCandidates.length;
+    let fallbackCandidates: (typeof sameAuthorVersions)[number][] = [];
+    if (remainingSlots > 0) {
+      const alreadySelected = new Set<string>([
+        currentBookId,
+        ...sameAuthorIds,
+        ...similarCandidateBookIds,
+      ]);
+      // Fetch a slightly larger pool to allow rating-based sorting, then trim
+      fallbackCandidates = await this.prisma.bookVersion.findMany({
+        where: {
+          bookId: { notIn: Array.from(alreadySelected) },
+          language: lang,
+          status: 'published',
+        },
+        select: this.bookCardSelect(),
+        // Order by publishedAt as a baseline; final rating-based sort below
+        orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+        take: remainingSlots,
+      });
+    }
+
+    // 5. Ratings via a single groupBy (no N+1) — for all selected books (sameAuthor + similar + fallback)
+    const candidateBookIds = Array.from(
+      new Set<string>([
+        ...sameAuthorIds,
+        ...similarCandidates.map((c) => c.version.bookId),
+        ...fallbackCandidates.map((v) => v.bookId),
+      ]),
+    );
+    const ratingsMap = await this.getRatingsForBooks(candidateBookIds);
+
+    // Sort similar by matched DESC, rating DESC, publishedAt DESC, id ASC (stable)
+    const similarSorted = similarCandidates
+      .sort(
+        (a, b) =>
+          b.matched - a.matched ||
+          (ratingsMap.get(b.version.bookId)?.avg ?? -1) -
+            (ratingsMap.get(a.version.bookId)?.avg ?? -1) ||
+          this.comparePublishedAtDesc(b.version.publishedAt, a.version.publishedAt) ||
+          a.version.id.localeCompare(b.version.id),
+      )
+      .slice(0, effectiveLimit - sameAuthorVersions.length)
+      .map((x) => x.version);
+
+    // Fill remaining with fallback, sorted by rating DESC, publishedAt DESC, id ASC (stable)
+    const remainingAfterSimilar = effectiveLimit - sameAuthorVersions.length - similarSorted.length;
+    const fallbackSorted = fallbackCandidates
+      .filter((v) => !similarSorted.some((s) => s.bookId === v.bookId))
+      .sort(
+        (a, b) =>
+          (ratingsMap.get(b.bookId)?.avg ?? -1) - (ratingsMap.get(a.bookId)?.avg ?? -1) ||
+          this.comparePublishedAtDesc(b.publishedAt, a.publishedAt) ||
+          a.id.localeCompare(b.id),
+      )
+      .slice(0, Math.max(remainingAfterSimilar, 0));
+    const similarVersions = [...similarSorted, ...fallbackSorted];
+
+    // 6. Fetch author slugs (AuthorTranslation.slug) for the requested language
+    const authorIds = Array.from(
+      new Set<string>(
+        [...sameAuthorVersions, ...similarVersions]
+          .map((v) => v.authorId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const authorSlugMap = await this.getAuthorSlugs(authorIds, lang);
+
+    return {
+      sameAuthor: sameAuthorVersions.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap)),
+      similar: similarVersions.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap)),
+    };
+  }
+
+  /**
+   * Prisma `select` for a compact BookCard row (only fields used by BookCard).
+   */
+  private bookCardSelect() {
+    return {
+      id: true,
+      bookId: true,
+      slug: true,
+      title: true,
+      author: true,
+      authorId: true,
+      coverImageUrl: true,
+      type: true,
+      publishedAt: true,
+      _count: { select: { chapters: true, audioChapters: true } },
+    } as const satisfies Prisma.BookVersionSelect;
+  }
+
+  private comparePublishedAtDesc(a: Date | null | undefined, b: Date | null | undefined): number {
+    if (!a && !b) return 0;
+    if (!a) return 1; // nulls last
+    if (!b) return -1;
+    return b.getTime() - a.getTime();
+  }
+
+  private async getRatingsForBooks(
+    bookIds: string[],
+  ): Promise<Map<string, { avg: number | null; count: number }>> {
+    if (bookIds.length === 0) return new Map();
+    const groups = await this.prisma.bookRating.groupBy({
+      by: ['bookId'],
+      where: { bookId: { in: bookIds } },
+      _avg: { score: true },
+      _count: { score: true },
+    });
+    const map = new Map<string, { avg: number | null; count: number }>();
+    for (const g of groups) {
+      map.set(g.bookId, { avg: g._avg.score ?? null, count: g._count.score });
+    }
+    return map;
+  }
+
+  private async getAuthorSlugs(authorIds: string[], lang: Language): Promise<Map<string, string>> {
+    if (authorIds.length === 0) return new Map();
+    // Prefer translation for the requested language; fallback to English; then any.
+    const translations = await this.prisma.authorTranslation.findMany({
+      where: { authorId: { in: authorIds }, language: { in: [lang, Language.en] } },
+      select: { authorId: true, language: true, slug: true },
+    });
+    const map = new Map<string, string>();
+    for (const t of translations) {
+      // First-wins preference: requested lang over en
+      if (!map.has(t.authorId) || t.language === lang) {
+        map.set(t.authorId, t.slug);
+      }
+    }
+    return map;
+  }
+
+  private toBookCardDto(
+    version: {
+      id: string;
+      bookId: string;
+      slug: string | null;
+      title: string;
+      author: string;
+      authorId: string | null;
+      coverImageUrl: string | null;
+      type: BookType;
+      publishedAt: Date | null;
+      _count: { chapters: number; audioChapters: number };
+    },
+    ratingsMap: Map<string, { avg: number | null; count: number }>,
+    authorSlugMap: Map<string, string>,
+  ): BookCardDto {
+    const rating = ratingsMap.get(version.bookId);
+    const hasText = version._count.chapters > 0 || version.type === BookType.text;
+    const hasAudio = version._count.audioChapters > 0;
+    return {
+      id: version.bookId,
+      slug: version.slug ?? version.id,
+      title: version.title,
+      author: version.author,
+      authorSlug: version.authorId ? (authorSlugMap.get(version.authorId) ?? null) : null,
+      coverImageUrl: version.coverImageUrl,
+      rating: rating?.avg ?? null,
+      ratingsCount: rating?.count ?? 0,
+      hasText,
+      hasAudio,
+      publishedAt: version.publishedAt ? version.publishedAt.toISOString() : null,
     };
   }
 

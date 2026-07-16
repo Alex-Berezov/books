@@ -8,6 +8,7 @@ import { AuthorService } from '../author/author.service';
 import { Language as PrismaLanguage } from '@prisma/client';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { LanguageResolverGuard } from '../../common/guards/language-resolver.guard';
+import { RelatedBooksQueryDto } from '../book/dto/related-books.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -65,6 +66,24 @@ export class PublicController {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });
+  }
+
+  // Related books (compact BookCard) for a book page: same-author + similar-by-category
+  @Get('books/:slug/related')
+  @ApiOperation({ summary: 'Related books (compact cards) for a book page' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiParam({ name: 'slug' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Maximum total number of unique cards (sameAuthor + similar). Default 8, max 16.',
+  })
+  related(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('slug') slug: string,
+    @Query() query: RelatedBooksQueryDto,
+  ) {
+    return this.books.findRelated(slug, pathLang, query.limit);
   }
 
   // Localized reader bootstrap endpoint
