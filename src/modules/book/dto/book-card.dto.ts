@@ -66,4 +66,12 @@ export class BookCardDto {
     nullable: true,
   })
   publishedAt!: string | null;
+
+  @ApiProperty({
+    description:
+      'Stable category IDs attached to this book version (for homepage category-based filtering).',
+    example: ['b176b984-e62e-4d50-9f76-873ab0925956'],
+    type: [String],
+  })
+  categoryIds!: string[];
 }

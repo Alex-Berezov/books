@@ -9,6 +9,7 @@ import { Language as PrismaLanguage } from '@prisma/client';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { LanguageResolverGuard } from '../../common/guards/language-resolver.guard';
 import { RelatedBooksQueryDto } from '../book/dto/related-books.dto';
+import { BookCardsQueryDto } from '../book/dto/book-cards-query.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -86,6 +87,19 @@ export class PublicController {
     return this.books.findRelated(slug, pathLang, query.limit);
   }
 
+  // Compact paginated book cards (homepage / catalog) — replaces legacy /books?limit=100
+  @Get('books/cards')
+  @ApiOperation({ summary: 'Compact paginated book cards for a language (homepage/catalog)' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Cards per page. Default 24, max 48.' })
+  bookCards(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query() query: BookCardsQueryDto,
+  ) {
+    return this.books.findCards(pathLang, query.page, query.limit);
+  }
+
   // Localized reader bootstrap endpoint
   @Get('books/:slug/reader-bootstrap')
   @ApiOperation({ summary: 'Get reader bootstrap info in a single query' })
@@ -159,5 +173,20 @@ export class PublicController {
     @Param('slug') slug: string,
   ) {
     return this.authors.getPublicBySlug(slug, pathLang);
+  }
+
+  // Compact paginated book cards for an author (author page fallback) — filters by stable authorId
+  @Get('authors/:slug/books/cards')
+  @ApiOperation({ summary: 'Compact paginated book cards for an author (author page fallback)' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiParam({ name: 'slug', description: 'Author slug (resolved to stable authorId)' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Cards per page. Default 24, max 48.' })
+  authorBookCards(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('slug') slug: string,
+    @Query() query: BookCardsQueryDto,
+  ) {
+    return this.books.findCardsByAuthor(slug, pathLang, query.page, query.limit);
   }
 }

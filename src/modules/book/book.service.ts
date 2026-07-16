@@ -609,6 +609,153 @@ export class BookService {
   }
 
   /**
+   * Compact paginated list of published book cards for a language (homepage / catalog).
+   *
+   * Returns BookCardDto[] (no versions/translations/JSON content). One card per book,
+   * using the localized published version for slug/title/author/cover.
+   * Rating via a single groupBy (no N+1). Server-side max limit = 48.
+   */
+  async findCards(
+    lang: Language,
+    page = 1,
+    limit = 24,
+  ): Promise<{
+    items: BookCardDto[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    const effectivePage = Math.max(page, 1);
+    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const skip = (effectivePage - 1) * effectiveLimit;
+
+    // Distinct bookIds that have a published version in this language
+    const versions = await this.prisma.bookVersion.findMany({
+      where: { language: lang, status: 'published' },
+      select: { id: true, bookId: true },
+      distinct: ['bookId'],
+      skip,
+      take: effectiveLimit,
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+    });
+
+    const total = (
+      await this.prisma.bookVersion.groupBy({
+        by: ['bookId'],
+        where: { language: lang, status: 'published' },
+      })
+    ).length;
+
+    const bookIds = versions.map((v) => v.bookId);
+    return this.buildCardsResponse(bookIds, lang, effectivePage, effectiveLimit, total);
+  }
+
+  /**
+   * Compact paginated list of published book cards for an author (author page fallback).
+   *
+   * `authorSlug` is resolved to a stable `authorId` via AuthorTranslation.slug, then
+   * filtered by BookVersion.authorId. NOT by localized author display name.
+   */
+  async findCardsByAuthor(
+    authorSlug: string,
+    lang: Language,
+    page = 1,
+    limit = 24,
+  ): Promise<{
+    items: BookCardDto[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    const effectivePage = Math.max(page, 1);
+    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const skip = (effectivePage - 1) * effectiveLimit;
+
+    // Resolve authorId from slug (prefer requested lang, fallback en)
+    const authorTranslation = await this.prisma.authorTranslation.findFirst({
+      where: {
+        slug: authorSlug,
+        language: { in: [lang, Language.en] },
+      },
+      select: { authorId: true, language: true },
+      orderBy: [{ language: 'asc' }],
+    });
+
+    if (!authorTranslation) {
+      return {
+        items: [],
+        pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
+      };
+    }
+
+    const authorId = authorTranslation.authorId;
+
+    const versions = await this.prisma.bookVersion.findMany({
+      where: { authorId, language: lang, status: 'published' },
+      select: { id: true, bookId: true },
+      distinct: ['bookId'],
+      skip,
+      take: effectiveLimit,
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+    });
+
+    const total = (
+      await this.prisma.bookVersion.groupBy({
+        by: ['bookId'],
+        where: { authorId, language: lang, status: 'published' },
+      })
+    ).length;
+
+    const bookIds = versions.map((v) => v.bookId);
+    return this.buildCardsResponse(bookIds, lang, effectivePage, effectiveLimit, total);
+  }
+
+  /**
+   * Build a BookCardDto[] response from a set of bookIds for a language.
+   * Shared by findCards / findCardsByAuthor.
+   */
+  private async buildCardsResponse(
+    bookIds: string[],
+    lang: Language,
+    page: number,
+    limit: number,
+    total: number,
+  ): Promise<{
+    items: BookCardDto[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    if (bookIds.length === 0) {
+      return {
+        items: [],
+        pagination: { page, limit, total, totalPages: total === 0 ? 0 : Math.ceil(total / limit) },
+      };
+    }
+
+    // Fetch one localized published version per book (the first by publishedAt desc)
+    const versions = await this.prisma.bookVersion.findMany({
+      where: { bookId: { in: bookIds }, language: lang, status: 'published' },
+      select: this.bookCardSelect(),
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+    });
+
+    // Deduplicate by bookId (keep first = latest publishedAt), preserve bookIds order
+    const byBookId = new Map<string, (typeof versions)[number]>();
+    for (const v of versions) {
+      if (!byBookId.has(v.bookId)) byBookId.set(v.bookId, v);
+    }
+    const ordered = bookIds
+      .map((id) => byBookId.get(id))
+      .filter((v): v is (typeof versions)[number] => !!v);
+
+    const ratingsMap = await this.getRatingsForBooks(bookIds);
+    const authorIds = Array.from(
+      new Set(ordered.map((v) => v.authorId).filter((id): id is string => !!id)),
+    );
+    const authorSlugMap = await this.getAuthorSlugs(authorIds, lang);
+
+    return {
+      items: ordered.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap)),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
    * Prisma `select` for a compact BookCard row (only fields used by BookCard).
    */
   private bookCardSelect() {
@@ -623,6 +770,7 @@ export class BookService {
       type: true,
       publishedAt: true,
       _count: { select: { chapters: true, audioChapters: true } },
+      categories: { select: { categoryId: true } },
     } as const satisfies Prisma.BookVersionSelect;
   }
 
@@ -679,6 +827,7 @@ export class BookService {
       type: BookType;
       publishedAt: Date | null;
       _count: { chapters: number; audioChapters: number };
+      categories: { categoryId: string }[];
     },
     ratingsMap: Map<string, { avg: number | null; count: number }>,
     authorSlugMap: Map<string, string>,
@@ -698,6 +847,7 @@ export class BookService {
       hasText,
       hasAudio,
       publishedAt: version.publishedAt ? version.publishedAt.toISOString() : null,
+      categoryIds: version.categories.map((c) => c.categoryId),
     };
   }
 
