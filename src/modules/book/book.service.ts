@@ -707,8 +707,173 @@ export class BookService {
   }
 
   /**
+   * Compact paginated list of published book cards for a category (or genre/collection).
+   *
+   * Resolves the category slug to a stable category ID via CategoryTranslation,
+   * then returns BookCardDto[] for books in that category.
+   */
+  async findCardsByCategory(
+    categorySlug: string,
+    lang: Language,
+    page = 1,
+    limit = 24,
+  ): Promise<{
+    items: BookCardDto[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    const effectivePage = Math.max(page, 1);
+    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const skip = (effectivePage - 1) * effectiveLimit;
+
+    // Resolve category slug to a stable category ID (prefer translation, fallback base slug)
+    const catTrans = await this.prisma.categoryTranslation.findUnique({
+      where: { language_slug: { language: lang, slug: categorySlug } },
+      select: { categoryId: true },
+    });
+    let categoryId: string | null = catTrans?.categoryId ?? null;
+
+    if (!categoryId) {
+      const baseCat = await this.prisma.category.findFirst({
+        where: {
+          OR: [
+            { slug: categorySlug },
+            ...(categorySlug.match(/^[0-9a-f-]{36}$/i) ? [{ id: categorySlug }] : []),
+          ],
+        },
+        select: { id: true },
+      });
+      if (!baseCat) {
+        return {
+          items: [],
+          pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
+        };
+      }
+      categoryId = baseCat.id;
+    }
+
+    // Find distinct bookIds that have a published version in this language with this category
+    const bookIds = await this.getBookIdsByCategory(categoryId, lang, skip, effectiveLimit);
+    const total = await this.countBookIdsByCategory(categoryId, lang);
+
+    return this.buildCardsResponse(bookIds, lang, effectivePage, effectiveLimit, total);
+  }
+
+  /**
+   * Compact paginated list of published book cards for a tag.
+   *
+   * Resolves the tag slug to a stable tag ID via TagTranslation,
+   * then returns BookCardDto[] for books with that tag.
+   */
+  async findCardsByTag(
+    tagSlug: string,
+    lang: Language,
+    page = 1,
+    limit = 24,
+  ): Promise<{
+    items: BookCardDto[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    const effectivePage = Math.max(page, 1);
+    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const skip = (effectivePage - 1) * effectiveLimit;
+
+    // Resolve tag slug to a stable tag ID (prefer translation, fallback base slug)
+    const tagTrans = await this.prisma.tagTranslation.findUnique({
+      where: { language_slug: { language: lang, slug: tagSlug } },
+      select: { tagId: true },
+    });
+    let tagId: string | null = tagTrans?.tagId ?? null;
+
+    if (!tagId) {
+      const baseTag = await this.prisma.tag.findFirst({
+        where: { slug: tagSlug, isVisible: true },
+        select: { id: true },
+      });
+      if (!baseTag) {
+        return {
+          items: [],
+          pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
+        };
+      }
+      tagId = baseTag.id;
+    }
+
+    // Find distinct bookIds that have a published version in this language with this tag
+    const bookIds = await this.getBookIdsByTag(tagId, lang, skip, effectiveLimit);
+    const total = await this.countBookIdsByTag(tagId, lang);
+
+    return this.buildCardsResponse(bookIds, lang, effectivePage, effectiveLimit, total);
+  }
+
+  private async getBookIdsByCategory(
+    categoryId: string,
+    lang: Language,
+    skip: number,
+    take: number,
+  ): Promise<string[]> {
+    const versions = await this.prisma.bookVersion.findMany({
+      where: {
+        language: lang,
+        status: 'published',
+        categories: { some: { categoryId } },
+      },
+      select: { id: true, bookId: true },
+      distinct: ['bookId'],
+      skip,
+      take,
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+    });
+    return versions.map((v) => v.bookId);
+  }
+
+  private async countBookIdsByCategory(categoryId: string, lang: Language): Promise<number> {
+    const groups = await this.prisma.bookVersion.groupBy({
+      by: ['bookId'],
+      where: {
+        language: lang,
+        status: 'published',
+        categories: { some: { categoryId } },
+      },
+    });
+    return groups.length;
+  }
+
+  private async getBookIdsByTag(
+    tagId: string,
+    lang: Language,
+    skip: number,
+    take: number,
+  ): Promise<string[]> {
+    const versions = await this.prisma.bookVersion.findMany({
+      where: {
+        language: lang,
+        status: 'published',
+        tags: { some: { tagId } },
+      },
+      select: { id: true, bookId: true },
+      distinct: ['bookId'],
+      skip,
+      take,
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+    });
+    return versions.map((v) => v.bookId);
+  }
+
+  private async countBookIdsByTag(tagId: string, lang: Language): Promise<number> {
+    const groups = await this.prisma.bookVersion.groupBy({
+      by: ['bookId'],
+      where: {
+        language: lang,
+        status: 'published',
+        tags: { some: { tagId } },
+      },
+    });
+    return groups.length;
+  }
+
+  /**
    * Build a BookCardDto[] response from a set of bookIds for a language.
-   * Shared by findCards / findCardsByAuthor.
+   * Shared by findCards / findCardsByAuthor / findCardsByCategory / findCardsByTag.
    */
   private async buildCardsResponse(
     bookIds: string[],

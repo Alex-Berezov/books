@@ -135,6 +135,21 @@ export class PublicController {
     return this.categories.getByLangSlugWithBooks(pathLang, slug);
   }
 
+  // Compact paginated book cards for a category (or genre/collection)
+  @Get('categories/:slug/books/cards')
+  @ApiOperation({ summary: 'Compact paginated book cards for a category/genre/collection' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiParam({ name: 'slug', description: 'Category/Genre/Collection slug' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Cards per page. Default 24, max 48.' })
+  categoryBookCards(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('slug') slug: string,
+    @Query() query: BookCardsQueryDto,
+  ) {
+    return this.books.findCardsByCategory(slug, pathLang, query.page, query.limit);
+  }
+
   // Localized tags by translation slug
   @Get('tags/:slug/books')
   @ApiOperation({ summary: 'Public list of book versions by localized tag' })
@@ -147,6 +162,21 @@ export class PublicController {
     @Query('limit') limit?: number,
   ) {
     return this.tags.versionsByTagLangSlug(pathLang, slug, page, limit);
+  }
+
+  // Compact paginated book cards for a tag
+  @Get('tags/:slug/books/cards')
+  @ApiOperation({ summary: 'Compact paginated book cards for a tag' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiParam({ name: 'slug', description: 'Tag slug' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Cards per page. Default 24, max 48.' })
+  tagBookCards(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('slug') slug: string,
+    @Query() query: BookCardsQueryDto,
+  ) {
+    return this.books.findCardsByTag(slug, pathLang, query.page, query.limit);
   }
 
   // Localized authors list
