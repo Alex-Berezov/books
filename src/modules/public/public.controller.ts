@@ -171,12 +171,17 @@ export class PublicController {
   @ApiParam({ name: 'slug', description: 'Tag slug' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
   @ApiQuery({ name: 'limit', required: false, description: 'Cards per page. Default 24, max 48.' })
+  @ApiQuery({
+    name: 'includeTag',
+    required: false,
+    description: 'Include tag details. Default false.',
+  })
   tagBookCards(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Param('slug') slug: string,
     @Query() query: BookCardsQueryDto,
   ) {
-    return this.books.findCardsByTag(slug, pathLang, query.page, query.limit);
+    return this.books.findCardsByTag(slug, pathLang, query.page, query.limit, query.includeTag);
   }
 
   // Localized authors list

@@ -823,6 +823,7 @@ export class BookService {
     lang: Language,
     page = 1,
     limit = 24,
+    includeTag = false,
   ): Promise<{
     tag: Record<string, unknown> | null;
     items: BookCardDto[];
@@ -861,21 +862,6 @@ export class BookService {
       matchedTranslation = trans ? { ...trans, tag: undefined } : null;
     }
 
-    // Fetch full tag with book count
-    const tag = await this.prisma.tag.findUnique({
-      where: { id: tagId },
-      select: {
-        id: true,
-        key: true,
-        slug: true,
-        name: true,
-        indexable: true,
-        isVisible: true,
-        sortOrder: true,
-        _count: { select: { books: true } },
-      },
-    });
-
     // Find distinct bookIds that have a published version in this language with this tag
     const bookIds = await this.getBookIdsByTag(tagId, lang, skip, effectiveLimit);
     const total = await this.countBookIdsByTag(tagId, lang);
@@ -888,22 +874,40 @@ export class BookService {
       total,
     );
 
+    let tagResult: Record<string, unknown> | null = null;
+    if (includeTag) {
+      const tag = await this.prisma.tag.findUnique({
+        where: { id: tagId },
+        select: {
+          id: true,
+          key: true,
+          slug: true,
+          name: true,
+          indexable: true,
+          isVisible: true,
+          sortOrder: true,
+          _count: { select: { books: true } },
+        },
+      });
+      if (tag) {
+        tagResult = {
+          id: tag.id,
+          key: tag.key,
+          slug: matchedTranslation?.slug ?? tag.slug,
+          name: matchedTranslation?.name ?? tag.name,
+          indexable: tag.indexable,
+          isVisible: tag.isVisible,
+          sortOrder: tag.sortOrder,
+          booksCount: tag._count.books,
+          language: lang,
+          translation: matchedTranslation,
+          translations: matchedTranslation ? [matchedTranslation] : [],
+        };
+      }
+    }
+
     return {
-      tag: tag
-        ? {
-            id: tag.id,
-            key: tag.key,
-            slug: matchedTranslation?.slug ?? tag.slug,
-            name: matchedTranslation?.name ?? tag.name,
-            indexable: tag.indexable,
-            isVisible: tag.isVisible,
-            sortOrder: tag.sortOrder,
-            booksCount: tag._count.books,
-            language: lang,
-            translation: matchedTranslation,
-            translations: matchedTranslation ? [matchedTranslation] : [],
-          }
-        : null,
+      tag: tagResult,
       items: cardsResponse.items,
       pagination: cardsResponse.pagination,
     };

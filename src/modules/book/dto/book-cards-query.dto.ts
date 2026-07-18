@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsInt, Min, Max } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsOptional, IsInt, Min, Max, IsBoolean } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 
 /**
  * Query DTO for compact books-cards endpoint.
@@ -29,4 +29,16 @@ export class BookCardsQueryDto {
   @Min(1)
   @Max(48)
   limit?: number = 24;
+
+  @ApiProperty({
+    description:
+      'Include tag details in response. Default false — returns tag: null for card-only use cases.',
+    example: false,
+    default: false,
+    required: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  includeTag?: boolean = false;
 }
