@@ -766,9 +766,12 @@ export class SeoService {
       const ogImageAlt = seo?.ogImageAlt || metaTitle;
       const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
 
-      // Hreflangs
+      // Hreflangs — fetch all translations of this category for complete hreflang set
+      const allCategoryTranslations = await this.prisma.categoryTranslation.findMany({
+        where: { categoryId: chosen.categoryId, category: { type: 'category' } },
+      });
       const slugsMap: Record<string, string> = {};
-      for (const t of transCandidates) {
+      for (const t of allCategoryTranslations) {
         slugsMap[t.language.toLowerCase()] = t.slug;
       }
       const hreflangLinks = generateHreflangLinks('category', slugsMap);
@@ -907,9 +910,12 @@ export class SeoService {
       const ogImageAlt = seo?.ogImageAlt || metaTitle;
       const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
 
-      // Hreflangs
+      // Hreflangs — fetch all translations of this collection for complete hreflang set
+      const allCollectionTranslations = await this.prisma.categoryTranslation.findMany({
+        where: { categoryId: chosen.categoryId, category: { type: 'collection' } },
+      });
       const slugsMap: Record<string, string> = {};
-      for (const t of transCandidates) {
+      for (const t of allCollectionTranslations) {
         slugsMap[t.language.toLowerCase()] = t.slug;
       }
       const hreflangLinks = generateHreflangLinks('collection', slugsMap);
@@ -1061,8 +1067,12 @@ export class SeoService {
       const ogImageAlt = seo?.ogImageAlt || metaTitle;
       const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
 
+      // Hreflangs — fetch all translations of this genre for complete hreflang set
+      const allGenreTranslations = await this.prisma.categoryTranslation.findMany({
+        where: { categoryId: chosen.categoryId, category: { type: 'genre' } },
+      });
       const slugsMap: Record<string, string> = {};
-      for (const t of transCandidates) {
+      for (const t of allGenreTranslations) {
         slugsMap[t.language.toLowerCase()] = t.slug;
       }
       const hreflangLinks = generateHreflangLinks('genre', slugsMap);
@@ -1199,9 +1209,12 @@ export class SeoService {
       const ogImageAlt = seo?.ogImageAlt || metaTitle;
       const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
 
-      // Hreflangs
+      // Hreflangs — fetch all translations of this tag for complete hreflang set
+      const allTagTranslations = await this.prisma.tagTranslation.findMany({
+        where: { tagId: chosen.tagId },
+      });
       const slugsMap: Record<string, string> = {};
-      for (const t of transCandidates) {
+      for (const t of allTagTranslations) {
         slugsMap[t.language.toLowerCase()] = t.slug;
       }
       const hreflangLinks = generateHreflangLinks('tag', slugsMap);

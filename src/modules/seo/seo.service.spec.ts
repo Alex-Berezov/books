@@ -10,8 +10,9 @@ type PrismaStub = {
   seo: { findUnique: jest.Mock };
   bookCategory: { findMany: jest.Mock };
   bookRating: { findMany: jest.Mock };
-  categoryTranslation: { findUnique: jest.Mock; findFirst: jest.Mock };
+  categoryTranslation: { findUnique: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock };
   category: { findUnique: jest.Mock };
+  tagTranslation: { findUnique: jest.Mock; findMany: jest.Mock };
 };
 
 const createPrismaStub = (): PrismaStub => ({
@@ -21,8 +22,9 @@ const createPrismaStub = (): PrismaStub => ({
   seo: { findUnique: jest.fn() },
   bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
   bookRating: { findMany: jest.fn().mockResolvedValue([]) },
-  categoryTranslation: { findUnique: jest.fn(), findFirst: jest.fn() },
+  categoryTranslation: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
   category: { findUnique: jest.fn() },
+  tagTranslation: { findUnique: jest.fn(), findMany: jest.fn() },
 });
 
 describe('SeoService (unit)', () => {
@@ -243,6 +245,322 @@ describe('SeoService (unit)', () => {
           country: 'US',
         },
       });
+    });
+  });
+
+  describe('resolvePublic(category) — hreflangs from all translations', () => {
+    const categoryId = 'cat-uuid-1';
+    const allTranslations = [
+      { id: 'ct-en', categoryId, language: Language.en, slug: 'fiction', name: 'Fiction' },
+      { id: 'ct-es', categoryId, language: Language.es, slug: 'ficcion', name: 'Ficción' },
+      { id: 'ct-fr', categoryId, language: Language.fr, slug: 'fiction', name: 'Fiction' },
+      { id: 'ct-pt', categoryId, language: Language.pt, slug: 'ficcao', name: 'Ficção' },
+      {
+        id: 'ct-ru',
+        categoryId,
+        language: Language.ru,
+        slug: 'khudozhestvennaya',
+        name: 'Художественная',
+      },
+    ];
+    const categoryObj = {
+      id: categoryId,
+      name: 'Fiction',
+      slug: 'fiction',
+      type: 'category',
+      parentId: null,
+      indexable: true,
+    };
+
+    beforeEach(() => {
+      prisma.categoryTranslation.findMany
+        .mockResolvedValueOnce([{ ...allTranslations[0], category: categoryObj }])
+        .mockResolvedValueOnce(allTranslations);
+    });
+
+    it('returns hreflangs for all 5 translations', async () => {
+      const result = await service.resolvePublic('category', 'fiction', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const langCodes = hreflangs.filter((h) => h.hreflang !== 'x-default').map((h) => h.hreflang);
+      expect(langCodes).toEqual(expect.arrayContaining(['en', 'es', 'fr', 'pt', 'ru']));
+      expect(langCodes).toHaveLength(5);
+    });
+
+    it('uses per-language slug in href', async () => {
+      const result = await service.resolvePublic('category', 'fiction', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const esLink = hreflangs.find((h) => h.hreflang === 'es');
+      expect(esLink?.href).toContain('/es/category/ficcion');
+      const ruLink = hreflangs.find((h) => h.hreflang === 'ru');
+      expect(ruLink?.href).toContain('/ru/category/khudozhestvennaya');
+    });
+
+    it('x-default points to English slug', async () => {
+      const result = await service.resolvePublic('category', 'fiction', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const xDefault = hreflangs.find((h) => h.hreflang === 'x-default');
+      expect(xDefault?.href).toContain('/en/category/fiction');
+    });
+
+    it('keeps canonical on current language and slug', async () => {
+      const result = await service.resolvePublic('category', 'fiction', {
+        pathLang: Language.en,
+      });
+      const meta = result.meta as { canonicalUrl: string };
+      expect(meta.canonicalUrl).toContain('/en/category/fiction');
+    });
+  });
+
+  describe('resolvePublic(genre) — hreflangs from all translations', () => {
+    const genreId = 'genre-uuid-1';
+    const allTranslations = [
+      { id: 'gt-en', categoryId: genreId, language: Language.en, slug: 'mystery', name: 'Mystery' },
+      {
+        id: 'gt-es',
+        categoryId: genreId,
+        language: Language.es,
+        slug: 'misterio',
+        name: 'Misterio',
+      },
+      { id: 'gt-fr', categoryId: genreId, language: Language.fr, slug: 'mystere', name: 'Mystère' },
+      {
+        id: 'gt-pt',
+        categoryId: genreId,
+        language: Language.pt,
+        slug: 'misterio',
+        name: 'Mistério',
+      },
+      {
+        id: 'gt-ru',
+        categoryId: genreId,
+        language: Language.ru,
+        slug: 'detektiv',
+        name: 'Детектив',
+      },
+    ];
+    const genreObj = {
+      id: genreId,
+      name: 'Mystery',
+      slug: 'mystery',
+      type: 'genre',
+      parentId: null,
+      indexable: true,
+    };
+
+    beforeEach(() => {
+      prisma.categoryTranslation.findMany
+        .mockResolvedValueOnce([{ ...allTranslations[0], category: genreObj }])
+        .mockResolvedValueOnce(allTranslations);
+    });
+
+    it('returns hreflangs for all 5 translations', async () => {
+      const result = await service.resolvePublic('genre', 'mystery', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const langCodes = hreflangs.filter((h) => h.hreflang !== 'x-default').map((h) => h.hreflang);
+      expect(langCodes).toEqual(expect.arrayContaining(['en', 'es', 'fr', 'pt', 'ru']));
+      expect(langCodes).toHaveLength(5);
+    });
+
+    it('uses per-language slug in href', async () => {
+      const result = await service.resolvePublic('genre', 'mystery', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const esLink = hreflangs.find((h) => h.hreflang === 'es');
+      expect(esLink?.href).toContain('/es/genre/misterio');
+    });
+  });
+
+  describe('resolvePublic(collection) — hreflangs from all translations', () => {
+    const collectionId = 'col-uuid-1';
+    const allTranslations = [
+      {
+        id: 'clt-en',
+        categoryId: collectionId,
+        language: Language.en,
+        slug: 'classics',
+        name: 'Classics',
+      },
+      {
+        id: 'clt-es',
+        categoryId: collectionId,
+        language: Language.es,
+        slug: 'clasicos',
+        name: 'Clásicos',
+      },
+      {
+        id: 'clt-fr',
+        categoryId: collectionId,
+        language: Language.fr,
+        slug: 'classiques',
+        name: 'Classiques',
+      },
+      {
+        id: 'clt-pt',
+        categoryId: collectionId,
+        language: Language.pt,
+        slug: 'classicos',
+        name: 'Clássicos',
+      },
+      {
+        id: 'clt-ru',
+        categoryId: collectionId,
+        language: Language.ru,
+        slug: 'klassika',
+        name: 'Классика',
+      },
+    ];
+    const colObj = {
+      id: collectionId,
+      name: 'Classics',
+      slug: 'classics',
+      type: 'collection',
+      parentId: null,
+      indexable: true,
+    };
+
+    beforeEach(() => {
+      prisma.categoryTranslation.findMany
+        .mockResolvedValueOnce([{ ...allTranslations[0], category: colObj }])
+        .mockResolvedValueOnce(allTranslations);
+    });
+
+    it('returns hreflangs for all 5 translations', async () => {
+      const result = await service.resolvePublic('collection', 'classics', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const langCodes = hreflangs.filter((h) => h.hreflang !== 'x-default').map((h) => h.hreflang);
+      expect(langCodes).toEqual(expect.arrayContaining(['en', 'es', 'fr', 'pt', 'ru']));
+      expect(langCodes).toHaveLength(5);
+    });
+
+    it('uses per-language slug in href', async () => {
+      const result = await service.resolvePublic('collection', 'classics', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const frLink = hreflangs.find((h) => h.hreflang === 'fr');
+      expect(frLink?.href).toContain('/fr/collection/classiques');
+    });
+  });
+
+  describe('resolvePublic(tag) — hreflangs from all translations', () => {
+    const tagId = 'tag-uuid-1';
+    const allTranslations = [
+      { id: 'tt-en', tagId, language: Language.en, slug: 'love', name: 'Love', indexable: true },
+      { id: 'tt-es', tagId, language: Language.es, slug: 'amor', name: 'Amor', indexable: true },
+      { id: 'tt-fr', tagId, language: Language.fr, slug: 'amour', name: 'Amour', indexable: true },
+      { id: 'tt-pt', tagId, language: Language.pt, slug: 'amor', name: 'Amor', indexable: true },
+      {
+        id: 'tt-ru',
+        tagId,
+        language: Language.ru,
+        slug: 'lyubov',
+        name: 'Любовь',
+        indexable: true,
+      },
+    ];
+    const tagObj = { id: tagId, name: 'Love', indexable: true };
+
+    beforeEach(() => {
+      prisma.tagTranslation.findMany
+        .mockResolvedValueOnce([{ ...allTranslations[0], tag: tagObj }])
+        .mockResolvedValueOnce(allTranslations);
+    });
+
+    it('returns hreflangs for all 5 translations', async () => {
+      const result = await service.resolvePublic('tag', 'love', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const langCodes = hreflangs.filter((h) => h.hreflang !== 'x-default').map((h) => h.hreflang);
+      expect(langCodes).toEqual(expect.arrayContaining(['en', 'es', 'fr', 'pt', 'ru']));
+      expect(langCodes).toHaveLength(5);
+    });
+
+    it('uses per-language slug in href', async () => {
+      const result = await service.resolvePublic('tag', 'love', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const esLink = hreflangs.find((h) => h.hreflang === 'es');
+      expect(esLink?.href).toContain('/es/tag/amor');
+      const ruLink = hreflangs.find((h) => h.hreflang === 'ru');
+      expect(ruLink?.href).toContain('/ru/tag/lyubov');
+    });
+  });
+
+  describe('resolvePublic fallback — no English translation', () => {
+    it('x-default points to first available language', async () => {
+      const categoryId = 'cat-no-en';
+      const translations = [
+        { id: 'ct-es', categoryId, language: Language.es, slug: 'ficcion', name: 'Ficción' },
+        { id: 'ct-fr', categoryId, language: Language.fr, slug: 'fiction', name: 'Fiction' },
+      ];
+      const catObj = {
+        id: categoryId,
+        name: 'Ficción',
+        slug: 'ficcion',
+        type: 'category',
+        parentId: null,
+        indexable: true,
+      };
+
+      prisma.categoryTranslation.findMany
+        .mockResolvedValueOnce([{ ...translations[0], category: catObj }])
+        .mockResolvedValueOnce(translations);
+
+      const result = await service.resolvePublic('category', 'ficcion', {
+        pathLang: Language.es,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const xDefault = hreflangs.find((h) => h.hreflang === 'x-default');
+      expect(xDefault).toBeDefined();
+      expect(xDefault?.href).toContain('/es/category/ficcion');
+    });
+
+    it('missing translation does not break response', async () => {
+      const categoryId = 'cat-partial';
+      const translations = [
+        { id: 'ct-en', categoryId, language: Language.en, slug: 'fiction', name: 'Fiction' },
+        {
+          id: 'ct-ru',
+          categoryId,
+          language: Language.ru,
+          slug: 'khudozhestvennaya',
+          name: 'Художественная',
+        },
+      ];
+      const catObj = {
+        id: categoryId,
+        name: 'Fiction',
+        slug: 'fiction',
+        type: 'category',
+        parentId: null,
+        indexable: true,
+      };
+
+      prisma.categoryTranslation.findMany
+        .mockResolvedValueOnce([{ ...translations[0], category: catObj }])
+        .mockResolvedValueOnce(translations);
+
+      const result = await service.resolvePublic('category', 'fiction', {
+        pathLang: Language.en,
+      });
+      const hreflangs = result.hreflangs as Array<{ hreflang: string; href: string }>;
+      const langCodes = hreflangs.filter((h) => h.hreflang !== 'x-default').map((h) => h.hreflang);
+      expect(langCodes).toEqual(expect.arrayContaining(['en', 'ru']));
+      expect(langCodes).not.toEqual(expect.arrayContaining(['es', 'fr', 'pt']));
+      expect(langCodes).toHaveLength(2);
     });
   });
 });
