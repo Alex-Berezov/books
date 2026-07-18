@@ -102,7 +102,7 @@ describe('CategoryService', () => {
     prisma.categoryTranslation.findUnique.mockResolvedValue(null);
     prisma.category.findFirst.mockResolvedValue({ id: 'cat1', name: 'Cat', slug: 'cat' });
     const now = new Date();
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
     (prisma as any).book = {
       findMany: jest.fn().mockResolvedValue([
         {

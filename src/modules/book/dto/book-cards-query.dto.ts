@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsInt, Min, Max, IsBoolean } from 'class-validator';
+import { IsOptional, IsInt, Min, Max, IsBoolean, IsString, IsIn } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
 /**
@@ -41,4 +41,36 @@ export class BookCardsQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   includeTag?: boolean = false;
+
+  @ApiProperty({
+    description: 'Sort order. "popular" = rating desc, publishedAt desc. "new" = publishedAt desc.',
+    example: 'popular',
+    required: false,
+    enum: ['popular', 'new'],
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['popular', 'new'])
+  sort?: string;
+
+  @ApiProperty({
+    description:
+      'Filter by content type. "audio" = has audio chapters, "text" = has text chapters.',
+    example: 'audio',
+    required: false,
+    enum: ['audio', 'text'],
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['audio', 'text'])
+  type?: string;
+
+  @ApiProperty({
+    description: 'Search query by title or author (case-insensitive contains).',
+    example: 'hamlet',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  q?: string;
 }

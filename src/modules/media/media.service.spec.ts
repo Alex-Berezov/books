@@ -37,7 +37,7 @@ describe('MediaService (unit)', () => {
       const res = await service.confirm({ key: 'k', url: '' }, 'user-1');
       expect(storage.getPublicUrl).toHaveBeenCalledWith('k');
       // inspect call args explicitly to avoid loose matchers typing issues
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
       const createArg = prisma.mediaAsset.create.mock.calls[0][0] as {
         data: { key: string; url: string; createdById: string };
       };
@@ -58,7 +58,7 @@ describe('MediaService (unit)', () => {
       storage.getPublicUrl.mockReturnValue('http://u/static/k');
 
       const res = await service.confirm({ key: 'k', url: 'http://u/static/k', size: 10 }, 'user-2');
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
       const updateArg = prisma.mediaAsset.update.mock.calls[0][0] as {
         where: { id: string };
         data: { url: string; isDeleted: boolean; size?: number };
@@ -95,7 +95,7 @@ describe('MediaService (unit)', () => {
       prisma.mediaAsset.count.mockResolvedValue(1);
 
       const res = await service.list({ q: 'covers', type: 'image/' } as MediaListQueryDto);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
       const fmArg = prisma.mediaAsset.findMany.mock.calls[0][0] as {
         where: {
           isDeleted: boolean;

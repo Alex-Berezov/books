@@ -5,17 +5,27 @@ import { NotFoundException } from '@nestjs/common';
 
 interface PrismaStub {
   book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
-  bookVersion: { findMany: jest.Mock; findFirst: jest.Mock };
+  bookVersion: { findMany: jest.Mock; findFirst: jest.Mock; groupBy: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock };
   bookCategory: { findMany: jest.Mock };
   bookTag: { findMany: jest.Mock };
-  bookRating: { aggregate: jest.Mock; upsert: jest.Mock; findUnique: jest.Mock };
+  bookRating: {
+    aggregate: jest.Mock;
+    upsert: jest.Mock;
+    findUnique: jest.Mock;
+    groupBy: jest.Mock;
+  };
+  authorTranslation: { findMany: jest.Mock };
 }
 
 const createPrismaStub = (): PrismaStub => ({
   book: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
-  bookVersion: { findMany: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
+  bookVersion: {
+    findMany: jest.fn(),
+    findFirst: jest.fn().mockResolvedValue(null),
+    groupBy: jest.fn(),
+  },
   bookSummary: { findFirst: jest.fn() },
   seo: { findUnique: jest.fn() },
   bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
@@ -24,7 +34,9 @@ const createPrismaStub = (): PrismaStub => ({
     aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }),
     upsert: jest.fn(),
     findUnique: jest.fn(),
+    groupBy: jest.fn().mockResolvedValue([]),
   },
+  authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
 });
 
 describe('BookService.getOverview', () => {
@@ -243,6 +255,146 @@ describe('BookService.getOverview', () => {
       expect(res.data[0].hasText).toBe(false);
       expect(res.data[0].hasAudio).toBe(false);
       expect(res.data[0].hasSummary).toBe(false);
+    });
+  });
+
+  describe('findCards', () => {
+    let service: BookService;
+    let prisma: PrismaStub;
+
+    const mockVersion = (overrides: Record<string, unknown> = {}) => ({
+      id: (overrides.id as string) ?? 'v1',
+      bookId: (overrides.bookId as string) ?? 'b1',
+      slug: (overrides.slug as string) ?? 'test-book',
+      title: (overrides.title as string) ?? 'Test Book',
+      author: (overrides.author as string) ?? 'Test Author',
+      authorId: (overrides.authorId as string | null) ?? 'a1',
+      coverImageUrl: (overrides.coverImageUrl as string | null) ?? 'https://example.com/cover.jpg',
+      type: (overrides.type as BookType) ?? BookType.text,
+      publishedAt: (overrides.publishedAt as Date | null) ?? new Date('2024-01-01'),
+      language: (overrides.language as Language) ?? Language.en,
+      status: (overrides.status as string) ?? 'published',
+      _count: {
+        chapters: (overrides.chapters as number) ?? 5,
+        audioChapters: (overrides.audioChapters as number) ?? 0,
+      },
+      categories: (overrides.categories as { categoryId: string }[]) ?? [{ categoryId: 'c1' }],
+    });
+
+    beforeEach(() => {
+      prisma = createPrismaStub();
+      service = new BookService(prisma as unknown as PrismaService);
+    });
+
+    it('returns paginated compact cards with default sort', async () => {
+      prisma.bookVersion.findMany
+        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
+        .mockResolvedValueOnce([mockVersion()])
+        .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
+
+      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      const res = await service.findCards(Language.en);
+
+      expect(res.items).toHaveLength(1);
+      expect(res.items[0].title).toBe('Test Book');
+      expect(res.pagination.total).toBe(1);
+      expect(res.pagination.page).toBe(1);
+    });
+
+    it('applies type=audio filter', async () => {
+      prisma.bookVersion.findMany
+        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
+        .mockResolvedValueOnce([mockVersion({ audioChapters: 3 })])
+        .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
+
+      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      await service.findCards(Language.en, 1, 24, undefined, 'audio');
+
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            language: Language.en,
+            status: 'published',
+            AND: expect.arrayContaining([expect.objectContaining({ audioChapters: { some: {} } })]),
+          }),
+        }),
+      );
+    });
+
+    it('applies type=text filter', async () => {
+      prisma.bookVersion.findMany
+        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
+        .mockResolvedValueOnce([mockVersion({ chapters: 3 })])
+        .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
+
+      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      await service.findCards(Language.en, 1, 24, undefined, 'text');
+
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([{ chapters: { some: {} } }, { type: BookType.text }]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('applies q search filter', async () => {
+      prisma.bookVersion.findMany
+        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
+        .mockResolvedValueOnce([mockVersion({ title: 'Hamlet' })])
+        .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
+
+      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      await service.findCards(Language.en, 1, 24, undefined, undefined, 'hamlet');
+
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  { title: { contains: 'hamlet', mode: 'insensitive' } },
+                  { author: { contains: 'hamlet', mode: 'insensitive' } },
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('returns empty items when no books match', async () => {
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.groupBy.mockResolvedValue([]);
+
+      const res = await service.findCards(Language.en, 1, 24, undefined, 'audio');
+
+      expect(res.items).toHaveLength(0);
+      expect(res.pagination.total).toBe(0);
+    });
+
+    it('enforces max limit of 48', async () => {
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.groupBy.mockResolvedValue([]);
+
+      await service.findCards(Language.en, 1, 999);
+
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 48 }),
+      );
     });
   });
 });

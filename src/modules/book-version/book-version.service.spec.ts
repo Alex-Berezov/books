@@ -363,7 +363,6 @@ describe('BookVersionService', () => {
     expect(res.primaryCategoryId).toBe('cat-sibling');
     expect(prisma.bookCategory.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         data: expect.arrayContaining([
           expect.objectContaining({
             bookVersionId: 'new-v',
@@ -374,7 +373,6 @@ describe('BookVersionService', () => {
     );
     expect(prisma.bookTag.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         data: expect.arrayContaining([
           expect.objectContaining({
             bookVersionId: 'new-v',

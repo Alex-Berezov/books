@@ -93,11 +93,14 @@ export class PublicController {
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
   @ApiQuery({ name: 'limit', required: false, description: 'Cards per page. Default 24, max 48.' })
+  @ApiQuery({ name: 'sort', required: false, description: 'Sort order: popular, new.' })
+  @ApiQuery({ name: 'type', required: false, description: 'Filter by type: audio, text.' })
+  @ApiQuery({ name: 'q', required: false, description: 'Search query by title/author.' })
   bookCards(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query() query: BookCardsQueryDto,
   ) {
-    return this.books.findCards(pathLang, query.page, query.limit);
+    return this.books.findCards(pathLang, query.page, query.limit, query.sort, query.type, query.q);
   }
 
   // Localized reader bootstrap endpoint
@@ -148,6 +151,18 @@ export class PublicController {
     @Query() query: BookCardsQueryDto,
   ) {
     return this.books.findCardsByCategory(slug, pathLang, query.page, query.limit);
+  }
+
+  // Public category/genre listing with translations and book counts
+  @Get('categories')
+  @ApiOperation({ summary: 'Public category/genre listing for catalog sidebar' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiQuery({ name: 'type', required: false, description: 'Filter by type: category, genre' })
+  categoriesList(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query('type') type?: string,
+  ) {
+    return this.categories.list(1, 50, type as 'category' | 'genre' | 'collection');
   }
 
   // Localized tags by translation slug

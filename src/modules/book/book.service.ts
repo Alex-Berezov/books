@@ -614,11 +614,19 @@ export class BookService {
    * Returns BookCardDto[] (no versions/translations/JSON content). One card per book,
    * using the localized published version for slug/title/author/cover.
    * Rating via a single groupBy (no N+1). Server-side max limit = 48.
+   *
+   * Supports optional filters:
+   * - sort: 'popular' (rating desc, publishedAt desc, id asc) or 'new' (publishedAt desc, id asc)
+   * - type: 'audio' (hasAudio === true) or 'text' (hasText === true)
+   * - q: search by title/author (case-insensitive contains)
    */
   async findCards(
     lang: Language,
     page = 1,
     limit = 24,
+    sort?: string,
+    type?: string,
+    q?: string,
   ): Promise<{
     items: BookCardDto[];
     pagination: { page: number; limit: number; total: number; totalPages: number };
@@ -627,20 +635,86 @@ export class BookService {
     const effectiveLimit = Math.min(Math.max(limit, 1), 48);
     const skip = (effectivePage - 1) * effectiveLimit;
 
-    // Distinct bookIds that have a published version in this language
+    // Build where conditions for filters
+    const baseWhere: Prisma.BookVersionWhereInput = {
+      language: lang,
+      status: 'published',
+    };
+
+    const filterConditions: Prisma.BookVersionWhereInput[] = [];
+
+    if (type === 'audio') {
+      filterConditions.push({ audioChapters: { some: {} } });
+    } else if (type === 'text') {
+      filterConditions.push({
+        OR: [{ chapters: { some: {} } }, { type: BookType.text }],
+      });
+    }
+
+    if (q) {
+      filterConditions.push({
+        OR: [
+          { title: { contains: q, mode: 'insensitive' } },
+          { author: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    const where: Prisma.BookVersionWhereInput =
+      filterConditions.length > 0 ? { ...baseWhere, AND: filterConditions } : baseWhere;
+
+    if (sort === 'popular') {
+      // For popular sort: fetch all matching bookIds, get ratings, sort by rating, then paginate
+      const allVersions = await this.prisma.bookVersion.findMany({
+        where,
+        select: { id: true, bookId: true, publishedAt: true },
+        distinct: ['bookId'],
+      });
+
+      const allBookIds = allVersions.map((v) => v.bookId);
+      const total = allBookIds.length;
+
+      if (total === 0) {
+        return {
+          items: [],
+          pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
+        };
+      }
+
+      const ratingsMap = await this.getRatingsForBooks(allBookIds);
+
+      const sorted = allVersions.sort((a, b) => {
+        const ratingA = ratingsMap.get(a.bookId)?.avg ?? -1;
+        const ratingB = ratingsMap.get(b.bookId)?.avg ?? -1;
+        if (ratingB !== ratingA) return ratingB - ratingA;
+        return (
+          this.comparePublishedAtDesc(b.publishedAt, a.publishedAt) || a.id.localeCompare(b.id)
+        );
+      });
+
+      const paginatedBookIds = sorted.slice(skip, skip + effectiveLimit).map((v) => v.bookId);
+      return this.buildCardsResponse(paginatedBookIds, lang, effectivePage, effectiveLimit, total);
+    }
+
+    // Default/new sort: order by publishedAt desc, id asc
+    const orderBy: Prisma.BookVersionOrderByWithRelationInput[] = [
+      { publishedAt: { sort: 'desc', nulls: 'last' } },
+      { id: 'asc' },
+    ];
+
     const versions = await this.prisma.bookVersion.findMany({
-      where: { language: lang, status: 'published' },
+      where,
       select: { id: true, bookId: true },
       distinct: ['bookId'],
       skip,
       take: effectiveLimit,
-      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
+      orderBy,
     });
 
     const total = (
       await this.prisma.bookVersion.groupBy({
         by: ['bookId'],
-        where: { language: lang, status: 'published' },
+        where,
       })
     ).length;
 
