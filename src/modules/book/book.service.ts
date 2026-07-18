@@ -824,6 +824,7 @@ export class BookService {
     page = 1,
     limit = 24,
   ): Promise<{
+    tag: Record<string, unknown> | null;
     items: BookCardDto[];
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }> {
@@ -834,9 +835,11 @@ export class BookService {
     // Resolve tag slug to a stable tag ID (prefer translation, fallback base slug)
     const tagTrans = await this.prisma.tagTranslation.findUnique({
       where: { language_slug: { language: lang, slug: tagSlug } },
-      select: { tagId: true },
     });
     let tagId: string | null = tagTrans?.tagId ?? null;
+    let matchedTranslation: Record<string, unknown> | null = tagTrans
+      ? { ...tagTrans, tag: undefined }
+      : null;
 
     if (!tagId) {
       const baseTag = await this.prisma.tag.findFirst({
@@ -845,18 +848,65 @@ export class BookService {
       });
       if (!baseTag) {
         return {
+          tag: null,
           items: [],
           pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
         };
       }
       tagId = baseTag.id;
+
+      const trans = await this.prisma.tagTranslation.findFirst({
+        where: { tagId, language: lang },
+      });
+      matchedTranslation = trans ? { ...trans, tag: undefined } : null;
     }
+
+    // Fetch full tag with book count
+    const tag = await this.prisma.tag.findUnique({
+      where: { id: tagId },
+      select: {
+        id: true,
+        key: true,
+        slug: true,
+        name: true,
+        indexable: true,
+        isVisible: true,
+        sortOrder: true,
+        _count: { select: { books: true } },
+      },
+    });
 
     // Find distinct bookIds that have a published version in this language with this tag
     const bookIds = await this.getBookIdsByTag(tagId, lang, skip, effectiveLimit);
     const total = await this.countBookIdsByTag(tagId, lang);
 
-    return this.buildCardsResponse(bookIds, lang, effectivePage, effectiveLimit, total);
+    const cardsResponse = await this.buildCardsResponse(
+      bookIds,
+      lang,
+      effectivePage,
+      effectiveLimit,
+      total,
+    );
+
+    return {
+      tag: tag
+        ? {
+            id: tag.id,
+            key: tag.key,
+            slug: matchedTranslation?.slug ?? tag.slug,
+            name: matchedTranslation?.name ?? tag.name,
+            indexable: tag.indexable,
+            isVisible: tag.isVisible,
+            sortOrder: tag.sortOrder,
+            booksCount: tag._count.books,
+            language: lang,
+            translation: matchedTranslation,
+            translations: matchedTranslation ? [matchedTranslation] : [],
+          }
+        : null,
+      items: cardsResponse.items,
+      pagination: cardsResponse.pagination,
+    };
   }
 
   private async getBookIdsByCategory(
