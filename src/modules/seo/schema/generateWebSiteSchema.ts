@@ -12,7 +12,7 @@ export function generateWebSiteSchema(language: string = 'en'): Record<string, u
       '@type': 'SearchAction',
       target: {
         '@type': 'EntryPoint',
-        urlTemplate: `${base}${lang}/search?query={search_term_string}`,
+        urlTemplate: `${base}${lang}/catalog?q={search_term_string}`,
       },
       'query-input': 'required name=search_term_string',
     },
