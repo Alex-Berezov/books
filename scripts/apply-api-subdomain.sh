@@ -207,10 +207,10 @@ run_cmd "cp $ENV_FILE ${ENV_FILE}.backup.$(date +%Y%m%d_%H%M%S)" "Creating .env.
 if [ "$DRY_RUN" = false ]; then
   # Update LOCAL_PUBLIC_BASE_URL
   if grep -q "^LOCAL_PUBLIC_BASE_URL=" "$ENV_FILE"; then
-    sudo sed -i 's|^LOCAL_PUBLIC_BASE_URL=.*|LOCAL_PUBLIC_BASE_URL=https://api.bibliaris.com|' "$ENV_FILE"
+    sudo sed -i 's|^LOCAL_PUBLIC_BASE_URL=.*|LOCAL_PUBLIC_BASE_URL=https://bibliaris.com|' "$ENV_FILE"
     echo -e "${GREEN}✓ LOCAL_PUBLIC_BASE_URL updated${NC}"
   else
-    echo "LOCAL_PUBLIC_BASE_URL=https://api.bibliaris.com" | sudo tee -a "$ENV_FILE" > /dev/null
+    echo "LOCAL_PUBLIC_BASE_URL=https://bibliaris.com" | sudo tee -a "$ENV_FILE" > /dev/null
     echo -e "${GREEN}✓ LOCAL_PUBLIC_BASE_URL added${NC}"
   fi
   
@@ -226,7 +226,7 @@ else
   echo -e "${YELLOW}⊘ .env.prod update skipped (dry-run)${NC}"
   echo ""
   echo "The following variables will be updated:"
-  echo "  LOCAL_PUBLIC_BASE_URL=https://api.bibliaris.com"
+  echo "  LOCAL_PUBLIC_BASE_URL=https://bibliaris.com"
   echo "  CORS_ORIGIN=https://bibliaris.com,http://localhost:3000,http://localhost:3001"
 fi
 echo ""

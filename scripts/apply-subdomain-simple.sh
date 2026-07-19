@@ -40,7 +40,7 @@ cd /opt/books/app/src
 cp .env.prod .env.prod.backup.$(date +%Y%m%d_%H%M%S)
 
 # Update environment variables
-sed -i 's|LOCAL_PUBLIC_BASE_URL=.*|LOCAL_PUBLIC_BASE_URL=https://api.bibliaris.com|' .env.prod
+sed -i 's|LOCAL_PUBLIC_BASE_URL=.*|LOCAL_PUBLIC_BASE_URL=https://bibliaris.com|' .env.prod
 sed -i 's|CORS_ORIGIN=.*|CORS_ORIGIN=https://bibliaris.com,http://localhost:3000,http://localhost:3001|' .env.prod
 
 echo "✓ .env.prod updated"
