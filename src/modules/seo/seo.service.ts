@@ -25,6 +25,7 @@ interface CategoryWithParent {
   name: string;
   slug: string;
   parentId: string | null;
+  type: string | null;
 }
 
 interface BookCategoryLink {
@@ -387,7 +388,7 @@ export class SeoService {
       const hreflangLinks = generateHreflangLinks('book', slugsMap);
 
       // Breadcrumbs
-      const breadcrumbItems = [
+      const breadcrumbItems: Array<{ name: string; url: string; type?: string }> = [
         { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
       ];
 
@@ -397,19 +398,23 @@ export class SeoService {
         if (chosen.primaryCategoryId) {
           cat = await this.prisma.category.findUnique({
             where: { id: chosen.primaryCategoryId },
-            select: { id: true, name: true, slug: true, parentId: true },
+            select: { id: true, name: true, slug: true, parentId: true, type: true },
           });
         }
         if (!cat) {
           const rawLinks = await this.prisma.bookCategory.findMany({
             where: { bookVersionId: chosen.id },
-            select: { category: { select: { id: true, name: true, slug: true, parentId: true } } },
+            select: {
+              category: {
+                select: { id: true, name: true, slug: true, parentId: true, type: true },
+              },
+            },
           });
           const links = rawLinks as unknown as BookCategoryLink[];
           cat = links[0]?.category ?? null;
         }
         if (cat) {
-          const catPath: Array<{ name: string; slug: string }> = [];
+          const catPath: Array<{ name: string; slug: string; type: string | null }> = [];
           let current: CategoryWithParent | null = cat;
           while (current) {
             const trans = await this.prisma.categoryTranslation.findUnique({
@@ -418,11 +423,12 @@ export class SeoService {
             catPath.push({
               name: trans?.name || current.name,
               slug: trans?.slug || current.slug,
+              type: current.type,
             });
             if (current.parentId) {
               const parent = await this.prisma.category.findUnique({
                 where: { id: current.parentId },
-                select: { id: true, name: true, slug: true, parentId: true },
+                select: { id: true, name: true, slug: true, parentId: true, type: true },
               });
               current = parent as CategoryWithParent | null;
             } else {
@@ -430,9 +436,12 @@ export class SeoService {
             }
           }
           catPath.reverse().forEach((p) => {
+            const taxonomyType =
+              p.type === 'genre' || p.type === 'collection' ? p.type : 'category';
             breadcrumbItems.push({
               name: p.name,
-              url: getCanonicalUrl('category', p.slug, effLang),
+              url: getCanonicalUrl(taxonomyType, p.slug, effLang),
+              type: taxonomyType,
             });
           });
         }
@@ -555,10 +564,10 @@ export class SeoService {
           ],
         },
         hreflangs: hreflangLinks,
-        // Compatibility field for legacy tests
-        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
+        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item: Record<string, string>) => ({
           name: item.name,
           slug: item.url.split('/').pop() || '',
+          ...(item.type ? { type: item.type } : {}),
         })),
       };
     }
