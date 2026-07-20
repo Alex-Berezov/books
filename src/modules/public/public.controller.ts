@@ -179,6 +179,20 @@ export class PublicController {
     return this.tags.versionsByTagLangSlug(pathLang, slug, page, limit);
   }
 
+  // Public tags listing for homepage
+  @Get('tags')
+  @ApiOperation({ summary: 'Public tags listing for homepage' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Tags per page. Default 50.' })
+  tagsList(
+    @Param('lang', LangParamPipe) _pathLang: PrismaLanguage,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.tags.list(page ? Number(page) : 1, limit ? Number(limit) : 50);
+  }
+
   // Compact paginated book cards for a tag
   @Get('tags/:slug/books/cards')
   @ApiOperation({ summary: 'Compact paginated book cards for a tag' })
