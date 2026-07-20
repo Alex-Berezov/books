@@ -847,7 +847,6 @@ export class BookService {
         indexable: true,
         isVisible: true,
         sortOrder: true,
-        _count: { select: { books: true } },
       },
     });
 
@@ -875,7 +874,7 @@ export class BookService {
             indexable: category.indexable,
             isVisible: category.isVisible,
             sortOrder: category.sortOrder,
-            booksCount: category._count.books,
+            booksCount: total,
             language: lang,
             translation: matchedTranslation,
             translations: matchedTranslation ? [matchedTranslation] : [],
@@ -960,7 +959,6 @@ export class BookService {
           indexable: true,
           isVisible: true,
           sortOrder: true,
-          _count: { select: { books: true } },
         },
       });
       if (tag) {
@@ -972,7 +970,7 @@ export class BookService {
           indexable: tag.indexable,
           isVisible: tag.isVisible,
           sortOrder: tag.sortOrder,
-          booksCount: tag._count.books,
+          booksCount: total,
           language: lang,
           translation: matchedTranslation,
           translations: matchedTranslation ? [matchedTranslation] : [],

@@ -30,7 +30,7 @@ export type CategoryTreeNode = {
 export class CategoryService {
   constructor(private prisma: PrismaService) {}
 
-  async list(page = 1, limit = 20, type?: PrismaCategory['type']) {
+  async list(page = 1, limit = 20, type?: PrismaCategory['type'], lang?: Language) {
     const where: Prisma.CategoryWhereInput = {};
     if (type) {
       where.type = type;
@@ -55,16 +55,22 @@ export class CategoryService {
       }),
     ]);
 
-    // Get distinct book counts for these categories
+    // Get distinct book counts for these categories (optionally filtered by language)
     const categoryIds = items.map((item) => item.id);
+    const whereConditions: Prisma.Sql[] = [
+      Prisma.sql`bc."categoryId" IN (${Prisma.join(categoryIds)})`,
+      Prisma.sql`bv.status = 'published'`,
+    ];
+    if (lang) {
+      whereConditions.push(Prisma.sql`bv.language = ${lang}::"Language"`);
+    }
     const bookCounts = await this.prisma.$queryRaw<
       Array<{ categoryId: string; booksCount: number }>
     >`
       SELECT bc."categoryId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
       FROM "BookCategory" bc
       JOIN "BookVersion" bv ON bc."bookVersionId" = bv.id
-      WHERE bc."categoryId" IN (${Prisma.join(categoryIds)})
-        AND bv.status = 'published'
+      WHERE ${Prisma.join(whereConditions, ' AND ')}
       GROUP BY bc."categoryId"
     `;
     const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
@@ -566,7 +572,7 @@ export class CategoryService {
   }
 
   // ===== Hierarchy helpers =====
-  async getTree(type?: PrismaCategory['type']): Promise<CategoryTreeNode[]> {
+  async getTree(type?: PrismaCategory['type'], lang?: Language): Promise<CategoryTreeNode[]> {
     type CategoryNode = CategoryTreeNode;
 
     // Build where clause for optional type filter
@@ -600,14 +606,18 @@ export class CategoryService {
       },
     });
 
-    // Count distinct books per category (not versions)
+    // Count distinct books per category (not versions), optionally filtered by language
+    const treeWhereConditions: Prisma.Sql[] = [Prisma.sql`bv.status = 'published'`];
+    if (lang) {
+      treeWhereConditions.push(Prisma.sql`bv.language = ${lang}::"Language"`);
+    }
     const bookCounts = await this.prisma.$queryRaw<
       Array<{ categoryId: string; booksCount: number }>
     >`
       SELECT bc."categoryId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
       FROM "BookCategory" bc
       JOIN "BookVersion" bv ON bc."bookVersionId" = bv.id
-      WHERE bv.status = 'published'
+      WHERE ${Prisma.join(treeWhereConditions, ' AND ')}
       GROUP BY bc."categoryId"
     `;
 

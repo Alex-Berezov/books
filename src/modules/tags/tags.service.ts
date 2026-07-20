@@ -11,7 +11,7 @@ import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 export class TagsService {
   constructor(private prisma: PrismaService) {}
 
-  async list(page = 1, limit = 20, search?: string) {
+  async list(page = 1, limit = 20, search?: string, lang?: Language) {
     const skip = (page - 1) * limit;
     const where: Prisma.TagWhereInput = search
       ? {
@@ -47,16 +47,22 @@ export class TagsService {
       }),
     ]);
 
-    // Count distinct books per tag (via bookId, not BookVersion)
+    // Count distinct books per tag (via bookId, not BookVersion), optionally filtered by language
     const tagIds = items.map((item) => item.id);
+    const tagWhereConditions: Prisma.Sql[] = [
+      Prisma.sql`bt."tagId" IN (${Prisma.join(tagIds)})`,
+      Prisma.sql`bv.status = 'published'`,
+    ];
+    if (lang) {
+      tagWhereConditions.push(Prisma.sql`bv.language = ${lang}::"Language"`);
+    }
     const bookCounts =
       tagIds.length > 0
         ? await this.prisma.$queryRaw<Array<{ tagId: string; booksCount: number }>>`
           SELECT bt."tagId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
           FROM "BookTag" bt
           JOIN "BookVersion" bv ON bt."bookVersionId" = bv.id
-          WHERE bt."tagId" IN (${Prisma.join(tagIds)})
-            AND bv.status = 'published'
+          WHERE ${Prisma.join(tagWhereConditions, ' AND ')}
           GROUP BY bt."tagId"
         `
         : [];

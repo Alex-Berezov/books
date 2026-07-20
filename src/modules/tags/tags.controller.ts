@@ -37,10 +37,14 @@ export class TagsController {
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'q', required: false, type: String })
-  list(@Query() query?: ListTagsDto): Promise<PaginatedTagsResponse> {
+  @ApiQuery({ name: 'lang', required: false, enum: Language })
+  list(
+    @Query() query?: ListTagsDto,
+    @Query('lang') lang?: Language,
+  ): Promise<PaginatedTagsResponse> {
     const page = query?.page ?? 1;
     const limit = query?.limit ?? 20;
-    return this.service.list(page, limit, query?.q);
+    return this.service.list(page, limit, query?.q, lang);
   }
 
   @Post('tags')

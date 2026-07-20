@@ -162,7 +162,7 @@ export class PublicController {
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query('type') type?: string,
   ) {
-    return this.categories.list(1, 50, type as 'category' | 'genre' | 'collection');
+    return this.categories.list(1, 50, type as 'category' | 'genre' | 'collection', pathLang);
   }
 
   // Localized tags by translation slug
@@ -186,11 +186,11 @@ export class PublicController {
   @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
   @ApiQuery({ name: 'limit', required: false, description: 'Tags per page. Default 50.' })
   tagsList(
-    @Param('lang', LangParamPipe) _pathLang: PrismaLanguage,
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.tags.list(page ? Number(page) : 1, limit ? Number(limit) : 50);
+    return this.tags.list(page ? Number(page) : 1, limit ? Number(limit) : 50, undefined, pathLang);
   }
 
   // Compact paginated book cards for a tag

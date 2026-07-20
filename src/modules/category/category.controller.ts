@@ -95,8 +95,9 @@ export class CategoryController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number = 1,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
     @Query('type') type?: CategoryType,
+    @Query('lang') lang?: Language,
   ): Promise<PaginatedCategoriesResponse> {
-    return this.service.list(page, limit, type);
+    return this.service.list(page, limit, type, lang);
   }
 
   @Get('categories/tree')
@@ -111,8 +112,8 @@ export class CategoryController {
     enum: CategoryType,
     description: 'Filter by category type (category|genre|collection)',
   })
-  tree(@Query('type') type?: CategoryType) {
-    return this.service.getTree(type);
+  tree(@Query('type') type?: CategoryType, @Query('lang') lang?: Language) {
+    return this.service.getTree(type, lang);
   }
 
   @Get('categories/:id/children')
