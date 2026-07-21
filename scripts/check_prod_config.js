@@ -10,10 +10,13 @@ const path = require('path');
 console.log('🔍 Checking production configuration');
 console.log('==================================\n');
 
-// Load .env.prod
-const envPath = path.join(__dirname, '.env.prod');
+// Load .env.prod — try cwd first, then parent of scripts/
+let envPath = path.join(process.cwd(), '.env.prod');
 if (!fs.existsSync(envPath)) {
-  console.error('❌ .env.prod file not found');
+  envPath = path.join(__dirname, '..', '.env.prod');
+}
+if (!fs.existsSync(envPath)) {
+  console.error('❌ .env.prod file not found (looked in cwd and project root)');
   process.exit(1);
 }
 
@@ -173,7 +176,7 @@ if (envVars.DATABASE_URL) {
 }
 
 // Check docker-compose.prod.yml file
-const dockerComposePath = path.join(__dirname, 'docker-compose.prod.yml');
+const dockerComposePath = path.join(__dirname, '..', 'docker-compose.prod.yml');
 if (fs.existsSync(dockerComposePath)) {
   const composeContent = fs.readFileSync(dockerComposePath, 'utf8');
   const usesEnvProd = composeContent.includes('.env.prod');

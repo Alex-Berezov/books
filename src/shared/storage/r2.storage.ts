@@ -4,7 +4,6 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
-  NotFound,
 } from '@aws-sdk/client-s3';
 import { Readable } from 'node:stream';
 import { StorageService, StorageSaveOptions, StorageStat } from './storage.interface';
@@ -41,8 +40,15 @@ export class R2StorageService implements StorageService {
     });
     this.bucket = bucket;
     this.publicBaseUrl = publicBaseUrl.replace(/\/$/, '');
-    this.keyPrefix = process.env.R2_KEY_PREFIX || '';
+    this.keyPrefix = this.normalizePrefix(process.env.R2_KEY_PREFIX || '');
     this.cacheControl = process.env.R2_CACHE_CONTROL || '';
+  }
+
+  private normalizePrefix(prefix: string): string {
+    let normalized = prefix.replace(/\\/g, '/');
+    normalized = normalized.replace(/\.{2,}/g, '');
+    normalized = normalized.replace(/^\/+|\/+$/g, '');
+    return normalized;
   }
 
   private normalizeKey(key: string): string {
@@ -55,6 +61,13 @@ export class R2StorageService implements StorageService {
   private prefixedKey(key: string): string {
     const normalized = this.normalizeKey(key);
     return this.keyPrefix ? `${this.keyPrefix}/${normalized}` : normalized;
+  }
+
+  private isNotFoundError(e: unknown): boolean {
+    const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+    return (
+      err.name === 'NotFound' || err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404
+    );
   }
 
   async save(key: string, data: Buffer | Readable, options?: StorageSaveOptions): Promise<string> {
@@ -81,9 +94,9 @@ export class R2StorageService implements StorageService {
     try {
       await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey }));
     } catch (e) {
-      const err = e as Error;
-      if (err.name === 'NotFound') return;
-      this.logger.warn(`Delete failed for ${objectKey}: ${err.message}`);
+      if (this.isNotFoundError(e)) return;
+      this.logger.error(`Delete failed for ${objectKey}: ${(e as Error).message}`);
+      throw e;
     }
   }
 
@@ -93,10 +106,9 @@ export class R2StorageService implements StorageService {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: objectKey }));
       return true;
     } catch (e) {
-      const err = e as Error;
-      if (err.name === 'NotFound' || err instanceof NotFound) return false;
-      this.logger.warn(`exists() check failed for ${objectKey}: ${err.message}`);
-      return false;
+      if (this.isNotFoundError(e)) return false;
+      this.logger.error(`exists() check failed for ${objectKey}: ${(e as Error).message}`);
+      throw e;
     }
   }
 
@@ -111,16 +123,15 @@ export class R2StorageService implements StorageService {
         contentType: resp.ContentType,
       };
     } catch (e) {
-      const err = e as Error;
-      if (err.name === 'NotFound' || err instanceof NotFound) return null;
-      this.logger.warn(`stat() failed for ${objectKey}: ${err.message}`);
-      return null;
+      if (this.isNotFoundError(e)) return null;
+      this.logger.error(`stat() failed for ${objectKey}: ${(e as Error).message}`);
+      throw e;
     }
   }
 
   getPublicUrl(key: string): string {
-    const normalized = this.normalizeKey(key);
-    const encodedKey = normalized.split('/').map(encodeURIComponent).join('/');
+    const objectKey = this.prefixedKey(key);
+    const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
     return `${this.publicBaseUrl}/${encodedKey}`;
   }
 
