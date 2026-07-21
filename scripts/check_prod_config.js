@@ -82,6 +82,46 @@ const checks = [
 
 let allPassed = true;
 
+// Check storage driver
+const storageDriver = envVars.STORAGE_DRIVER || 'local';
+if (storageDriver === 'r2') {
+  console.log('\n📦 R2 Storage enabled — checking R2 variables:');
+  const r2Required = [
+    'R2_ENDPOINT',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET',
+    'R2_PUBLIC_BASE_URL',
+  ];
+  r2Required.forEach((name) => {
+    const val = envVars[name];
+    const ok = !!val;
+    console.log(`   ${ok ? '✅' : '❌'} ${name}: ${ok ? val : 'missing'}`);
+    if (!ok) allPassed = false;
+  });
+  if (envVars.R2_PUBLIC_BASE_URL && !envVars.R2_PUBLIC_BASE_URL.startsWith('https://')) {
+    console.log('   ⚠️ R2_PUBLIC_BASE_URL should use https://');
+  }
+  if (envVars.R2_ENDPOINT) {
+    try {
+      new URL(envVars.R2_ENDPOINT);
+    } catch {
+      console.log('   ❌ R2_ENDPOINT is not a valid URL');
+      allPassed = false;
+    }
+  }
+  if (envVars.R2_PUBLIC_BASE_URL) {
+    try {
+      new URL(envVars.R2_PUBLIC_BASE_URL);
+    } catch {
+      console.log('   ❌ R2_PUBLIC_BASE_URL is not a valid URL');
+      allPassed = false;
+    }
+  }
+} else {
+  console.log('\n📦 Storage driver: local');
+}
+
 checks.forEach((check) => {
   const passed = check.actual === check.expected;
   const icon = passed ? '✅' : check.critical ? '❌' : '⚠️';

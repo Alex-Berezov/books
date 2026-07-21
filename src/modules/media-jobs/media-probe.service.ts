@@ -72,7 +72,14 @@ export class MediaProbeService {
   async runProbe(mediaId: string): Promise<MediaProbeJobResult> {
     const asset = await this.prisma.mediaAsset.findUnique({
       where: { id: mediaId },
-      select: { id: true, key: true, contentType: true, duration: true, isDeleted: true },
+      select: {
+        id: true,
+        key: true,
+        url: true,
+        contentType: true,
+        duration: true,
+        isDeleted: true,
+      },
     });
     if (!asset || asset.isDeleted) {
       this.probeJobsSkipped += 1;
@@ -87,18 +94,24 @@ export class MediaProbeService {
       return { mediaId, durationSec: null };
     }
     const storage = this.storage;
-    if (typeof storage.getLocalPath !== 'function') {
-      this.logger.warn('Storage driver does not support local path; probe skipped');
-      this.probeJobsSkipped += 1;
-      return { mediaId, durationSec: null };
+    let probeInput: string | null = null;
+    if (typeof storage.getLocalPath === 'function') {
+      probeInput = storage.getLocalPath(asset.key);
     }
-    const localPath: string | null = storage.getLocalPath(asset.key);
-    if (!localPath) {
+    if (
+      !probeInput &&
+      asset.url &&
+      (asset.url.startsWith('http://') || asset.url.startsWith('https://'))
+    ) {
+      this.logger.warn(`Remote storage without local path, probing by public URL: ${asset.url}`);
+      probeInput = asset.url;
+    }
+    if (!probeInput) {
       this.probeJobsSkipped += 1;
       return { mediaId, durationSec: null };
     }
     try {
-      const { durationSec } = await probeDuration(localPath);
+      const { durationSec } = await probeDuration(probeInput);
       if (durationSec != null) {
         await this.prisma.mediaAsset.update({
           where: { id: mediaId },

@@ -38,5 +38,7 @@ export function configureSecurity(app: INestApplication): void {
   app.use(express.urlencoded({ limit: urlencodedLimit, extended: true }));
 
   // Raw body middleware for direct uploads (local driver)
-  app.use('/api/uploads/direct', express.raw({ type: '*/*', limit: '110mb' }));
+  const audioLimitMb = Number(process.env.UPLOADS_MAX_AUDIO_MB || 200);
+  const rawLimit = `${audioLimitMb + 10}mb`;
+  app.use('/api/uploads/direct', express.raw({ type: '*/*', limit: rawLimit }));
 }
