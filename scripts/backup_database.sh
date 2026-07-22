@@ -374,7 +374,7 @@ cleanup_old_backups() {
     # Delete files older than retention period
         while IFS= read -r -d '' file; do
             rm "$file"
-            ((deleted_count++))
+            ((deleted_count++)) || true
             log_info "Deleted old backup: $(basename "$file")"
         done < <(find "$cleanup_dir" -type f \( -name "*.sql" -o -name "*.sql.gz" -o -name "*.dump" -o -name "*.tar.gz" \) -mtime +$retention_days -print0 2>/dev/null)
     fi
@@ -576,12 +576,12 @@ cleanup_remote_old_backups() {
             
             if aws s3 rm "s3://${BACKUP_S3_BUCKET}/${BACKUP_S3_PREFIX}/${backup_type}/${obj_name}" "${aws_args[@]}" 2>>"$LOG_FILE"; then
                 log_info "Deleted remote backup: ${obj_name}"
-                ((deleted_count++))
+                ((deleted_count++)) || true
             else
                 log_warning "Failed to delete remote backup: ${obj_name}"
             fi
         else
-            ((kept_count++))
+            ((kept_count++)) || true
         fi
     done <<< "$objects"
     

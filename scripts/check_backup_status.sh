@@ -33,9 +33,9 @@ BACKUP_DIR="${BACKUP_DIR:-/opt/books/backups}"
 MIN_BACKUP_SIZE_MB="${MIN_BACKUP_SIZE_MB:-1}"
 
 check() {
-  if [[ "$2" == "pass" ]]; then log_pass "$1"; ((PASS++))
-  elif [[ "$2" == "warn" ]]; then log_warn "$1"; ((WARN++))
-  else log_fail "$1"; ((FAIL++)); fi
+  if [[ "$2" == "pass" ]]; then log_pass "$1"; ((PASS++)) || true
+  elif [[ "$2" == "warn" ]]; then log_warn "$1"; ((WARN++)) || true
+  else log_fail "$1"; ((FAIL++)) || true; fi
 }
 
 echo "=== Backup Status Check ==="
@@ -52,7 +52,7 @@ fi
 
 # 2. Backend container running
 log_info "Checking backend container..."
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q books-app; then
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q src-app; then
   check "Backend container running" "pass"
 else
   check "Backend container NOT running" "fail"
