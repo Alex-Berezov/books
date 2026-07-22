@@ -78,9 +78,14 @@ detect_uploads_volume() {
     local compose_file="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
     if [[ -f "$compose_file" ]]; then
         detected=$(docker compose -f "$compose_file" config --volumes 2>/dev/null | grep uploads_data_prod | head -1 || true)
+        # compose config returns logical name (e.g., uploads_data_prod);
+        # verify the actual Docker volume exists (Docker may prefix it)
+        if [[ -n "$detected" ]] && ! docker volume inspect "$detected" &>/dev/null; then
+            detected=""
+        fi
     fi
     
-    # Fallback: list Docker volumes by name suffix
+    # Fallback: list Docker volumes by name suffix (handles project-name prefixing)
     if [[ -z "$detected" ]]; then
         detected=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E '(^|_)uploads_data_prod$' | head -1 || true)
     fi
