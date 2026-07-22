@@ -1,4 +1,5 @@
-import { Controller, Get, Param, Query, Headers, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Headers, UseGuards, UseInterceptors } from '@nestjs/common';
+import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
 import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { BookService } from '../book/book.service';
 import { PagesService } from '../pages/pages.service';
@@ -14,6 +15,7 @@ import { BookCardsQueryDto } from '../book/dto/book-cards-query.dto';
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
 @UseGuards(LanguageResolverGuard)
+@UseInterceptors(PublicCacheInterceptor)
 @Controller(':lang')
 export class PublicController {
   constructor(

@@ -6,9 +6,11 @@ import {
   Param,
   Put,
   UseGuards,
+  UseInterceptors,
   Query,
   Headers,
 } from '@nestjs/common';
+import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
 import { ApiOperation, ApiParam, ApiTags, ApiResponse, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -56,6 +58,7 @@ export class SeoController {
   }
 
   @Get('seo/resolve')
+  @UseInterceptors(PublicCacheInterceptor)
   @ApiOperation({ summary: 'Resolve SEO bundle (meta/OG/Twitter/canonical) with fallbacks' })
   @ApiQuery({
     name: 'type',
@@ -102,6 +105,7 @@ export class SeoController {
 
   // Language-prefixed public resolver (prefix has higher priority than query/header)
   @Get(':lang/seo/resolve')
+  @UseInterceptors(PublicCacheInterceptor)
   @ApiOperation({ summary: 'Resolve SEO bundle (public) for specific language (by path prefix)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiQuery({
