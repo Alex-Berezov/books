@@ -99,7 +99,7 @@ check_backup_files() {
                 local file_size=$(du -b "$file" | cut -f1)
                 dir_size=$((dir_size + file_size))
                 total_size=$((total_size + file_size))
-            done < <(find "$dir_path" -name "books-db_*.sql*" -type f -print0 2>/dev/null)
+            done < <(find "$dir_path" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f -print0 2>/dev/null)
         fi
         
         if [[ $backup_count -gt 0 ]]; then
@@ -132,7 +132,7 @@ check_backup_freshness() {
             latest_timestamp=$file_timestamp
             latest_backup=$file
         fi
-    done < <(find "$BACKUP_DIR" -name "books-db_*.sql*" -type f -print0 2>/dev/null)
+    done < <(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f -print0 2>/dev/null)
     
     if [[ -n "$latest_backup" ]]; then
         local backup_age_seconds=$(($(date +%s) - latest_timestamp))
@@ -169,7 +169,7 @@ check_backup_sizes() {
             fail_test "$(basename "$file"): suspicious small size (${file_size_mb}MB < ${MIN_BACKUP_SIZE_MB}MB)"
             ((small_backups++))
         fi
-    done < <(find "$BACKUP_DIR" -name "books-db_*.sql*" -type f -print0 2>/dev/null)
+    done < <(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f -print0 2>/dev/null)
     
     if [[ $small_backups -eq 0 ]]; then
     pass_test "All backups have acceptable size"
@@ -182,6 +182,7 @@ check_compressed_integrity() {
     
     local corrupted_backups=0
     
+    # Check gzip archives
     while IFS= read -r -d '' file; do
         if gzip -t "$file" 2>/dev/null; then
             pass_test "$(basename "$file"): compression OK"
@@ -190,6 +191,26 @@ check_compressed_integrity() {
             ((corrupted_backups++))
         fi
     done < <(find "$BACKUP_DIR" -name "*.gz" -type f -print0 2>/dev/null)
+    
+    # Check .dump files (custom-format, verify via pg_restore --list)
+    while IFS= read -r -d '' file; do
+        if command -v pg_restore &> /dev/null; then
+            if pg_restore --list "$file" &>/dev/null; then
+                pass_test "$(basename "$file"): .dump integrity OK"
+            else
+                fail_test "$(basename "$file"): .dump integrity FAILED"
+                ((corrupted_backups++))
+            fi
+        else
+            # Fallback: check file is non-empty
+            if [[ -s "$file" ]]; then
+                pass_test "$(basename "$file"): .dump size OK (pg_restore not available)"
+            else
+                fail_test "$(basename "$file"): .dump is empty"
+                ((corrupted_backups++))
+            fi
+        fi
+    done < <(find "$BACKUP_DIR" -name "*.dump" -type f -print0 2>/dev/null)
     
     if [[ $corrupted_backups -eq 0 ]]; then
     pass_test "All compressed backups pass integrity test"
@@ -202,7 +223,7 @@ check_sql_structure() {
     
     # Find one of the latest backups for validation
     local test_backup=""
-    test_backup=$(find "$BACKUP_DIR" -name "books-db_*.sql*" -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+    test_backup=$(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
     
     if [[ -z "$test_backup" ]]; then
     warn_test "No backups available for structure check"
@@ -211,48 +232,79 @@ check_sql_structure() {
     
     log_info "Structure check: $(basename "$test_backup")"
     
-    # Prepare file sample for analysis
-    local sql_content=""
-    if [[ "$test_backup" == *.gz ]]; then
-        sql_content=$(gunzip -c "$test_backup" | head -50)
-    else
-        sql_content=$(head -50 "$test_backup")
-    fi
-    
-    # Check for key elements
-    if echo "$sql_content" | grep -q "PostgreSQL database dump"; then
-    pass_test "SQL backup contains PostgreSQL header"
-    else
-    warn_test "SQL backup may be damaged (missing PostgreSQL header)"
-    fi
-    
-    if echo "$sql_content" | grep -q "CREATE TABLE\|DROP TABLE"; then
-    pass_test "SQL backup contains DDL statements"
-    else
-    warn_test "SQL backup may lack table structure"
-    fi
-    
-    # Verify presence of key project tables
-    local full_content=""
-    if [[ "$test_backup" == *.gz ]]; then
-        full_content=$(gunzip -c "$test_backup")
-    else
-        full_content=$(cat "$test_backup")
-    fi
-    
-    local expected_tables=("User" "Book" "BookVersion" "Category" "Page" "_prisma_migrations")
-    local found_tables=0
-    
-    for table in "${expected_tables[@]}"; do
-        if echo "$full_content" | grep -q "CREATE TABLE.*\"$table\""; then
-            ((found_tables++))
+    if [[ "$test_backup" == *.dump ]]; then
+        # Custom-format .dump — use pg_restore --list
+        if command -v pg_restore &> /dev/null; then
+            local dump_list
+            dump_list=$(pg_restore --list "$test_backup" 2>/dev/null) || {
+                fail_test "Cannot read .dump file via pg_restore --list"
+                return
+            }
+            
+            pass_test "Custom-format .dump is readable by pg_restore"
+            
+            # Check for key project tables
+            local expected_tables=("User" "Book" "BookVersion" "Category" "Page" "_prisma_migrations")
+            local found_tables=0
+            
+            for table in "${expected_tables[@]}"; do
+                if echo "$dump_list" | grep -q "\"$table\""; then
+                    ((found_tables++))
+                fi
+            done
+            
+            if [[ $found_tables -ge 3 ]]; then
+                pass_test "Backup contains core project tables ($found_tables/${#expected_tables[@]})"
+            else
+                fail_test "Backup missing many project tables ($found_tables/${#expected_tables[@]})"
+            fi
+        else
+            warn_test "pg_restore not available — cannot verify .dump structure"
         fi
-    done
-    
-    if [[ $found_tables -ge 3 ]]; then
-    pass_test "SQL backup contains core project tables ($found_tables/${#expected_tables[@]})"
     else
-    fail_test "SQL backup missing many project tables ($found_tables/${#expected_tables[@]})"
+        # Legacy plain SQL (.sql or .sql.gz)
+        local sql_content=""
+        if [[ "$test_backup" == *.gz ]]; then
+            sql_content=$(gunzip -c "$test_backup" | head -50)
+        else
+            sql_content=$(head -50 "$test_backup")
+        fi
+        
+        # Check for key elements
+        if echo "$sql_content" | grep -q "PostgreSQL database dump"; then
+        pass_test "SQL backup contains PostgreSQL header"
+        else
+        warn_test "SQL backup may be damaged (missing PostgreSQL header)"
+        fi
+        
+        if echo "$sql_content" | grep -q "CREATE TABLE\|DROP TABLE"; then
+        pass_test "SQL backup contains DDL statements"
+        else
+        warn_test "SQL backup may lack table structure"
+        fi
+        
+        # Verify presence of key project tables
+        local full_content=""
+        if [[ "$test_backup" == *.gz ]]; then
+            full_content=$(gunzip -c "$test_backup")
+        else
+            full_content=$(cat "$test_backup")
+        fi
+        
+        local expected_tables=("User" "Book" "BookVersion" "Category" "Page" "_prisma_migrations")
+        local found_tables=0
+        
+        for table in "${expected_tables[@]}"; do
+            if echo "$full_content" | grep -q "CREATE TABLE.*\"$table\""; then
+                ((found_tables++))
+            fi
+        done
+        
+        if [[ $found_tables -ge 3 ]]; then
+        pass_test "SQL backup contains core project tables ($found_tables/${#expected_tables[@]})"
+        else
+        fail_test "SQL backup missing many project tables ($found_tables/${#expected_tables[@]})"
+        fi
     fi
 }
 
@@ -280,7 +332,7 @@ check_uploads_backups() {
             warn_test "$(basename "$file"): archive empty or damaged"
         fi
         
-    done < <(find "$BACKUP_DIR" -name "uploads_*.tar.gz" -type f -print0 2>/dev/null)
+    done < <(find "$BACKUP_DIR" -name "bibliaris-prod-uploads-*.tar.gz" -type f -print0 2>/dev/null)
     
     if [[ $uploads_count -eq 0 ]]; then
     warn_test "Uploads backups not found (may be disabled)"
@@ -373,6 +425,78 @@ check_backup_schedule() {
     fi
 }
 
+# Check remote backup status (S3-compatible storage)
+check_remote_backup_status() {
+    log_info "Checking remote backup status..."
+    
+    local s3_enabled="${BACKUP_REMOTE_ENABLED:-0}"
+    if [[ "$s3_enabled" != "1" ]]; then
+        warn_test "Remote backups disabled (BACKUP_REMOTE_ENABLED != 1)"
+        return
+    fi
+    
+    local s3_bucket="${BACKUP_S3_BUCKET:-}"
+    local s3_endpoint="${BACKUP_S3_ENDPOINT:-}"
+    if [[ -z "$s3_bucket" || -z "$s3_endpoint" ]]; then
+        warn_test "Remote storage not fully configured (missing bucket or endpoint)"
+        return
+    fi
+    
+    if ! command -v aws &> /dev/null; then
+        fail_test "aws CLI not found — cannot check remote backups"
+        return
+    fi
+    
+    local s3_prefix="${BACKUP_S3_PREFIX:-prod/postgres}"
+    
+    export AWS_ACCESS_KEY_ID="${BACKUP_S3_ACCESS_KEY_ID:-}"
+    export AWS_SECRET_ACCESS_KEY="${BACKUP_S3_SECRET_ACCESS_KEY:-}"
+    export AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-auto}"
+    local aws_args=("--endpoint-url" "$s3_endpoint")
+    
+    local latest_remote=""
+    local latest_timestamp=0
+    
+    for backup_type in daily weekly monthly before-deploy; do
+        local remote_prefix="${s3_prefix}/${backup_type}/"
+        local s3_uri="s3://${s3_bucket}/${remote_prefix}"
+        
+        local objects
+        objects=$(aws s3 ls "$s3_uri" "${aws_args[@]}" 2>/dev/null) || continue
+        
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local obj_size=$(echo "$line" | awk '{print $3}')
+            local obj_name=$(echo "$line" | awk '{print $4}')
+            local obj_date_str=$(echo "$line" | awk '{print $1 " " $2}')
+            local obj_epoch=$(date -d "$obj_date_str" +%s 2>/dev/null || echo 0)
+            
+            if [[ $obj_epoch -gt $latest_timestamp ]]; then
+                latest_timestamp=$obj_epoch
+                latest_remote="${s3_uri}${obj_name}"
+            fi
+        done <<< "$objects"
+    done
+    
+    if [[ -z "$latest_remote" ]]; then
+        warn_test "No remote backup files found in bucket"
+        return
+    fi
+    
+    pass_test "Remote backup found: $(basename "$latest_remote")"
+    
+    local now_epoch=$(date +%s)
+    local age_hours=$(( (now_epoch - latest_timestamp) / 3600 ))
+    
+    log_info "Last remote backup age: ${age_hours} hours"
+    
+    if [[ $age_hours -le 36 ]]; then
+        pass_test "Remote backup is fresh (${age_hours}h ≤ 36h)"
+    else
+        fail_test "Remote backup is stale (${age_hours}h > 36h)"
+    fi
+}
+
 # Generate report
 generate_report() {
     local report_file="$BACKUP_DIR/integrity_report_$(date '+%Y%m%d_%H%M%S').txt"
@@ -393,7 +517,7 @@ generate_report() {
         for backup_type in daily weekly monthly; do
             local dir_path="$BACKUP_DIR/$backup_type"
             if [[ -d "$dir_path" ]]; then
-                local count=$(find "$dir_path" -name "books-db_*.sql*" -type f | wc -l)
+                local count=$(find "$dir_path" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f 2>/dev/null | wc -l)
                 local size=$(du -sh "$dir_path" 2>/dev/null | cut -f1 || echo "0")
                 echo "$backup_type: $count backups, size: $size"
             fi
@@ -450,6 +574,8 @@ main() {
     check_disk_space
     echo
     check_backup_schedule
+    echo
+    check_remote_backup_status
     
     echo
     echo "=== Final Results ==="
@@ -493,6 +619,15 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     echo "Environment variables:"
     echo "  MIN_BACKUP_SIZE_MB     - minimum acceptable backup size in MB (default 1)"
     echo "  MAX_BACKUP_AGE_DAYS    - maximum backup age in days (default 7)"
+    echo ""
+    echo "Remote storage check (S3-compatible):"
+    echo "  BACKUP_REMOTE_ENABLED  - enable remote check (0/1)"
+    echo "  BACKUP_S3_ENDPOINT     - S3 endpoint URL"
+    echo "  BACKUP_S3_BUCKET       - S3 bucket name"
+    echo "  BACKUP_S3_PREFIX       - path prefix in bucket"
+    echo "  BACKUP_S3_ACCESS_KEY_ID - S3 access key"
+    echo "  BACKUP_S3_SECRET_ACCESS_KEY - S3 secret key"
+    echo "  BACKUP_S3_REGION       - S3 region (auto)"
     echo
     echo "Exit codes:"
     echo "  0 - All checks passed"

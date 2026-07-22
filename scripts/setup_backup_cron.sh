@@ -311,6 +311,15 @@ setup_logging() {
     endscript
 }
 
+/opt/books/backups/status.log {
+    weekly
+    missingok
+    rotate 12
+    compress
+    notifempty
+    create 644 $BACKUP_USER $BACKUP_USER
+}
+
 /opt/books/backups/*.txt {
     weekly
     missingok

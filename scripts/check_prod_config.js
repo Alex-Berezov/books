@@ -181,14 +181,49 @@ if (fs.existsSync(dockerComposePath)) {
   const composeContent = fs.readFileSync(dockerComposePath, 'utf8');
   const usesEnvProd = composeContent.includes('.env.prod');
   const hasHealthcheck = composeContent.includes('/api/metrics');
+  const hasPostgresPort = /ports:[\s\S]*?5432:5432/.test(composeContent);
 
   console.log(`🐳 docker-compose.prod.yml uses .env.prod: ${usesEnvProd ? '✅' : '❌'}`);
   console.log(
     `🩺 docker-compose.prod.yml healthcheck path: ${hasHealthcheck ? '/api/metrics ✅' : 'Wrong path ❌'}`,
   );
+  console.log(`🔒 PostgreSQL port exposed: ${hasPostgresPort ? '❌' : '✅ (not exposed)'}`);
+  if (hasPostgresPort) {
+    console.log('   ↳ PostgreSQL should NOT be exposed to the internet in production!');
+    console.log('   ↳ Backend connects via Docker internal network (postgres:5432)');
+    allPassed = false;
+  }
 } else {
   console.log('🐳 docker-compose.prod.yml: ❌ Not found');
   allPassed = false;
+}
+
+// Check backup remote storage variables
+console.log('\n📤 Backup remote storage check:');
+const backupRemoteEnabled = envVars.BACKUP_REMOTE_ENABLED;
+if (backupRemoteEnabled === '1') {
+  const backupS3Required = [
+    'BACKUP_S3_ENDPOINT',
+    'BACKUP_S3_BUCKET',
+    'BACKUP_S3_ACCESS_KEY_ID',
+    'BACKUP_S3_SECRET_ACCESS_KEY',
+  ];
+  backupS3Required.forEach((name) => {
+    const val = envVars[name];
+    const ok = !!val;
+    console.log(`   ${ok ? '✅' : '❌'} ${name}: ${ok ? val : 'missing'}`);
+    if (!ok) allPassed = false;
+  });
+  if (envVars.BACKUP_S3_ENDPOINT) {
+    try {
+      new URL(envVars.BACKUP_S3_ENDPOINT);
+    } catch {
+      console.log('   ❌ BACKUP_S3_ENDPOINT is not a valid URL');
+      allPassed = false;
+    }
+  }
+} else {
+  console.log('   ⚠️ BACKUP_REMOTE_ENABLED is not set to 1 — remote backups disabled');
 }
 
 console.log('\n' + '='.repeat(50));
