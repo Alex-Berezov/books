@@ -67,7 +67,7 @@ BACKUP_RETENTION_BEFORE_DEPLOY="${BACKUP_RETENTION_BEFORE_DEPLOY:-30}"
 
 # Function to detect Docker volume name for uploads
 detect_uploads_volume() {
-    if [[ -n "$UPLOADS_DOCKER_VOLUME" ]]; then
+    if [[ -n "${UPLOADS_DOCKER_VOLUME:-}" ]]; then
         echo "$UPLOADS_DOCKER_VOLUME"
         return
     fi
