@@ -20,6 +20,14 @@ log_pass() { echo -e "${GREEN}[PASS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_fail() { echo -e "${RED}[FAIL]${NC} $1"; }
 
+# Source backup-specific environment (e.g., S3/R2 credentials)
+BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-/opt/books/app/.env.backup}"
+if [[ -f "$BACKUP_ENV_FILE" ]]; then
+    set -a
+    source "$BACKUP_ENV_FILE"
+    set +a
+fi
+
 PASS=0; FAIL=0; WARN=0
 BACKUP_DIR="${BACKUP_DIR:-/opt/books/backups}"
 MIN_BACKUP_SIZE_MB="${MIN_BACKUP_SIZE_MB:-1}"

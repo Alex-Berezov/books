@@ -30,6 +30,14 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_WARNING=0
 
+# Source backup-specific environment (e.g., S3/R2 credentials)
+BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-/opt/books/app/.env.backup}"
+if [[ -f "$BACKUP_ENV_FILE" ]]; then
+    set -a
+    source "$BACKUP_ENV_FILE"
+    set +a
+fi
+
 # Configuration
 BACKUP_DIR="/opt/books/backups"
 MIN_BACKUP_SIZE_MB="${MIN_BACKUP_SIZE_MB:-1}"

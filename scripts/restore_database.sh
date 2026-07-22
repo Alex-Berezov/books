@@ -25,6 +25,14 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
+# Source backup-specific environment (e.g., S3/R2 credentials)
+BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-/opt/books/app/.env.backup}"
+if [[ -f "$BACKUP_ENV_FILE" ]]; then
+    set -a
+    source "$BACKUP_ENV_FILE"
+    set +a
+fi
+
 # Default configuration
 BACKUP_DIR="/opt/books/backups"
 UPLOADS_DIR="/opt/books/uploads"
