@@ -199,6 +199,10 @@ backup_database() {
     log_info "Using database: $db_name, user: $db_user"
         
     # Backup via Docker (custom-format)
+    # Strategy: dump inside container → docker cp out.
+    # Using docker exec stdout redirect can race (exit code before flush),
+    # so we write the dump file inside the container and copy it out.
+        local container_dump_path="/tmp/$(basename "$backup_file")"
         docker exec "$postgres_container" pg_dump \
             -h localhost \
             -p 5432 \
@@ -208,7 +212,9 @@ backup_database() {
             --no-owner \
             --no-privileges \
             --verbose \
-            -f - > "$backup_file" 2>>"$LOG_FILE"
+            -f "$container_dump_path" 2>>"$LOG_FILE" \
+            && docker cp "$postgres_container:$container_dump_path" "$backup_file" \
+            && docker exec "$postgres_container" rm -f "$container_dump_path"
     else
     # Local backup (custom-format)
         PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
@@ -224,6 +230,9 @@ backup_database() {
     fi
     
     local backup_rc=$?
+    local diag_dir
+    diag_dir="$(dirname "$backup_file")"
+    
     if [[ $backup_rc -eq 0 && -f "$backup_file" && -s "$backup_file" ]]; then
     log_success "Database backup created: $(basename "$backup_file") (custom-format .dump)"
         
@@ -235,9 +244,16 @@ backup_database() {
     else
     log_error "Database backup failed (exit code: $backup_rc)"
     if [[ -f "$LOG_FILE" ]]; then
-        log_error "Last lines from pg_dump:"
+        log_error "Last lines from pg_dump stderr:"
         tail -5 "$LOG_FILE" | while IFS= read -r line; do log_error "  $line"; done
     fi
+        log_error "Diagnostics:"
+        log_error "  Target file: $backup_file"
+        log_error "  Directory exists: $(test -d "$diag_dir" && echo yes || echo no)"
+        log_error "  File exists: $(test -f "$backup_file" && echo yes || echo no)"
+        log_error "  File size: $(stat -c %s "$backup_file" 2>&1 || echo 'stat unavailable')"
+        log_error "  Dir contents: $(ls -la "$diag_dir" 2>&1 | head -5 | tr '\n' ';')"
+        log_error "  Disk space: $(df -h "$BACKUP_DIR" 2>&1 | tail -1)"
         return 1
     fi
 }

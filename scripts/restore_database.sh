@@ -213,7 +213,10 @@ backup_current_database() {
     local backup_file="/tmp/pre_restore_backup_${timestamp}.dump"
     
     if [[ "$USE_DOCKER" == "true" ]]; then
-        docker exec "$(docker ps -qf name=postgres)" pg_dump \
+        local container_name
+        container_name=$(docker ps -qf name=postgres)
+        local container_dump_path="/tmp/$(basename "$backup_file")"
+        docker exec "$container_name" pg_dump \
             -h localhost \
             -p 5432 \
             -U "$POSTGRES_USER" \
@@ -221,7 +224,9 @@ backup_current_database() {
             -Fc \
             --no-owner \
             --no-privileges \
-            -f - > "$backup_file" 2>>"$LOG_FILE"
+            -f "$container_dump_path" 2>>"$LOG_FILE" \
+            && docker cp "$container_name:$container_dump_path" "$backup_file" \
+            && docker exec "$container_name" rm -f "$container_dump_path"
     else
         PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
             -h "$POSTGRES_HOST" \
@@ -243,6 +248,9 @@ backup_current_database() {
         if [[ -f "$LOG_FILE" ]]; then
             tail -3 "$LOG_FILE" | while IFS= read -r line; do log_warning "pg_dump: $line"; done
         fi
+        log_warning "  Target: $backup_file"
+        log_warning "  File exists: $(test -f "$backup_file" && echo yes || echo no)"
+        log_warning "  Disk space: $(df -h "$(dirname "$backup_file")" 2>&1 | tail -1)"
         echo ""
     fi
 }
