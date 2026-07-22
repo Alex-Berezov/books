@@ -8,21 +8,21 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Logging functions
+# Logging functions (all output to stderr so stdout is clean for variable capture)
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${YELLOW}[WARNING]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 # Default configuration
@@ -105,14 +105,15 @@ list_available_backups() {
         return 1
     fi
     
-    echo "Available backups:"
+    # User-facing output to stderr; paths to stdout for capture
+    echo "Available backups:" >&2
     for i in "${!backups[@]}"; do
         local backup_file="${backups[$i]}"
-        local backup_date=$(basename "$backup_file" | sed 's/books-db_//' | sed 's/.sql.*//' | sed 's/_/ /')
+        local backup_date=$(basename "$backup_file" | sed 's/bibliaris-prod-[^-]*-//' | sed 's/\.[^.]*$//' | sed 's/-/ /g')
         local backup_size=$(du -h "$backup_file" | cut -f1)
-        local backup_age=$(find "$backup_file" -mtime +0 -printf "%Cr\n" 2>/dev/null || stat -c %y "$backup_file")
+        local backup_age=$(stat -c %y "$backup_file" 2>/dev/null | cut -d. -f1)
         
-        echo "$((i+1)). $(basename "$backup_file") (size: $backup_size, created: $backup_age)"
+        echo "$((i+1)). $(basename "$backup_file") (size: $backup_size, created: $backup_age)" >&2
     done
     
     printf '%s\n' "${backups[@]}"
@@ -128,7 +129,7 @@ select_backup() {
         return 1
     fi
     
-    echo
+    echo >&2
     read -p "Select backup number to restore (1-${#available_backups[@]}): " selection
     
     if [[ ! "$selection" =~ ^[0-9]+$ ]] || [[ $selection -lt 1 ]] || [[ $selection -gt ${#available_backups[@]} ]]; then
@@ -220,7 +221,7 @@ restore_database() {
     
     # Confirm restore (destructive)
     if [[ "$confirm_restore" != "true" ]]; then
-        echo
+        echo >&2
         log_warning "WARNING: Restore will completely REPLACE the current database!"
         read -p "Are you sure you want to continue? (yes/no): " confirmation
         
@@ -385,25 +386,54 @@ restore_uploads() {
     
     log_info "Restoring uploads from: $(basename "$uploads_backup")"
     
-    # Backup current uploads directory
-    if [[ -d "$UPLOADS_DIR" && "$(ls -A "$UPLOADS_DIR" 2>/dev/null)" ]]; then
-        local timestamp=$(date '+%Y%m%d_%H%M%S')
-        local backup_current_uploads="/tmp/uploads_backup_${timestamp}.tar.gz"
-        
-        tar -czf "$backup_current_uploads" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")" 2>/dev/null
-        log_info "Current uploads saved to: $backup_current_uploads"
+    local restore_ok=false
+    
+    if [[ "$USE_DOCKER" == "true" ]]; then
+        # Docker mode: restore to named volume
+        local volume_name="uploads_data_prod"
+        if docker volume inspect "$volume_name" &>/dev/null; then
+            log_info "Restoring to Docker volume: $volume_name"
+            
+            # Backup current state in volume
+            local timestamp=$(date '+%Y%m%d_%H%M%S')
+            local backup_current_uploads="/tmp/uploads_backup_${timestamp}.tar.gz"
+            docker run --rm -v "${volume_name}:/data" -v "/tmp:/backup" alpine \
+                tar -czf "/backup/uploads_backup_${timestamp}.tar.gz" -C /data . 2>/dev/null && \
+                log_info "Current uploads saved to: $backup_current_uploads" || true
+            
+            # Restore from backup file into volume
+            if docker run --rm -v "${volume_name}:/data" -v "$(dirname "$uploads_backup"):/backup" alpine \
+                tar -xzf "/backup/$(basename "$uploads_backup")" -C /data 2>/dev/null; then
+                restore_ok=true
+                log_success "Uploads restored to Docker volume $volume_name"
+            fi
+        else
+            log_warning "Docker volume $volume_name not found, falling back to host path"
+        fi
     fi
     
-    # Restore uploads
-    if tar -xzf "$uploads_backup" -C "$(dirname "$UPLOADS_DIR")" 2>/dev/null; then
-        log_success "Uploads restored successfully"
+    if [[ "$restore_ok" != "true" ]]; then
+        # Fallback or local mode: restore to host directory
+        # Backup current uploads
+        if [[ -d "$UPLOADS_DIR" && "$(ls -A "$UPLOADS_DIR" 2>/dev/null)" ]]; then
+            local timestamp=$(date '+%Y%m%d_%H%M%S')
+            local backup_current_uploads="/tmp/uploads_backup_${timestamp}.tar.gz"
+            tar -czf "$backup_current_uploads" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")" 2>/dev/null
+            log_info "Current uploads saved to: $backup_current_uploads"
+        fi
         
-        # Fix permissions
-        chown -R deploy:deploy "$UPLOADS_DIR" 2>/dev/null || true
-        chmod -R 755 "$UPLOADS_DIR" 2>/dev/null || true
-        
-        return 0
-    else
+        # Restore
+        if tar -xzf "$uploads_backup" -C "$(dirname "$UPLOADS_DIR")" 2>/dev/null; then
+            restore_ok=true
+            log_success "Uploads restored to host path $UPLOADS_DIR"
+            
+            # Fix permissions
+            chown -R deploy:deploy "$UPLOADS_DIR" 2>/dev/null || true
+            chmod -R 755 "$UPLOADS_DIR" 2>/dev/null || true
+        fi
+    fi
+    
+    if [[ "$restore_ok" != "true" ]]; then
         log_error "Uploads restore failed"
         return 1
     fi

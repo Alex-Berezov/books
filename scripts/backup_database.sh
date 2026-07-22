@@ -8,21 +8,21 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Logging functions
+# Logging functions (all output to stderr so stdout is clean for variable capture)
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${YELLOW}[WARNING]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
 # Default configuration
@@ -209,26 +209,52 @@ backup_uploads() {
         return 0
     fi
     
-    if [[ ! -d "$UPLOADS_DIR" ]]; then
-    log_warning "Uploads directory not found: $UPLOADS_DIR"
-        return 0
-    fi
-    
     log_info "Creating uploads/media backup..."
     
-    # Count files for backup
-    local file_count=$(find "$UPLOADS_DIR" -type f | wc -l)
-    log_info "Files found for backup: $file_count"
+    local files_count=0
+    local tar_ok=false
     
-    if [[ $file_count -eq 0 ]]; then
-    log_warning "No files to backup in $UPLOADS_DIR"
-        return 0
+    if [[ "$USE_DOCKER" == "true" ]]; then
+        # Docker mode: backup from named volume uploads_data_prod
+        local volume_name="uploads_data_prod"
+        if docker volume inspect "$volume_name" &>/dev/null; then
+            log_info "Backing up Docker volume: $volume_name"
+            # Use a temporary container to tar the volume contents
+            if docker run --rm -v "${volume_name}:/data" -v "$(dirname "$backup_file"):/backup" alpine \
+                tar -czf "/backup/$(basename "$backup_file")" -C /data . 2>>"$LOG_FILE"; then
+                tar_ok=true
+            else
+                log_warning "Docker volume backup failed, falling back to host path: $UPLOADS_DIR"
+            fi
+        else
+            log_warning "Docker volume $volume_name not found, falling back to host path: $UPLOADS_DIR"
+        fi
     fi
     
-    # Create archive
-    tar -czf "$backup_file" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")" 2>>"$LOG_FILE"
+    if [[ "$tar_ok" != "true" ]]; then
+        # Fallback or local mode: backup from host directory
+        if [[ ! -d "$UPLOADS_DIR" ]]; then
+            log_warning "Uploads directory not found: $UPLOADS_DIR"
+            return 0
+        fi
+        
+        local file_count=$(find "$UPLOADS_DIR" -type f 2>/dev/null | wc -l)
+        log_info "Files found for backup: $file_count"
+        
+        if [[ $file_count -eq 0 ]]; then
+            log_warning "No files to backup in $UPLOADS_DIR"
+            return 0
+        fi
+        
+        log_info "Archiving from host path: $UPLOADS_DIR"
+        tar -czf "$backup_file" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")" 2>>"$LOG_FILE"
+        
+        if [[ $? -eq 0 && -f "$backup_file" ]]; then
+            tar_ok=true
+        fi
+    fi
     
-    if [[ $? -eq 0 && -f "$backup_file" ]]; then
+    if [[ "$tar_ok" == "true" && -f "$backup_file" ]]; then
         local file_size=$(du -h "$backup_file" | cut -f1)
     log_success "Uploads/media backup created: $(basename "$backup_file") (size: $file_size)"
         echo "$backup_file"
@@ -316,20 +342,20 @@ generate_backup_report() {
     
     log_success "Report created: $(basename "$report_file")"
     
-    # Print concise summary to console
-    echo ""
-    echo "=== FINAL SUMMARY ==="
+    # Print concise summary to console (stderr to keep stdout clean)
+    echo "" >&2
+    echo "=== FINAL SUMMARY ===" >&2
     if [[ -n "$db_backup_file" && -f "$db_backup_file" ]]; then
-    echo -e "${GREEN}✓${NC} Database: $(basename "$db_backup_file") ($(du -h "$db_backup_file" | cut -f1))"
+    echo -e "${GREEN}✓${NC} Database: $(basename "$db_backup_file") ($(du -h "$db_backup_file" | cut -f1))" >&2
     else
-    echo -e "${RED}✗${NC} Database: Error"
+    echo -e "${RED}✗${NC} Database: Error" >&2
     fi
     
     if [[ "$INCLUDE_UPLOADS" == "true" ]]; then
         if [[ -n "$uploads_backup_file" && -f "$uploads_backup_file" ]]; then
-            echo -e "${GREEN}✓${NC} Media uploads: $(basename "$uploads_backup_file") ($(du -h "$uploads_backup_file" | cut -f1))"
+            echo -e "${GREEN}✓${NC} Media uploads: $(basename "$uploads_backup_file") ($(du -h "$uploads_backup_file" | cut -f1))" >&2
         else
-            echo -e "${YELLOW}!${NC} Media uploads: Skipped or error"
+            echo -e "${YELLOW}!${NC} Media uploads: Skipped or error" >&2
         fi
     fi
 }
@@ -344,14 +370,32 @@ upload_to_remote() {
         return 0
     fi
     
-    if [[ -z "$BACKUP_S3_BUCKET" || -z "$BACKUP_S3_ENDPOINT" ]]; then
-        log_warning "Remote backup enabled but S3 bucket or endpoint not configured"
-        return 0
+    # Validate config: when remote is enabled, all params are required
+    local config_ok=true
+    if [[ -z "$BACKUP_S3_ENDPOINT" ]]; then
+        log_error "BACKUP_REMOTE_ENABLED=1 but BACKUP_S3_ENDPOINT is not set"
+        config_ok=false
+    fi
+    if [[ -z "$BACKUP_S3_BUCKET" ]]; then
+        log_error "BACKUP_REMOTE_ENABLED=1 but BACKUP_S3_BUCKET is not set"
+        config_ok=false
+    fi
+    if [[ -z "$BACKUP_S3_ACCESS_KEY_ID" ]]; then
+        log_error "BACKUP_REMOTE_ENABLED=1 but BACKUP_S3_ACCESS_KEY_ID is not set"
+        config_ok=false
+    fi
+    if [[ -z "$BACKUP_S3_SECRET_ACCESS_KEY" ]]; then
+        log_error "BACKUP_REMOTE_ENABLED=1 but BACKUP_S3_SECRET_ACCESS_KEY is not set"
+        config_ok=false
     fi
     
     if ! command -v aws &> /dev/null; then
-        log_error "aws CLI not found. Install it for remote backup upload."
-        log_error "See: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+        log_error "BACKUP_REMOTE_ENABLED=1 but aws CLI not found."
+        log_error "Install: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+        config_ok=false
+    fi
+    
+    if [[ "$config_ok" != "true" ]]; then
         return 1
     fi
     

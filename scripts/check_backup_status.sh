@@ -84,9 +84,9 @@ if [[ "${BACKUP_REMOTE_ENABLED:-0}" == "1" ]] && command -v aws &> /dev/null; th
   export AWS_ACCESS_KEY_ID="${BACKUP_S3_ACCESS_KEY_ID:-}"
   export AWS_SECRET_ACCESS_KEY="${BACKUP_S3_SECRET_ACCESS_KEY:-}"
   export AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-auto}"
-  local aws_args=(--endpoint-url "${BACKUP_S3_ENDPOINT:-}")
-  local bucket="${BACKUP_S3_BUCKET:-}"
-  local prefix="${BACKUP_S3_PREFIX:-prod/postgres}"
+  aws_args=(--endpoint-url "${BACKUP_S3_ENDPOINT:-}")
+  bucket="${BACKUP_S3_BUCKET:-}"
+  prefix="${BACKUP_S3_PREFIX:-prod/postgres}"
 
   latest_remote=""
   latest_remote_epoch=0
