@@ -47,6 +47,9 @@ DOCKER_COMPOSE_FILE="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
 DOCKER_POSTGRES_SERVICE="${DOCKER_POSTGRES_SERVICE:-postgres}"
 USE_DOCKER="${USE_DOCKER:-auto}"
 
+# Docker volume name for uploads (auto-detected, fallback to this default)
+UPLOADS_DOCKER_VOLUME="${UPLOADS_DOCKER_VOLUME:-}"
+
 # S3-compatible remote storage settings
 BACKUP_REMOTE_ENABLED="${BACKUP_REMOTE_ENABLED:-0}"
 BACKUP_S3_ENDPOINT="${BACKUP_S3_ENDPOINT:-}"
@@ -61,6 +64,34 @@ BACKUP_RETENTION_DAILY="${BACKUP_RETENTION_DAILY:-30}"
 BACKUP_RETENTION_WEEKLY="${BACKUP_RETENTION_WEEKLY:-56}"
 BACKUP_RETENTION_MONTHLY="${BACKUP_RETENTION_MONTHLY:-365}"
 BACKUP_RETENTION_BEFORE_DEPLOY="${BACKUP_RETENTION_BEFORE_DEPLOY:-30}"
+
+# Function to detect Docker volume name for uploads
+detect_uploads_volume() {
+    if [[ -n "$UPLOADS_DOCKER_VOLUME" ]]; then
+        echo "$UPLOADS_DOCKER_VOLUME"
+        return
+    fi
+    
+    local detected=""
+    
+    # Try docker compose config (most reliable in production)
+    local compose_file="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
+    if [[ -f "$compose_file" ]]; then
+        detected=$(docker compose -f "$compose_file" config --volumes 2>/dev/null | grep uploads_data_prod | head -1 || true)
+    fi
+    
+    # Fallback: list Docker volumes by name suffix
+    if [[ -z "$detected" ]]; then
+        detected=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E '(^|_)uploads_data_prod$' | head -1 || true)
+    fi
+    
+    # Final fallback: hardcoded name
+    if [[ -z "$detected" ]]; then
+        detected="uploads_data_prod"
+    fi
+    
+    echo "$detected"
+}
 
 # Function to detect how to connect to PostgreSQL
 detect_postgres_connection() {
@@ -105,6 +136,7 @@ test_postgres_connection() {
 
 # Function to create backup directories
 setup_backup_directories() {
+    local backup_type="${1:-}"
     log_info "Creating backup directories..."
     
     # Create main backup directory
@@ -114,6 +146,12 @@ setup_backup_directories() {
     mkdir -p "$BACKUP_DIR/daily"
     mkdir -p "$BACKUP_DIR/weekly"
     mkdir -p "$BACKUP_DIR/monthly"
+    mkdir -p "$BACKUP_DIR/before-deploy"
+    
+    # Also create the specific type directory (in case it's a new type)
+    if [[ -n "$backup_type" ]]; then
+        mkdir -p "$BACKUP_DIR/$backup_type"
+    fi
     
     # Check write permissions
     if [[ ! -w "$BACKUP_DIR" ]]; then
@@ -215,8 +253,9 @@ backup_uploads() {
     local tar_ok=false
     
     if [[ "$USE_DOCKER" == "true" ]]; then
-        # Docker mode: backup from named volume uploads_data_prod
-        local volume_name="uploads_data_prod"
+        # Docker mode: backup from named volume
+        local volume_name
+        volume_name=$(detect_uploads_volume)
         if docker volume inspect "$volume_name" &>/dev/null; then
             log_info "Backing up Docker volume: $volume_name"
             # Use a temporary container to tar the volume contents
@@ -520,7 +559,7 @@ main() {
         exit 1
     fi
     
-    setup_backup_directories
+    setup_backup_directories "$backup_type"
     
     # Creating backups
     local db_backup_file=""

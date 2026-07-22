@@ -39,6 +39,34 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
 # Docker environment settings
 USE_DOCKER="${USE_DOCKER:-auto}"
 
+# Function to detect Docker volume name for uploads
+detect_uploads_volume() {
+    if [[ -n "${UPLOADS_DOCKER_VOLUME:-}" ]]; then
+        echo "$UPLOADS_DOCKER_VOLUME"
+        return
+    fi
+    
+    local detected=""
+    
+    # Try docker compose config
+    local compose_file="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
+    if [[ -f "$compose_file" ]]; then
+        detected=$(docker compose -f "$compose_file" config --volumes 2>/dev/null | grep uploads_data_prod | head -1 || true)
+    fi
+    
+    # Fallback: list Docker volumes by name suffix
+    if [[ -z "$detected" ]]; then
+        detected=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E '(^|_)uploads_data_prod$' | head -1 || true)
+    fi
+    
+    # Final fallback
+    if [[ -z "$detected" ]]; then
+        detected="uploads_data_prod"
+    fi
+    
+    echo "$detected"
+}
+
 # Function to determine connection method to PostgreSQL
 detect_postgres_connection() {
     if [[ "$USE_DOCKER" == "auto" ]]; then
@@ -390,7 +418,8 @@ restore_uploads() {
     
     if [[ "$USE_DOCKER" == "true" ]]; then
         # Docker mode: restore to named volume
-        local volume_name="uploads_data_prod"
+        local volume_name
+        volume_name=$(detect_uploads_volume)
         if docker volume inspect "$volume_name" &>/dev/null; then
             log_info "Restoring to Docker volume: $volume_name"
             
