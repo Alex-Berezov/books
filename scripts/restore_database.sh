@@ -81,7 +81,22 @@ detect_uploads_volume() {
 # Function to determine connection method to PostgreSQL
 detect_postgres_connection() {
     if [[ "$USE_DOCKER" == "auto" ]]; then
-        if docker ps --format "table {{.Names}}" | grep -q postgres; then
+        local found_postgres=false
+        if docker compose -f "$DOCKER_COMPOSE_FILE" ps --status running 2>/dev/null | grep -q postgres; then
+            found_postgres=true
+        elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q postgres; then
+            found_postgres=true
+        elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q postgres; then
+            log_warning "PostgreSQL container exists but is not running, attempting to start..."
+            docker compose -f "$DOCKER_COMPOSE_FILE" start postgres 2>/dev/null || \
+            docker start "$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep postgres | head -1)" 2>/dev/null || true
+            sleep 3
+            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q postgres; then
+                found_postgres=true
+                log_success "PostgreSQL container started"
+            fi
+        fi
+        if [[ "$found_postgres" == "true" ]]; then
             USE_DOCKER="true"
             log_info "Detected PostgreSQL in Docker container"
         elif command -v psql &> /dev/null; then

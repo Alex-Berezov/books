@@ -109,7 +109,29 @@ detect_uploads_volume() {
 # Function to detect how to connect to PostgreSQL
 detect_postgres_connection() {
     if [[ "$USE_DOCKER" == "auto" ]]; then
-        if docker ps --format "table {{.Names}}" | grep -q postgres; then
+        # Try multiple Docker detection strategies
+        local found_postgres=false
+        
+        # Strategy 1: docker compose ps (checks compose service state)
+        if docker compose -f "$DOCKER_COMPOSE_FILE" ps --status running 2>/dev/null | grep -q postgres; then
+            found_postgres=true
+        # Strategy 2: docker ps (running containers by name)
+        elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q postgres; then
+            found_postgres=true
+        # Strategy 3: docker ps -a (includes stopped/exited containers)
+        elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q postgres; then
+            log_warning "PostgreSQL container exists but is not running"
+            log_warning "Attempting to start PostgreSQL container..."
+            docker compose -f "$DOCKER_COMPOSE_FILE" start postgres 2>/dev/null || \
+            docker start "$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep postgres | head -1)" 2>/dev/null || true
+            sleep 3
+            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q postgres; then
+                found_postgres=true
+                log_success "PostgreSQL container started"
+            fi
+        fi
+        
+        if [[ "$found_postgres" == "true" ]]; then
             USE_DOCKER="true"
             log_info "Detected PostgreSQL in Docker container"
         elif command -v psql &> /dev/null; then
@@ -117,6 +139,7 @@ detect_postgres_connection() {
             log_info "Detected local PostgreSQL"
         else
             log_error "PostgreSQL not found locally or in Docker"
+            log_error "Docker ps output: $(docker ps -a --format '{{.Names}}' 2>&1 | tr '\n' ' ')"
             exit 1
         fi
     fi
