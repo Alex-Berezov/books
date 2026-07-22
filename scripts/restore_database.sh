@@ -96,7 +96,7 @@ list_available_backups() {
         if [[ -d "$dir" ]]; then
             while IFS= read -r -d '' file; do
                 backups+=("$file")
-            done < <(find "$dir" -name "books-db_*.sql*" -type f -print0 | sort -z)
+            done < <(find "$dir" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f -print0 | sort -z 2>/dev/null)
         fi
     done
     
@@ -139,7 +139,7 @@ select_backup() {
     echo "${available_backups[$((selection-1))]}"
 }
 
-# Function to prepare backup file (decompress if needed)
+# Function to prepare backup file (returns format and decompressed path if needed)
 prepare_backup_file() {
     local backup_file="$1"
     
@@ -148,28 +148,37 @@ prepare_backup_file() {
         return 1
     fi
     
-    # Decompress if needed
-    if [[ "$backup_file" == *.gz ]]; then
-        log_info "Decompressing backup file..."
+    local format="sql"
+    local restore_file="$backup_file"
+    
+    # Detect format: .dump = custom-format (pg_restore), .sql / .sql.gz = plain (psql)
+    if [[ "$backup_file" == *.dump ]]; then
+        format="dump"
+    elif [[ "$backup_file" == *.sql.gz ]]; then
+        format="sql"
+        log_info "Decompressing legacy backup file..."
         local temp_file="/tmp/restore_$(basename "$backup_file" .gz)"
-        
         if ! gunzip -c "$backup_file" > "$temp_file"; then
             log_error "Backup decompression failed"
             return 1
         fi
-        
-        echo "$temp_file"
+        restore_file="$temp_file"
+    elif [[ "$backup_file" == *.sql ]]; then
+        format="sql"
     else
-        echo "$backup_file"
+        log_warning "Unknown backup format, assuming plain SQL"
+        format="sql"
     fi
+    
+    echo "$format|$restore_file"
 }
 
 # Function to create a backup of the current database
 backup_current_database() {
     log_info "Creating pre-restore database backup..."
     
-    local timestamp=$(date '+%Y%m%d_%H%M%S')
-    local backup_file="/tmp/pre_restore_backup_${timestamp}.sql"
+    local timestamp=$(date '+%Y-%m-%d-%H-%M')
+    local backup_file="/tmp/pre_restore_backup_${timestamp}.dump"
     
     if [[ "$USE_DOCKER" == "true" ]]; then
         docker exec "$(docker ps -qf name=postgres)" pg_dump \
@@ -177,18 +186,20 @@ backup_current_database() {
             -p 5432 \
             -U "$POSTGRES_USER" \
             -d "$POSTGRES_DB" \
+            -Fc \
             --no-owner \
             --no-privileges \
-            > "$backup_file" 2>/dev/null
+            -f - > "$backup_file" 2>/dev/null
     else
         PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
             -h "$POSTGRES_HOST" \
             -p "$POSTGRES_PORT" \
             -U "$POSTGRES_USER" \
             -d "$POSTGRES_DB" \
+            -Fc \
             --no-owner \
             --no-privileges \
-            > "$backup_file" 2>/dev/null
+            -f - > "$backup_file" 2>/dev/null
     fi
     
     if [[ -f "$backup_file" && -s "$backup_file" ]]; then
@@ -230,35 +241,73 @@ restore_database() {
     fi
     
     # Prepare backup file
-    local restore_file
-    if ! restore_file=$(prepare_backup_file "$backup_file"); then
+    local prepare_result
+    if ! prepare_result=$(prepare_backup_file "$backup_file"); then
         log_error "Failed to prepare backup file"
         exit 1
     fi
     
-    log_info "Starting database restore..."
+    local format="${prepare_result%%|*}"
+    local restore_file="${prepare_result#*|}"
+    
+    log_info "Starting database restore (format: $format)..."
     
     local restore_success=false
     
-    if [[ "$USE_DOCKER" == "true" ]]; then
-        # Docker restore
-        if docker exec -i "$(docker ps -qf name=postgres)" psql \
-            -h localhost \
-            -p 5432 \
-            -U "$POSTGRES_USER" \
-            -d "$POSTGRES_DB" \
-            < "$restore_file" >/dev/null 2>&1; then
-            restore_success=true
+    if [[ "$format" == "dump" ]]; then
+        # Custom-format restore via pg_restore
+        if [[ "$USE_DOCKER" == "true" ]]; then
+            # Copy dump into container first, then pg_restore
+            local container_name
+            container_name=$(docker ps -qf name=postgres)
+            docker cp "$restore_file" "${container_name}:/tmp/restore.dump" >/dev/null 2>&1
+            if docker exec "$container_name" pg_restore \
+                -h localhost \
+                -p 5432 \
+                -U "$POSTGRES_USER" \
+                -d "$POSTGRES_DB" \
+                --clean \
+                --if-exists \
+                --no-owner \
+                --no-privileges \
+                /tmp/restore.dump >/dev/null 2>&1; then
+                restore_success=true
+            fi
+            docker exec "$container_name" rm -f /tmp/restore.dump >/dev/null 2>&1 || true
+        else
+            if PGPASSWORD="$POSTGRES_PASSWORD" pg_restore \
+                -h "$POSTGRES_HOST" \
+                -p "$POSTGRES_PORT" \
+                -U "$POSTGRES_USER" \
+                -d "$POSTGRES_DB" \
+                --clean \
+                --if-exists \
+                --no-owner \
+                --no-privileges \
+                "$restore_file" >/dev/null 2>&1; then
+                restore_success=true
+            fi
         fi
     else
-        # Local restore
-        if PGPASSWORD="$POSTGRES_PASSWORD" psql \
-            -h "$POSTGRES_HOST" \
-            -p "$POSTGRES_PORT" \
-            -U "$POSTGRES_USER" \
-            -d "$POSTGRES_DB" \
-            < "$restore_file" >/dev/null 2>&1; then
-            restore_success=true
+        # Legacy plain SQL restore via psql
+        if [[ "$USE_DOCKER" == "true" ]]; then
+            if docker exec -i "$(docker ps -qf name=postgres)" psql \
+                -h localhost \
+                -p 5432 \
+                -U "$POSTGRES_USER" \
+                -d "$POSTGRES_DB" \
+                < "$restore_file" >/dev/null 2>&1; then
+                restore_success=true
+            fi
+        else
+            if PGPASSWORD="$POSTGRES_PASSWORD" psql \
+                -h "$POSTGRES_HOST" \
+                -p "$POSTGRES_PORT" \
+                -U "$POSTGRES_USER" \
+                -d "$POSTGRES_DB" \
+                < "$restore_file" >/dev/null 2>&1; then
+                restore_success=true
+            fi
         fi
     fi
     
@@ -287,20 +336,36 @@ restore_database() {
         # Attempt rollback
         if [[ -n "$current_backup" && -f "$current_backup" ]]; then
             log_info "Attempting to restore previous state..."
-            if [[ "$USE_DOCKER" == "true" ]]; then
-                docker exec -i "$(docker ps -qf name=postgres)" psql \
-                    -h localhost \
-                    -p 5432 \
-                    -U "$POSTGRES_USER" \
-                    -d "$POSTGRES_DB" \
-                    < "$current_backup" >/dev/null 2>&1
+            if [[ "$current_backup" == *.dump ]]; then
+                # Custom-format rollback via pg_restore
+                if [[ "$USE_DOCKER" == "true" ]]; then
+                    local container_name
+                    container_name=$(docker ps -qf name=postgres)
+                    docker cp "$current_backup" "${container_name}:/tmp/rollback.dump" >/dev/null 2>&1
+                    docker exec "$container_name" pg_restore \
+                        -h localhost -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+                        --clean --if-exists --no-owner --no-privileges \
+                        /tmp/rollback.dump >/dev/null 2>&1
+                    docker exec "$container_name" rm -f /tmp/rollback.dump >/dev/null 2>&1 || true
+                else
+                    PGPASSWORD="$POSTGRES_PASSWORD" pg_restore \
+                        -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+                        -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+                        --clean --if-exists --no-owner --no-privileges \
+                        "$current_backup" >/dev/null 2>&1
+                fi
             else
-                PGPASSWORD="$POSTGRES_PASSWORD" psql \
-                    -h "$POSTGRES_HOST" \
-                    -p "$POSTGRES_PORT" \
-                    -U "$POSTGRES_USER" \
-                    -d "$POSTGRES_DB" \
-                    < "$current_backup" >/dev/null 2>&1
+                # Legacy plain SQL rollback
+                if [[ "$USE_DOCKER" == "true" ]]; then
+                    docker exec -i "$(docker ps -qf name=postgres)" psql \
+                        -h localhost -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+                        < "$current_backup" >/dev/null 2>&1
+                else
+                    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+                        -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+                        -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+                        < "$current_backup" >/dev/null 2>&1
+                fi
             fi
             log_warning "Previous state restored"
         fi
@@ -412,7 +477,7 @@ main() {
     
     # Locate and restore uploads archive if present
     local uploads_backup_file
-    local backup_basename=$(basename "$backup_file" | sed 's/books-db_/uploads_/' | sed 's/.sql.*/.tar.gz/')
+    local backup_basename=$(basename "$backup_file" | sed 's/bibliaris-prod-[^-]*-/bibliaris-prod-uploads-/' | sed 's/\.sql.*/.tar.gz/' | sed 's/\.dump/.tar.gz/')
     local backup_dir=$(dirname "$backup_file")
     uploads_backup_file="${backup_dir}/${backup_basename}"
     

@@ -332,7 +332,7 @@ create_backup() {
     log "Creating backup before deployment..."
     
     if [[ -f "./scripts/backup_database.sh" ]]; then
-        execute "./scripts/backup_database.sh daily --tag pre-deploy-$(date +%Y%m%d-%H%M%S)"
+        execute "./scripts/backup_database.sh before-deploy --tag pre-deploy-$(date +%Y%m%d-%H%M%S)"
     log_success "Backup created"
     else
     log_error "backup_database.sh script not found"

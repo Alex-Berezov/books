@@ -25,6 +25,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip_backup_emergency:
+        description: 'Skip pre-deploy backup (emergency only!)'
+        required: false
+        type: boolean
+        default: false
 
 # Global workflow permissions
 permissions:
@@ -281,13 +286,19 @@ jobs:
             # Login to registry to pull image
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             
+            BACKUP_FLAG=""
+            if [[ "${{ github.event.inputs.skip_backup_emergency }}" == "true" ]]; then
+              echo "⚠️  EMERGENCY: Skipping pre-deploy backup!"
+              BACKUP_FLAG="--no-backup"
+            fi
+            
             echo "🚀 Starting deployment..."
             ./scripts/deploy_production.sh \
               --image-tag "${{ needs.build.outputs.version }}" \
               --registry "${{ env.REGISTRY }}/${REPO_LOWER}" \
               --skip-git-update \
               --pull \
-              --no-backup \
+              $BACKUP_FLAG \
               --force
             
             echo "✅ Deployment completed!"
