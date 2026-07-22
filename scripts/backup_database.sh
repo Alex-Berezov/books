@@ -223,7 +223,8 @@ backup_database() {
             -f - > "$backup_file" 2>>"$LOG_FILE"
     fi
     
-    if [[ $? -eq 0 && -f "$backup_file" && -s "$backup_file" ]]; then
+    local backup_rc=$?
+    if [[ $backup_rc -eq 0 && -f "$backup_file" && -s "$backup_file" ]]; then
     log_success "Database backup created: $(basename "$backup_file") (custom-format .dump)"
         
     # Check backup file size
@@ -232,7 +233,11 @@ backup_database() {
         
         echo "$backup_file"
     else
-    log_error "Error creating database backup"
+    log_error "Database backup failed (exit code: $backup_rc)"
+    if [[ -f "$LOG_FILE" ]]; then
+        log_error "Last lines from pg_dump:"
+        tail -5 "$LOG_FILE" | while IFS= read -r line; do log_error "  $line"; done
+    fi
         return 1
     fi
 }

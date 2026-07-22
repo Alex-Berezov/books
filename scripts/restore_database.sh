@@ -221,7 +221,7 @@ backup_current_database() {
             -Fc \
             --no-owner \
             --no-privileges \
-            -f - > "$backup_file" 2>/dev/null
+            -f - > "$backup_file" 2>>"$LOG_FILE"
     else
         PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
             -h "$POSTGRES_HOST" \
@@ -231,14 +231,18 @@ backup_current_database() {
             -Fc \
             --no-owner \
             --no-privileges \
-            -f - > "$backup_file" 2>/dev/null
+            -f - > "$backup_file" 2>>"$LOG_FILE"
     fi
     
-    if [[ -f "$backup_file" && -s "$backup_file" ]]; then
+    local dump_rc=$?
+    if [[ $dump_rc -eq 0 && -f "$backup_file" && -s "$backup_file" ]]; then
         log_success "Backup created: $backup_file"
         echo "$backup_file"
     else
-        log_warning "Backup creation failed (database may be empty)"
+        log_warning "Pre-restore backup failed (exit: $dump_rc) — continuing anyway"
+        if [[ -f "$LOG_FILE" ]]; then
+            tail -3 "$LOG_FILE" | while IFS= read -r line; do log_warning "pg_dump: $line"; done
+        fi
         echo ""
     fi
 }
