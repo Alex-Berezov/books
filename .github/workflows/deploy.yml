@@ -120,6 +120,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/books_test?schema=public
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          NODE_OPTIONS: --max-old-space-size=4096
 
   # =====================================================
   # DOCKER IMAGE BUILD
