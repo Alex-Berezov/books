@@ -122,6 +122,32 @@ describe('RightsIntakeService', () => {
         }),
       );
     });
+
+    it('excludes ARCHIVED when no status filter provided', async () => {
+      prisma.rightsIntake.count.mockResolvedValue(0);
+      prisma.rightsIntake.findMany.mockResolvedValue([]);
+      mockTransactionArray();
+
+      await service.list({});
+      expect(prisma.rightsIntake.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { workflowStatus: { not: 'ARCHIVED' } } }),
+      );
+      expect(prisma.rightsIntake.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { workflowStatus: { not: 'ARCHIVED' } } }),
+      );
+    });
+
+    it('filters by ARCHIVED when status=ARCHIVED', async () => {
+      prisma.rightsIntake.count.mockResolvedValue(1);
+      prisma.rightsIntake.findMany.mockResolvedValue([{ id: 'i1', workflowStatus: 'ARCHIVED' }]);
+      mockTransactionArray();
+
+      const result = await service.list({ status: RightsIntakeStatus.ARCHIVED });
+      expect(prisma.rightsIntake.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { workflowStatus: RightsIntakeStatus.ARCHIVED } }),
+      );
+      expect(result.total).toBe(1);
+    });
   });
 
   describe('getById', () => {
@@ -211,10 +237,49 @@ describe('RightsIntakeService', () => {
       );
     });
 
+    it('archives READY_FOR_AGENT intake', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'READY_FOR_AGENT',
+      });
+      prisma.rightsIntake.update.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'ARCHIVED',
+        archivedAt: new Date(),
+      });
+
+      const result = await service.archive('i1');
+      expect(result.workflowStatus).toBe('ARCHIVED');
+    });
+
     it('throws if already archived', async () => {
       prisma.rightsIntake.findUnique.mockResolvedValue({
         id: 'i1',
         workflowStatus: 'ARCHIVED',
+      });
+      await expect(service.archive('i1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws when archiving APPROVED intake', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'APPROVED',
+      });
+      await expect(service.archive('i1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws when archiving REJECTED intake', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'REJECTED',
+      });
+      await expect(service.archive('i1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws when archiving BOOK_CREATED intake', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'BOOK_CREATED',
       });
       await expect(service.archive('i1')).rejects.toThrow(BadRequestException);
     });
