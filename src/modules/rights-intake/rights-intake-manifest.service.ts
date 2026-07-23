@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   RIGHTS_AGENT_MANIFEST_VERSION,
+  RIGHTS_AGENT_MANIFEST_TYPE,
   RIGHTS_AGENT_EXPECTED_REPORT_SCHEMA_VERSION,
 } from './rights-intake.constants';
 import type { RightsAgentManifestDto } from './dto/rights-agent-manifest.dto';
@@ -59,7 +60,7 @@ export class RightsIntakeManifestService {
 
     return {
       manifestVersion: RIGHTS_AGENT_MANIFEST_VERSION,
-      manifestType: 'BIBLIARIS_RIGHTS_CLEARANCE_INPUT',
+      manifestType: RIGHTS_AGENT_MANIFEST_TYPE,
       generatedAt: now,
       generatedBy: {
         product: 'Bibliaris',

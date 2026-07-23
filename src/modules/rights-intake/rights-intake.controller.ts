@@ -45,6 +45,12 @@ export class RightsIntakeController {
     return this.service.create(dto, req.user.userId);
   }
 
+  @Get(':id/agent-manifest')
+  @ApiOperation({ summary: 'Export agent manifest for external ChatGPT-based rights check' })
+  agentManifest(@Param('id') id: string) {
+    return this.manifestService.generate(id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get rights intake by ID' })
   getById(@Param('id') id: string) {
@@ -68,11 +74,5 @@ export class RightsIntakeController {
   @ApiOperation({ summary: 'Archive rights intake (soft delete)' })
   archive(@Param('id') id: string) {
     return this.service.archive(id);
-  }
-
-  @Get(':id/agent-manifest')
-  @ApiOperation({ summary: 'Export agent manifest for external ChatGPT-based rights check' })
-  agentManifest(@Param('id') id: string) {
-    return this.manifestService.generate(id);
   }
 }
