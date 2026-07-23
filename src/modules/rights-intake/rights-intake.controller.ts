@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RightsIntakeService } from './rights-intake.service';
+import { RightsIntakeManifestService } from './rights-intake-manifest.service';
 import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
@@ -27,7 +28,10 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager)
 export class RightsIntakeController {
-  constructor(private readonly service: RightsIntakeService) {}
+  constructor(
+    private readonly service: RightsIntakeService,
+    private readonly manifestService: RightsIntakeManifestService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List rights intakes' })
@@ -64,5 +68,11 @@ export class RightsIntakeController {
   @ApiOperation({ summary: 'Archive rights intake (soft delete)' })
   archive(@Param('id') id: string) {
     return this.service.archive(id);
+  }
+
+  @Get(':id/agent-manifest')
+  @ApiOperation({ summary: 'Export agent manifest for external ChatGPT-based rights check' })
+  agentManifest(@Param('id') id: string) {
+    return this.manifestService.generate(id);
   }
 }
