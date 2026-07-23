@@ -145,6 +145,7 @@ model User {
   roles              UserRole[]
   mediaAssets        MediaAsset[]
   ratings            BookRating[]
+  rightsIntakes      RightsIntake[]
 }
 
 
@@ -553,6 +554,76 @@ model TagTranslation {
   @@unique([tagId, language])
   @@index([tagId])
   @@index([language])
+}
+
+// =====================
+// Rights Intake (Phase 1)
+// =====================
+
+model RightsIntake {
+  id String @id @default(uuid())
+
+  candidateTitle   String
+  candidateAuthor  String
+  originalTitle    String?
+  originalLanguage String?
+  authorBirthYear  Int?
+  authorDeathYear  Int?
+
+  sourceProvider   RightsSourceProvider   @default(UNKNOWN)
+  sourceExternalId String?
+  sourceUrl        String?
+  sourceTitle      String?
+  sourceLanguage   String?
+  sourceTextType   RightsSourceTextType @default(UNKNOWN)
+
+  targetLanguages     Json
+  targetCountryCodes  Json
+  plannedContentTypes Json
+  plannedComponents   Json?
+
+  notesRu        String?
+  workflowStatus RightsIntakeStatus @default(DRAFT)
+
+  createdByUserId String?
+  createdByUser   User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  approvedReviewId String?
+  createdBookId    String?
+  archivedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workflowStatus])
+  @@index([createdAt])
+  @@index([createdByUserId])
+}
+
+enum RightsIntakeStatus {
+  DRAFT
+  READY_FOR_AGENT
+  REVIEW_IMPORTED
+  HUMAN_REVIEW_REQUIRED
+  APPROVED
+  REJECTED
+  BOOK_CREATED
+  ARCHIVED
+}
+
+enum RightsSourceProvider {
+  PROJECT_GUTENBERG
+  OTHER
+  UNKNOWN
+}
+
+enum RightsSourceTextType {
+  ORIGINAL_TEXT
+  TRANSLATION
+  ADAPTATION
+  ABRIDGMENT
+  COMPILATION
+  UNKNOWN
 }
 
 // =====================
