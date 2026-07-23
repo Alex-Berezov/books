@@ -36,6 +36,8 @@ export class RightsIntakeService {
     const where: Record<string, unknown> = {};
     if (dto.status) {
       where['workflowStatus'] = dto.status;
+    } else {
+      where['workflowStatus'] = { not: 'ARCHIVED' };
     }
     if (dto.q) {
       where['OR'] = [
@@ -166,6 +168,11 @@ export class RightsIntakeService {
     const intake = await this.getById(id);
     if (intake.workflowStatus === 'ARCHIVED') {
       throw new BadRequestException('Rights intake is already archived');
+    }
+    if (intake.workflowStatus !== 'DRAFT' && intake.workflowStatus !== 'READY_FOR_AGENT') {
+      throw new BadRequestException(
+        `Cannot archive intake with status '${intake.workflowStatus}'. Only DRAFT or READY_FOR_AGENT can be archived.`,
+      );
     }
 
     return this.prisma.rightsIntake.update({

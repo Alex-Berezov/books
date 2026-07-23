@@ -5,6 +5,7 @@ import {
   IsArray,
   IsEnum,
   IsInt,
+  IsUrl,
   Min,
   Max,
   MinLength,
@@ -102,7 +103,7 @@ export class CreateRightsIntakeDto {
 
   @ApiPropertyOptional({ description: 'Source URL' })
   @IsOptional()
-  @IsString()
+  @IsUrl()
   sourceUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Source title', maxLength: 500 })
