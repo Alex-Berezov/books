@@ -9,6 +9,20 @@ type SeoFragment = Pick<Seo, 'metaTitle' | 'metaDescription'>;
 type BookVersionWithSeo = BookVersion & { seo?: SeoFragment | null };
 
 interface PrismaStub {
+  book: {
+    findUnique: (args: { where: { id: string }; select: Record<string, boolean> }) => Promise<{
+      id: string;
+      rightsIntakeId: string | null;
+      currentRightsProfileId: string | null;
+      approvedRightsReviewId: string | null;
+    } | null>;
+  };
+  rightsIntake: {
+    findUnique: (args: { where: { id: string }; select: Record<string, boolean> }) => Promise<{
+      id: string;
+      targetLanguages: string[];
+    } | null>;
+  };
   bookVersion: {
     findMany: (args?: Prisma.BookVersionFindManyArgs) => Promise<BookVersionWithSeo[]>;
     findFirst: (args?: Prisma.BookVersionFindFirstArgs) => Promise<{ id: string } | null>;
@@ -29,17 +43,31 @@ interface PrismaStub {
     createMany: (args: {
       data: Array<{ id: string; bookVersionId: string; categoryId: string }>;
     }) => Promise<{ count: number }>;
+    findMany: (args: {
+      where: { bookVersionId: string };
+      select: { categoryId: boolean };
+    }) => Promise<Array<{ categoryId: string }>>;
   };
   bookTag: {
     createMany: (args: {
       data: Array<{ id: string; bookVersionId: string; tagId: string }>;
     }) => Promise<{ count: number }>;
+    findMany: (args: {
+      where: { bookVersionId: string };
+      select: { tagId: boolean };
+    }) => Promise<Array<{ tagId: string }>>;
   };
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
 
 const createPrismaStub = (): PrismaStub => {
   const stub = {
+    book: {
+      findUnique: jest.fn(),
+    },
+    rightsIntake: {
+      findUnique: jest.fn(),
+    },
     bookVersion: {
       findMany: jest.fn<Promise<BookVersionWithSeo[]>, [Prisma.BookVersionFindManyArgs?]>(),
       findFirst: jest.fn<Promise<{ id: string } | null>, [Prisma.BookVersionFindFirstArgs?]>(),
@@ -69,12 +97,14 @@ const createPrismaStub = (): PrismaStub => {
     },
     bookCategory: {
       createMany: jest.fn(),
+      findMany: jest.fn(),
     },
     bookTag: {
       createMany: jest.fn(),
+      findMany: jest.fn(),
     },
     $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
-  } as PrismaStub;
+  } as unknown as PrismaStub;
   return stub;
 };
 
@@ -89,6 +119,16 @@ describe('BookVersionService', () => {
   });
 
   it('creates version with seo', async () => {
+    (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+      id: 'b1',
+      rightsIntakeId: 'intake-1',
+      currentRightsProfileId: 'profile-1',
+      approvedRightsReviewId: 'review-1',
+    });
+    (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+      id: 'intake-1',
+      targetLanguages: ['en', 'es'],
+    });
     (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
     (prisma.seo.create as jest.Mock).mockResolvedValue({
       id: 10,
@@ -124,11 +164,19 @@ describe('BookVersionService', () => {
       seoMetaDescription: 'MD',
     };
     const res = await service.create('b1', dto);
-    expect(res.seo?.metaTitle).toBe('MT');
+    expect((res as any).seo?.metaTitle).toBe('MT');
     expect(prisma.bookVersion.create).toHaveBeenCalled();
   });
 
   it('rejects duplicate language per book', async () => {
+    (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+      id: 'b1',
+      rightsIntakeId: 'intake-1',
+    });
+    (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+      id: 'intake-1',
+      targetLanguages: ['en', 'es'],
+    });
     (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue({ id: 'existing' });
     const dto: CreateBookVersionDto = {
       language: Language.en,
@@ -178,6 +226,16 @@ describe('BookVersionService', () => {
   });
 
   it('creates version without seo fragment', async () => {
+    (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+      id: 'b1',
+      rightsIntakeId: 'intake-1',
+      currentRightsProfileId: 'profile-1',
+      approvedRightsReviewId: 'review-1',
+    });
+    (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+      id: 'intake-1',
+      targetLanguages: ['en', 'es'],
+    });
     (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
     const now = new Date();
     (prisma.bookVersion.create as jest.Mock).mockResolvedValue({
@@ -206,7 +264,7 @@ describe('BookVersionService', () => {
       isFree: false,
     };
     const res = await service.create('b1', dto);
-    expect(res.seo).toBeNull();
+    expect((res as any).seo).toBeNull();
     expect(prisma.seo.create).not.toHaveBeenCalled();
   });
 
@@ -323,13 +381,35 @@ describe('BookVersionService', () => {
   });
 
   it('copies categories and tags from sibling version if exists', async () => {
-    const mockFindFirst = prisma.bookVersion.findFirst as jest.Mock;
-    mockFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
-      id: 'sibling-v',
-      primaryCategoryId: 'cat-sibling',
-      categories: [{ categoryId: 'cat1' }],
-      tags: [{ tagId: 'tag1' }],
+    (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+      id: 'b1',
+      rightsIntakeId: 'intake-1',
+      currentRightsProfileId: 'profile-1',
+      approvedRightsReviewId: 'review-1',
     });
+    (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+      id: 'intake-1',
+      targetLanguages: ['en', 'es'],
+    });
+
+    const mockFindFirst = prisma.bookVersion.findFirst as jest.Mock;
+    mockFindFirst
+      .mockResolvedValueOnce(null) // for duplicate check
+      .mockResolvedValueOnce({
+        id: 'sibling-v',
+        primaryCategoryId: 'cat-sibling',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        rightsStatus: 'APPROVED',
+        rightsAllowedCountryCodes: ['US'],
+        rightsBlockedCountryCodes: [],
+        rightsLicenseRequiredCountryCodes: [],
+        rightsPendingCountryCodes: [],
+        rightsRequiredActions: [],
+      });
+
+    (prisma.bookCategory.findMany as jest.Mock).mockResolvedValue([{ categoryId: 'cat1' }]);
+    (prisma.bookTag.findMany as jest.Mock).mockResolvedValue([{ tagId: 'tag1' }]);
 
     const now = new Date();
     (prisma.bookVersion.create as jest.Mock).mockResolvedValue({

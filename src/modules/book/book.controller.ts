@@ -24,7 +24,6 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { BookService } from './book.service';
-import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { RateBookDto } from './dto/rate-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
@@ -96,41 +95,18 @@ export class BookController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create new book' })
-  @ApiResponse({ status: 201, description: 'Book successfully created' })
-  @ApiResponse({ status: 400, description: 'Invalid data format' })
-  @ApiResponse({ status: 409, description: 'Book with this slug already exists' })
-  @ApiResponse({ status: 500, description: 'Internal server error' })
+  @ApiOperation({ summary: 'Create new book (DISABLED - use rights intake workflow)' })
+  @ApiResponse({ status: 400, description: 'Books must be created from an approved rights intake' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async create(@Body() createBookDto: CreateBookDto) {
-    try {
-      return await this.bookService.create(createBookDto);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-
-      // Prisma unique constraint violation (P2002)
-      if (
-        typeof err === 'object' &&
-        err !== null &&
-        'code' in err &&
-        (err as { code: string }).code === 'P2002'
-      ) {
-        throw new HttpException(
-          {
-            message: 'Book with this slug already exists',
-            slug: createBookDto.slug,
-            details: 'Please use a different slug',
-          },
-          HttpStatus.CONFLICT,
-        );
-      }
-
-      throw new HttpException(
-        { message: 'Failed to create book', details: (err as Error).message },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+  create() {
+    throw new HttpException(
+      {
+        message: 'Books must be created from an approved rights intake',
+        details: 'Use POST /admin/rights/intakes/:id/create-book endpoint instead',
+      },
+      HttpStatus.BAD_REQUEST,
+    );
   }
 
   @Get('themes')

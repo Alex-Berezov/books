@@ -6,6 +6,31 @@ import { Prisma } from '@prisma/client';
 import { Language, BookType } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
+interface BookWithRights {
+  id: string;
+  rightsIntakeId: string | null;
+  currentRightsProfileId: string | null;
+  approvedRightsReviewId: string | null;
+}
+
+interface RightsIntakeWithLanguages {
+  id: string;
+  targetLanguages: string[];
+}
+
+interface SiblingVersionWithRights {
+  id: string;
+  primaryCategoryId: string | null;
+  rightsProfileId: string | null;
+  approvedRightsReviewId: string | null;
+  rightsStatus: string | null;
+  rightsAllowedCountryCodes: unknown;
+  rightsBlockedCountryCodes: unknown;
+  rightsLicenseRequiredCountryCodes: unknown;
+  rightsPendingCountryCodes: unknown;
+  rightsRequiredActions: unknown;
+}
+
 @Injectable()
 export class BookVersionService {
   constructor(private prisma: PrismaService) {}
@@ -46,6 +71,48 @@ export class BookVersionService {
 
   async create(bookId: string, dto: CreateBookVersionDto, overrideLanguage?: Language) {
     const effectiveLanguage = overrideLanguage ?? dto.language;
+
+    // Get book with rights intake to check clearance
+    const book = (await this.prisma.book.findUnique({
+      where: { id: bookId },
+      select: {
+        id: true,
+        rightsIntakeId: true,
+        currentRightsProfileId: true,
+        approvedRightsReviewId: true,
+      },
+    })) as unknown as BookWithRights | null;
+
+    if (!book) {
+      throw new NotFoundException(`Book with ID ${bookId} not found`);
+    }
+
+    // Check if book has rights clearance
+    if (!book.rightsIntakeId) {
+      throw new BadRequestException(
+        'Cannot create version for a book without approved rights clearance',
+      );
+    }
+
+    // Get rights intake to check target languages
+    const rightsIntake = (await this.prisma.rightsIntake.findUnique({
+      where: { id: book.rightsIntakeId },
+      select: {
+        id: true,
+        targetLanguages: true,
+      },
+    })) as unknown as RightsIntakeWithLanguages | null;
+
+    // Check if language is in approved target languages
+    if (
+      rightsIntake?.targetLanguages &&
+      !rightsIntake.targetLanguages.includes(effectiveLanguage)
+    ) {
+      throw new BadRequestException(
+        `Language ${effectiveLanguage} is not in approved target languages for this book`,
+      );
+    }
+
     const existing = await this.prisma.bookVersion.findFirst({
       where: { bookId, language: effectiveLanguage },
       select: { id: true },
@@ -67,19 +134,36 @@ export class BookVersionService {
         }
 
         // Search for any existing sibling version of this book to copy tags/categories from
-        const siblingVersion = await tx.bookVersion.findFirst({
+        const siblingVersion = (await tx.bookVersion.findFirst({
           where: { bookId },
           select: {
             id: true,
             primaryCategoryId: true,
-            categories: { select: { categoryId: true } },
-            tags: { select: { tagId: true } },
+            rightsProfileId: true,
+            approvedRightsReviewId: true,
+            rightsStatus: true,
+            rightsAllowedCountryCodes: true,
+            rightsBlockedCountryCodes: true,
+            rightsLicenseRequiredCountryCodes: true,
+            rightsPendingCountryCodes: true,
+            rightsRequiredActions: true,
           },
-          orderBy: { createdAt: 'asc' }, // Prefer the oldest one (e.g. English) as the source
-        });
+          orderBy: { createdAt: 'asc' },
+        })) as unknown as SiblingVersionWithRights | null;
 
         const effectivePrimaryCategoryId =
           dto.primaryCategoryId || siblingVersion?.primaryCategoryId || undefined;
+
+        // Copy rights snapshot from sibling version or book's current profile
+        const rightsProfileId = siblingVersion?.rightsProfileId || book.currentRightsProfileId;
+        const approvedRightsReviewId =
+          siblingVersion?.approvedRightsReviewId || book.approvedRightsReviewId;
+        const rightsStatus = siblingVersion?.rightsStatus;
+        const rightsAllowedCountryCodes = siblingVersion?.rightsAllowedCountryCodes;
+        const rightsBlockedCountryCodes = siblingVersion?.rightsBlockedCountryCodes;
+        const rightsLicenseRequiredCountryCodes = siblingVersion?.rightsLicenseRequiredCountryCodes;
+        const rightsPendingCountryCodes = siblingVersion?.rightsPendingCountryCodes;
+        const rightsRequiredActions = siblingVersion?.rightsRequiredActions;
 
         const newVersion = await tx.bookVersion.create({
           data: {
@@ -112,24 +196,42 @@ export class BookVersionService {
             summaryShort: dto.summaryShort,
             symbols: (dto.symbols as Prisma.JsonValue) ?? undefined,
             coverAlt: dto.coverAlt,
+            // Rights fields from clearance
+            rightsProfileId,
+            approvedRightsReviewId,
+            rightsStatus,
+            rightsAllowedCountryCodes: rightsAllowedCountryCodes as Prisma.InputJsonValue,
+            rightsBlockedCountryCodes: rightsBlockedCountryCodes as Prisma.InputJsonValue,
+            rightsLicenseRequiredCountryCodes:
+              rightsLicenseRequiredCountryCodes as Prisma.InputJsonValue,
+            rightsPendingCountryCodes: rightsPendingCountryCodes as Prisma.InputJsonValue,
+            rightsRequiredActions: rightsRequiredActions as Prisma.InputJsonValue,
           },
           include: { seo: true },
         });
 
         // Copy categories and tags if sibling version exists
         if (siblingVersion) {
-          if (siblingVersion.categories.length > 0) {
+          const siblingCategories = await tx.bookCategory.findMany({
+            where: { bookVersionId: siblingVersion.id },
+            select: { categoryId: true },
+          });
+          if (siblingCategories.length > 0) {
             await tx.bookCategory.createMany({
-              data: siblingVersion.categories.map((c) => ({
+              data: siblingCategories.map((c) => ({
                 id: randomUUID(),
                 bookVersionId: newVersion.id,
                 categoryId: c.categoryId,
               })),
             });
           }
-          if (siblingVersion.tags.length > 0) {
+          const siblingTags = await tx.bookTag.findMany({
+            where: { bookVersionId: siblingVersion.id },
+            select: { tagId: true },
+          });
+          if (siblingTags.length > 0) {
             await tx.bookTag.createMany({
-              data: siblingVersion.tags.map((t) => ({
+              data: siblingTags.map((t) => ({
                 id: randomUUID(),
                 bookVersionId: newVersion.id,
                 tagId: t.tagId,
@@ -140,8 +242,8 @@ export class BookVersionService {
 
         return newVersion;
       });
-    } catch (e: any) {
-      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
+    } catch (e: unknown) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new BadRequestException('Version for this language already exists for this book');
       }
       throw e;
