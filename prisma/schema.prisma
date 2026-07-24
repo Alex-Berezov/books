@@ -1026,6 +1026,8 @@ enum RightsEvidenceSourceLevel {
   OFFICIAL_BIBLIOGRAPHIC
   SECONDARY
 }
+
+enum RightsIntakeStatus {
   DRAFT
   READY_FOR_AGENT
   REVIEW_IMPORTED
