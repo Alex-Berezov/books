@@ -589,6 +589,7 @@ model RightsIntake {
   createdByUserId String?
   createdByUser   User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   reviewImports   RightsReviewImport[]
+  rightsProfiles  RightsProfile[]
 
   approvedReviewId String?
   createdBookId    String?
@@ -630,6 +631,8 @@ model RightsReviewImport {
 
   importedByUserId String?
   importedByUser   User? @relation(fields: [importedByUserId], references: [id], onDelete: SetNull)
+  materializedProfiles RightsProfile[] @relation("ProfileCurrentReviewImport")
+  rightsReviews        RightsReview[]
 
   supersededAt DateTime?
 
@@ -643,7 +646,386 @@ model RightsReviewImport {
   @@index([importedByUserId])
 }
 
-enum RightsIntakeStatus {
+model RightsProfile {
+  id String @id @default(uuid())
+
+  rightsIntakeId String
+  rightsIntake RightsIntake @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  currentReviewImportId String?
+  currentReviewImport RightsReviewImport? @relation("ProfileCurrentReviewImport", fields: [currentReviewImportId], references: [id], onDelete: SetNull)
+
+  status RightsProfileStatus @default(IMPORTED)
+  isCurrent Boolean @default(true)
+
+  overallStatus RightsOverallStatus
+  publicationGate RightsPublicationGate
+  confidence RightsConfidence
+
+  summaryRu String @db.Text
+  conclusionRu String @db.Text
+  reasoningRu String? @db.Text
+  nextReviewAt DateTime?
+
+  sourceEdition SourceEdition?
+  reviews RightsReview[]
+  territoryDecisions TerritoryDecision[]
+  components RightsComponent[]
+  evidence RightsEvidence[]
+  actions RightsAction[]
+
+  supersededAt DateTime?
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsIntakeId])
+  @@index([currentReviewImportId])
+  @@index([status])
+  @@index([isCurrent])
+  @@index([overallStatus])
+  @@index([publicationGate])
+}
+
+model SourceEdition {
+  id String @id @default(uuid())
+
+  rightsProfileId String @unique
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  provider RightsSourceProvider @default(UNKNOWN)
+  externalId String?
+  sourceUrl String?
+  sourceTitle String?
+  sourceLanguage String?
+  sourceTextType RightsSourceTextType @default(UNKNOWN)
+
+  gutenbergStatus String?
+  status String
+  notesRu String? @db.Text
+
+  editionRights EditionRights?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([provider])
+  @@index([externalId])
+}
+
+model EditionRights {
+  id String @id @default(uuid())
+
+  sourceEditionId String @unique
+  sourceEdition SourceEdition @relation(fields: [sourceEditionId], references: [id], onDelete: Cascade)
+
+  status String
+  notesRu String? @db.Text
+  legalBasisRu String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RightsReview {
+  id String @id @default(uuid())
+
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  rightsReviewImportId String @unique
+  rightsReviewImport RightsReviewImport @relation(fields: [rightsReviewImportId], references: [id], onDelete: Cascade)
+
+  status RightsReviewStatus @default(IMPORTED)
+  schemaVersion String?
+  reviewerType String @default("EXTERNAL_CHATGPT_AGENT")
+
+  overallStatus RightsOverallStatus
+  publicationGate RightsPublicationGate
+  confidence RightsConfidence
+
+  summaryRu String @db.Text
+  conclusionRu String @db.Text
+  reasoningRu String? @db.Text
+  nextReviewAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsProfileId])
+  @@index([status])
+  @@index([overallStatus])
+  @@index([publicationGate])
+}
+
+model RightsComponent {
+  id String @id @default(uuid())
+
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  componentType RightsComponentType
+  titleRu String
+  status RightsComponentStatus
+  requiredAction RightsComponentRequiredAction
+  confidence RightsConfidence
+  notesRu String? @db.Text
+
+  territoryAssessments ComponentTerritoryAssessment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsProfileId])
+  @@index([componentType])
+  @@index([status])
+}
+
+model TerritoryDecision {
+  id String @id @default(uuid())
+
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  countryCode String
+  finalStatus TerritoryRightsStatus
+  accessPolicy RightsAccessPolicy
+  geoBlockRequired Boolean @default(false)
+  geoBlockScope String?
+
+  reasonRu String @db.Text
+  legalBasisRu String? @db.Text
+  confidence RightsConfidence
+  nextReviewAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([rightsProfileId, countryCode])
+  @@index([rightsProfileId])
+  @@index([countryCode])
+  @@index([finalStatus])
+  @@index([accessPolicy])
+  @@index([geoBlockRequired])
+}
+
+model ComponentTerritoryAssessment {
+  id String @id @default(uuid())
+
+  rightsComponentId String
+  rightsComponent RightsComponent @relation(fields: [rightsComponentId], references: [id], onDelete: Cascade)
+
+  countryCode String
+  status TerritoryRightsStatus
+  accessPolicy RightsAccessPolicy
+  geoBlockRequired Boolean @default(false)
+  reasonRu String? @db.Text
+  confidence RightsConfidence?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([rightsComponentId, countryCode])
+  @@index([rightsComponentId])
+  @@index([countryCode])
+  @@index([status])
+}
+
+model RightsEvidence {
+  id String @id @default(uuid())
+
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  evidenceType RightsEvidenceType
+  sourceLevel RightsEvidenceSourceLevel
+
+  title String
+  authority String
+  url String?
+  jurisdictionCode String?
+  accessedAt DateTime?
+
+  relevantExcerpt String? @db.Text
+  summaryRu String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsProfileId])
+  @@index([evidenceType])
+  @@index([sourceLevel])
+  @@index([jurisdictionCode])
+}
+
+model RightsAction {
+  id String @id @default(uuid())
+
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  actionType RightsActionType
+  status RightsActionStatus @default(PENDING)
+
+  descriptionRu String @db.Text
+  affectedCountryCodes Json
+  isBlocking Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsProfileId])
+  @@index([actionType])
+  @@index([status])
+  @@index([isBlocking])
+}
+
+enum RightsProfileStatus {
+  IMPORTED
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum RightsReviewStatus {
+  IMPORTED
+  SUPERSEDED
+}
+
+enum RightsOverallStatus {
+  PUBLISHABLE
+  PUBLISHABLE_AFTER_CHANGES
+  PUBLISHABLE_WITH_GEO_RESTRICTIONS
+  LICENSE_REQUIRED
+  INSUFFICIENT_DATA
+  REJECTED
+}
+
+enum RightsPublicationGate {
+  ALLOW
+  ALLOW_AFTER_GEO_CONFIGURATION
+  BLOCK
+}
+
+enum RightsConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum RightsAccessPolicy {
+  ALLOW
+  BLOCK
+  REVIEW_REQUIRED
+}
+
+enum TerritoryRightsStatus {
+  ALLOWED
+  ALLOWED_AFTER_CHANGES
+  BLOCKED
+  LICENSE_REQUIRED
+  PENDING_REVIEW
+  NOT_CHECKED
+  NOT_TARGETED
+}
+
+enum RightsComponentType {
+  ORIGINAL_TEXT
+  TRANSLATION
+  ADAPTATION
+  ABRIDGMENT
+  INTRODUCTION
+  PREFACE
+  AFTERWORD
+  ANNOTATIONS
+  FOOTNOTES
+  BIOGRAPHY
+  GLOSSARY
+  INDEX
+  EDITORIAL_REVISION
+  COMPILATION_STRUCTURE
+  ILLUSTRATION
+  PHOTOGRAPH
+  MAP
+  COVER
+  TYPOGRAPHIC_LAYOUT
+  AUDIO_NARRATION
+  AUDIO_RECORDING
+  OTHER
+}
+
+enum RightsComponentStatus {
+  PUBLIC_DOMAIN
+  OWNED
+  LICENSED
+  PERMISSION_GRANTED
+  COPYRIGHTED
+  UNCERTAIN
+  EXCLUDED
+}
+
+enum RightsComponentRequiredAction {
+  KEEP
+  REMOVE
+  REPLACE
+  RETRANSLATE
+  OBTAIN_LICENSE
+  VERIFY
+  NONE
+}
+
+enum RightsActionType {
+  REMOVE_COMPONENT
+  REPLACE_COMPONENT
+  CREATE_NEW_TRANSLATION
+  TRANSLATE_FROM_ORIGINAL
+  VERIFY_TRANSLATOR
+  VERIFY_EDITION
+  OBTAIN_LICENSE
+  CONFIGURE_GEO_BLOCK
+  VERIFY_GEO_BLOCK
+  REMOVE_GUTENBERG_HEADER
+  REMOVE_GUTENBERG_FOOTER
+  REMOVE_GUTENBERG_LICENSE
+  REPLACE_COVER
+  REPLACE_ILLUSTRATIONS
+  RECHECK_LATER
+  LAWYER_REVIEW
+  OTHER
+}
+
+enum RightsActionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  WAIVED
+  CANCELLED
+}
+
+enum RightsEvidenceType {
+  GUTENBERG_PAGE
+  GUTENBERG_FILE_NOTICE
+  OFFICIAL_LAW
+  COURT_DECISION
+  COPYRIGHT_REGISTRY
+  RENEWAL_RECORD
+  LIBRARY_CATALOG
+  AUTHORITY_RECORD
+  LICENSE_DOCUMENT
+  PERMISSION_LETTER
+  CONTRACT
+  SCREENSHOT
+  FILE_EXCERPT
+  LEGAL_OPINION
+  SECONDARY_GUIDANCE
+  OTHER
+}
+
+enum RightsEvidenceSourceLevel {
+  PRIMARY
+  OFFICIAL_BIBLIOGRAPHIC
+  SECONDARY
+}
   DRAFT
   READY_FOR_AGENT
   REVIEW_IMPORTED
