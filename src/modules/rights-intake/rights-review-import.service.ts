@@ -89,26 +89,17 @@ export class RightsReviewImportService {
       return importRecord;
     }
 
-    const importRecord = (await (this.prisma as unknown as Record<string, unknown>)[
-      '$transaction'
-    ]) as (
-      fn: (tx: Record<string, unknown>) => Promise<Record<string, unknown>>,
-    ) => Promise<Record<string, unknown>>;
-
-    type TxClient = {
-      rightsReviewImport: {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const t = tx as unknown as Record<string, unknown>;
+      const riTx = t['rightsReviewImport'] as {
         updateMany: (args: Record<string, unknown>) => Promise<{ count: number }>;
         create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
-      rightsIntake: {
+      const intakeTx = t['rightsIntake'] as {
         update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
-    };
 
-    const result = await importRecord(async (tx: unknown) => {
-      const t = tx as TxClient;
-
-      await t.rightsReviewImport.updateMany({
+      await riTx.updateMany({
         where: { rightsIntakeId: intakeId, isCurrent: true },
         data: {
           isCurrent: false,
@@ -117,7 +108,7 @@ export class RightsReviewImportService {
         },
       });
 
-      const created = await t.rightsReviewImport.create({
+      const created = await riTx.create({
         data: {
           ...baseData,
           importStatus: 'VALIDATED',
@@ -126,7 +117,7 @@ export class RightsReviewImportService {
         },
       });
 
-      await t.rightsIntake.update({
+      await intakeTx.update({
         where: { id: intakeId },
         data: { workflowStatus: 'REVIEW_IMPORTED' },
       });
@@ -138,6 +129,11 @@ export class RightsReviewImportService {
   }
 
   async listByIntake(intakeId: string, query: { page?: number; limit?: number; status?: string }) {
+    const intake = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
+    if (!intake) {
+      throw new NotFoundException(`Rights intake with ID '${intakeId}' not found`);
+    }
+
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -161,6 +157,8 @@ export class RightsReviewImportService {
           importStatus: true,
           isCurrent: true,
           sourceFileName: true,
+          validationErrors: true,
+          validationWarnings: true,
           importedByUserId: true,
           supersededAt: true,
           createdAt: true,
@@ -169,14 +167,26 @@ export class RightsReviewImportService {
       }),
     ]);
 
-    const mapped = items.map((item) => ({
-      ...item,
-      validationErrorsCount: 0,
-      validationWarningsCount: 0,
-      supersededAt: item.supersededAt ? new Date(item.supersededAt as string).toISOString() : null,
-      createdAt: new Date(item.createdAt as string).toISOString(),
-      updatedAt: new Date(item.updatedAt as string).toISOString(),
-    }));
+    const mapped = items.map((item) => {
+      const errs = item['validationErrors'] as ValidationIssue[] | null;
+      const warns = item['validationWarnings'] as ValidationIssue[] | null;
+      return {
+        id: item['id'],
+        rightsIntakeId: item['rightsIntakeId'],
+        schemaVersion: item['schemaVersion'],
+        importStatus: item['importStatus'],
+        isCurrent: item['isCurrent'],
+        sourceFileName: item['sourceFileName'],
+        validationErrorsCount: errs?.length ?? 0,
+        validationWarningsCount: warns?.length ?? 0,
+        importedByUserId: item['importedByUserId'],
+        supersededAt: item['supersededAt']
+          ? new Date(item['supersededAt'] as string).toISOString()
+          : null,
+        createdAt: new Date(item['createdAt'] as string).toISOString(),
+        updatedAt: new Date(item['updatedAt'] as string).toISOString(),
+      };
+    });
 
     return {
       items: mapped,
@@ -187,7 +197,9 @@ export class RightsReviewImportService {
   }
 
   async getById(importId: string) {
-    const importRecord = await this.ri.findUnique({ where: { id: importId } });
+    const importRecord = await this.ri.findUnique({
+      where: { id: importId },
+    });
     if (!importRecord) {
       throw new NotFoundException(`Review import with ID '${importId}' not found`);
     }

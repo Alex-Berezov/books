@@ -1,4 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsInt, IsString, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ValidationIssueDto } from './rights-review-import-validation.dto';
 
 export class RightsReviewImportListItemDto {
@@ -28,9 +30,25 @@ export class RightsReviewImportDetailDto extends RightsReviewImportListItemDto {
 }
 
 export class ListRightsReviewImportsRequestDto {
-  @ApiPropertyOptional() page?: number;
-  @ApiPropertyOptional() limit?: number;
-  @ApiPropertyOptional() status?: string;
+  @ApiPropertyOptional({ description: 'Page number', default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ description: 'Items per page', default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 20;
+
+  @ApiPropertyOptional({ description: 'Filter by import status' })
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 export class RightsReviewImportsListResponseDto {
