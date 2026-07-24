@@ -10,6 +10,7 @@ ALTER TABLE "RightsReview" ALTER COLUMN "status" SET DEFAULT 'HUMAN_REVIEW_REQUI
 DROP TYPE "RightsReviewStatus_old";
 
 -- Migrate RightsProfileStatus
+ALTER TABLE "RightsProfile" ALTER COLUMN "status" DROP DEFAULT;
 ALTER TYPE "RightsProfileStatus" RENAME TO "RightsProfileStatus_old";
 CREATE TYPE "RightsProfileStatus" AS ENUM ('IMPORTED', 'HUMAN_REVIEW_REQUIRED', 'APPROVED', 'REJECTED', 'SUPERSEDED', 'STALE', 'ARCHIVED');
 ALTER TABLE "RightsProfile" ALTER COLUMN "status" TYPE "RightsProfileStatus" USING ("status"::text::"RightsProfileStatus");
