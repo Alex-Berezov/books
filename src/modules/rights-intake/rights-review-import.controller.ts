@@ -1,4 +1,4 @@
-import { Body, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RightsReviewImportService } from './rights-review-import.service';
 import { CreateRightsReviewImportDto } from './dto/create-rights-review-import.dto';
@@ -8,6 +8,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('rights-review-imports')
+@Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager)
 export class RightsReviewImportController {
