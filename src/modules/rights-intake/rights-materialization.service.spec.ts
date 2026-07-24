@@ -116,7 +116,7 @@ interface PrismaStub {
 
 const createPrismaStub = (): PrismaStub => {
   const stub: Record<string, unknown> = {
-    rightsIntake: { findUnique: jest.fn() },
+    rightsIntake: { findUnique: jest.fn(), update: jest.fn() },
     $transaction: jest.fn(),
   };
 
@@ -243,7 +243,7 @@ describe('RightsMaterializationService', () => {
           data: expect.objectContaining({
             rightsIntakeId: 'intake-1',
             currentReviewImportId: 'import-1',
-            status: 'IMPORTED',
+            status: 'HUMAN_REVIEW_REQUIRED',
             isCurrent: true,
           }),
         }),
@@ -253,7 +253,7 @@ describe('RightsMaterializationService', () => {
           data: expect.objectContaining({
             rightsProfileId: 'profile-1',
             rightsReviewImportId: 'import-1',
-            status: 'IMPORTED',
+            status: 'HUMAN_REVIEW_REQUIRED',
           }),
         }),
       );
@@ -273,6 +273,29 @@ describe('RightsMaterializationService', () => {
         }),
       );
       expect(result).toEqual(profile);
+    });
+
+    it('should update intake workflowStatus to HUMAN_REVIEW_REQUIRED and clear approvedReviewId', async () => {
+      setupBasicMocks();
+      setupTransaction();
+      const profile = makeProfile();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(profile);
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).create.mockResolvedValue({
+        id: 'source-edition-1',
+      });
+
+      await service.materializeFromImport('import-1');
+
+      expect((prisma['rightsIntake'] as Record<string, jest.Mock>).update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'intake-1' },
+          data: {
+            workflowStatus: 'HUMAN_REVIEW_REQUIRED',
+            approvedReviewId: null,
+          },
+        }),
+      );
     });
 
     it('should create TerritoryDecision records from reportJson', async () => {

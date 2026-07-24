@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { RightsReviewApprovalDto } from './rights-review-approval.dto';
 
 export class EditionRightsDto {
   @ApiProperty() id!: string;
@@ -43,6 +44,34 @@ export class RightsReviewDto {
   @ApiProperty() conclusionRu!: string;
   @ApiProperty() reasoningRu!: string | null;
   @ApiProperty() nextReviewAt!: string | null;
+
+  @ApiPropertyOptional()
+  approvedByUserId?: string | null;
+
+  @ApiPropertyOptional()
+  approvedByUser?: { id: string; name?: string; email: string } | null;
+
+  @ApiPropertyOptional()
+  approvedAt?: string | null;
+
+  @ApiPropertyOptional()
+  approvalNotesRu?: string | null;
+
+  @ApiPropertyOptional()
+  rejectedByUserId?: string | null;
+
+  @ApiPropertyOptional()
+  rejectedByUser?: { id: string; name?: string; email: string } | null;
+
+  @ApiPropertyOptional()
+  rejectedAt?: string | null;
+
+  @ApiPropertyOptional()
+  rejectionReasonRu?: string | null;
+
+  @ApiPropertyOptional({ type: [RightsReviewApprovalDto] })
+  approvals?: RightsReviewApprovalDto[];
+
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }

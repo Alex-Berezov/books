@@ -12,13 +12,18 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RightsIntakeService } from './rights-intake.service';
 import { RightsIntakeManifestService } from './rights-intake-manifest.service';
+import { RightsApprovalService } from './rights-approval.service';
 import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
 import { ChangeRightsIntakeStatusDto } from './dto/change-rights-intake-status.dto';
+import { ApproveRightsReviewDto } from './dto/approve-rights-review.dto';
+import { RejectRightsReviewDto } from './dto/reject-rights-review.dto';
+import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
+import { RightsProfileDetailDto } from './dto/rights-profile-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -31,6 +36,7 @@ export class RightsIntakeController {
   constructor(
     private readonly service: RightsIntakeService,
     private readonly manifestService: RightsIntakeManifestService,
+    private readonly rightsApprovalService: RightsApprovalService,
   ) {}
 
   @Get()
@@ -74,5 +80,38 @@ export class RightsIntakeController {
   @ApiOperation({ summary: 'Archive rights intake (soft delete)' })
   archive(@Param('id') id: string) {
     return this.service.archive(id);
+  }
+
+  @Post(':intakeId/reviews/:reviewId/approve')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Approve a rights review (human approval)' })
+  async approveReview(
+    @Param('intakeId') intakeId: string,
+    @Param('reviewId') reviewId: string,
+    @Body() dto: ApproveRightsReviewDto,
+    @Req() req: { user: { userId: string } },
+  ): Promise<RightsProfileDetailDto> {
+    return this.rightsApprovalService.approveReview(req.user.userId, reviewId, dto);
+  }
+
+  @Post(':intakeId/reviews/:reviewId/reject')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reject a rights review (human rejection)' })
+  async rejectReview(
+    @Param('intakeId') intakeId: string,
+    @Param('reviewId') reviewId: string,
+    @Body() dto: RejectRightsReviewDto,
+    @Req() req: { user: { userId: string } },
+  ): Promise<RightsProfileDetailDto> {
+    return this.rightsApprovalService.rejectReview(req.user.userId, reviewId, dto);
+  }
+
+  @Get(':intakeId/approvals')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all approvals for a rights intake' })
+  async getApprovalsByIntake(
+    @Param('intakeId') intakeId: string,
+  ): Promise<RightsReviewApprovalDto[]> {
+    return this.rightsApprovalService.getApprovalsByIntake(intakeId);
   }
 }

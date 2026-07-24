@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { RightsIntakeService } from './rights-intake.service';
 import { RightsIntakeManifestService } from './rights-intake-manifest.service';
+import { RightsApprovalService } from './rights-approval.service';
 import { RightsReviewImportService } from './rights-review-import.service';
 import { RightsReviewImportController } from './rights-review-import.controller';
 import { RightsReviewImportValidator } from './rights-review-import.validator';
@@ -19,6 +20,7 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsReviewImportValidator,
     RightsMaterializationService,
     RightsProfileService,
+    RightsApprovalService,
     PrismaService,
   ],
   exports: [RightsIntakeService, RightsProfileService],

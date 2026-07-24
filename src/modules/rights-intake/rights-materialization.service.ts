@@ -209,7 +209,7 @@ export class RightsMaterializationService {
         data: {
           rightsIntakeId: intakeId,
           currentReviewImportId: importId,
-          status: 'IMPORTED',
+          status: 'HUMAN_REVIEW_REQUIRED',
           isCurrent: true,
           overallStatus: reportJson['overallStatus'] as string,
           publicationGate: reportJson['publicationGate'] as string,
@@ -225,7 +225,7 @@ export class RightsMaterializationService {
         data: {
           rightsProfileId: profile['id'] as string,
           rightsReviewImportId: importId,
-          status: 'IMPORTED',
+          status: 'HUMAN_REVIEW_REQUIRED',
           schemaVersion: reportJson['schemaVersion'] as string,
           overallStatus: reportJson['overallStatus'] as string,
           publicationGate: reportJson['publicationGate'] as string,
@@ -337,6 +337,18 @@ export class RightsMaterializationService {
           });
         }
       }
+
+      const riTx = t['rightsIntake'] as {
+        update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      };
+
+      await riTx.update({
+        where: { id: intakeId },
+        data: {
+          workflowStatus: 'HUMAN_REVIEW_REQUIRED',
+          approvedReviewId: null,
+        },
+      });
 
       return profile;
     });

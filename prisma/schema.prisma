@@ -143,10 +143,13 @@ model User {
   viewStats          ViewStat[]
   readingProgress    ReadingProgress[]
   roles              UserRole[]
-  mediaAssets        MediaAsset[]
   ratings            BookRating[]
+  mediaAssets        MediaAsset[]
   rightsIntakes      RightsIntake[]
   rightsReviewImports RightsReviewImport[]
+  approvedRightsReviews RightsReview[] @relation("RightsReviewApprovedBy")
+  rejectedRightsReviews RightsReview[] @relation("RightsReviewRejectedBy")
+  rightsReviewApprovals RightsReviewApproval[]
 }
 
 
@@ -590,6 +593,7 @@ model RightsIntake {
   createdByUser   User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   reviewImports   RightsReviewImport[]
   rightsProfiles  RightsProfile[]
+  rightsReviewApprovals RightsReviewApproval[]
 
   approvedReviewId String?
   createdBookId    String?
@@ -673,6 +677,7 @@ model RightsProfile {
   components RightsComponent[]
   evidence RightsEvidence[]
   actions RightsAction[]
+  approvals RightsReviewApproval[]
 
   supersededAt DateTime?
   archivedAt DateTime?
@@ -737,7 +742,7 @@ model RightsReview {
   rightsReviewImportId String @unique
   rightsReviewImport RightsReviewImport @relation(fields: [rightsReviewImportId], references: [id], onDelete: Cascade)
 
-  status RightsReviewStatus @default(IMPORTED)
+  status RightsReviewStatus @default(HUMAN_REVIEW_REQUIRED)
   schemaVersion String?
   reviewerType String @default("EXTERNAL_CHATGPT_AGENT")
 
@@ -750,6 +755,20 @@ model RightsReview {
   reasoningRu String? @db.Text
   nextReviewAt DateTime?
 
+  approvedByUserId String?
+  approvedByUser User? @relation("RightsReviewApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  approvedAt DateTime?
+  approvalNotesRu String? @db.Text
+
+  rejectedByUserId String?
+  rejectedByUser User? @relation("RightsReviewRejectedBy", fields: [rejectedByUserId], references: [id], onDelete: SetNull)
+
+  rejectedAt DateTime?
+  rejectionReasonRu String? @db.Text
+
+  approvals RightsReviewApproval[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -757,6 +776,10 @@ model RightsReview {
   @@index([status])
   @@index([overallStatus])
   @@index([publicationGate])
+  @@index([approvedByUserId])
+  @@index([rejectedByUserId])
+  @@index([approvedAt])
+  @@index([rejectedAt])
 }
 
 model RightsComponent {
@@ -881,15 +904,58 @@ model RightsAction {
   @@index([isBlocking])
 }
 
+model RightsReviewApproval {
+  id String @id @default(uuid())
+
+  rightsReviewId String
+  rightsReview RightsReview @relation(fields: [rightsReviewId], references: [id], onDelete: Cascade)
+
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  rightsIntakeId String
+  rightsIntake RightsIntake @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  decision RightsApprovalDecision
+
+  decidedByUserId String?
+  decidedByUser User? @relation(fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  notesRu String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsReviewId])
+  @@index([rightsProfileId])
+  @@index([rightsIntakeId])
+  @@index([decision])
+  @@index([decidedByUserId])
+  @@index([createdAt])
+}
+
+enum RightsApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
 enum RightsProfileStatus {
   IMPORTED
+  HUMAN_REVIEW_REQUIRED
+  APPROVED
+  REJECTED
   SUPERSEDED
+  STALE
   ARCHIVED
 }
 
 enum RightsReviewStatus {
-  IMPORTED
+  DRAFT
+  AGENT_COMPLETED
+  HUMAN_REVIEW_REQUIRED
+  HUMAN_APPROVED
+  HUMAN_REJECTED
   SUPERSEDED
+  STALE
 }
 
 enum RightsOverallStatus {

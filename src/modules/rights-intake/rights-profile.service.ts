@@ -3,7 +3,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type {
   RightsProfileDetailDto,
   RightsProfileSummaryDto,
+  RightsReviewDto,
 } from './dto/rights-profile-response.dto';
+import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 
 @Injectable()
 export class RightsProfileService {
@@ -116,6 +118,16 @@ export class RightsProfileService {
     };
     const reviewsData = await reviews.findMany({
       where: { rightsProfileId: profileId },
+      include: {
+        approvedByUser: { select: { id: true, name: true, email: true } },
+        rejectedByUser: { select: { id: true, name: true, email: true } },
+        approvals: {
+          include: {
+            decidedByUser: { select: { id: true, name: true, email: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
     });
 
     const components = (await (this.prisma as unknown as Record<string, unknown>)[
@@ -222,26 +234,76 @@ export class RightsProfileService {
     };
   }
 
-  private mapReview(record: Record<string, unknown>) {
+  private mapReview(record: Record<string, unknown>): RightsReviewDto {
+    const approvedByUserRaw = record['approvedByUser'] as Record<string, unknown> | null;
+    const rejectedByUserRaw = record['rejectedByUser'] as Record<string, unknown> | null;
+    const approvalsRaw = record['approvals'] as Array<Record<string, unknown>> | null;
+
     return {
-      id: record['id'],
-      rightsProfileId: record['rightsProfileId'],
-      rightsReviewImportId: record['rightsReviewImportId'],
-      status: record['status'],
-      schemaVersion: record['schemaVersion'] ?? null,
-      reviewerType: record['reviewerType'],
-      overallStatus: record['overallStatus'],
-      publicationGate: record['publicationGate'],
-      confidence: record['confidence'],
-      summaryRu: record['summaryRu'],
-      conclusionRu: record['conclusionRu'],
-      reasoningRu: record['reasoningRu'] ?? null,
+      id: record['id'] as string,
+      rightsProfileId: record['rightsProfileId'] as string,
+      rightsReviewImportId: record['rightsReviewImportId'] as string,
+      status: record['status'] as string,
+      schemaVersion: (record['schemaVersion'] as string | null) ?? null,
+      reviewerType: record['reviewerType'] as string,
+      overallStatus: record['overallStatus'] as string,
+      publicationGate: record['publicationGate'] as string,
+      confidence: record['confidence'] as string,
+      summaryRu: record['summaryRu'] as string,
+      conclusionRu: record['conclusionRu'] as string,
+      reasoningRu: (record['reasoningRu'] as string | null) ?? null,
       nextReviewAt: record['nextReviewAt']
         ? new Date(record['nextReviewAt'] as string).toISOString()
         : null,
+      approvedByUserId: (record['approvedByUserId'] as string | null) ?? null,
+      approvedByUser: approvedByUserRaw
+        ? {
+            id: approvedByUserRaw['id'] as string,
+            name: approvedByUserRaw['name'] as string | undefined,
+            email: approvedByUserRaw['email'] as string,
+          }
+        : null,
+      approvedAt: record['approvedAt']
+        ? new Date(record['approvedAt'] as string).toISOString()
+        : null,
+      approvalNotesRu: (record['approvalNotesRu'] as string | null) ?? null,
+      rejectedByUserId: (record['rejectedByUserId'] as string | null) ?? null,
+      rejectedByUser: rejectedByUserRaw
+        ? {
+            id: rejectedByUserRaw['id'] as string,
+            name: rejectedByUserRaw['name'] as string | undefined,
+            email: rejectedByUserRaw['email'] as string,
+          }
+        : null,
+      rejectedAt: record['rejectedAt']
+        ? new Date(record['rejectedAt'] as string).toISOString()
+        : null,
+      rejectionReasonRu: (record['rejectionReasonRu'] as string | null) ?? null,
+      approvals: approvalsRaw
+        ? approvalsRaw.map((a) => {
+            const decidedByUserRaw = a['decidedByUser'] as Record<string, unknown> | null;
+            const dto: RightsReviewApprovalDto = {
+              id: a['id'] as string,
+              rightsReviewId: a['rightsReviewId'] as string,
+              rightsProfileId: a['rightsProfileId'] as string,
+              rightsIntakeId: a['rightsIntakeId'] as string,
+              decision: a['decision'] as string,
+              decidedByUser: decidedByUserRaw
+                ? {
+                    id: decidedByUserRaw['id'] as string,
+                    name: decidedByUserRaw['name'] as string | undefined,
+                    email: decidedByUserRaw['email'] as string,
+                  }
+                : null,
+              notesRu: (a['notesRu'] as string | null) ?? null,
+              createdAt: new Date(a['createdAt'] as string).toISOString(),
+            };
+            return dto;
+          })
+        : null,
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
-    };
+    } as RightsReviewDto;
   }
 
   private mapComponent(record: Record<string, unknown>) {
