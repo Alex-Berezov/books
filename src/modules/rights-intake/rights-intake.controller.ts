@@ -16,6 +16,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RightsIntakeService } from './rights-intake.service';
 import { RightsIntakeManifestService } from './rights-intake-manifest.service';
 import { RightsApprovalService } from './rights-approval.service';
+import { RightsBookCreationService } from './rights-book-creation.service';
 import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
@@ -24,6 +25,8 @@ import { ApproveRightsReviewDto } from './dto/approve-rights-review.dto';
 import { RejectRightsReviewDto } from './dto/reject-rights-review.dto';
 import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 import { RightsProfileDetailDto } from './dto/rights-profile-response.dto';
+import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
+import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -37,6 +40,7 @@ export class RightsIntakeController {
     private readonly service: RightsIntakeService,
     private readonly manifestService: RightsIntakeManifestService,
     private readonly rightsApprovalService: RightsApprovalService,
+    private readonly rightsBookCreationService: RightsBookCreationService,
   ) {}
 
   @Get()
@@ -113,5 +117,15 @@ export class RightsIntakeController {
     @Param('intakeId') intakeId: string,
   ): Promise<RightsReviewApprovalDto[]> {
     return this.rightsApprovalService.getApprovalsByIntake(intakeId);
+  }
+
+  @Post(':id/create-book')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create book from approved rights clearance' })
+  async createBookFromClearance(
+    @Param('id') id: string,
+    @Body() dto: CreateBookFromClearanceDto,
+  ): Promise<CreateBookFromClearanceResponseDto> {
+    return this.rightsBookCreationService.createBookFromApprovedClearance(id, dto);
   }
 }

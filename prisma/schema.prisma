@@ -18,6 +18,25 @@ model Book {
   updatedAt DateTime      @updatedAt
   versions  BookVersion[]
   ratings   BookRating[]
+
+  // Phase 6: Rights clearance links
+  rightsIntakeId String? @unique
+  rightsIntake RightsIntake? @relation("BookRightsIntake", fields: [rightsIntakeId], references: [id], onDelete: SetNull)
+
+  currentRightsProfileId String?
+  currentRightsProfile RightsProfile? @relation("BookCurrentRightsProfile", fields: [currentRightsProfileId], references: [id], onDelete: SetNull)
+
+  approvedRightsReviewId String?
+  approvedRightsReview RightsReview? @relation("BookApprovedRightsReview", fields: [approvedRightsReviewId], references: [id], onDelete: SetNull)
+
+  rightsCreatedAt DateTime?
+
+  // Phase 6: Back-relation to RightsIntake (createdBook)
+  sourceRightsIntake RightsIntake? @relation("RightsIntakeCreatedBook")
+
+  @@index([rightsIntakeId])
+  @@index([currentRightsProfileId])
+  @@index([approvedRightsReviewId])
 }
 
 model BookVersion {
@@ -72,12 +91,28 @@ model BookVersion {
   symbols               Json?
   coverAlt              String?
 
+  // Phase 6: Rights snapshot
+  rightsProfileId String?
+  rightsProfile RightsProfile? @relation("BookVersionRightsProfile", fields: [rightsProfileId], references: [id], onDelete: SetNull)
+
+  approvedRightsReviewId String?
+  approvedRightsReview RightsReview? @relation("BookVersionApprovedRightsReview", fields: [approvedRightsReviewId], references: [id], onDelete: SetNull)
+
+  rightsStatus String?
+  rightsAllowedCountryCodes Json?
+  rightsBlockedCountryCodes Json?
+  rightsLicenseRequiredCountryCodes Json?
+  rightsPendingCountryCodes Json?
+  rightsRequiredActions Json?
+
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
   @@index([previewMediaId])
   @@index([primaryCategoryId])
   @@index([authorId])
+  @@index([rightsProfileId])
+  @@index([approvedRightsReviewId])
 }
 
 model BookSummary {
@@ -596,8 +631,12 @@ model RightsIntake {
   rightsReviewApprovals RightsReviewApproval[]
 
   approvedReviewId String?
-  createdBookId    String?
+  createdBookId    String? @unique
+  createdBook      Book?   @relation("RightsIntakeCreatedBook", fields: [createdBookId], references: [id], onDelete: SetNull)
   archivedAt       DateTime?
+
+  // Phase 6: Back-relation to Book
+  book Book? @relation("BookRightsIntake")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -678,6 +717,10 @@ model RightsProfile {
   evidence RightsEvidence[]
   actions RightsAction[]
   approvals RightsReviewApproval[]
+
+  // Phase 6: Back-relations to Book/BookVersion
+  books Book[] @relation("BookCurrentRightsProfile")
+  bookVersions BookVersion[] @relation("BookVersionRightsProfile")
 
   supersededAt DateTime?
   archivedAt DateTime?
@@ -768,6 +811,10 @@ model RightsReview {
   rejectionReasonRu String? @db.Text
 
   approvals RightsReviewApproval[]
+
+  // Phase 6: Back-relations to Book/BookVersion
+  approvedBooks Book[] @relation("BookApprovedRightsReview")
+  approvedBookVersions BookVersion[] @relation("BookVersionApprovedRightsReview")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
