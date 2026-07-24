@@ -2,14 +2,25 @@
 CREATE TYPE "RightsApprovalDecision" AS ENUM ('APPROVED', 'REJECTED');
 
 -- Migrate RightsReviewStatus
+-- Old: IMPORTED, SUPERSEDED
+-- New: DRAFT, AGENT_COMPLETED, HUMAN_REVIEW_REQUIRED, HUMAN_APPROVED, HUMAN_REJECTED, SUPERSEDED, STALE
+-- Map IMPORTED -> HUMAN_REVIEW_REQUIRED in USING clause
 ALTER TABLE "RightsReview" ALTER COLUMN "status" DROP DEFAULT;
 ALTER TYPE "RightsReviewStatus" RENAME TO "RightsReviewStatus_old";
 CREATE TYPE "RightsReviewStatus" AS ENUM ('DRAFT', 'AGENT_COMPLETED', 'HUMAN_REVIEW_REQUIRED', 'HUMAN_APPROVED', 'HUMAN_REJECTED', 'SUPERSEDED', 'STALE');
-ALTER TABLE "RightsReview" ALTER COLUMN "status" TYPE "RightsReviewStatus" USING ("status"::text::"RightsReviewStatus");
+ALTER TABLE "RightsReview" ALTER COLUMN "status" TYPE "RightsReviewStatus" USING (
+  CASE "status"::text
+    WHEN 'IMPORTED' THEN 'HUMAN_REVIEW_REQUIRED'::text
+    ELSE "status"::text
+  END::"RightsReviewStatus"
+);
 ALTER TABLE "RightsReview" ALTER COLUMN "status" SET DEFAULT 'HUMAN_REVIEW_REQUIRED';
 DROP TYPE "RightsReviewStatus_old";
 
 -- Migrate RightsProfileStatus
+-- Old: IMPORTED, SUPERSEDED, ARCHIVED
+-- New: IMPORTED, HUMAN_REVIEW_REQUIRED, APPROVED, REJECTED, SUPERSEDED, STALE, ARCHIVED
+-- IMPORTED exists in both, but we map existing IMPORTED -> HUMAN_REVIEW_REQUIRED via UPDATE
 ALTER TABLE "RightsProfile" ALTER COLUMN "status" DROP DEFAULT;
 ALTER TYPE "RightsProfileStatus" RENAME TO "RightsProfileStatus_old";
 CREATE TYPE "RightsProfileStatus" AS ENUM ('IMPORTED', 'HUMAN_REVIEW_REQUIRED', 'APPROVED', 'REJECTED', 'SUPERSEDED', 'STALE', 'ARCHIVED');
@@ -17,8 +28,7 @@ ALTER TABLE "RightsProfile" ALTER COLUMN "status" TYPE "RightsProfileStatus" USI
 ALTER TABLE "RightsProfile" ALTER COLUMN "status" SET DEFAULT 'IMPORTED';
 DROP TYPE "RightsProfileStatus_old";
 
--- Data migration: IMPORTED -> HUMAN_REVIEW_REQUIRED for existing records
-UPDATE "RightsReview" SET "status" = 'HUMAN_REVIEW_REQUIRED' WHERE "status"::text = 'IMPORTED';
+-- Data migration: IMPORTED -> HUMAN_REVIEW_REQUIRED for existing RightsProfile records
 UPDATE "RightsProfile" SET "status" = 'HUMAN_REVIEW_REQUIRED' WHERE "status"::text = 'IMPORTED';
 
 -- AlterTable: add approval fields to RightsReview

@@ -91,7 +91,7 @@ export class RightsIntakeController {
     @Body() dto: ApproveRightsReviewDto,
     @Req() req: { user: { userId: string } },
   ): Promise<RightsProfileDetailDto> {
-    return this.rightsApprovalService.approveReview(req.user.userId, reviewId, dto);
+    return this.rightsApprovalService.approveReview(req.user.userId, intakeId, reviewId, dto);
   }
 
   @Post(':intakeId/reviews/:reviewId/reject')
@@ -103,7 +103,7 @@ export class RightsIntakeController {
     @Body() dto: RejectRightsReviewDto,
     @Req() req: { user: { userId: string } },
   ): Promise<RightsProfileDetailDto> {
-    return this.rightsApprovalService.rejectReview(req.user.userId, reviewId, dto);
+    return this.rightsApprovalService.rejectReview(req.user.userId, intakeId, reviewId, dto);
   }
 
   @Get(':intakeId/approvals')

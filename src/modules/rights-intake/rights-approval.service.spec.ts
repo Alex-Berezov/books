@@ -95,8 +95,19 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
 
       await expect(
-        service.approveReview('user-1', 'nonexistent', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'nonexistent', { notesRu: 'test' }),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if review does not belong to intake', async () => {
+      const review = makeReview({
+        rightsProfile: { id: 'profile-1', rightsIntakeId: 'intake-B', isCurrent: true },
+      });
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
+
+      await expect(
+        service.approveReview('user-1', 'intake-A', 'review-1', { notesRu: 'test' }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw BadRequestException if profile is not current', async () => {
@@ -106,7 +117,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
 
       await expect(
-        service.approveReview('user-1', 'review-1', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -115,7 +126,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
 
       await expect(
-        service.approveReview('user-1', 'review-1', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -124,7 +135,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
 
       await expect(
-        service.approveReview('user-1', 'review-1', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -134,7 +145,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
 
       await expect(
-        service.approveReview('user-1', 'review-1', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -146,7 +157,7 @@ describe('RightsApprovalService', () => {
       );
 
       await expect(
-        service.approveReview('user-1', 'review-1', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -165,7 +176,7 @@ describe('RightsApprovalService', () => {
       );
 
       await expect(
-        service.approveReview('user-1', 'review-1', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -180,7 +191,7 @@ describe('RightsApprovalService', () => {
       ]);
 
       await expect(
-        service.approveReview('user-1', 'review-1', { notesRu: 'test' }),
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -198,7 +209,9 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
 
-      const result = await service.approveReview('user-1', 'review-1', { notesRu: 'test' });
+      const result = await service.approveReview('user-1', 'intake-1', 'review-1', {
+        notesRu: 'test',
+      });
 
       expect(result).toBeDefined();
       expect(txStub.rightsReviewApproval.create).toHaveBeenCalled();
@@ -218,7 +231,9 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
 
-      const result = await service.approveReview('user-1', 'review-1', { notesRu: 'test' });
+      const result = await service.approveReview('user-1', 'intake-1', 'review-1', {
+        notesRu: 'test',
+      });
 
       expect(result).toBeDefined();
       expect(txStub.rightsReviewApproval.create).toHaveBeenCalled();
@@ -236,7 +251,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
 
-      await service.approveReview('user-1', 'review-1', { notesRu: 'approved notes' });
+      await service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'approved notes' });
 
       expect(txStub.rightsReviewApproval.create).toHaveBeenCalledWith({
         data: {
@@ -262,7 +277,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
 
-      await service.approveReview('user-1', 'review-1', { notesRu: 'test' });
+      await service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' });
 
       expect(txStub.rightsReview.update).toHaveBeenCalledWith({
         where: { id: 'review-1' },
@@ -289,7 +304,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
 
-      await service.approveReview('user-1', 'review-1', { notesRu: 'test' });
+      await service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' });
 
       expect(txStub.rightsProfile.update).toHaveBeenCalledWith({
         where: { id: 'profile-1' },
@@ -309,7 +324,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
 
-      await service.approveReview('user-1', 'review-1', { notesRu: 'test' });
+      await service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' });
 
       expect(txStub.rightsIntake.update).toHaveBeenCalledWith({
         where: { id: 'intake-1' },
@@ -332,7 +347,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
 
-      await service.approveReview('user-1', 'review-1', {});
+      await service.approveReview('user-1', 'intake-1', 'review-1', {});
 
       expect(txStub.rightsReviewApproval.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ notesRu: null }),
@@ -345,8 +360,19 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
 
       await expect(
-        service.rejectReview('user-1', 'nonexistent', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'nonexistent', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if review does not belong to intake', async () => {
+      const review = makeReview({
+        rightsProfile: { id: 'profile-1', rightsIntakeId: 'intake-B', isCurrent: true },
+      });
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
+
+      await expect(
+        service.rejectReview('user-1', 'intake-A', 'review-1', { reasonRu: 'test reason here' }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw BadRequestException if profile is not current', async () => {
@@ -356,7 +382,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
 
       await expect(
-        service.rejectReview('user-1', 'review-1', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -365,7 +391,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
 
       await expect(
-        service.rejectReview('user-1', 'review-1', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -374,7 +400,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
 
       await expect(
-        service.rejectReview('user-1', 'review-1', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -384,7 +410,7 @@ describe('RightsApprovalService', () => {
       (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
 
       await expect(
-        service.rejectReview('user-1', 'review-1', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -396,7 +422,7 @@ describe('RightsApprovalService', () => {
       );
 
       await expect(
-        service.rejectReview('user-1', 'review-1', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -408,7 +434,7 @@ describe('RightsApprovalService', () => {
       );
 
       await expect(
-        service.rejectReview('user-1', 'review-1', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -420,7 +446,7 @@ describe('RightsApprovalService', () => {
       );
 
       await expect(
-        service.rejectReview('user-1', 'review-1', { reasonRu: 'test reason here' }),
+        service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'test reason here' }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -435,7 +461,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'REJECTED' });
 
-      await service.rejectReview('user-1', 'review-1', { reasonRu: 'reject reason' });
+      await service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'reject reason' });
 
       expect(txStub.rightsReviewApproval.create).toHaveBeenCalledWith({
         data: {
@@ -460,7 +486,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'REJECTED' });
 
-      await service.rejectReview('user-1', 'review-1', { reasonRu: 'reject reason' });
+      await service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'reject reason' });
 
       expect(txStub.rightsReview.update).toHaveBeenCalledWith({
         where: { id: 'review-1' },
@@ -486,7 +512,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'REJECTED' });
 
-      await service.rejectReview('user-1', 'review-1', { reasonRu: 'reject reason' });
+      await service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'reject reason' });
 
       expect(txStub.rightsProfile.update).toHaveBeenCalledWith({
         where: { id: 'profile-1' },
@@ -505,7 +531,7 @@ describe('RightsApprovalService', () => {
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'REJECTED' });
 
-      await service.rejectReview('user-1', 'review-1', { reasonRu: 'reject reason' });
+      await service.rejectReview('user-1', 'intake-1', 'review-1', { reasonRu: 'reject reason' });
 
       expect(txStub.rightsIntake.update).toHaveBeenCalledWith({
         where: { id: 'intake-1' },

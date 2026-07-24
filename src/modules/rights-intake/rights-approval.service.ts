@@ -36,7 +36,12 @@ export class RightsApprovalService {
     };
   }
 
-  async approveReview(userId: string, reviewId: string, dto: ApproveRightsReviewDto) {
+  async approveReview(
+    userId: string,
+    intakeId: string,
+    reviewId: string,
+    dto: ApproveRightsReviewDto,
+  ) {
     const review = await this.rr.findUnique({
       where: { id: reviewId },
       include: { rightsProfile: true },
@@ -48,7 +53,11 @@ export class RightsApprovalService {
 
     const profile = review['rightsProfile'] as Record<string, unknown>;
     const profileId = profile['id'] as string;
-    const intakeId = profile['rightsIntakeId'] as string;
+    const profileIntakeId = profile['rightsIntakeId'] as string;
+
+    if (profileIntakeId !== intakeId) {
+      throw new BadRequestException(`Review '${reviewId}' does not belong to intake '${intakeId}'`);
+    }
 
     if (!profile['isCurrent']) {
       throw new BadRequestException('Cannot approve: profile is not current');
@@ -155,7 +164,12 @@ export class RightsApprovalService {
     return this.rp.getById(profileId);
   }
 
-  async rejectReview(userId: string, reviewId: string, dto: RejectRightsReviewDto) {
+  async rejectReview(
+    userId: string,
+    intakeId: string,
+    reviewId: string,
+    dto: RejectRightsReviewDto,
+  ) {
     const review = await this.rr.findUnique({
       where: { id: reviewId },
       include: { rightsProfile: true },
@@ -167,7 +181,11 @@ export class RightsApprovalService {
 
     const profile = review['rightsProfile'] as Record<string, unknown>;
     const profileId = profile['id'] as string;
-    const intakeId = profile['rightsIntakeId'] as string;
+    const profileIntakeId = profile['rightsIntakeId'] as string;
+
+    if (profileIntakeId !== intakeId) {
+      throw new BadRequestException(`Review '${reviewId}' does not belong to intake '${intakeId}'`);
+    }
 
     if (!profile['isCurrent']) {
       throw new BadRequestException('Cannot reject: profile is not current');

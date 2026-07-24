@@ -195,6 +195,50 @@ describe('RightsReviewImportService', () => {
     );
   });
 
+  it('import allowed for HUMAN_REVIEW_REQUIRED (re-import)', async () => {
+    prisma.rightsIntake.findUnique.mockResolvedValue(
+      mockIntake({ workflowStatus: 'HUMAN_REVIEW_REQUIRED' }),
+    );
+    prisma.rightsReviewImport.updateMany.mockResolvedValue({ count: 0 });
+    prisma.$transaction.mockImplementation((fn: (tx: PrismaStub) => unknown) => fn(prisma));
+    prisma.rightsReviewImport.create.mockResolvedValue({
+      id: 'import-1',
+      importStatus: 'VALIDATED',
+      isCurrent: true,
+    });
+
+    const result = await service.create('intake-1', createDto(), 'user-1');
+    expect(result.importStatus).toBe('VALIDATED');
+  });
+
+  it('import allowed for APPROVED (re-import)', async () => {
+    prisma.rightsIntake.findUnique.mockResolvedValue(mockIntake({ workflowStatus: 'APPROVED' }));
+    prisma.rightsReviewImport.updateMany.mockResolvedValue({ count: 0 });
+    prisma.$transaction.mockImplementation((fn: (tx: PrismaStub) => unknown) => fn(prisma));
+    prisma.rightsReviewImport.create.mockResolvedValue({
+      id: 'import-1',
+      importStatus: 'VALIDATED',
+      isCurrent: true,
+    });
+
+    const result = await service.create('intake-1', createDto(), 'user-1');
+    expect(result.importStatus).toBe('VALIDATED');
+  });
+
+  it('import allowed for REJECTED (re-import)', async () => {
+    prisma.rightsIntake.findUnique.mockResolvedValue(mockIntake({ workflowStatus: 'REJECTED' }));
+    prisma.rightsReviewImport.updateMany.mockResolvedValue({ count: 0 });
+    prisma.$transaction.mockImplementation((fn: (tx: PrismaStub) => unknown) => fn(prisma));
+    prisma.rightsReviewImport.create.mockResolvedValue({
+      id: 'import-1',
+      importStatus: 'VALIDATED',
+      isCurrent: true,
+    });
+
+    const result = await service.create('intake-1', createDto(), 'user-1');
+    expect(result.importStatus).toBe('VALIDATED');
+  });
+
   it('list returns paginated imports without full reportJson', async () => {
     prisma.rightsIntake.findUnique.mockResolvedValue(mockIntake());
     prisma.rightsReviewImport.count.mockResolvedValue(1);

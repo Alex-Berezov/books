@@ -31,17 +31,10 @@ export class RightsReviewImportService {
       throw new NotFoundException(`Rights intake with ID '${intakeId}' not found`);
     }
 
-    const forbiddenStatuses = [
-      'DRAFT',
-      'ARCHIVED',
-      'APPROVED',
-      'REJECTED',
-      'BOOK_CREATED',
-      'HUMAN_REVIEW_REQUIRED',
-    ];
+    const forbiddenStatuses = ['DRAFT', 'ARCHIVED', 'BOOK_CREATED'];
     if (forbiddenStatuses.includes(intake.workflowStatus)) {
       throw new BadRequestException(
-        'Review result can only be imported for READY_FOR_AGENT or REVIEW_IMPORTED intakes.',
+        'Review result can only be imported for READY_FOR_AGENT, REVIEW_IMPORTED, HUMAN_REVIEW_REQUIRED, APPROVED, or REJECTED intakes.',
       );
     }
 
