@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
+import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 
 // Response shape helper for stronger typing in assertions
 interface BookVersionResponse {
@@ -29,6 +30,7 @@ describe('BookVersions e2e', () => {
   let bookId: string;
   let bookSlug: string;
   let adminToken: string;
+  const createdBookSlugs: string[] = [];
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -41,9 +43,10 @@ describe('BookVersions e2e', () => {
 
     process.env.ADMIN_EMAILS = 'admin@example.com';
     const slug = `book-${Date.now()}`;
-    const book = await prisma.book.create({ data: { slug } });
-    bookId = book.id;
+    const bookWithRights = await createBookWithRights(prisma, slug);
+    bookId = bookWithRights.book.id;
     bookSlug = slug;
+    createdBookSlugs.push(slug);
 
     // ensure admin auth
     const email = 'admin@example.com';
@@ -60,6 +63,9 @@ describe('BookVersions e2e', () => {
   });
 
   afterAll(async () => {
+    for (const slug of createdBookSlugs) {
+      await cleanupBookWithRights(prisma, slug);
+    }
     await app.close();
   });
 
@@ -136,9 +142,10 @@ describe('BookVersions e2e', () => {
 
   it('enforces uniqueness (bookId, language)', async () => {
     const slug = `book-${Date.now()}-2`;
-    const book = await prisma.book.create({ data: { slug } });
+    const bookWithRights = await createBookWithRights(prisma, slug);
+    createdBookSlugs.push(slug);
     await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en,
@@ -151,7 +158,7 @@ describe('BookVersions e2e', () => {
       })
       .expect(201);
     await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en,

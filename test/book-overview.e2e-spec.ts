@@ -5,11 +5,13 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
+import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 
 describe('Book Overview (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let adminToken: string;
+  let bookSlug: string;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
@@ -37,16 +39,19 @@ describe('Book Overview (e2e)', () => {
   });
 
   afterAll(async () => {
+    if (bookSlug) {
+      await cleanupBookWithRights(prisma, bookSlug);
+    }
     await app.close();
   });
 
   it('returns aggregated overview with flags and SEO (published only)', async () => {
-    const slug = `overview-${Date.now()}`;
-    const book = await prisma.book.create({ data: { slug } });
+    bookSlug = `overview-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, bookSlug);
 
     // Create text EN (draft) with SEO
     const createText = await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en,

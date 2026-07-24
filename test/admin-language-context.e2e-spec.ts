@@ -5,11 +5,13 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
+import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 
 describe('Admin language context (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let adminToken: string;
+  const createdBookSlugs: string[] = [];
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
@@ -37,6 +39,9 @@ describe('Admin language context (e2e)', () => {
   });
 
   afterAll(async () => {
+    for (const slug of createdBookSlugs) {
+      await cleanupBookWithRights(prisma, slug);
+    }
     await app.close();
   });
 
@@ -77,11 +82,13 @@ describe('Admin language context (e2e)', () => {
   });
 
   it('creates BookVersion in language from X-Admin-Language and lists by that language unless overridden by query', async () => {
-    const book = await prisma.book.create({ data: { slug: `admin-langs-book-${Date.now()}` } });
+    const slug = `admin-langs-book-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, slug);
+    createdBookSlugs.push(slug);
 
     // Create ES version via admin endpoint; dto.language is ignored
     const vEs = await request(http())
-      .post(`/admin/en/books/${book.id}/versions`)
+      .post(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .send({
@@ -98,7 +105,7 @@ describe('Admin language context (e2e)', () => {
 
     // Default admin listing — ES
     const listEs = await request(http())
-      .get(`/admin/en/books/${book.id}/versions`)
+      .get(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .expect(200);
@@ -107,7 +114,7 @@ describe('Admin language context (e2e)', () => {
 
     // Override to EN via query
     const listEn = await request(http())
-      .get(`/admin/en/books/${book.id}/versions?language=en`)
+      .get(`/admin/en/books/${bookWithRights.book.id}/versions?language=en`)
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .expect(200);
@@ -146,11 +153,11 @@ describe('Admin language context (e2e)', () => {
     expect((listEn.body.data as any[]).some((p) => p.slug === slug)).toBe(false);
 
     // BookVersions
-    const book = await prisma.book.create({
-      data: { slug: `admin-langs-book-path-${Date.now()}` },
-    });
+    const bookSlug = `admin-langs-book-path-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, bookSlug);
+    createdBookSlugs.push(bookSlug);
     const vFr = await request(http())
-      .post(`/admin/fr/books/${book.id}/versions`)
+      .post(`/admin/fr/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en, // should be ignored
@@ -165,13 +172,13 @@ describe('Admin language context (e2e)', () => {
     expect(vFr.body.language).toBe(Language.fr);
 
     const listFrV = await request(http())
-      .get(`/admin/fr/books/${book.id}/versions`)
+      .get(`/admin/fr/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect((listFrV.body as any[]).every((v) => v.language === 'fr')).toBe(true);
 
     const listEnV = await request(http())
-      .get(`/admin/en/books/${book.id}/versions`)
+      .get(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect((listEnV.body as any[]).length).toBe(0);
@@ -225,11 +232,13 @@ describe('Admin language context (e2e)', () => {
   });
 
   it('ignores DTO.language on admin BookVersion create and rejects duplicate for same book+language', async () => {
-    const book = await prisma.book.create({ data: { slug: `neg-admin-book-${Date.now()}` } });
+    const bookSlug = `neg-admin-book-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, bookSlug);
+    createdBookSlugs.push(bookSlug);
 
     // Create FR version while DTO.language says EN — effective should be FR
     const vFr = await request(http())
-      .post(`/admin/en/books/${book.id}/versions`)
+      .post(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.fr)
       .send({
@@ -246,7 +255,7 @@ describe('Admin language context (e2e)', () => {
 
     // Try to create duplicate FR version for same book — must fail 400
     const dupFr = await request(http())
-      .post(`/admin/en/books/${book.id}/versions`)
+      .post(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.fr)
       .send({
@@ -263,7 +272,7 @@ describe('Admin language context (e2e)', () => {
 
     // Creating EN version for the same book should succeed
     const vEn = await request(http())
-      .post(`/admin/en/books/${book.id}/versions`)
+      .post(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.en)
       .send({

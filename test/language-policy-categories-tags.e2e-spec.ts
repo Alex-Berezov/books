@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
+import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 
 // This test validates language selection policy on category and tag listing endpoints
 
@@ -12,6 +13,7 @@ describe('Language policy on categories/tags listings (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let admin: string;
+  let bookSlug: string;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
@@ -39,16 +41,19 @@ describe('Language policy on categories/tags listings (e2e)', () => {
   });
 
   afterAll(async () => {
+    if (bookSlug) {
+      await cleanupBookWithRights(prisma, bookSlug);
+    }
     await app.close();
   });
 
   it('filters by ?lang and Accept-Language with fallback', async () => {
     // Create book with two versions EN (text) and ES (audio)
-    const slug = `lang-cat-tag-${Date.now()}`;
-    const book = await prisma.book.create({ data: { slug } });
+    bookSlug = `lang-cat-tag-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, bookSlug);
 
     const vEN = await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${admin}`)
       .send({
         language: Language.en,
@@ -64,7 +69,7 @@ describe('Language policy on categories/tags listings (e2e)', () => {
     const vENid = (vEN.body as { id: string }).id;
 
     const vES = await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${admin}`)
       .send({
         language: Language.es,

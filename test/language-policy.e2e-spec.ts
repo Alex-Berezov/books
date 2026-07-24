@@ -5,11 +5,13 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
+import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 
 describe('Language selection policy (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let adminToken: string;
+  let bookSlug: string;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
@@ -37,16 +39,19 @@ describe('Language selection policy (e2e)', () => {
   });
 
   afterAll(async () => {
+    if (bookSlug) {
+      await cleanupBookWithRights(prisma, bookSlug);
+    }
     await app.close();
   });
 
   it('prefers lang query over Accept-Language and falls back to default when not available', async () => {
-    const slug = `lang-policy-${Date.now()}`;
-    const book = await prisma.book.create({ data: { slug } });
+    bookSlug = `lang-policy-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, bookSlug);
 
     // Create two published versions: EN text, ES audio
     const vEn = await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.en,
@@ -64,7 +69,7 @@ describe('Language selection policy (e2e)', () => {
       .expect(200);
 
     const vEs = await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         language: Language.es,

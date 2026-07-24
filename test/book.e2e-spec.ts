@@ -2,19 +2,13 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { BookService } from '../src/modules/book/book.service';
 
 describe('Books (e2e) - slug validation', () => {
   let app: INestApplication;
   let adminToken: string;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(BookService)
-      .useValue({
-        create: jest.fn((dto: { slug: string }) => ({ id: '1', ...dto })),
-      })
-      .compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
 
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
@@ -49,12 +43,16 @@ describe('Books (e2e) - slug validation', () => {
     await app.close();
   });
 
-  it('should accept valid slug', async () => {
-    await request(app.getHttpServer() as unknown as Parameters<typeof request>[0])
+  it('should reject direct book creation and require rights intake workflow', async () => {
+    const response = await request(app.getHttpServer() as unknown as Parameters<typeof request>[0])
       .post('/books')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ slug: 'valid-slug-123' })
-      .expect(201);
+      .expect(400);
+
+    expect((response.body as { message: string }).message).toContain(
+      'Books must be created from an approved rights intake',
+    );
   });
 
   it('should reject invalid slug (uppercase)', async () => {

@@ -5,11 +5,13 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
+import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 
 describe('Public versions list — Accept-Language fallback (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let admin: string;
+  let bookSlug: string;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
@@ -37,14 +39,18 @@ describe('Public versions list — Accept-Language fallback (e2e)', () => {
   });
 
   afterAll(async () => {
+    if (bookSlug) {
+      await cleanupBookWithRights(prisma, bookSlug);
+    }
     await app.close();
   });
 
   it('prefers Accept-Language when no explicit language query provided', async () => {
-    const book = await prisma.book.create({ data: { slug: `list-lang-${Date.now()}` } });
+    bookSlug = `list-lang-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, bookSlug);
 
     const vEN = await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${admin}`)
       .send({
         language: Language.en,
@@ -59,7 +65,7 @@ describe('Public versions list — Accept-Language fallback (e2e)', () => {
     const vENid = (vEN.body as { id: string }).id;
 
     const vES = await request(http())
-      .post(`/books/${book.id}/versions`)
+      .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${admin}`)
       .send({
         language: Language.es,

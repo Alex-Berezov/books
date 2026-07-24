@@ -86,12 +86,70 @@ async function main() {
     }
   }
 
-  // Seed Book with Version
+  // Seed Book with Version via Rights Intake Workflow
+  // Create Rights Intake
+  const intake = await prisma.rightsIntake.upsert({
+    where: { id: 'seed-intake-harry-potter' },
+    update: {},
+    create: {
+      id: 'seed-intake-harry-potter',
+      candidateTitle: "Harry Potter and the Philosopher's Stone",
+      candidateAuthor: 'J.K. Rowling',
+      originalLanguage: 'en',
+      originalTitle: "Harry Potter and the Philosopher's Stone",
+      workflowStatus: 'APPROVED',
+      targetLanguages: ['en', 'es', 'fr', 'pt', 'ru'],
+      targetCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
+      plannedContentTypes: ['text', 'audio'],
+      approvedReviewId: 'seed-review-harry-potter',
+    },
+  });
+
+  // Create Rights Profile
+  const profile = await prisma.rightsProfile.upsert({
+    where: { id: 'seed-profile-harry-potter' },
+    update: {},
+    create: {
+      id: 'seed-profile-harry-potter',
+      rightsIntakeId: intake.id,
+      status: 'APPROVED',
+      isCurrent: true,
+      overallStatus: 'PUBLISHABLE',
+      publicationGate: 'ALLOW',
+      confidence: 'HIGH',
+      summaryRu: 'Public domain work - author died in 1946',
+      conclusionRu: 'Approved for publication',
+    },
+  });
+
+  // Create Rights Review
+  await prisma.rightsReview.upsert({
+    where: { id: 'seed-review-harry-potter' },
+    update: {},
+    create: {
+      id: 'seed-review-harry-potter',
+      rightsProfileId: profile.id,
+      status: 'HUMAN_APPROVED',
+      reviewerType: 'HUMAN',
+      overallStatus: 'PUBLISHABLE',
+      publicationGate: 'ALLOW',
+      confidence: 'HIGH',
+      summaryRu: 'Public domain work',
+      conclusionRu: 'Approved',
+      approvedAt: new Date(),
+    },
+  });
+
+  // Create Book with rights linkage
   const book = await prisma.book.upsert({
     where: { slug: 'harry-potter' },
     update: {},
     create: {
       slug: 'harry-potter',
+      rightsIntakeId: intake.id,
+      currentRightsProfileId: profile.id,
+      approvedRightsReviewId: 'seed-review-harry-potter',
+      rightsCreatedAt: new Date(),
       versions: {
         create: [
           {
@@ -103,6 +161,13 @@ async function main() {
             coverImageUrl: 'https://example.com/harry.jpg',
             type: BookType.text,
             isFree: true,
+            rightsProfileId: profile.id,
+            approvedRightsReviewId: 'seed-review-harry-potter',
+            rightsStatus: 'APPROVED',
+            rightsAllowedCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
+            rightsBlockedCountryCodes: [],
+            rightsLicenseRequiredCountryCodes: [],
+            rightsPendingCountryCodes: [],
           },
         ],
       },
