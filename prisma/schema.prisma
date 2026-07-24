@@ -146,6 +146,7 @@ model User {
   mediaAssets        MediaAsset[]
   ratings            BookRating[]
   rightsIntakes      RightsIntake[]
+  rightsReviewImports RightsReviewImport[]
 }
 
 
@@ -587,6 +588,7 @@ model RightsIntake {
 
   createdByUserId String?
   createdByUser   User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  reviewImports   RightsReviewImport[]
 
   approvedReviewId String?
   createdBookId    String?
@@ -598,6 +600,47 @@ model RightsIntake {
   @@index([workflowStatus])
   @@index([createdAt])
   @@index([createdByUserId])
+}
+
+// =====================
+// Rights Review Import (Phase 3)
+// =====================
+
+model RightsReviewImport {
+  id String @id @default(uuid())
+
+  rightsIntakeId String
+  rightsIntake   RightsIntake @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  schemaVersion String?
+  importStatus  RightsReviewImportStatus @default(VALIDATION_FAILED)
+  isCurrent     Boolean @default(false)
+
+  reportJson        Json
+  reportMarkdown    String?
+  rawAgentOutput    String?
+
+  sourceFileName      String?
+  reportJsonSha256    String?
+  reportMarkdownSha256 String?
+  rawAgentOutputSha256 String?
+
+  validationErrors   Json?
+  validationWarnings Json?
+
+  importedByUserId String?
+  importedByUser   User? @relation(fields: [importedByUserId], references: [id], onDelete: SetNull)
+
+  supersededAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsIntakeId])
+  @@index([importStatus])
+  @@index([isCurrent])
+  @@index([createdAt])
+  @@index([importedByUserId])
 }
 
 enum RightsIntakeStatus {
@@ -624,6 +667,12 @@ enum RightsSourceTextType {
   ABRIDGMENT
   COMPILATION
   UNKNOWN
+}
+
+enum RightsReviewImportStatus {
+  VALIDATED
+  VALIDATION_FAILED
+  SUPERSEDED
 }
 
 // =====================

@@ -1,0 +1,1 @@
+export const RIGHTS_REVIEW_IMPORT_SCHEMA_VERSION = '1.0';
