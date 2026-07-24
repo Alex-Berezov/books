@@ -16,6 +16,7 @@ const createPrismaStub = (): PrismaStub => {
 
   stub['rightsProfile'] = { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() };
   stub['sourceEdition'] = { findUnique: jest.fn() };
+  stub['editionRights'] = { findUnique: jest.fn() };
   stub['rightsReview'] = { findMany: jest.fn() };
   stub['rightsComponent'] = { findMany: jest.fn() };
   stub['territoryDecision'] = { findMany: jest.fn() };

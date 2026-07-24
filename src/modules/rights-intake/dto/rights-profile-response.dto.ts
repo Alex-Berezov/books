@@ -1,5 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+export class EditionRightsDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() sourceEditionId!: string;
+  @ApiProperty() status!: string;
+  @ApiProperty() notesRu!: string | null;
+  @ApiProperty() legalBasisRu!: string | null;
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
+}
+
 export class SourceEditionDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsProfileId!: string;
@@ -14,16 +24,9 @@ export class SourceEditionDto {
   @ApiProperty() notesRu!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
-}
 
-export class EditionRightsDto {
-  @ApiProperty() id!: string;
-  @ApiProperty() sourceEditionId!: string;
-  @ApiProperty() status!: string;
-  @ApiProperty() notesRu!: string | null;
-  @ApiProperty() legalBasisRu!: string | null;
-  @ApiProperty() createdAt!: string;
-  @ApiProperty() updatedAt!: string;
+  @ApiPropertyOptional({ type: EditionRightsDto })
+  editionRights!: EditionRightsDto | null;
 }
 
 export class RightsReviewDto {

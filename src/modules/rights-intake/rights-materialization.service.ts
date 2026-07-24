@@ -116,7 +116,7 @@ export class RightsMaterializationService {
     if (existing) {
       const existingProfile = existing['rightsProfile'] as Record<string, unknown>;
       if (existingProfile) {
-        return existingProfile['id'] as string;
+        return existingProfile;
       }
     }
 

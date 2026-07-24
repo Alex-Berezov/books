@@ -23,6 +23,12 @@ export class RightsProfileService {
     };
   }
 
+  private get er() {
+    return (this.prisma as unknown as Record<string, unknown>)['editionRights'] as {
+      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+    };
+  }
+
   async getCurrentByIntake(intakeId: string) {
     const intake = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
     if (!intake) {
@@ -98,6 +104,13 @@ export class RightsProfileService {
       where: { rightsProfileId: profileId },
     });
 
+    let editionRightsRecord: Record<string, unknown> | null = null;
+    if (sourceEditionRecord) {
+      editionRightsRecord = await this.er.findUnique({
+        where: { sourceEditionId: sourceEditionRecord['id'] as string },
+      });
+    }
+
     const reviews = (await (this.prisma as unknown as Record<string, unknown>)['rightsReview']) as {
       findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
     };
@@ -154,7 +167,9 @@ export class RightsProfileService {
       nextReviewAt: profile['nextReviewAt']
         ? new Date(profile['nextReviewAt'] as string).toISOString()
         : null,
-      sourceEdition: sourceEditionRecord ? this.mapSourceEdition(sourceEditionRecord) : null,
+      sourceEdition: sourceEditionRecord
+        ? this.mapSourceEdition(sourceEditionRecord, editionRightsRecord)
+        : null,
       reviews: reviewsData.map((r: Record<string, unknown>) => this.mapReview(r)),
       territoryDecisions: territoryData.map((t: Record<string, unknown>) =>
         this.mapTerritoryDecision(t),
@@ -173,19 +188,35 @@ export class RightsProfileService {
     } as RightsProfileDetailDto;
   }
 
-  private mapSourceEdition(record: Record<string, unknown>) {
+  private mapSourceEdition(
+    record: Record<string, unknown>,
+    editionRightsRecord: Record<string, unknown> | null,
+  ) {
     return {
-      id: record['id'],
-      rightsProfileId: record['rightsProfileId'],
-      provider: record['provider'],
-      externalId: record['externalId'] ?? null,
-      sourceUrl: record['sourceUrl'] ?? null,
-      sourceTitle: record['sourceTitle'] ?? null,
-      sourceLanguage: record['sourceLanguage'] ?? null,
-      sourceTextType: record['sourceTextType'],
-      gutenbergStatus: record['gutenbergStatus'] ?? null,
-      status: record['status'],
-      notesRu: record['notesRu'] ?? null,
+      id: record['id'] as string,
+      rightsProfileId: record['rightsProfileId'] as string,
+      provider: record['provider'] as string,
+      externalId: (record['externalId'] as string) ?? null,
+      sourceUrl: (record['sourceUrl'] as string) ?? null,
+      sourceTitle: (record['sourceTitle'] as string) ?? null,
+      sourceLanguage: (record['sourceLanguage'] as string) ?? null,
+      sourceTextType: record['sourceTextType'] as string,
+      gutenbergStatus: (record['gutenbergStatus'] as string) ?? null,
+      status: record['status'] as string,
+      notesRu: (record['notesRu'] as string) ?? null,
+      createdAt: new Date(record['createdAt'] as string).toISOString(),
+      updatedAt: new Date(record['updatedAt'] as string).toISOString(),
+      editionRights: editionRightsRecord ? this.mapEditionRights(editionRightsRecord) : null,
+    };
+  }
+
+  private mapEditionRights(record: Record<string, unknown>) {
+    return {
+      id: record['id'] as string,
+      sourceEditionId: record['sourceEditionId'] as string,
+      status: record['status'] as string,
+      notesRu: (record['notesRu'] as string) ?? null,
+      legalBasisRu: (record['legalBasisRu'] as string) ?? null,
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
     };

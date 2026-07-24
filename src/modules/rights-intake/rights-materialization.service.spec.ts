@@ -432,7 +432,7 @@ describe('RightsMaterializationService', () => {
 
       const result = await service.materializeFromImport('import-1');
 
-      expect(result).toBe('existing-profile-1');
+      expect(result).toEqual(existingProfile);
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect((prisma['rightsProfile'] as Record<string, jest.Mock>).create).not.toHaveBeenCalled();
     });
