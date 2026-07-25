@@ -122,6 +122,19 @@ async function main() {
     },
   });
 
+  // Create Rights Review Import
+  await prisma.rightsReviewImport.upsert({
+    where: { id: 'seed-import-harry-potter' },
+    update: {},
+    create: {
+      id: 'seed-import-harry-potter',
+      rightsIntakeId: intake.id,
+      importStatus: 'VALIDATED',
+      isCurrent: true,
+      reportJson: { source: 'seed' },
+    },
+  });
+
   // Create Rights Review
   await prisma.rightsReview.upsert({
     where: { id: 'seed-review-harry-potter' },
@@ -129,6 +142,7 @@ async function main() {
     create: {
       id: 'seed-review-harry-potter',
       rightsProfileId: profile.id,
+      rightsReviewImportId: 'seed-import-harry-potter',
       status: 'HUMAN_APPROVED',
       reviewerType: 'HUMAN',
       overallStatus: 'PUBLISHABLE',
