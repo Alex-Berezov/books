@@ -1,5 +1,13 @@
 import { PrismaClient, Language } from '@prisma/client';
 
+const DEFAULT_RIGHTS_TARGET_LANGUAGES: Language[] = [
+  Language.en,
+  Language.es,
+  Language.fr,
+  Language.pt,
+  Language.ru,
+];
+
 export interface BookWithRights {
   book: {
     id: string;
@@ -23,7 +31,11 @@ export async function createBookWithRights(
     languages?: Language[];
   } = {},
 ): Promise<BookWithRights> {
-  const { title = 'Test Book', author = 'Test Author', languages = [Language.en] } = options;
+  const {
+    title = 'Test Book',
+    author = 'Test Author',
+    languages = DEFAULT_RIGHTS_TARGET_LANGUAGES,
+  } = options;
 
   const intakeId = `test-intake-${slug}`;
   const profileId = `test-profile-${slug}`;
