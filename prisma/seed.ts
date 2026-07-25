@@ -157,7 +157,12 @@ async function main() {
   // Create Book with rights linkage
   const book = await prisma.book.upsert({
     where: { slug: 'harry-potter' },
-    update: {},
+    update: {
+      rightsIntakeId: intake.id,
+      currentRightsProfileId: profile.id,
+      approvedRightsReviewId: 'seed-review-harry-potter',
+      rightsCreatedAt: new Date(),
+    },
     create: {
       slug: 'harry-potter',
       rightsIntakeId: intake.id,
