@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class PublicationGateReasonDto {
   @ApiProperty({ description: 'Unique reason code' })
@@ -84,13 +85,11 @@ export class PublicationGateResultDto {
 
 export class UpdateRightsGeoBlockDto {
   @ApiProperty()
-  configured: boolean;
+  @IsBoolean()
+  configured!: boolean;
 
   @ApiProperty({ required: false, nullable: true })
+  @IsOptional()
+  @IsString()
   notesRu?: string | null;
-
-  constructor(data: { configured: boolean; notesRu?: string | null }) {
-    this.configured = data.configured;
-    this.notesRu = data.notesRu;
-  }
 }
