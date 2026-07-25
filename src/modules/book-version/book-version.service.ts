@@ -131,8 +131,10 @@ export class BookVersionService {
     if (existing) {
       throw new BadRequestException('Version for this language already exists for this book');
     }
+
+    let version;
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      version = await this.prisma.$transaction(async (tx) => {
         let seoId: number | undefined;
         if (dto.seoMetaTitle || dto.seoMetaDescription) {
           const seo = await tx.seo.create({
@@ -264,15 +266,13 @@ export class BookVersionService {
       }
       throw e;
     }
-  }
 
-  async createWithBaseline(bookId: string, dto: CreateBookVersionDto, overrideLanguage?: Language) {
-    const version = await this.create(bookId, dto, overrideLanguage);
     await this.rightsContentHashService.initializeVersionBaseline(
       version.id,
       'INITIAL_VERSION_SNAPSHOT',
       null,
     );
+
     return version;
   }
 
