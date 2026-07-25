@@ -486,18 +486,37 @@ export class RightsContentHashService {
           },
         });
 
-        // Update all versions referencing the same review
-        await tx.bookVersion.updateMany({
+        // Check related versions and mark stale only if their hash changed
+        const relatedVersions = await tx.bookVersion.findMany({
           where: {
             approvedRightsReviewId: version.approvedRightsReviewId,
             id: { not: versionId },
             rightsStaleDetectedAt: null,
           },
-          data: {
-            rightsRecheckRequired: true,
-            ...staleReason,
+          select: {
+            id: true,
+            rightsContentHash: true,
           },
         });
+
+        for (const relatedVersion of relatedVersions) {
+          if (relatedVersion.rightsContentHash) {
+            try {
+              const relatedComputation = await this.computeVersionHash(relatedVersion.id);
+              if (relatedComputation.hash !== relatedVersion.rightsContentHash) {
+                await tx.bookVersion.update({
+                  where: { id: relatedVersion.id },
+                  data: {
+                    rightsRecheckRequired: true,
+                    ...staleReason,
+                  },
+                });
+              }
+            } catch {
+              // If hash computation fails, skip this version
+            }
+          }
+        }
       }
 
       // Update RightsProfile status to STALE if profile exists
@@ -512,18 +531,37 @@ export class RightsContentHashService {
           },
         });
 
-        // Update all versions referencing the same profile
-        await tx.bookVersion.updateMany({
+        // Check related versions and mark stale only if their hash changed
+        const relatedVersions = await tx.bookVersion.findMany({
           where: {
             rightsProfileId: version.rightsProfileId,
             id: { not: versionId },
             rightsStaleDetectedAt: null,
           },
-          data: {
-            rightsRecheckRequired: true,
-            ...staleReason,
+          select: {
+            id: true,
+            rightsContentHash: true,
           },
         });
+
+        for (const relatedVersion of relatedVersions) {
+          if (relatedVersion.rightsContentHash) {
+            try {
+              const relatedComputation = await this.computeVersionHash(relatedVersion.id);
+              if (relatedComputation.hash !== relatedVersion.rightsContentHash) {
+                await tx.bookVersion.update({
+                  where: { id: relatedVersion.id },
+                  data: {
+                    rightsRecheckRequired: true,
+                    ...staleReason,
+                  },
+                });
+              }
+            } catch {
+              // If hash computation fails, skip this version
+            }
+          }
+        }
       }
 
       // Create audit event

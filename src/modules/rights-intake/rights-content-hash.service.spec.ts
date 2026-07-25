@@ -8,6 +8,7 @@ const mockPrisma = {
   bookVersion: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
+    findMany: jest.fn(),
     update: jest.fn(),
     updateMany: jest.fn(),
   },
@@ -595,6 +596,7 @@ describe('RightsContentHashService', () => {
         approvedRightsReviewId: 'review-1',
         rightsStaleDetectedAt: null,
       });
+      mockPrisma.bookVersion.findMany.mockResolvedValue([]);
       mockPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
         cb(mockPrisma),
       );
