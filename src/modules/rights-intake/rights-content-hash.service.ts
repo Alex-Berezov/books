@@ -233,7 +233,6 @@ export class RightsContentHashService {
       },
       geoFields: {
         rightsGeoBlockRequired: versionAny['rightsGeoBlockRequired'] ?? false,
-        rightsGeoBlockConfigured: versionAny['rightsGeoBlockConfigured'] ?? false,
       },
       rightsRequiredActions: versionAny['rightsRequiredActions'] ?? null,
       rightsProfile: rightsProfile

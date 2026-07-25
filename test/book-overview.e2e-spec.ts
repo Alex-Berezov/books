@@ -6,10 +6,13 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { markBookRightsFreshForTests } from './helpers/rights-fresh';
+import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 
 describe('Book Overview (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let rightsContentHashService: RightsContentHashService;
   let adminToken: string;
   let bookSlug: string;
 
@@ -18,6 +21,7 @@ describe('Book Overview (e2e)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
+    rightsContentHashService = moduleRef.get(RightsContentHashService);
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -103,6 +107,9 @@ describe('Book Overview (e2e)', () => {
         duration: 100,
       })
       .expect(201);
+
+    // Reset rights status after content changes (this test doesn't check rights)
+    await markBookRightsFreshForTests(prisma, bookWithRights.book.id, rightsContentHashService);
 
     // Publish only text
     await request(http())

@@ -6,10 +6,12 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType, RightsPublicationGate } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 
 describe('BookVersion Publication Gate (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let rightsContentHashService: RightsContentHashService;
   let adminToken: string;
   let versionId: string;
   let bookWithRights: {
@@ -24,6 +26,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
+    rightsContentHashService = moduleRef.get(RightsContentHashService);
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -237,13 +240,20 @@ describe('BookVersion Publication Gate (e2e)', () => {
       .expect(201);
     const geoVersionId = createRes.body.id as string;
 
-    // Mark geo-block required
+    // Mark geo-block required and blocked countries (changes rights snapshot)
     await prisma.bookVersion.update({
       where: { id: geoVersionId },
       data: { rightsGeoBlockRequired: true, rightsBlockedCountryCodes: ['RU'] },
     });
 
-    // Gate should block
+    // Re-create baseline after manual rights change (simulates fresh clearance)
+    await rightsContentHashService.initializeVersionBaseline(
+      geoVersionId,
+      'INITIAL_VERSION_SNAPSHOT',
+      null,
+    );
+
+    // Gate should block (geo-block not configured)
     const gateBefore = await request(app.getHttpServer())
       .get(`/admin/versions/${geoVersionId}/publication-gate`)
       .set('Authorization', `Bearer ${adminToken}`)
