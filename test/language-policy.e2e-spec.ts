@@ -102,7 +102,7 @@ describe('Language selection policy (e2e)', () => {
 
     // 1) Accept-Language favors es, but query ?lang=en should win for picking text
     const res1 = await request(http())
-      .get(`/books/${slug}/overview?lang=en`)
+      .get(`/books/${bookSlug}/overview?lang=en`)
       .set('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8')
       .expect(200);
     expect(res1.body.availableLanguages).toEqual(
@@ -112,14 +112,14 @@ describe('Language selection policy (e2e)', () => {
 
     // 2) Without query, Accept-Language should prefer es for audio choice when both present
     const res2 = await request(http())
-      .get(`/books/${slug}/overview`)
+      .get(`/books/${bookSlug}/overview`)
       .set('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8')
       .expect(200);
     // listen SEO will be from ES audio if present; just ensure audio exists
     expect(res2.body.hasAudio).toBe(true);
 
     // 3) Unsupported query lang → fallback to DEFAULT_LANGUAGE (env), default is en in tests
-    const res3 = await request(http()).get(`/books/${slug}/overview?lang=de`).expect(200);
+    const res3 = await request(http()).get(`/books/${bookSlug}/overview?lang=de`).expect(200);
     expect(res3.body.availableLanguages).toEqual(
       expect.arrayContaining([Language.en, Language.es]),
     );

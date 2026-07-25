@@ -11,6 +11,7 @@ export interface BookWithRights {
   intake: { id: string };
   profile: { id: string };
   review: { id: string };
+  reviewImport: { id: string };
 }
 
 export async function createBookWithRights(
@@ -27,6 +28,7 @@ export async function createBookWithRights(
   const intakeId = `test-intake-${slug}`;
   const profileId = `test-profile-${slug}`;
   const reviewId = `test-review-${slug}`;
+  const reviewImportId = `test-import-${slug}`;
 
   // Create Rights Intake
   const intake = await prisma.rightsIntake.create({
@@ -59,11 +61,23 @@ export async function createBookWithRights(
     },
   });
 
+  // Create Rights Review Import (required by RightsReview)
+  const reviewImport = await prisma.rightsReviewImport.create({
+    data: {
+      id: reviewImportId,
+      rightsIntakeId: intake.id,
+      importStatus: 'VALIDATED',
+      isCurrent: true,
+      reportJson: { source: 'test-helper' },
+    },
+  });
+
   // Create Rights Review
   const review = await prisma.rightsReview.create({
     data: {
       id: reviewId,
       rightsProfileId: profile.id,
+      rightsReviewImportId: reviewImport.id,
       status: 'HUMAN_APPROVED',
       reviewerType: 'HUMAN',
       overallStatus: 'PUBLISHABLE',
@@ -97,6 +111,7 @@ export async function createBookWithRights(
     intake: { id: intake.id },
     profile: { id: profile.id },
     review: { id: review.id },
+    reviewImport: { id: reviewImport.id },
   };
 }
 
@@ -104,11 +119,13 @@ export async function cleanupBookWithRights(prisma: PrismaClient, slug: string):
   const intakeId = `test-intake-${slug}`;
   const profileId = `test-profile-${slug}`;
   const reviewId = `test-review-${slug}`;
+  const reviewImportId = `test-import-${slug}`;
 
   // Delete in correct order to respect foreign keys
   await prisma.bookVersion.deleteMany({ where: { book: { slug } } });
   await prisma.book.delete({ where: { slug } }).catch(() => {});
   await prisma.rightsReview.delete({ where: { id: reviewId } }).catch(() => {});
+  await prisma.rightsReviewImport.delete({ where: { id: reviewImportId } }).catch(() => {});
   await prisma.rightsProfile.delete({ where: { id: profileId } }).catch(() => {});
   await prisma.rightsIntake.delete({ where: { id: intakeId } }).catch(() => {});
 }

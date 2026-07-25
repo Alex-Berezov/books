@@ -88,14 +88,15 @@ describe('Public versions list — Accept-Language fallback (e2e)', () => {
       .set('Authorization', `Bearer ${admin}`)
       .expect(200);
 
+    const bookId = bookWithRights.book.id;
     const resES = await request(http())
-      .get(`/books/${book.id}/versions`)
+      .get(`/books/${bookId}/versions`)
       .set('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8')
       .expect(200);
     expect(resES.body.every((v: any) => v.language === 'es')).toBe(true);
 
     const resEN = await request(http())
-      .get(`/books/${book.id}/versions`)
+      .get(`/books/${bookId}/versions`)
       .set('Accept-Language', 'en-US,en;q=0.9')
       .expect(200);
     expect(resEN.body.every((v: any) => v.language === 'en')).toBe(true);
