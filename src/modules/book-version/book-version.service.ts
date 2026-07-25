@@ -146,18 +146,6 @@ export class BookVersionService {
 
         const siblingVersion = (await tx.bookVersion.findFirst({
           where: { bookId },
-          select: {
-            id: true,
-            primaryCategoryId: true,
-            rightsProfileId: true,
-            approvedRightsReviewId: true,
-            rightsStatus: true,
-            rightsAllowedCountryCodes: true,
-            rightsBlockedCountryCodes: true,
-            rightsLicenseRequiredCountryCodes: true,
-            rightsPendingCountryCodes: true,
-            rightsRequiredActions: true,
-          },
           orderBy: { createdAt: 'asc' },
         })) as unknown as SiblingVersionWithRights | null;
 

@@ -135,9 +135,9 @@ export async function cleanupBookWithRights(prisma: PrismaClient, slug: string):
 
   // Delete in correct order to respect foreign keys
   await prisma.bookVersion.deleteMany({ where: { book: { slug } } });
-  await prisma.book.delete({ where: { slug } }).catch(() => {});
-  await prisma.rightsReview.delete({ where: { id: reviewId } }).catch(() => {});
-  await prisma.rightsReviewImport.delete({ where: { id: reviewImportId } }).catch(() => {});
-  await prisma.rightsProfile.delete({ where: { id: profileId } }).catch(() => {});
-  await prisma.rightsIntake.delete({ where: { id: intakeId } }).catch(() => {});
+  await prisma.book.deleteMany({ where: { slug } });
+  await prisma.rightsReview.deleteMany({ where: { id: reviewId } });
+  await prisma.rightsReviewImport.deleteMany({ where: { id: reviewImportId } });
+  await prisma.rightsProfile.deleteMany({ where: { id: profileId } });
+  await prisma.rightsIntake.deleteMany({ where: { id: intakeId } });
 }
