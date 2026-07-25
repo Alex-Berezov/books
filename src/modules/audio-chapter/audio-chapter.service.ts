@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAudioChapterDto } from './dto/create-audio-chapter.dto';
 import { UpdateAudioChapterDto } from './dto/update-audio-chapter.dto';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { Prisma } from '@prisma/client';
 
 export interface PaginatedAudioChapters<T> {
@@ -19,7 +20,10 @@ export interface PaginatedAudioChapters<T> {
 
 @Injectable()
 export class AudioChapterService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private rightsContentHashService: RightsContentHashService,
+  ) {}
 
   private normalizePage(page = 1, limit = 50) {
     const p = Math.max(1, Math.floor(page));
@@ -119,7 +123,7 @@ export class AudioChapterService {
     if (exists) throw this.conflict(dto.number);
 
     try {
-      return await this.prisma.audioChapter.create({
+      const item = await this.prisma.audioChapter.create({
         data: {
           bookVersionId,
           number: dto.number,
@@ -131,6 +135,13 @@ export class AudioChapterService {
           mediaId: dto.mediaId ?? null,
         },
       });
+      await this.rightsContentHashService.checkVersionStaleness(
+        bookVersionId,
+        'AUDIO_CHAPTER_CREATED',
+        null,
+        true,
+      );
+      return item;
     } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw this.conflict(dto.number);
@@ -175,7 +186,14 @@ export class AudioChapterService {
     }
 
     try {
-      return await this.prisma.audioChapter.update({ where: { id }, data: dto });
+      const updated = await this.prisma.audioChapter.update({ where: { id }, data: dto });
+      await this.rightsContentHashService.checkVersionStaleness(
+        item.bookVersionId,
+        'AUDIO_CHAPTER_UPDATED',
+        null,
+        true,
+      );
+      return updated;
     } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw this.conflict(dto.number ?? item.number);
@@ -187,7 +205,15 @@ export class AudioChapterService {
   async remove(id: string) {
     const item = await this.prisma.audioChapter.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Audio chapter not found');
-    return this.prisma.audioChapter.delete({ where: { id } });
+    const bookVersionId = item.bookVersionId;
+    const result = await this.prisma.audioChapter.delete({ where: { id } });
+    await this.rightsContentHashService.checkVersionStaleness(
+      bookVersionId,
+      'AUDIO_CHAPTER_DELETED',
+      null,
+      true,
+    );
+    return result;
   }
 
   async reorder(bookVersionId: string, audioChapterIds: string[]) {
@@ -227,9 +253,18 @@ export class AudioChapterService {
       ),
     ]);
 
-    return this.prisma.audioChapter.findMany({
+    const result = await this.prisma.audioChapter.findMany({
       where: { bookVersionId },
       orderBy: { number: 'asc' },
     });
+
+    await this.rightsContentHashService.checkVersionStaleness(
+      bookVersionId,
+      'AUDIO_CHAPTER_REORDERED',
+      null,
+      true,
+    );
+
+    return result;
   }
 }

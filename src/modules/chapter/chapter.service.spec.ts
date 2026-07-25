@@ -1,4 +1,5 @@
 import { ChapterService } from './chapter.service';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -28,10 +29,17 @@ const createPrismaStub = (): PrismaStub => ({
 describe('ChapterService', () => {
   let service: ChapterService;
   let prisma: PrismaStub;
+  let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new ChapterService(prisma as unknown as PrismaService);
+    mockRightsContentHashService = {
+      computeVersionHash: jest.fn(),
+      initializeVersionBaseline: jest.fn(),
+      checkVersionStaleness: jest.fn(),
+      markVersionAndClearanceStale: jest.fn(),
+    } as unknown as jest.Mocked<RightsContentHashService>;
+    service = new ChapterService(prisma as unknown as PrismaService, mockRightsContentHashService);
   });
 
   it('lists all chapters by version when no pagination', async () => {

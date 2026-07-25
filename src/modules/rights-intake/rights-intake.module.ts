@@ -10,6 +10,7 @@ import { RightsIntakeController } from './rights-intake.controller';
 import { RightsProfileController } from './rights-profile.controller';
 import { RightsMaterializationService } from './rights-materialization.service';
 import { RightsProfileService } from './rights-profile.service';
+import { RightsContentHashService } from './rights-content-hash.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Module({
@@ -23,8 +24,9 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsProfileService,
     RightsApprovalService,
     RightsBookCreationService,
+    RightsContentHashService,
     PrismaService,
   ],
-  exports: [RightsIntakeService, RightsProfileService],
+  exports: [RightsIntakeService, RightsProfileService, RightsContentHashService],
 })
 export class RightsIntakeModule {}

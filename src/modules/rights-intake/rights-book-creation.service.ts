@@ -7,10 +7,14 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
+import { RightsContentHashService } from './rights-content-hash.service';
 
 @Injectable()
 export class RightsBookCreationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rightsContentHashService: RightsContentHashService,
+  ) {}
 
   private get ri() {
     return (this.prisma as unknown as Record<string, unknown>)['rightsIntake'] as {
@@ -291,6 +295,15 @@ export class RightsBookCreationService {
 
     const book = result.book;
     const versions = result.versions;
+
+    // Phase 8: Initialize content hash baselines for all created versions
+    for (const v of versions) {
+      await this.rightsContentHashService.initializeVersionBaseline(
+        v['id'] as string,
+        'INITIAL_VERSION_SNAPSHOT',
+        null,
+      );
+    }
 
     return {
       book: {

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { RightsBookCreationService } from './rights-book-creation.service';
+import { RightsContentHashService } from './rights-content-hash.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 
@@ -60,10 +61,20 @@ const makeDto = (overrides: Record<string, unknown> = {}): CreateBookFromClearan
 describe('RightsBookCreationService', () => {
   let service: RightsBookCreationService;
   let prisma: Record<string, unknown>;
+  let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new RightsBookCreationService(prisma as unknown as PrismaService);
+    mockRightsContentHashService = {
+      computeVersionHash: jest.fn(),
+      initializeVersionBaseline: jest.fn(),
+      checkVersionStaleness: jest.fn(),
+      markVersionAndClearanceStale: jest.fn(),
+    } as unknown as jest.Mocked<RightsContentHashService>;
+    service = new RightsBookCreationService(
+      prisma as unknown as PrismaService,
+      mockRightsContentHashService,
+    );
   });
 
   describe('createBookFromApprovedClearance', () => {

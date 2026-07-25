@@ -1,10 +1,12 @@
 import { PublicationGateService } from './publication-gate.service';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 describe('PublicationGateService', () => {
   let service: PublicationGateService;
   let prisma: jest.Mocked<PrismaService>;
+  let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
 
   const baseVersion = {
     id: 'v1',
@@ -12,6 +14,8 @@ describe('PublicationGateService', () => {
     rightsProfileId: 'profile-1',
     approvedRightsReviewId: 'review-1',
     rightsStatus: 'APPROVED',
+    rightsContentHash: 'baseline-hash-123',
+    rightsRecheckRequired: false,
     rightsBlockedCountryCodes: [],
     rightsLicenseRequiredCountryCodes: [],
     rightsPendingCountryCodes: [],
@@ -53,7 +57,16 @@ describe('PublicationGateService', () => {
       },
     } as unknown as jest.Mocked<PrismaService>;
 
-    service = new PublicationGateService(prisma);
+    mockRightsContentHashService = {
+      computeVersionHash: jest
+        .fn()
+        .mockResolvedValue({ hash: 'baseline-hash-123', algorithmVersion: '1.0' }),
+      initializeVersionBaseline: jest.fn(),
+      checkVersionStaleness: jest.fn(),
+      markVersionAndClearanceStale: jest.fn(),
+    } as unknown as jest.Mocked<RightsContentHashService>;
+
+    service = new PublicationGateService(prisma, mockRightsContentHashService);
   });
 
   // 6.1 Version not found

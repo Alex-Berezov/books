@@ -1,5 +1,6 @@
 import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -115,6 +116,7 @@ describe('BookVersionService', () => {
   let gateService: jest.Mocked<
     Pick<PublicationGateService, 'assertVersionCanPublish' | 'checkVersionCanPublish'>
   >;
+  let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -122,9 +124,16 @@ describe('BookVersionService', () => {
       assertVersionCanPublish: jest.fn().mockResolvedValue(undefined),
       checkVersionCanPublish: jest.fn(),
     };
+    mockRightsContentHashService = {
+      computeVersionHash: jest.fn(),
+      initializeVersionBaseline: jest.fn(),
+      checkVersionStaleness: jest.fn(),
+      markVersionAndClearanceStale: jest.fn(),
+    } as unknown as jest.Mocked<RightsContentHashService>;
     service = new BookVersionService(
       prisma as unknown as PrismaService,
       gateService as unknown as PublicationGateService,
+      mockRightsContentHashService,
     );
   });
 

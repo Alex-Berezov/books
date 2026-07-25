@@ -2,11 +2,15 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ChapterService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private rightsContentHashService: RightsContentHashService,
+  ) {}
 
   listByVersion(bookVersionId: string, page?: number, limit?: number) {
     if (page && limit) {
@@ -45,9 +49,16 @@ export class ChapterService {
       throw new BadRequestException('Chapter number must be unique within a version');
     }
     try {
-      return await this.prisma.chapter.create({
+      const chapter = await this.prisma.chapter.create({
         data: { bookVersionId, number: chapterNumber, title: dto.title, content: dto.content },
       });
+      await this.rightsContentHashService.checkVersionStaleness(
+        bookVersionId,
+        'CHAPTER_CREATED',
+        null,
+        true,
+      );
+      return chapter;
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Chapter number must be unique within a version');
@@ -74,12 +85,27 @@ export class ChapterService {
       if (dup) throw new BadRequestException('Chapter number must be unique within a version');
     }
 
-    return this.prisma.chapter.update({ where: { id }, data: dto });
+    const updated = await this.prisma.chapter.update({ where: { id }, data: dto });
+    await this.rightsContentHashService.checkVersionStaleness(
+      chapter.bookVersionId,
+      'CHAPTER_UPDATED',
+      null,
+      true,
+    );
+    return updated;
   }
 
   async remove(id: string) {
     const chapter = await this.prisma.chapter.findUnique({ where: { id } });
     if (!chapter) throw new NotFoundException('Chapter not found');
-    return this.prisma.chapter.delete({ where: { id } });
+    const bookVersionId = chapter.bookVersionId;
+    const result = await this.prisma.chapter.delete({ where: { id } });
+    await this.rightsContentHashService.checkVersionStaleness(
+      bookVersionId,
+      'CHAPTER_DELETED',
+      null,
+      true,
+    );
+    return result;
   }
 }

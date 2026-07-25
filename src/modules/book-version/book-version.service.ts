@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
 import { PublicationGateService } from './publication-gate.service';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { UpdateRightsGeoBlockDto } from './dto/publication-gate-result.dto';
 import { Prisma } from '@prisma/client';
 import { Language, BookType } from '@prisma/client';
@@ -42,6 +43,7 @@ export class BookVersionService {
   constructor(
     private prisma: PrismaService,
     private publicationGateService: PublicationGateService,
+    private rightsContentHashService: RightsContentHashService,
   ) {}
 
   async list(
@@ -264,6 +266,16 @@ export class BookVersionService {
     }
   }
 
+  async createWithBaseline(bookId: string, dto: CreateBookVersionDto, overrideLanguage?: Language) {
+    const version = await this.create(bookId, dto, overrideLanguage);
+    await this.rightsContentHashService.initializeVersionBaseline(
+      version.id,
+      'INITIAL_VERSION_SNAPSHOT',
+      null,
+    );
+    return version;
+  }
+
   async getPublic(id: string) {
     const version = await this.prisma.bookVersion.findFirst({
       where: { id, status: 'published' },
@@ -326,8 +338,13 @@ export class BookVersionService {
         throw new BadRequestException('previewMediaId must reference an audio MediaAsset');
       }
     }
+
+    const hasNonSeoFields = Object.keys(dto).some(
+      (k) => k !== 'seoMetaTitle' && k !== 'seoMetaDescription',
+    );
+
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const updated = await this.prisma.$transaction(async (tx) => {
         let seoId = existing.seoId;
         if (dto.seoMetaTitle !== undefined || dto.seoMetaDescription !== undefined) {
           if (seoId) {
@@ -351,7 +368,7 @@ export class BookVersionService {
         // Убираем SEO поля из DTO, так как они не существуют в BookVersion schema
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { seoMetaTitle, seoMetaDescription, ...updateData } = dto;
-        const updated = await tx.bookVersion.update({
+        return await tx.bookVersion.update({
           where: { id },
           data: {
             ...updateData,
@@ -359,8 +376,19 @@ export class BookVersionService {
           },
           include: { seo: true },
         });
-        return updated;
       });
+
+      // Phase 8: Stale detection - skip if only SEO fields changed
+      if (hasNonSeoFields) {
+        await this.rightsContentHashService.checkVersionStaleness(
+          id,
+          'BOOK_VERSION_UPDATED',
+          null,
+          true,
+        );
+      }
+
+      return updated;
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Version for this language already exists for this book');

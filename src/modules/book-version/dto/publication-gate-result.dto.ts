@@ -60,6 +60,18 @@ export class PublicationGateResultDto {
   @ApiProperty({ type: [PublicationGateReasonDto] })
   warnings: PublicationGateReasonDto[];
 
+  @ApiProperty({ nullable: true })
+  contentHashBaseline!: string | null;
+
+  @ApiProperty({ nullable: true })
+  contentHashCurrent!: string | null;
+
+  @ApiProperty({ nullable: true })
+  contentHashMatches!: boolean | null;
+
+  @ApiProperty()
+  rightsRecheckRequired!: boolean;
+
   constructor(data: {
     versionId: string;
     bookId: string;
@@ -70,6 +82,10 @@ export class PublicationGateResultDto {
     rightsStatus: string | null;
     blockingReasons: PublicationGateReasonDto[];
     warnings: PublicationGateReasonDto[];
+    contentHashBaseline?: string | null;
+    contentHashCurrent?: string | null;
+    contentHashMatches?: boolean | null;
+    rightsRecheckRequired?: boolean;
   }) {
     this.versionId = data.versionId;
     this.bookId = data.bookId;
@@ -80,6 +96,10 @@ export class PublicationGateResultDto {
     this.rightsStatus = data.rightsStatus;
     this.blockingReasons = data.blockingReasons;
     this.warnings = data.warnings;
+    this.contentHashBaseline = data.contentHashBaseline ?? null;
+    this.contentHashCurrent = data.contentHashCurrent ?? null;
+    this.contentHashMatches = data.contentHashMatches ?? null;
+    this.rightsRecheckRequired = data.rightsRecheckRequired ?? false;
   }
 }
 

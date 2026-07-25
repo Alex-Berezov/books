@@ -4,6 +4,7 @@ import {
   PublicationGateResultDto,
   PublicationGateReasonDto,
 } from './dto/publication-gate-result.dto';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 
 interface VersionWithGeoBlock {
   id: string;
@@ -16,6 +17,8 @@ interface VersionWithGeoBlock {
   rightsPendingCountryCodes: unknown;
   rightsGeoBlockRequired: boolean;
   rightsGeoBlockConfigured: boolean;
+  rightsContentHash: string | null;
+  rightsRecheckRequired: boolean;
   book: {
     id: string;
     currentRightsProfileId: string | null;
@@ -25,7 +28,10 @@ interface VersionWithGeoBlock {
 
 @Injectable()
 export class PublicationGateService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rightsContentHashService: RightsContentHashService,
+  ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
     const blockingReasons: PublicationGateReasonDto[] = [];
@@ -352,6 +358,60 @@ export class PublicationGateService {
       );
     }
 
+    // Phase 8: Content hash checks
+    const contentHashBaseline: string | null = version.rightsContentHash;
+    let contentHashCurrent: string | null = null;
+    let contentHashMatches: boolean | null = null;
+
+    if (!version.rightsContentHash) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: 'MISSING_RIGHTS_CONTENT_HASH',
+          severity: 'BLOCKER',
+          messageRu:
+            'У версии нет сохранённого content hash для проверки актуальности прав. Требуется повторная проверка.',
+        }),
+      );
+    }
+
+    if (version.rightsRecheckRequired) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: 'RIGHTS_RECHECK_REQUIRED',
+          severity: 'BLOCKER',
+          messageRu:
+            'После утверждения прав были изменены юридически значимые данные. Требуется повторная проверка.',
+        }),
+      );
+    }
+
+    // Always compute live hash for comparison
+    try {
+      const computation = await this.rightsContentHashService.computeVersionHash(versionId);
+      contentHashCurrent = computation.hash;
+
+      if (version.rightsContentHash && computation.hash !== version.rightsContentHash) {
+        contentHashMatches = false;
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'RIGHTS_CONTENT_HASH_CHANGED',
+            severity: 'BLOCKER',
+            messageRu:
+              'Содержимое или rights snapshot версии изменились после утверждения проверки. Требуется повторная проверка.',
+            details: {
+              baselineHash: version.rightsContentHash,
+              currentHash: computation.hash,
+              algorithmVersion: computation.algorithmVersion,
+            },
+          }),
+        );
+      } else if (version.rightsContentHash) {
+        contentHashMatches = true;
+      }
+    } catch {
+      // If hash computation fails, don't block on this alone
+    }
+
     return new PublicationGateResultDto({
       versionId: version.id,
       bookId: book.id,
@@ -362,6 +422,10 @@ export class PublicationGateService {
       rightsStatus: version.rightsStatus,
       blockingReasons,
       warnings,
+      contentHashBaseline,
+      contentHashCurrent,
+      contentHashMatches,
+      rightsRecheckRequired: version.rightsRecheckRequired,
     });
   }
 

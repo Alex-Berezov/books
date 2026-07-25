@@ -111,6 +111,17 @@ model BookVersion {
   rightsGeoBlockConfiguredAt DateTime?
   rightsGeoBlockNotesRu String?
 
+  // Phase 8: Content hash & stale detection
+  rightsContentHash String?
+  rightsContentHashAlgorithmVersion String?
+  rightsContentHashInput Json?
+  rightsContentHashCalculatedAt DateTime?
+  rightsRecheckRequired Boolean @default(false)
+  rightsStaleDetectedAt DateTime?
+  rightsStaleReasonCode String?
+  rightsStaleReasonRu String? @db.Text
+  rightsContentHashEvents RightsContentHashEvent[]
+
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
@@ -119,6 +130,9 @@ model BookVersion {
   @@index([authorId])
   @@index([rightsProfileId])
   @@index([approvedRightsReviewId])
+  @@index([rightsContentHash])
+  @@index([rightsRecheckRequired])
+  @@index([rightsStaleDetectedAt])
 }
 
 model BookSummary {
@@ -191,6 +205,7 @@ model User {
   approvedRightsReviews RightsReview[] @relation("RightsReviewApprovedBy")
   rejectedRightsReviews RightsReview[] @relation("RightsReviewRejectedBy")
   rightsReviewApprovals RightsReviewApproval[]
+  rightsContentHashEvents RightsContentHashEvent[]
 }
 
 
@@ -728,6 +743,16 @@ model RightsProfile {
   books Book[] @relation("BookCurrentRightsProfile")
   bookVersions BookVersion[] @relation("BookVersionRightsProfile")
 
+  // Phase 8: Content hash & stale detection
+  contentHash String?
+  contentHashAlgorithmVersion String?
+  contentHashInput Json?
+  contentHashCalculatedAt DateTime?
+  staleDetectedAt DateTime?
+  staleReasonCode String?
+  staleReasonRu String? @db.Text
+  contentHashEvents RightsContentHashEvent[]
+
   supersededAt DateTime?
   archivedAt DateTime?
 
@@ -740,6 +765,8 @@ model RightsProfile {
   @@index([isCurrent])
   @@index([overallStatus])
   @@index([publicationGate])
+  @@index([contentHash])
+  @@index([staleDetectedAt])
 }
 
 model SourceEdition {
@@ -822,11 +849,23 @@ model RightsReview {
   approvedBooks Book[] @relation("BookApprovedRightsReview")
   approvedBookVersions BookVersion[] @relation("BookVersionApprovedRightsReview")
 
+  // Phase 8: Content hash & stale detection
+  contentHash String?
+  contentHashAlgorithmVersion String?
+  contentHashInput Json?
+  contentHashCalculatedAt DateTime?
+  staleDetectedAt DateTime?
+  staleReasonCode String?
+  staleReasonRu String? @db.Text
+  contentHashEvents RightsContentHashEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([rightsProfileId])
   @@index([status])
+  @@index([contentHash])
+  @@index([staleDetectedAt])
   @@index([overallStatus])
   @@index([publicationGate])
   @@index([approvedByUserId])
@@ -983,6 +1022,59 @@ model RightsReviewApproval {
   @@index([rightsIntakeId])
   @@index([decision])
   @@index([decidedByUserId])
+  @@index([createdAt])
+}
+
+// Phase 8: Content hash & stale detection
+enum RightsContentChangeTrigger {
+  INITIAL_VERSION_SNAPSHOT
+  BOOK_VERSION_UPDATED
+  CHAPTER_CREATED
+  CHAPTER_UPDATED
+  CHAPTER_DELETED
+  AUDIO_CHAPTER_CREATED
+  AUDIO_CHAPTER_UPDATED
+  AUDIO_CHAPTER_DELETED
+  AUDIO_CHAPTER_REORDERED
+  RIGHTS_SNAPSHOT_CHANGED
+  SOURCE_EDITION_CHANGED
+  REVIEW_IMPORT_CHANGED
+  MANUAL_HASH_CHECK
+}
+
+model RightsContentHashEvent {
+  id String @id @default(uuid())
+
+  bookVersionId String?
+  bookVersion BookVersion? @relation(fields: [bookVersionId], references: [id], onDelete: SetNull)
+
+  rightsProfileId String?
+  rightsProfile RightsProfile? @relation(fields: [rightsProfileId], references: [id], onDelete: SetNull)
+
+  rightsReviewId String?
+  rightsReview RightsReview? @relation(fields: [rightsReviewId], references: [id], onDelete: SetNull)
+
+  trigger RightsContentChangeTrigger
+
+  previousHash String?
+  currentHash String?
+  hashAlgorithmVersion String
+
+  staleMarked Boolean @default(false)
+
+  reasonCode String?
+  reasonRu String? @db.Text
+
+  createdByUserId String?
+  createdByUser User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([bookVersionId])
+  @@index([rightsProfileId])
+  @@index([rightsReviewId])
+  @@index([trigger])
+  @@index([staleMarked])
   @@index([createdAt])
 }
 

@@ -20,6 +20,8 @@ import {
   PublicationGateResultDto,
   UpdateRightsGeoBlockDto,
 } from './dto/publication-gate-result.dto';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { RightsContentHashCheckDto } from '../rights-intake/dto/rights-content-hash.dto';
 import {
   ApiOperation,
   ApiParam,
@@ -41,6 +43,7 @@ export class BookVersionController {
   constructor(
     private readonly service: BookVersionService,
     private readonly publicationGateService: PublicationGateService,
+    private readonly rightsContentHashService: RightsContentHashService,
   ) {}
 
   @Get('books/:bookId/versions')
@@ -529,5 +532,36 @@ export class BookVersionController {
   @Roles(Role.Admin, Role.ContentManager)
   async updateRightsGeoBlock(@Param('id') id: string, @Body() dto: UpdateRightsGeoBlockDto) {
     return this.service.updateRightsGeoBlock(id, dto);
+  }
+
+  @Get('admin/versions/:id/rights-content-hash')
+  @ApiOperation({
+    summary: 'Get computed rights content hash for a version',
+    description:
+      'Вычисляет текущий content hash версии без изменения состояния. Возвращает результат сравнения с baseline.',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async getRightsContentHash(@Param('id') id: string): Promise<RightsContentHashCheckDto> {
+    return this.rightsContentHashService.checkVersionStaleness(
+      id,
+      'MANUAL_HASH_CHECK',
+      null,
+      false,
+    );
+  }
+
+  @Post('admin/versions/:id/rights-content-hash/check')
+  @ApiOperation({
+    summary: 'Check rights content hash and mark stale if mismatch',
+    description:
+      'Вычисляет текущий content hash, сравнивает с baseline. Если есть расхождение, фиксирует stale.',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async checkRightsContentHash(@Param('id') id: string): Promise<RightsContentHashCheckDto> {
+    return this.rightsContentHashService.checkVersionStaleness(id, 'MANUAL_HASH_CHECK', null, true);
   }
 }
