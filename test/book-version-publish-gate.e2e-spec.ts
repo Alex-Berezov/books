@@ -181,6 +181,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
         actionType: 'REMOVE_COMPONENT',
         status: 'PENDING',
         descriptionRu: 'Test blocking action',
+        affectedCountryCodes: [],
         isBlocking: true,
       },
     });
