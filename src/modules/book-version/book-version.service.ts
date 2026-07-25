@@ -144,7 +144,7 @@ export class BookVersionService {
 
         // Search for any existing sibling version of this book to copy tags/categories from
 
-        const siblingVersion = (await (tx.bookVersion.findFirst as any)({
+        const siblingVersion = (await tx.bookVersion.findFirst({
           where: { bookId },
           select: {
             id: true,
@@ -157,10 +157,6 @@ export class BookVersionService {
             rightsLicenseRequiredCountryCodes: true,
             rightsPendingCountryCodes: true,
             rightsRequiredActions: true,
-            rightsGeoBlockRequired: true,
-            rightsGeoBlockConfigured: true,
-            rightsGeoBlockConfiguredAt: true,
-            rightsGeoBlockNotesRu: true,
           },
           orderBy: { createdAt: 'asc' },
         })) as unknown as SiblingVersionWithRights | null;
@@ -185,7 +181,7 @@ export class BookVersionService {
         const rightsGeoBlockConfiguredAt = siblingVersion?.rightsGeoBlockConfiguredAt ?? null;
         const rightsGeoBlockNotesRu = siblingVersion?.rightsGeoBlockNotesRu ?? null;
 
-        const newVersion = await (tx.bookVersion.create as any)({
+        const newVersion = await tx.bookVersion.create({
           data: {
             bookId,
             language: effectiveLanguage,
@@ -231,6 +227,11 @@ export class BookVersionService {
             rightsGeoBlockConfigured,
             rightsGeoBlockConfiguredAt,
             rightsGeoBlockNotesRu,
+          } as Prisma.BookVersionUncheckedCreateInput & {
+            rightsGeoBlockRequired: boolean;
+            rightsGeoBlockConfigured: boolean;
+            rightsGeoBlockConfiguredAt: Date | null;
+            rightsGeoBlockNotesRu: string | null;
           },
           include: { seo: true },
         });
