@@ -1,4 +1,5 @@
 import { BookVersionService } from './book-version.service';
+import { PublicationGateService } from './publication-gate.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -111,11 +112,20 @@ const createPrismaStub = (): PrismaStub => {
 describe('BookVersionService', () => {
   let service: BookVersionService;
   let prisma: PrismaStub;
+  let gateService: jest.Mocked<
+    Pick<PublicationGateService, 'assertVersionCanPublish' | 'checkVersionCanPublish'>
+  >;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    // Narrow stub to PrismaService for constructor (safe: tests only use mocked methods)
-    service = new BookVersionService(prisma as unknown as PrismaService);
+    gateService = {
+      assertVersionCanPublish: jest.fn().mockResolvedValue(undefined),
+      checkVersionCanPublish: jest.fn(),
+    };
+    service = new BookVersionService(
+      prisma as unknown as PrismaService,
+      gateService as unknown as PublicationGateService,
+    );
   });
 
   it('creates version with seo', async () => {
@@ -164,7 +174,7 @@ describe('BookVersionService', () => {
       seoMetaDescription: 'MD',
     };
     const res = await service.create('b1', dto);
-    expect((res as any).seo?.metaTitle).toBe('MT');
+    expect(res.seo?.metaTitle).toBe('MT');
     expect(prisma.bookVersion.create).toHaveBeenCalled();
   });
 
@@ -264,7 +274,7 @@ describe('BookVersionService', () => {
       isFree: false,
     };
     const res = await service.create('b1', dto);
-    expect((res as any).seo).toBeNull();
+    expect(res.seo).toBeNull();
     expect(prisma.seo.create).not.toHaveBeenCalled();
   });
 
@@ -357,7 +367,7 @@ describe('BookVersionService', () => {
     await expect(service.getPublic('v-draft')).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('publish and unpublish toggle status and publishedAt', async () => {
+  it('publish calls publication gate and unpublish does not', async () => {
     const now = new Date();
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' } as any);
     (prisma.bookVersion.update as jest.Mock)
@@ -366,8 +376,30 @@ describe('BookVersionService', () => {
 
     const pub = await service.publish('v1');
     expect(pub.status).toBe('published');
+    expect(gateService.assertVersionCanPublish).toHaveBeenCalledWith('v1');
+
     const unpub = await service.unpublish('v1');
     expect(unpub.status).toBe('draft');
+    // unpublish should NOT call publication gate
+    expect(gateService.assertVersionCanPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('publish throws if gate blocks', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' } as any);
+    gateService.assertVersionCanPublish.mockRejectedValue(
+      new BadRequestException({
+        message: 'Publication blocked by rights gate',
+        code: 'RIGHTS_PUBLICATION_BLOCKED',
+        canPublish: false,
+        blockingReasons: [
+          { code: 'MISSING_RIGHTS_PROFILE', severity: 'BLOCKER', messageRu: 'test' },
+        ],
+        warnings: [],
+      }),
+    );
+
+    await expect(service.publish('v1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.bookVersion.update).not.toHaveBeenCalled();
   });
 
   it('listAdmin ignores status filter (returns drafts too)', async () => {
@@ -406,6 +438,10 @@ describe('BookVersionService', () => {
         rightsLicenseRequiredCountryCodes: [],
         rightsPendingCountryCodes: [],
         rightsRequiredActions: [],
+        rightsGeoBlockRequired: false,
+        rightsGeoBlockConfigured: false,
+        rightsGeoBlockConfiguredAt: null,
+        rightsGeoBlockNotesRu: null,
       });
 
     (prisma.bookCategory.findMany as jest.Mock).mockResolvedValue([{ categoryId: 'cat1' }]);

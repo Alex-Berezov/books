@@ -2,6 +2,8 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
+import { PublicationGateService } from './publication-gate.service';
+import { UpdateRightsGeoBlockDto } from './dto/publication-gate-result.dto';
 import { Prisma } from '@prisma/client';
 import { Language, BookType } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -29,11 +31,18 @@ interface SiblingVersionWithRights {
   rightsLicenseRequiredCountryCodes: unknown;
   rightsPendingCountryCodes: unknown;
   rightsRequiredActions: unknown;
+  rightsGeoBlockRequired: boolean | null;
+  rightsGeoBlockConfigured: boolean | null;
+  rightsGeoBlockConfiguredAt: Date | null;
+  rightsGeoBlockNotesRu: string | null;
 }
 
 @Injectable()
 export class BookVersionService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private publicationGateService: PublicationGateService,
+  ) {}
 
   async list(
     bookId: string,
@@ -134,7 +143,8 @@ export class BookVersionService {
         }
 
         // Search for any existing sibling version of this book to copy tags/categories from
-        const siblingVersion = (await tx.bookVersion.findFirst({
+
+        const siblingVersion = (await (tx.bookVersion.findFirst as any)({
           where: { bookId },
           select: {
             id: true,
@@ -147,6 +157,10 @@ export class BookVersionService {
             rightsLicenseRequiredCountryCodes: true,
             rightsPendingCountryCodes: true,
             rightsRequiredActions: true,
+            rightsGeoBlockRequired: true,
+            rightsGeoBlockConfigured: true,
+            rightsGeoBlockConfiguredAt: true,
+            rightsGeoBlockNotesRu: true,
           },
           orderBy: { createdAt: 'asc' },
         })) as unknown as SiblingVersionWithRights | null;
@@ -165,7 +179,13 @@ export class BookVersionService {
         const rightsPendingCountryCodes = siblingVersion?.rightsPendingCountryCodes;
         const rightsRequiredActions = siblingVersion?.rightsRequiredActions;
 
-        const newVersion = await tx.bookVersion.create({
+        // Copy geo-block fields from sibling or compute from profile/context
+        const rightsGeoBlockRequired = siblingVersion?.rightsGeoBlockRequired ?? false;
+        const rightsGeoBlockConfigured = siblingVersion?.rightsGeoBlockConfigured ?? false;
+        const rightsGeoBlockConfiguredAt = siblingVersion?.rightsGeoBlockConfiguredAt ?? null;
+        const rightsGeoBlockNotesRu = siblingVersion?.rightsGeoBlockNotesRu ?? null;
+
+        const newVersion = await (tx.bookVersion.create as any)({
           data: {
             bookId,
             language: effectiveLanguage,
@@ -206,6 +226,11 @@ export class BookVersionService {
               rightsLicenseRequiredCountryCodes as Prisma.InputJsonValue,
             rightsPendingCountryCodes: rightsPendingCountryCodes as Prisma.InputJsonValue,
             rightsRequiredActions: rightsRequiredActions as Prisma.InputJsonValue,
+            // Phase 7: geo-block fields
+            rightsGeoBlockRequired,
+            rightsGeoBlockConfigured,
+            rightsGeoBlockConfiguredAt,
+            rightsGeoBlockNotesRu,
           },
           include: { seo: true },
         });
@@ -391,6 +416,9 @@ export class BookVersionService {
   async publish(id: string) {
     const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('BookVersion not found');
+
+    await this.publicationGateService.assertVersionCanPublish(id);
+
     return this.prisma.bookVersion.update({
       where: { id },
       data: { status: 'published', publishedAt: new Date() },
@@ -404,6 +432,28 @@ export class BookVersionService {
     return this.prisma.bookVersion.update({
       where: { id },
       data: { status: 'draft', publishedAt: null },
+      include: { seo: true },
+    });
+  }
+
+  async updateRightsGeoBlock(id: string, dto: UpdateRightsGeoBlockDto) {
+    const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('BookVersion not found');
+
+    const updateData: Record<string, unknown> = {
+      rightsGeoBlockConfigured: dto.configured,
+      rightsGeoBlockNotesRu: dto.notesRu ?? null,
+    };
+
+    if (dto.configured) {
+      updateData.rightsGeoBlockConfiguredAt = new Date();
+    } else {
+      updateData.rightsGeoBlockConfiguredAt = null;
+    }
+
+    return this.prisma.bookVersion.update({
+      where: { id },
+      data: updateData,
       include: { seo: true },
     });
   }

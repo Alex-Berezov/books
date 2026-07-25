@@ -253,6 +253,13 @@ export class RightsBookCreationService {
             rightsLicenseRequiredCountryCodes: licenseRequiredCountries,
             rightsPendingCountryCodes: pendingCountries,
             rightsRequiredActions: requiredActions,
+            // Phase 7: Publication gate geo-block fields
+            rightsGeoBlockRequired:
+              blockedCountries.length > 0 ||
+              profile['publicationGate'] === 'ALLOW_AFTER_GEO_CONFIGURATION',
+            rightsGeoBlockConfigured: false,
+            rightsGeoBlockConfiguredAt: null,
+            rightsGeoBlockNotesRu: null,
             originalLanguage:
               versionDto.originalLanguage ?? (intake['originalLanguage'] as string | null),
             originalTitle: versionDto.originalTitle ?? (intake['originalTitle'] as string | null),

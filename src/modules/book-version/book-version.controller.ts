@@ -13,8 +13,13 @@ import {
   Headers,
 } from '@nestjs/common';
 import { BookVersionService } from './book-version.service';
+import { PublicationGateService } from './publication-gate.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
+import {
+  PublicationGateResultDto,
+  UpdateRightsGeoBlockDto,
+} from './dto/publication-gate-result.dto';
 import {
   ApiOperation,
   ApiParam,
@@ -33,7 +38,10 @@ import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 @ApiTags('book-versions')
 @Controller()
 export class BookVersionController {
-  constructor(private readonly service: BookVersionService) {}
+  constructor(
+    private readonly service: BookVersionService,
+    private readonly publicationGateService: PublicationGateService,
+  ) {}
 
   @Get('books/:bookId/versions')
   @ApiOperation({
@@ -494,5 +502,32 @@ export class BookVersionController {
   })
   unpublish(@Param('id') id: string) {
     return this.service.unpublish(id);
+  }
+
+  @Get('admin/versions/:id/publication-gate')
+  @ApiOperation({
+    summary: 'Check publication gate for a version',
+    description:
+      'Возвращает структурированный результат проверки publication gate: может ли версия быть опубликована, и если нет — причины блокировки.',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async checkPublicationGate(@Param('id') id: string): Promise<PublicationGateResultDto> {
+    return this.publicationGateService.checkVersionCanPublish(id);
+  }
+
+  @Patch('admin/versions/:id/rights-geo-block')
+  @ApiOperation({
+    summary: 'Mark geo-block as configured for a version',
+    description:
+      'Временная административная отметка до Phase 12. Позволяет пометить, что geo-block настроен, для прохождения publication gate.',
+  })
+  @ApiParam({ name: 'id' })
+  @ApiBody({ type: UpdateRightsGeoBlockDto })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async updateRightsGeoBlock(@Param('id') id: string, @Body() dto: UpdateRightsGeoBlockDto) {
+    return this.service.updateRightsGeoBlock(id, dto);
   }
 }

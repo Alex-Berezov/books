@@ -105,6 +105,12 @@ model BookVersion {
   rightsPendingCountryCodes Json?
   rightsRequiredActions Json?
 
+  // Phase 7: Publication gate geo-block fields
+  rightsGeoBlockRequired Boolean @default(false)
+  rightsGeoBlockConfigured Boolean @default(false)
+  rightsGeoBlockConfiguredAt DateTime?
+  rightsGeoBlockNotesRu String?
+
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
