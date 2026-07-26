@@ -126,6 +126,24 @@ export class BookRightsDashboardMetricsDto {
 
   @ApiProperty({ example: false })
   recheckRequired!: boolean;
+
+  @ApiProperty({ example: 7 })
+  regionCount!: number;
+
+  @ApiProperty({ example: 0 })
+  blockedRegionCount!: number;
+
+  @ApiProperty({ example: 0 })
+  licenseRequiredRegionCount!: number;
+
+  @ApiProperty({ example: 0 })
+  pendingReviewRegionCount!: number;
+
+  @ApiProperty({ example: 0 })
+  mixedRegionCount!: number;
+
+  @ApiProperty({ example: 0 })
+  notTargetedRegionCount!: number;
 }
 
 export class BookRightsDashboardDto {

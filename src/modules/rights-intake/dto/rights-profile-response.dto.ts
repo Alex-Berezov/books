@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { TerritoryRegionSummaryDto } from './territory-region-summary.dto';
 import { RightsReviewApprovalDto } from './rights-review-approval.dto';
 
 export class EditionRightsDto {
@@ -174,6 +175,9 @@ export class RightsProfileDetailDto {
 
   @ApiProperty({ type: [TerritoryDecisionDto] })
   territoryDecisions!: TerritoryDecisionDto[];
+
+  @ApiProperty({ type: [TerritoryRegionSummaryDto] })
+  regionalTerritorySummary!: TerritoryRegionSummaryDto[];
 
   @ApiProperty({ type: [RightsComponentDto] })
   components!: RightsComponentDto[];

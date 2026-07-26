@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import type {
   RightsProfileDetailDto,
   RightsProfileSummaryDto,
@@ -9,7 +10,10 @@ import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 
 @Injectable()
 export class RightsProfileService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly regionAggregationService: TerritoryRegionAggregationService,
+  ) {}
 
   private get rp() {
     return (this.prisma as unknown as Record<string, unknown>)['rightsProfile'] as {
@@ -186,6 +190,8 @@ export class RightsProfileService {
       territoryDecisions: territoryData.map((t: Record<string, unknown>) =>
         this.mapTerritoryDecision(t),
       ),
+      regionalTerritorySummary:
+        this.regionAggregationService.aggregateTerritoryDecisions(territoryData),
       components: componentsData.map((c: Record<string, unknown>) => this.mapComponent(c)),
       evidence: evidenceData.map((e: Record<string, unknown>) => this.mapEvidence(e)),
       actions: actionsData.map((a: Record<string, unknown>) => this.mapAction(a)),

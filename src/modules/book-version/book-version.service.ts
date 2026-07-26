@@ -5,6 +5,7 @@ import { UpdateBookVersionDto } from './dto/update-book-version.dto';
 import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { UpdateRightsGeoBlockDto } from './dto/publication-gate-result.dto';
 import { Prisma } from '@prisma/client';
 import { Language, BookType } from '@prisma/client';
@@ -45,6 +46,7 @@ export class BookVersionService {
     private prisma: PrismaService,
     private publicationGateService: PublicationGateService,
     private rightsContentHashService: RightsContentHashService,
+    private regionAggregationService?: TerritoryRegionAggregationService,
   ) {}
 
   async list(
@@ -459,6 +461,28 @@ export class BookVersionService {
       !!version.rightsStaleDetectedAt || !contentHash.matchesBaseline || contentHash.isStale;
     const recheckRequired = version.rightsRecheckRequired || contentHash.recheckRequired;
 
+    const regionalTerritorySummary =
+      (currentProfile?.['regionalTerritorySummary'] as Array<Record<string, unknown>>) ||
+      (this.regionAggregationService?.aggregateTerritoryDecisions(
+        territoryDecisions,
+      ) as unknown as Array<Record<string, unknown>>) ||
+      [];
+
+    const regionCount = regionalTerritorySummary.length;
+    const blockedRegionCount = regionalTerritorySummary.filter(
+      (r) => r['status'] === 'BLOCKED',
+    ).length;
+    const licenseRequiredRegionCount = regionalTerritorySummary.filter(
+      (r) => r['status'] === 'LICENSE_REQUIRED',
+    ).length;
+    const pendingReviewRegionCount = regionalTerritorySummary.filter(
+      (r) => r['status'] === 'PENDING_REVIEW',
+    ).length;
+    const mixedRegionCount = regionalTerritorySummary.filter((r) => r['status'] === 'MIXED').length;
+    const notTargetedRegionCount = regionalTerritorySummary.filter(
+      (r) => r['status'] === 'NOT_TARGETED',
+    ).length;
+
     return {
       book: {
         id: version.book.id,
@@ -535,6 +559,12 @@ export class BookVersionService {
         reviewsCount: reviewHistory.length,
         isStale,
         recheckRequired,
+        regionCount,
+        blockedRegionCount,
+        licenseRequiredRegionCount,
+        pendingReviewRegionCount,
+        mixedRegionCount,
+        notTargetedRegionCount,
       },
     };
   }

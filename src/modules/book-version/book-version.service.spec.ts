@@ -1,6 +1,7 @@
 import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -152,6 +153,7 @@ describe('BookVersionService', () => {
       prisma as unknown as PrismaService,
       gateService as unknown as PublicationGateService,
       mockRightsContentHashService,
+      new TerritoryRegionAggregationService(),
     );
   });
 
@@ -734,6 +736,9 @@ describe('BookVersionService', () => {
       expect(res.summary.unresolvedBlockingActionsCount).toBe(1);
       expect(res.summary.evidenceCount).toBe(1);
       expect(res.summary.componentsCount).toBe(1);
+      expect(res.summary.regionCount).toBe(7);
+      expect(res.summary.blockedRegionCount).toBe(1);
+      expect(res.summary.licenseRequiredRegionCount).toBe(1);
       expect(res.versions).toHaveLength(2);
       expect(res.currentProfile).toBeDefined();
       expect(
