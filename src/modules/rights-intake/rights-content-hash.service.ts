@@ -46,8 +46,12 @@ const TRIGGER_MESSAGES: Record<Trigger, string> = {
 export class RightsContentHashService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async computeVersionHash(versionId: string): Promise<RightsContentHashComputationDto> {
-    const version = await this.prisma.bookVersion.findUnique({
+  async computeVersionHash(
+    versionId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<RightsContentHashComputationDto> {
+    const client = tx ?? this.prisma;
+    const version = await client.bookVersion.findUnique({
       where: { id: versionId },
       include: {
         book: {
@@ -329,7 +333,7 @@ export class RightsContentHashService {
     userId?: string | null,
     tx?: Prisma.TransactionClient,
   ): Promise<RightsContentHashComputationDto> {
-    const computation = await this.computeVersionHash(versionId);
+    const computation = await this.computeVersionHash(versionId, tx);
     const client = tx ?? this.prisma;
 
     await client.bookVersion.update({
@@ -390,7 +394,7 @@ export class RightsContentHashService {
       throw new NotFoundException('BookVersion not found');
     }
 
-    const computation = await this.computeVersionHash(versionId);
+    const computation = await this.computeVersionHash(versionId, tx);
     const baselineHash = version.rightsContentHash;
     const matchesBaseline = baselineHash === computation.hash;
     const isStale = !matchesBaseline || version.rightsRecheckRequired;
@@ -447,7 +451,8 @@ export class RightsContentHashService {
     userId?: string | null,
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    const version = await this.prisma.bookVersion.findUnique({
+    const client = tx ?? this.prisma;
+    const version = await client.bookVersion.findUnique({
       where: { id: versionId },
       select: {
         id: true,
