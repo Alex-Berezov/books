@@ -1,5 +1,6 @@
 import { RightsMaterializationService } from './rights-materialization.service';
 import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
@@ -142,6 +143,8 @@ const createPrismaStub = (): PrismaStub => {
   stub['territoryDecision'] = { create: jest.fn() };
   stub['rightsEvidence'] = { create: jest.fn() };
   stub['rightsAction'] = { create: jest.fn() };
+  stub['bookVersion'] = { findUnique: jest.fn(), update: jest.fn() };
+  stub['geoBlockRule'] = { findMany: jest.fn(), updateMany: jest.fn(), upsert: jest.fn() };
 
   return stub as unknown as PrismaStub;
 };
@@ -607,6 +610,78 @@ describe('RightsMaterializationService', () => {
           geoBlockScope: 'TEXT_READER',
         }),
       });
+
+      // Verify GeoBlockRule generation pipeline from the materialized TerritoryDecision
+      const materializedDecision = (
+        prisma['territoryDecision'] as Record<string, jest.Mock>
+      ).create.mock.calls.find(
+        (call: Array<{ data: { countryCode: string } }>) => call[0]?.data?.countryCode === 'GB',
+      )?.[0]?.data;
+
+      expect(materializedDecision).toBeDefined();
+      expect(materializedDecision.geoBlockRequired).toBe(true);
+      expect(materializedDecision.geoBlockScope).toBe('TEXT_READER');
+
+      // Test GeoBlockRule projection from decision
+      const geoBlockRuleService = new GeoBlockRuleService(prisma as unknown as PrismaService);
+      (prisma['bookVersion'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+        id: 'v1',
+        bookId: 'b1',
+        rightsProfileId: 'profile-1',
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: false,
+      });
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany = jest
+        .fn()
+        .mockResolvedValue([
+          {
+            id: 'td-gb',
+            rightsProfileId: 'profile-1',
+            countryCode: 'GB',
+            finalStatus: 'BLOCKED',
+            accessPolicy: 'BLOCK',
+            geoBlockRequired: true,
+            geoBlockScope: 'TEXT_READER',
+            reasonRu: 'Translation copyright active in GB',
+            legalBasisRu: 'UK Copyright Law',
+          },
+        ]);
+      (prisma['geoBlockRule'] as Record<string, jest.Mock>).updateMany = jest
+        .fn()
+        .mockResolvedValue({ count: 0 });
+      (prisma['geoBlockRule'] as Record<string, jest.Mock>).upsert = jest
+        .fn()
+        .mockResolvedValue({ id: 'rule-gb' });
+      (prisma['geoBlockRule'] as Record<string, jest.Mock>).findMany = jest.fn().mockResolvedValue([
+        {
+          id: 'rule-gb',
+          bookId: 'b1',
+          bookVersionId: 'v1',
+          rightsProfileId: 'profile-1',
+          territoryDecisionId: 'td-gb',
+          scope: 'TEXT_READER',
+          countryCode: 'GB',
+          accessPolicy: 'BLOCK',
+          sourceFinalStatus: 'BLOCKED',
+          isActive: true,
+          reasonRu: 'Translation copyright active in GB',
+          legalBasisRu: 'UK Copyright Law',
+          generatedFrom: 'TERRITORY_DECISION',
+          generatedAt: new Date(),
+          verifiedAt: null,
+          verifiedByUserId: null,
+          verificationNotesRu: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+      (prisma['bookVersion'] as Record<string, jest.Mock>).update = jest.fn().mockResolvedValue({});
+
+      const rulesResult = await geoBlockRuleService.generateRulesForVersion('v1');
+      expect(rulesResult.summary.blockedCountries).toContain('GB');
+      expect(rulesResult.summary.scopes).toContain('TEXT_READER');
+      expect(rulesResult.rules[0].countryCode).toBe('GB');
+      expect(rulesResult.rules[0].scope).toBe('TEXT_READER');
     });
 
     it('should inherit component confidence for a territory assessment', async () => {
