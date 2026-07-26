@@ -410,7 +410,7 @@ export class RightsContentHashService {
       );
     }
 
-    if (persist) {
+    if (persist && matchesBaseline) {
       await client.rightsContentHashEvent.create({
         data: {
           bookVersionId: versionId,

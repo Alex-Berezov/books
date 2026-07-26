@@ -363,6 +363,21 @@ describe('PublicationGateService', () => {
     expect(result.blockingReasons.some((r) => r.code === 'GEO_BLOCK_NOT_CONFIGURED')).toBe(true);
   });
 
+  it('blocks publishing when hash computation fails', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+    (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+    (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+    (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    mockRightsContentHashService.computeVersionHash.mockRejectedValue(
+      new Error('DB connection failed'),
+    );
+    const result = await service.checkVersionCanPublish('v1');
+    expect(result.canPublish).toBe(false);
+    expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHECK_FAILED')).toBe(
+      true,
+    );
+  });
+
   // Fully valid version -> canPublish = true
   it('allows publishing for a fully valid version', async () => {
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
