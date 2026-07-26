@@ -395,7 +395,11 @@ export class BookVersionService {
       const foundProfile = await this.prisma.rightsProfile.findUnique({
         where: { id: profileId },
         include: {
-          sourceEdition: true,
+          sourceEdition: {
+            include: {
+              editionRights: true,
+            },
+          },
           components: true,
           territoryDecisions: true,
           evidence: true,
@@ -406,6 +410,9 @@ export class BookVersionService {
         currentProfile = foundProfile as Record<string, unknown>;
         const foundReviews = await this.prisma.rightsReview.findMany({
           where: { rightsProfileId: profileId },
+          include: {
+            rightsReviewImport: true,
+          },
           orderBy: { createdAt: 'desc' },
         });
         reviewHistory = (foundReviews as Record<string, unknown>[]) || [];

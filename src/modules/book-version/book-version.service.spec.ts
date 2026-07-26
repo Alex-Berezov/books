@@ -59,6 +59,15 @@ interface PrismaStub {
       select: { tagId: boolean };
     }) => Promise<Array<{ tagId: string }>>;
   };
+  rightsReviewApproval: {
+    findMany: jest.Mock;
+  };
+  rightsProfile: {
+    findUnique: jest.Mock;
+  };
+  rightsReview: {
+    findMany: jest.Mock;
+  };
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
 
@@ -69,6 +78,15 @@ const createPrismaStub = (): PrismaStub => {
     },
     rightsIntake: {
       findUnique: jest.fn(),
+    },
+    rightsReviewApproval: {
+      findMany: jest.fn(),
+    },
+    rightsProfile: {
+      findUnique: jest.fn(),
+    },
+    rightsReview: {
+      findMany: jest.fn(),
     },
     bookVersion: {
       findMany: jest.fn<Promise<BookVersionWithSeo[]>, [Prisma.BookVersionFindManyArgs?]>(),
@@ -564,6 +582,165 @@ describe('BookVersionService', () => {
       expect(res.summary.hasClearance).toBe(false);
       expect(res.summary.canPublishCurrentVersion).toBe(false);
       expect(res.summary.publicationGate).toBe('BLOCK');
+    });
+
+    it('should return full rights dashboard payload when clearance profile and history exist', async () => {
+      const mockVersionWithClearance = {
+        id: 'v1',
+        bookId: 'b1',
+        language: 'en',
+        type: 'text',
+        status: 'published',
+        title: 'Title EN',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        rightsStatus: 'APPROVED',
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockConfiguredAt: new Date('2026-07-26T10:00:00Z'),
+        rightsGeoBlockNotesRu: 'Geo-block configured',
+        rightsContentHash: 'hash-v1',
+        rightsContentHashAlgorithmVersion: 'v1',
+        rightsContentHashCalculatedAt: new Date('2026-07-26T10:00:00Z'),
+        rightsRecheckRequired: false,
+        rightsStaleDetectedAt: null,
+        rightsStaleReasonCode: null,
+        rightsStaleReasonRu: null,
+        book: {
+          id: 'b1',
+          slug: 'slug-b1',
+          rightsIntakeId: 'intake-1',
+          currentRightsProfileId: 'profile-1',
+          approvedRightsReviewId: 'review-1',
+          rightsCreatedAt: new Date('2026-07-26T10:00:00Z'),
+        },
+      };
+
+      const mockSiblingVersion = {
+        id: 'v2',
+        language: 'es',
+        type: 'text',
+        status: 'draft',
+        title: 'Title ES',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        rightsStatus: 'APPROVED',
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: false,
+        rightsRecheckRequired: true,
+        rightsStaleDetectedAt: new Date('2026-07-26T11:00:00Z'),
+      };
+
+      const mockIntake = {
+        id: 'intake-1',
+        candidateTitle: 'Pride and Prejudice',
+        candidateAuthor: 'Jane Austen',
+        workflowStatus: 'BOOK_CREATED',
+      };
+
+      const mockProfile = {
+        id: 'profile-1',
+        rightsIntakeId: 'intake-1',
+        overallStatus: 'APPROVED',
+        confidence: 'HIGH',
+        publicationGate: 'ALLOW',
+        sourceEdition: {
+          id: 'source-1',
+          provider: 'PROJECT_GUTENBERG',
+          externalId: '1342',
+          sourceTitle: 'Pride and Prejudice',
+          sourceLanguage: 'en',
+          sourceTextType: 'ORIGINAL_TEXT',
+          gutenbergStatus: 'PUBLIC_DOMAIN_US',
+          status: 'VERIFIED',
+          editionRights: {
+            id: 'ed-rights-1',
+            status: 'PUBLIC_DOMAIN',
+            notesRu: 'Note',
+            legalBasisRu: 'US 70 pMA',
+          },
+        },
+        territoryDecisions: [
+          {
+            countryCode: 'US',
+            accessPolicy: 'ALLOW',
+            finalStatus: 'PUBLIC_DOMAIN',
+            geoBlockRequired: false,
+          },
+          {
+            countryCode: 'GB',
+            accessPolicy: 'BLOCK',
+            finalStatus: 'BLOCKED',
+            geoBlockRequired: true,
+          },
+          {
+            countryCode: 'FR',
+            accessPolicy: 'LICENSE_REQUIRED',
+            finalStatus: 'LICENSE_REQUIRED',
+            geoBlockRequired: false,
+          },
+        ],
+        components: [{ id: 'comp-1', componentType: 'ORIGINAL_TEXT', status: 'PUBLIC_DOMAIN' }],
+        evidence: [{ id: 'ev-1', evidenceType: 'AUTHOR_DEATH_YEAR_RECORD' }],
+        actions: [
+          { id: 'act-1', actionType: 'CONFIGURE_GEO_BLOCK', status: 'PENDING', isBlocking: true },
+        ],
+      };
+
+      const mockReview = {
+        id: 'review-1',
+        rightsProfileId: 'profile-1',
+        overallStatus: 'APPROVED',
+        publicationGate: 'ALLOW',
+        confidence: 'HIGH',
+        rightsReviewImport: { id: 'import-1', provider: 'COMMUNITY' },
+      };
+
+      const mockApproval = {
+        id: 'approval-1',
+        rightsIntakeId: 'intake-1',
+        decision: 'APPROVE',
+        createdAt: new Date('2026-07-26T10:00:00Z'),
+      };
+
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(mockVersionWithClearance);
+      (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([
+        mockVersionWithClearance,
+        mockSiblingVersion,
+      ]);
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue(mockIntake);
+      prisma.rightsReviewApproval.findMany.mockResolvedValue([mockApproval]);
+      prisma.rightsProfile.findUnique.mockResolvedValue(mockProfile);
+      prisma.rightsReview.findMany.mockResolvedValue([mockReview]);
+
+      (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
+        canPublish: true,
+        blockingReasons: [],
+        warnings: [],
+      });
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockResolvedValue({
+        matchesBaseline: true,
+        isStale: false,
+        recheckRequired: false,
+      });
+
+      const res = await service.getRightsDashboard('v1');
+      expect(res.summary.hasClearance).toBe(true);
+      expect(res.summary.canPublishCurrentVersion).toBe(true);
+      expect(res.summary.publicationGate).toBe('ALLOW');
+      expect(res.summary.blockedCountriesCount).toBe(1);
+      expect(res.summary.licenseRequiredCountriesCount).toBe(1);
+      expect(res.summary.geoBlockRequiredCount).toBe(1);
+      expect(res.summary.unresolvedBlockingActionsCount).toBe(1);
+      expect(res.summary.evidenceCount).toBe(1);
+      expect(res.summary.componentsCount).toBe(1);
+      expect(res.versions).toHaveLength(2);
+      expect(res.currentProfile).toBeDefined();
+      expect(
+        (res.currentProfile?.['sourceEdition'] as Record<string, unknown>)['editionRights'],
+      ).toBeDefined();
+      expect(res.reviewHistory).toHaveLength(1);
+      expect(res.approvalHistory).toHaveLength(1);
     });
   });
 });
