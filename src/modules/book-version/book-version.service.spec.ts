@@ -507,4 +507,63 @@ describe('BookVersionService', () => {
       }),
     );
   });
+
+  describe('getRightsDashboard', () => {
+    it('throws NotFoundException when version does not exist', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(null);
+      await expect(service.getRightsDashboard('missing')).rejects.toThrow(NotFoundException);
+    });
+
+    it('returns dashboard for version without clearance', async () => {
+      const mockVersion = {
+        id: 'v1',
+        bookId: 'b1',
+        language: 'en',
+        type: 'text',
+        status: 'draft',
+        title: 'Title',
+        rightsProfileId: null,
+        approvedRightsReviewId: null,
+        rightsStatus: null,
+        rightsGeoBlockRequired: false,
+        rightsGeoBlockConfigured: false,
+        rightsGeoBlockConfiguredAt: null,
+        rightsGeoBlockNotesRu: null,
+        rightsContentHash: null,
+        rightsContentHashAlgorithmVersion: null,
+        rightsContentHashCalculatedAt: null,
+        rightsRecheckRequired: false,
+        rightsStaleDetectedAt: null,
+        rightsStaleReasonCode: null,
+        rightsStaleReasonRu: null,
+        book: {
+          id: 'b1',
+          slug: 'slug-b1',
+          rightsIntakeId: null,
+          currentRightsProfileId: null,
+          approvedRightsReviewId: null,
+          rightsCreatedAt: null,
+        },
+      };
+
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(mockVersion);
+      (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([mockVersion]);
+      (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
+        canPublish: false,
+        blockingReasons: [{ code: 'NO_CLEARANCE', messageRu: 'No clearance' }],
+        warnings: [],
+      });
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockResolvedValue({
+        matchesBaseline: false,
+        recheckRequired: false,
+      });
+
+      const res = await service.getRightsDashboard('v1');
+      expect(res.book.id).toBe('b1');
+      expect(res.currentVersion.id).toBe('v1');
+      expect(res.summary.hasClearance).toBe(false);
+      expect(res.summary.canPublishCurrentVersion).toBe(false);
+      expect(res.summary.publicationGate).toBe('BLOCK');
+    });
+  });
 });

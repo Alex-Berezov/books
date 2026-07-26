@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
+import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { UpdateRightsGeoBlockDto } from './dto/publication-gate-result.dto';
@@ -304,7 +305,16 @@ export class BookVersionService {
       where: { id },
       include: {
         seo: true,
-        book: { select: { slug: true } },
+        book: {
+          select: {
+            id: true,
+            slug: true,
+            rightsIntakeId: true,
+            currentRightsProfileId: true,
+            approvedRightsReviewId: true,
+            rightsCreatedAt: true,
+          },
+        },
         categories: {
           include: { category: true },
         },
@@ -321,6 +331,204 @@ export class BookVersionService {
       bookSlug: version.book.slug,
       categories: version.categories.map((c) => c.category),
       tags: version.tags.map((t) => t.tag),
+    };
+  }
+
+  async getRightsDashboard(versionId: string): Promise<BookRightsDashboardDto> {
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: versionId },
+      include: {
+        book: {
+          select: {
+            id: true,
+            slug: true,
+            rightsIntakeId: true,
+            currentRightsProfileId: true,
+            approvedRightsReviewId: true,
+            rightsCreatedAt: true,
+          },
+        },
+      },
+    });
+    if (!version) throw new NotFoundException('BookVersion not found');
+
+    const bookVersions = await this.prisma.bookVersion.findMany({
+      where: { bookId: version.bookId },
+      select: {
+        id: true,
+        language: true,
+        type: true,
+        status: true,
+        title: true,
+        rightsProfileId: true,
+        approvedRightsReviewId: true,
+        rightsStatus: true,
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsRecheckRequired: true,
+        rightsStaleDetectedAt: true,
+      },
+    });
+
+    const intakeId = version.book.rightsIntakeId;
+    let intake: Record<string, unknown> | null = null;
+    let approvalHistory: Record<string, unknown>[] = [];
+    if (intakeId) {
+      const foundIntake = await this.prisma.rightsIntake.findUnique({
+        where: { id: intakeId },
+      });
+      intake = (foundIntake as Record<string, unknown> | null) || null;
+
+      const foundApprovals = await this.prisma.rightsReviewApproval.findMany({
+        where: { rightsIntakeId: intakeId },
+        orderBy: { createdAt: 'desc' },
+      });
+      approvalHistory = (foundApprovals as Record<string, unknown>[]) || [];
+    }
+
+    const profileId = version.rightsProfileId || version.book.currentRightsProfileId;
+    let currentProfile: Record<string, unknown> | null = null;
+    let reviewHistory: Record<string, unknown>[] = [];
+    let approvedReview: Record<string, unknown> | null = null;
+
+    if (profileId) {
+      const foundProfile = await this.prisma.rightsProfile.findUnique({
+        where: { id: profileId },
+        include: {
+          sourceEdition: true,
+          components: true,
+          territoryDecisions: true,
+          evidence: true,
+          actions: true,
+        },
+      });
+      if (foundProfile) {
+        currentProfile = foundProfile as Record<string, unknown>;
+        const foundReviews = await this.prisma.rightsReview.findMany({
+          where: { rightsProfileId: profileId },
+          orderBy: { createdAt: 'desc' },
+        });
+        reviewHistory = (foundReviews as Record<string, unknown>[]) || [];
+        const approvedId = version.approvedRightsReviewId || version.book.approvedRightsReviewId;
+        if (approvedId) {
+          approvedReview =
+            reviewHistory.find((r) => r['id'] === approvedId) || reviewHistory[0] || null;
+        } else {
+          approvedReview = reviewHistory[0] || null;
+        }
+      }
+    }
+
+    const publicationGate = await this.publicationGateService.checkVersionCanPublish(versionId);
+    const contentHash = await this.rightsContentHashService.checkVersionStaleness(
+      versionId,
+      'MANUAL_HASH_CHECK',
+    );
+
+    const hasClearance = !!intakeId || !!profileId;
+    const canPublishCurrentVersion = publicationGate.canPublish;
+
+    const territoryDecisions =
+      (currentProfile?.['territoryDecisions'] as Array<Record<string, unknown>>) || [];
+    const actions = (currentProfile?.['actions'] as Array<Record<string, unknown>>) || [];
+    const components = (currentProfile?.['components'] as Array<Record<string, unknown>>) || [];
+    const evidence = (currentProfile?.['evidence'] as Array<Record<string, unknown>>) || [];
+
+    const blockedCountriesCount = territoryDecisions.filter(
+      (t) => t['finalStatus'] === 'BLOCKED' || t['accessPolicy'] === 'BLOCK',
+    ).length;
+    const licenseRequiredCountriesCount = territoryDecisions.filter(
+      (t) => t['finalStatus'] === 'LICENSE_REQUIRED',
+    ).length;
+    const pendingCountriesCount = territoryDecisions.filter(
+      (t) => t['finalStatus'] === 'PENDING' || t['finalStatus'] === 'UNCERTAIN',
+    ).length;
+    const geoBlockRequiredCount = territoryDecisions.filter((t) => t['geoBlockRequired']).length;
+    const unresolvedBlockingActionsCount = actions.filter(
+      (a) => a['isBlocking'] && a['status'] !== 'COMPLETED' && a['status'] !== 'WAIVED',
+    ).length;
+
+    const isStale =
+      !!version.rightsStaleDetectedAt || !contentHash.matchesBaseline || contentHash.isStale;
+    const recheckRequired = version.rightsRecheckRequired || contentHash.recheckRequired;
+
+    return {
+      book: {
+        id: version.book.id,
+        slug: version.book.slug,
+        rightsIntakeId: version.book.rightsIntakeId,
+        currentRightsProfileId: version.book.currentRightsProfileId,
+        approvedRightsReviewId: version.book.approvedRightsReviewId,
+        rightsCreatedAt: version.book.rightsCreatedAt
+          ? version.book.rightsCreatedAt.toISOString()
+          : null,
+      },
+      currentVersion: {
+        id: version.id,
+        language: version.language,
+        type: version.type,
+        status: version.status,
+        rightsProfileId: version.rightsProfileId,
+        approvedRightsReviewId: version.approvedRightsReviewId,
+        rightsStatus: version.rightsStatus,
+        rightsGeoBlockRequired: version.rightsGeoBlockRequired,
+        rightsGeoBlockConfigured: version.rightsGeoBlockConfigured,
+        rightsGeoBlockConfiguredAt: version.rightsGeoBlockConfiguredAt
+          ? version.rightsGeoBlockConfiguredAt.toISOString()
+          : null,
+        rightsGeoBlockNotesRu: version.rightsGeoBlockNotesRu,
+        rightsContentHash: version.rightsContentHash,
+        rightsContentHashAlgorithmVersion: version.rightsContentHashAlgorithmVersion,
+        rightsContentHashCalculatedAt: version.rightsContentHashCalculatedAt
+          ? version.rightsContentHashCalculatedAt.toISOString()
+          : null,
+        rightsRecheckRequired: version.rightsRecheckRequired,
+        rightsStaleDetectedAt: version.rightsStaleDetectedAt
+          ? version.rightsStaleDetectedAt.toISOString()
+          : null,
+        rightsStaleReasonCode: version.rightsStaleReasonCode,
+        rightsStaleReasonRu: version.rightsStaleReasonRu,
+      },
+      versions: bookVersions.map((v) => ({
+        id: v.id,
+        language: v.language,
+        type: v.type,
+        status: v.status,
+        title: v.title,
+        rightsProfileId: v.rightsProfileId,
+        approvedRightsReviewId: v.approvedRightsReviewId,
+        rightsStatus: v.rightsStatus,
+        rightsGeoBlockRequired: v.rightsGeoBlockRequired,
+        rightsGeoBlockConfigured: v.rightsGeoBlockConfigured,
+        rightsRecheckRequired: v.rightsRecheckRequired,
+        rightsStaleDetectedAt: v.rightsStaleDetectedAt
+          ? v.rightsStaleDetectedAt.toISOString()
+          : null,
+      })),
+      intake,
+      currentProfile,
+      approvedReview,
+      reviewHistory,
+      approvalHistory,
+      publicationGate,
+      contentHash,
+      summary: {
+        hasClearance,
+        canPublishCurrentVersion,
+        publicationGate: canPublishCurrentVersion ? 'ALLOW' : 'BLOCK',
+        overallStatus: (currentProfile?.['overallStatus'] as string | null) || null,
+        confidence: (currentProfile?.['confidence'] as string | null) || null,
+        blockedCountriesCount,
+        licenseRequiredCountriesCount,
+        pendingCountriesCount,
+        geoBlockRequiredCount,
+        unresolvedBlockingActionsCount,
+        evidenceCount: evidence.length,
+        componentsCount: components.length,
+        reviewsCount: reviewHistory.length,
+        isStale,
+        recheckRequired,
+      },
     };
   }
 

@@ -20,6 +20,7 @@ import {
   PublicationGateResultDto,
   UpdateRightsGeoBlockDto,
 } from './dto/publication-gate-result.dto';
+import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsContentHashCheckDto } from '../rights-intake/dto/rights-content-hash.dto';
 import {
@@ -360,6 +361,24 @@ export class BookVersionController {
   })
   getAdmin(@Param('id') id: string) {
     return this.service.getAdmin(id);
+  }
+
+  @Get('admin/versions/:id/rights-dashboard')
+  @ApiOperation({
+    summary: 'Admin: Get consolidated rights dashboard for a book version',
+    description:
+      'Возвращает агрегированный дашборд авторских прав: статус заявки, профиль прав, геоблокировку, проверки и историю.',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiResponse({
+    status: 200,
+    description: 'Consolidated rights dashboard payload',
+    type: BookRightsDashboardDto,
+  })
+  getRightsDashboard(@Param('id') id: string) {
+    return this.service.getRightsDashboard(id);
   }
 
   @Patch('versions/:id')
