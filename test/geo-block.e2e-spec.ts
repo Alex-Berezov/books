@@ -9,7 +9,7 @@ interface GeoBlockRuleCreateDelegate {
   create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
 }
 
-interface PrismaWithGeoBlockRule extends PrismaService {
+interface PrismaWithGeoBlockRule {
   geoBlockRule: GeoBlockRuleCreateDelegate;
 }
 
@@ -97,7 +97,7 @@ describe('GeoIP market blocking e2e', () => {
     });
     audioChapterId = audioChapter.id;
 
-    const database = prisma as PrismaWithGeoBlockRule;
+    const database = prisma as unknown as PrismaWithGeoBlockRule;
     await database.geoBlockRule.create({
       data: {
         bookId: book.id,

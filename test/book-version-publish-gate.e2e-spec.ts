@@ -22,6 +22,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
   };
   const slug = `gate-${Date.now()}`;
   const createdSlugs: string[] = [];
+  const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -39,21 +40,18 @@ describe('BookVersion Publication Gate (e2e)', () => {
 
     const email = 'admin-gate@example.com';
     const password = 'password123';
-    const reg = await request(app.getHttpServer()).post('/auth/register').send({ email, password });
+    const reg = await request(http()).post('/auth/register').send({ email, password });
     if (reg.status === 201) {
       adminToken = reg.body.accessToken as string;
     } else if (reg.status === 409) {
-      const login = await request(app.getHttpServer())
-        .post('/auth/login')
-        .send({ email, password })
-        .expect(200);
+      const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
       adminToken = login.body.accessToken as string;
     } else {
       throw new Error(`Admin register unexpected status ${reg.status}`);
     }
 
     // Create a draft version
-    const createRes = await request(app.getHttpServer())
+    const createRes = await request(http())
       .post(`/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -78,14 +76,12 @@ describe('BookVersion Publication Gate (e2e)', () => {
 
   // GET /admin/versions/:id/publication-gate requires auth
   it('GET /admin/versions/:id/publication-gate requires auth', async () => {
-    await request(app.getHttpServer())
-      .get(`/admin/versions/${versionId}/publication-gate`)
-      .expect(401);
+    await request(http()).get(`/admin/versions/${versionId}/publication-gate`).expect(401);
   });
 
   // content manager/admin gets gate result
   it('returns gate result for admin', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(http())
       .get(`/admin/versions/${versionId}/publication-gate`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -99,7 +95,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
 
   // version with rights can publish
   it('version with approved rights can publish', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(http())
       .patch(`/versions/${versionId}/publish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -113,7 +109,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
     createdSlugs.push(noRightsSlug);
 
     // Cannot even create a version for a book without an intake
-    await request(app.getHttpServer())
+    await request(http())
       .post(`/books/${noRightsBook.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -141,7 +137,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
       data: { publicationGate: RightsPublicationGate.BLOCK },
     });
 
-    const createRes = await request(app.getHttpServer())
+    const createRes = await request(http())
       .post(`/books/${blockRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -156,7 +152,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
       .expect(201);
     const blockedVersionId = createRes.body.id as string;
 
-    const gateRes = await request(app.getHttpServer())
+    const gateRes = await request(http())
       .get(`/admin/versions/${blockedVersionId}/publication-gate`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -165,7 +161,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
       true,
     );
 
-    await request(app.getHttpServer())
+    await request(http())
       .patch(`/versions/${blockedVersionId}/publish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
@@ -189,7 +185,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
       },
     });
 
-    const createRes = await request(app.getHttpServer())
+    const createRes = await request(http())
       .post(`/books/${actionRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -204,7 +200,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
       .expect(201);
     const actionVersionId = createRes.body.id as string;
 
-    const gateRes = await request(app.getHttpServer())
+    const gateRes = await request(http())
       .get(`/admin/versions/${actionVersionId}/publication-gate`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -213,19 +209,19 @@ describe('BookVersion Publication Gate (e2e)', () => {
       gateRes.body.blockingReasons.some((r: any) => r.code === 'UNRESOLVED_BLOCKING_RIGHTS_ACTION'),
     ).toBe(true);
 
-    await request(app.getHttpServer())
+    await request(http())
       .patch(`/versions/${actionVersionId}/publish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
   });
 
-  // PATCH /admin/versions/:id/rights-geo-block works
-  it('marks geo-block as configured', async () => {
+  // Deprecated PATCH wrapper verifies generated Phase 12 rules
+  it('generates and verifies geo-block rules through the compatibility wrapper', async () => {
     const geoSlug = `geo-${Date.now()}`;
     const geoRights = await createBookWithRights(prisma, geoSlug);
     createdSlugs.push(geoSlug);
 
-    const createRes = await request(app.getHttpServer())
+    const createRes = await request(http())
       .post(`/books/${geoRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -245,6 +241,18 @@ describe('BookVersion Publication Gate (e2e)', () => {
       where: { id: geoVersionId },
       data: { rightsGeoBlockRequired: true, rightsBlockedCountryCodes: ['RU'] },
     });
+    await prisma.territoryDecision.create({
+      data: {
+        rightsProfileId: geoRights.profile.id,
+        countryCode: 'RU',
+        finalStatus: 'BLOCKED',
+        accessPolicy: 'BLOCK',
+        geoBlockRequired: true,
+        geoBlockScope: 'LANGUAGE_EDITION',
+        reasonRu: 'Blocked for the publication gate E2E scenario',
+        confidence: 'HIGH',
+      },
+    });
 
     // Re-create baseline after manual rights change (simulates fresh clearance)
     await rightsContentHashService.initializeVersionBaseline(
@@ -254,21 +262,26 @@ describe('BookVersion Publication Gate (e2e)', () => {
     );
 
     // Gate should block (geo-block not configured)
-    const gateBefore = await request(app.getHttpServer())
+    const gateBefore = await request(http())
       .get(`/admin/versions/${geoVersionId}/publication-gate`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(gateBefore.body.canPublish).toBe(false);
 
-    // Mark geo-block as configured via API
-    await request(app.getHttpServer())
+    // Generate the runtime projection, then verify it through the deprecated wrapper.
+    await request(http())
+      .post(`/admin/versions/${geoVersionId}/geo-block-rules/generate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+
+    await request(http())
       .patch(`/admin/versions/${geoVersionId}/rights-geo-block`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ configured: true, notesRu: 'Configured for testing' })
       .expect(200);
 
     // Gate should now allow (if no other blockers)
-    const gateAfter = await request(app.getHttpServer())
+    const gateAfter = await request(http())
       .get(`/admin/versions/${geoVersionId}/publication-gate`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -288,7 +301,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
       data: { publicationGate: RightsPublicationGate.BLOCK },
     });
 
-    const createRes = await request(app.getHttpServer())
+    const createRes = await request(http())
       .post(`/books/${unblockRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -304,7 +317,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
     const unblockVersionId = createRes.body.id as string;
 
     // unpublish should work fine even though gate is BLOCK
-    await request(app.getHttpServer())
+    await request(http())
       .patch(`/versions/${unblockVersionId}/unpublish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
