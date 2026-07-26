@@ -681,6 +681,30 @@ describe('BookVersionService', () => {
             finalStatus: 'LICENSE_REQUIRED',
             geoBlockRequired: false,
           },
+          {
+            countryCode: 'CA',
+            accessPolicy: 'REVIEW_REQUIRED',
+            finalStatus: 'PENDING_REVIEW',
+            geoBlockRequired: false,
+          },
+          {
+            countryCode: 'AU',
+            accessPolicy: 'REVIEW_REQUIRED',
+            finalStatus: 'NOT_CHECKED',
+            geoBlockRequired: false,
+          },
+          {
+            countryCode: 'MX',
+            accessPolicy: 'REVIEW_REQUIRED',
+            finalStatus: 'UNCERTAIN',
+            geoBlockRequired: false,
+          },
+          {
+            countryCode: 'BR',
+            accessPolicy: 'REVIEW_REQUIRED',
+            finalStatus: 'PENDING',
+            geoBlockRequired: false,
+          },
         ],
         components: [{ id: 'comp-1', componentType: 'ORIGINAL_TEXT', status: 'PUBLIC_DOMAIN' }],
         evidence: [{ id: 'ev-1', evidenceType: 'AUTHOR_DEATH_YEAR_RECORD' }],
@@ -732,6 +756,7 @@ describe('BookVersionService', () => {
       expect(res.summary.publicationGate).toBe('ALLOW');
       expect(res.summary.blockedCountriesCount).toBe(1);
       expect(res.summary.licenseRequiredCountriesCount).toBe(1);
+      expect(res.summary.pendingCountriesCount).toBe(4);
       expect(res.summary.geoBlockRequiredCount).toBe(1);
       expect(res.summary.unresolvedBlockingActionsCount).toBe(1);
       expect(res.summary.evidenceCount).toBe(1);
@@ -744,6 +769,7 @@ describe('BookVersionService', () => {
       expect(
         (res.currentProfile?.['sourceEdition'] as Record<string, unknown>)['editionRights'],
       ).toBeDefined();
+      expect(res.currentProfile?.['regionalTerritorySummary'] as unknown[]).toHaveLength(7);
       expect(res.reviewHistory).toHaveLength(1);
       expect(res.approvalHistory).toHaveLength(1);
     });

@@ -450,7 +450,11 @@ export class BookVersionService {
       (t) => t['finalStatus'] === 'LICENSE_REQUIRED',
     ).length;
     const pendingCountriesCount = territoryDecisions.filter(
-      (t) => t['finalStatus'] === 'PENDING' || t['finalStatus'] === 'UNCERTAIN',
+      (t) =>
+        t['finalStatus'] === 'PENDING_REVIEW' ||
+        t['finalStatus'] === 'NOT_CHECKED' ||
+        t['finalStatus'] === 'UNCERTAIN' ||
+        t['finalStatus'] === 'PENDING',
     ).length;
     const geoBlockRequiredCount = territoryDecisions.filter((t) => t['geoBlockRequired']).length;
     const unresolvedBlockingActionsCount = actions.filter(
@@ -467,6 +471,13 @@ export class BookVersionService {
         territoryDecisions,
       ) as unknown as Array<Record<string, unknown>>) ||
       [];
+
+    if (currentProfile) {
+      currentProfile = {
+        ...currentProfile,
+        regionalTerritorySummary,
+      };
+    }
 
     const regionCount = regionalTerritorySummary.length;
     const blockedRegionCount = regionalTerritorySummary.filter(
