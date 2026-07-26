@@ -43,7 +43,7 @@ export class RightsIntakeService {
       where['sourceProvider'] = dto.sourceProvider;
     }
     if (dto.targetLanguage) {
-      where['targetLanguages'] = { array_contains: dto.targetLanguage };
+      where['targetLanguages'] = { array_contains: [dto.targetLanguage] };
     }
     if (dto.attentionOnly) {
       where['OR'] = [

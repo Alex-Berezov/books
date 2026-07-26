@@ -148,6 +148,60 @@ describe('RightsIntakeService', () => {
       );
       expect(result.total).toBe(1);
     });
+
+    it('filters by targetLanguage using array_contains', async () => {
+      prisma.rightsIntake.count.mockResolvedValue(1);
+      prisma.rightsIntake.findMany.mockResolvedValue([{ id: 'i1', targetLanguages: ['en', 'fr'] }]);
+      mockTransactionArray();
+
+      await service.list({ targetLanguage: 'en' });
+      expect(prisma.rightsIntake.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            targetLanguages: { array_contains: ['en'] },
+          }),
+        }),
+      );
+    });
+
+    it('filters by sourceProvider', async () => {
+      prisma.rightsIntake.count.mockResolvedValue(1);
+      prisma.rightsIntake.findMany.mockResolvedValue([
+        { id: 'i1', sourceProvider: 'PROJECT_GUTENBERG' },
+      ]);
+      mockTransactionArray();
+
+      await service.list({ sourceProvider: 'PROJECT_GUTENBERG' as any });
+      expect(prisma.rightsIntake.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            sourceProvider: 'PROJECT_GUTENBERG',
+          }),
+        }),
+      );
+    });
+
+    it('filters by attentionOnly', async () => {
+      prisma.rightsIntake.count.mockResolvedValue(1);
+      prisma.rightsIntake.findMany.mockResolvedValue([{ id: 'i1', workflowStatus: 'DRAFT' }]);
+      mockTransactionArray();
+
+      await service.list({ attentionOnly: true });
+      expect(prisma.rightsIntake.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: expect.arrayContaining([
+              {
+                workflowStatus: {
+                  in: ['DRAFT', 'READY_FOR_AGENT', 'REVIEW_IMPORTED', 'HUMAN_REVIEW_REQUIRED'],
+                },
+              },
+              { workflowStatus: 'APPROVED', createdBookId: null },
+            ]),
+          }),
+        }),
+      );
+    });
   });
 
   describe('getById', () => {
