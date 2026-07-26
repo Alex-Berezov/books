@@ -610,7 +610,7 @@ describe('RightsContentHashService', () => {
       );
 
       expect(result.matchesBaseline).toBe(false);
-      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalled();
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
     });
   });
 });
