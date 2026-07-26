@@ -39,25 +39,153 @@ export class RightsIntakeService {
     } else {
       where['workflowStatus'] = { not: 'ARCHIVED' };
     }
-    if (dto.q) {
+    if (dto.sourceProvider) {
+      where['sourceProvider'] = dto.sourceProvider;
+    }
+    if (dto.targetLanguage) {
+      where['targetLanguages'] = { array_contains: dto.targetLanguage };
+    }
+    if (dto.attentionOnly) {
       where['OR'] = [
+        {
+          workflowStatus: {
+            in: ['DRAFT', 'READY_FOR_AGENT', 'REVIEW_IMPORTED', 'HUMAN_REVIEW_REQUIRED'],
+          },
+        },
+        { workflowStatus: 'APPROVED', createdBookId: null },
+      ];
+    }
+    if (dto.q) {
+      const qCondition = [
         { candidateTitle: { contains: dto.q, mode: 'insensitive' } },
         { candidateAuthor: { contains: dto.q, mode: 'insensitive' } },
         { originalTitle: { contains: dto.q, mode: 'insensitive' } },
         { sourceExternalId: { contains: dto.q, mode: 'insensitive' } },
         { sourceUrl: { contains: dto.q, mode: 'insensitive' } },
       ];
+      if (where['OR']) {
+        where['AND'] = [{ OR: where['OR'] }, { OR: qCondition }];
+        delete where['OR'];
+      } else {
+        where['OR'] = qCondition;
+      }
     }
 
-    const [total, items] = await this.prisma.$transaction([
+    const [total, rawItems] = await this.prisma.$transaction([
       this.prisma.rightsIntake.count({ where }),
       this.prisma.rightsIntake.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
+        include: dto.includeSummary
+          ? {
+              reviewImports: {
+                where: { isCurrent: true },
+                take: 1,
+                select: {
+                  id: true,
+                  importStatus: true,
+                  isCurrent: true,
+                  validationErrors: true,
+                  validationWarnings: true,
+                  createdAt: true,
+                },
+              },
+              rightsProfiles: {
+                where: { isCurrent: true },
+                take: 1,
+                include: {
+                  territoryDecisions: true,
+                  actions: true,
+                },
+              },
+            }
+          : undefined,
       }),
     ]);
+
+    const items = rawItems.map((item: Record<string, unknown>) => {
+      if (!dto.includeSummary) return item;
+
+      const reviewImports =
+        (item['reviewImports'] as Array<{
+          id: string;
+          importStatus: string;
+          isCurrent: boolean;
+          validationErrors: unknown;
+          validationWarnings: unknown;
+          createdAt: Date;
+        }>) || [];
+
+      const rightsProfiles =
+        (item['rightsProfiles'] as Array<{
+          id: string;
+          status: string;
+          overallStatus: string;
+          publicationGate: string;
+          confidence: string;
+          territoryDecisions: Array<{
+            finalStatus: string;
+            accessPolicy: string;
+            geoBlockRequired: boolean;
+          }>;
+          actions: Array<{
+            isBlocking: boolean;
+            status: string;
+          }>;
+        }>) || [];
+
+      const currentImport = reviewImports[0] || null;
+      const currentProfile = rightsProfiles[0] || null;
+
+      const intakeFields = { ...item };
+      delete intakeFields['reviewImports'];
+      delete intakeFields['rightsProfiles'];
+
+      const valErrors = Array.isArray(currentImport?.validationErrors)
+        ? currentImport.validationErrors
+        : [];
+      const valWarnings = Array.isArray(currentImport?.validationWarnings)
+        ? currentImport.validationWarnings
+        : [];
+
+      const territoryDecisions = currentProfile?.territoryDecisions || [];
+      const actions = currentProfile?.actions || [];
+
+      return {
+        ...intakeFields,
+        currentReviewImport: currentImport
+          ? {
+              id: currentImport.id,
+              importStatus: currentImport.importStatus,
+              isCurrent: currentImport.isCurrent,
+              validationErrorsCount: valErrors.length,
+              validationWarningsCount: valWarnings.length,
+              createdAt: currentImport.createdAt,
+            }
+          : null,
+        currentRightsProfile: currentProfile
+          ? {
+              id: currentProfile.id,
+              status: currentProfile.status,
+              overallStatus: currentProfile.overallStatus,
+              publicationGate: currentProfile.publicationGate,
+              confidence: currentProfile.confidence,
+              blockedCountriesCount: territoryDecisions.filter(
+                (t) => t.finalStatus === 'BLOCKED' || t.accessPolicy === 'BLOCK',
+              ).length,
+              licenseRequiredCountriesCount: territoryDecisions.filter(
+                (t) => t.finalStatus === 'LICENSE_REQUIRED',
+              ).length,
+              geoBlockRequiredCount: territoryDecisions.filter((t) => t.geoBlockRequired).length,
+              blockingActionsCount: actions.filter(
+                (a) => a.isBlocking && a.status !== 'COMPLETED' && a.status !== 'WAIVED',
+              ).length,
+            }
+          : null,
+      };
+    });
 
     return {
       items,

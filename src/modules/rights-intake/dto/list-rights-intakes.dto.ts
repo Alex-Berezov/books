@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsInt, Min, Max, IsEnum, IsString } from 'class-validator';
-import { Type } from 'class-transformer';
-import { RightsIntakeStatus } from '@prisma/client';
+import { IsOptional, IsInt, Min, Max, IsEnum, IsString, IsBoolean } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+import { RightsIntakeStatus, RightsSourceProvider } from '@prisma/client';
 
 export class ListRightsIntakesDto {
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
@@ -28,4 +28,26 @@ export class ListRightsIntakesDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by source provider', enum: RightsSourceProvider })
+  @IsOptional()
+  @IsEnum(RightsSourceProvider)
+  sourceProvider?: RightsSourceProvider;
+
+  @ApiPropertyOptional({ description: 'Filter by target language' })
+  @IsOptional()
+  @IsString()
+  targetLanguage?: string;
+
+  @ApiPropertyOptional({ description: 'Filter for intakes requiring action' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  attentionOnly?: boolean;
+
+  @ApiPropertyOptional({ description: 'Include summary indicators in list response' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  includeSummary?: boolean;
 }
