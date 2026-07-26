@@ -643,6 +643,8 @@ describe('BookVersionService', () => {
         candidateAuthor: 'Jane Austen',
         workflowStatus: 'BOOK_CREATED',
       };
+      const expiringComponentRightsAt = new Date();
+      expiringComponentRightsAt.setDate(expiringComponentRightsAt.getDate() + 30);
 
       const mockProfile = {
         id: 'profile-1',
@@ -710,7 +712,36 @@ describe('BookVersionService', () => {
             geoBlockRequired: false,
           },
         ],
-        components: [{ id: 'comp-1', componentType: 'ORIGINAL_TEXT', status: 'PUBLIC_DOMAIN' }],
+        components: [
+          {
+            id: 'comp-1',
+            componentType: 'ORIGINAL_TEXT',
+            status: 'PUBLIC_DOMAIN',
+            territoryAssessments: [
+              {
+                id: 'assessment-1',
+                countryCode: 'GB',
+                accessPolicy: 'BLOCK',
+                geoBlockRequired: true,
+                rightsExpireAt: expiringComponentRightsAt,
+              },
+              {
+                id: 'assessment-2',
+                countryCode: 'CA',
+                accessPolicy: 'REVIEW_REQUIRED',
+                geoBlockRequired: false,
+                rightsExpireAt: null,
+              },
+              {
+                id: 'assessment-3',
+                countryCode: 'US',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: false,
+                rightsExpireAt: null,
+              },
+            ],
+          },
+        ],
         evidence: [{ id: 'ev-1', evidenceType: 'AUTHOR_DEATH_YEAR_RECORD' }],
         actions: [
           { id: 'act-1', actionType: 'CONFIGURE_GEO_BLOCK', status: 'PENDING', isBlocking: true },
@@ -765,6 +796,10 @@ describe('BookVersionService', () => {
       expect(res.summary.unresolvedBlockingActionsCount).toBe(1);
       expect(res.summary.evidenceCount).toBe(1);
       expect(res.summary.componentsCount).toBe(1);
+      expect(res.summary.componentTerritoryAssessmentsCount).toBe(3);
+      expect(res.summary.blockedComponentTerritoryAssessmentsCount).toBe(1);
+      expect(res.summary.reviewRequiredComponentTerritoryAssessmentsCount).toBe(1);
+      expect(res.summary.expiringComponentTerritoryAssessmentsCount).toBe(1);
       expect(res.summary.regionCount).toBe(7);
       expect(res.summary.blockedRegionCount).toBe(1);
       expect(res.summary.licenseRequiredRegionCount).toBe(1);
@@ -774,6 +809,24 @@ describe('BookVersionService', () => {
         (res.currentProfile?.['sourceEdition'] as Record<string, unknown>)['editionRights'],
       ).toBeDefined();
       expect(res.currentProfile?.['regionalTerritorySummary'] as unknown[]).toHaveLength(7);
+      expect(
+        (res.currentProfile?.['components'] as Array<Record<string, unknown>>)[0][
+          'territoryAssessments'
+        ] as unknown[],
+      ).toHaveLength(3);
+      expect(prisma.rightsProfile.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            components: {
+              include: {
+                territoryAssessments: {
+                  orderBy: [{ countryCode: 'asc' }],
+                },
+              },
+            },
+          }),
+        }),
+      );
       expect(res.reviewHistory).toHaveLength(1);
       expect(res.approvalHistory).toHaveLength(1);
     });

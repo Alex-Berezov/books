@@ -955,7 +955,12 @@ model ComponentTerritoryAssessment {
   accessPolicy RightsAccessPolicy
   geoBlockRequired Boolean @default(false)
   reasonRu String? @db.Text
+  legalBasisRu String? @db.Text
+  publicDomainFromYear Int?
+  rightsExpireAt DateTime?
+  sourceEvidenceIds Json?
   confidence RightsConfidence?
+  notesRu String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -964,6 +969,9 @@ model ComponentTerritoryAssessment {
   @@index([rightsComponentId])
   @@index([countryCode])
   @@index([status])
+  @@index([accessPolicy])
+  @@index([geoBlockRequired])
+  @@index([rightsExpireAt])
 }
 
 model RightsEvidence {

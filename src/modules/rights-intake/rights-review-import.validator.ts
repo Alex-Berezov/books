@@ -316,6 +316,8 @@ export class RightsReviewImportValidator {
     // Validate territoryDecisions
     if (Array.isArray(territoryDecisions)) {
       const coveredCountries = new Set<string>();
+      const componentCoveredCountries =
+        this.getComponentTerritoryCountryCodes(componentAssessments);
       for (let i = 0; i < territoryDecisions.length; i++) {
         const td = territoryDecisions[i] as Record<string, unknown>;
         const prefix = `territoryDecisions[${i}]`;
@@ -399,7 +401,7 @@ export class RightsReviewImportValidator {
 
       // Check all target countries are covered
       for (const country of targetCountryCodes) {
-        if (!coveredCountries.has(country)) {
+        if (!coveredCountries.has(country) && !componentCoveredCountries.has(country)) {
           addError(
             errors,
             'territoryDecisions',
@@ -587,6 +589,14 @@ export class RightsReviewImportValidator {
             'INVALID_ENUM',
           );
         }
+
+        this.validateComponentTerritoryAssessments(
+          ca['territoryAssessments'],
+          prefix,
+          errors,
+          warnings,
+          territoryDecisions,
+        );
       }
     }
 
@@ -638,5 +648,220 @@ export class RightsReviewImportValidator {
     }
 
     return { errors, warnings };
+  }
+
+  private getComponentTerritoryCountryCodes(componentAssessments: unknown): Set<string> {
+    const countryCodes = new Set<string>();
+    if (!Array.isArray(componentAssessments)) return countryCodes;
+
+    for (const component of componentAssessments) {
+      if (!component || typeof component !== 'object') continue;
+      const territoryAssessments = (component as Record<string, unknown>)['territoryAssessments'];
+      if (!Array.isArray(territoryAssessments)) continue;
+
+      for (const assessment of territoryAssessments) {
+        if (!assessment || typeof assessment !== 'object') continue;
+        const countryCode = (assessment as Record<string, unknown>)['countryCode'];
+        if (typeof countryCode === 'string' && /^[A-Za-z]{2}$/.test(countryCode)) {
+          countryCodes.add(countryCode.toUpperCase());
+        }
+      }
+    }
+
+    return countryCodes;
+  }
+
+  private validateComponentTerritoryAssessments(
+    value: unknown,
+    componentPrefix: string,
+    errors: ValidationIssue[],
+    warnings: ValidationIssue[],
+    territoryDecisions: unknown,
+  ): void {
+    if (value === undefined) return;
+    if (!Array.isArray(value)) {
+      addError(
+        errors,
+        `${componentPrefix}.territoryAssessments`,
+        'territoryAssessments must be an array',
+        'NOT_ARRAY',
+      );
+      return;
+    }
+
+    for (let index = 0; index < value.length; index++) {
+      const assessment: unknown = value[index];
+      const prefix = `${componentPrefix}.territoryAssessments[${index}]`;
+      if (!assessment || typeof assessment !== 'object' || Array.isArray(assessment)) {
+        addError(errors, prefix, 'territory assessment must be an object', 'INVALID_TYPE');
+        continue;
+      }
+
+      const record = assessment as Record<string, unknown>;
+      const countryCode = record['countryCode'];
+      if (typeof countryCode !== 'string' || !/^[A-Za-z]{2}$/.test(countryCode)) {
+        addError(
+          errors,
+          `${prefix}.countryCode`,
+          'countryCode must be a two-letter ISO alpha-2 code',
+          'INVALID_COUNTRY_CODE',
+        );
+      }
+
+      const status = record['status'];
+      if (typeof status !== 'string' || !isIn(VALID_TERRITORY_FINAL_STATUSES, status)) {
+        addError(
+          errors,
+          `${prefix}.status`,
+          `Invalid territory assessment status: "${String(status)}"`,
+          'INVALID_ENUM',
+        );
+      }
+
+      const accessPolicy = record['accessPolicy'];
+      if (typeof accessPolicy !== 'string' || !isIn(VALID_ACCESS_POLICIES, accessPolicy)) {
+        addError(
+          errors,
+          `${prefix}.accessPolicy`,
+          `Invalid accessPolicy: "${String(accessPolicy)}"`,
+          'INVALID_ENUM',
+        );
+      }
+
+      if (typeof record['geoBlockRequired'] !== 'boolean') {
+        addError(
+          errors,
+          `${prefix}.geoBlockRequired`,
+          'geoBlockRequired must be a boolean',
+          'INVALID_TYPE',
+        );
+      }
+
+      const reasonRequired = accessPolicy !== 'ALLOW' || record['geoBlockRequired'] === true;
+      if (
+        reasonRequired &&
+        (typeof record['reasonRu'] !== 'string' || record['reasonRu'].trim() === '')
+      ) {
+        addError(
+          errors,
+          `${prefix}.reasonRu`,
+          'reasonRu is required for restricted territory assessments',
+          'MISSING_FIELD',
+        );
+      }
+
+      this.validateOptionalString(record, 'legalBasisRu', prefix, errors);
+      this.validateOptionalString(record, 'notesRu', prefix, errors);
+
+      const publicDomainFromYear = record['publicDomainFromYear'];
+      if (
+        publicDomainFromYear !== undefined &&
+        publicDomainFromYear !== null &&
+        (typeof publicDomainFromYear !== 'number' || !Number.isInteger(publicDomainFromYear))
+      ) {
+        addError(
+          errors,
+          `${prefix}.publicDomainFromYear`,
+          'publicDomainFromYear must be an integer or null',
+          'INVALID_TYPE',
+        );
+      }
+
+      const rightsExpireAt = record['rightsExpireAt'];
+      if (
+        rightsExpireAt !== undefined &&
+        rightsExpireAt !== null &&
+        (typeof rightsExpireAt !== 'string' || Number.isNaN(Date.parse(rightsExpireAt)))
+      ) {
+        addError(
+          errors,
+          `${prefix}.rightsExpireAt`,
+          'rightsExpireAt must be an ISO date string or null',
+          'INVALID_DATE',
+        );
+      }
+
+      const sourceEvidenceIds = record['sourceEvidenceIds'];
+      if (
+        sourceEvidenceIds !== undefined &&
+        (!Array.isArray(sourceEvidenceIds) ||
+          sourceEvidenceIds.some((evidenceId) => typeof evidenceId !== 'string'))
+      ) {
+        addError(
+          errors,
+          `${prefix}.sourceEvidenceIds`,
+          'sourceEvidenceIds must be an array of strings',
+          'INVALID_TYPE',
+        );
+      }
+
+      const assessmentConfidence = record['confidence'];
+      const confidenceStr =
+        typeof assessmentConfidence === 'string'
+          ? assessmentConfidence
+          : typeof assessmentConfidence === 'number' || typeof assessmentConfidence === 'boolean'
+            ? String(assessmentConfidence)
+            : '';
+      if (
+        assessmentConfidence !== undefined &&
+        (typeof assessmentConfidence !== 'string' || !isIn(VALID_CONFIDENCE, assessmentConfidence))
+      ) {
+        addError(
+          errors,
+          `${prefix}.confidence`,
+          `Invalid confidence: "${confidenceStr}"`,
+          'INVALID_ENUM',
+        );
+      }
+
+      this.addComponentConflictWarning(
+        record,
+        prefix,
+        countryCode,
+        accessPolicy,
+        warnings,
+        territoryDecisions,
+      );
+    }
+  }
+
+  private validateOptionalString(
+    record: Record<string, unknown>,
+    field: string,
+    prefix: string,
+    errors: ValidationIssue[],
+  ): void {
+    const value = record[field];
+    if (value !== undefined && value !== null && typeof value !== 'string') {
+      addError(errors, `${prefix}.${field}`, `${field} must be a string`, 'INVALID_TYPE');
+    }
+  }
+
+  private addComponentConflictWarning(
+    assessment: Record<string, unknown>,
+    prefix: string,
+    countryCode: unknown,
+    accessPolicy: unknown,
+    warnings: ValidationIssue[],
+    territoryDecisions: unknown,
+  ): void {
+    if (!Array.isArray(territoryDecisions) || typeof countryCode !== 'string') return;
+    if (accessPolicy !== 'BLOCK' && accessPolicy !== 'REVIEW_REQUIRED') return;
+
+    const topLevelDecision = territoryDecisions.find(
+      (decision) =>
+        decision &&
+        typeof decision === 'object' &&
+        (decision as Record<string, unknown>)['countryCode'] === countryCode.toUpperCase(),
+    ) as Record<string, unknown> | undefined;
+
+    if (topLevelDecision?.['accessPolicy'] !== 'ALLOW') return;
+
+    addWarning(
+      warnings,
+      `${prefix}.accessPolicy`,
+      `Component-level ${String(assessment['accessPolicy'])} overrides top-level ALLOW for ${countryCode.toUpperCase()}`,
+      'COMPONENT_TERRITORY_CONFLICT',
+    );
   }
 }

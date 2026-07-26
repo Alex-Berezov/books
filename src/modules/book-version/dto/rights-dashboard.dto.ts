@@ -128,6 +128,18 @@ export class BookRightsDashboardMetricsDto {
   componentsCount!: number;
 
   @ApiProperty({ example: 0 })
+  componentTerritoryAssessmentsCount!: number;
+
+  @ApiProperty({ example: 0 })
+  blockedComponentTerritoryAssessmentsCount!: number;
+
+  @ApiProperty({ example: 0 })
+  reviewRequiredComponentTerritoryAssessmentsCount!: number;
+
+  @ApiProperty({ example: 0 })
+  expiringComponentTerritoryAssessmentsCount!: number;
+
+  @ApiProperty({ example: 0 })
   reviewsCount!: number;
 
   @ApiProperty({ example: false })

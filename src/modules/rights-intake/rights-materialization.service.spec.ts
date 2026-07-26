@@ -1,4 +1,5 @@
 import { RightsMaterializationService } from './rights-materialization.service';
+import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
@@ -87,6 +88,7 @@ const makeIntake = (overrides: Record<string, unknown> = {}) => ({
   id: 'intake-1',
   workflowStatus: 'REVIEW_IMPORTED',
   candidateTitle: 'Test Book',
+  targetCountryCodes: ['US', 'FR'],
   ...overrides,
 });
 
@@ -136,6 +138,7 @@ const createPrismaStub = (): PrismaStub => {
   stub['sourceEdition'] = { create: jest.fn(), findUnique: jest.fn() };
   stub['editionRights'] = { create: jest.fn() };
   stub['rightsComponent'] = { create: jest.fn() };
+  stub['componentTerritoryAssessment'] = { create: jest.fn() };
   stub['territoryDecision'] = { create: jest.fn() };
   stub['rightsEvidence'] = { create: jest.fn() };
   stub['rightsAction'] = { create: jest.fn() };
@@ -149,7 +152,16 @@ describe('RightsMaterializationService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new RightsMaterializationService(prisma as unknown as PrismaService);
+    service = new RightsMaterializationService(
+      prisma as unknown as PrismaService,
+      new ComponentTerritoryAggregationService(),
+    );
+    (prisma['rightsComponent'] as Record<string, jest.Mock>).create.mockResolvedValue({
+      id: 'component-1',
+    });
+    (prisma['sourceEdition'] as Record<string, jest.Mock>).create.mockResolvedValue({
+      id: 'source-edition-1',
+    });
   });
 
   function setupTransaction() {
@@ -525,6 +537,115 @@ describe('RightsMaterializationService', () => {
       expect(result).toEqual(profile);
       expect((prisma['sourceEdition'] as Record<string, jest.Mock>).create).not.toHaveBeenCalled();
       expect((prisma['editionRights'] as Record<string, jest.Mock>).create).not.toHaveBeenCalled();
+    });
+
+    it('should create component territory assessments and aggregate a conservative decision', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.componentAssessments = [
+        {
+          componentType: 'TRANSLATION',
+          titleRu: 'Перевод',
+          status: 'COPYRIGHTED',
+          requiredAction: 'OBTAIN_LICENSE',
+          confidence: 'HIGH',
+          territoryAssessments: [
+            {
+              countryCode: 'gb',
+              status: 'BLOCKED',
+              accessPolicy: 'BLOCK',
+              geoBlockRequired: true,
+              reasonRu: 'Перевод защищён.',
+              legalBasisRu: 'Translation copyright term.',
+              rightsExpireAt: '2031-01-01T00:00:00.000Z',
+              publicDomainFromYear: 2032,
+              sourceEvidenceIds: ['evidence-gb'],
+              confidence: 'MEDIUM',
+              notesRu: 'Проверить автора перевода.',
+            },
+          ],
+        },
+      ];
+      reportJson.territoryDecisions = [
+        {
+          countryCode: 'GB',
+          finalStatus: 'ALLOWED',
+          accessPolicy: 'ALLOW',
+          geoBlockRequired: false,
+          reasonRu: 'Top-level allow.',
+          confidence: 'HIGH',
+        },
+      ];
+      setupBasicMocks({ reportJson });
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake({ targetCountryCodes: ['GB'] }));
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      await service.materializeFromImport('import-1');
+
+      expect(
+        (prisma['componentTerritoryAssessment'] as Record<string, jest.Mock>).create,
+      ).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          rightsComponentId: 'component-1',
+          countryCode: 'GB',
+          confidence: 'MEDIUM',
+          sourceEvidenceIds: ['evidence-gb'],
+          rightsExpireAt: new Date('2031-01-01T00:00:00.000Z'),
+        }),
+      });
+      expect(
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).create,
+      ).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          countryCode: 'GB',
+          finalStatus: 'BLOCKED',
+          accessPolicy: 'BLOCK',
+          geoBlockRequired: true,
+          geoBlockScope: 'TEXT_READER',
+        }),
+      });
+    });
+
+    it('should inherit component confidence for a territory assessment', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.componentAssessments = [
+        {
+          componentType: 'ORIGINAL_TEXT',
+          titleRu: 'Оригинальный текст',
+          status: 'PUBLIC_DOMAIN',
+          requiredAction: 'KEEP',
+          confidence: 'LOW',
+          territoryAssessments: [
+            {
+              countryCode: 'US',
+              status: 'ALLOWED',
+              accessPolicy: 'ALLOW',
+              geoBlockRequired: false,
+            },
+          ],
+        },
+      ];
+      setupBasicMocks({ reportJson });
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake({ targetCountryCodes: ['US'] }));
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      await service.materializeFromImport('import-1');
+
+      expect(
+        (prisma['componentTerritoryAssessment'] as Record<string, jest.Mock>).create,
+      ).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          countryCode: 'US',
+          confidence: 'LOW',
+        }),
+      });
     });
 
     it('should set suggestedStatus to PENDING when invalid', async () => {

@@ -12,6 +12,7 @@ import { RightsMaterializationService } from './rights-materialization.service';
 import { RightsProfileService } from './rights-profile.service';
 import { RightsContentHashService } from './rights-content-hash.service';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
+import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Module({
@@ -27,6 +28,7 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsBookCreationService,
     RightsContentHashService,
     TerritoryRegionAggregationService,
+    ComponentTerritoryAggregationService,
     PrismaService,
   ],
   exports: [
@@ -34,6 +36,7 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsProfileService,
     RightsContentHashService,
     TerritoryRegionAggregationService,
+    ComponentTerritoryAggregationService,
   ],
 })
 export class RightsIntakeModule {}

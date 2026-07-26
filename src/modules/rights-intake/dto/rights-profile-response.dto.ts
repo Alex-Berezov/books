@@ -77,6 +77,24 @@ export class RightsReviewDto {
   @ApiProperty() updatedAt!: string;
 }
 
+export class ComponentTerritoryAssessmentDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() rightsComponentId!: string;
+  @ApiProperty() countryCode!: string;
+  @ApiProperty() status!: string;
+  @ApiProperty() accessPolicy!: string;
+  @ApiProperty() geoBlockRequired!: boolean;
+  @ApiPropertyOptional({ nullable: true }) reasonRu!: string | null;
+  @ApiPropertyOptional({ nullable: true }) legalBasisRu!: string | null;
+  @ApiPropertyOptional({ nullable: true }) publicDomainFromYear!: number | null;
+  @ApiPropertyOptional({ nullable: true }) rightsExpireAt!: string | null;
+  @ApiPropertyOptional({ type: [String], nullable: true }) sourceEvidenceIds!: string[] | null;
+  @ApiPropertyOptional({ nullable: true }) confidence!: string | null;
+  @ApiPropertyOptional({ nullable: true }) notesRu!: string | null;
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
+}
+
 export class RightsComponentDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsProfileId!: string;
@@ -86,6 +104,10 @@ export class RightsComponentDto {
   @ApiProperty() requiredAction!: string;
   @ApiProperty() confidence!: string;
   @ApiProperty() notesRu!: string | null;
+
+  @ApiProperty({ type: [ComponentTerritoryAssessmentDto] })
+  territoryAssessments!: ComponentTerritoryAssessmentDto[];
+
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }

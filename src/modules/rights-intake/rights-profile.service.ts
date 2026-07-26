@@ -141,6 +141,11 @@ export class RightsProfileService {
     };
     const componentsData = await components.findMany({
       where: { rightsProfileId: profileId },
+      include: {
+        territoryAssessments: {
+          orderBy: [{ countryCode: 'asc' }],
+        },
+      },
     });
 
     const territoryDecisions = (await (this.prisma as unknown as Record<string, unknown>)[
@@ -321,6 +326,35 @@ export class RightsProfileService {
       status: record['status'],
       requiredAction: record['requiredAction'],
       confidence: record['confidence'],
+      notesRu: record['notesRu'] ?? null,
+      territoryAssessments: Array.isArray(record['territoryAssessments'])
+        ? (record['territoryAssessments'] as Array<Record<string, unknown>>).map((assessment) =>
+            this.mapComponentTerritoryAssessment(assessment),
+          )
+        : [],
+      createdAt: new Date(record['createdAt'] as string).toISOString(),
+      updatedAt: new Date(record['updatedAt'] as string).toISOString(),
+    };
+  }
+
+  private mapComponentTerritoryAssessment(record: Record<string, unknown>) {
+    return {
+      id: record['id'],
+      rightsComponentId: record['rightsComponentId'],
+      countryCode: record['countryCode'],
+      status: record['status'],
+      accessPolicy: record['accessPolicy'],
+      geoBlockRequired: record['geoBlockRequired'],
+      reasonRu: record['reasonRu'] ?? null,
+      legalBasisRu: record['legalBasisRu'] ?? null,
+      publicDomainFromYear: record['publicDomainFromYear'] ?? null,
+      rightsExpireAt: record['rightsExpireAt']
+        ? new Date(record['rightsExpireAt'] as string).toISOString()
+        : null,
+      sourceEvidenceIds: Array.isArray(record['sourceEvidenceIds'])
+        ? (record['sourceEvidenceIds'] as string[])
+        : null,
+      confidence: record['confidence'] ?? null,
       notesRu: record['notesRu'] ?? null,
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),

@@ -410,7 +410,13 @@ export class BookVersionService {
               editionRights: true,
             },
           },
-          components: true,
+          components: {
+            include: {
+              territoryAssessments: {
+                orderBy: [{ countryCode: 'asc' }],
+              },
+            },
+          },
           territoryDecisions: true,
           evidence: true,
           actions: true,
@@ -450,6 +456,11 @@ export class BookVersionService {
     const actions = (currentProfile?.['actions'] as Array<Record<string, unknown>>) || [];
     const components = (currentProfile?.['components'] as Array<Record<string, unknown>>) || [];
     const evidence = (currentProfile?.['evidence'] as Array<Record<string, unknown>>) || [];
+    const componentTerritoryAssessments = components.flatMap((component) =>
+      Array.isArray(component['territoryAssessments'])
+        ? (component['territoryAssessments'] as Array<Record<string, unknown>>)
+        : [],
+    );
 
     const blockedCountriesCount = territoryDecisions.filter(
       (t) => t['finalStatus'] === 'BLOCKED' || t['accessPolicy'] === 'BLOCK',
@@ -467,6 +478,23 @@ export class BookVersionService {
     const geoBlockRequiredCount = territoryDecisions.filter((t) => t['geoBlockRequired']).length;
     const unresolvedBlockingActionsCount = actions.filter(
       (a) => a['isBlocking'] && a['status'] !== 'COMPLETED' && a['status'] !== 'WAIVED',
+    ).length;
+    const blockedComponentTerritoryAssessmentsCount = componentTerritoryAssessments.filter(
+      (assessment) =>
+        assessment['accessPolicy'] === 'BLOCK' || assessment['geoBlockRequired'] === true,
+    ).length;
+    const reviewRequiredComponentTerritoryAssessmentsCount = componentTerritoryAssessments.filter(
+      (assessment) => assessment['accessPolicy'] === 'REVIEW_REQUIRED',
+    ).length;
+    const componentAssessmentExpiryThreshold = new Date();
+    componentAssessmentExpiryThreshold.setDate(componentAssessmentExpiryThreshold.getDate() + 180);
+    const now = new Date();
+    const expiringComponentTerritoryAssessmentsCount = componentTerritoryAssessments.filter(
+      (assessment) => {
+        if (!assessment['rightsExpireAt']) return false;
+        const rightsExpireAt = new Date(assessment['rightsExpireAt'] as string);
+        return rightsExpireAt >= now && rightsExpireAt <= componentAssessmentExpiryThreshold;
+      },
     ).length;
 
     const isStale =
@@ -583,6 +611,10 @@ export class BookVersionService {
         unresolvedBlockingActionsCount,
         evidenceCount: evidence.length,
         componentsCount: components.length,
+        componentTerritoryAssessmentsCount: componentTerritoryAssessments.length,
+        blockedComponentTerritoryAssessmentsCount,
+        reviewRequiredComponentTerritoryAssessmentsCount,
+        expiringComponentTerritoryAssessmentsCount,
         reviewsCount: reviewHistory.length,
         isStale,
         recheckRequired,

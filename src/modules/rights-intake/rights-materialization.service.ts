@@ -1,9 +1,21 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ComponentTerritoryAggregationService,
+  type ComponentTerritoryAccessPolicy,
+  type ComponentTerritoryAggregationComponent,
+  type ComponentTerritoryAssessmentInput,
+  type ComponentTerritoryConfidence,
+  type ComponentTerritoryFinalStatus,
+  type ExistingTerritoryDecisionInput,
+} from './component-territory-aggregation.service';
 
 @Injectable()
 export class RightsMaterializationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly componentTerritoryAggregationService: ComponentTerritoryAggregationService,
+  ) {}
 
   private get rp() {
     return (this.prisma as unknown as Record<string, unknown>)['rightsProfile'] as {
@@ -198,6 +210,9 @@ export class RightsMaterializationService {
       const tdTx = t['territoryDecision'] as {
         create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
+      const ctaTx = t['componentTerritoryAssessment'] as {
+        create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      };
       const reTx = t['rightsEvidence'] as {
         create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
@@ -262,9 +277,11 @@ export class RightsMaterializationService {
         });
       }
 
+      const aggregationComponents: ComponentTerritoryAggregationComponent[] = [];
+      let hasComponentTerritoryAssessments = false;
       if (componentAssessments && componentAssessments.length > 0) {
         for (const component of componentAssessments) {
-          await rcTx.create({
+          const createdComponent = await rcTx.create({
             data: {
               rightsProfileId: profile['id'] as string,
               componentType: component['componentType'] as string,
@@ -275,23 +292,86 @@ export class RightsMaterializationService {
               notesRu: (component['notesRu'] as string) ?? null,
             },
           });
+
+          const componentConfidence = component['confidence'] as ComponentTerritoryConfidence;
+          const componentTerritoryAssessments = Array.isArray(component['territoryAssessments'])
+            ? (component['territoryAssessments'] as Array<Record<string, unknown>>)
+            : [];
+          const normalizedAssessments: ComponentTerritoryAssessmentInput[] = [];
+
+          for (const assessment of componentTerritoryAssessments) {
+            hasComponentTerritoryAssessments = true;
+            const normalizedAssessment = {
+              countryCode: (assessment['countryCode'] as string).toUpperCase(),
+              status: assessment['status'] as ComponentTerritoryFinalStatus,
+              accessPolicy: assessment['accessPolicy'] as ComponentTerritoryAccessPolicy,
+              geoBlockRequired: (assessment['geoBlockRequired'] as boolean) ?? false,
+              reasonRu: (assessment['reasonRu'] as string) ?? null,
+              legalBasisRu: (assessment['legalBasisRu'] as string) ?? null,
+              publicDomainFromYear:
+                typeof assessment['publicDomainFromYear'] === 'number'
+                  ? assessment['publicDomainFromYear']
+                  : null,
+              rightsExpireAt: this.parseDateOrNull(assessment['rightsExpireAt']),
+              sourceEvidenceIds: Array.isArray(assessment['sourceEvidenceIds'])
+                ? (assessment['sourceEvidenceIds'] as string[])
+                : null,
+              confidence:
+                (assessment['confidence'] as ComponentTerritoryConfidence | undefined) ??
+                componentConfidence,
+              notesRu: (assessment['notesRu'] as string) ?? null,
+            };
+
+            await ctaTx.create({
+              data: {
+                rightsComponentId: createdComponent['id'] as string,
+                ...normalizedAssessment,
+              },
+            });
+            normalizedAssessments.push(normalizedAssessment);
+          }
+
+          aggregationComponents.push({
+            rightsComponentId: createdComponent['id'] as string,
+            componentType: component['componentType'] as string,
+            titleRu: component['titleRu'] as string,
+            status: component['status'] as string,
+            requiredAction: component['requiredAction'] as string,
+            confidence: componentConfidence,
+            territoryAssessments: normalizedAssessments,
+          });
         }
       }
 
-      if (territoryDecisions && territoryDecisions.length > 0) {
-        for (const territory of territoryDecisions) {
+      const existingTerritoryDecisions = this.mapExistingTerritoryDecisions(territoryDecisions);
+      const decisionsToCreate = hasComponentTerritoryAssessments
+        ? this.componentTerritoryAggregationService.aggregateTerritoryDecisionsFromComponents({
+            rightsProfileId: profile['id'] as string,
+            components: aggregationComponents,
+            targetCountryCodes: Array.isArray(intake.targetCountryCodes)
+              ? (intake.targetCountryCodes as string[])
+              : [],
+            existingTerritoryDecisions,
+          })
+        : existingTerritoryDecisions.map((territory) => ({
+            rightsProfileId: profile['id'] as string,
+            ...territory,
+          }));
+
+      if (decisionsToCreate.length > 0) {
+        for (const territory of decisionsToCreate) {
           await tdTx.create({
             data: {
               rightsProfileId: profile['id'] as string,
-              countryCode: territory['countryCode'] as string,
-              finalStatus: territory['finalStatus'] as string,
-              accessPolicy: territory['accessPolicy'] as string,
-              geoBlockRequired: (territory['geoBlockRequired'] as boolean) ?? false,
-              geoBlockScope: (territory['geoBlockScope'] as string) ?? null,
-              reasonRu: territory['reasonRu'] as string,
-              legalBasisRu: (territory['legalBasisRu'] as string) ?? null,
-              confidence: territory['confidence'] as string,
-              nextReviewAt: this.parseDateOrNull(territory['nextReviewAt']),
+              countryCode: territory.countryCode,
+              finalStatus: territory.finalStatus,
+              accessPolicy: territory.accessPolicy,
+              geoBlockRequired: territory.geoBlockRequired,
+              geoBlockScope: territory.geoBlockScope ?? null,
+              reasonRu: territory.reasonRu,
+              legalBasisRu: territory.legalBasisRu ?? null,
+              confidence: territory.confidence,
+              nextReviewAt: territory.nextReviewAt ?? null,
             },
           });
         }
@@ -354,5 +434,21 @@ export class RightsMaterializationService {
     });
 
     return result;
+  }
+
+  private mapExistingTerritoryDecisions(
+    territoryDecisions: Array<Record<string, unknown>> | undefined,
+  ): ExistingTerritoryDecisionInput[] {
+    return (territoryDecisions ?? []).map((territory) => ({
+      countryCode: territory['countryCode'] as string,
+      finalStatus: territory['finalStatus'] as ComponentTerritoryFinalStatus,
+      accessPolicy: territory['accessPolicy'] as ComponentTerritoryAccessPolicy,
+      geoBlockRequired: (territory['geoBlockRequired'] as boolean) ?? false,
+      geoBlockScope: (territory['geoBlockScope'] as string) ?? null,
+      reasonRu: territory['reasonRu'] as string,
+      legalBasisRu: (territory['legalBasisRu'] as string) ?? null,
+      confidence: territory['confidence'] as ComponentTerritoryConfidence,
+      nextReviewAt: this.parseDateOrNull(territory['nextReviewAt']),
+    }));
   }
 }

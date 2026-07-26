@@ -229,4 +229,86 @@ describe('RightsReviewImportValidator', () => {
     const { warnings } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
     expect(warnings.some((w) => w.code === 'MISSING_NEXT_REVIEW')).toBe(true);
   });
+
+  it('accepts nested component territory assessments and uses them for target coverage', () => {
+    const payload = validPayload();
+    payload.territoryDecisions = [];
+    (payload.componentAssessments as Array<Record<string, unknown>>)[0].territoryAssessments = [
+      {
+        countryCode: 'us',
+        status: 'ALLOWED',
+        accessPolicy: 'ALLOW',
+        geoBlockRequired: false,
+        publicDomainFromYear: 1928,
+        sourceEvidenceIds: ['evidence-1'],
+      },
+      {
+        countryCode: 'FR',
+        status: 'PENDING_REVIEW',
+        accessPolicy: 'REVIEW_REQUIRED',
+        geoBlockRequired: false,
+        reasonRu: 'Нужна дополнительная проверка.',
+        rightsExpireAt: null,
+        confidence: 'MEDIUM',
+      },
+      {
+        countryCode: 'GB',
+        status: 'ALLOWED',
+        accessPolicy: 'ALLOW',
+        geoBlockRequired: false,
+      },
+    ];
+
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects invalid nested component territory assessment fields', () => {
+    const payload = validPayload();
+    (payload.componentAssessments as Array<Record<string, unknown>>)[0].territoryAssessments = [
+      {
+        countryCode: 'USA',
+        status: 'UNKNOWN',
+        accessPolicy: 'BLOCK',
+        geoBlockRequired: 'yes',
+        publicDomainFromYear: 1928.5,
+        rightsExpireAt: 'not-a-date',
+        sourceEvidenceIds: ['evidence-1', 2],
+      },
+    ];
+
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: expect.stringContaining('countryCode') }),
+        expect.objectContaining({ path: expect.stringContaining('status') }),
+        expect.objectContaining({ path: expect.stringContaining('geoBlockRequired') }),
+        expect.objectContaining({ path: expect.stringContaining('reasonRu') }),
+        expect.objectContaining({ path: expect.stringContaining('publicDomainFromYear') }),
+        expect.objectContaining({ path: expect.stringContaining('rightsExpireAt') }),
+        expect.objectContaining({ path: expect.stringContaining('sourceEvidenceIds') }),
+      ]),
+    );
+  });
+
+  it('warns when a component restriction conflicts with a top-level allow', () => {
+    const payload = validPayload();
+    (payload.componentAssessments as Array<Record<string, unknown>>)[0].territoryAssessments = [
+      {
+        countryCode: 'US',
+        status: 'BLOCKED',
+        accessPolicy: 'BLOCK',
+        geoBlockRequired: true,
+        reasonRu: 'Компонент защищён.',
+      },
+    ];
+
+    const { warnings } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+    expect(warnings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'COMPONENT_TERRITORY_CONFLICT' })]),
+    );
+  });
 });

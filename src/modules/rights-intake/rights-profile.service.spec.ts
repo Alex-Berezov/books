@@ -195,6 +195,83 @@ describe('RightsProfileService', () => {
       expect(result.territoryDecisions).toEqual([]);
       expect(result.evidence).toEqual([]);
       expect(result.actions).toEqual([]);
+      expect(
+        (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany,
+      ).toHaveBeenCalledWith({
+        where: { rightsProfileId: 'profile-1' },
+        include: {
+          territoryAssessments: {
+            orderBy: [{ countryCode: 'asc' }],
+          },
+        },
+      });
+    });
+
+    it('should return nested component territory assessments and normalize missing arrays', async () => {
+      const profile = makeProfile();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(profile);
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        {
+          id: 'component-1',
+          rightsProfileId: 'profile-1',
+          componentType: 'TRANSLATION',
+          titleRu: 'Перевод',
+          status: 'COPYRIGHTED',
+          requiredAction: 'OBTAIN_LICENSE',
+          confidence: 'MEDIUM',
+          notesRu: null,
+          territoryAssessments: [
+            {
+              id: 'assessment-1',
+              rightsComponentId: 'component-1',
+              countryCode: 'GB',
+              status: 'BLOCKED',
+              accessPolicy: 'BLOCK',
+              geoBlockRequired: true,
+              reasonRu: 'Перевод защищён.',
+              legalBasisRu: 'Translation term.',
+              publicDomainFromYear: null,
+              rightsExpireAt: new Date('2031-01-01T00:00:00.000Z'),
+              sourceEvidenceIds: ['evidence-1'],
+              confidence: 'MEDIUM',
+              notesRu: null,
+              createdAt: new Date('2026-07-27T00:00:00.000Z'),
+              updatedAt: new Date('2026-07-27T00:00:00.000Z'),
+            },
+          ],
+          createdAt: new Date('2026-07-27T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-27T00:00:00.000Z'),
+        },
+        {
+          id: 'component-2',
+          rightsProfileId: 'profile-1',
+          componentType: 'COVER',
+          titleRu: 'Обложка',
+          status: 'OWNED',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          notesRu: null,
+          createdAt: new Date('2026-07-27T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-27T00:00:00.000Z'),
+        },
+      ]);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsEvidence'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const result = await service.getById('profile-1');
+
+      expect(result.components[0].territoryAssessments).toEqual([
+        expect.objectContaining({
+          id: 'assessment-1',
+          countryCode: 'GB',
+          sourceEvidenceIds: ['evidence-1'],
+          rightsExpireAt: '2031-01-01T00:00:00.000Z',
+        }),
+      ]);
+      expect(result.components[1].territoryAssessments).toEqual([]);
     });
 
     it('should throw NotFoundException when profile not found', async () => {
