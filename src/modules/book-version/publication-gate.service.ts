@@ -408,8 +408,17 @@ export class PublicationGateService {
       } else if (version.rightsContentHash) {
         contentHashMatches = true;
       }
-    } catch {
-      // If hash computation fails, don't block on this alone
+    } catch (e) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: 'RIGHTS_CONTENT_HASH_CHECK_FAILED',
+          severity: 'BLOCKER',
+          messageRu: 'Ошибка при вычислении content hash. Невозможно проверить актуальность прав.',
+          details: {
+            error: e instanceof Error ? e.message : 'Unknown error',
+          },
+        }),
+      );
     }
 
     return new PublicationGateResultDto({

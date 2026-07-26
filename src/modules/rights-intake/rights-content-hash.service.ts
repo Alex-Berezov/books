@@ -327,10 +327,12 @@ export class RightsContentHashService {
     versionId: string,
     trigger: Trigger,
     userId?: string | null,
+    tx?: Prisma.TransactionClient,
   ): Promise<RightsContentHashComputationDto> {
     const computation = await this.computeVersionHash(versionId);
+    const client = tx ?? this.prisma;
 
-    await this.prisma.bookVersion.update({
+    await client.bookVersion.update({
       where: { id: versionId },
       data: {
         rightsContentHash: computation.hash,
@@ -346,7 +348,7 @@ export class RightsContentHashService {
       },
     });
 
-    await this.prisma.rightsContentHashEvent.create({
+    await client.rightsContentHashEvent.create({
       data: {
         bookVersionId: versionId,
         rightsProfileId: computation.rightsProfileId,
@@ -368,8 +370,11 @@ export class RightsContentHashService {
     trigger: Trigger,
     userId?: string | null,
     persist = false,
+    tx?: Prisma.TransactionClient,
   ): Promise<RightsContentHashCheckDto> {
-    const version = await this.prisma.bookVersion.findUnique({
+    const client = tx ?? this.prisma;
+
+    const version = await client.bookVersion.findUnique({
       where: { id: versionId },
       select: {
         id: true,
@@ -397,11 +402,12 @@ export class RightsContentHashService {
         computation.hash,
         baselineHash,
         userId,
+        client,
       );
     }
 
     if (persist) {
-      await this.prisma.rightsContentHashEvent.create({
+      await client.rightsContentHashEvent.create({
         data: {
           bookVersionId: versionId,
           rightsProfileId: computation.rightsProfileId,
@@ -439,6 +445,7 @@ export class RightsContentHashService {
     currentHash: string,
     previousHash: string | null,
     userId?: string | null,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: versionId },
@@ -463,9 +470,9 @@ export class RightsContentHashService {
       rightsStaleReasonRu: reasonRu,
     };
 
-    await this.prisma.$transaction(async (tx) => {
+    const doMark = async (client: Prisma.TransactionClient): Promise<void> => {
       // Update BookVersion
-      await tx.bookVersion.update({
+      await client.bookVersion.update({
         where: { id: versionId },
         data: {
           rightsRecheckRequired: true,
@@ -475,7 +482,7 @@ export class RightsContentHashService {
 
       // Update RightsReview status to STALE if review exists
       if (version.approvedRightsReviewId) {
-        await tx.rightsReview.update({
+        await client.rightsReview.update({
           where: { id: version.approvedRightsReviewId },
           data: {
             status: 'STALE' as never,
@@ -485,42 +492,33 @@ export class RightsContentHashService {
           },
         });
 
-        // Check related versions and mark stale only if their hash changed
-        const relatedVersions = await tx.bookVersion.findMany({
+        // Mark ALL related versions as stale (shared clearance became invalid)
+        const relatedVersions = await client.bookVersion.findMany({
           where: {
             approvedRightsReviewId: version.approvedRightsReviewId,
             id: { not: versionId },
             rightsStaleDetectedAt: null,
           },
-          select: {
-            id: true,
-            rightsContentHash: true,
-          },
+          select: { id: true },
         });
 
         for (const relatedVersion of relatedVersions) {
-          if (relatedVersion.rightsContentHash) {
-            try {
-              const relatedComputation = await this.computeVersionHash(relatedVersion.id);
-              if (relatedComputation.hash !== relatedVersion.rightsContentHash) {
-                await tx.bookVersion.update({
-                  where: { id: relatedVersion.id },
-                  data: {
-                    rightsRecheckRequired: true,
-                    ...staleReason,
-                  },
-                });
-              }
-            } catch {
-              // If hash computation fails, skip this version
-            }
-          }
+          await client.bookVersion.update({
+            where: { id: relatedVersion.id },
+            data: {
+              rightsRecheckRequired: true,
+              rightsStaleDetectedAt: now,
+              rightsStaleReasonCode: 'SHARED_CLEARANCE_STALE',
+              rightsStaleReasonRu:
+                'Изменение контента в другой версии той же проверки прав. Требуется повторная проверка.',
+            },
+          });
         }
       }
 
       // Update RightsProfile status to STALE if profile exists
       if (version.rightsProfileId) {
-        await tx.rightsProfile.update({
+        await client.rightsProfile.update({
           where: { id: version.rightsProfileId },
           data: {
             status: 'STALE' as never,
@@ -530,41 +528,32 @@ export class RightsContentHashService {
           },
         });
 
-        // Check related versions and mark stale only if their hash changed
-        const relatedVersions = await tx.bookVersion.findMany({
+        // Mark ALL related versions as stale (shared clearance became invalid)
+        const relatedVersions = await client.bookVersion.findMany({
           where: {
             rightsProfileId: version.rightsProfileId,
             id: { not: versionId },
             rightsStaleDetectedAt: null,
           },
-          select: {
-            id: true,
-            rightsContentHash: true,
-          },
+          select: { id: true },
         });
 
         for (const relatedVersion of relatedVersions) {
-          if (relatedVersion.rightsContentHash) {
-            try {
-              const relatedComputation = await this.computeVersionHash(relatedVersion.id);
-              if (relatedComputation.hash !== relatedVersion.rightsContentHash) {
-                await tx.bookVersion.update({
-                  where: { id: relatedVersion.id },
-                  data: {
-                    rightsRecheckRequired: true,
-                    ...staleReason,
-                  },
-                });
-              }
-            } catch {
-              // If hash computation fails, skip this version
-            }
-          }
+          await client.bookVersion.update({
+            where: { id: relatedVersion.id },
+            data: {
+              rightsRecheckRequired: true,
+              rightsStaleDetectedAt: now,
+              rightsStaleReasonCode: 'SHARED_CLEARANCE_STALE',
+              rightsStaleReasonRu:
+                'Изменение контента в другой версии того же профиля прав. Требуется повторная проверка.',
+            },
+          });
         }
       }
 
       // Create audit event
-      await tx.rightsContentHashEvent.create({
+      await client.rightsContentHashEvent.create({
         data: {
           bookVersionId: versionId,
           rightsProfileId: version.rightsProfileId,
@@ -579,7 +568,13 @@ export class RightsContentHashService {
           createdByUserId: userId ?? null,
         },
       });
-    });
+    };
+
+    if (tx) {
+      await doMark(tx);
+    } else {
+      await this.prisma.$transaction((innerTx) => doMark(innerTx));
+    }
   }
 
   private serializeSourceEdition(

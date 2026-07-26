@@ -13,18 +13,25 @@ interface PrismaStub {
     update: (args: Prisma.ChapterUpdateArgs) => Promise<any>;
     delete: (args: Prisma.ChapterDeleteArgs) => Promise<any>;
   };
+  $transaction: (cb: (tx: PrismaStub) => Promise<any>) => Promise<any>;
 }
 
-const createPrismaStub = (): PrismaStub => ({
-  chapter: {
-    findMany: jest.fn(),
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    findUnique: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-});
+const createPrismaStub = (): PrismaStub => {
+  const stub: PrismaStub = {
+    chapter: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    $transaction: jest.fn((cb: (tx: PrismaStub) => Promise<any>) => {
+      return cb(stub);
+    }),
+  };
+  return stub;
+};
 
 describe('ChapterService', () => {
   let service: ChapterService;

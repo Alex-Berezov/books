@@ -743,7 +743,11 @@ model RightsProfile {
   books Book[] @relation("BookCurrentRightsProfile")
   bookVersions BookVersion[] @relation("BookVersionRightsProfile")
 
-  // Phase 8: Content hash & stale detection
+  // Phase 8: Content hash & stale detection — fields reserved for future clearance-level
+  // content hashing. In Phase 8, the canonical source (content) hash lives on BookVersion
+  // (rightsContentHash*). These profile-level fields are defined here for potential future
+  // use (e.g., hashing the clearance/rights-rule data itself) but are NOT populated by
+  // the current RightsContentHashService.
   contentHash String?
   contentHashAlgorithmVersion String?
   contentHashInput Json?
@@ -849,7 +853,11 @@ model RightsReview {
   approvedBooks Book[] @relation("BookApprovedRightsReview")
   approvedBookVersions BookVersion[] @relation("BookVersionApprovedRightsReview")
 
-  // Phase 8: Content hash & stale detection
+  // Phase 8: Content hash & stale detection — fields reserved for future clearance-level
+  // content hashing. In Phase 8, the canonical source (content) hash lives on BookVersion
+  // (rightsContentHash*). These profile-level fields are defined here for potential future
+  // use (e.g., hashing the clearance/rights-rule data itself) but are NOT populated by
+  // the current RightsContentHashService.
   contentHash String?
   contentHashAlgorithmVersion String?
   contentHashInput Json?

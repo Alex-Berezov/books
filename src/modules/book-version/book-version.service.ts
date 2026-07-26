@@ -258,6 +258,13 @@ export class BookVersionService {
           }
         }
 
+        await this.rightsContentHashService.initializeVersionBaseline(
+          newVersion.id,
+          'INITIAL_VERSION_SNAPSHOT',
+          null,
+          tx,
+        );
+
         return newVersion;
       });
     } catch (e: unknown) {
@@ -266,12 +273,6 @@ export class BookVersionService {
       }
       throw e;
     }
-
-    await this.rightsContentHashService.initializeVersionBaseline(
-      version.id,
-      'INITIAL_VERSION_SNAPSHOT',
-      null,
-    );
 
     return version;
   }
@@ -368,7 +369,7 @@ export class BookVersionService {
         // Убираем SEO поля из DTO, так как они не существуют в BookVersion schema
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { seoMetaTitle, seoMetaDescription, ...updateData } = dto;
-        return await tx.bookVersion.update({
+        const updated = await tx.bookVersion.update({
           where: { id },
           data: {
             ...updateData,
@@ -376,17 +377,20 @@ export class BookVersionService {
           },
           include: { seo: true },
         });
-      });
 
-      // Phase 8: Stale detection - skip if only SEO fields changed
-      if (hasNonSeoFields) {
-        await this.rightsContentHashService.checkVersionStaleness(
-          id,
-          'BOOK_VERSION_UPDATED',
-          null,
-          true,
-        );
-      }
+        // Phase 8: Stale detection - skip if only SEO fields changed
+        if (hasNonSeoFields) {
+          await this.rightsContentHashService.checkVersionStaleness(
+            id,
+            'BOOK_VERSION_UPDATED',
+            null,
+            true,
+            tx,
+          );
+        }
+
+        return updated;
+      });
 
       return updated;
     } catch (e: any) {

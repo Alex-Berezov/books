@@ -123,24 +123,28 @@ export class AudioChapterService {
     if (exists) throw this.conflict(dto.number);
 
     try {
-      const item = await this.prisma.audioChapter.create({
-        data: {
+      const item = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.audioChapter.create({
+          data: {
+            bookVersionId,
+            number: dto.number,
+            title: dto.title,
+            audioUrl: dto.audioUrl,
+            duration: dto.duration,
+            description: dto.description ?? null,
+            transcript: dto.transcript ?? null,
+            mediaId: dto.mediaId ?? null,
+          },
+        });
+        await this.rightsContentHashService.checkVersionStaleness(
           bookVersionId,
-          number: dto.number,
-          title: dto.title,
-          audioUrl: dto.audioUrl,
-          duration: dto.duration,
-          description: dto.description ?? null,
-          transcript: dto.transcript ?? null,
-          mediaId: dto.mediaId ?? null,
-        },
+          'AUDIO_CHAPTER_CREATED',
+          null,
+          true,
+          tx,
+        );
+        return created;
       });
-      await this.rightsContentHashService.checkVersionStaleness(
-        bookVersionId,
-        'AUDIO_CHAPTER_CREATED',
-        null,
-        true,
-      );
       return item;
     } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
@@ -186,13 +190,17 @@ export class AudioChapterService {
     }
 
     try {
-      const updated = await this.prisma.audioChapter.update({ where: { id }, data: dto });
-      await this.rightsContentHashService.checkVersionStaleness(
-        item.bookVersionId,
-        'AUDIO_CHAPTER_UPDATED',
-        null,
-        true,
-      );
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const result = await tx.audioChapter.update({ where: { id }, data: dto });
+        await this.rightsContentHashService.checkVersionStaleness(
+          item.bookVersionId,
+          'AUDIO_CHAPTER_UPDATED',
+          null,
+          true,
+          tx,
+        );
+        return result;
+      });
       return updated;
     } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
@@ -206,13 +214,17 @@ export class AudioChapterService {
     const item = await this.prisma.audioChapter.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Audio chapter not found');
     const bookVersionId = item.bookVersionId;
-    const result = await this.prisma.audioChapter.delete({ where: { id } });
-    await this.rightsContentHashService.checkVersionStaleness(
-      bookVersionId,
-      'AUDIO_CHAPTER_DELETED',
-      null,
-      true,
-    );
+    const result = await this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.audioChapter.delete({ where: { id } });
+      await this.rightsContentHashService.checkVersionStaleness(
+        bookVersionId,
+        'AUDIO_CHAPTER_DELETED',
+        null,
+        true,
+        tx,
+      );
+      return deleted;
+    });
     return result;
   }
 
@@ -238,32 +250,35 @@ export class AudioChapterService {
 
     // Two-step renumber to avoid unique constraint collisions.
     const OFFSET = 1_000_000;
-    await this.prisma.$transaction([
-      ...audioChapterIds.map((id, idx) =>
-        this.prisma.audioChapter.update({
-          where: { id },
-          data: { number: idx + 1 + OFFSET },
-        }),
-      ),
-      ...audioChapterIds.map((id, idx) =>
-        this.prisma.audioChapter.update({
-          where: { id },
-          data: { number: idx + 1 },
-        }),
-      ),
-    ]);
+    const result = await this.prisma.$transaction(async (tx) => {
+      for (let i = 0; i < audioChapterIds.length; i++) {
+        await tx.audioChapter.update({
+          where: { id: audioChapterIds[i] },
+          data: { number: i + 1 + OFFSET },
+        });
+      }
+      for (let i = 0; i < audioChapterIds.length; i++) {
+        await tx.audioChapter.update({
+          where: { id: audioChapterIds[i] },
+          data: { number: i + 1 },
+        });
+      }
 
-    const result = await this.prisma.audioChapter.findMany({
-      where: { bookVersionId },
-      orderBy: { number: 'asc' },
+      const items = await tx.audioChapter.findMany({
+        where: { bookVersionId },
+        orderBy: { number: 'asc' },
+      });
+
+      await this.rightsContentHashService.checkVersionStaleness(
+        bookVersionId,
+        'AUDIO_CHAPTER_REORDERED',
+        null,
+        true,
+        tx,
+      );
+
+      return items;
     });
-
-    await this.rightsContentHashService.checkVersionStaleness(
-      bookVersionId,
-      'AUDIO_CHAPTER_REORDERED',
-      null,
-      true,
-    );
 
     return result;
   }

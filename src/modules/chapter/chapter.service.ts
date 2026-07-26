@@ -49,15 +49,19 @@ export class ChapterService {
       throw new BadRequestException('Chapter number must be unique within a version');
     }
     try {
-      const chapter = await this.prisma.chapter.create({
-        data: { bookVersionId, number: chapterNumber, title: dto.title, content: dto.content },
+      const chapter = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.chapter.create({
+          data: { bookVersionId, number: chapterNumber, title: dto.title, content: dto.content },
+        });
+        await this.rightsContentHashService.checkVersionStaleness(
+          bookVersionId,
+          'CHAPTER_CREATED',
+          null,
+          true,
+          tx,
+        );
+        return created;
       });
-      await this.rightsContentHashService.checkVersionStaleness(
-        bookVersionId,
-        'CHAPTER_CREATED',
-        null,
-        true,
-      );
       return chapter;
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
@@ -85,13 +89,17 @@ export class ChapterService {
       if (dup) throw new BadRequestException('Chapter number must be unique within a version');
     }
 
-    const updated = await this.prisma.chapter.update({ where: { id }, data: dto });
-    await this.rightsContentHashService.checkVersionStaleness(
-      chapter.bookVersionId,
-      'CHAPTER_UPDATED',
-      null,
-      true,
-    );
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.chapter.update({ where: { id }, data: dto });
+      await this.rightsContentHashService.checkVersionStaleness(
+        chapter.bookVersionId,
+        'CHAPTER_UPDATED',
+        null,
+        true,
+        tx,
+      );
+      return result;
+    });
     return updated;
   }
 
@@ -99,13 +107,17 @@ export class ChapterService {
     const chapter = await this.prisma.chapter.findUnique({ where: { id } });
     if (!chapter) throw new NotFoundException('Chapter not found');
     const bookVersionId = chapter.bookVersionId;
-    const result = await this.prisma.chapter.delete({ where: { id } });
-    await this.rightsContentHashService.checkVersionStaleness(
-      bookVersionId,
-      'CHAPTER_DELETED',
-      null,
-      true,
-    );
+    const result = await this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.chapter.delete({ where: { id } });
+      await this.rightsContentHashService.checkVersionStaleness(
+        bookVersionId,
+        'CHAPTER_DELETED',
+        null,
+        true,
+        tx,
+      );
+      return deleted;
+    });
     return result;
   }
 }

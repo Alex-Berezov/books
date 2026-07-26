@@ -281,6 +281,16 @@ export class RightsBookCreationService {
         versions.push(version);
       }
 
+      // Phase 8: Initialize content hash baselines for all created versions
+      for (const v of versions) {
+        await this.rightsContentHashService.initializeVersionBaseline(
+          v['id'] as string,
+          'INITIAL_VERSION_SNAPSHOT',
+          null,
+          tx,
+        );
+      }
+
       // Update RightsIntake
       await riTx.update({
         where: { id: intakeId },
@@ -295,15 +305,6 @@ export class RightsBookCreationService {
 
     const book = result.book;
     const versions = result.versions;
-
-    // Phase 8: Initialize content hash baselines for all created versions
-    for (const v of versions) {
-      await this.rightsContentHashService.initializeVersionBaseline(
-        v['id'] as string,
-        'INITIAL_VERSION_SNAPSHOT',
-        null,
-      );
-    }
 
     return {
       book: {
