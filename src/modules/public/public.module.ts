@@ -8,8 +8,10 @@ import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { CategoryService } from '../category/category.service';
 import { TagsService } from '../tags/tags.service';
 import { AuthorService } from '../author/author.service';
+import { GeoBlockModule } from '../geo-block/geo-block.module';
 
 @Module({
+  imports: [GeoBlockModule],
   controllers: [PublicController],
   providers: [
     BookService,

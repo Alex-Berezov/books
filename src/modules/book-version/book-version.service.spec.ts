@@ -2,6 +2,7 @@ import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -153,6 +154,9 @@ describe('BookVersionService', () => {
       prisma as unknown as PrismaService,
       gateService as unknown as PublicationGateService,
       mockRightsContentHashService,
+      {
+        assertAccess: jest.fn(),
+      } as unknown as GeoBlockRuleService,
       new TerritoryRegionAggregationService(),
     );
   });

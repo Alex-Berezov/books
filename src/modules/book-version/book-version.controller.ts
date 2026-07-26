@@ -11,6 +11,7 @@ import {
   HttpStatus,
   UseGuards,
   Headers,
+  Req,
 } from '@nestjs/common';
 import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
@@ -37,6 +38,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 
 @ApiTags('book-versions')
 @Controller()
@@ -45,6 +48,8 @@ export class BookVersionController {
     private readonly service: BookVersionService,
     private readonly publicationGateService: PublicationGateService,
     private readonly rightsContentHashService: RightsContentHashService,
+    private readonly geoIpCountryService: GeoIpCountryService,
+    private readonly geoBlockRuleService: GeoBlockRuleService,
   ) {}
 
   @Get('books/:bookId/versions')
@@ -291,8 +296,8 @@ export class BookVersionController {
       },
     },
   })
-  get(@Param('id') id: string) {
-    return this.service.getPublic(id);
+  get(@Param('id') id: string, @Headers() headers: GeoRequestHeaders) {
+    return this.service.getPublic(id, this.geoIpCountryService.resolveCountry(headers));
   }
 
   @Get('versions/:id/preview')
@@ -314,8 +319,8 @@ export class BookVersionController {
       },
     },
   })
-  getPreview(@Param('id') id: string) {
-    return this.service.getPreview(id);
+  getPreview(@Param('id') id: string, @Headers() headers: GeoRequestHeaders) {
+    return this.service.getPreview(id, this.geoIpCountryService.resolveCountry(headers));
   }
 
   @Get('admin/versions/:id')
@@ -543,14 +548,23 @@ export class BookVersionController {
   @ApiOperation({
     summary: 'Mark geo-block as configured for a version',
     description:
-      'Временная административная отметка до Phase 12. Позволяет пометить, что geo-block настроен, для прохождения publication gate.',
+      'Deprecated compatibility wrapper. Verification now requires generated active rules.',
+    deprecated: true,
   })
   @ApiParam({ name: 'id' })
   @ApiBody({ type: UpdateRightsGeoBlockDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async updateRightsGeoBlock(@Param('id') id: string, @Body() dto: UpdateRightsGeoBlockDto) {
-    return this.service.updateRightsGeoBlock(id, dto);
+  async updateRightsGeoBlock(
+    @Param('id') id: string,
+    @Body() dto: UpdateRightsGeoBlockDto,
+    @Req() request: { user: { userId: string } },
+  ) {
+    return this.geoBlockRuleService.verifyRulesForVersion(
+      id,
+      { verified: dto.configured, notesRu: dto.notesRu },
+      request.user.userId,
+    );
   }
 
   @Get('admin/versions/:id/rights-content-hash')

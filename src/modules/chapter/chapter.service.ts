@@ -4,15 +4,30 @@ import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { Prisma } from '@prisma/client';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 
 @Injectable()
 export class ChapterService {
   constructor(
     private prisma: PrismaService,
     private rightsContentHashService: RightsContentHashService,
+    private geoBlockRuleService: GeoBlockRuleService,
   ) {}
 
-  listByVersion(bookVersionId: string, page?: number, limit?: number) {
+  async listByVersion(
+    bookVersionId: string,
+    page?: number,
+    limit?: number,
+    countryCode: string | null = null,
+  ) {
+    await this.ensureVersionPublished(bookVersionId);
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId,
+      countryCode,
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
     if (page && limit) {
       const skip = (page - 1) * limit;
       return this.prisma.chapter.findMany({
@@ -71,9 +86,15 @@ export class ChapterService {
     }
   }
 
-  async get(id: string) {
+  async get(id: string, countryCode: string | null = null) {
     const chapter = await this.prisma.chapter.findUnique({ where: { id } });
     if (!chapter) throw new NotFoundException('Chapter not found');
+    await this.ensureVersionPublished(chapter.bookVersionId);
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId: chapter.bookVersionId,
+      countryCode,
+      scope: GeoBlockScope.TEXT_READER,
+    });
     return chapter;
   }
 
@@ -119,5 +140,15 @@ export class ChapterService {
       return deleted;
     });
     return result;
+  }
+
+  private async ensureVersionPublished(bookVersionId: string): Promise<void> {
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: bookVersionId },
+      select: { status: true },
+    });
+    if (!version || version.status !== 'published') {
+      throw new NotFoundException('Book version not found');
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -7,6 +8,7 @@ describe('PublicationGateService', () => {
   let service: PublicationGateService;
   let prisma: jest.Mocked<PrismaService>;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
+  let mockGeoBlockRuleService: jest.Mocked<GeoBlockRuleService>;
 
   const baseVersion = {
     id: 'v1',
@@ -22,6 +24,7 @@ describe('PublicationGateService', () => {
     rightsRequiredActions: [],
     rightsGeoBlockRequired: false,
     rightsGeoBlockConfigured: false,
+    rightsGeoBlockVerifiedAt: null,
     book: {
       id: 'b1',
       currentRightsProfileId: 'profile-1',
@@ -66,7 +69,15 @@ describe('PublicationGateService', () => {
       markVersionAndClearanceStale: jest.fn(),
     } as unknown as jest.Mocked<RightsContentHashService>;
 
-    service = new PublicationGateService(prisma, mockRightsContentHashService);
+    mockGeoBlockRuleService = {
+      getActiveRulesForVersion: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<GeoBlockRuleService>;
+
+    service = new PublicationGateService(
+      prisma,
+      mockRightsContentHashService,
+      mockGeoBlockRuleService,
+    );
   });
 
   // 6.1 Version not found
@@ -361,6 +372,88 @@ describe('PublicationGateService', () => {
     const result = await service.checkVersionCanPublish('v1');
     expect(result.canPublish).toBe(false);
     expect(result.blockingReasons.some((r) => r.code === 'GEO_BLOCK_NOT_CONFIGURED')).toBe(true);
+  });
+
+  it('blocks if geo-block rules are missing', async () => {
+    const version = {
+      ...baseVersion,
+      rightsGeoBlockRequired: true,
+      rightsGeoBlockConfigured: true,
+      rightsGeoBlockVerifiedAt: new Date(),
+    };
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
+    (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+    (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+    (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.checkVersionCanPublish('v1');
+
+    expect(result.blockingReasons.some((r) => r.code === 'GEO_BLOCK_RULES_MISSING')).toBe(true);
+  });
+
+  it('blocks if generated rules do not cover every blocked country', async () => {
+    const version = {
+      ...baseVersion,
+      rightsBlockedCountryCodes: ['GB', 'DE'],
+      rightsGeoBlockRequired: true,
+      rightsGeoBlockConfigured: true,
+      rightsGeoBlockVerifiedAt: new Date(),
+    };
+    mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
+      { id: 'rule-1', countryCode: 'GB', verifiedAt: new Date() },
+    ] as never);
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
+    (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+    (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+    (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.checkVersionCanPublish('v1');
+    const reason = result.blockingReasons.find((item) => item.code === 'GEO_BLOCK_RULES_MISSING');
+
+    expect(reason?.details).toEqual({ missingCountryCodes: ['DE'] });
+  });
+
+  it('blocks if active geo-block rules are not verified', async () => {
+    const version = {
+      ...baseVersion,
+      rightsGeoBlockRequired: true,
+      rightsGeoBlockConfigured: true,
+      rightsGeoBlockVerifiedAt: new Date(),
+    };
+    mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
+      { id: 'rule-1', countryCode: 'GB', verifiedAt: null },
+    ] as never);
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
+    (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+    (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+    (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.checkVersionCanPublish('v1');
+
+    expect(result.blockingReasons.some((r) => r.code === 'GEO_BLOCK_RULES_NOT_VERIFIED')).toBe(
+      true,
+    );
+  });
+
+  it('allows verified geo-block rules when all other checks pass', async () => {
+    const verifiedAt = new Date();
+    const version = {
+      ...baseVersion,
+      rightsGeoBlockRequired: true,
+      rightsGeoBlockConfigured: true,
+      rightsGeoBlockVerifiedAt: verifiedAt,
+    };
+    mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
+      { id: 'rule-1', countryCode: 'GB', verifiedAt },
+    ] as never);
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
+    (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+    (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+    (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.checkVersionCanPublish('v1');
+
+    expect(result.canPublish).toBe(true);
   });
 
   it('blocks publishing when hash computation fails', async () => {

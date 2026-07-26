@@ -8,10 +8,15 @@ import { BookType, Language, Category, CategoryTranslation, Prisma } from '@pris
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { cleanDescription } from '../seo/utils/cleanDescription';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 
 @Injectable()
 export class BookService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private geoBlockRuleService: GeoBlockRuleService,
+  ) {}
 
   async create(data: CreateBookDto) {
     return this.prisma.book.create({ data });
@@ -1286,7 +1291,12 @@ export class BookService {
   /**
    * Get Reader bootstrap data in a single request.
    */
-  async getReaderBootstrap(slug: string, lang: string, userId?: string) {
+  async getReaderBootstrap(
+    slug: string,
+    lang: string,
+    userId?: string,
+    countryCode: string | null = null,
+  ) {
     let overview: Awaited<ReturnType<BookService['getOverview']>>;
     try {
       overview = await this.getOverview(slug, lang);
@@ -1349,6 +1359,12 @@ export class BookService {
     if (!textVersionId) {
       throw new NotFoundException(`No text version found for book slug "${slug}"`);
     }
+
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId: textVersionId,
+      countryCode,
+      scope: GeoBlockScope.TEXT_READER,
+    });
 
     // Fetch chapters
     const chapters = await this.prisma.chapter.findMany({

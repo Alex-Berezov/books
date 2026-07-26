@@ -11,6 +11,7 @@ import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { LanguageResolverGuard } from '../../common/guards/language-resolver.guard';
 import { RelatedBooksQueryDto } from '../book/dto/related-books.dto';
 import { BookCardsQueryDto } from '../book/dto/book-cards-query.dto';
+import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -24,6 +25,7 @@ export class PublicController {
     private readonly categories: CategoryService,
     private readonly tags: TagsService,
     private readonly authors: AuthorService,
+    private readonly geoIpCountryService: GeoIpCountryService,
   ) {}
 
   // Localized book overview
@@ -115,8 +117,14 @@ export class PublicController {
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Param('slug') slug: string,
     @Query('userId') userId?: string,
+    @Headers() headers?: GeoRequestHeaders,
   ) {
-    return this.books.getReaderBootstrap(slug, pathLang, userId);
+    return this.books.getReaderBootstrap(
+      slug,
+      pathLang,
+      userId,
+      this.geoIpCountryService.resolveCountry(headers ?? {}),
+    );
   }
 
   // Localized page by slug

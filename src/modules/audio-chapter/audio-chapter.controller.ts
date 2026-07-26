@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AudioChapterService } from './audio-chapter.service';
@@ -20,11 +21,15 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { Query } from '@nestjs/common';
+import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 
 @ApiTags('audio-chapters')
 @Controller()
 export class AudioChapterController {
-  constructor(private readonly service: AudioChapterService) {}
+  constructor(
+    private readonly service: AudioChapterService,
+    private readonly geoIpCountryService: GeoIpCountryService,
+  ) {}
 
   @Get('versions/:bookVersionId/audio-chapters')
   @ApiOperation({ summary: 'List audio chapters by book version (public, published only)' })
@@ -35,10 +40,19 @@ export class AudioChapterController {
     required: false,
     schema: { type: 'integer', minimum: 1, maximum: 100 },
   })
-  list(@Param('bookVersionId') bookVersionId: string, @Query() pagination?: PaginationDto) {
+  list(
+    @Param('bookVersionId') bookVersionId: string,
+    @Query() pagination?: PaginationDto,
+    @Headers() headers?: GeoRequestHeaders,
+  ) {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 50;
-    return this.service.listPublic(bookVersionId, page, limit);
+    return this.service.listPublic(
+      bookVersionId,
+      page,
+      limit,
+      this.geoIpCountryService.resolveCountry(headers ?? {}),
+    );
   }
 
   @Get('admin/versions/:bookVersionId/audio-chapters')
@@ -83,8 +97,8 @@ export class AudioChapterController {
   @Get('audio-chapters/:id')
   @ApiOperation({ summary: 'Get audio chapter by id (public, published version only)' })
   @ApiParam({ name: 'id' })
-  get(@Param('id') id: string) {
-    return this.service.getPublic(id);
+  get(@Param('id') id: string, @Headers() headers: GeoRequestHeaders) {
+    return this.service.getPublic(id, this.geoIpCountryService.resolveCountry(headers));
   }
 
   @Get('admin/audio-chapters/:id')

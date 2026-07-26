@@ -5,6 +5,7 @@ import {
   PublicationGateReasonDto,
 } from './dto/publication-gate-result.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 
 interface VersionWithGeoBlock {
   id: string;
@@ -17,6 +18,7 @@ interface VersionWithGeoBlock {
   rightsPendingCountryCodes: unknown;
   rightsGeoBlockRequired: boolean;
   rightsGeoBlockConfigured: boolean;
+  rightsGeoBlockVerifiedAt: Date | null;
   rightsContentHash: string | null;
   rightsRecheckRequired: boolean;
   book: {
@@ -31,6 +33,7 @@ export class PublicationGateService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rightsContentHashService: RightsContentHashService,
+    private readonly geoBlockRuleService: GeoBlockRuleService,
   ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
@@ -356,6 +359,46 @@ export class PublicationGateService {
             'Требуется настройка geo-block перед публикацией. Отметьте geo-block как настроенный через API.',
         }),
       );
+    }
+
+    if (version.rightsGeoBlockRequired) {
+      const activeRules = await this.geoBlockRuleService.getActiveRulesForVersion(versionId);
+      const activeCountryCodes = new Set(activeRules.map((rule) => rule.countryCode.toUpperCase()));
+      const missingCountryCodes = (blockedCountryCodes ?? []).filter(
+        (countryCode) => !activeCountryCodes.has(countryCode.toUpperCase()),
+      );
+
+      if (activeRules.length === 0 || missingCountryCodes.length > 0) {
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'GEO_BLOCK_RULES_MISSING',
+            severity: 'BLOCKER',
+            messageRu:
+              'Geo-block обязателен, но runtime-правила ещё не сгенерированы из territory decisions.',
+            details: {
+              missingCountryCodes,
+            },
+          }),
+        );
+      } else if (activeRules.some((rule) => rule.verifiedAt === null)) {
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'GEO_BLOCK_RULES_NOT_VERIFIED',
+            severity: 'BLOCKER',
+            messageRu: 'Сгенерированные runtime-правила geo-block ещё не проверены.',
+          }),
+        );
+      }
+
+      if (!version.rightsGeoBlockVerifiedAt) {
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'GEO_BLOCK_VERIFICATION_MISSING',
+            severity: 'BLOCKER',
+            messageRu: 'У версии отсутствует подтверждение проверки runtime geo-block.',
+          }),
+        );
+      }
     }
 
     // Phase 8: Content hash checks

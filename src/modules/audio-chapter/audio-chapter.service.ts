@@ -9,6 +9,8 @@ import { CreateAudioChapterDto } from './dto/create-audio-chapter.dto';
 import { UpdateAudioChapterDto } from './dto/update-audio-chapter.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { Prisma } from '@prisma/client';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 
 export interface PaginatedAudioChapters<T> {
   items: T[];
@@ -23,6 +25,7 @@ export class AudioChapterService {
   constructor(
     private prisma: PrismaService,
     private rightsContentHashService: RightsContentHashService,
+    private geoBlockRuleService: GeoBlockRuleService,
   ) {}
 
   private normalizePage(page = 1, limit = 50) {
@@ -73,8 +76,14 @@ export class AudioChapterService {
     bookVersionId: string,
     page = 1,
     limit = 50,
+    countryCode: string | null = null,
   ): Promise<PaginatedAudioChapters<unknown>> {
     await this.ensureVersionPublished(bookVersionId);
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId,
+      countryCode,
+      scope: GeoBlockScope.AUDIO,
+    });
     return this.listInternal(bookVersionId, page, limit);
   }
 
@@ -154,7 +163,7 @@ export class AudioChapterService {
     }
   }
 
-  async getPublic(id: string) {
+  async getPublic(id: string, countryCode: string | null = null) {
     const item = await this.prisma.audioChapter.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Audio chapter not found');
     const version = await this.prisma.bookVersion.findUnique({
@@ -164,6 +173,12 @@ export class AudioChapterService {
     if (!version || version.status !== 'published') {
       throw new NotFoundException('Audio chapter not found');
     }
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId: item.bookVersionId,
+      mediaAssetId: item.mediaId ?? undefined,
+      countryCode,
+      scope: GeoBlockScope.AUDIO,
+    });
     return item;
   }
 

@@ -2,6 +2,7 @@ import { BookService } from './book.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BookType, Language } from '@prisma/client';
 import { NotFoundException } from '@nestjs/common';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 
 interface PrismaStub {
   book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
@@ -39,13 +40,18 @@ const createPrismaStub = (): PrismaStub => ({
   authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
 });
 
+const createGeoBlockRuleServiceStub = (): GeoBlockRuleService =>
+  ({
+    assertAccess: jest.fn(),
+  }) as unknown as GeoBlockRuleService;
+
 describe('BookService.getOverview', () => {
   let service: BookService;
   let prisma: PrismaStub;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new BookService(prisma as unknown as PrismaService);
+    service = new BookService(prisma as unknown as PrismaService, createGeoBlockRuleServiceStub());
   });
 
   it('returns aggregated overview with languages, flags and SEO (happy path)', async () => {
@@ -283,7 +289,10 @@ describe('BookService.getOverview', () => {
 
     beforeEach(() => {
       prisma = createPrismaStub();
-      service = new BookService(prisma as unknown as PrismaService);
+      service = new BookService(
+        prisma as unknown as PrismaService,
+        createGeoBlockRuleServiceStub(),
+      );
     });
 
     it('returns paginated compact cards with default sort', async () => {

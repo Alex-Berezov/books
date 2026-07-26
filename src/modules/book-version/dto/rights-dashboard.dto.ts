@@ -59,6 +59,15 @@ export class BookRightsDashboardVersionSummaryDto {
   @ApiPropertyOptional({ nullable: true, example: 'Notes' })
   rightsGeoBlockNotesRu?: string | null;
 
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-26T12:00:00.000Z' })
+  rightsGeoBlockVerifiedAt?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'user-uuid' })
+  rightsGeoBlockVerifiedByUserId?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-26T11:30:00.000Z' })
+  rightsGeoBlockLastGeneratedAt?: string | null;
+
   @ApiPropertyOptional({ nullable: true, example: 'a1b2c3d4...' })
   rightsContentHash?: string | null;
 

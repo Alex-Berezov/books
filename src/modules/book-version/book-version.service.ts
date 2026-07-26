@@ -6,10 +6,11 @@ import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
-import { UpdateRightsGeoBlockDto } from './dto/publication-gate-result.dto';
 import { Prisma } from '@prisma/client';
 import { Language, BookType } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 
 interface BookWithRights {
   id: string;
@@ -46,6 +47,7 @@ export class BookVersionService {
     private prisma: PrismaService,
     private publicationGateService: PublicationGateService,
     private rightsContentHashService: RightsContentHashService,
+    private geoBlockRuleService: GeoBlockRuleService,
     private regionAggregationService?: TerritoryRegionAggregationService,
   ) {}
 
@@ -280,7 +282,7 @@ export class BookVersionService {
     return version;
   }
 
-  async getPublic(id: string) {
+  async getPublic(id: string, countryCode: string | null = null) {
     const version = await this.prisma.bookVersion.findFirst({
       where: { id, status: 'published' },
       include: {
@@ -294,6 +296,11 @@ export class BookVersionService {
       },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId: id,
+      countryCode,
+      scope: GeoBlockScope.LANGUAGE_EDITION,
+    });
     return {
       ...version,
       categories: version.categories.map((c) => c.category),
@@ -353,6 +360,7 @@ export class BookVersionService {
       },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
+    const versionRecord = version as unknown as Record<string, unknown>;
 
     const bookVersions = await this.prisma.bookVersion.findMany({
       where: { bookId: version.bookId },
@@ -519,6 +527,14 @@ export class BookVersionService {
           ? version.rightsGeoBlockConfiguredAt.toISOString()
           : null,
         rightsGeoBlockNotesRu: version.rightsGeoBlockNotesRu,
+        rightsGeoBlockVerifiedAt: versionRecord['rightsGeoBlockVerifiedAt']
+          ? (versionRecord['rightsGeoBlockVerifiedAt'] as Date).toISOString()
+          : null,
+        rightsGeoBlockVerifiedByUserId:
+          (versionRecord['rightsGeoBlockVerifiedByUserId'] as string | null) ?? null,
+        rightsGeoBlockLastGeneratedAt: versionRecord['rightsGeoBlockLastGeneratedAt']
+          ? (versionRecord['rightsGeoBlockLastGeneratedAt'] as Date).toISOString()
+          : null,
         rightsContentHash: version.rightsContentHash,
         rightsContentHashAlgorithmVersion: version.rightsContentHashAlgorithmVersion,
         rightsContentHashCalculatedAt: version.rightsContentHashCalculatedAt
@@ -657,7 +673,7 @@ export class BookVersionService {
     }
   }
 
-  async getPreview(id: string) {
+  async getPreview(id: string, countryCode: string | null = null) {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id },
       select: {
@@ -674,6 +690,18 @@ export class BookVersionService {
     if (!version.previewMediaId || !version.previewMedia || version.previewMedia.isDeleted) {
       throw new NotFoundException('Preview not available');
     }
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId: id,
+      mediaAssetId: version.previewMediaId,
+      countryCode,
+      scope: GeoBlockScope.AUDIO,
+    });
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId: id,
+      mediaAssetId: version.previewMediaId,
+      countryCode,
+      scope: GeoBlockScope.DOWNLOADS,
+    });
     return {
       previewUrl: version.previewMedia.url,
       duration: version.previewMedia.duration,
@@ -709,28 +737,6 @@ export class BookVersionService {
     return this.prisma.bookVersion.update({
       where: { id },
       data: { status: 'draft', publishedAt: null },
-      include: { seo: true },
-    });
-  }
-
-  async updateRightsGeoBlock(id: string, dto: UpdateRightsGeoBlockDto) {
-    const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('BookVersion not found');
-
-    const updateData: Record<string, unknown> = {
-      rightsGeoBlockConfigured: dto.configured,
-      rightsGeoBlockNotesRu: dto.notesRu ?? null,
-    };
-
-    if (dto.configured) {
-      updateData.rightsGeoBlockConfiguredAt = new Date();
-    } else {
-      updateData.rightsGeoBlockConfiguredAt = null;
-    }
-
-    return this.prisma.bookVersion.update({
-      where: { id },
-      data: updateData,
       include: { seo: true },
     });
   }

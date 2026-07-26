@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Headers,
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ChapterService } from './chapter.service';
@@ -18,11 +19,15 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { Query } from '@nestjs/common';
+import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 
 @ApiTags('chapters')
 @Controller()
 export class ChapterController {
-  constructor(private readonly service: ChapterService) {}
+  constructor(
+    private readonly service: ChapterService,
+    private readonly geoIpCountryService: GeoIpCountryService,
+  ) {}
 
   @Get('versions/:bookVersionId/chapters')
   @ApiOperation({
@@ -36,10 +41,16 @@ export class ChapterController {
     @Param('bookVersionId') bookVersionId: string,
     @Query('page') rawPage?: string,
     @Query('limit') rawLimit?: string,
+    @Headers() headers?: GeoRequestHeaders,
   ) {
     const page = rawPage ? parseInt(rawPage, 10) : undefined;
     const limit = rawLimit ? parseInt(rawLimit, 10) : undefined;
-    return this.service.listByVersion(bookVersionId, page, limit);
+    return this.service.listByVersion(
+      bookVersionId,
+      page,
+      limit,
+      this.geoIpCountryService.resolveCountry(headers ?? {}),
+    );
   }
 
   @Post('versions/:bookVersionId/chapters')
@@ -55,8 +66,8 @@ export class ChapterController {
   @Get('chapters/:id')
   @ApiOperation({ summary: 'Get chapter by id' })
   @ApiParam({ name: 'id' })
-  get(@Param('id') id: string) {
-    return this.service.get(id);
+  get(@Param('id') id: string, @Headers() headers: GeoRequestHeaders) {
+    return this.service.get(id, this.geoIpCountryService.resolveCountry(headers));
   }
 
   @Patch('chapters/:id')

@@ -18,6 +18,7 @@ model Book {
   updatedAt DateTime      @updatedAt
   versions  BookVersion[]
   ratings   BookRating[]
+  geoBlockRules GeoBlockRule[]
 
   // Phase 6: Rights clearance links
   rightsIntakeId String? @unique
@@ -110,6 +111,11 @@ model BookVersion {
   rightsGeoBlockConfigured Boolean @default(false)
   rightsGeoBlockConfiguredAt DateTime?
   rightsGeoBlockNotesRu String?
+  rightsGeoBlockVerifiedAt DateTime?
+  rightsGeoBlockVerifiedByUserId String?
+  rightsGeoBlockVerifiedBy User? @relation("BookVersionGeoBlockVerifiedBy", fields: [rightsGeoBlockVerifiedByUserId], references: [id], onDelete: SetNull)
+  rightsGeoBlockLastGeneratedAt DateTime?
+  geoBlockRules GeoBlockRule[]
 
   // Phase 8: Content hash & stale detection
   rightsContentHash String?
@@ -133,6 +139,7 @@ model BookVersion {
   @@index([rightsContentHash])
   @@index([rightsRecheckRequired])
   @@index([rightsStaleDetectedAt])
+  @@index([rightsGeoBlockVerifiedByUserId])
 }
 
 model BookSummary {
@@ -206,6 +213,8 @@ model User {
   rejectedRightsReviews RightsReview[] @relation("RightsReviewRejectedBy")
   rightsReviewApprovals RightsReviewApproval[]
   rightsContentHashEvents RightsContentHashEvent[]
+  verifiedGeoBlockRules GeoBlockRule[] @relation("GeoBlockRuleVerifiedBy")
+  verifiedGeoBlockVersions BookVersion[] @relation("BookVersionGeoBlockVerifiedBy")
 }
 
 
@@ -756,6 +765,7 @@ model RightsProfile {
   staleReasonCode String?
   staleReasonRu String? @db.Text
   contentHashEvents RightsContentHashEvent[]
+  geoBlockRules GeoBlockRule[]
 
   supersededAt DateTime?
   archivedAt DateTime?
@@ -921,6 +931,7 @@ model TerritoryDecision {
   legalBasisRu String? @db.Text
   confidence RightsConfidence
   nextReviewAt DateTime?
+  geoBlockRules GeoBlockRule[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1084,6 +1095,64 @@ model RightsContentHashEvent {
   @@index([trigger])
   @@index([staleMarked])
   @@index([createdAt])
+}
+
+// Phase 12: Runtime GeoIP market blocking projection
+enum GeoBlockScope {
+  ENTIRE_BOOK
+  LANGUAGE_EDITION
+  TEXT_READER
+  DOWNLOADS
+  AUDIO
+  SPECIFIC_ASSET
+}
+
+model GeoBlockRule {
+  id String @id @default(uuid())
+
+  bookId String?
+  book Book? @relation(fields: [bookId], references: [id], onDelete: SetNull)
+
+  bookVersionId String?
+  bookVersion BookVersion? @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  rightsProfileId String?
+  rightsProfile RightsProfile? @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  territoryDecisionId String?
+  territoryDecision TerritoryDecision? @relation(fields: [territoryDecisionId], references: [id], onDelete: SetNull)
+
+  scope GeoBlockScope
+  countryCode String
+
+  accessPolicy RightsAccessPolicy
+  sourceFinalStatus TerritoryRightsStatus?
+
+  isActive Boolean @default(true)
+
+  reasonRu String? @db.Text
+  legalBasisRu String? @db.Text
+
+  generatedFrom String @default("TERRITORY_DECISION")
+  generatedAt DateTime @default(now())
+
+  verifiedAt DateTime?
+  verifiedByUserId String?
+  verifiedByUser User? @relation("GeoBlockRuleVerifiedBy", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  verificationNotesRu String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bookId])
+  @@index([bookVersionId])
+  @@index([rightsProfileId])
+  @@index([territoryDecisionId])
+  @@index([countryCode])
+  @@index([scope])
+  @@index([isActive])
+  @@index([verifiedByUserId])
+  @@unique([bookVersionId, scope, countryCode])
 }
 
 enum RightsApprovalDecision {

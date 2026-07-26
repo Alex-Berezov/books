@@ -3,8 +3,12 @@ import { RightsContentHashService } from '../rights-intake/rights-content-hash.s
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 
 interface PrismaStub {
+  bookVersion: {
+    findUnique: jest.Mock;
+  };
   chapter: {
     findMany: (args: Prisma.ChapterFindManyArgs) => Promise<any[]>;
     findFirst: (args: Prisma.ChapterFindFirstArgs) => Promise<{ id: string } | null>;
@@ -18,6 +22,9 @@ interface PrismaStub {
 
 const createPrismaStub = (): PrismaStub => {
   const stub: PrismaStub = {
+    bookVersion: {
+      findUnique: jest.fn().mockResolvedValue({ status: 'published' }),
+    },
     chapter: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -46,7 +53,9 @@ describe('ChapterService', () => {
       checkVersionStaleness: jest.fn(),
       markVersionAndClearanceStale: jest.fn(),
     } as unknown as jest.Mocked<RightsContentHashService>;
-    service = new ChapterService(prisma as unknown as PrismaService, mockRightsContentHashService);
+    service = new ChapterService(prisma as unknown as PrismaService, mockRightsContentHashService, {
+      assertAccess: jest.fn(),
+    } as unknown as GeoBlockRuleService);
   });
 
   it('lists all chapters by version when no pagination', async () => {
