@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { QueryPersonsDto } from './dto/query-persons.dto';
@@ -167,6 +167,20 @@ export class PersonsService {
 
   public async remove(id: string): Promise<{ id: string }> {
     await this.findOne(id);
+
+    const bvcModel = (this.prisma as unknown as Record<string, unknown>)[
+      'bookVersionContributor'
+    ] as { count?: (args: Record<string, unknown>) => Promise<number> } | undefined;
+
+    if (bvcModel && typeof bvcModel.count === 'function') {
+      const bvcCount = await bvcModel.count({ where: { personId: id } });
+      if (bvcCount > 0) {
+        throw new BadRequestException(
+          `Cannot delete Person: linked to ${bvcCount} book version contributor records. Unlink them first.`,
+        );
+      }
+    }
+
     await this.personModel.delete({ where: { id } });
     return { id };
   }

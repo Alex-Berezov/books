@@ -1519,6 +1519,7 @@ model RightsProfileContributor {
   viafId String?
   isni String?
   gutenbergAgentId String?
+  creditedLanguage String?
 
   publicDomainFromYear Int?
 

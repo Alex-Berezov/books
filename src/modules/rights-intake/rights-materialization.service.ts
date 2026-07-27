@@ -645,6 +645,8 @@ export class RightsMaterializationService {
             viafId: (c['viafId'] as string) || null,
             isni: (c['isni'] as string) || null,
             gutenbergAgentId: (c['gutenbergAgentId'] as string) || null,
+            creditedLanguage:
+              (c['creditedLanguage'] as string) || (c['targetLanguage'] as string) || null,
             publicDomainFromYear:
               typeof c['publicDomainFromYear'] === 'number' ? c['publicDomainFromYear'] : null,
             sourceEvidenceIds: Array.isArray(c['sourceEvidenceIds'])

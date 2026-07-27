@@ -389,6 +389,10 @@ export class RightsProfileService {
       viafId: (record['viafId'] as string) ?? null,
       isni: (record['isni'] as string) ?? null,
       gutenbergAgentId: (record['gutenbergAgentId'] as string) ?? null,
+      creditedLanguage: (record['creditedLanguage'] as string) ?? null,
+      sourceEvidenceIds: Array.isArray(record['sourceEvidenceIds'])
+        ? (record['sourceEvidenceIds'] as string[])
+        : null,
       publicDomainFromYear: (record['publicDomainFromYear'] as number) ?? null,
       confidence: (record['confidence'] as string) ?? null,
       notesRu: (record['notesRu'] as string) ?? null,

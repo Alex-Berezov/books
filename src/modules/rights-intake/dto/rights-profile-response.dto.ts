@@ -127,6 +127,8 @@ export class RightsProfileContributorDto {
   @ApiPropertyOptional({ nullable: true }) viafId?: string | null;
   @ApiPropertyOptional({ nullable: true }) isni?: string | null;
   @ApiPropertyOptional({ nullable: true }) gutenbergAgentId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) creditedLanguage?: string | null;
+  @ApiPropertyOptional({ type: [String], nullable: true }) sourceEvidenceIds?: string[] | null;
   @ApiPropertyOptional({ nullable: true }) publicDomainFromYear?: number | null;
   @ApiPropertyOptional({ nullable: true }) confidence?: string | null;
   @ApiPropertyOptional({ nullable: true }) notesRu?: string | null;

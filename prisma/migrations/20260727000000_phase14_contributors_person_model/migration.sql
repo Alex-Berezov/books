@@ -85,6 +85,7 @@ CREATE TABLE "RightsProfileContributor" (
     "viafId" TEXT,
     "isni" TEXT,
     "gutenbergAgentId" TEXT,
+    "creditedLanguage" TEXT,
     "publicDomainFromYear" INTEGER,
     "sourceEvidenceIds" JSONB,
     "confidence" "RightsConfidence",
