@@ -181,6 +181,19 @@ export class PersonsService {
       }
     }
 
+    const rpcModel = (this.prisma as unknown as Record<string, unknown>)[
+      'rightsProfileContributor'
+    ] as { count?: (args: Record<string, unknown>) => Promise<number> } | undefined;
+
+    if (rpcModel && typeof rpcModel.count === 'function') {
+      const rpcCount = await rpcModel.count({ where: { personId: id } });
+      if (rpcCount > 0) {
+        throw new BadRequestException(
+          `Cannot delete Person: linked to ${rpcCount} rights profile contributor records. Unlink them first.`,
+        );
+      }
+    }
+
     await this.personModel.delete({ where: { id } });
     return { id };
   }

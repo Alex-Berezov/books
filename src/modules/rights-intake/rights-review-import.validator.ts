@@ -334,6 +334,19 @@ export class RightsReviewImportValidator {
             }
           }
 
+          if (role === 'TRANSLATOR') {
+            const creditedLang =
+              (item['creditedLanguage'] as string) || (item['targetLanguage'] as string);
+            if (!creditedLang || typeof creditedLang !== 'string') {
+              addWarning(
+                warnings,
+                `${prefix}.creditedLanguage`,
+                'TRANSLATOR contributor should specify creditedLanguage or targetLanguage to ensure precise language version projection',
+                'MISSING_TRANSLATOR_LANGUAGE',
+              );
+            }
+          }
+
           const displayName = item['displayName'] as string | undefined;
           if (!displayName || typeof displayName !== 'string') {
             addError(errors, `${prefix}.displayName`, 'displayName is required', 'MISSING_FIELD');
