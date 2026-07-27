@@ -487,6 +487,7 @@ model Author {
   
   translations  AuthorTranslation[]
   bookVersions  BookVersion[]
+  contributors  Contributor[]
 }
 
 model AuthorTranslation {
@@ -801,6 +802,7 @@ model SourceEdition {
   notesRu String? @db.Text
 
   editionRights EditionRights?
+  contributors  SourceEditionContributor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -906,6 +908,7 @@ model RightsComponent {
   notesRu String? @db.Text
 
   territoryAssessments ComponentTerritoryAssessment[]
+  contributors         RightsComponentContributor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -991,6 +994,8 @@ model RightsEvidence {
 
   relevantExcerpt String? @db.Text
   summaryRu String @db.Text
+
+  sourceEditionContributors SourceEditionContributor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1353,6 +1358,105 @@ enum RightsReviewImportStatus {
   VALIDATED
   VALIDATION_FAILED
   SUPERSEDED
+}
+
+enum ContributorRole {
+  AUTHOR
+  TRANSLATOR
+  EDITOR
+  ILLUSTRATOR
+  PHOTOGRAPHER
+  INTRODUCTION_AUTHOR
+  ANNOTATION_AUTHOR
+  COMPILER
+  ADAPTER
+  COVER_DESIGNER
+  CARTOGRAPHER
+  OTHER
+}
+
+enum ContributorIdentityConfidence {
+  CONFIRMED
+  PROBABLE
+  UNCERTAIN
+  UNKNOWN
+}
+
+model Contributor {
+  id String @id @default(uuid())
+
+  displayName String
+  originalName String?
+  birthDate DateTime?
+  deathDate DateTime?
+  birthYear Int?
+  deathYear Int?
+  nationalityCountry String?
+  pseudonym String?
+  viafId String?
+  locAuthorityId String?
+  otherAuthorityIds Json?
+  identityConfidence ContributorIdentityConfidence @default(CONFIRMED)
+  notesRu String? @db.Text
+
+  authorId String?
+  author Author? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  sourceEditionContributors SourceEditionContributor[]
+  rightsComponentContributors RightsComponentContributor[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([displayName])
+  @@index([authorId])
+  @@index([viafId])
+  @@index([identityConfidence])
+}
+
+model SourceEditionContributor {
+  id String @id @default(uuid())
+
+  sourceEditionId String
+  sourceEdition SourceEdition @relation(fields: [sourceEditionId], references: [id], onDelete: Cascade)
+
+  contributorId String
+  contributor Contributor @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+
+  role ContributorRole
+  creditedName String?
+  notesRu String? @db.Text
+
+  evidenceId String?
+  evidence RightsEvidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sourceEditionId])
+  @@index([contributorId])
+  @@index([role])
+}
+
+model RightsComponentContributor {
+  id String @id @default(uuid())
+
+  rightsComponentId String
+  rightsComponent RightsComponent @relation(fields: [rightsComponentId], references: [id], onDelete: Cascade)
+
+  contributorId String
+  contributor Contributor @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+
+  role ContributorRole
+  creditedName String?
+  notesRu String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsComponentId])
+  @@index([contributorId])
+  @@index([role])
 }
 
 // =====================

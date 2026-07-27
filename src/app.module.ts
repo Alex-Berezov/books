@@ -40,6 +40,7 @@ import { MediaJobsModule } from './modules/media-jobs/media-jobs.module';
 import { PrismaModule } from './shared/prisma/prisma.module';
 import { SecurityModule } from './shared/security/security.module';
 import { GeoBlockModule } from './modules/geo-block/geo-block.module';
+import { ContributorsModule } from './modules/contributors/contributors.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 console.log(`[AppModule] Serving static files from: ${staticRoot}`);
@@ -86,6 +87,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     ImportModule,
     RightsIntakeModule,
     GeoBlockModule,
+    ContributorsModule,
     // ...other modules
   ],
   controllers: [AppController],

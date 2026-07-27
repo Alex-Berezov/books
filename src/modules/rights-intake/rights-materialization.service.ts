@@ -275,6 +275,14 @@ export class RightsMaterializationService {
             notesRu: (sourceAssessment['notesRu'] as string) ?? null,
           },
         });
+
+        if (Array.isArray(sourceAssessment['contributors'])) {
+          await this.materializeContributorsForSourceEdition(
+            t,
+            sourceEdition['id'] as string,
+            sourceAssessment['contributors'] as Array<Record<string, unknown>>,
+          );
+        }
       }
 
       const aggregationComponents: ComponentTerritoryAggregationComponent[] = [];
@@ -292,6 +300,14 @@ export class RightsMaterializationService {
               notesRu: (component['notesRu'] as string) ?? null,
             },
           });
+
+          if (Array.isArray(component['contributors'])) {
+            await this.materializeContributorsForComponent(
+              t,
+              createdComponent['id'] as string,
+              component['contributors'] as Array<Record<string, unknown>>,
+            );
+          }
 
           const componentConfidence = component['confidence'] as ComponentTerritoryConfidence;
           const componentTerritoryAssessments = Array.isArray(component['territoryAssessments'])
@@ -450,5 +466,99 @@ export class RightsMaterializationService {
       confidence: territory['confidence'] as ComponentTerritoryConfidence,
       nextReviewAt: this.parseDateOrNull(territory['nextReviewAt']),
     }));
+  }
+
+  private async materializeContributorsForSourceEdition(
+    tx: Record<string, unknown>,
+    sourceEditionId: string,
+    contributorsRaw: Array<Record<string, unknown>>,
+  ) {
+    const cTx = tx['contributor'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+    };
+    const secTx = tx['sourceEditionContributor'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    for (const c of contributorsRaw) {
+      if (!c['displayName']) continue;
+      let contributor = await cTx.findFirst({
+        where: { displayName: c['displayName'] as string },
+      });
+      if (!contributor) {
+        contributor = await cTx.create({
+          data: {
+            displayName: c['displayName'] as string,
+            originalName: (c['originalName'] as string) ?? null,
+            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
+            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
+            nationalityCountry: (c['nationalityCountry'] as string) ?? null,
+            pseudonym: (c['pseudonym'] as string) ?? null,
+            viafId: (c['viafId'] as string) ?? null,
+            locAuthorityId: (c['locAuthorityId'] as string) ?? null,
+            identityConfidence: (c['identityConfidence'] as string) ?? 'CONFIRMED',
+            notesRu: (c['notesRu'] as string) ?? null,
+          },
+        });
+      }
+
+      await secTx.create({
+        data: {
+          sourceEditionId,
+          contributorId: contributor['id'] as string,
+          role: (c['role'] as string) ?? 'AUTHOR',
+          creditedName: (c['creditedName'] as string) ?? null,
+          notesRu: (c['notesRu'] as string) ?? null,
+        },
+      });
+    }
+  }
+
+  private async materializeContributorsForComponent(
+    tx: Record<string, unknown>,
+    rightsComponentId: string,
+    contributorsRaw: Array<Record<string, unknown>>,
+  ) {
+    const cTx = tx['contributor'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+    };
+    const rccTx = tx['rightsComponentContributor'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    for (const c of contributorsRaw) {
+      if (!c['displayName']) continue;
+      let contributor = await cTx.findFirst({
+        where: { displayName: c['displayName'] as string },
+      });
+      if (!contributor) {
+        contributor = await cTx.create({
+          data: {
+            displayName: c['displayName'] as string,
+            originalName: (c['originalName'] as string) ?? null,
+            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
+            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
+            nationalityCountry: (c['nationalityCountry'] as string) ?? null,
+            pseudonym: (c['pseudonym'] as string) ?? null,
+            viafId: (c['viafId'] as string) ?? null,
+            locAuthorityId: (c['locAuthorityId'] as string) ?? null,
+            identityConfidence: (c['identityConfidence'] as string) ?? 'CONFIRMED',
+            notesRu: (c['notesRu'] as string) ?? null,
+          },
+        });
+      }
+
+      await rccTx.create({
+        data: {
+          rightsComponentId,
+          contributorId: contributor['id'] as string,
+          role: (c['role'] as string) ?? 'AUTHOR',
+          creditedName: (c['creditedName'] as string) ?? null,
+          notesRu: (c['notesRu'] as string) ?? null,
+        },
+      });
+    }
   }
 }

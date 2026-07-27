@@ -100,6 +100,7 @@ export class RightsIntakeManifestService {
           'Check whether the original work appears to be public domain in target countries.',
           'Check whether the source edition itself appears to be public domain or otherwise usable in target countries.',
           'Check whether translator/editor/illustrator/cover/audio-related rights may affect publication.',
+          'Identify all contributors (author, translator, editor, illustrator, photographer, cover designer, etc.) with life dates, nationality, authority IDs (VIAF/LoC), and identity confidence.',
           'Check each planned target language separately.',
           'Check each target country separately, not only regions.',
           'Identify countries where publication should be allowed, blocked, license-required, pending review, or not targeted.',
