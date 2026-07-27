@@ -106,6 +106,8 @@ export class RightsIntakeManifestService {
           'Identify countries where publication should be allowed, blocked, license-required, pending review, or not targeted.',
           'Identify required actions before book creation or publication.',
           'Identify whether geo restrictions are required.',
+          'Check whether a license is required for each target market and each component.',
+          'If publication is possible only under a license, fill in the licenses[] block and set licenseRef in component and country decisions.',
           'Collect evidence URLs, source titles, jurisdictions, excerpts or summaries, and access dates.',
           'Call out uncertainty explicitly instead of guessing.',
         ],
@@ -153,6 +155,7 @@ export class RightsIntakeManifestService {
         notes: [
           'This phase only exports the input manifest. Import and validation of the agent result will be implemented in a later phase.',
           'The external agent should return JSON plus a human-readable report, but Bibliaris will not import it until the import phase is implemented.',
+          'The optional licenses[] block describes licenses and permissions; licenses[].key values are referenced from licenseRef/licenseRefs.',
         ],
       },
     };

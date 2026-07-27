@@ -1,6 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
+import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
+import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
+import type { RightsLicenseSummaryDto } from '../rights-licenses/dto/rights-license-response.dto';
+import type { RightsLicenseRecord } from '../rights-licenses/rights-license-interface';
 import type {
   RightsProfileDetailDto,
   RightsProfileSummaryDto,
@@ -8,11 +13,24 @@ import type {
 } from './dto/rights-profile-response.dto';
 import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 
+const EXPIRING_SOON_DAYS = 90;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** One RightsLicenseLink row joined with its license, as loaded for a profile. */
+interface ProfileLicenseLink {
+  rightsLicenseId: string;
+  rightsComponentId: string | null;
+  componentTerritoryAssessmentId: string | null;
+  rightsLicense: RightsLicenseRecord;
+}
+
 @Injectable()
 export class RightsProfileService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly regionAggregationService: TerritoryRegionAggregationService,
+    private readonly licensesService: RightsLicensesService,
+    private readonly licenseCoverageService: RightsLicenseCoverageService,
   ) {}
 
   private get rp() {
@@ -190,6 +208,16 @@ export class RightsProfileService {
       },
     });
 
+    const licenseLinks = await this.loadProfileLicenseLinks(profileId);
+    const licenseMetrics = this.buildLicenseMetrics(licenseLinks);
+    const licenseCoverage = await this.licenseCoverageService.evaluateProfileCoverage(profileId);
+    const licensesByComponentId = this.groupLicensesByComponent(licenseLinks, componentsData);
+    const licenseByAssessmentId = new Map(
+      licenseLinks
+        .filter((link) => link.componentTerritoryAssessmentId)
+        .map((link) => [link.componentTerritoryAssessmentId as string, link.rightsLicense]),
+    );
+
     const authorsCount = contributorsData.filter((c) => c['role'] === 'AUTHOR').length;
     const translatorsCount = contributorsData.filter((c) => c['role'] === 'TRANSLATOR').length;
     const narratorsCount = contributorsData.filter((c) => c['role'] === 'NARRATOR').length;
@@ -219,7 +247,19 @@ export class RightsProfileService {
       ),
       regionalTerritorySummary:
         this.regionAggregationService.aggregateTerritoryDecisions(territoryData),
-      components: componentsData.map((c: Record<string, unknown>) => this.mapComponent(c)),
+      components: componentsData.map((c: Record<string, unknown>) =>
+        this.mapComponent(c, licensesByComponentId, licenseByAssessmentId),
+      ),
+      licenses: licenseMetrics.licenses,
+      licenseCoverage,
+      licensesCount: licenseMetrics.licensesCount,
+      activeLicensesCount: licenseMetrics.activeLicensesCount,
+      expiredLicensesCount: licenseMetrics.expiredLicensesCount,
+      revokedLicensesCount: licenseMetrics.revokedLicensesCount,
+      expiringSoonLicensesCount: licenseMetrics.expiringSoonLicensesCount,
+      licenseRequiredCountriesCount: licenseCoverage.requiredCountryCodes.length,
+      licenseCoveredCountriesCount: licenseCoverage.coveredCountryCodes.length,
+      licenseUncoveredCountriesCount: licenseCoverage.uncoveredCountryCodes.length,
       evidence: evidenceData.map((e: Record<string, unknown>) => this.mapEvidence(e)),
       actions: actionsData.map((a: Record<string, unknown>) => this.mapAction(a)),
       contributors: contributorsData.map((c: Record<string, unknown>) => this.mapContributor(c)),
@@ -345,7 +385,116 @@ export class RightsProfileService {
     } as RightsReviewDto;
   }
 
-  private mapComponent(record: Record<string, unknown>) {
+  /**
+   * Loads every license reachable from the profile: linked to the profile itself, to its
+   * components, their per-country assessments, territory decisions or the source edition.
+   */
+  private async loadProfileLicenseLinks(rightsProfileId: string): Promise<ProfileLicenseLink[]> {
+    const linkDelegate = (this.prisma as unknown as Record<string, unknown>)[
+      'rightsLicenseLink'
+    ] as {
+      findMany: (args: Record<string, unknown>) => Promise<ProfileLicenseLink[]>;
+    };
+
+    return linkDelegate.findMany({
+      where: {
+        OR: [
+          { rightsProfileId },
+          { rightsComponent: { rightsProfileId } },
+          { componentTerritoryAssessment: { rightsComponent: { rightsProfileId } } },
+          { territoryDecision: { rightsProfileId } },
+          { sourceEdition: { rightsProfileId } },
+        ],
+      },
+      include: { rightsLicense: true },
+    });
+  }
+
+  private buildLicenseMetrics(links: ProfileLicenseLink[]): {
+    licenses: RightsLicenseSummaryDto[];
+    licensesCount: number;
+    activeLicensesCount: number;
+    expiredLicensesCount: number;
+    revokedLicensesCount: number;
+    expiringSoonLicensesCount: number;
+  } {
+    const at = new Date();
+    const uniqueLicenses = new Map<string, RightsLicenseRecord>();
+    for (const link of links) {
+      if (link.rightsLicense && !uniqueLicenses.has(link.rightsLicenseId)) {
+        uniqueLicenses.set(link.rightsLicenseId, link.rightsLicense);
+      }
+    }
+
+    const records = [...uniqueLicenses.values()];
+    const licenses = records.map((license) => this.licensesService.mapSummary(license, at));
+
+    return {
+      licenses,
+      licensesCount: licenses.length,
+      activeLicensesCount: licenses.filter((l) => l.effectiveStatus === RightsLicenseStatus.ACTIVE)
+        .length,
+      expiredLicensesCount: licenses.filter(
+        (l) => l.effectiveStatus === RightsLicenseStatus.EXPIRED,
+      ).length,
+      revokedLicensesCount: licenses.filter(
+        (l) => l.effectiveStatus === RightsLicenseStatus.REVOKED,
+      ).length,
+      expiringSoonLicensesCount: records.filter((license) => {
+        if (license.isPerpetual || !license.expiresAt) return false;
+        if (!this.licenseCoverageService.isActiveAt(license, at)) return false;
+        const daysLeft = (license.expiresAt.getTime() - at.getTime()) / MS_PER_DAY;
+        return daysLeft >= 0 && daysLeft <= EXPIRING_SOON_DAYS;
+      }).length,
+    };
+  }
+
+  /**
+   * A license counts for a component when it is linked to the component itself or to any
+   * of the component's per-country assessments.
+   */
+  private groupLicensesByComponent(
+    links: ProfileLicenseLink[],
+    componentsData: Array<Record<string, unknown>>,
+  ): Map<string, RightsLicenseSummaryDto[]> {
+    const at = new Date();
+    const assessmentToComponent = new Map<string, string>();
+    for (const component of componentsData) {
+      const assessments = component['territoryAssessments'];
+      if (!Array.isArray(assessments)) continue;
+      for (const assessment of assessments as Array<Record<string, unknown>>) {
+        assessmentToComponent.set(assessment['id'] as string, component['id'] as string);
+      }
+    }
+
+    const byComponent = new Map<string, Map<string, RightsLicenseRecord>>();
+    for (const link of links) {
+      if (!link.rightsLicense) continue;
+      const componentId =
+        link.rightsComponentId ??
+        (link.componentTerritoryAssessmentId
+          ? assessmentToComponent.get(link.componentTerritoryAssessmentId)
+          : undefined);
+      if (!componentId) continue;
+
+      const bucket = byComponent.get(componentId) ?? new Map<string, RightsLicenseRecord>();
+      bucket.set(link.rightsLicenseId, link.rightsLicense);
+      byComponent.set(componentId, bucket);
+    }
+
+    return new Map(
+      [...byComponent.entries()].map(([componentId, bucket]) => [
+        componentId,
+        [...bucket.values()].map((license) => this.licensesService.mapSummary(license, at)),
+      ]),
+    );
+  }
+
+  private mapComponent(
+    record: Record<string, unknown>,
+    licensesByComponentId: Map<string, RightsLicenseSummaryDto[]> = new Map(),
+    licenseByAssessmentId: Map<string, RightsLicenseRecord> = new Map(),
+  ) {
     return {
       id: record['id'],
       rightsProfileId: record['rightsProfileId'],
@@ -355,9 +504,10 @@ export class RightsProfileService {
       requiredAction: record['requiredAction'],
       confidence: record['confidence'],
       notesRu: record['notesRu'] ?? null,
+      licenses: licensesByComponentId.get(record['id'] as string) ?? [],
       territoryAssessments: Array.isArray(record['territoryAssessments'])
         ? (record['territoryAssessments'] as Array<Record<string, unknown>>).map((assessment) =>
-            this.mapComponentTerritoryAssessment(assessment),
+            this.mapComponentTerritoryAssessment(assessment, licenseByAssessmentId),
           )
         : [],
       contributors: Array.isArray(record['contributors'])
@@ -417,10 +567,16 @@ export class RightsProfileService {
     };
   }
 
-  private mapComponentTerritoryAssessment(record: Record<string, unknown>) {
+  private mapComponentTerritoryAssessment(
+    record: Record<string, unknown>,
+    licenseByAssessmentId: Map<string, RightsLicenseRecord> = new Map(),
+  ) {
+    const license = licenseByAssessmentId.get(record['id'] as string) ?? null;
     return {
       id: record['id'],
       rightsComponentId: record['rightsComponentId'],
+      licenseId: license ? license.id : null,
+      licenseTitle: license ? license.title : null,
       countryCode: record['countryCode'],
       status: record['status'],
       accessPolicy: record['accessPolicy'],

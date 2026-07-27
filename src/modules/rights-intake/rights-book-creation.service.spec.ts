@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { RightsBookCreationService } from './rights-book-creation.service';
 import { RightsContentHashService } from './rights-content-hash.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 
@@ -13,6 +14,13 @@ const createPrismaStub = () => {
     rightsProfile: { findFirst: jest.fn() },
     rightsAction: { findMany: jest.fn() },
     territoryDecision: { findMany: jest.fn() },
+    rightsComponent: { findMany: jest.fn().mockResolvedValue([]) },
+    rightsLicense: { findMany: jest.fn().mockResolvedValue([]) },
+    rightsLicenseLink: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
   return stub;
@@ -74,6 +82,7 @@ describe('RightsBookCreationService', () => {
     service = new RightsBookCreationService(
       prisma as unknown as PrismaService,
       mockRightsContentHashService,
+      new RightsLicenseCoverageService(prisma as unknown as PrismaService),
     );
   });
 
@@ -689,6 +698,122 @@ describe('RightsBookCreationService', () => {
       await expect(service.createBookFromApprovedClearance('intake-1', makeDto())).rejects.toThrow(
         'DB Error',
       );
+    });
+  });
+  // Phase 15: license snapshot on created versions
+  describe('license snapshot', () => {
+    const licenseRow = () => ({
+      id: 'lic-1',
+      licenseKey: 'license:penguin-2019',
+      licenseType: 'DIRECT_LICENSE',
+      status: 'ACTIVE',
+      title: 'Лицензия',
+      licensor: 'Penguin',
+      isPerpetual: true,
+      expiresAt: null,
+      effectiveFrom: null,
+      revokedAt: null,
+      territoryScope: 'COUNTRY_LIST',
+      countryCodes: ['DE'],
+      excludedCountryCodes: null,
+      languageCodes: null,
+      mediaFormats: null,
+      attributionRequired: false,
+      requiredAttributionText: null,
+      translationAllowed: true,
+      sublicensingAllowed: true,
+    });
+
+    const arrange = (options: { licensed: boolean }) => {
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview(),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', accessPolicy: 'ALLOW', finalStatus: 'ALLOWED_BY_LICENSE' },
+        { countryCode: 'DE', accessPolicy: 'REVIEW_REQUIRED', finalStatus: 'LICENSE_REQUIRED' },
+      ]);
+
+      if (options.licensed) {
+        (prisma['rightsLicenseLink'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+          { rightsLicenseId: 'lic-1' },
+        ]);
+        (prisma['rightsLicense'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+          licenseRow(),
+        ]);
+      }
+
+      const txStub = {
+        book: {
+          create: jest.fn().mockResolvedValue({
+            id: 'book-1',
+            slug: 'test-book',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        },
+        bookVersion: { create: jest.fn().mockResolvedValue({ id: 'version-1' }) },
+        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+        rightsLicenseLink: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      };
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      return txStub;
+    };
+
+    it('treats ALLOWED_BY_LICENSE countries as allowed markets', async () => {
+      const txStub = arrange({ licensed: true });
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(txStub.bookVersion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          rightsAllowedCountryCodes: ['US'],
+          rightsLicenseRequiredCountryCodes: ['DE'],
+        }),
+      });
+    });
+
+    it('writes the license snapshot and sets APPROVED_WITH_LICENSES when covered', async () => {
+      const txStub = arrange({ licensed: true });
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(txStub.bookVersion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          rightsStatus: 'APPROVED_WITH_LICENSES',
+          rightsLicenseCoverageStatus: 'COVERED',
+          rightsLicenseIds: ['lic-1'],
+          rightsLicenseUncoveredCountryCodes: [],
+        }),
+      });
+      expect(txStub.rightsLicenseLink.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            linkType: 'BOOK_VERSION',
+            bookVersionId: 'version-1',
+            rightsLicenseId: 'lic-1',
+          }),
+        }),
+      );
+    });
+
+    it('keeps APPROVED_WITH_LICENSE_LIMITATIONS when no license covers the market', async () => {
+      const txStub = arrange({ licensed: false });
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(txStub.bookVersion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          rightsStatus: 'APPROVED_WITH_LICENSE_LIMITATIONS',
+          rightsLicenseCoverageStatus: 'NOT_COVERED',
+          rightsLicenseUncoveredCountryCodes: ['DE'],
+        }),
+      });
+      expect(txStub.rightsLicenseLink.create).not.toHaveBeenCalled();
     });
   });
 });

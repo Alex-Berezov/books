@@ -1,4 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  LicenseCoverageResultDto,
+  RightsLicenseSummaryDto,
+} from '../../rights-licenses/dto/rights-license-response.dto';
 import { TerritoryRegionSummaryDto } from './territory-region-summary.dto';
 import { RightsReviewApprovalDto } from './rights-review-approval.dto';
 
@@ -80,6 +84,8 @@ export class RightsReviewDto {
 export class ComponentTerritoryAssessmentDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsComponentId!: string;
+  @ApiPropertyOptional({ nullable: true }) licenseId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) licenseTitle?: string | null;
   @ApiProperty() countryCode!: string;
   @ApiProperty() status!: string;
   @ApiProperty() accessPolicy!: string;
@@ -152,6 +158,9 @@ export class RightsComponentDto {
 
   @ApiPropertyOptional({ type: [RightsProfileContributorDto] })
   contributors?: RightsProfileContributorDto[];
+
+  @ApiPropertyOptional({ type: [RightsLicenseSummaryDto] })
+  licenses?: RightsLicenseSummaryDto[];
 
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
@@ -263,6 +272,22 @@ export class RightsProfileDetailDto {
   @ApiPropertyOptional() translatorsCount?: number;
   @ApiPropertyOptional() narratorsCount?: number;
   @ApiPropertyOptional() contributorsWithoutPersonCount?: number;
+
+  // Phase 15: licenses reachable from this profile and their coverage of license-gated markets
+  @ApiPropertyOptional({ type: [RightsLicenseSummaryDto] })
+  licenses?: RightsLicenseSummaryDto[];
+
+  @ApiPropertyOptional({ type: LicenseCoverageResultDto, nullable: true })
+  licenseCoverage?: LicenseCoverageResultDto | null;
+
+  @ApiPropertyOptional() licensesCount?: number;
+  @ApiPropertyOptional() activeLicensesCount?: number;
+  @ApiPropertyOptional() expiredLicensesCount?: number;
+  @ApiPropertyOptional() revokedLicensesCount?: number;
+  @ApiPropertyOptional() expiringSoonLicensesCount?: number;
+  @ApiPropertyOptional() licenseRequiredCountriesCount?: number;
+  @ApiPropertyOptional() licenseCoveredCountriesCount?: number;
+  @ApiPropertyOptional() licenseUncoveredCountriesCount?: number;
 
   @ApiProperty() supersededAt!: string | null;
   @ApiProperty() archivedAt!: string | null;

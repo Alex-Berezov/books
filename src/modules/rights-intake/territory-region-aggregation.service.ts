@@ -178,6 +178,7 @@ export class TerritoryRegionAggregationService {
       countryCount,
       targetedCountryCount: 0,
       allowedCountryCount: 0,
+      licensedCountryCount: 0,
       blockedCountryCount: 0,
       licenseRequiredCountryCount: 0,
       pendingReviewCountryCount: 0,
@@ -199,6 +200,7 @@ export class TerritoryRegionAggregationService {
     }
 
     let allowedCount = 0;
+    let licensedCount = 0;
     let blockedCount = 0;
     let licenseRequiredCount = 0;
     let pendingCount = 0;
@@ -217,9 +219,17 @@ export class TerritoryRegionAggregationService {
         geoBlockCount++;
       }
 
+      // Phase 15: a country cleared by license counts as allowed for regional roll-ups,
+      // and is additionally tracked in licensedCountryCount.
+      const isLicensed = finalStatus === 'ALLOWED_BY_LICENSE' && accessPolicy !== 'BLOCK';
+      if (isLicensed) {
+        licensedCount++;
+      }
+
       const isAllowed =
         finalStatus === 'PUBLIC_DOMAIN' ||
         finalStatus === 'ALLOWED' ||
+        isLicensed ||
         (finalStatus === 'ALLOWED_AFTER_CHANGES' && accessPolicy !== 'BLOCK');
 
       const isBlocked = finalStatus === 'BLOCKED' || accessPolicy === 'BLOCK';
@@ -287,6 +297,7 @@ export class TerritoryRegionAggregationService {
       countryCount: totalCountryCount,
       targetedCountryCount: targetedCount,
       allowedCountryCount: allowedCount,
+      licensedCountryCount: licensedCount,
       blockedCountryCount: blockedCount,
       licenseRequiredCountryCount: licenseRequiredCount,
       pendingReviewCountryCount: pendingCount,

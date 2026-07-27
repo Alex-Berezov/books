@@ -35,6 +35,7 @@ export class TerritoryRegionSummaryDto {
   @ApiProperty() countryCount!: number;
   @ApiProperty() targetedCountryCount!: number;
   @ApiProperty() allowedCountryCount!: number;
+  @ApiProperty() licensedCountryCount!: number;
   @ApiProperty() blockedCountryCount!: number;
   @ApiProperty() licenseRequiredCountryCount!: number;
   @ApiProperty() pendingReviewCountryCount!: number;

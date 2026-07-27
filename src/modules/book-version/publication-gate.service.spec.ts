@@ -1,14 +1,30 @@
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+
+/** Default coverage result: no market needs a license, so no license reason is produced. */
+const notRequiredCoverage = () => ({
+  status: 'NOT_REQUIRED' as const,
+  checkedAt: '2026-07-28T00:00:00.000Z',
+  requiredCountryCodes: [],
+  coveredCountryCodes: [],
+  uncoveredCountryCodes: [],
+  countries: [],
+  licenseIds: [],
+  blockers: [],
+  warnings: [],
+  attributionTextsRu: [],
+});
 
 describe('PublicationGateService', () => {
   let service: PublicationGateService;
   let prisma: jest.Mocked<PrismaService>;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
   let mockGeoBlockRuleService: jest.Mocked<GeoBlockRuleService>;
+  let mockLicenseCoverageService: { evaluateVersionCoverage: jest.Mock };
 
   const baseVersion = {
     id: 'v1',
@@ -73,10 +89,15 @@ describe('PublicationGateService', () => {
       getActiveRulesForVersion: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<GeoBlockRuleService>;
 
+    mockLicenseCoverageService = {
+      evaluateVersionCoverage: jest.fn().mockResolvedValue(notRequiredCoverage()),
+    };
+
     service = new PublicationGateService(
       prisma,
       mockRightsContentHashService,
       mockGeoBlockRuleService,
+      mockLicenseCoverageService as unknown as RightsLicenseCoverageService,
     );
   });
 
@@ -306,16 +327,96 @@ describe('PublicationGateService', () => {
     expect(result.warnings.some((r) => r.code === 'BLOCKED_COUNTRIES_WITH_GEO_BLOCK')).toBe(true);
   });
 
-  // 6.14 License required countries
-  it('blocks if license required countries exist', async () => {
-    const version = { ...baseVersion, rightsLicenseRequiredCountryCodes: ['DE'] };
-    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
-    (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
-    (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
-    (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
-    const result = await service.checkVersionCanPublish('v1');
-    expect(result.canPublish).toBe(false);
-    expect(result.blockingReasons.some((r) => r.code === 'LICENSE_REQUIRED')).toBe(true);
+  // 6.14 License coverage (Phase 15)
+  describe('license coverage', () => {
+    const arrangeVersion = (overrides: Record<string, unknown> = {}) => {
+      const version = { ...baseVersion, rightsLicenseRequiredCountryCodes: ['DE'], ...overrides };
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    const blockerCoverage = (code: string, messageRu: string) => ({
+      ...notRequiredCoverage(),
+      status: 'NOT_COVERED' as const,
+      requiredCountryCodes: ['DE'],
+      uncoveredCountryCodes: ['DE'],
+      blockers: [{ code, severity: 'BLOCKER' as const, messageRu, countryCode: 'DE' }],
+    });
+
+    it('does not block when a valid license covers the required countries', async () => {
+      arrangeVersion();
+      mockLicenseCoverageService.evaluateVersionCoverage.mockResolvedValue({
+        ...notRequiredCoverage(),
+        status: 'COVERED',
+        requiredCountryCodes: ['DE'],
+        coveredCountryCodes: ['DE'],
+        licenseIds: ['lic-1'],
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code.startsWith('LICENSE_'))).toBe(false);
+      expect(result.licenseCoverageStatus).toBe('COVERED');
+      expect(result.licenseCoveredCountryCodes).toEqual(['DE']);
+      expect(result.licenseIds).toEqual(['lic-1']);
+    });
+
+    it.each([
+      ['LICENSE_MISSING_FOR_COUNTRY', 'Нет лицензии для страны DE.'],
+      ['LICENSE_EXPIRED', 'Срок действия лицензии истёк.'],
+      ['LICENSE_REVOKED', 'Лицензия отозвана.'],
+      ['LICENSE_SCOPE_LANGUAGE_MISMATCH', 'Лицензия не покрывает язык версии.'],
+    ])('blocks with %s', async (code, messageRu) => {
+      arrangeVersion();
+      mockLicenseCoverageService.evaluateVersionCoverage.mockResolvedValue(
+        blockerCoverage(code, messageRu),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === code)).toBe(true);
+      expect(result.licenseUncoveredCountryCodes).toEqual(['DE']);
+    });
+
+    it('warns about attribution when the version has no attribution text yet', async () => {
+      arrangeVersion();
+      mockLicenseCoverageService.evaluateVersionCoverage.mockResolvedValue({
+        ...notRequiredCoverage(),
+        status: 'COVERED',
+        requiredCountryCodes: ['DE'],
+        coveredCountryCodes: ['DE'],
+        licenseIds: ['lic-1'],
+        warnings: [
+          {
+            code: 'LICENSE_ATTRIBUTION_REQUIRED',
+            severity: 'WARNING' as const,
+            messageRu: 'Лицензия требует указания правообладателя.',
+            licenseId: 'lic-1',
+          },
+        ],
+        attributionTextsRu: ['© Penguin Random House, 2019'],
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.warnings.some((r) => r.code === 'LICENSE_ATTRIBUTION_REQUIRED')).toBe(true);
+    });
+
+    it('never returns the removed LICENSE_REQUIRED code', async () => {
+      arrangeVersion();
+      mockLicenseCoverageService.evaluateVersionCoverage.mockResolvedValue(
+        blockerCoverage('LICENSE_MISSING_FOR_COUNTRY', 'Нет лицензии для страны DE.'),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'LICENSE_REQUIRED')).toBe(false);
+      expect(result.warnings.some((r) => r.code === 'LICENSE_REQUIRED')).toBe(false);
+    });
   });
 
   // 6.15 Pending countries

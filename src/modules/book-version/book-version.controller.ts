@@ -28,6 +28,8 @@ import { ReorderBookVersionContributorsDto } from './dto/reorder-version-contrib
 import { BookVersionContributorResponseDto } from './dto/version-contributor-response.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsContentHashCheckDto } from '../rights-intake/dto/rights-content-hash.dto';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
+import { LicenseCoverageResultDto } from '../rights-licenses/dto/rights-license-response.dto';
 import {
   ApiOperation,
   ApiParam,
@@ -54,6 +56,7 @@ export class BookVersionController {
     private readonly rightsContentHashService: RightsContentHashService,
     private readonly geoIpCountryService: GeoIpCountryService,
     private readonly geoBlockRuleService: GeoBlockRuleService,
+    private readonly licenseCoverageService: RightsLicenseCoverageService,
   ) {}
 
   @Get('books/:bookId/versions')
@@ -388,6 +391,20 @@ export class BookVersionController {
   })
   getRightsDashboard(@Param('id') id: string) {
     return this.service.getRightsDashboard(id);
+  }
+
+  @Get('admin/versions/:id/license-coverage')
+  @ApiOperation({
+    summary: 'Admin: Evaluate license coverage for a book version',
+    description:
+      'Возвращает покрытие лицензиями рынков со статусом LICENSE_REQUIRED: по странам, блокеры и предупреждения.',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiResponse({ status: 200, type: LicenseCoverageResultDto })
+  getLicenseCoverage(@Param('id') id: string): Promise<LicenseCoverageResultDto> {
+    return this.licenseCoverageService.evaluateVersionCoverage(id);
   }
 
   @Patch('versions/:id')

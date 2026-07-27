@@ -255,4 +255,81 @@ describe('ComponentTerritoryAggregationService', () => {
       }),
     );
   });
+  // Phase 15: ALLOWED_BY_LICENSE
+  describe('license-based clearance', () => {
+    const licensedComponent = (overrides: Partial<ComponentTerritoryAggregationComponent> = {}) =>
+      createComponent({
+        rightsComponentId: 'component-licensed',
+        componentType: 'TRANSLATION',
+        titleRu: 'Перевод',
+        status: 'LICENSED',
+        territoryAssessments: [
+          {
+            countryCode: 'US',
+            status: 'ALLOWED_BY_LICENSE',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+          },
+        ],
+        ...overrides,
+      });
+
+    it('aggregates a fully licensed country to ALLOWED_BY_LICENSE', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [licensedComponent()],
+        targetCountryCodes: ['US'],
+      });
+
+      expect(result[0]).toEqual(
+        expect.objectContaining({
+          countryCode: 'US',
+          finalStatus: 'ALLOWED_BY_LICENSE',
+          accessPolicy: 'ALLOW',
+          geoBlockRequired: false,
+        }),
+      );
+      expect(result[0].reasonRu).toContain('лицензии');
+    });
+
+    it('reports ALLOWED_BY_LICENSE when public-domain and licensed components are mixed', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [createComponent(), licensedComponent()],
+        targetCountryCodes: ['US'],
+      });
+
+      expect(result[0].finalStatus).toBe('ALLOWED_BY_LICENSE');
+      expect(result[0].accessPolicy).toBe('ALLOW');
+    });
+
+    it('lets a blocking component win over a licensed one', () => {
+      const blocked = createComponent({
+        rightsComponentId: 'component-blocked',
+        componentType: 'ILLUSTRATION',
+        titleRu: 'Иллюстрации',
+        status: 'COPYRIGHTED',
+        territoryAssessments: [
+          {
+            countryCode: 'US',
+            status: 'BLOCKED',
+            accessPolicy: 'BLOCK',
+            geoBlockRequired: true,
+            reasonRu: 'Иллюстрации под охраной.',
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [licensedComponent(), blocked],
+        targetCountryCodes: ['US'],
+      });
+
+      expect(result[0].finalStatus).toBe('BLOCKED');
+      expect(result[0].accessPolicy).toBe('BLOCK');
+    });
+  });
 });

@@ -311,4 +311,106 @@ describe('RightsReviewImportValidator', () => {
       expect.arrayContaining([expect.objectContaining({ code: 'COMPONENT_TERRITORY_CONFLICT' })]),
     );
   });
+
+  // Phase 15: optional licenses[] block
+  describe('licenses block', () => {
+    const licensedPayload = (): Record<string, unknown> => {
+      const payload = validPayload();
+      payload.licenses = [
+        {
+          key: 'license:penguin-2019',
+          licenseType: 'DIRECT_LICENSE',
+          status: 'ACTIVE',
+          title: 'Лицензия на перевод',
+          licensor: 'Penguin Random House',
+          territoryScope: 'COUNTRY_LIST',
+          countryCodes: ['FR'],
+          languageCodes: ['fr'],
+          mediaFormats: ['TEXT_ONLINE'],
+          translationAllowed: true,
+          isPerpetual: true,
+        },
+      ];
+      return payload;
+    };
+
+    it('accepts a valid licenses block without errors', () => {
+      const { errors } = validator.validate(
+        licensedPayload(),
+        INTAKE_ID,
+        TARGET_LANGUAGES,
+        TARGET_COUNTRIES,
+      );
+      expect(errors).toEqual([]);
+    });
+
+    it('rejects an unknown licenseType', () => {
+      const payload = licensedPayload();
+      (payload.licenses as Array<Record<string, unknown>>)[0].licenseType = 'MADE_UP';
+
+      const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+      expect(
+        errors.some((e) => e.code === 'INVALID_ENUM' && e.path === 'licenses[0].licenseType'),
+      ).toBe(true);
+    });
+
+    it('rejects a duplicate license key', () => {
+      const payload = licensedPayload();
+      const licenses = payload.licenses as Array<Record<string, unknown>>;
+      licenses.push({ ...licenses[0] });
+
+      const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+      expect(errors.some((e) => e.code === 'DUPLICATE_LICENSE_KEY')).toBe(true);
+    });
+
+    it('rejects a licenseRef pointing at an unknown key', () => {
+      const payload = licensedPayload();
+      (payload.territoryDecisions as Array<Record<string, unknown>>)[1].licenseRef =
+        'license:does-not-exist';
+
+      const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+      expect(errors.some((e) => e.code === 'INVALID_REFERENCE')).toBe(true);
+    });
+
+    it('requires a licenseRef for an ALLOWED_BY_LICENSE country', () => {
+      const payload = licensedPayload();
+      (payload.territoryDecisions as Array<Record<string, unknown>>)[1].finalStatus =
+        'ALLOWED_BY_LICENSE';
+
+      const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+      expect(errors.some((e) => e.code === 'MISSING_LICENSE_REF')).toBe(true);
+    });
+
+    it('warns when a LICENSE_REQUIRED country is not covered by any declared license', () => {
+      const payload = licensedPayload();
+      (payload.territoryDecisions as Array<Record<string, unknown>>)[0].finalStatus =
+        'LICENSE_REQUIRED';
+
+      const { warnings } = validator.validate(
+        payload,
+        INTAKE_ID,
+        TARGET_LANGUAGES,
+        TARGET_COUNTRIES,
+      );
+
+      expect(warnings.some((w) => w.code === 'LICENSE_REQUIRED_WITHOUT_LICENSE')).toBe(true);
+    });
+
+    it('leaves legacy reports without a licenses block untouched', () => {
+      const { errors, warnings } = validator.validate(
+        validPayload(),
+        INTAKE_ID,
+        TARGET_LANGUAGES,
+        TARGET_COUNTRIES,
+      );
+
+      expect(errors).toEqual([]);
+      expect(warnings.some((w) => w.code.startsWith('LICENSE'))).toBe(false);
+      expect(warnings.some((w) => w.code === 'COMPONENT_LICENSED_WITHOUT_LICENSE_REF')).toBe(false);
+    });
+  });
 });

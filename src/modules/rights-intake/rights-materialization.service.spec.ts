@@ -147,6 +147,16 @@ const createPrismaStub = (): PrismaStub => {
   stub['bookVersion'] = { findUnique: jest.fn(), update: jest.fn() };
   stub['geoBlockRule'] = { findMany: jest.fn(), updateMany: jest.fn(), upsert: jest.fn() };
   stub['rightsProfileContributor'] = { create: jest.fn(), update: jest.fn() };
+  stub['rightsLicense'] = {
+    findFirst: jest.fn().mockResolvedValue(null),
+    create: jest.fn(),
+    update: jest.fn(),
+  };
+  stub['rightsLicenseLink'] = {
+    findFirst: jest.fn().mockResolvedValue(null),
+    create: jest.fn(),
+  };
+  stub['rightsLicenseEvent'] = { create: jest.fn() };
 
   return stub as unknown as PrismaStub;
 };
@@ -1016,6 +1026,139 @@ describe('RightsMaterializationService', () => {
 
       expect(rpc().create).not.toHaveBeenCalled();
       expect(rpc().update).not.toHaveBeenCalled();
+    });
+  });
+
+  // Phase 15: licenses[] materialization
+  describe('licenses', () => {
+    const rl = () => prisma['rightsLicense'] as Record<string, jest.Mock>;
+    const rll = () => prisma['rightsLicenseLink'] as Record<string, jest.Mock>;
+    const rle = () => prisma['rightsLicenseEvent'] as Record<string, jest.Mock>;
+
+    const linkCalls = () =>
+      rll().create.mock.calls.map((call) => (call[0] as { data: Record<string, unknown> }).data);
+
+    const withLicenses = (): Record<string, unknown> => {
+      const reportJson = makeValidReportJson();
+      reportJson['licenses'] = [
+        {
+          key: 'license:penguin-2019',
+          title: 'Лицензия на перевод',
+          licensor: 'Penguin Random House',
+          status: 'ACTIVE',
+          territoryScope: 'COUNTRY_LIST',
+          countryCodes: ['FR'],
+          languageCodes: ['fr'],
+          documentSha256: 'a'.repeat(64),
+        },
+      ];
+      return reportJson;
+    };
+
+    const setupLicenseScenario = (reportJson: Record<string, unknown>) => {
+      setupTransaction();
+      setupBasicMocks({ reportJson });
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsReview'] as Record<string, jest.Mock>).create.mockResolvedValue({
+        id: 'review-1',
+      });
+      (
+        prisma['componentTerritoryAssessment'] as Record<string, jest.Mock>
+      ).create.mockResolvedValue({ id: 'assessment-1' });
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).create.mockResolvedValue({
+        id: 'decision-1',
+      });
+      (prisma['rightsEvidence'] as Record<string, jest.Mock>).create.mockResolvedValue({
+        id: 'evidence-1',
+      });
+      rl().create.mockResolvedValue({ id: 'lic-1' });
+    };
+
+    it('creates licenses from the report and links them to the profile', async () => {
+      setupLicenseScenario(withLicenses());
+
+      await service.materializeFromImport('import-1');
+
+      expect(rl().create).toHaveBeenCalledTimes(1);
+      expect(rle().create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ eventType: 'IMPORTED_FROM_REVIEW' }),
+        }),
+      );
+      expect(linkCalls()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ linkType: 'RIGHTS_PROFILE', rightsProfileId: 'profile-1' }),
+        ]),
+      );
+    });
+
+    it('reuses an existing license with the same licenseKey instead of creating a duplicate', async () => {
+      setupLicenseScenario(withLicenses());
+      rl().findFirst.mockResolvedValue({ id: 'lic-existing', title: 'Существующая' });
+
+      await service.materializeFromImport('import-1');
+
+      expect(rl().create).not.toHaveBeenCalled();
+      expect(linkCalls()[0]).toEqual(expect.objectContaining({ rightsLicenseId: 'lic-existing' }));
+    });
+
+    it('links component licenseRefs to the created component', async () => {
+      const reportJson = withLicenses();
+      (reportJson['componentAssessments'] as Array<Record<string, unknown>>)[0]['licenseRefs'] = [
+        'license:penguin-2019',
+      ];
+      setupLicenseScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(linkCalls()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            linkType: 'RIGHTS_COMPONENT',
+            rightsComponentId: 'component-1',
+          }),
+        ]),
+      );
+    });
+
+    it('links a territory assessment licenseRef with the covered country', async () => {
+      const reportJson = withLicenses();
+      (reportJson['componentAssessments'] as Array<Record<string, unknown>>)[0][
+        'territoryAssessments'
+      ] = [
+        {
+          countryCode: 'FR',
+          status: 'ALLOWED_BY_LICENSE',
+          accessPolicy: 'ALLOW',
+          geoBlockRequired: false,
+          licenseRef: 'license:penguin-2019',
+        },
+      ];
+      setupLicenseScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(linkCalls()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            linkType: 'COMPONENT_TERRITORY_ASSESSMENT',
+            componentTerritoryAssessmentId: 'assessment-1',
+            coversCountryCodes: ['FR'],
+          }),
+        ]),
+      );
+    });
+
+    it('creates no license rows for a legacy report without a licenses block', async () => {
+      setupLicenseScenario(makeValidReportJson());
+
+      await service.materializeFromImport('import-1');
+
+      expect(rl().create).not.toHaveBeenCalled();
+      expect(rll().create).not.toHaveBeenCalled();
     });
   });
 });

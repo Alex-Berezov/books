@@ -72,6 +72,22 @@ export class PublicationGateResultDto {
   @ApiProperty()
   rightsRecheckRequired!: boolean;
 
+  // Phase 15: license coverage of the markets that require a license
+  @ApiProperty({ nullable: true })
+  licenseCoverageStatus!: string | null;
+
+  @ApiProperty({ type: [String] })
+  licenseRequiredCountryCodes!: string[];
+
+  @ApiProperty({ type: [String] })
+  licenseCoveredCountryCodes!: string[];
+
+  @ApiProperty({ type: [String] })
+  licenseUncoveredCountryCodes!: string[];
+
+  @ApiProperty({ type: [String] })
+  licenseIds!: string[];
+
   constructor(data: {
     versionId: string;
     bookId: string;
@@ -86,6 +102,11 @@ export class PublicationGateResultDto {
     contentHashCurrent?: string | null;
     contentHashMatches?: boolean | null;
     rightsRecheckRequired?: boolean;
+    licenseCoverageStatus?: string | null;
+    licenseRequiredCountryCodes?: string[];
+    licenseCoveredCountryCodes?: string[];
+    licenseUncoveredCountryCodes?: string[];
+    licenseIds?: string[];
   }) {
     this.versionId = data.versionId;
     this.bookId = data.bookId;
@@ -100,6 +121,11 @@ export class PublicationGateResultDto {
     this.contentHashCurrent = data.contentHashCurrent ?? null;
     this.contentHashMatches = data.contentHashMatches ?? null;
     this.rightsRecheckRequired = data.rightsRecheckRequired ?? false;
+    this.licenseCoverageStatus = data.licenseCoverageStatus ?? null;
+    this.licenseRequiredCountryCodes = data.licenseRequiredCountryCodes ?? [];
+    this.licenseCoveredCountryCodes = data.licenseCoveredCountryCodes ?? [];
+    this.licenseUncoveredCountryCodes = data.licenseUncoveredCountryCodes ?? [];
+    this.licenseIds = data.licenseIds ?? [];
   }
 }
 

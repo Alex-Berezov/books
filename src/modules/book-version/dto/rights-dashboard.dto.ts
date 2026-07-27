@@ -88,6 +88,16 @@ export class BookRightsDashboardVersionSummaryDto {
 
   @ApiPropertyOptional({ nullable: true, example: 'Версия текста устарела' })
   rightsStaleReasonRu?: string | null;
+
+  // Phase 15: license snapshot recorded at publish / book creation time
+  @ApiPropertyOptional({ nullable: true, example: 'COVERED' })
+  rightsLicenseCoverageStatus?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-28T12:00:00.000Z' })
+  rightsLicenseCheckedAt?: string | null;
+
+  @ApiPropertyOptional({ type: [String], nullable: true })
+  rightsLicenseIds?: string[] | null;
 }
 
 export class BookRightsDashboardMetricsDto {
@@ -180,6 +190,34 @@ export class BookRightsDashboardMetricsDto {
 
   @ApiProperty({ example: 0 })
   notTargetedRegionCount!: number;
+
+  // Phase 15: license metrics
+  @ApiPropertyOptional({ example: 1 })
+  licensesCount?: number;
+
+  @ApiPropertyOptional({ example: 1 })
+  activeLicensesCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  expiredLicensesCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  revokedLicensesCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  expiringSoonLicensesCount?: number;
+
+  @ApiPropertyOptional({ example: 1 })
+  attributionRequiredLicensesCount?: number;
+
+  @ApiPropertyOptional({ example: 'COVERED' })
+  licenseCoverageStatus?: string;
+
+  @ApiPropertyOptional({ example: 3 })
+  licenseCoveredCountriesCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  licenseUncoveredCountriesCount?: number;
 }
 
 export class BookRightsDashboardDto {

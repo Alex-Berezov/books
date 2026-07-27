@@ -6,6 +6,7 @@ import {
 } from './dto/publication-gate-result.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 
 interface VersionWithGeoBlock {
   id: string;
@@ -21,6 +22,7 @@ interface VersionWithGeoBlock {
   rightsGeoBlockVerifiedAt: Date | null;
   rightsContentHash: string | null;
   rightsRecheckRequired: boolean;
+  rightsLicenseAttributionTextRu: string | null;
   book: {
     id: string;
     currentRightsProfileId: string | null;
@@ -34,6 +36,7 @@ export class PublicationGateService {
     private readonly prisma: PrismaService,
     private readonly rightsContentHashService: RightsContentHashService,
     private readonly geoBlockRuleService: GeoBlockRuleService,
+    private readonly licenseCoverageService: RightsLicenseCoverageService,
   ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
@@ -295,17 +298,35 @@ export class PublicationGateService {
       }
     }
 
-    // 6.14 License required countries
-    const licenseRequiredCountryCodes = version.rightsLicenseRequiredCountryCodes as
-      | string[]
-      | null;
-    if (licenseRequiredCountryCodes && licenseRequiredCountryCodes.length > 0) {
+    // 6.14 License coverage (Phase 15). A country with LICENSE_REQUIRED no longer blocks
+    // publication on its own — it blocks only when no valid license covers it.
+    const licenseCoverage = await this.licenseCoverageService.evaluateVersionCoverage(versionId);
+
+    for (const blocker of licenseCoverage.blockers) {
       blockingReasons.push(
         new PublicationGateReasonDto({
-          code: 'LICENSE_REQUIRED',
+          code: blocker.code,
           severity: 'BLOCKER',
-          messageRu:
-            'Для части рынков требуется лицензия. Публикация невозможна до реализации и привязки лицензии.',
+          messageRu: blocker.messageRu,
+          details: { licenseId: blocker.licenseId, countryCode: blocker.countryCode },
+        }),
+      );
+    }
+
+    for (const warning of licenseCoverage.warnings) {
+      // Attribution is only worth flagging when the version has no attribution text yet.
+      if (
+        warning.code === 'LICENSE_ATTRIBUTION_REQUIRED' &&
+        version.rightsLicenseAttributionTextRu
+      ) {
+        continue;
+      }
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: warning.code,
+          severity: 'WARNING',
+          messageRu: warning.messageRu,
+          details: { licenseId: warning.licenseId, countryCode: warning.countryCode },
         }),
       );
     }
@@ -478,6 +499,11 @@ export class PublicationGateService {
       contentHashCurrent,
       contentHashMatches,
       rightsRecheckRequired: version.rightsRecheckRequired,
+      licenseCoverageStatus: licenseCoverage.status,
+      licenseRequiredCountryCodes: licenseCoverage.requiredCountryCodes,
+      licenseCoveredCountryCodes: licenseCoverage.coveredCountryCodes,
+      licenseUncoveredCountryCodes: licenseCoverage.uncoveredCountryCodes,
+      licenseIds: licenseCoverage.licenseIds,
     });
   }
 

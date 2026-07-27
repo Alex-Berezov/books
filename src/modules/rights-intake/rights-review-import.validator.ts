@@ -37,6 +37,7 @@ const VALID_CONFIDENCE = ['HIGH', 'MEDIUM', 'LOW'] as const;
 const VALID_LANGUAGE_ASSESSMENT_STATUSES = [
   'ALLOWED',
   'ALLOWED_AFTER_CHANGES',
+  'ALLOWED_BY_LICENSE',
   'BLOCKED',
   'LICENSE_REQUIRED',
   'PENDING_REVIEW',
@@ -111,6 +112,7 @@ const VALID_COMPONENT_ACTIONS = [
 const VALID_TERRITORY_FINAL_STATUSES = [
   'ALLOWED',
   'ALLOWED_AFTER_CHANGES',
+  'ALLOWED_BY_LICENSE',
   'BLOCKED',
   'LICENSE_REQUIRED',
   'PENDING_REVIEW',
@@ -184,6 +186,54 @@ const VALID_SOURCE_TEXT_TYPES = [
   'COMPILATION',
   'UNKNOWN',
 ] as const;
+
+// Phase 15: licenses[] block. All license fields are optional, so schemaVersion stays "1.0".
+const VALID_LICENSE_TYPES = [
+  'DIRECT_LICENSE',
+  'DIRECT_PERMISSION',
+  'RIGHTS_ASSIGNMENT',
+  'WORK_FOR_HIRE',
+  'OPEN_LICENSE',
+  'PUBLIC_DOMAIN_DEDICATION',
+  'OTHER',
+] as const;
+const VALID_LICENSE_STATUSES = [
+  'DRAFT',
+  'PENDING',
+  'ACTIVE',
+  'EXPIRED',
+  'REVOKED',
+  'UNCERTAIN',
+  'SUPERSEDED',
+] as const;
+const VALID_LICENSE_TERRITORY_SCOPES = [
+  'WORLDWIDE',
+  'COUNTRY_LIST',
+  'EXCEPT_COUNTRY_LIST',
+  'UNKNOWN',
+] as const;
+const VALID_LICENSE_MEDIA_FORMATS = [
+  'TEXT_ONLINE',
+  'TEXT_DOWNLOAD',
+  'EBOOK',
+  'AUDIO_STREAMING',
+  'AUDIO_DOWNLOAD',
+  'IMAGE',
+  'PRINT',
+  'OTHER',
+] as const;
+
+const LICENSE_EXPIRING_SOON_DAYS = 180;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Parsed shape of one `licenses[]` entry, used for cross-field checks after validation. */
+interface ParsedReportLicense {
+  key: string;
+  territoryScope: string | undefined;
+  countryCodes: string[];
+  excludedCountryCodes: string[];
+  translationAllowed: boolean;
+}
 
 function isIn<T extends readonly string[]>(arr: T, value: string): value is T[number] {
   return (arr as readonly string[]).includes(value);
@@ -477,6 +527,10 @@ export class RightsReviewImportValidator {
     } else if (!isIn(VALID_CONFIDENCE, confidence)) {
       addError(errors, 'confidence', `Invalid confidence: "${confidence}"`, 'INVALID_ENUM');
     }
+
+    // Phase 15: optional licenses[] block and licenseRef/licenseRefs cross-references
+    const licenses = this.validateLicenses(reportJson, errors, warnings);
+    this.validateLicenseReferences(reportJson, licenses, errors, warnings);
 
     // Validate territoryDecisions
     if (Array.isArray(territoryDecisions)) {
@@ -889,6 +943,466 @@ export class RightsReviewImportValidator {
     }
 
     return { errors, warnings };
+  }
+
+  /**
+   * Validates the optional `licenses[]` block. Reports without it are legacy-valid and
+   * produce neither errors nor license warnings.
+   */
+  private validateLicenses(
+    reportJson: Record<string, unknown>,
+    errors: ValidationIssue[],
+    warnings: ValidationIssue[],
+  ): ParsedReportLicense[] {
+    const raw = reportJson['licenses'];
+    if (raw === undefined || raw === null) return [];
+
+    if (!Array.isArray(raw)) {
+      addError(errors, 'licenses', 'licenses must be an array', 'INVALID_TYPE');
+      return [];
+    }
+
+    const referenceDate = this.parseReportDate(reportJson['generatedAt']) ?? new Date();
+    const seenKeys = new Set<string>();
+    const parsed: ParsedReportLicense[] = [];
+
+    for (let i = 0; i < raw.length; i++) {
+      const prefix = `licenses[${i}]`;
+      const item = raw[i] as Record<string, unknown>;
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        addError(errors, prefix, 'license must be an object', 'INVALID_TYPE');
+        continue;
+      }
+
+      const key = item['key'];
+      if (typeof key !== 'string' || key.trim() === '') {
+        addError(errors, `${prefix}.key`, 'key is required and must be a string', 'MISSING_FIELD');
+      } else if (seenKeys.has(key)) {
+        addError(
+          errors,
+          `${prefix}.key`,
+          `Duplicate license key: "${key}"`,
+          'DUPLICATE_LICENSE_KEY',
+        );
+      } else {
+        seenKeys.add(key);
+      }
+
+      if (typeof item['title'] !== 'string' || item['title'].trim() === '') {
+        addError(errors, `${prefix}.title`, 'title is required', 'MISSING_FIELD');
+      }
+      if (typeof item['licensor'] !== 'string' || item['licensor'].trim() === '') {
+        addError(errors, `${prefix}.licensor`, 'licensor is required', 'MISSING_FIELD');
+      }
+
+      const licenseType = item['licenseType'];
+      if (typeof licenseType === 'string' && !isIn(VALID_LICENSE_TYPES, licenseType)) {
+        addError(
+          errors,
+          `${prefix}.licenseType`,
+          `Invalid licenseType: "${licenseType}"`,
+          'INVALID_ENUM',
+        );
+      }
+
+      const status = item['status'];
+      if (typeof status === 'string' && !isIn(VALID_LICENSE_STATUSES, status)) {
+        addError(errors, `${prefix}.status`, `Invalid license status: "${status}"`, 'INVALID_ENUM');
+      }
+
+      const territoryScope = item['territoryScope'];
+      if (
+        typeof territoryScope === 'string' &&
+        !isIn(VALID_LICENSE_TERRITORY_SCOPES, territoryScope)
+      ) {
+        addError(
+          errors,
+          `${prefix}.territoryScope`,
+          `Invalid territoryScope: "${territoryScope}"`,
+          'INVALID_ENUM',
+        );
+      }
+
+      const mediaFormats = item['mediaFormats'];
+      if (Array.isArray(mediaFormats)) {
+        for (let j = 0; j < mediaFormats.length; j++) {
+          const format: unknown = mediaFormats[j];
+          if (typeof format !== 'string' || !isIn(VALID_LICENSE_MEDIA_FORMATS, format)) {
+            addError(
+              errors,
+              `${prefix}.mediaFormats[${j}]`,
+              `Invalid media format: "${String(format)}"`,
+              'INVALID_ENUM',
+            );
+          }
+        }
+      }
+
+      const languageCodes = item['languageCodes'];
+      if (Array.isArray(languageCodes)) {
+        for (let j = 0; j < languageCodes.length; j++) {
+          const code: unknown = languageCodes[j];
+          if (typeof code !== 'string' || !isIn(VALID_LANGUAGE_CODES, code)) {
+            addError(
+              errors,
+              `${prefix}.languageCodes[${j}]`,
+              `Invalid language code: "${String(code)}"`,
+              'INVALID_ENUM',
+            );
+          }
+        }
+      }
+
+      const countryCodes = this.validateLicenseCountryCodes(
+        item['countryCodes'],
+        `${prefix}.countryCodes`,
+        errors,
+      );
+      const excludedCountryCodes = this.validateLicenseCountryCodes(
+        item['excludedCountryCodes'],
+        `${prefix}.excludedCountryCodes`,
+        errors,
+      );
+
+      if (territoryScope === 'COUNTRY_LIST' && countryCodes.length === 0) {
+        addError(
+          errors,
+          `${prefix}.countryCodes`,
+          'countryCodes is required when territoryScope is COUNTRY_LIST',
+          'MISSING_FIELD',
+        );
+      }
+      if (territoryScope === 'EXCEPT_COUNTRY_LIST' && excludedCountryCodes.length === 0) {
+        addError(
+          errors,
+          `${prefix}.excludedCountryCodes`,
+          'excludedCountryCodes is required when territoryScope is EXCEPT_COUNTRY_LIST',
+          'MISSING_FIELD',
+        );
+      }
+
+      this.validateLicenseDate(item['grantedAt'], `${prefix}.grantedAt`, errors);
+      const effectiveFrom = this.validateLicenseDate(
+        item['effectiveFrom'],
+        `${prefix}.effectiveFrom`,
+        errors,
+      );
+      const expiresAt = this.validateLicenseDate(item['expiresAt'], `${prefix}.expiresAt`, errors);
+
+      if (effectiveFrom && expiresAt && expiresAt.getTime() <= effectiveFrom.getTime()) {
+        addError(
+          errors,
+          `${prefix}.expiresAt`,
+          'expiresAt must be later than effectiveFrom',
+          'INVALID_LICENSE_PERIOD',
+        );
+      }
+      if (item['isPerpetual'] === true && item['expiresAt']) {
+        addError(
+          errors,
+          `${prefix}.expiresAt`,
+          'expiresAt cannot be set for a perpetual license',
+          'PERPETUAL_WITH_EXPIRY',
+        );
+      }
+
+      if (item['attributionRequired'] === true && !item['requiredAttributionText']) {
+        addError(
+          errors,
+          `${prefix}.requiredAttributionText`,
+          'requiredAttributionText is required when attributionRequired is true',
+          'MISSING_FIELD',
+        );
+      }
+
+      const licenseConfidence = item['confidence'];
+      if (typeof licenseConfidence === 'string' && !isIn(VALID_CONFIDENCE, licenseConfidence)) {
+        addError(
+          errors,
+          `${prefix}.confidence`,
+          `Invalid confidence: "${licenseConfidence}"`,
+          'INVALID_ENUM',
+        );
+      }
+
+      const sourceEvidenceIds = item['sourceEvidenceIds'];
+      if (sourceEvidenceIds !== undefined && sourceEvidenceIds !== null) {
+        const isStringArray =
+          Array.isArray(sourceEvidenceIds) &&
+          sourceEvidenceIds.every((value) => typeof value === 'string');
+        if (!isStringArray) {
+          addError(
+            errors,
+            `${prefix}.sourceEvidenceIds`,
+            'sourceEvidenceIds must be an array of strings',
+            'INVALID_TYPE',
+          );
+        }
+      }
+
+      // Warnings
+      if (status === 'ACTIVE' && expiresAt && expiresAt.getTime() <= referenceDate.getTime()) {
+        addWarning(
+          warnings,
+          `${prefix}.expiresAt`,
+          'License is marked ACTIVE but already expired',
+          'LICENSE_ALREADY_EXPIRED',
+        );
+      } else if (expiresAt) {
+        const daysLeft = (expiresAt.getTime() - referenceDate.getTime()) / MS_PER_DAY;
+        if (daysLeft >= 0 && daysLeft <= LICENSE_EXPIRING_SOON_DAYS) {
+          addWarning(
+            warnings,
+            `${prefix}.expiresAt`,
+            `License expires within ${LICENSE_EXPIRING_SOON_DAYS} days`,
+            'LICENSE_EXPIRING_SOON',
+          );
+        }
+      }
+
+      if (
+        licenseType === 'OPEN_LICENSE' &&
+        !item['otherConditionsRu'] &&
+        !item['requiredAttributionText']
+      ) {
+        addWarning(
+          warnings,
+          prefix,
+          'OPEN_LICENSE has neither otherConditionsRu nor requiredAttributionText',
+          'OPEN_LICENSE_WITHOUT_TERMS',
+        );
+      }
+
+      if (typeof key === 'string' && key.trim() !== '') {
+        parsed.push({
+          key,
+          territoryScope: typeof territoryScope === 'string' ? territoryScope : undefined,
+          countryCodes,
+          excludedCountryCodes,
+          translationAllowed: item['translationAllowed'] === true,
+        });
+      }
+    }
+
+    return parsed;
+  }
+
+  private validateLicenseCountryCodes(
+    value: unknown,
+    path: string,
+    errors: ValidationIssue[],
+  ): string[] {
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value)) {
+      addError(errors, path, 'must be an array of ISO alpha-2 country codes', 'INVALID_TYPE');
+      return [];
+    }
+
+    const codes: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const code: unknown = value[i];
+      if (typeof code !== 'string' || !/^[A-Z]{2}$/.test(code)) {
+        addError(
+          errors,
+          `${path}[${i}]`,
+          `Invalid countryCode: "${String(code)}". Must be uppercase ISO alpha-2`,
+          'INVALID_COUNTRY_CODE',
+        );
+        continue;
+      }
+      codes.push(code);
+    }
+    return codes;
+  }
+
+  private validateLicenseDate(
+    value: unknown,
+    path: string,
+    errors: ValidationIssue[],
+  ): Date | null {
+    if (value === undefined || value === null) return null;
+    const parsed = this.parseReportDate(value);
+    if (!parsed) {
+      const shown = typeof value === 'string' ? value : typeof value;
+      addError(errors, path, `Invalid date: "${shown}"`, 'INVALID_DATE');
+      return null;
+    }
+    return parsed;
+  }
+
+  private parseReportDate(value: unknown): Date | null {
+    if (typeof value !== 'string' || value.trim() === '') return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  /**
+   * Checks every `licenseRef` / `licenseRefs` in the report against the declared license
+   * keys and reports missing refs where a licensed outcome demands one.
+   */
+  private validateLicenseReferences(
+    reportJson: Record<string, unknown>,
+    licenses: ParsedReportLicense[],
+    errors: ValidationIssue[],
+    warnings: ValidationIssue[],
+  ): void {
+    const knownKeys = new Set(licenses.map((license) => license.key));
+    const licensesByKey = new Map(licenses.map((license) => [license.key, license]));
+
+    const checkRef = (value: unknown, path: string): string | null => {
+      if (value === undefined || value === null) return null;
+      if (typeof value !== 'string') {
+        addError(errors, path, 'licenseRef must be a string', 'INVALID_TYPE');
+        return null;
+      }
+      if (!knownKeys.has(value)) {
+        addError(errors, path, `Unknown license key: "${value}"`, 'INVALID_REFERENCE');
+        return null;
+      }
+      return value;
+    };
+
+    const checkRefs = (value: unknown, path: string): string[] => {
+      if (value === undefined || value === null) return [];
+      if (!Array.isArray(value)) {
+        addError(errors, path, 'licenseRefs must be an array', 'INVALID_TYPE');
+        return [];
+      }
+      const resolved: string[] = [];
+      for (let i = 0; i < value.length; i++) {
+        const ref = checkRef(value[i], `${path}[${i}]`);
+        if (ref) resolved.push(ref);
+      }
+      return resolved;
+    };
+
+    const sourceAssessment = reportJson['sourceAssessment'];
+    if (sourceAssessment && typeof sourceAssessment === 'object') {
+      checkRefs(
+        (sourceAssessment as Record<string, unknown>)['licenseRefs'],
+        'sourceAssessment.licenseRefs',
+      );
+    }
+
+    const evidence = reportJson['evidence'];
+    if (Array.isArray(evidence)) {
+      for (let i = 0; i < evidence.length; i++) {
+        const item = evidence[i] as Record<string, unknown>;
+        if (!item || typeof item !== 'object') continue;
+        checkRef(item['licenseRef'], `evidence[${i}].licenseRef`);
+      }
+    }
+
+    const componentAssessments = reportJson['componentAssessments'];
+    if (Array.isArray(componentAssessments)) {
+      for (let i = 0; i < componentAssessments.length; i++) {
+        const ca = componentAssessments[i] as Record<string, unknown>;
+        if (!ca || typeof ca !== 'object') continue;
+        const prefix = `componentAssessments[${i}]`;
+
+        const componentRefs = checkRefs(ca['licenseRefs'], `${prefix}.licenseRefs`);
+        const hasRefs = Array.isArray(ca['licenseRefs']) && ca['licenseRefs'].length > 0;
+
+        if (
+          (ca['status'] === 'LICENSED' || ca['requiredAction'] === 'OBTAIN_LICENSE') &&
+          !hasRefs
+        ) {
+          addWarning(
+            warnings,
+            `${prefix}.licenseRefs`,
+            'Component is licensed or requires a license but has no licenseRefs',
+            'COMPONENT_LICENSED_WITHOUT_LICENSE_REF',
+          );
+        }
+
+        if (ca['componentType'] === 'TRANSLATION') {
+          for (const ref of componentRefs) {
+            if (licensesByKey.get(ref)?.translationAllowed === false) {
+              addWarning(
+                warnings,
+                `${prefix}.licenseRefs`,
+                `License "${ref}" does not allow translation but is referenced by a TRANSLATION component`,
+                'LICENSE_TRANSLATION_NOT_ALLOWED',
+              );
+            }
+          }
+        }
+
+        const territoryAssessments = ca['territoryAssessments'];
+        if (!Array.isArray(territoryAssessments)) continue;
+        for (let j = 0; j < territoryAssessments.length; j++) {
+          const ta = territoryAssessments[j] as Record<string, unknown>;
+          if (!ta || typeof ta !== 'object') continue;
+          const taPath = `${prefix}.territoryAssessments[${j}].licenseRef`;
+          checkRef(ta['licenseRef'], taPath);
+          if (ta['status'] === 'ALLOWED_BY_LICENSE' && !ta['licenseRef']) {
+            addError(
+              errors,
+              taPath,
+              'licenseRef is required when status is ALLOWED_BY_LICENSE',
+              'MISSING_LICENSE_REF',
+            );
+          }
+        }
+      }
+    }
+
+    const territoryDecisions = reportJson['territoryDecisions'];
+    if (Array.isArray(territoryDecisions)) {
+      for (let i = 0; i < territoryDecisions.length; i++) {
+        const td = territoryDecisions[i] as Record<string, unknown>;
+        if (!td || typeof td !== 'object') continue;
+        const path = `territoryDecisions[${i}].licenseRef`;
+        checkRef(td['licenseRef'], path);
+
+        if (td['finalStatus'] === 'ALLOWED_BY_LICENSE' && !td['licenseRef']) {
+          addError(
+            errors,
+            path,
+            'licenseRef is required when finalStatus is ALLOWED_BY_LICENSE',
+            'MISSING_LICENSE_REF',
+          );
+        }
+
+        if (td['finalStatus'] === 'LICENSE_REQUIRED') {
+          const countryCode = td['countryCode'];
+          const covered =
+            typeof countryCode === 'string' &&
+            licenses.some((license) => this.licenseCoversCountry(license, countryCode));
+          if (!covered) {
+            addWarning(
+              warnings,
+              `territoryDecisions[${i}]`,
+              `No declared license covers country "${String(countryCode)}" marked as LICENSE_REQUIRED`,
+              'LICENSE_REQUIRED_WITHOUT_LICENSE',
+            );
+          }
+        }
+      }
+    }
+
+    if (reportJson['overallStatus'] === 'LICENSE_REQUIRED' && licenses.length === 0) {
+      addWarning(
+        warnings,
+        'licenses',
+        'overallStatus is LICENSE_REQUIRED but the licenses block is empty',
+        'LICENSE_REQUIRED_NO_LICENSES_BLOCK',
+      );
+    }
+  }
+
+  private licenseCoversCountry(license: ParsedReportLicense, countryCode: string): boolean {
+    const code = countryCode.toUpperCase();
+    switch (license.territoryScope) {
+      case 'WORLDWIDE':
+        return true;
+      case 'COUNTRY_LIST':
+        return license.countryCodes.includes(code);
+      case 'EXCEPT_COUNTRY_LIST':
+        return !license.excludedCountryCodes.includes(code);
+      default:
+        return false;
+    }
   }
 
   private getComponentTerritoryCountryCodes(componentAssessments: unknown): Set<string> {

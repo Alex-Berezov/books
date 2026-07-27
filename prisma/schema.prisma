@@ -128,7 +128,15 @@ model BookVersion {
   rightsStaleReasonRu String? @db.Text
   rightsContentHashEvents RightsContentHashEvent[]
 
+  // Phase 15: License snapshot
+  rightsLicenseIds Json?
+  rightsLicenseCoverageStatus String?
+  rightsLicenseCheckedAt DateTime?
+  rightsLicenseUncoveredCountryCodes Json?
+  rightsLicenseAttributionTextRu String? @db.Text
+
   contributors BookVersionContributor[]
+  licenseLinks RightsLicenseLink[]
 
   @@unique([bookId, language])
   @@unique([language, slug])
@@ -142,6 +150,7 @@ model BookVersion {
   @@index([rightsRecheckRequired])
   @@index([rightsStaleDetectedAt])
   @@index([rightsGeoBlockVerifiedByUserId])
+  @@index([rightsLicenseCoverageStatus])
 }
 
 model BookSummary {
@@ -217,6 +226,10 @@ model User {
   rightsContentHashEvents RightsContentHashEvent[]
   verifiedGeoBlockRules GeoBlockRule[] @relation("GeoBlockRuleVerifiedBy")
   verifiedGeoBlockVersions BookVersion[] @relation("BookVersionGeoBlockVerifiedBy")
+  rightsLicensesCreated RightsLicense[] @relation("RightsLicenseCreatedBy")
+  rightsLicensesRevoked RightsLicense[] @relation("RightsLicenseRevokedBy")
+  rightsLicenseLinksCreated RightsLicenseLink[] @relation("RightsLicenseLinkCreatedBy")
+  rightsLicenseEventsCreated RightsLicenseEvent[] @relation("RightsLicenseEventCreatedBy")
 }
 
 
@@ -383,6 +396,7 @@ model MediaAsset {
   deletedAt    DateTime?
   audioChapters AudioChapter[]
   previewVersions BookVersion[] @relation("VersionPreviewMedia")
+  rightsLicenseDocuments RightsLicense[] @relation("RightsLicenseDocument")
 
   @@index([createdAt])
   @@index([hash])
@@ -758,6 +772,7 @@ model RightsProfile {
   actions RightsAction[]
   approvals RightsReviewApproval[]
   contributors RightsProfileContributor[]
+  licenseLinks RightsLicenseLink[]
 
   // Phase 6: Back-relations to Book/BookVersion
   books Book[] @relation("BookCurrentRightsProfile")
@@ -812,6 +827,7 @@ model SourceEdition {
   notesRu String? @db.Text
 
   editionRights EditionRights?
+  licenseLinks RightsLicenseLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -918,6 +934,7 @@ model RightsComponent {
 
   territoryAssessments ComponentTerritoryAssessment[]
   contributors         RightsProfileContributor[]
+  licenseLinks         RightsLicenseLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -944,6 +961,7 @@ model TerritoryDecision {
   confidence RightsConfidence
   nextReviewAt DateTime?
   geoBlockRules GeoBlockRule[]
+  licenseLinks RightsLicenseLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -974,6 +992,8 @@ model ComponentTerritoryAssessment {
   confidence RightsConfidence?
   notesRu String? @db.Text
 
+  licenseLinks RightsLicenseLink[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1003,6 +1023,8 @@ model RightsEvidence {
 
   relevantExcerpt String? @db.Text
   summaryRu String @db.Text
+
+  licenseLinks RightsLicenseLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1230,6 +1252,7 @@ enum RightsAccessPolicy {
 enum TerritoryRightsStatus {
   ALLOWED
   ALLOWED_AFTER_CHANGES
+  ALLOWED_BY_LICENSE
   BLOCKED
   LICENSE_REQUIRED
   PENDING_REVIEW
@@ -1584,4 +1607,219 @@ model BookRating {
 
   @@unique([userId, bookId])
   @@index([bookId])
+}
+
+// =====================
+// Phase 15: Rights Licenses
+// =====================
+
+enum RightsLicenseType {
+  DIRECT_LICENSE
+  DIRECT_PERMISSION
+  RIGHTS_ASSIGNMENT
+  WORK_FOR_HIRE
+  OPEN_LICENSE
+  PUBLIC_DOMAIN_DEDICATION
+  OTHER
+}
+
+enum RightsLicenseStatus {
+  DRAFT
+  PENDING
+  ACTIVE
+  EXPIRED
+  REVOKED
+  UNCERTAIN
+  SUPERSEDED
+}
+
+enum RightsLicenseTerritoryScope {
+  WORLDWIDE
+  COUNTRY_LIST
+  EXCEPT_COUNTRY_LIST
+  UNKNOWN
+}
+
+enum RightsLicenseMediaFormat {
+  TEXT_ONLINE
+  TEXT_DOWNLOAD
+  EBOOK
+  AUDIO_STREAMING
+  AUDIO_DOWNLOAD
+  IMAGE
+  PRINT
+  OTHER
+}
+
+enum RightsLicenseLinkType {
+  RIGHTS_PROFILE
+  RIGHTS_COMPONENT
+  COMPONENT_TERRITORY_ASSESSMENT
+  TERRITORY_DECISION
+  SOURCE_EDITION
+  RIGHTS_EVIDENCE
+  BOOK_VERSION
+}
+
+enum RightsLicenseEventType {
+  CREATED
+  UPDATED
+  ACTIVATED
+  REVOKED
+  EXPIRED
+  RENEWED
+  LINKED
+  UNLINKED
+  DOCUMENT_ATTACHED
+  IMPORTED_FROM_REVIEW
+}
+
+model RightsLicense {
+  id String @id @default(uuid())
+
+  licenseKey String? @unique
+
+  licenseType RightsLicenseType @default(DIRECT_LICENSE)
+  status      RightsLicenseStatus @default(DRAFT)
+
+  title        String
+  licensor     String
+  licensee     String?
+  rightsHolder String?
+  referenceNumber String?
+
+  grantedAt     DateTime?
+  effectiveFrom DateTime?
+  expiresAt     DateTime?
+  isPerpetual   Boolean @default(false)
+
+  territoryScope       RightsLicenseTerritoryScope @default(UNKNOWN)
+  countryCodes         Json?
+  excludedCountryCodes Json?
+  languageCodes        Json?
+  mediaFormats         Json?
+
+  commercialUseAllowed Boolean @default(false)
+  modificationAllowed  Boolean @default(false)
+  translationAllowed   Boolean @default(false)
+  sublicensingAllowed  Boolean @default(false)
+
+  attributionRequired     Boolean @default(false)
+  requiredAttributionText String? @db.Text
+
+  exclusive Boolean @default(false)
+  revocable Boolean @default(true)
+
+  revokedAt          DateTime?
+  revokedByUserId    String?
+  revokedByUser      User? @relation("RightsLicenseRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  revocationReasonRu String? @db.Text
+
+  royaltyTermsRu    String? @db.Text
+  otherConditionsRu String? @db.Text
+  notesRu           String? @db.Text
+
+  documentStorageKey   String?
+  documentSha256       String?
+  documentUrl          String?
+  documentMediaAssetId String?
+  documentMediaAsset   MediaAsset? @relation("RightsLicenseDocument", fields: [documentMediaAssetId], references: [id], onDelete: SetNull)
+
+  sourceEvidenceIds Json?
+  confidence        RightsConfidence?
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsLicenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  links  RightsLicenseLink[]
+  events RightsLicenseEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([licenseType])
+  @@index([territoryScope])
+  @@index([expiresAt])
+  @@index([effectiveFrom])
+  @@index([documentSha256])
+  @@index([createdByUserId])
+  @@index([revokedByUserId])
+  @@index([documentMediaAssetId])
+  @@index([createdAt])
+}
+
+model RightsLicenseLink {
+  id String @id @default(uuid())
+
+  rightsLicenseId String
+  rightsLicense   RightsLicense @relation(fields: [rightsLicenseId], references: [id], onDelete: Cascade)
+
+  linkType RightsLicenseLinkType
+
+  rightsProfileId String?
+  rightsProfile   RightsProfile? @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  rightsComponentId String?
+  rightsComponent   RightsComponent? @relation(fields: [rightsComponentId], references: [id], onDelete: Cascade)
+
+  componentTerritoryAssessmentId String?
+  componentTerritoryAssessment   ComponentTerritoryAssessment? @relation(fields: [componentTerritoryAssessmentId], references: [id], onDelete: Cascade)
+
+  territoryDecisionId String?
+  territoryDecision   TerritoryDecision? @relation(fields: [territoryDecisionId], references: [id], onDelete: Cascade)
+
+  sourceEditionId String?
+  sourceEdition   SourceEdition? @relation(fields: [sourceEditionId], references: [id], onDelete: Cascade)
+
+  rightsEvidenceId String?
+  rightsEvidence   RightsEvidence? @relation(fields: [rightsEvidenceId], references: [id], onDelete: Cascade)
+
+  bookVersionId String?
+  bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  coversCountryCodes Json?
+  notesRu String? @db.Text
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsLicenseLinkCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsLicenseId])
+  @@index([linkType])
+  @@index([rightsProfileId])
+  @@index([rightsComponentId])
+  @@index([componentTerritoryAssessmentId])
+  @@index([territoryDecisionId])
+  @@index([sourceEditionId])
+  @@index([rightsEvidenceId])
+  @@index([bookVersionId])
+  @@index([createdByUserId])
+}
+
+model RightsLicenseEvent {
+  id String @id @default(uuid())
+
+  rightsLicenseId String
+  rightsLicense   RightsLicense @relation(fields: [rightsLicenseId], references: [id], onDelete: Cascade)
+
+  eventType RightsLicenseEventType
+
+  previousStatus RightsLicenseStatus?
+  currentStatus  RightsLicenseStatus?
+
+  notesRu String? @db.Text
+  payload Json?
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsLicenseEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsLicenseId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([createdByUserId])
 }

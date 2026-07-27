@@ -100,11 +100,11 @@ describe('RightsIntakeManifestService', () => {
       expect(manifest.publicationPlan.plannedComponents).toEqual([]);
     });
 
-    it('includes manifestVersion = 1.0', async () => {
+    it('includes manifestVersion = 1.1', async () => {
       prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
 
       const manifest = await service.generate('intake-1');
-      expect(manifest.manifestVersion).toBe('1.0');
+      expect(manifest.manifestVersion).toBe('1.1');
     });
 
     it('includes expectedResultSchema.requiredTopLevelFields', async () => {

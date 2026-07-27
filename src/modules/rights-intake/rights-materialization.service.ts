@@ -267,6 +267,8 @@ export class RightsMaterializationService {
         create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
 
+      const importedByUserId = (importRecord['importedByUserId'] as string | null) ?? null;
+
       const profile = await rpTx.create({
         data: {
           rightsIntakeId: intakeId,
@@ -299,6 +301,14 @@ export class RightsMaterializationService {
         },
       });
 
+      // Phase 15: licenses are materialized before the entities that reference them,
+      // so every licenseRef resolves to an already-persisted license id.
+      const licenseIdByKey = await this.materializeLicenses(t, reportJson, {
+        rightsProfileId: profile['id'] as string,
+        rightsReviewImportId: importId,
+        importedByUserId,
+      });
+
       if (sourceAssessment) {
         const sourceEdition = await seTx.create({
           data: {
@@ -322,10 +332,19 @@ export class RightsMaterializationService {
             notesRu: (sourceAssessment['notesRu'] as string) ?? null,
           },
         });
+
+        await this.linkLicenses(t, licenseIdByKey, {
+          refs: sourceAssessment['licenseRefs'],
+          linkType: 'SOURCE_EDITION',
+          targetField: 'sourceEditionId',
+          targetId: sourceEdition['id'] as string,
+          createdByUserId: importedByUserId,
+        });
       }
 
       const aggregationComponents: ComponentTerritoryAggregationComponent[] = [];
       const createdComponentMap = new Map<string, string>();
+      const licenseRefByCountry = new Map<string, string>();
       let hasComponentTerritoryAssessments = false;
       if (componentAssessments && componentAssessments.length > 0) {
         for (let idx = 0; idx < componentAssessments.length; idx++) {
@@ -342,6 +361,14 @@ export class RightsMaterializationService {
             },
           });
           createdComponentMap.set(`comp-${idx}`, createdComponent['id'] as string);
+
+          await this.linkLicenses(t, licenseIdByKey, {
+            refs: component['licenseRefs'],
+            linkType: 'RIGHTS_COMPONENT',
+            targetField: 'rightsComponentId',
+            targetId: createdComponent['id'] as string,
+            createdByUserId: importedByUserId,
+          });
 
           const componentConfidence = component['confidence'] as ComponentTerritoryConfidence;
           const componentTerritoryAssessments = Array.isArray(component['territoryAssessments'])
@@ -372,12 +399,28 @@ export class RightsMaterializationService {
               notesRu: (assessment['notesRu'] as string) ?? null,
             };
 
-            await ctaTx.create({
+            const createdAssessment = await ctaTx.create({
               data: {
                 rightsComponentId: createdComponent['id'] as string,
                 ...normalizedAssessment,
               },
             });
+
+            const assessmentLicenseRef = assessment['licenseRef'];
+            if (typeof assessmentLicenseRef === 'string') {
+              // Remembered so an aggregated territory decision without its own licenseRef
+              // can still inherit the license that justified the country.
+              licenseRefByCountry.set(normalizedAssessment.countryCode, assessmentLicenseRef);
+              await this.linkLicenses(t, licenseIdByKey, {
+                refs: [assessmentLicenseRef],
+                linkType: 'COMPONENT_TERRITORY_ASSESSMENT',
+                targetField: 'componentTerritoryAssessmentId',
+                targetId: createdAssessment['id'] as string,
+                coversCountryCodes: [normalizedAssessment.countryCode],
+                createdByUserId: importedByUserId,
+              });
+            }
+
             normalizedAssessments.push(normalizedAssessment);
           }
 
@@ -408,9 +451,11 @@ export class RightsMaterializationService {
             ...territory,
           }));
 
+      const reportedLicenseRefByCountry = this.mapReportedTerritoryLicenseRefs(territoryDecisions);
+
       if (decisionsToCreate.length > 0) {
         for (const territory of decisionsToCreate) {
-          await tdTx.create({
+          const createdDecision = await tdTx.create({
             data: {
               rightsProfileId: profile['id'] as string,
               countryCode: territory.countryCode,
@@ -424,12 +469,29 @@ export class RightsMaterializationService {
               nextReviewAt: territory.nextReviewAt ?? null,
             },
           });
+
+          // Aggregated decisions lose the report-level licenseRef, so fall back to the
+          // license attached to the component assessment for the same country.
+          const decisionLicenseRef =
+            reportedLicenseRefByCountry.get(territory.countryCode) ??
+            licenseRefByCountry.get(territory.countryCode);
+
+          if (decisionLicenseRef) {
+            await this.linkLicenses(t, licenseIdByKey, {
+              refs: [decisionLicenseRef],
+              linkType: 'TERRITORY_DECISION',
+              targetField: 'territoryDecisionId',
+              targetId: createdDecision['id'] as string,
+              coversCountryCodes: [territory.countryCode],
+              createdByUserId: importedByUserId,
+            });
+          }
         }
       }
 
       if (evidence && evidence.length > 0) {
         for (const ev of evidence) {
-          await reTx.create({
+          const createdEvidence = await reTx.create({
             data: {
               rightsProfileId: profile['id'] as string,
               evidenceType: ev['evidenceType'] as string,
@@ -443,6 +505,16 @@ export class RightsMaterializationService {
               summaryRu: ev['summaryRu'] as string,
             },
           });
+
+          if (typeof ev['licenseRef'] === 'string') {
+            await this.linkLicenses(t, licenseIdByKey, {
+              refs: [ev['licenseRef']],
+              linkType: 'RIGHTS_EVIDENCE',
+              targetField: 'rightsEvidenceId',
+              targetId: createdEvidence['id'] as string,
+              createdByUserId: importedByUserId,
+            });
+          }
         }
       }
 
@@ -492,6 +564,215 @@ export class RightsMaterializationService {
     });
 
     return result;
+  }
+
+  /**
+   * Creates (or reuses) the licenses declared in the report and links each one to the profile.
+   * Reuse order: same `licenseKey`, then same non-empty `documentSha256`, otherwise a new row.
+   * A reused license is never overwritten — only its still-empty columns get filled in.
+   */
+  private async materializeLicenses(
+    t: Record<string, unknown>,
+    reportJson: Record<string, unknown>,
+    context: {
+      rightsProfileId: string;
+      rightsReviewImportId: string;
+      importedByUserId: string | null;
+    },
+  ): Promise<Map<string, string>> {
+    const licenseIdByKey = new Map<string, string>();
+    const licenses = reportJson['licenses'];
+    if (!Array.isArray(licenses) || licenses.length === 0) return licenseIdByKey;
+
+    const rlTx = t['rightsLicense'] as {
+      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+    const rleTx = t['rightsLicenseEvent'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    for (const raw of licenses) {
+      const license = raw as Record<string, unknown>;
+      const key = license['key'];
+      if (typeof key !== 'string' || key.trim() === '') continue;
+
+      const documentSha256 = (license['documentSha256'] as string | undefined) ?? null;
+      const data = this.buildLicenseData(license, key);
+
+      let existing = await rlTx.findFirst({ where: { licenseKey: key } });
+      if (!existing && documentSha256) {
+        existing = await rlTx.findFirst({ where: { documentSha256 } });
+      }
+
+      let licenseId: string;
+      if (existing) {
+        licenseId = existing['id'] as string;
+        const patch = this.buildLicenseBackfill(existing, data);
+        if (Object.keys(patch).length > 0) {
+          await rlTx.update({ where: { id: licenseId }, data: patch });
+        }
+      } else {
+        const created = await rlTx.create({
+          data: { ...data, createdByUserId: context.importedByUserId },
+        });
+        licenseId = created['id'] as string;
+      }
+
+      licenseIdByKey.set(key, licenseId);
+
+      await rleTx.create({
+        data: {
+          rightsLicenseId: licenseId,
+          eventType: 'IMPORTED_FROM_REVIEW',
+          currentStatus: data['status'] as string,
+          createdByUserId: context.importedByUserId,
+          payload: {
+            rightsProfileId: context.rightsProfileId,
+            rightsReviewImportId: context.rightsReviewImportId,
+          },
+        },
+      });
+
+      await this.linkLicenses(t, licenseIdByKey, {
+        refs: [key],
+        linkType: 'RIGHTS_PROFILE',
+        targetField: 'rightsProfileId',
+        targetId: context.rightsProfileId,
+        createdByUserId: context.importedByUserId,
+      });
+    }
+
+    return licenseIdByKey;
+  }
+
+  private buildLicenseData(license: Record<string, unknown>, key: string): Record<string, unknown> {
+    const readStringArray = (
+      value: unknown,
+      transform: (item: string) => string,
+    ): string[] | null =>
+      Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string').map(transform)
+        : null;
+
+    return {
+      licenseKey: key,
+      licenseType: (license['licenseType'] as string) ?? 'DIRECT_LICENSE',
+      status: (license['status'] as string) ?? 'DRAFT',
+      title: license['title'] as string,
+      licensor: license['licensor'] as string,
+      licensee: (license['licensee'] as string) ?? null,
+      rightsHolder: (license['rightsHolder'] as string) ?? null,
+      referenceNumber: (license['referenceNumber'] as string) ?? null,
+      grantedAt: this.parseDateOrNull(license['grantedAt']),
+      effectiveFrom: this.parseDateOrNull(license['effectiveFrom']),
+      expiresAt: this.parseDateOrNull(license['expiresAt']),
+      isPerpetual: (license['isPerpetual'] as boolean) ?? false,
+      territoryScope: (license['territoryScope'] as string) ?? 'UNKNOWN',
+      countryCodes: readStringArray(license['countryCodes'], (item) => item.toUpperCase()),
+      excludedCountryCodes: readStringArray(license['excludedCountryCodes'], (item) =>
+        item.toUpperCase(),
+      ),
+      languageCodes: readStringArray(license['languageCodes'], (item) => item.toLowerCase()),
+      mediaFormats: readStringArray(license['mediaFormats'], (item) => item),
+      commercialUseAllowed: (license['commercialUseAllowed'] as boolean) ?? false,
+      modificationAllowed: (license['modificationAllowed'] as boolean) ?? false,
+      translationAllowed: (license['translationAllowed'] as boolean) ?? false,
+      sublicensingAllowed: (license['sublicensingAllowed'] as boolean) ?? false,
+      attributionRequired: (license['attributionRequired'] as boolean) ?? false,
+      requiredAttributionText: (license['requiredAttributionText'] as string) ?? null,
+      exclusive: (license['exclusive'] as boolean) ?? false,
+      revocable: (license['revocable'] as boolean) ?? true,
+      royaltyTermsRu: (license['royaltyTermsRu'] as string) ?? null,
+      otherConditionsRu: (license['otherConditionsRu'] as string) ?? null,
+      notesRu: (license['notesRu'] as string) ?? null,
+      documentStorageKey: (license['documentStorageKey'] as string) ?? null,
+      documentSha256: (license['documentSha256'] as string) ?? null,
+      documentUrl: (license['documentUrl'] as string) ?? null,
+      sourceEvidenceIds: readStringArray(license['sourceEvidenceIds'], (item) => item),
+      confidence: (license['confidence'] as string) ?? null,
+    };
+  }
+
+  /** Only fills columns that are currently null/empty on the reused license. */
+  private buildLicenseBackfill(
+    existing: Record<string, unknown>,
+    data: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const patch: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(data)) {
+      if (value === null || value === undefined) continue;
+      const current = existing[field];
+      const isEmpty =
+        current === null ||
+        current === undefined ||
+        (Array.isArray(current) && current.length === 0);
+      if (isEmpty) patch[field] = value;
+    }
+    return patch;
+  }
+
+  /** Creates license links, skipping refs that were not materialized and existing duplicates. */
+  private async linkLicenses(
+    t: Record<string, unknown>,
+    licenseIdByKey: Map<string, string>,
+    options: {
+      refs: unknown;
+      linkType: string;
+      targetField: string;
+      targetId: string;
+      coversCountryCodes?: string[];
+      createdByUserId: string | null;
+    },
+  ): Promise<void> {
+    if (licenseIdByKey.size === 0) return;
+
+    const refs = Array.isArray(options.refs)
+      ? options.refs.filter((ref): ref is string => typeof ref === 'string')
+      : [];
+    if (refs.length === 0) return;
+
+    const rllTx = t['rightsLicenseLink'] as {
+      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    for (const ref of new Set(refs)) {
+      const rightsLicenseId = licenseIdByKey.get(ref);
+      if (!rightsLicenseId) continue;
+
+      const existing = await rllTx.findFirst({
+        where: { rightsLicenseId, [options.targetField]: options.targetId },
+      });
+      if (existing) continue;
+
+      await rllTx.create({
+        data: {
+          rightsLicenseId,
+          linkType: options.linkType,
+          [options.targetField]: options.targetId,
+          coversCountryCodes: options.coversCountryCodes ?? null,
+          createdByUserId: options.createdByUserId,
+        },
+      });
+    }
+  }
+
+  private mapReportedTerritoryLicenseRefs(
+    territoryDecisions: Array<Record<string, unknown>> | undefined,
+  ): Map<string, string> {
+    const refs = new Map<string, string>();
+    if (!Array.isArray(territoryDecisions)) return refs;
+
+    for (const decision of territoryDecisions) {
+      const countryCode = decision['countryCode'];
+      const licenseRef = decision['licenseRef'];
+      if (typeof countryCode === 'string' && typeof licenseRef === 'string') {
+        refs.set(countryCode.toUpperCase(), licenseRef);
+      }
+    }
+    return refs;
   }
 
   private mapExistingTerritoryDecisions(

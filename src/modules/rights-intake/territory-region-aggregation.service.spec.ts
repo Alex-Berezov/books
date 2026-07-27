@@ -135,4 +135,42 @@ describe('TerritoryRegionAggregationService', () => {
     expect(otherRegion).toBeDefined();
     expect(otherRegion?.countries.map((c) => c.countryCode)).toEqual(['JP']);
   });
+  // Phase 15: ALLOWED_BY_LICENSE counts as allowed and is tracked separately
+  it('counts ALLOWED_BY_LICENSE countries as allowed and licensed', () => {
+    const decisions = [
+      {
+        countryCode: 'US',
+        finalStatus: 'ALLOWED_BY_LICENSE',
+        accessPolicy: 'ALLOW',
+        geoBlockRequired: false,
+        reasonRu: 'Публикация разрешена на основании лицензии.',
+      },
+    ];
+
+    const result = service.aggregateTerritoryDecisions(decisions);
+    const usRegion = result.find((r) => r.regionCode === 'US');
+
+    expect(usRegion?.status).toBe('ALLOWED');
+    expect(usRegion?.allowedCountryCount).toBe(1);
+    expect(usRegion?.licensedCountryCount).toBe(1);
+    expect(usRegion?.blockingReasons).toHaveLength(0);
+  });
+
+  it('does not count a licensed country that is nevertheless blocked', () => {
+    const decisions = [
+      {
+        countryCode: 'GB',
+        finalStatus: 'ALLOWED_BY_LICENSE',
+        accessPolicy: 'BLOCK',
+        geoBlockRequired: true,
+        reasonRu: 'Лицензия отозвана.',
+      },
+    ];
+
+    const result = service.aggregateTerritoryDecisions(decisions);
+    const ukRegion = result.find((r) => r.regionCode === 'UK');
+
+    expect(ukRegion?.licensedCountryCount).toBe(0);
+    expect(ukRegion?.blockedCountryCount).toBe(1);
+  });
 });

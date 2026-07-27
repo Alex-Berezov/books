@@ -3,6 +3,7 @@ import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -137,9 +138,32 @@ describe('BookVersionService', () => {
     Pick<PublicationGateService, 'assertVersionCanPublish' | 'checkVersionCanPublish'>
   >;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
+  let licenseCoverageService: {
+    loadLicensesForProfile: jest.Mock;
+    effectiveStatus: jest.Mock;
+    isActiveAt: jest.Mock;
+    evaluateVersionCoverage: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    licenseCoverageService = {
+      loadLicensesForProfile: jest.fn().mockResolvedValue([]),
+      effectiveStatus: jest.fn().mockReturnValue('ACTIVE'),
+      isActiveAt: jest.fn().mockReturnValue(true),
+      evaluateVersionCoverage: jest.fn().mockResolvedValue({
+        status: 'NOT_REQUIRED',
+        checkedAt: new Date().toISOString(),
+        requiredCountryCodes: [],
+        coveredCountryCodes: [],
+        uncoveredCountryCodes: [],
+        countries: [],
+        licenseIds: [],
+        blockers: [],
+        warnings: [],
+        attributionTextsRu: [],
+      }),
+    };
     gateService = {
       assertVersionCanPublish: jest.fn().mockResolvedValue(undefined),
       checkVersionCanPublish: jest.fn(),
@@ -157,6 +181,7 @@ describe('BookVersionService', () => {
       {
         assertAccess: jest.fn(),
       } as unknown as GeoBlockRuleService,
+      licenseCoverageService as unknown as RightsLicenseCoverageService,
       new TerritoryRegionAggregationService(),
     );
   });
@@ -829,6 +854,99 @@ describe('BookVersionService', () => {
       );
       expect(res.reviewHistory).toHaveLength(1);
       expect(res.approvalHistory).toHaveLength(1);
+    });
+    // Phase 15: license metrics in the dashboard summary
+    it('returns license metrics and coverage in the dashboard summary', async () => {
+      const licenseRow = {
+        id: 'lic-1',
+        title: 'Лицензия на перевод',
+        licensor: 'Penguin',
+        licenseType: 'DIRECT_LICENSE',
+        status: 'ACTIVE',
+        territoryScope: 'COUNTRY_LIST',
+        expiresAt: null,
+        isPerpetual: true,
+        attributionRequired: true,
+      };
+
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        id: 'v1',
+        bookId: 'b1',
+        language: 'en',
+        type: 'text',
+        status: 'draft',
+        title: 'Title EN',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: null,
+        rightsStatus: 'APPROVED_WITH_LICENSES',
+        rightsGeoBlockRequired: false,
+        rightsGeoBlockConfigured: false,
+        rightsRecheckRequired: false,
+        rightsLicenseCoverageStatus: 'COVERED',
+        rightsLicenseCheckedAt: new Date('2026-07-28T00:00:00Z'),
+        rightsLicenseIds: ['lic-1'],
+        book: {
+          id: 'b1',
+          slug: 'book',
+          rightsIntakeId: null,
+          currentRightsProfileId: 'profile-1',
+          approvedRightsReviewId: null,
+          rightsCreatedAt: null,
+        },
+      });
+      (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue(null);
+      prisma.rightsReviewApproval.findMany.mockResolvedValue([]);
+      prisma.rightsProfile.findUnique.mockResolvedValue({
+        id: 'profile-1',
+        overallStatus: 'PUBLISHABLE',
+        confidence: 'HIGH',
+        components: [],
+        territoryDecisions: [],
+        evidence: [],
+        actions: [],
+        contributors: [],
+      });
+      prisma.rightsReview.findMany.mockResolvedValue([]);
+
+      (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
+        canPublish: true,
+        blockingReasons: [],
+        warnings: [],
+      });
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockResolvedValue({
+        matchesBaseline: true,
+        isStale: false,
+        recheckRequired: false,
+      });
+
+      licenseCoverageService.loadLicensesForProfile.mockResolvedValue([licenseRow]);
+      licenseCoverageService.evaluateVersionCoverage.mockResolvedValue({
+        status: 'COVERED',
+        checkedAt: '2026-07-28T00:00:00.000Z',
+        requiredCountryCodes: ['ES'],
+        coveredCountryCodes: ['ES'],
+        uncoveredCountryCodes: [],
+        countries: [],
+        licenseIds: ['lic-1'],
+        blockers: [],
+        warnings: [],
+        attributionTextsRu: ['© Penguin Random House, 2019'],
+      });
+
+      const res = await service.getRightsDashboard('v1');
+
+      expect(res.summary.licensesCount).toBe(1);
+      expect(res.summary.activeLicensesCount).toBe(1);
+      expect(res.summary.expiredLicensesCount).toBe(0);
+      expect(res.summary.revokedLicensesCount).toBe(0);
+      expect(res.summary.attributionRequiredLicensesCount).toBe(1);
+      expect(res.summary.licenseCoverageStatus).toBe('COVERED');
+      expect(res.summary.licenseCoveredCountriesCount).toBe(1);
+      expect(res.summary.licenseUncoveredCountriesCount).toBe(0);
+      expect(res.currentProfile?.['licenses'] as unknown[]).toHaveLength(1);
+      expect(res.currentVersion.rightsLicenseCoverageStatus).toBe('COVERED');
+      expect(res.currentVersion.rightsLicenseIds).toEqual(['lic-1']);
     });
   });
 });

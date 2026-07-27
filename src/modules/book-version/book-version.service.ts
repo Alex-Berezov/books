@@ -14,6 +14,8 @@ import { ReorderBookVersionContributorsDto } from './dto/reorder-version-contrib
 import { randomUUID } from 'crypto';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
+import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
 
 interface BookWithRights {
   id: string;
@@ -51,6 +53,7 @@ export class BookVersionService {
     private publicationGateService: PublicationGateService,
     private rightsContentHashService: RightsContentHashService,
     private geoBlockRuleService: GeoBlockRuleService,
+    private licenseCoverageService: RightsLicenseCoverageService,
     private regionAggregationService?: TerritoryRegionAggregationService,
   ) {}
 
@@ -524,10 +527,51 @@ export class BookVersionService {
     const narratorsCount = profileContributors.filter((c) => c['role'] === 'NARRATOR').length;
     const contributorsWithoutPersonCount = profileContributors.filter((c) => !c['personId']).length;
 
+    // Phase 15: licenses reachable from the profile plus the version's own coverage
+    const profileLicenses = profileId
+      ? await this.licenseCoverageService.loadLicensesForProfile(profileId)
+      : [];
+    const licenseCoverage = await this.licenseCoverageService.evaluateVersionCoverage(versionId);
+    const licenseCheckedAt = new Date();
+    const licenseSummaries = profileLicenses.map((license) => ({
+      id: license.id,
+      title: license.title,
+      licensor: license.licensor,
+      licenseType: license.licenseType,
+      status: license.status,
+      effectiveStatus: this.licenseCoverageService.effectiveStatus(license, licenseCheckedAt),
+      territoryScope: license.territoryScope,
+      expiresAt: license.expiresAt ? license.expiresAt.toISOString() : null,
+      isPerpetual: license.isPerpetual,
+      attributionRequired: license.attributionRequired,
+    }));
+
+    const activeLicensesCount = licenseSummaries.filter(
+      (l) => l.effectiveStatus === RightsLicenseStatus.ACTIVE,
+    ).length;
+    const expiredLicensesCount = licenseSummaries.filter(
+      (l) => l.effectiveStatus === RightsLicenseStatus.EXPIRED,
+    ).length;
+    const revokedLicensesCount = licenseSummaries.filter(
+      (l) => l.effectiveStatus === RightsLicenseStatus.REVOKED,
+    ).length;
+    const expiringSoonLicensesCount = profileLicenses.filter((license) => {
+      if (license.isPerpetual || !license.expiresAt) return false;
+      if (!this.licenseCoverageService.isActiveAt(license, licenseCheckedAt)) return false;
+      const daysLeft =
+        (license.expiresAt.getTime() - licenseCheckedAt.getTime()) / (24 * 60 * 60 * 1000);
+      return daysLeft >= 0 && daysLeft <= 90;
+    }).length;
+    const attributionRequiredLicensesCount = licenseSummaries.filter(
+      (l) => l.attributionRequired,
+    ).length;
+
     if (currentProfile) {
       currentProfile = {
         ...currentProfile,
         regionalTerritorySummary,
+        licenses: licenseSummaries,
+        licenseCoverage,
       };
     }
 
@@ -590,6 +634,14 @@ export class BookVersionService {
           : null,
         rightsStaleReasonCode: version.rightsStaleReasonCode,
         rightsStaleReasonRu: version.rightsStaleReasonRu,
+        rightsLicenseCoverageStatus:
+          (versionRecord['rightsLicenseCoverageStatus'] as string | null) ?? null,
+        rightsLicenseCheckedAt: versionRecord['rightsLicenseCheckedAt']
+          ? (versionRecord['rightsLicenseCheckedAt'] as Date).toISOString()
+          : null,
+        rightsLicenseIds: Array.isArray(versionRecord['rightsLicenseIds'])
+          ? (versionRecord['rightsLicenseIds'] as string[])
+          : null,
       },
       versions: bookVersions.map((v) => ({
         id: v.id,
@@ -645,6 +697,15 @@ export class BookVersionService {
         pendingReviewRegionCount,
         mixedRegionCount,
         notTargetedRegionCount,
+        licensesCount: licenseSummaries.length,
+        activeLicensesCount,
+        expiredLicensesCount,
+        revokedLicensesCount,
+        expiringSoonLicensesCount,
+        attributionRequiredLicensesCount,
+        licenseCoverageStatus: licenseCoverage.status,
+        licenseCoveredCountriesCount: licenseCoverage.coveredCountryCodes.length,
+        licenseUncoveredCountriesCount: licenseCoverage.uncoveredCountryCodes.length,
       },
     };
   }
@@ -777,9 +838,26 @@ export class BookVersionService {
 
     await this.publicationGateService.assertVersionCanPublish(id);
 
+    // Phase 15: record which licenses justified this publication, so a later revocation
+    // or expiry can be traced back to what was relied on at publish time.
+    const coverage = await this.licenseCoverageService.evaluateVersionCoverage(id);
+    const existingAttribution = (existing as unknown as { rightsLicenseAttributionTextRu?: string })
+      .rightsLicenseAttributionTextRu;
+
     return this.prisma.bookVersion.update({
       where: { id },
-      data: { status: 'published', publishedAt: new Date() },
+      data: {
+        status: 'published',
+        publishedAt: new Date(),
+        rightsLicenseIds: coverage.licenseIds,
+        rightsLicenseCoverageStatus: coverage.status,
+        rightsLicenseCheckedAt: new Date(),
+        rightsLicenseUncoveredCountryCodes: coverage.uncoveredCountryCodes,
+        rightsLicenseAttributionTextRu:
+          existingAttribution && existingAttribution.trim() !== ''
+            ? existingAttribution
+            : coverage.attributionTextsRu.join('\n') || null,
+      } as unknown as Prisma.BookVersionUpdateInput,
       include: { seo: true },
     });
   }

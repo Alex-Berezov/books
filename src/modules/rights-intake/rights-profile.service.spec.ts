@@ -1,6 +1,8 @@
 import { RightsProfileService } from './rights-profile.service';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
+import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
 import { NotFoundException } from '@nestjs/common';
 
 interface PrismaStub {
@@ -24,6 +26,9 @@ const createPrismaStub = (): PrismaStub => {
   stub['rightsEvidence'] = { findMany: jest.fn() };
   stub['rightsAction'] = { findMany: jest.fn() };
   stub['rightsProfileContributor'] = { findMany: jest.fn().mockResolvedValue([]) };
+  stub['rightsLicense'] = { findMany: jest.fn().mockResolvedValue([]) };
+  stub['rightsLicenseLink'] = { findMany: jest.fn().mockResolvedValue([]) };
+  stub['bookVersion'] = { findUnique: jest.fn().mockResolvedValue(null) };
 
   return stub as unknown as PrismaStub;
 };
@@ -54,9 +59,12 @@ describe('RightsProfileService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    const coverageService = new RightsLicenseCoverageService(prisma as unknown as PrismaService);
     service = new RightsProfileService(
       prisma as unknown as PrismaService,
       new TerritoryRegionAggregationService(),
+      new RightsLicensesService(prisma as unknown as PrismaService, coverageService),
+      coverageService,
     );
   });
 
@@ -284,6 +292,109 @@ describe('RightsProfileService', () => {
       (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
 
       await expect(service.getById('missing-profile')).rejects.toThrow(NotFoundException);
+    });
+  });
+  // Phase 15: licenses in profile detail
+  describe('licenses', () => {
+    const makeLicenseRow = () => ({
+      id: 'lic-1',
+      licenseKey: 'license:penguin-2019',
+      licenseType: 'DIRECT_LICENSE',
+      status: 'ACTIVE',
+      title: 'Лицензия на перевод',
+      licensor: 'Penguin Random House',
+      licensee: null,
+      rightsHolder: null,
+      referenceNumber: null,
+      grantedAt: null,
+      effectiveFrom: null,
+      expiresAt: null,
+      isPerpetual: true,
+      territoryScope: 'COUNTRY_LIST',
+      countryCodes: ['ES'],
+      excludedCountryCodes: null,
+      languageCodes: ['es'],
+      mediaFormats: null,
+      commercialUseAllowed: true,
+      modificationAllowed: false,
+      translationAllowed: true,
+      sublicensingAllowed: false,
+      attributionRequired: false,
+      requiredAttributionText: null,
+      exclusive: false,
+      revocable: true,
+      revokedAt: null,
+      revokedByUserId: null,
+      revocationReasonRu: null,
+      confidence: null,
+      createdAt: new Date('2026-07-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+    });
+
+    it('returns licenses, coverage and metrics in the profile detail', async () => {
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        {
+          id: 'component-1',
+          rightsProfileId: 'profile-1',
+          componentType: 'TRANSLATION',
+          titleRu: 'Перевод',
+          status: 'LICENSED',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          territoryAssessments: [],
+          createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+        },
+      ]);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        {
+          id: 'decision-1',
+          rightsProfileId: 'profile-1',
+          countryCode: 'ES',
+          finalStatus: 'ALLOWED_BY_LICENSE',
+          accessPolicy: 'ALLOW',
+          geoBlockRequired: false,
+          geoBlockScope: null,
+          reasonRu: 'Публикация разрешена на основании лицензии.',
+          legalBasisRu: null,
+          confidence: 'HIGH',
+          nextReviewAt: null,
+          createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+        },
+      ]);
+      (prisma['rightsEvidence'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsLicenseLink'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        {
+          rightsLicenseId: 'lic-1',
+          rightsComponentId: 'component-1',
+          componentTerritoryAssessmentId: null,
+          rightsLicense: makeLicenseRow(),
+        },
+      ]);
+      (prisma['rightsLicense'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        makeLicenseRow(),
+      ]);
+
+      const result = await service.getById('profile-1');
+
+      expect(result.licenses).toHaveLength(1);
+      expect(result.licenses?.[0].effectiveStatus).toBe('ACTIVE');
+      expect(result.licensesCount).toBe(1);
+      expect(result.activeLicensesCount).toBe(1);
+      expect(result.expiredLicensesCount).toBe(0);
+      expect(result.revokedLicensesCount).toBe(0);
+      expect(result.licenseCoverage?.status).toBe('COVERED');
+      expect(result.licenseRequiredCountriesCount).toBe(1);
+      expect(result.licenseCoveredCountriesCount).toBe(1);
+      expect(result.licenseUncoveredCountriesCount).toBe(0);
+      expect(result.components[0].licenses).toHaveLength(1);
     });
   });
 });

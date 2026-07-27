@@ -6,6 +6,7 @@ export type ComponentTerritoryConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
 export type ComponentTerritoryFinalStatus =
   | 'ALLOWED'
   | 'ALLOWED_AFTER_CHANGES'
+  | 'ALLOWED_BY_LICENSE'
   | 'BLOCKED'
   | 'LICENSE_REQUIRED'
   | 'PENDING_REVIEW'
@@ -198,15 +199,25 @@ export class ComponentTerritoryAggregationService {
       return this.createReviewDecision(input.rightsProfileId, countryCode, problems);
     }
 
+    // Phase 15: a country cleared only thanks to a license is reported as such, so the
+    // editor sees that publication there depends on the license staying valid.
+    const licensed = assessments.filter(
+      ({ assessment }) => assessment.status === 'ALLOWED_BY_LICENSE',
+    );
+    const licensedTitles = licensed.map(({ component }) => `«${component.titleRu}»`).join(', ');
+
     return {
       rightsProfileId: input.rightsProfileId,
       countryCode,
-      finalStatus: 'ALLOWED',
+      finalStatus: licensed.length > 0 ? 'ALLOWED_BY_LICENSE' : 'ALLOWED',
       accessPolicy: 'ALLOW',
       geoBlockRequired: false,
       geoBlockScope: null,
-      reasonRu: `Все проверенные компоненты разрешены для страны ${countryCode}.`,
-      legalBasisRu: null,
+      reasonRu:
+        licensed.length > 0
+          ? `Публикация разрешена на основании лицензии. Лицензированные компоненты: ${licensedTitles}.`
+          : `Все проверенные компоненты разрешены для страны ${countryCode}.`,
+      legalBasisRu: this.joinUnique(licensed.map(({ assessment }) => assessment.legalBasisRu)),
       confidence: this.getMinimumConfidence(
         assessments.map(
           ({ component, assessment }) => assessment.confidence ?? component.confidence,

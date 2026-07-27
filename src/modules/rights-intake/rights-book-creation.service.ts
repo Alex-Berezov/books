@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
 import { RightsContentHashService } from './rights-content-hash.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class RightsBookCreationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rightsContentHashService: RightsContentHashService,
+    private readonly licenseCoverageService: RightsLicenseCoverageService,
   ) {}
 
   private get ri() {
@@ -170,7 +172,8 @@ export class RightsBookCreationService {
       const accessPolicy = td['accessPolicy'] as string;
       const finalStatus = td['finalStatus'] as string;
 
-      if (accessPolicy === 'ALLOW') {
+      // Phase 15: a country cleared by license is an allowed market, not a pending one.
+      if (accessPolicy === 'ALLOW' || finalStatus === 'ALLOWED_BY_LICENSE') {
         allowedCountries.push(countryCode);
       } else if (accessPolicy === 'BLOCK' || finalStatus === 'BLOCKED') {
         blockedCountries.push(countryCode);
@@ -199,10 +202,31 @@ export class RightsBookCreationService {
       isBlocking: a['isBlocking'] as boolean,
     }));
 
+    // 17b. Phase 15: evaluate license coverage per version (language and format differ)
+    const licenses = await this.licenseCoverageService.loadLicensesForProfile(profileId);
+    const checkedAt = new Date();
+    const coverageByVersion = dto.versions.map((versionDto) =>
+      this.licenseCoverageService.evaluateCoverage({
+        requiredCountryCodes: licenseRequiredCountries,
+        languageCode: versionDto.language,
+        requiredMediaFormats: this.licenseCoverageService.mediaFormatsForVersionType(
+          versionDto.type,
+        ),
+        licenses,
+        at: checkedAt,
+      }),
+    );
+    const allVersionsLicensed =
+      licenseRequiredCountries.length > 0 &&
+      coverageByVersion.length > 0 &&
+      coverageByVersion.every((coverage) => coverage.status === 'COVERED');
+
     // 18. Compute rights status
     let rightsStatus = 'APPROVED';
     if (profile['publicationGate'] === 'ALLOW_AFTER_GEO_CONFIGURATION') {
       rightsStatus = 'APPROVED_WITH_GEO_RESTRICTIONS';
+    } else if (allVersionsLicensed) {
+      rightsStatus = 'APPROVED_WITH_LICENSES';
     } else if (licenseRequiredCountries.length > 0) {
       rightsStatus = 'APPROVED_WITH_LICENSE_LIMITATIONS';
     } else if (pendingCountries.length > 0) {
@@ -236,8 +260,15 @@ export class RightsBookCreationService {
       const bookId = book['id'] as string;
 
       // Create BookVersions
+      const rllTx = t['rightsLicenseLink'] as {
+        findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+        create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      };
+
       const versions: Array<Record<string, unknown>> = [];
-      for (const versionDto of dto.versions) {
+      for (let versionIndex = 0; versionIndex < dto.versions.length; versionIndex++) {
+        const versionDto = dto.versions[versionIndex];
+        const coverage = coverageByVersion[versionIndex];
         const version = await bvTx.create({
           data: {
             bookId,
@@ -265,6 +296,12 @@ export class RightsBookCreationService {
             rightsGeoBlockConfigured: false,
             rightsGeoBlockConfiguredAt: null,
             rightsGeoBlockNotesRu: null,
+            // Phase 15: license snapshot
+            rightsLicenseIds: coverage.licenseIds,
+            rightsLicenseCoverageStatus: coverage.status,
+            rightsLicenseCheckedAt: checkedAt,
+            rightsLicenseUncoveredCountryCodes: coverage.uncoveredCountryCodes,
+            rightsLicenseAttributionTextRu: coverage.attributionTextsRu.join('\n') || null,
             originalLanguage:
               versionDto.originalLanguage ?? (intake['originalLanguage'] as string | null),
             originalTitle: versionDto.originalTitle ?? (intake['originalTitle'] as string | null),
@@ -279,6 +316,24 @@ export class RightsBookCreationService {
             coverAlt: versionDto.coverAlt ?? null,
           },
         });
+
+        // Carry the licenses that justified this version onto the version itself, so the
+        // publication gate can find them without walking back to the profile.
+        for (const rightsLicenseId of coverage.licenseIds) {
+          const existingLink = await rllTx.findFirst({
+            where: { rightsLicenseId, bookVersionId: version['id'] as string },
+          });
+          if (existingLink) continue;
+
+          await rllTx.create({
+            data: {
+              rightsLicenseId,
+              linkType: 'BOOK_VERSION',
+              bookVersionId: version['id'] as string,
+            },
+          });
+        }
+
         versions.push(version);
       }
 

@@ -42,6 +42,7 @@ import { SecurityModule } from './shared/security/security.module';
 import { GeoBlockModule } from './modules/geo-block/geo-block.module';
 import { ContributorsModule } from './modules/contributors/contributors.module';
 import { PersonsModule } from './modules/persons/persons.module';
+import { RightsLicensesModule } from './modules/rights-licenses/rights-licenses.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 console.log(`[AppModule] Serving static files from: ${staticRoot}`);
@@ -90,6 +91,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     GeoBlockModule,
     ContributorsModule,
     PersonsModule,
+    RightsLicensesModule,
     // ...other modules
   ],
   controllers: [AppController],
