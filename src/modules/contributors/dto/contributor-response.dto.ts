@@ -1,106 +1,81 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ContributorIdentityConfidenceDto, ContributorRoleDto } from './create-contributor.dto';
+import { ContributorRole } from '../../persons/person-interface';
 
-export class SourceEditionContributorResponseDto {
+/**
+ * Связь участника с rights profile или его компонентом.
+ * Физически хранится в таблице RightsProfileContributor (см. фазу 14).
+ */
+export class ContributorLinkResponseDto {
   @ApiProperty()
   id!: string;
 
   @ApiProperty()
-  sourceEditionId!: string;
+  rightsProfileId!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  rightsComponentId?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  personId?: string | null;
+
+  @ApiProperty({ enum: ContributorRole })
+  role!: ContributorRole;
 
   @ApiProperty()
-  contributorId!: string;
+  displayName!: string;
 
-  @ApiProperty({ enum: ContributorRoleDto })
-  role!: ContributorRoleDto;
+  @ApiPropertyOptional({ nullable: true })
+  creditedName?: string | null;
 
-  @ApiPropertyOptional()
-  creditedName?: string;
-
-  @ApiPropertyOptional()
-  evidenceId?: string;
-
-  @ApiPropertyOptional()
-  notesRu?: string;
-
-  @ApiProperty()
-  createdAt!: Date;
-}
-
-export class RightsComponentContributorResponseDto {
-  @ApiProperty()
-  id!: string;
-
-  @ApiProperty()
-  rightsComponentId!: string;
-
-  @ApiProperty()
-  contributorId!: string;
-
-  @ApiProperty({ enum: ContributorRoleDto })
-  role!: ContributorRoleDto;
-
-  @ApiPropertyOptional()
-  creditedName?: string;
-
-  @ApiPropertyOptional()
-  notesRu?: string;
+  @ApiPropertyOptional({ nullable: true })
+  notesRu?: string | null;
 
   @ApiProperty()
   createdAt!: Date;
 }
 
 export class ContributorResponseDto {
-  @ApiProperty()
+  @ApiProperty({ description: 'Person ID — участники хранятся в справочнике Person' })
   id!: string;
 
   @ApiProperty()
   displayName!: string;
 
-  @ApiPropertyOptional()
-  originalName?: string;
+  @ApiPropertyOptional({ nullable: true })
+  sortName?: string | null;
 
-  @ApiPropertyOptional()
-  birthDate?: Date;
+  @ApiPropertyOptional({ nullable: true })
+  birthDate?: string | null;
 
-  @ApiPropertyOptional()
-  deathDate?: Date;
+  @ApiPropertyOptional({ nullable: true })
+  deathDate?: string | null;
 
-  @ApiPropertyOptional()
-  birthYear?: number;
+  @ApiPropertyOptional({ nullable: true })
+  birthYear?: number | null;
 
-  @ApiPropertyOptional()
-  deathYear?: number;
+  @ApiPropertyOptional({ nullable: true })
+  deathYear?: number | null;
 
-  @ApiPropertyOptional()
-  nationalityCountry?: string;
+  @ApiPropertyOptional({ nullable: true, description: '2-letter country code' })
+  nationalityCountry?: string | null;
 
-  @ApiPropertyOptional()
-  pseudonym?: string;
+  @ApiPropertyOptional({ nullable: true })
+  publicDomainFromYear?: number | null;
 
-  @ApiPropertyOptional()
-  viafId?: string;
+  @ApiPropertyOptional({ nullable: true })
+  wikidataId?: string | null;
 
-  @ApiPropertyOptional()
-  locAuthorityId?: string;
+  @ApiPropertyOptional({ nullable: true })
+  viafId?: string | null;
 
-  @ApiPropertyOptional()
-  otherAuthorityIds?: Record<string, unknown>;
+  @ApiPropertyOptional({ nullable: true })
+  isni?: string | null;
 
-  @ApiProperty({ enum: ContributorIdentityConfidenceDto })
-  identityConfidence!: ContributorIdentityConfidenceDto;
+  @ApiPropertyOptional({ nullable: true })
+  gutenbergAgentId?: string | null;
 
-  @ApiPropertyOptional()
-  notesRu?: string;
-
-  @ApiPropertyOptional()
-  authorId?: string;
-
-  @ApiPropertyOptional({ type: [SourceEditionContributorResponseDto] })
-  sourceEditionContributors?: SourceEditionContributorResponseDto[];
-
-  @ApiPropertyOptional({ type: [RightsComponentContributorResponseDto] })
-  rightsComponentContributors?: RightsComponentContributorResponseDto[];
+  @ApiPropertyOptional({ nullable: true })
+  notesRu?: string | null;
 
   @ApiProperty()
   createdAt!: Date;
@@ -121,7 +96,4 @@ export class ContributorListResponseDto {
 
   @ApiProperty()
   limit!: number;
-
-  @ApiProperty()
-  totalPages!: number;
 }

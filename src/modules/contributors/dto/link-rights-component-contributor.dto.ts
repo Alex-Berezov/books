@@ -1,18 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
-import { ContributorRoleDto } from './create-contributor.dto';
+import { ContributorRole } from '../../persons/person-interface';
 
 export class LinkRightsComponentContributorDto {
-  @ApiProperty({ description: 'ID of the contributor to link' })
+  @ApiProperty({ description: 'ID of the person to link as contributor' })
   @IsUUID()
   contributorId!: string;
 
   @ApiProperty({
-    enum: ContributorRoleDto,
+    enum: ContributorRole,
     description: 'Role of the contributor for this rights component',
   })
-  @IsEnum(ContributorRoleDto)
-  role!: ContributorRoleDto;
+  @IsEnum(ContributorRole)
+  role!: ContributorRole;
 
   @ApiPropertyOptional({ description: 'Credited name' })
   @IsOptional()

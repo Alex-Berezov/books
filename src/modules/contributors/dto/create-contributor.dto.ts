@@ -1,56 +1,25 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsDateString,
-  IsEnum,
-  IsInt,
-  IsObject,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Max,
-  Min,
-} from 'class-validator';
-
-export enum ContributorRoleDto {
-  AUTHOR = 'AUTHOR',
-  TRANSLATOR = 'TRANSLATOR',
-  EDITOR = 'EDITOR',
-  ILLUSTRATOR = 'ILLUSTRATOR',
-  PHOTOGRAPHER = 'PHOTOGRAPHER',
-  INTRODUCTION_AUTHOR = 'INTRODUCTION_AUTHOR',
-  ANNOTATION_AUTHOR = 'ANNOTATION_AUTHOR',
-  COMPILER = 'COMPILER',
-  ADAPTER = 'ADAPTER',
-  COVER_DESIGNER = 'COVER_DESIGNER',
-  CARTOGRAPHER = 'CARTOGRAPHER',
-  OTHER = 'OTHER',
-}
-
-export enum ContributorIdentityConfidenceDto {
-  CONFIRMED = 'CONFIRMED',
-  PROBABLE = 'PROBABLE',
-  UNCERTAIN = 'UNCERTAIN',
-  UNKNOWN = 'UNKNOWN',
-}
+import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 
 export class CreateContributorDto {
   @ApiProperty({ description: 'Display name of contributor', example: 'Alexander Pope' })
   @IsString()
   displayName!: string;
 
-  @ApiPropertyOptional({ description: 'Original name on source language' })
+  @ApiPropertyOptional({
+    description: 'Date of birth as recorded in sources',
+    example: '1688-05-21',
+  })
   @IsOptional()
   @IsString()
-  originalName?: string;
-
-  @ApiPropertyOptional({ description: 'Date of birth (ISO 8601 string)' })
-  @IsOptional()
-  @IsDateString()
   birthDate?: string;
 
-  @ApiPropertyOptional({ description: 'Date of death (ISO 8601 string)' })
+  @ApiPropertyOptional({
+    description: 'Date of death as recorded in sources',
+    example: '1744-05-30',
+  })
   @IsOptional()
-  @IsDateString()
+  @IsString()
   deathDate?: string;
 
   @ApiPropertyOptional({ description: 'Birth year', example: 1688 })
@@ -72,40 +41,41 @@ export class CreateContributorDto {
   @IsString()
   nationalityCountry?: string;
 
-  @ApiPropertyOptional({ description: 'Pseudonym' })
+  @ApiPropertyOptional({ description: 'Year the works enter public domain', example: 1815 })
+  @IsOptional()
+  @IsInt()
+  @Min(-3000)
+  @Max(2200)
+  publicDomainFromYear?: number;
+
+  @ApiPropertyOptional({ description: 'Wikidata ID', example: 'Q7245' })
   @IsOptional()
   @IsString()
-  pseudonym?: string;
+  wikidataId?: string;
 
-  @ApiPropertyOptional({ description: 'VIAF ID' })
+  @ApiPropertyOptional({ description: 'VIAF ID', example: '24606633' })
   @IsOptional()
   @IsString()
   viafId?: string;
 
-  @ApiPropertyOptional({ description: 'Library of Congress Authority ID' })
+  @ApiPropertyOptional({ description: 'ISNI', example: '0000000121174572' })
   @IsOptional()
   @IsString()
-  locAuthorityId?: string;
+  isni?: string;
 
-  @ApiPropertyOptional({ description: 'Other authority identifiers JSON object' })
+  @ApiPropertyOptional({ description: 'Project Gutenberg agent ID', example: '53' })
   @IsOptional()
-  @IsObject()
-  otherAuthorityIds?: Record<string, unknown>;
-
-  @ApiPropertyOptional({
-    enum: ContributorIdentityConfidenceDto,
-    default: ContributorIdentityConfidenceDto.CONFIRMED,
-  })
-  @IsOptional()
-  @IsEnum(ContributorIdentityConfidenceDto)
-  identityConfidence?: ContributorIdentityConfidenceDto;
+  @IsString()
+  gutenbergAgentId?: string;
 
   @ApiPropertyOptional({ description: 'Notes in Russian' })
   @IsOptional()
   @IsString()
   notesRu?: string;
 
-  @ApiPropertyOptional({ description: 'Optional link to public catalog Author ID' })
+  @ApiPropertyOptional({
+    description: 'Optional legacy catalog Author ID to bridge with this person',
+  })
   @IsOptional()
   @IsUUID()
   authorId?: string;

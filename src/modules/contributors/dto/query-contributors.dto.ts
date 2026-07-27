@@ -1,26 +1,18 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
-import { ContributorIdentityConfidenceDto, ContributorRoleDto } from './create-contributor.dto';
+import { ContributorRole } from '../../persons/person-interface';
 
 export class QueryContributorsDto {
-  @ApiPropertyOptional({ description: 'Search term for name or pseudonym' })
+  @ApiPropertyOptional({ description: 'Search term for name or authority identifiers' })
   @IsOptional()
   @IsString()
   q?: string;
 
-  @ApiPropertyOptional({ enum: ContributorRoleDto, description: 'Filter by role' })
+  @ApiPropertyOptional({ enum: ContributorRole, description: 'Filter by contributor role' })
   @IsOptional()
-  @IsEnum(ContributorRoleDto)
-  role?: ContributorRoleDto;
-
-  @ApiPropertyOptional({
-    enum: ContributorIdentityConfidenceDto,
-    description: 'Filter by identity confidence',
-  })
-  @IsOptional()
-  @IsEnum(ContributorIdentityConfidenceDto)
-  identityConfidence?: ContributorIdentityConfidenceDto;
+  @IsEnum(ContributorRole)
+  role?: ContributorRole;
 
   @ApiPropertyOptional({ default: 1, minimum: 1 })
   @IsOptional()

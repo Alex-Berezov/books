@@ -146,6 +146,7 @@ const createPrismaStub = (): PrismaStub => {
   stub['rightsAction'] = { create: jest.fn() };
   stub['bookVersion'] = { findUnique: jest.fn(), update: jest.fn() };
   stub['geoBlockRule'] = { findMany: jest.fn(), updateMany: jest.fn(), upsert: jest.fn() };
+  stub['rightsProfileContributor'] = { create: jest.fn(), update: jest.fn() };
 
   return stub as unknown as PrismaStub;
 };
@@ -153,15 +154,17 @@ const createPrismaStub = (): PrismaStub => {
 describe('RightsMaterializationService', () => {
   let service: RightsMaterializationService;
   let prisma: PrismaStub;
+  let personResolver: { resolveOrCreatePerson: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    personResolver = {
+      resolveOrCreatePerson: jest.fn().mockResolvedValue({ id: 'person-1' }),
+    };
     service = new RightsMaterializationService(
       prisma as unknown as PrismaService,
       new ComponentTerritoryAggregationService(),
-      {
-        resolveOrCreatePerson: jest.fn().mockResolvedValue({ id: 'person-1' }),
-      } as unknown as PersonResolverService,
+      personResolver as unknown as PersonResolverService,
     );
     (prisma['rightsComponent'] as Record<string, jest.Mock>).create.mockResolvedValue({
       id: 'component-1',
@@ -757,6 +760,262 @@ describe('RightsMaterializationService', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('materializeFromImport — contributors', () => {
+    const rpc = () => prisma['rightsProfileContributor'] as Record<string, jest.Mock>;
+
+    const createdContributorData = () =>
+      rpc().create.mock.calls.map((call) => (call[0] as { data: Record<string, unknown> }).data);
+
+    const setupContributorScenario = (reportJson: Record<string, unknown>) => {
+      setupBasicMocks({ reportJson });
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      let componentIndex = 0;
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).create.mockImplementation(() =>
+        Promise.resolve({ id: `component-${++componentIndex}` }),
+      );
+
+      let contributorIndex = 0;
+      rpc().create.mockImplementation(() => Promise.resolve({ id: `rpc-${++contributorIndex}` }));
+
+      personResolver.resolveOrCreatePerson.mockImplementation(
+        (input: { canonicalName?: string; displayName: string }) =>
+          Promise.resolve({ id: `person-${input.canonicalName ?? input.displayName}` }),
+      );
+    };
+
+    it('should materialize sourceAssessment.contributors as profile-level contributors', async () => {
+      const reportJson = makeValidReportJson();
+      const sourceAssessment = reportJson.sourceAssessment as Record<string, unknown>;
+      sourceAssessment['contributors'] = [
+        {
+          displayName: 'Mark Twain',
+          role: 'AUTHOR',
+          birthYear: 1835,
+          deathYear: 1910,
+          viafId: '50566653',
+          notesRu: 'Автор оригинала.',
+        },
+      ];
+      setupContributorScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(rpc().create).toHaveBeenCalledTimes(1);
+      expect(createdContributorData()[0]).toEqual(
+        expect.objectContaining({
+          rightsProfileId: 'profile-1',
+          rightsComponentId: null,
+          personId: 'person-Mark Twain',
+          role: 'AUTHOR',
+          displayName: 'Mark Twain',
+          birthYear: 1835,
+          deathYear: 1910,
+          viafId: '50566653',
+          notesRu: 'Автор оригинала.',
+        }),
+      );
+    });
+
+    it('should materialize inline component contributors bound to the created component', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.componentAssessments = [
+        {
+          componentType: 'TRANSLATION',
+          titleRu: 'Испанский перевод',
+          status: 'LICENSED',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          contributors: [{ displayName: 'Juan Pérez', role: 'TRANSLATOR' }],
+        },
+      ];
+      setupContributorScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(createdContributorData()).toEqual([
+        expect.objectContaining({
+          rightsComponentId: 'component-1',
+          personId: 'person-Juan Pérez',
+          role: 'TRANSLATOR',
+          displayName: 'Juan Pérez',
+        }),
+      ]);
+    });
+
+    it('should map legacy contributor fields and unknown roles', async () => {
+      const reportJson = makeValidReportJson();
+      const sourceAssessment = reportJson.sourceAssessment as Record<string, unknown>;
+      sourceAssessment['contributors'] = [
+        {
+          displayName: 'Anna Karlsson',
+          originalName: 'Karlsson, Anna',
+          nationalityCountry: 'SE',
+          pseudonym: 'A. K.',
+          identityConfidence: 'PROBABLE',
+          role: 'PROOFREADER',
+        },
+      ];
+      setupContributorScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(createdContributorData()[0]).toEqual(
+        expect.objectContaining({
+          displayName: 'Anna Karlsson',
+          canonicalName: 'Karlsson, Anna',
+          nationalityCountryCode: 'SE',
+          creditedName: 'A. K.',
+          confidence: 'MEDIUM',
+          role: 'OTHER',
+          roleOtherRu: 'PROOFREADER',
+        }),
+      );
+    });
+
+    it('should attach a top-level contributor to a component via contributorRefs without duplicating it', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.contributors = [
+        { key: 'translator:juan', role: 'TRANSLATOR', displayName: 'Juan Pérez' },
+      ];
+      reportJson.componentAssessments = [
+        {
+          componentType: 'TRANSLATION',
+          titleRu: 'Испанский перевод',
+          status: 'LICENSED',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          contributorRefs: [
+            { contributorKey: 'translator:juan', role: 'TRANSLATOR', creditedName: 'J. Pérez' },
+          ],
+        },
+      ];
+      setupContributorScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(rpc().create).toHaveBeenCalledTimes(1);
+      expect(rpc().update).toHaveBeenCalledWith({
+        where: { id: 'rpc-1' },
+        data: {
+          rightsComponentId: 'component-1',
+          creditedName: 'J. Pérez',
+          notesRu: null,
+        },
+      });
+    });
+
+    it('should create an extra contributor row when the same contributor is referenced by two components', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.contributors = [
+        { key: 'translator:juan', role: 'TRANSLATOR', displayName: 'Juan Pérez' },
+      ];
+      reportJson.componentAssessments = [
+        {
+          componentType: 'TRANSLATION',
+          titleRu: 'Испанский перевод',
+          status: 'LICENSED',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          contributorRefs: [{ contributorKey: 'translator:juan' }],
+        },
+        {
+          componentType: 'ANNOTATIONS',
+          titleRu: 'Комментарии переводчика',
+          status: 'LICENSED',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          contributorRefs: [{ contributorKey: 'translator:juan' }],
+        },
+      ];
+      setupContributorScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(rpc().update).toHaveBeenCalledTimes(1);
+      expect(rpc().create).toHaveBeenCalledTimes(2);
+      expect(createdContributorData()[1]).toEqual(
+        expect.objectContaining({
+          rightsComponentId: 'component-2',
+          role: 'TRANSLATOR',
+          displayName: 'Juan Pérez',
+        }),
+      );
+    });
+
+    it('should not duplicate a contributor that is both referenced and inlined on the same component', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.contributors = [
+        { key: 'translator:juan', role: 'TRANSLATOR', displayName: 'Juan Pérez' },
+      ];
+      reportJson.componentAssessments = [
+        {
+          componentType: 'TRANSLATION',
+          titleRu: 'Испанский перевод',
+          status: 'LICENSED',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          contributorRefs: [{ contributorKey: 'translator:juan' }],
+          contributors: [{ displayName: 'Juan Pérez', role: 'TRANSLATOR' }],
+        },
+      ];
+      setupContributorScenario(reportJson);
+
+      await service.materializeFromImport('import-1');
+
+      expect(rpc().create).toHaveBeenCalledTimes(1);
+    });
+
+    it('should create a fallback AUTHOR contributor from the intake candidate author', async () => {
+      setupContributorScenario(makeValidReportJson());
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ candidateAuthor: 'Mark Twain' }),
+      );
+
+      await service.materializeFromImport('import-1');
+
+      expect(createdContributorData()).toEqual([
+        expect.objectContaining({
+          rightsProfileId: 'profile-1',
+          rightsComponentId: null,
+          role: 'AUTHOR',
+          displayName: 'Mark Twain',
+          canonicalName: 'Mark Twain',
+        }),
+      ]);
+    });
+
+    it('should not create the fallback contributor when the report already provides contributors', async () => {
+      const reportJson = makeValidReportJson();
+      const sourceAssessment = reportJson.sourceAssessment as Record<string, unknown>;
+      sourceAssessment['contributors'] = [{ displayName: 'Juan Pérez', role: 'TRANSLATOR' }];
+      setupContributorScenario(reportJson);
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ candidateAuthor: 'Mark Twain' }),
+      );
+
+      await service.materializeFromImport('import-1');
+
+      expect(rpc().create).toHaveBeenCalledTimes(1);
+      expect(createdContributorData()[0]).toEqual(
+        expect.objectContaining({ displayName: 'Juan Pérez', role: 'TRANSLATOR' }),
+      );
+    });
+
+    it('should not touch contributors when the report has none and the intake has no candidate author', async () => {
+      setupContributorScenario(makeValidReportJson());
+
+      await service.materializeFromImport('import-1');
+
+      expect(rpc().create).not.toHaveBeenCalled();
+      expect(rpc().update).not.toHaveBeenCalled();
     });
   });
 });

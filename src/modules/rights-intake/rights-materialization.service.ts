@@ -11,7 +11,48 @@ import {
 } from './component-territory-aggregation.service';
 
 import { PersonResolverService } from '../persons/person-resolver.service';
+import { ContributorRole } from '../persons/person-interface';
 import { RightsConfidence, Prisma } from '@prisma/client';
+
+type NormalizedContributorConfidence = RightsConfidence | null;
+
+interface NormalizedContributorInput {
+  role: ContributorRole;
+  roleOtherRu: string | null;
+  displayName: string;
+  canonicalName: string;
+  creditedName: string | null;
+  creditedLanguage: string | null;
+  birthYear: number | null;
+  deathYear: number | null;
+  nationalityCountryCode: string | null;
+  wikidataId: string | null;
+  viafId: string | null;
+  isni: string | null;
+  gutenbergAgentId: string | null;
+  publicDomainFromYear: number | null;
+  sourceEvidenceIds: string[] | null;
+  confidence: NormalizedContributorConfidence;
+  notesRu: string | null;
+}
+
+interface MaterializedContributor {
+  id: string;
+  personId: string | null;
+  rightsComponentId: string | null;
+  input: NormalizedContributorInput;
+}
+
+const CONTRIBUTOR_ROLE_VALUES: ContributorRole[] = Object.values(ContributorRole);
+
+const RIGHTS_CONFIDENCE_VALUES: string[] = ['HIGH', 'MEDIUM', 'LOW'];
+
+const IDENTITY_CONFIDENCE_TO_RIGHTS_CONFIDENCE: Record<string, RightsConfidence | null> = {
+  CONFIRMED: 'HIGH' as RightsConfidence,
+  PROBABLE: 'MEDIUM' as RightsConfidence,
+  UNCERTAIN: 'LOW' as RightsConfidence,
+  UNKNOWN: null,
+};
 
 @Injectable()
 export class RightsMaterializationService {
@@ -281,14 +322,6 @@ export class RightsMaterializationService {
             notesRu: (sourceAssessment['notesRu'] as string) ?? null,
           },
         });
-
-        if (Array.isArray(sourceAssessment['contributors'])) {
-          await this.materializeContributorsForSourceEdition(
-            t,
-            sourceEdition['id'] as string,
-            sourceAssessment['contributors'] as Array<Record<string, unknown>>,
-          );
-        }
       }
 
       const aggregationComponents: ComponentTerritoryAggregationComponent[] = [];
@@ -309,14 +342,6 @@ export class RightsMaterializationService {
             },
           });
           createdComponentMap.set(`comp-${idx}`, createdComponent['id'] as string);
-
-          if (Array.isArray(component['contributors'])) {
-            await this.materializeContributorsForComponent(
-              t,
-              createdComponent['id'] as string,
-              component['contributors'] as Array<Record<string, unknown>>,
-            );
-          }
 
           const componentConfidence = component['confidence'] as ComponentTerritoryConfidence;
           const componentTerritoryAssessments = Array.isArray(component['territoryAssessments'])
@@ -485,97 +510,163 @@ export class RightsMaterializationService {
     }));
   }
 
-  private async materializeContributorsForSourceEdition(
-    tx: Record<string, unknown>,
-    sourceEditionId: string,
-    contributorsRaw: Array<Record<string, unknown>>,
-  ) {
-    const cTx = tx['contributor'] as {
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-    };
-    const secTx = tx['sourceEditionContributor'] as {
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    };
-
-    for (const c of contributorsRaw) {
-      if (!c['displayName']) continue;
-      let contributor = await cTx.findFirst({
-        where: { displayName: c['displayName'] as string },
-      });
-      if (!contributor) {
-        contributor = await cTx.create({
-          data: {
-            displayName: c['displayName'] as string,
-            originalName: (c['originalName'] as string) ?? null,
-            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
-            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
-            nationalityCountry: (c['nationalityCountry'] as string) ?? null,
-            pseudonym: (c['pseudonym'] as string) ?? null,
-            viafId: (c['viafId'] as string) ?? null,
-            locAuthorityId: (c['locAuthorityId'] as string) ?? null,
-            identityConfidence: (c['identityConfidence'] as string) ?? 'CONFIRMED',
-            notesRu: (c['notesRu'] as string) ?? null,
-          },
-        });
+  private readContributorString(raw: Record<string, unknown>, ...keys: string[]): string | null {
+    for (const key of keys) {
+      const value = raw[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
       }
-
-      await secTx.create({
-        data: {
-          sourceEditionId,
-          contributorId: contributor['id'] as string,
-          role: (c['role'] as string) ?? 'AUTHOR',
-          creditedName: (c['creditedName'] as string) ?? null,
-          notesRu: (c['notesRu'] as string) ?? null,
-        },
-      });
     }
+    return null;
   }
 
-  private async materializeContributorsForComponent(
-    tx: Record<string, unknown>,
-    rightsComponentId: string,
-    contributorsRaw: Array<Record<string, unknown>>,
-  ) {
-    const cTx = tx['contributor'] as {
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-    };
-    const rccTx = tx['rightsComponentContributor'] as {
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    };
-
-    for (const c of contributorsRaw) {
-      if (!c['displayName']) continue;
-      let contributor = await cTx.findFirst({
-        where: { displayName: c['displayName'] as string },
-      });
-      if (!contributor) {
-        contributor = await cTx.create({
-          data: {
-            displayName: c['displayName'] as string,
-            originalName: (c['originalName'] as string) ?? null,
-            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
-            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
-            nationalityCountry: (c['nationalityCountry'] as string) ?? null,
-            pseudonym: (c['pseudonym'] as string) ?? null,
-            viafId: (c['viafId'] as string) ?? null,
-            locAuthorityId: (c['locAuthorityId'] as string) ?? null,
-            identityConfidence: (c['identityConfidence'] as string) ?? 'CONFIRMED',
-            notesRu: (c['notesRu'] as string) ?? null,
-          },
-        });
+  private readContributorNumber(raw: Record<string, unknown>, ...keys: string[]): number | null {
+    for (const key of keys) {
+      const value = raw[key];
+      if (typeof value === 'number' && Number.isInteger(value)) {
+        return value;
       }
+    }
+    return null;
+  }
 
-      await rccTx.create({
-        data: {
-          rightsComponentId,
-          contributorId: contributor['id'] as string,
-          role: (c['role'] as string) ?? 'AUTHOR',
-          creditedName: (c['creditedName'] as string) ?? null,
-          notesRu: (c['notesRu'] as string) ?? null,
-        },
+  private normalizeContributorRole(rawRole: string | null): {
+    role: ContributorRole;
+    roleOtherRu: string | null;
+  } {
+    if (!rawRole) {
+      return { role: ContributorRole.AUTHOR, roleOtherRu: null };
+    }
+
+    const upperCased = rawRole.toUpperCase();
+    if (CONTRIBUTOR_ROLE_VALUES.includes(upperCased as ContributorRole)) {
+      return { role: upperCased as ContributorRole, roleOtherRu: null };
+    }
+
+    return { role: ContributorRole.OTHER, roleOtherRu: rawRole };
+  }
+
+  private normalizeContributorConfidence(
+    raw: Record<string, unknown>,
+  ): NormalizedContributorConfidence {
+    const confidence = this.readContributorString(raw, 'confidence');
+    if (confidence && RIGHTS_CONFIDENCE_VALUES.includes(confidence.toUpperCase())) {
+      return confidence.toUpperCase() as RightsConfidence;
+    }
+
+    const identityConfidence = this.readContributorString(raw, 'identityConfidence');
+    if (identityConfidence) {
+      return IDENTITY_CONFIDENCE_TO_RIGHTS_CONFIDENCE[identityConfidence.toUpperCase()] ?? null;
+    }
+
+    return null;
+  }
+
+  private normalizeContributor(raw: Record<string, unknown>): NormalizedContributorInput | null {
+    const displayName = this.readContributorString(
+      raw,
+      'displayName',
+      'canonicalName',
+      'originalName',
+      'name',
+    );
+    if (!displayName) {
+      return null;
+    }
+
+    const { role, roleOtherRu } = this.normalizeContributorRole(
+      this.readContributorString(raw, 'role'),
+    );
+
+    return {
+      role,
+      roleOtherRu: this.readContributorString(raw, 'roleOtherRu') ?? roleOtherRu,
+      displayName,
+      canonicalName:
+        this.readContributorString(raw, 'canonicalName', 'originalName') ?? displayName,
+      creditedName: this.readContributorString(raw, 'creditedName', 'pseudonym'),
+      creditedLanguage: this.readContributorString(raw, 'creditedLanguage', 'targetLanguage'),
+      birthYear: this.readContributorNumber(raw, 'birthYear'),
+      deathYear: this.readContributorNumber(raw, 'deathYear'),
+      nationalityCountryCode: this.readContributorString(
+        raw,
+        'nationalityCountryCode',
+        'nationalityCountry',
+      ),
+      wikidataId: this.readContributorString(raw, 'wikidataId'),
+      viafId: this.readContributorString(raw, 'viafId'),
+      isni: this.readContributorString(raw, 'isni'),
+      gutenbergAgentId: this.readContributorString(raw, 'gutenbergAgentId'),
+      publicDomainFromYear: this.readContributorNumber(raw, 'publicDomainFromYear'),
+      sourceEvidenceIds: Array.isArray(raw['sourceEvidenceIds'])
+        ? (raw['sourceEvidenceIds'] as unknown[]).filter(
+            (evidenceId): evidenceId is string => typeof evidenceId === 'string',
+          )
+        : null,
+      confidence: this.normalizeContributorConfidence(raw),
+      notesRu: this.readContributorString(raw, 'notesRu'),
+    };
+  }
+
+  private buildContributorData(
+    rightsProfileId: string,
+    rightsComponentId: string | null,
+    personId: string | null,
+    input: NormalizedContributorInput,
+  ): Record<string, unknown> {
+    return {
+      rightsProfileId,
+      rightsComponentId,
+      personId,
+      role: input.role,
+      roleOtherRu: input.roleOtherRu,
+      displayName: input.displayName,
+      canonicalName: input.canonicalName,
+      creditedName: input.creditedName,
+      creditedLanguage: input.creditedLanguage,
+      birthYear: input.birthYear,
+      deathYear: input.deathYear,
+      nationalityCountryCode: input.nationalityCountryCode,
+      wikidataId: input.wikidataId,
+      viafId: input.viafId,
+      isni: input.isni,
+      gutenbergAgentId: input.gutenbergAgentId,
+      publicDomainFromYear: input.publicDomainFromYear,
+      sourceEvidenceIds: input.sourceEvidenceIds,
+      confidence: input.confidence,
+      notesRu: input.notesRu,
+    };
+  }
+
+  private contributorDedupKey(
+    personId: string | null,
+    input: NormalizedContributorInput,
+    rightsComponentId: string | null,
+  ): string {
+    const identity = personId ?? input.canonicalName.toLowerCase();
+    return `${identity}|${input.role}|${rightsComponentId ?? ''}`;
+  }
+
+  private async resolveContributorPersonId(
+    input: NormalizedContributorInput,
+  ): Promise<string | null> {
+    try {
+      const person = await this.personResolverService.resolveOrCreatePerson({
+        displayName: input.displayName,
+        canonicalName: input.canonicalName,
+        birthYear: input.birthYear,
+        deathYear: input.deathYear,
+        nationalityCountryCode: input.nationalityCountryCode,
+        publicDomainFromYear: input.publicDomainFromYear,
+        wikidataId: input.wikidataId,
+        viafId: input.viafId,
+        isni: input.isni,
+        gutenbergAgentId: input.gutenbergAgentId,
+        notesRu: input.notesRu,
       });
+      return person.id;
+    } catch {
+      return null;
     }
   }
 
@@ -592,117 +683,172 @@ export class RightsMaterializationService {
       update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
     };
 
-    const rawContributors = reportJson['contributors'] as
-      | Array<Record<string, unknown>>
-      | undefined;
-    const componentAssessments = reportJson['componentAssessments'] as
-      | Array<Record<string, unknown>>
-      | undefined;
+    const createdDedupKeys = new Set<string>();
+    const keyToContributorRecord = new Map<string, MaterializedContributor>();
+    let createdCount = 0;
 
-    const keyToContributorRecord = new Map<string, { id: string; personId: string | null }>();
-
-    if (Array.isArray(rawContributors) && rawContributors.length > 0) {
-      for (const c of rawContributors) {
-        const key = (c['key'] as string) || `c-${Math.random()}`;
-        const displayName =
-          (c['displayName'] as string) || (c['canonicalName'] as string) || 'Unknown';
-        const canonicalName = (c['canonicalName'] as string) || displayName;
-
-        let personId: string | null = null;
-        try {
-          const person = await this.personResolverService.resolveOrCreatePerson({
-            displayName,
-            canonicalName,
-            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
-            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
-            nationalityCountryCode: (c['nationalityCountryCode'] as string) || null,
-            publicDomainFromYear:
-              typeof c['publicDomainFromYear'] === 'number' ? c['publicDomainFromYear'] : null,
-            wikidataId: (c['wikidataId'] as string) || null,
-            viafId: (c['viafId'] as string) || null,
-            isni: (c['isni'] as string) || null,
-            gutenbergAgentId: (c['gutenbergAgentId'] as string) || null,
-            notesRu: (c['notesRu'] as string) || null,
-          });
-          personId = person.id;
-        } catch {
-          // Keep null if resolution fails
-        }
-
-        const rpc = await rpcModel.create({
-          data: {
-            rightsProfileId,
-            personId,
-            role: (c['role'] as string) || 'AUTHOR',
-            roleOtherRu: (c['roleOtherRu'] as string) || null,
-            displayName,
-            canonicalName,
-            creditedName: (c['creditedName'] as string) || null,
-            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
-            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
-            nationalityCountryCode: (c['nationalityCountryCode'] as string) || null,
-            wikidataId: (c['wikidataId'] as string) || null,
-            viafId: (c['viafId'] as string) || null,
-            isni: (c['isni'] as string) || null,
-            gutenbergAgentId: (c['gutenbergAgentId'] as string) || null,
-            creditedLanguage:
-              (c['creditedLanguage'] as string) || (c['targetLanguage'] as string) || null,
-            publicDomainFromYear:
-              typeof c['publicDomainFromYear'] === 'number' ? c['publicDomainFromYear'] : null,
-            sourceEvidenceIds: Array.isArray(c['sourceEvidenceIds'])
-              ? c['sourceEvidenceIds']
-              : null,
-            confidence: (c['confidence'] as RightsConfidence) || null,
-            notesRu: (c['notesRu'] as string) || null,
-          },
-        });
-
-        const rpcId = rpc['id'] as string;
-        keyToContributorRecord.set(key, { id: rpcId, personId });
+    const createContributor = async (
+      input: NormalizedContributorInput,
+      rightsComponentId: string | null,
+    ): Promise<MaterializedContributor | null> => {
+      const personId = await this.resolveContributorPersonId(input);
+      const dedupKey = this.contributorDedupKey(personId, input, rightsComponentId);
+      if (createdDedupKeys.has(dedupKey)) {
+        return null;
       }
+      createdDedupKeys.add(dedupKey);
 
-      if (Array.isArray(componentAssessments)) {
-        for (let i = 0; i < componentAssessments.length; i++) {
-          const ca = componentAssessments[i];
-          const componentId = createdComponentMap.get(`comp-${i}`);
-          if (!componentId) continue;
+      const created = await rpcModel.create({
+        data: this.buildContributorData(rightsProfileId, rightsComponentId, personId, input),
+      });
+      createdCount += 1;
 
-          const refs = ca['contributorRefs'] as Array<Record<string, unknown>> | undefined;
-          if (Array.isArray(refs)) {
-            for (const ref of refs) {
-              const contributorKey = ref['contributorKey'] as string;
-              const rec = keyToContributorRecord.get(contributorKey);
-              if (rec) {
-                await rpcModel.update({
-                  where: { id: rec.id },
-                  data: { rightsComponentId: componentId },
-                });
-              }
-            }
+      return {
+        id: created['id'] as string,
+        personId,
+        rightsComponentId,
+        input,
+      };
+    };
+
+    const rawContributors = reportJson['contributors'];
+    if (Array.isArray(rawContributors)) {
+      for (let index = 0; index < rawContributors.length; index++) {
+        const rawContributor = rawContributors[index] as Record<string, unknown>;
+        const input = this.normalizeContributor(rawContributor);
+        if (!input) continue;
+
+        const created = await createContributor(input, null);
+        if (!created) continue;
+
+        const contributorKey =
+          this.readContributorString(rawContributor, 'key') ?? `contributor-${index}`;
+        keyToContributorRecord.set(contributorKey, created);
+      }
+    }
+
+    const componentAssessments = reportJson['componentAssessments'];
+    if (Array.isArray(componentAssessments)) {
+      for (let index = 0; index < componentAssessments.length; index++) {
+        const componentAssessment = componentAssessments[index] as Record<string, unknown>;
+        const rightsComponentId = createdComponentMap.get(`comp-${index}`);
+        if (!rightsComponentId) continue;
+
+        await this.materializeComponentContributorRefs(
+          rpcModel,
+          componentAssessment,
+          rightsComponentId,
+          keyToContributorRecord,
+          createdDedupKeys,
+          createContributor,
+        );
+
+        const inlineContributors = componentAssessment['contributors'];
+        if (Array.isArray(inlineContributors)) {
+          for (const rawContributor of inlineContributors) {
+            const input = this.normalizeContributor(rawContributor as Record<string, unknown>);
+            if (!input) continue;
+            await createContributor(input, rightsComponentId);
           }
         }
       }
-    } else if (intakeCandidateAuthor && intakeCandidateAuthor.trim()) {
-      let personId: string | null = null;
-      try {
-        const person = await this.personResolverService.resolveOrCreatePerson({
-          displayName: intakeCandidateAuthor.trim(),
-          canonicalName: intakeCandidateAuthor.trim(),
+    }
+
+    const sourceAssessment = reportJson['sourceAssessment'] as Record<string, unknown> | undefined;
+    const sourceContributors = sourceAssessment?.['contributors'];
+    if (Array.isArray(sourceContributors)) {
+      for (const rawContributor of sourceContributors) {
+        const input = this.normalizeContributor(rawContributor as Record<string, unknown>);
+        if (!input) continue;
+        await createContributor(input, null);
+      }
+    }
+
+    if (createdCount === 0 && intakeCandidateAuthor && intakeCandidateAuthor.trim()) {
+      const candidateAuthor = intakeCandidateAuthor.trim();
+      await createContributor(
+        {
+          role: ContributorRole.AUTHOR,
+          roleOtherRu: null,
+          displayName: candidateAuthor,
+          canonicalName: candidateAuthor,
+          creditedName: null,
+          creditedLanguage: null,
+          birthYear: null,
+          deathYear: null,
+          nationalityCountryCode: null,
+          wikidataId: null,
+          viafId: null,
+          isni: null,
+          gutenbergAgentId: null,
+          publicDomainFromYear: null,
+          sourceEvidenceIds: null,
+          confidence: null,
+          notesRu: null,
+        },
+        null,
+      );
+    }
+  }
+
+  private async materializeComponentContributorRefs(
+    rpcModel: {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    },
+    componentAssessment: Record<string, unknown>,
+    rightsComponentId: string,
+    keyToContributorRecord: Map<string, MaterializedContributor>,
+    createdDedupKeys: Set<string>,
+    createContributor: (
+      input: NormalizedContributorInput,
+      rightsComponentId: string | null,
+    ) => Promise<MaterializedContributor | null>,
+  ) {
+    const refs = componentAssessment['contributorRefs'];
+    if (!Array.isArray(refs)) return;
+
+    for (const rawRef of refs) {
+      const ref = rawRef as Record<string, unknown>;
+      const contributorKey = this.readContributorString(ref, 'contributorKey');
+      if (!contributorKey) continue;
+
+      const base = keyToContributorRecord.get(contributorKey);
+      if (!base) continue;
+
+      const rawRefRole = this.readContributorString(ref, 'role');
+      const refRole = rawRefRole ? this.normalizeContributorRole(rawRefRole) : null;
+      const creditedName =
+        this.readContributorString(ref, 'creditedName') ?? base.input.creditedName;
+      const notesRu = this.readContributorString(ref, 'notesRu') ?? base.input.notesRu;
+      const roleMatchesBase = !refRole || refRole.role === base.input.role;
+
+      // Первая ссылка на ещё не привязанного участника: переиспользуем существующую строку,
+      // чтобы не плодить дубликат профильного участника.
+      if (base.rightsComponentId === null && roleMatchesBase) {
+        await rpcModel.update({
+          where: { id: base.id },
+          data: { rightsComponentId, creditedName, notesRu },
         });
-        personId = person.id;
-      } catch {
-        // Keep null
+
+        base.rightsComponentId = rightsComponentId;
+        base.input = { ...base.input, creditedName, notesRu };
+        createdDedupKeys.add(
+          this.contributorDedupKey(base.personId, base.input, rightsComponentId),
+        );
+        continue;
       }
 
-      await rpcModel.create({
-        data: {
-          rightsProfileId,
-          personId,
-          role: 'AUTHOR',
-          displayName: intakeCandidateAuthor.trim(),
-          canonicalName: intakeCandidateAuthor.trim(),
+      await createContributor(
+        {
+          ...base.input,
+          role: refRole ? refRole.role : base.input.role,
+          roleOtherRu: refRole ? refRole.roleOtherRu : base.input.roleOtherRu,
+          creditedName,
+          notesRu,
         },
-      });
+        rightsComponentId,
+      );
     }
   }
 }
