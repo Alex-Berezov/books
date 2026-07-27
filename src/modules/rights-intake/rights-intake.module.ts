@@ -13,9 +13,11 @@ import { RightsProfileService } from './rights-profile.service';
 import { RightsContentHashService } from './rights-content-hash.service';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
+import { PersonsModule } from '../persons/persons.module';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Module({
+  imports: [PersonsModule],
   controllers: [RightsIntakeController, RightsReviewImportController, RightsProfileController],
   providers: [
     RightsIntakeService,

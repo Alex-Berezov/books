@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
 import { RightsContentHashService } from './rights-content-hash.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class RightsBookCreationService {
@@ -289,6 +290,13 @@ export class RightsBookCreationService {
           null,
           tx,
         );
+        await this.projectContributorsToVersion(
+          tx as unknown as Prisma.TransactionClient,
+          v['id'] as string,
+          v['language'] as string,
+          v['type'] as string,
+          profileId,
+        );
       }
 
       // Update RightsIntake
@@ -330,5 +338,80 @@ export class RightsBookCreationService {
       rightsProfileId: profileId,
       approvedRightsReviewId: approvedReviewId,
     };
+  }
+
+  private async projectContributorsToVersion(
+    tx: Prisma.TransactionClient,
+    versionId: string,
+    versionLanguage: string,
+    versionType: string,
+    profileId: string,
+  ) {
+    const t = tx as unknown as Record<string, unknown>;
+    const rpcModel = t['rightsProfileContributor'] as {
+      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    };
+    const bvcModel = t['bookVersionContributor'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    const profileContributors =
+      rpcModel && typeof rpcModel.findMany === 'function'
+        ? await rpcModel.findMany({
+            where: { rightsProfileId: profileId },
+            include: {
+              rightsComponent: true,
+            },
+          })
+        : [];
+
+    if (!profileContributors || profileContributors.length === 0) return;
+
+    const seenKeys = new Set<string>();
+
+    for (let index = 0; index < profileContributors.length; index++) {
+      const pc = profileContributors[index];
+      const personId = pc['personId'] as string | null;
+      if (!personId) continue;
+
+      const role = pc['role'] as string;
+      const roleOtherRu = (pc['roleOtherRu'] as string) ?? null;
+      const creditedName = (pc['creditedName'] as string) ?? (pc['displayName'] as string) ?? null;
+      const confidence = (pc['confidence'] as string) ?? null;
+
+      let shouldProject = false;
+      let isPrimary = false;
+
+      if (role === 'AUTHOR') {
+        shouldProject = true;
+        isPrimary = index === 0;
+      } else if (role === 'TRANSLATOR') {
+        shouldProject = true;
+      } else if (role === 'NARRATOR') {
+        shouldProject = versionType === 'AUDIO' || versionType === 'audiobook';
+      } else {
+        shouldProject = true;
+      }
+
+      if (!shouldProject) continue;
+
+      const dedupeKey = `${versionId}:${personId}:${role}:${creditedName || ''}`;
+      if (seenKeys.has(dedupeKey)) continue;
+      seenKeys.add(dedupeKey);
+
+      await bvcModel.create({
+        data: {
+          bookVersionId: versionId,
+          personId,
+          role,
+          roleOtherRu,
+          displayOrder: index,
+          isPrimary,
+          creditedName,
+          creditedLanguage: versionLanguage,
+          confidence,
+        },
+      });
+    }
   }
 }

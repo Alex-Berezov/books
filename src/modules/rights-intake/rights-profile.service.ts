@@ -173,6 +173,23 @@ export class RightsProfileService {
       where: { rightsProfileId: profileId },
     });
 
+    const contributorsModel = (await (this.prisma as unknown as Record<string, unknown>)[
+      'rightsProfileContributor'
+    ]) as {
+      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    };
+    const contributorsData = await contributorsModel.findMany({
+      where: { rightsProfileId: profileId },
+      include: {
+        person: true,
+      },
+    });
+
+    const authorsCount = contributorsData.filter((c) => c['role'] === 'AUTHOR').length;
+    const translatorsCount = contributorsData.filter((c) => c['role'] === 'TRANSLATOR').length;
+    const narratorsCount = contributorsData.filter((c) => c['role'] === 'NARRATOR').length;
+    const contributorsWithoutPersonCount = contributorsData.filter((c) => !c['personId']).length;
+
     return {
       id: profileId,
       rightsIntakeId: profile['rightsIntakeId'] as string,
@@ -200,6 +217,12 @@ export class RightsProfileService {
       components: componentsData.map((c: Record<string, unknown>) => this.mapComponent(c)),
       evidence: evidenceData.map((e: Record<string, unknown>) => this.mapEvidence(e)),
       actions: actionsData.map((a: Record<string, unknown>) => this.mapAction(a)),
+      contributors: contributorsData,
+      contributorsCount: contributorsData.length,
+      authorsCount,
+      translatorsCount,
+      narratorsCount,
+      contributorsWithoutPersonCount,
       supersededAt: profile['supersededAt']
         ? new Date(profile['supersededAt'] as string).toISOString()
         : null,

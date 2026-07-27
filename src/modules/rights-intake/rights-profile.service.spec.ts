@@ -23,6 +23,7 @@ const createPrismaStub = (): PrismaStub => {
   stub['territoryDecision'] = { findMany: jest.fn() };
   stub['rightsEvidence'] = { findMany: jest.fn() };
   stub['rightsAction'] = { findMany: jest.fn() };
+  stub['rightsProfileContributor'] = { findMany: jest.fn().mockResolvedValue([]) };
 
   return stub as unknown as PrismaStub;
 };

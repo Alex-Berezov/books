@@ -75,6 +75,21 @@ const VALID_COMPONENT_TYPES = [
   'AUDIO_RECORDING',
   'OTHER',
 ] as const;
+const VALID_CONTRIBUTOR_ROLES = [
+  'AUTHOR',
+  'TRANSLATOR',
+  'EDITOR',
+  'ILLUSTRATOR',
+  'NARRATOR',
+  'ADAPTER',
+  'COMPILER',
+  'COMMENTATOR',
+  'INTRODUCTION_AUTHOR',
+  'AFTERWORD_AUTHOR',
+  'COVER_ARTIST',
+  'RIGHTS_HOLDER',
+  'OTHER',
+] as const;
 const VALID_COMPONENT_STATUSES = [
   'PUBLIC_DOMAIN',
   'OWNED',
@@ -262,6 +277,143 @@ export class RightsReviewImportValidator {
 
     if (!reportJson['summaryRu']) {
       addError(errors, 'summaryRu', 'summaryRu is required', 'MISSING_FIELD');
+    }
+
+    // Validate contributors array
+    const contributors = reportJson['contributors'];
+    const validContributorKeys = new Set<string>();
+    const contributorRolesMap = new Map<string, string[]>();
+
+    if (contributors !== undefined && contributors !== null) {
+      if (!Array.isArray(contributors)) {
+        addError(errors, 'contributors', 'contributors must be an array', 'INVALID_TYPE');
+      } else {
+        for (let i = 0; i < contributors.length; i++) {
+          const item = contributors[i] as Record<string, unknown>;
+          const prefix = `contributors[${i}]`;
+
+          const key = item['key'] as string | undefined;
+          if (!key || typeof key !== 'string') {
+            addError(
+              errors,
+              `${prefix}.key`,
+              'key is required and must be a string',
+              'MISSING_FIELD',
+            );
+          } else {
+            validContributorKeys.add(key);
+          }
+
+          const role = item['role'] as string | undefined;
+          if (!role || typeof role !== 'string') {
+            addError(errors, `${prefix}.role`, 'role is required', 'MISSING_FIELD');
+          } else if (!isIn(VALID_CONTRIBUTOR_ROLES, role)) {
+            addError(
+              errors,
+              `${prefix}.role`,
+              `Invalid contributor role: "${role}"`,
+              'INVALID_ENUM',
+            );
+          } else {
+            if (key) {
+              const roles = contributorRolesMap.get(key) || [];
+              roles.push(role);
+              contributorRolesMap.set(key, roles);
+            }
+          }
+
+          if (role === 'OTHER') {
+            const roleOtherRu = item['roleOtherRu'] as string | undefined;
+            if (!roleOtherRu || typeof roleOtherRu !== 'string') {
+              addError(
+                errors,
+                `${prefix}.roleOtherRu`,
+                'roleOtherRu is required when role is OTHER',
+                'MISSING_FIELD',
+              );
+            }
+          }
+
+          const displayName = item['displayName'] as string | undefined;
+          if (!displayName || typeof displayName !== 'string') {
+            addError(errors, `${prefix}.displayName`, 'displayName is required', 'MISSING_FIELD');
+          }
+
+          const birthYear = item['birthYear'] as number | undefined;
+          const deathYear = item['deathYear'] as number | undefined;
+          if (birthYear !== undefined && (!Number.isInteger(birthYear) || birthYear < 0)) {
+            addError(
+              errors,
+              `${prefix}.birthYear`,
+              'birthYear must be a positive integer',
+              'INVALID_TYPE',
+            );
+          }
+          if (deathYear !== undefined && (!Number.isInteger(deathYear) || deathYear < 0)) {
+            addError(
+              errors,
+              `${prefix}.deathYear`,
+              'deathYear must be a positive integer',
+              'INVALID_TYPE',
+            );
+          }
+          if (
+            birthYear !== undefined &&
+            deathYear !== undefined &&
+            Number.isInteger(birthYear) &&
+            Number.isInteger(deathYear) &&
+            deathYear < birthYear
+          ) {
+            addError(
+              errors,
+              `${prefix}.deathYear`,
+              `deathYear (${deathYear}) cannot be less than birthYear (${birthYear})`,
+              'INVALID_VALUE',
+            );
+          }
+
+          const publicDomainFromYear = item['publicDomainFromYear'] as number | undefined;
+          if (
+            publicDomainFromYear !== undefined &&
+            (!Number.isInteger(publicDomainFromYear) || publicDomainFromYear < 0)
+          ) {
+            addError(
+              errors,
+              `${prefix}.publicDomainFromYear`,
+              'publicDomainFromYear must be a positive integer',
+              'INVALID_TYPE',
+            );
+          }
+
+          const sourceEvidenceIds = item['sourceEvidenceIds'];
+          if (sourceEvidenceIds !== undefined && !Array.isArray(sourceEvidenceIds)) {
+            addError(
+              errors,
+              `${prefix}.sourceEvidenceIds`,
+              'sourceEvidenceIds must be an array of strings',
+              'INVALID_TYPE',
+            );
+          }
+        }
+      }
+    }
+
+    const candidateAuthor = reportJson['candidateAuthor'] as string | undefined;
+    const hasAuthorContributor = Array.from(contributorRolesMap.values()).some((roles) =>
+      roles.includes('AUTHOR'),
+    );
+    if (
+      candidateAuthor &&
+      !hasAuthorContributor &&
+      Array.isArray(contributors) &&
+      contributors.length > 0
+    ) {
+      addWarning(
+        warnings,
+        'contributors',
+        `candidateAuthor "${candidateAuthor}" is specified, but no contributor with role AUTHOR is present in top-level contributors`,
+        'MISSING_AUTHOR_WARNING',
+      );
     }
     if (!reportJson['conclusionRu']) {
       addError(errors, 'conclusionRu', 'conclusionRu is required', 'MISSING_FIELD');
@@ -588,6 +740,82 @@ export class RightsReviewImportValidator {
             `Invalid confidence: "${caConfidence}"`,
             'INVALID_ENUM',
           );
+        }
+
+        const contributorRefs = ca['contributorRefs'];
+        if (contributorRefs !== undefined && contributorRefs !== null) {
+          if (!Array.isArray(contributorRefs)) {
+            addError(
+              errors,
+              `${prefix}.contributorRefs`,
+              'contributorRefs must be an array',
+              'INVALID_TYPE',
+            );
+          } else {
+            for (let j = 0; j < contributorRefs.length; j++) {
+              const ref = contributorRefs[j] as Record<string, unknown>;
+              const refPrefix = `${prefix}.contributorRefs[${j}]`;
+
+              const contributorKey = ref['contributorKey'] as string | undefined;
+              if (!contributorKey || typeof contributorKey !== 'string') {
+                addError(
+                  errors,
+                  `${refPrefix}.contributorKey`,
+                  'contributorKey is required',
+                  'MISSING_FIELD',
+                );
+              } else if (
+                validContributorKeys.size > 0 &&
+                !validContributorKeys.has(contributorKey)
+              ) {
+                addError(
+                  errors,
+                  `${refPrefix}.contributorKey`,
+                  `contributorKey "${contributorKey}" does not exist in top-level contributors`,
+                  'INVALID_REFERENCE',
+                );
+              }
+
+              const role = ref['role'] as string | undefined;
+              if (role && !isIn(VALID_CONTRIBUTOR_ROLES, role)) {
+                addError(
+                  errors,
+                  `${refPrefix}.role`,
+                  `Invalid contributor role: "${role}"`,
+                  'INVALID_ENUM',
+                );
+              }
+            }
+          }
+        }
+
+        const titleRu = typeof ca['titleRu'] === 'string' ? ca['titleRu'] : '';
+        if (ct === 'TRANSLATION' || titleRu.toLowerCase().includes('перевод')) {
+          const hasTranslator = Array.isArray(contributorRefs)
+            ? contributorRefs.some((r) => (r as Record<string, unknown>)['role'] === 'TRANSLATOR')
+            : false;
+          if (!hasTranslator) {
+            addWarning(
+              warnings,
+              `${prefix}.contributorRefs`,
+              'TEXT_TRANSLATION component is missing a TRANSLATOR contributor reference',
+              'MISSING_ROLE_WARNING',
+            );
+          }
+        }
+
+        if (ct === 'AUDIO_NARRATION') {
+          const hasNarrator = Array.isArray(contributorRefs)
+            ? contributorRefs.some((r) => (r as Record<string, unknown>)['role'] === 'NARRATOR')
+            : false;
+          if (!hasNarrator) {
+            addWarning(
+              warnings,
+              `${prefix}.contributorRefs`,
+              'AUDIO_NARRATION component is missing a NARRATOR contributor reference',
+              'MISSING_ROLE_WARNING',
+            );
+          }
         }
 
         this.validateComponentTerritoryAssessments(

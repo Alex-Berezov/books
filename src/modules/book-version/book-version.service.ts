@@ -6,8 +6,11 @@ import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
-import { Prisma } from '@prisma/client';
-import { Language, BookType } from '@prisma/client';
+import { Language, BookType, Prisma } from '@prisma/client';
+import { ContributorRole } from '../persons/person-interface';
+import { CreateBookVersionContributorDto } from './dto/create-version-contributor.dto';
+import { UpdateBookVersionContributorDto } from './dto/update-version-contributor.dto';
+import { ReorderBookVersionContributorsDto } from './dto/reorder-version-contributors.dto';
 import { randomUUID } from 'crypto';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
@@ -789,5 +792,145 @@ export class BookVersionService {
       orderBy: { createdAt: 'desc' },
       include: { seo: true },
     });
+  }
+
+  private get bvcModel() {
+    return (this.prisma as unknown as Record<string, unknown>)['bookVersionContributor'] as {
+      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      updateMany: (args: Record<string, unknown>) => Promise<{ count: number }>;
+      delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      count: (args: Record<string, unknown>) => Promise<number>;
+    };
+  }
+
+  private get personModel() {
+    return (this.prisma as unknown as Record<string, unknown>)['person'] as {
+      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+    };
+  }
+
+  public async getVersionContributors(versionId: string) {
+    const version = await this.prisma.bookVersion.findUnique({ where: { id: versionId } });
+    if (!version) throw new NotFoundException(`BookVersion with ID "${versionId}" not found`);
+
+    return this.bvcModel.findMany({
+      where: { bookVersionId: versionId },
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+      include: {
+        person: true,
+      },
+    });
+  }
+
+  public async addVersionContributor(versionId: string, dto: CreateBookVersionContributorDto) {
+    const version = await this.prisma.bookVersion.findUnique({ where: { id: versionId } });
+    if (!version) throw new NotFoundException(`BookVersion with ID "${versionId}" not found`);
+
+    const person = await this.personModel.findUnique({ where: { id: dto.personId } });
+    if (!person) throw new NotFoundException(`Person with ID "${dto.personId}" not found`);
+
+    return this.bvcModel.create({
+      data: {
+        bookVersionId: versionId,
+        personId: dto.personId,
+        role: dto.role,
+        roleOtherRu: dto.roleOtherRu || null,
+        displayOrder: dto.displayOrder ?? 0,
+        isPrimary: dto.isPrimary ?? false,
+        creditedName: dto.creditedName || null,
+        creditedLanguage: dto.creditedLanguage || null,
+        contributionNoteRu: dto.contributionNoteRu || null,
+        confidence: dto.confidence || null,
+      },
+      include: {
+        person: true,
+      },
+    });
+  }
+
+  public async updateVersionContributor(
+    versionId: string,
+    contributorId: string,
+    dto: UpdateBookVersionContributorDto,
+  ) {
+    const existing = await this.bvcModel.findFirst({
+      where: { id: contributorId, bookVersionId: versionId },
+    });
+    if (!existing) {
+      throw new NotFoundException(
+        `BookVersionContributor with ID "${contributorId}" not found for version "${versionId}"`,
+      );
+    }
+
+    return this.bvcModel.update({
+      where: { id: contributorId },
+      data: {
+        ...(dto.role !== undefined ? { role: dto.role } : {}),
+        ...(dto.roleOtherRu !== undefined ? { roleOtherRu: dto.roleOtherRu || null } : {}),
+        ...(dto.displayOrder !== undefined ? { displayOrder: dto.displayOrder } : {}),
+        ...(dto.isPrimary !== undefined ? { isPrimary: dto.isPrimary } : {}),
+        ...(dto.creditedName !== undefined ? { creditedName: dto.creditedName || null } : {}),
+        ...(dto.creditedLanguage !== undefined
+          ? { creditedLanguage: dto.creditedLanguage || null }
+          : {}),
+        ...(dto.contributionNoteRu !== undefined
+          ? { contributionNoteRu: dto.contributionNoteRu || null }
+          : {}),
+        ...(dto.confidence !== undefined ? { confidence: dto.confidence || null } : {}),
+      },
+      include: {
+        person: true,
+      },
+    });
+  }
+
+  public async removeVersionContributor(versionId: string, contributorId: string) {
+    const existing = await this.bvcModel.findFirst({
+      where: { id: contributorId, bookVersionId: versionId },
+    });
+    if (!existing) {
+      throw new NotFoundException(
+        `BookVersionContributor with ID "${contributorId}" not found for version "${versionId}"`,
+      );
+    }
+
+    await this.bvcModel.delete({
+      where: { id: contributorId },
+    });
+
+    let warning: string | undefined = undefined;
+    if (existing['role'] === ContributorRole.AUTHOR && existing['isPrimary']) {
+      const remainingAuthors = await this.bvcModel.count({
+        where: { bookVersionId: versionId, role: ContributorRole.AUTHOR },
+      });
+      if (remainingAuthors === 0) {
+        warning =
+          'Removed the primary AUTHOR contributor. Note that legacy BookVersion.author string remains unchanged.';
+      }
+    }
+
+    return { success: true, warning };
+  }
+
+  public async reorderVersionContributors(
+    versionId: string,
+    dto: ReorderBookVersionContributorsDto,
+  ) {
+    const version = await this.prisma.bookVersion.findUnique({ where: { id: versionId } });
+    if (!version) throw new NotFoundException(`BookVersion with ID "${versionId}" not found`);
+
+    await Promise.all(
+      dto.contributorIds.map((id, index) =>
+        this.bvcModel.updateMany({
+          where: { id, bookVersionId: versionId },
+          data: { displayOrder: index },
+        }),
+      ),
+    );
+
+    return this.getVersionContributors(versionId);
   }
 }

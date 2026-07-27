@@ -10,11 +10,15 @@ import {
   type ExistingTerritoryDecisionInput,
 } from './component-territory-aggregation.service';
 
+import { PersonResolverService } from '../persons/person-resolver.service';
+import { RightsConfidence, Prisma } from '@prisma/client';
+
 @Injectable()
 export class RightsMaterializationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly componentTerritoryAggregationService: ComponentTerritoryAggregationService,
+    private readonly personResolverService: PersonResolverService,
   ) {}
 
   private get rp() {
@@ -147,6 +151,8 @@ export class RightsMaterializationService {
         'Cannot materialize: reportJson.intakeId does not match the import rightsIntakeId',
       );
     }
+
+    const intakeRecord = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
 
     const result = await this.prisma.$transaction(async (tx) => {
       const t = tx as unknown as Record<string, unknown>;
@@ -286,9 +292,11 @@ export class RightsMaterializationService {
       }
 
       const aggregationComponents: ComponentTerritoryAggregationComponent[] = [];
+      const createdComponentMap = new Map<string, string>();
       let hasComponentTerritoryAssessments = false;
       if (componentAssessments && componentAssessments.length > 0) {
-        for (const component of componentAssessments) {
+        for (let idx = 0; idx < componentAssessments.length; idx++) {
+          const component = componentAssessments[idx];
           const createdComponent = await rcTx.create({
             data: {
               rightsProfileId: profile['id'] as string,
@@ -300,6 +308,7 @@ export class RightsMaterializationService {
               notesRu: (component['notesRu'] as string) ?? null,
             },
           });
+          createdComponentMap.set(`comp-${idx}`, createdComponent['id'] as string);
 
           if (Array.isArray(component['contributors'])) {
             await this.materializeContributorsForComponent(
@@ -434,6 +443,14 @@ export class RightsMaterializationService {
         }
       }
 
+      await this.materializeProfileContributors(
+        t as unknown as Prisma.TransactionClient,
+        profile['id'] as string,
+        reportJson,
+        ((intakeRecord as Record<string, unknown>)['candidateAuthor'] as string) ?? null,
+        createdComponentMap,
+      );
+
       const riTx = t['rightsIntake'] as {
         update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
@@ -557,6 +574,131 @@ export class RightsMaterializationService {
           role: (c['role'] as string) ?? 'AUTHOR',
           creditedName: (c['creditedName'] as string) ?? null,
           notesRu: (c['notesRu'] as string) ?? null,
+        },
+      });
+    }
+  }
+
+  private async materializeProfileContributors(
+    tx: Prisma.TransactionClient,
+    rightsProfileId: string,
+    reportJson: Record<string, unknown>,
+    intakeCandidateAuthor: string | null,
+    createdComponentMap: Map<string, string>,
+  ) {
+    const t = tx as unknown as Record<string, unknown>;
+    const rpcModel = t['rightsProfileContributor'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    const rawContributors = reportJson['contributors'] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    const componentAssessments = reportJson['componentAssessments'] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    const keyToContributorRecord = new Map<string, { id: string; personId: string | null }>();
+
+    if (Array.isArray(rawContributors) && rawContributors.length > 0) {
+      for (const c of rawContributors) {
+        const key = (c['key'] as string) || `c-${Math.random()}`;
+        const displayName =
+          (c['displayName'] as string) || (c['canonicalName'] as string) || 'Unknown';
+        const canonicalName = (c['canonicalName'] as string) || displayName;
+
+        let personId: string | null = null;
+        try {
+          const person = await this.personResolverService.resolveOrCreatePerson({
+            displayName,
+            canonicalName,
+            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
+            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
+            nationalityCountryCode: (c['nationalityCountryCode'] as string) || null,
+            publicDomainFromYear:
+              typeof c['publicDomainFromYear'] === 'number' ? c['publicDomainFromYear'] : null,
+            wikidataId: (c['wikidataId'] as string) || null,
+            viafId: (c['viafId'] as string) || null,
+            isni: (c['isni'] as string) || null,
+            gutenbergAgentId: (c['gutenbergAgentId'] as string) || null,
+            notesRu: (c['notesRu'] as string) || null,
+          });
+          personId = person.id;
+        } catch {
+          // Keep null if resolution fails
+        }
+
+        const rpc = await rpcModel.create({
+          data: {
+            rightsProfileId,
+            personId,
+            role: (c['role'] as string) || 'AUTHOR',
+            roleOtherRu: (c['roleOtherRu'] as string) || null,
+            displayName,
+            canonicalName,
+            creditedName: (c['creditedName'] as string) || null,
+            birthYear: typeof c['birthYear'] === 'number' ? c['birthYear'] : null,
+            deathYear: typeof c['deathYear'] === 'number' ? c['deathYear'] : null,
+            nationalityCountryCode: (c['nationalityCountryCode'] as string) || null,
+            wikidataId: (c['wikidataId'] as string) || null,
+            viafId: (c['viafId'] as string) || null,
+            isni: (c['isni'] as string) || null,
+            gutenbergAgentId: (c['gutenbergAgentId'] as string) || null,
+            publicDomainFromYear:
+              typeof c['publicDomainFromYear'] === 'number' ? c['publicDomainFromYear'] : null,
+            sourceEvidenceIds: Array.isArray(c['sourceEvidenceIds'])
+              ? c['sourceEvidenceIds']
+              : null,
+            confidence: (c['confidence'] as RightsConfidence) || null,
+            notesRu: (c['notesRu'] as string) || null,
+          },
+        });
+
+        const rpcId = rpc['id'] as string;
+        keyToContributorRecord.set(key, { id: rpcId, personId });
+      }
+
+      if (Array.isArray(componentAssessments)) {
+        for (let i = 0; i < componentAssessments.length; i++) {
+          const ca = componentAssessments[i];
+          const componentId = createdComponentMap.get(`comp-${i}`);
+          if (!componentId) continue;
+
+          const refs = ca['contributorRefs'] as Array<Record<string, unknown>> | undefined;
+          if (Array.isArray(refs)) {
+            for (const ref of refs) {
+              const contributorKey = ref['contributorKey'] as string;
+              const rec = keyToContributorRecord.get(contributorKey);
+              if (rec) {
+                await rpcModel.update({
+                  where: { id: rec.id },
+                  data: { rightsComponentId: componentId },
+                });
+              }
+            }
+          }
+        }
+      }
+    } else if (intakeCandidateAuthor && intakeCandidateAuthor.trim()) {
+      let personId: string | null = null;
+      try {
+        const person = await this.personResolverService.resolveOrCreatePerson({
+          displayName: intakeCandidateAuthor.trim(),
+          canonicalName: intakeCandidateAuthor.trim(),
+        });
+        personId = person.id;
+      } catch {
+        // Keep null
+      }
+
+      await rpcModel.create({
+        data: {
+          rightsProfileId,
+          personId,
+          role: 'AUTHOR',
+          displayName: intakeCandidateAuthor.trim(),
+          canonicalName: intakeCandidateAuthor.trim(),
         },
       });
     }

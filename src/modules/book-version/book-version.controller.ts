@@ -22,6 +22,10 @@ import {
   UpdateRightsGeoBlockDto,
 } from './dto/publication-gate-result.dto';
 import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
+import { CreateBookVersionContributorDto } from './dto/create-version-contributor.dto';
+import { UpdateBookVersionContributorDto } from './dto/update-version-contributor.dto';
+import { ReorderBookVersionContributorsDto } from './dto/reorder-version-contributors.dto';
+import { BookVersionContributorResponseDto } from './dto/version-contributor-response.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsContentHashCheckDto } from '../rights-intake/dto/rights-content-hash.dto';
 import {
@@ -596,5 +600,69 @@ export class BookVersionController {
   @Roles(Role.Admin, Role.ContentManager)
   async checkRightsContentHash(@Param('id') id: string): Promise<RightsContentHashCheckDto> {
     return this.rightsContentHashService.checkVersionStaleness(id, 'MANUAL_HASH_CHECK', null, true);
+  }
+
+  @Get('admin/versions/:id/contributors')
+  @ApiOperation({ summary: 'Get list of contributors for a book version' })
+  @ApiResponse({ status: 200, type: [BookVersionContributorResponseDto] })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async getVersionContributors(@Param('id') id: string) {
+    return this.service.getVersionContributors(id);
+  }
+
+  @Post('admin/versions/:id/contributors')
+  @ApiOperation({ summary: 'Add a contributor to a book version' })
+  @ApiResponse({ status: 201, type: BookVersionContributorResponseDto })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async addVersionContributor(
+    @Param('id') id: string,
+    @Body() dto: CreateBookVersionContributorDto,
+  ) {
+    return this.service.addVersionContributor(id, dto);
+  }
+
+  @Patch('admin/versions/:id/contributors/:contributorId')
+  @ApiOperation({ summary: 'Update a contributor for a book version' })
+  @ApiResponse({ status: 200, type: BookVersionContributorResponseDto })
+  @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'contributorId' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async updateVersionContributor(
+    @Param('id') id: string,
+    @Param('contributorId') contributorId: string,
+    @Body() dto: UpdateBookVersionContributorDto,
+  ) {
+    return this.service.updateVersionContributor(id, contributorId, dto);
+  }
+
+  @Delete('admin/versions/:id/contributors/:contributorId')
+  @ApiOperation({ summary: 'Remove a contributor from a book version' })
+  @ApiParam({ name: 'id' })
+  @ApiParam({ name: 'contributorId' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async removeVersionContributor(
+    @Param('id') id: string,
+    @Param('contributorId') contributorId: string,
+  ) {
+    return this.service.removeVersionContributor(id, contributorId);
+  }
+
+  @Post('admin/versions/:id/contributors/reorder')
+  @ApiOperation({ summary: 'Reorder contributors for a book version' })
+  @ApiResponse({ status: 200, type: [BookVersionContributorResponseDto] })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async reorderVersionContributors(
+    @Param('id') id: string,
+    @Body() dto: ReorderBookVersionContributorsDto,
+  ) {
+    return this.service.reorderVersionContributors(id, dto);
   }
 }

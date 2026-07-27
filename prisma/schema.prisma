@@ -128,6 +128,8 @@ model BookVersion {
   rightsStaleReasonRu String? @db.Text
   rightsContentHashEvents RightsContentHashEvent[]
 
+  contributors BookVersionContributor[]
+
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
@@ -476,6 +478,9 @@ model Seo {
 
   // Relation to AuthorTranslation (1:1)
   authorTranslation AuthorTranslation? @relation("SeoForAuthorTranslation")
+
+  // Relation to PersonTranslation (1:1)
+  personTranslation PersonTranslation? @relation("SeoForPersonTranslation")
 }
 
 model Author {
@@ -484,10 +489,14 @@ model Author {
   deathDate     String?             // Формат YYYY-MM-DD
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
-  
+
+  personId      String?
+  person        Person?             @relation(fields: [personId], references: [id], onDelete: SetNull)
+
   translations  AuthorTranslation[]
   bookVersions  BookVersion[]
-  contributors  Contributor[]
+
+  @@index([personId])
 }
 
 model AuthorTranslation {
@@ -748,6 +757,7 @@ model RightsProfile {
   evidence RightsEvidence[]
   actions RightsAction[]
   approvals RightsReviewApproval[]
+  contributors RightsProfileContributor[]
 
   // Phase 6: Back-relations to Book/BookVersion
   books Book[] @relation("BookCurrentRightsProfile")
@@ -908,7 +918,7 @@ model RightsComponent {
   notesRu String? @db.Text
 
   territoryAssessments ComponentTerritoryAssessment[]
-  contributors         RightsComponentContributor[]
+  contributors         RightsProfileContributor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1365,98 +1375,168 @@ enum ContributorRole {
   TRANSLATOR
   EDITOR
   ILLUSTRATOR
-  PHOTOGRAPHER
-  INTRODUCTION_AUTHOR
-  ANNOTATION_AUTHOR
-  COMPILER
+  NARRATOR
   ADAPTER
-  COVER_DESIGNER
-  CARTOGRAPHER
+  COMPILER
+  COMMENTATOR
+  INTRODUCTION_AUTHOR
+  AFTERWORD_AUTHOR
+  COVER_ARTIST
+  RIGHTS_HOLDER
   OTHER
 }
 
-enum ContributorIdentityConfidence {
-  CONFIRMED
-  PROBABLE
-  UNCERTAIN
+enum PersonType {
+  NATURAL_PERSON
+  ORGANIZATION
   UNKNOWN
 }
 
-model Contributor {
+model Person {
   id String @id @default(uuid())
 
-  displayName String
-  originalName String?
-  birthDate DateTime?
-  deathDate DateTime?
+  type PersonType @default(NATURAL_PERSON)
+
+  canonicalName String
+  sortName String?
+  slug String? @unique
+
+  birthDate String?
+  deathDate String?
   birthYear Int?
   deathYear Int?
-  nationalityCountry String?
-  pseudonym String?
+
+  nationalityCountryCode String?
+  publicDomainFromYear Int?
+
+  wikidataId String?
   viafId String?
-  locAuthorityId String?
-  otherAuthorityIds Json?
-  identityConfidence ContributorIdentityConfidence @default(CONFIRMED)
+  isni String?
+  gutenbergAgentId String?
+
   notesRu String? @db.Text
 
-  authorId String?
-  author Author? @relation(fields: [authorId], references: [id], onDelete: SetNull)
-
-  sourceEditionContributors SourceEditionContributor[]
-  rightsComponentContributors RightsComponentContributor[]
+  translations PersonTranslation[]
+  legacyAuthors Author[]
+  bookVersionContributors BookVersionContributor[]
+  rightsProfileContributors RightsProfileContributor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([displayName])
-  @@index([authorId])
+  @@index([canonicalName])
+  @@index([sortName])
+  @@index([birthYear])
+  @@index([deathYear])
+  @@index([publicDomainFromYear])
+  @@index([wikidataId])
   @@index([viafId])
-  @@index([identityConfidence])
+  @@index([isni])
+  @@index([gutenbergAgentId])
 }
 
-model SourceEditionContributor {
+model PersonTranslation {
   id String @id @default(uuid())
 
-  sourceEditionId String
-  sourceEdition SourceEdition @relation(fields: [sourceEditionId], references: [id], onDelete: Cascade)
+  personId String
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
 
-  contributorId String
-  contributor Contributor @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  language Language
+  slug String
+  displayName String
+  biography String? @db.Text
+  shortDescription String? @db.Text
 
-  role ContributorRole
-  creditedName String?
-  notesRu String? @db.Text
+  wikidataUrl String?
+  wikipediaUrl String?
+  photoUrl String?
 
-  evidenceId String?
-  evidence RightsEvidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+  seoId Int? @unique
+  seo Seo? @relation("SeoForPersonTranslation", fields: [seoId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([sourceEditionId])
-  @@index([contributorId])
+  @@unique([personId, language])
+  @@unique([language, slug])
+  @@index([personId])
+  @@index([language])
+}
+
+model BookVersionContributor {
+  id String @id @default(uuid())
+
+  bookVersionId String
+  bookVersion BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  personId String
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  role ContributorRole
+  roleOtherRu String?
+
+  displayOrder Int @default(0)
+  isPrimary Boolean @default(false)
+
+  creditedName String?
+  creditedLanguage String?
+  contributionNoteRu String? @db.Text
+
+  sourceEvidenceIds Json?
+  confidence RightsConfidence?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bookVersionId])
+  @@index([personId])
   @@index([role])
+  @@index([isPrimary])
+  @@index([displayOrder])
 }
 
-model RightsComponentContributor {
+model RightsProfileContributor {
   id String @id @default(uuid())
 
-  rightsComponentId String
-  rightsComponent RightsComponent @relation(fields: [rightsComponentId], references: [id], onDelete: Cascade)
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
 
-  contributorId String
-  contributor Contributor @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  rightsComponentId String?
+  rightsComponent RightsComponent? @relation(fields: [rightsComponentId], references: [id], onDelete: SetNull)
+
+  personId String?
+  person Person? @relation(fields: [personId], references: [id], onDelete: SetNull)
 
   role ContributorRole
+  roleOtherRu String?
+
+  displayName String
+  canonicalName String?
   creditedName String?
+
+  birthYear Int?
+  deathYear Int?
+  nationalityCountryCode String?
+
+  wikidataId String?
+  viafId String?
+  isni String?
+  gutenbergAgentId String?
+
+  publicDomainFromYear Int?
+
+  sourceEvidenceIds Json?
+  confidence RightsConfidence?
   notesRu String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([rightsProfileId])
   @@index([rightsComponentId])
-  @@index([contributorId])
+  @@index([personId])
   @@index([role])
+  @@index([publicDomainFromYear])
 }
 
 // =====================

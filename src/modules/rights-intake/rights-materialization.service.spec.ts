@@ -1,6 +1,7 @@
 import { RightsMaterializationService } from './rights-materialization.service';
 import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { PersonResolverService } from '../persons/person-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
@@ -158,6 +159,9 @@ describe('RightsMaterializationService', () => {
     service = new RightsMaterializationService(
       prisma as unknown as PrismaService,
       new ComponentTerritoryAggregationService(),
+      {
+        resolveOrCreatePerson: jest.fn().mockResolvedValue({ id: 'person-1' }),
+      } as unknown as PersonResolverService,
     );
     (prisma['rightsComponent'] as Record<string, jest.Mock>).create.mockResolvedValue({
       id: 'component-1',
