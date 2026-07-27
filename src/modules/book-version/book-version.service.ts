@@ -423,7 +423,12 @@ export class BookVersionService {
           territoryDecisions: true,
           evidence: true,
           actions: true,
-        },
+          contributors: {
+            include: {
+              person: true,
+            },
+          },
+        } as any,
       });
       if (foundProfile) {
         currentProfile = foundProfile as Record<string, unknown>;
@@ -510,6 +515,14 @@ export class BookVersionService {
         territoryDecisions,
       ) as unknown as Array<Record<string, unknown>>) ||
       [];
+
+    const profileContributors =
+      (currentProfile?.['contributors'] as Array<Record<string, unknown>>) || [];
+    const contributorsCount = profileContributors.length;
+    const authorsCount = profileContributors.filter((c) => c['role'] === 'AUTHOR').length;
+    const translatorsCount = profileContributors.filter((c) => c['role'] === 'TRANSLATOR').length;
+    const narratorsCount = profileContributors.filter((c) => c['role'] === 'NARRATOR').length;
+    const contributorsWithoutPersonCount = profileContributors.filter((c) => !c['personId']).length;
 
     if (currentProfile) {
       currentProfile = {
@@ -621,6 +634,11 @@ export class BookVersionService {
         reviewsCount: reviewHistory.length,
         isStale,
         recheckRequired,
+        contributorsCount,
+        authorsCount,
+        translatorsCount,
+        narratorsCount,
+        contributorsWithoutPersonCount,
         regionCount,
         blockedRegionCount,
         licenseRequiredRegionCount,

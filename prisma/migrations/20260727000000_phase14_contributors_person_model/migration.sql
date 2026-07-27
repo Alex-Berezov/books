@@ -157,3 +157,48 @@ ALTER TABLE "RightsProfileContributor" ADD CONSTRAINT "RightsProfileContributor_
 
 -- AddForeignKey
 ALTER TABLE "RightsProfileContributor" ADD CONSTRAINT "RightsProfileContributor_personId_fkey" FOREIGN KEY ("personId") REFERENCES "Person"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Backfill legacy Author records into Person
+INSERT INTO "Person" ("id", "type", "canonicalName", "sortName", "slug", "birthYear", "deathYear", "viafId", "createdAt", "updatedAt")
+SELECT 
+  gen_random_uuid()::text,
+  'NATURAL_PERSON'::"PersonType",
+  a."name",
+  a."name",
+  a."slug",
+  a."birthYear",
+  a."deathYear",
+  a."viafId",
+  a."createdAt",
+  a."updatedAt"
+FROM "Author" a
+LEFT JOIN "Person" p ON p."slug" = a."slug"
+WHERE p."id" IS NULL;
+
+-- Update Author.personId linking to newly created Person by matching slug
+UPDATE "Author" a
+SET "personId" = p."id"
+FROM "Person" p
+WHERE a."personId" IS NULL AND a."slug" = p."slug";
+
+-- Backfill legacy AuthorTranslation records into PersonTranslation
+INSERT INTO "PersonTranslation" ("id", "personId", "language", "slug", "displayName", "biography", "shortDescription", "wikidataUrl", "wikipediaUrl", "photoUrl", "seoId", "createdAt", "updatedAt")
+SELECT
+  gen_random_uuid()::text,
+  a."personId",
+  at."language",
+  at."slug",
+  at."displayName",
+  at."biography",
+  at."shortDescription",
+  at."wikidataUrl",
+  at."wikipediaUrl",
+  at."photoUrl",
+  at."seoId",
+  at."createdAt",
+  at."updatedAt"
+FROM "AuthorTranslation" at
+JOIN "Author" a ON a."id" = at."authorId"
+LEFT JOIN "PersonTranslation" pt ON pt."personId" = a."personId" AND pt."language" = at."language"
+WHERE a."personId" IS NOT NULL AND pt."id" IS NULL;
+

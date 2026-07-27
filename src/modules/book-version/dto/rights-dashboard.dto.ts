@@ -148,6 +148,21 @@ export class BookRightsDashboardMetricsDto {
   @ApiProperty({ example: false })
   recheckRequired!: boolean;
 
+  @ApiProperty({ example: 0 })
+  contributorsCount!: number;
+
+  @ApiProperty({ example: 0 })
+  authorsCount!: number;
+
+  @ApiProperty({ example: 0 })
+  translatorsCount!: number;
+
+  @ApiProperty({ example: 0 })
+  narratorsCount!: number;
+
+  @ApiProperty({ example: 0 })
+  contributorsWithoutPersonCount!: number;
+
   @ApiProperty({ example: 7 })
   regionCount!: number;
 

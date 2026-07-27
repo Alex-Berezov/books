@@ -1,0 +1,50 @@
+{
+  "permissions": {
+    "additionalDirectories": ["../books-front", "../books-app-docs"],
+    "allow": [
+      "Bash(yarn lint)",
+      "Bash(yarn lint:*)",
+      "Bash(yarn typecheck)",
+      "Bash(yarn test)",
+      "Bash(yarn test:*)",
+      "Bash(yarn build)",
+      "Bash(yarn format:check)",
+      "Bash(npx eslint:*)",
+      "Bash(npx tsc:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git -C D:\\newDev\\books-front status:*)",
+      "Bash(git -C D:\\newDev\\books-front diff:*)",
+      "Bash(git -C D:\\newDev\\books-app-docs status:*)",
+      "Bash(git -C D:\\newDev\\books-app-docs diff:*)",
+      "Read(//d/newDev/**)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(yarn add:*)",
+      "Bash(yarn remove:*)",
+      "Bash(npm install:*)"
+    ],
+    "deny": [
+      "Bash(yarn prisma:migrate:*)",
+      "Bash(yarn prisma:seed:*)",
+      "Bash(yarn prisma:studio:*)",
+      "Bash(yarn prisma:generate:*)",
+      "Bash(yarn db:*)",
+      "Bash(yarn cleanup:*)",
+      "Bash(npx prisma:*)",
+      "Bash(prisma:*)",
+      "Bash(psql:*)",
+      "Bash(docker:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(//d/newDev/.env.prod.server)"
+    ]
+  }
+}

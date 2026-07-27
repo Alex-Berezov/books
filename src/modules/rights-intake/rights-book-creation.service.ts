@@ -296,6 +296,7 @@ export class RightsBookCreationService {
           v['language'] as string,
           v['type'] as string,
           profileId,
+          (intake['originalLanguage'] as string) || undefined,
         );
       }
 
@@ -346,6 +347,7 @@ export class RightsBookCreationService {
     versionLanguage: string,
     versionType: string,
     profileId: string,
+    originalLanguage?: string,
   ) {
     const t = tx as unknown as Record<string, unknown>;
     const rpcModel = t['rightsProfileContributor'] as {
@@ -386,9 +388,23 @@ export class RightsBookCreationService {
         shouldProject = true;
         isPrimary = index === 0;
       } else if (role === 'TRANSLATOR') {
-        shouldProject = true;
+        const rc = pc['rightsComponent'] as Record<string, unknown> | null;
+        const compType = rc ? (rc['componentType'] as string) || '' : '';
+        const titleRu = rc ? (rc['titleRu'] as string) || '' : '';
+        const creditedLang = (pc['creditedLanguage'] as string) || null;
+
+        if (creditedLang) {
+          shouldProject = creditedLang.toLowerCase() === versionLanguage.toLowerCase();
+        } else if (compType === 'TEXT_TRANSLATION') {
+          shouldProject =
+            versionLanguage !== originalLanguage ||
+            titleRu.toLowerCase().includes(versionLanguage.toLowerCase());
+        } else {
+          shouldProject = versionLanguage !== originalLanguage;
+        }
       } else if (role === 'NARRATOR') {
-        shouldProject = versionType === 'AUDIO' || versionType === 'audiobook';
+        const typeLower = versionType ? versionType.toLowerCase() : '';
+        shouldProject = typeLower === 'audio' || typeLower === 'audiobook';
       } else {
         shouldProject = true;
       }

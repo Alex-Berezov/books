@@ -204,6 +204,11 @@ describe('RightsProfileService', () => {
           territoryAssessments: {
             orderBy: [{ countryCode: 'asc' }],
           },
+          contributors: {
+            include: {
+              person: true,
+            },
+          },
         },
       });
     });

@@ -95,6 +95,46 @@ export class ComponentTerritoryAssessmentDto {
   @ApiProperty() updatedAt!: string;
 }
 
+export class PersonSummaryDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() type!: string;
+  @ApiProperty() canonicalName!: string;
+  @ApiPropertyOptional({ nullable: true }) sortName?: string | null;
+  @ApiPropertyOptional({ nullable: true }) slug?: string | null;
+  @ApiPropertyOptional({ nullable: true }) birthYear?: number | null;
+  @ApiPropertyOptional({ nullable: true }) deathYear?: number | null;
+  @ApiPropertyOptional({ nullable: true }) nationalityCountryCode?: string | null;
+  @ApiPropertyOptional({ nullable: true }) wikidataId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) viafId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) isni?: string | null;
+  @ApiPropertyOptional({ nullable: true }) gutenbergAgentId?: string | null;
+}
+
+export class RightsProfileContributorDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() rightsProfileId!: string;
+  @ApiPropertyOptional({ nullable: true }) rightsComponentId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) personId?: string | null;
+  @ApiProperty() role!: string;
+  @ApiPropertyOptional({ nullable: true }) roleOtherRu?: string | null;
+  @ApiProperty() displayName!: string;
+  @ApiPropertyOptional({ nullable: true }) canonicalName?: string | null;
+  @ApiPropertyOptional({ nullable: true }) creditedName?: string | null;
+  @ApiPropertyOptional({ nullable: true }) birthYear?: number | null;
+  @ApiPropertyOptional({ nullable: true }) deathYear?: number | null;
+  @ApiPropertyOptional({ nullable: true }) nationalityCountryCode?: string | null;
+  @ApiPropertyOptional({ nullable: true }) wikidataId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) viafId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) isni?: string | null;
+  @ApiPropertyOptional({ nullable: true }) gutenbergAgentId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) publicDomainFromYear?: number | null;
+  @ApiPropertyOptional({ nullable: true }) confidence?: string | null;
+  @ApiPropertyOptional({ nullable: true }) notesRu?: string | null;
+  @ApiPropertyOptional({ type: PersonSummaryDto, nullable: true }) person?: PersonSummaryDto | null;
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
+}
+
 export class RightsComponentDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsProfileId!: string;
@@ -107,6 +147,9 @@ export class RightsComponentDto {
 
   @ApiProperty({ type: [ComponentTerritoryAssessmentDto] })
   territoryAssessments!: ComponentTerritoryAssessmentDto[];
+
+  @ApiPropertyOptional({ type: [RightsProfileContributorDto] })
+  contributors?: RightsProfileContributorDto[];
 
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
@@ -209,6 +252,15 @@ export class RightsProfileDetailDto {
 
   @ApiProperty({ type: [RightsActionDto] })
   actions!: RightsActionDto[];
+
+  @ApiPropertyOptional({ type: [RightsProfileContributorDto] })
+  contributors?: RightsProfileContributorDto[];
+
+  @ApiPropertyOptional() contributorsCount?: number;
+  @ApiPropertyOptional() authorsCount?: number;
+  @ApiPropertyOptional() translatorsCount?: number;
+  @ApiPropertyOptional() narratorsCount?: number;
+  @ApiPropertyOptional() contributorsWithoutPersonCount?: number;
 
   @ApiProperty() supersededAt!: string | null;
   @ApiProperty() archivedAt!: string | null;

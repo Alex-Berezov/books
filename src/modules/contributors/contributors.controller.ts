@@ -58,8 +58,8 @@ export class ContributorsController {
   @Delete('contributors/:id')
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Delete a contributor' })
-  async remove(@Param('id') id: string) {
-    return this.contributorsService.remove(id);
+  async remove(@Param('id') id: string): Promise<{ id: string }> {
+    return await this.contributorsService.remove(id);
   }
 
   @Post('source-editions/:id/contributors')

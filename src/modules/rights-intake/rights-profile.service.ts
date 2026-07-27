@@ -145,6 +145,11 @@ export class RightsProfileService {
         territoryAssessments: {
           orderBy: [{ countryCode: 'asc' }],
         },
+        contributors: {
+          include: {
+            person: true,
+          },
+        },
       },
     });
 
@@ -217,7 +222,7 @@ export class RightsProfileService {
       components: componentsData.map((c: Record<string, unknown>) => this.mapComponent(c)),
       evidence: evidenceData.map((e: Record<string, unknown>) => this.mapEvidence(e)),
       actions: actionsData.map((a: Record<string, unknown>) => this.mapAction(a)),
-      contributors: contributorsData,
+      contributors: contributorsData.map((c: Record<string, unknown>) => this.mapContributor(c)),
       contributorsCount: contributorsData.length,
       authorsCount,
       translatorsCount,
@@ -355,6 +360,54 @@ export class RightsProfileService {
             this.mapComponentTerritoryAssessment(assessment),
           )
         : [],
+      contributors: Array.isArray(record['contributors'])
+        ? (record['contributors'] as Array<Record<string, unknown>>).map((contributor) =>
+            this.mapContributor(contributor),
+          )
+        : [],
+      createdAt: new Date(record['createdAt'] as string).toISOString(),
+      updatedAt: new Date(record['updatedAt'] as string).toISOString(),
+    };
+  }
+
+  private mapContributor(record: Record<string, unknown>) {
+    const personRaw = record['person'] as Record<string, unknown> | null;
+    return {
+      id: record['id'] as string,
+      rightsProfileId: record['rightsProfileId'] as string,
+      rightsComponentId: (record['rightsComponentId'] as string) ?? null,
+      personId: (record['personId'] as string) ?? null,
+      role: record['role'] as string,
+      roleOtherRu: (record['roleOtherRu'] as string) ?? null,
+      displayName: record['displayName'] as string,
+      canonicalName: (record['canonicalName'] as string) ?? null,
+      creditedName: (record['creditedName'] as string) ?? null,
+      birthYear: (record['birthYear'] as number) ?? null,
+      deathYear: (record['deathYear'] as number) ?? null,
+      nationalityCountryCode: (record['nationalityCountryCode'] as string) ?? null,
+      wikidataId: (record['wikidataId'] as string) ?? null,
+      viafId: (record['viafId'] as string) ?? null,
+      isni: (record['isni'] as string) ?? null,
+      gutenbergAgentId: (record['gutenbergAgentId'] as string) ?? null,
+      publicDomainFromYear: (record['publicDomainFromYear'] as number) ?? null,
+      confidence: (record['confidence'] as string) ?? null,
+      notesRu: (record['notesRu'] as string) ?? null,
+      person: personRaw
+        ? {
+            id: personRaw['id'] as string,
+            type: personRaw['type'] as string,
+            canonicalName: personRaw['canonicalName'] as string,
+            sortName: (personRaw['sortName'] as string) ?? null,
+            slug: (personRaw['slug'] as string) ?? null,
+            birthYear: (personRaw['birthYear'] as number) ?? null,
+            deathYear: (personRaw['deathYear'] as number) ?? null,
+            nationalityCountryCode: (personRaw['nationalityCountryCode'] as string) ?? null,
+            wikidataId: (personRaw['wikidataId'] as string) ?? null,
+            viafId: (personRaw['viafId'] as string) ?? null,
+            isni: (personRaw['isni'] as string) ?? null,
+            gutenbergAgentId: (personRaw['gutenbergAgentId'] as string) ?? null,
+          }
+        : null,
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
     };

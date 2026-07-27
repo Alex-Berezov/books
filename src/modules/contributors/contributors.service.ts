@@ -1,36 +1,22 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PersonsService } from '../persons/persons.service';
 import { CreateContributorDto } from './dto/create-contributor.dto';
 import { LinkRightsComponentContributorDto } from './dto/link-rights-component-contributor.dto';
 import { LinkSourceEditionContributorDto } from './dto/link-source-edition-contributor.dto';
 import { QueryContributorsDto } from './dto/query-contributors.dto';
 import { UpdateContributorDto } from './dto/update-contributor.dto';
+import type { ContributorRole } from '../persons/person-interface';
 
 @Injectable()
 export class ContributorsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly personsService: PersonsService,
+  ) {}
 
-  private get contributorModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['contributor'] as {
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
-      count: (args: Record<string, unknown>) => Promise<number>;
-      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    };
-  }
-
-  private get sourceEditionContributorModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['sourceEditionContributor'] as {
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-      delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    };
-  }
-
-  private get rightsComponentContributorModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['rightsComponentContributor'] as {
+  private get rpcModel() {
+    return (this.prisma as unknown as Record<string, unknown>)['rightsProfileContributor'] as {
       create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
       delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -50,134 +36,85 @@ export class ContributorsService {
   }
 
   async create(dto: CreateContributorDto) {
-    const data: Record<string, unknown> = {
-      displayName: dto.displayName,
-      originalName: dto.originalName ?? null,
-      birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
-      deathDate: dto.deathDate ? new Date(dto.deathDate) : null,
-      birthYear: dto.birthYear ?? null,
-      deathYear: dto.deathYear ?? null,
-      nationalityCountry: dto.nationalityCountry ?? null,
-      pseudonym: dto.pseudonym ?? null,
-      viafId: dto.viafId ?? null,
-      locAuthorityId: dto.locAuthorityId ?? null,
-      otherAuthorityIds: dto.otherAuthorityIds ?? null,
-      identityConfidence: dto.identityConfidence ?? 'CONFIRMED',
-      notesRu: dto.notesRu ?? null,
-      authorId: dto.authorId ?? null,
-    };
+    const person = await this.personsService.create({
+      canonicalName: dto.displayName,
+      birthYear: dto.birthYear ?? undefined,
+      deathYear: dto.deathYear ?? undefined,
+      nationalityCountryCode: dto.nationalityCountry ?? undefined,
+      viafId: dto.viafId ?? undefined,
+      notesRu: dto.notesRu ?? undefined,
+    });
 
-    return this.contributorModel.create({ data });
+    return {
+      id: person.id,
+      displayName: person.canonicalName,
+      birthYear: person.birthYear,
+      deathYear: person.deathYear,
+      viafId: person.viafId,
+      createdAt: person.createdAt,
+      updatedAt: person.updatedAt,
+    };
   }
 
   async findAll(query: QueryContributorsDto) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
-
-    const where: Record<string, unknown> = {};
-
-    if (query.q) {
-      where['OR'] = [
-        { displayName: { contains: query.q, mode: 'insensitive' } },
-        { originalName: { contains: query.q, mode: 'insensitive' } },
-        { pseudonym: { contains: query.q, mode: 'insensitive' } },
-      ];
-    }
-
-    if (query.identityConfidence) {
-      where['identityConfidence'] = query.identityConfidence;
-    }
-
-    if (query.role) {
-      where['OR'] = [
-        { sourceEditionContributors: { some: { role: query.role } } },
-        { rightsComponentContributors: { some: { role: query.role } } },
-      ];
-    }
-
-    const [items, total] = await Promise.all([
-      this.contributorModel.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { displayName: 'asc' },
-        include: {
-          sourceEditionContributors: true,
-          rightsComponentContributors: true,
-        },
-      }),
-      this.contributorModel.count({ where }),
-    ]);
-
-    const totalPages = Math.ceil(total / limit);
+    const res = await this.personsService.findAll({
+      q: query.q,
+      role: query.role as ContributorRole | undefined,
+      limit: query.limit,
+      offset: query.page && query.limit ? (query.page - 1) * query.limit : undefined,
+    });
 
     return {
-      items,
-      total,
-      page,
-      limit,
-      totalPages,
+      items: res.items.map((person) => ({
+        id: person.id,
+        displayName: person.canonicalName,
+        birthYear: person.birthYear,
+        deathYear: person.deathYear,
+        viafId: person.viafId,
+        createdAt: person.createdAt,
+        updatedAt: person.updatedAt,
+      })),
+      total: res.total,
+      page: query.page ?? 1,
+      limit: query.limit ?? 20,
     };
   }
 
   async findOne(id: string) {
-    const contributor = await this.contributorModel.findUnique({
-      where: { id },
-      include: {
-        sourceEditionContributors: {
-          include: {
-            sourceEdition: true,
-          },
-        },
-        rightsComponentContributors: {
-          include: {
-            rightsComponent: true,
-          },
-        },
-      },
-    });
-
-    if (!contributor) {
-      throw new NotFoundException(`Contributor with ID '${id}' not found`);
-    }
-
-    return contributor;
+    const person = await this.personsService.findOne(id);
+    return {
+      id: person.id,
+      displayName: person.canonicalName,
+      birthYear: person.birthYear,
+      deathYear: person.deathYear,
+      viafId: person.viafId,
+      createdAt: person.createdAt,
+      updatedAt: person.updatedAt,
+    };
   }
 
   async update(id: string, dto: UpdateContributorDto) {
-    await this.findOne(id);
-
-    const data: Record<string, unknown> = {};
-
-    if (dto.displayName !== undefined) data['displayName'] = dto.displayName;
-    if (dto.originalName !== undefined) data['originalName'] = dto.originalName ?? null;
-    if (dto.birthDate !== undefined)
-      data['birthDate'] = dto.birthDate ? new Date(dto.birthDate) : null;
-    if (dto.deathDate !== undefined)
-      data['deathDate'] = dto.deathDate ? new Date(dto.deathDate) : null;
-    if (dto.birthYear !== undefined) data['birthYear'] = dto.birthYear ?? null;
-    if (dto.deathYear !== undefined) data['deathYear'] = dto.deathYear ?? null;
-    if (dto.nationalityCountry !== undefined)
-      data['nationalityCountry'] = dto.nationalityCountry ?? null;
-    if (dto.pseudonym !== undefined) data['pseudonym'] = dto.pseudonym ?? null;
-    if (dto.viafId !== undefined) data['viafId'] = dto.viafId ?? null;
-    if (dto.locAuthorityId !== undefined) data['locAuthorityId'] = dto.locAuthorityId ?? null;
-    if (dto.otherAuthorityIds !== undefined)
-      data['otherAuthorityIds'] = dto.otherAuthorityIds ?? null;
-    if (dto.identityConfidence !== undefined) data['identityConfidence'] = dto.identityConfidence;
-    if (dto.notesRu !== undefined) data['notesRu'] = dto.notesRu ?? null;
-    if (dto.authorId !== undefined) data['authorId'] = dto.authorId ?? null;
-
-    return this.contributorModel.update({
-      where: { id },
-      data,
+    const person = await this.personsService.update(id, {
+      canonicalName: dto.displayName,
+      birthYear: dto.birthYear,
+      deathYear: dto.deathYear,
+      viafId: dto.viafId,
+      notesRu: dto.notesRu,
     });
+
+    return {
+      id: person.id,
+      displayName: person.canonicalName,
+      birthYear: person.birthYear,
+      deathYear: person.deathYear,
+      viafId: person.viafId,
+      createdAt: person.createdAt,
+      updatedAt: person.updatedAt,
+    };
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
-    return this.contributorModel.delete({ where: { id } });
+  async remove(id: string): Promise<{ id: string }> {
+    return await this.personsService.remove(id);
   }
 
   async linkSourceEdition(sourceEditionId: string, dto: LinkSourceEditionContributorDto) {
@@ -185,34 +122,31 @@ export class ContributorsService {
       where: { id: sourceEditionId },
     });
     if (!sourceEdition) {
-      throw new NotFoundException(`SourceEdition with ID '${sourceEditionId}' not found`);
+      throw new NotFoundException(`SourceEdition with ID "${sourceEditionId}" not found`);
     }
 
-    await this.findOne(dto.contributorId);
+    const person = await this.personsService.findOne(dto.contributorId);
 
-    return this.sourceEditionContributorModel.create({
+    const created = await this.rpcModel.create({
       data: {
-        sourceEditionId,
-        contributorId: dto.contributorId,
+        rightsProfileId: sourceEdition['rightsProfileId'],
+        personId: person.id,
         role: dto.role,
-        creditedName: dto.creditedName ?? null,
-        evidenceId: dto.evidenceId ?? null,
+        displayName: person.canonicalName,
+        creditedName: dto.creditedName ?? person.canonicalName,
         notesRu: dto.notesRu ?? null,
       },
     });
+
+    return created;
   }
 
-  async unlinkSourceEdition(sourceEditionId: string, linkId: string) {
-    const link = await this.sourceEditionContributorModel.findUnique({
-      where: { id: linkId },
-    });
-    if (!link || link['sourceEditionId'] !== sourceEditionId) {
-      throw new NotFoundException(
-        `SourceEditionContributor link '${linkId}' for SourceEdition '${sourceEditionId}' not found`,
-      );
+  async unlinkSourceEdition(_sourceEditionId: string, linkId: string) {
+    const link = await this.rpcModel.findUnique({ where: { id: linkId } });
+    if (!link) {
+      throw new NotFoundException(`RightsProfileContributor link with ID "${linkId}" not found`);
     }
-
-    return this.sourceEditionContributorModel.delete({ where: { id: linkId } });
+    return this.rpcModel.delete({ where: { id: linkId } });
   }
 
   async linkRightsComponent(rightsComponentId: string, dto: LinkRightsComponentContributorDto) {
@@ -220,32 +154,31 @@ export class ContributorsService {
       where: { id: rightsComponentId },
     });
     if (!component) {
-      throw new NotFoundException(`RightsComponent with ID '${rightsComponentId}' not found`);
+      throw new NotFoundException(`RightsComponent with ID "${rightsComponentId}" not found`);
     }
 
-    await this.findOne(dto.contributorId);
+    const person = await this.personsService.findOne(dto.contributorId);
 
-    return this.rightsComponentContributorModel.create({
+    const created = await this.rpcModel.create({
       data: {
+        rightsProfileId: component['rightsProfileId'],
         rightsComponentId,
-        contributorId: dto.contributorId,
+        personId: person.id,
         role: dto.role,
-        creditedName: dto.creditedName ?? null,
+        displayName: person.canonicalName,
+        creditedName: dto.creditedName ?? person.canonicalName,
         notesRu: dto.notesRu ?? null,
       },
     });
+
+    return created;
   }
 
-  async unlinkRightsComponent(rightsComponentId: string, linkId: string) {
-    const link = await this.rightsComponentContributorModel.findUnique({
-      where: { id: linkId },
-    });
-    if (!link || link['rightsComponentId'] !== rightsComponentId) {
-      throw new NotFoundException(
-        `RightsComponentContributor link '${linkId}' for RightsComponent '${rightsComponentId}' not found`,
-      );
+  async unlinkRightsComponent(_rightsComponentId: string, linkId: string) {
+    const link = await this.rpcModel.findUnique({ where: { id: linkId } });
+    if (!link) {
+      throw new NotFoundException(`RightsProfileContributor link with ID "${linkId}" not found`);
     }
-
-    return this.rightsComponentContributorModel.delete({ where: { id: linkId } });
+    return this.rpcModel.delete({ where: { id: linkId } });
   }
 }

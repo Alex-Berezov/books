@@ -15,6 +15,7 @@ export class PersonsService {
       findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
       create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
     };
   }
 
@@ -162,5 +163,11 @@ export class PersonsService {
 
   public async search(q: string) {
     return this.findAll({ q, limit: 20 });
+  }
+
+  public async remove(id: string): Promise<{ id: string }> {
+    await this.findOne(id);
+    await this.personModel.delete({ where: { id } });
+    return { id };
   }
 }
