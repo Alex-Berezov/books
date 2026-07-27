@@ -12,6 +12,8 @@
     ]
   },
   "maxWorkers": 1,
+  "workerIdleMemoryLimit": "512MB",
+  "setupFilesAfterEnv": ["<rootDir>/setup-after-env-e2e.ts"],
   "globalSetup": "<rootDir>/setup-e2e.ts",
   "globalTeardown": "<rootDir>/teardown-e2e.ts"
 }
