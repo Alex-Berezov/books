@@ -812,7 +812,6 @@ model SourceEdition {
   notesRu String? @db.Text
 
   editionRights EditionRights?
-  contributors  SourceEditionContributor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1004,8 +1003,6 @@ model RightsEvidence {
 
   relevantExcerpt String? @db.Text
   summaryRu String @db.Text
-
-  sourceEditionContributors SourceEditionContributor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
