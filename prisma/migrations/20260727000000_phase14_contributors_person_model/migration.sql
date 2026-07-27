@@ -159,46 +159,50 @@ ALTER TABLE "RightsProfileContributor" ADD CONSTRAINT "RightsProfileContributor_
 ALTER TABLE "RightsProfileContributor" ADD CONSTRAINT "RightsProfileContributor_personId_fkey" FOREIGN KEY ("personId") REFERENCES "Person"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- Backfill legacy Author records into Person
-INSERT INTO "Person" ("id", "type", "canonicalName", "sortName", "slug", "birthYear", "deathYear", "viafId", "createdAt", "updatedAt")
-SELECT 
+INSERT INTO "Person" ("id", "type", "canonicalName", "sortName", "slug", "birthDate", "deathDate", "birthYear", "deathYear", "createdAt", "updatedAt")
+SELECT DISTINCT ON (a."id")
   gen_random_uuid()::text,
   'NATURAL_PERSON'::"PersonType",
-  a."name",
-  a."name",
-  a."slug",
-  a."birthYear",
-  a."deathYear",
-  a."viafId",
+  at."name",
+  at."name",
+  at."slug",
+  a."birthDate",
+  a."deathDate",
+  CASE WHEN a."birthDate" ~ '^\d{4}' THEN substring(a."birthDate" from 1 for 4)::integer ELSE NULL END,
+  CASE WHEN a."deathDate" ~ '^\d{4}' THEN substring(a."deathDate" from 1 for 4)::integer ELSE NULL END,
   a."createdAt",
   a."updatedAt"
 FROM "Author" a
-LEFT JOIN "Person" p ON p."slug" = a."slug"
-WHERE p."id" IS NULL;
+JOIN "AuthorTranslation" at ON at."authorId" = a."id"
+LEFT JOIN "Person" p ON p."slug" = at."slug"
+WHERE p."id" IS NULL
+ORDER BY a."id", CASE WHEN at."language" = 'en' THEN 1 WHEN at."language" = 'ru' THEN 2 ELSE 3 END;
 
--- Update Author.personId linking to newly created Person by matching slug
+-- Update Author.personId linking to newly created Person by matching slug from AuthorTranslation
 UPDATE "Author" a
 SET "personId" = p."id"
-FROM "Person" p
-WHERE a."personId" IS NULL AND a."slug" = p."slug";
+FROM "AuthorTranslation" at
+JOIN "Person" p ON p."slug" = at."slug"
+WHERE a."id" = at."authorId" AND a."personId" IS NULL;
 
 -- Backfill legacy AuthorTranslation records into PersonTranslation
-INSERT INTO "PersonTranslation" ("id", "personId", "language", "slug", "displayName", "biography", "shortDescription", "wikidataUrl", "wikipediaUrl", "photoUrl", "seoId", "createdAt", "updatedAt")
+INSERT INTO "PersonTranslation" ("id", "personId", "language", "slug", "displayName", "biography", "wikidataUrl", "wikipediaUrl", "photoUrl", "seoId", "createdAt", "updatedAt")
 SELECT
   gen_random_uuid()::text,
   a."personId",
   at."language",
   at."slug",
-  at."displayName",
+  at."name",
   at."biography",
-  at."shortDescription",
   at."wikidataUrl",
   at."wikipediaUrl",
   at."photoUrl",
   at."seoId",
-  at."createdAt",
-  at."updatedAt"
+  a."createdAt",
+  a."updatedAt"
 FROM "AuthorTranslation" at
 JOIN "Author" a ON a."id" = at."authorId"
 LEFT JOIN "PersonTranslation" pt ON pt."personId" = a."personId" AND pt."language" = at."language"
 WHERE a."personId" IS NOT NULL AND pt."id" IS NULL;
+
 
