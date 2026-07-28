@@ -16,6 +16,9 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
+import { RightsClaimsService } from '../rights-claims/rights-claims.service';
+import { CLAIM_SEVERITY_RANK } from '../rights-claims/rights-claim.constants';
+import { RightsClaimSeverity } from '../rights-claims/rights-claim-interface';
 
 interface BookWithRights {
   id: string;
@@ -54,6 +57,7 @@ export class BookVersionService {
     private rightsContentHashService: RightsContentHashService,
     private geoBlockRuleService: GeoBlockRuleService,
     private licenseCoverageService: RightsLicenseCoverageService,
+    private rightsClaimsService: RightsClaimsService,
     private regionAggregationService?: TerritoryRegionAggregationService,
   ) {}
 
@@ -566,6 +570,25 @@ export class BookVersionService {
       (l) => l.attributionRequired,
     ).length;
 
+    // Phase 16: claims filed against this version or against the whole book
+    const claimList = await this.rightsClaimsService.listForVersion(versionId);
+    const claims = claimList.items.slice(0, 50);
+    const openClaims = claims.filter((claim) => claim.isOpen);
+    const claimBlockedCountries = new Set<string>();
+    for (const claim of claims) {
+      for (const code of claim.blockedCountryCodes) claimBlockedCountries.add(code);
+    }
+    const activeClaimBlocksCount = claims.reduce(
+      (total, claim) => total + claim.activeBlocksCount,
+      0,
+    );
+    const worstClaimSeverity =
+      openClaims.reduce<string | null>((worst, claim) => {
+        const rank = CLAIM_SEVERITY_RANK[claim.severity] ?? 0;
+        const worstRank = worst ? (CLAIM_SEVERITY_RANK[worst] ?? 0) : -1;
+        return rank > worstRank ? claim.severity : worst;
+      }, null) ?? null;
+
     if (currentProfile) {
       currentProfile = {
         ...currentProfile,
@@ -642,7 +665,12 @@ export class BookVersionService {
         rightsLicenseIds: Array.isArray(versionRecord['rightsLicenseIds'])
           ? (versionRecord['rightsLicenseIds'] as string[])
           : null,
+        rightsClaimBlockActive: versionRecord['rightsClaimBlockActive'] === true,
+        rightsClaimBlockAppliedAt: versionRecord['rightsClaimBlockAppliedAt']
+          ? (versionRecord['rightsClaimBlockAppliedAt'] as Date).toISOString()
+          : null,
       },
+      claims,
       versions: bookVersions.map((v) => ({
         id: v.id,
         language: v.language,
@@ -706,6 +734,17 @@ export class BookVersionService {
         licenseCoverageStatus: licenseCoverage.status,
         licenseCoveredCountriesCount: licenseCoverage.coveredCountryCodes.length,
         licenseUncoveredCountriesCount: licenseCoverage.uncoveredCountryCodes.length,
+        claimsCount: claims.length,
+        activeClaimsCount: openClaims.length,
+        blockingClaimsCount: openClaims.filter((claim) => claim.blocksPublication).length,
+        criticalClaimsCount: openClaims.filter(
+          (claim) => claim.severity === RightsClaimSeverity.CRITICAL,
+        ).length,
+        overdueClaimsCount: openClaims.filter((claim) => claim.isOverdue).length,
+        activeClaimBlocksCount,
+        claimBlockedCountriesCount: claimBlockedCountries.size,
+        hasWorldwideClaimBlock: claims.some((claim) => claim.hasWorldwideBlock),
+        worstClaimSeverity,
       },
     };
   }

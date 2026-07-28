@@ -30,6 +30,8 @@ import { RightsContentHashService } from '../rights-intake/rights-content-hash.s
 import { RightsContentHashCheckDto } from '../rights-intake/dto/rights-content-hash.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { LicenseCoverageResultDto } from '../rights-licenses/dto/rights-license-response.dto';
+import { RightsClaimsService } from '../rights-claims/rights-claims.service';
+import { RightsClaimListResponseDto } from '../rights-claims/dto/rights-claim-response.dto';
 import {
   ApiOperation,
   ApiParam,
@@ -57,6 +59,7 @@ export class BookVersionController {
     private readonly geoIpCountryService: GeoIpCountryService,
     private readonly geoBlockRuleService: GeoBlockRuleService,
     private readonly licenseCoverageService: RightsLicenseCoverageService,
+    private readonly rightsClaimsService: RightsClaimsService,
   ) {}
 
   @Get('books/:bookId/versions')
@@ -405,6 +408,32 @@ export class BookVersionController {
   @ApiResponse({ status: 200, type: LicenseCoverageResultDto })
   getLicenseCoverage(@Param('id') id: string): Promise<LicenseCoverageResultDto> {
     return this.licenseCoverageService.evaluateVersionCoverage(id);
+  }
+
+  @Get('admin/versions/:id/rights-claims')
+  @ApiOperation({
+    summary: 'Admin: List rights claims affecting a book version',
+    description:
+      'Возвращает претензии, поданные на эту версию, и претензии на книгу целиком (без bookVersionId).',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiResponse({ status: 200, type: RightsClaimListResponseDto })
+  getVersionRightsClaims(@Param('id') id: string): Promise<RightsClaimListResponseDto> {
+    return this.rightsClaimsService.listForVersion(id);
+  }
+
+  @Get('admin/books/:id/rights-claims')
+  @ApiOperation({
+    summary: 'Admin: List rights claims for a book across all versions',
+  })
+  @ApiParam({ name: 'id' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiResponse({ status: 200, type: RightsClaimListResponseDto })
+  getBookRightsClaims(@Param('id') id: string): Promise<RightsClaimListResponseDto> {
+    return this.rightsClaimsService.listForBook(id);
   }
 
   @Patch('versions/:id')

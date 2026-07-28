@@ -7,6 +7,7 @@ import {
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
+import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 
 interface VersionWithGeoBlock {
   id: string;
@@ -37,6 +38,7 @@ export class PublicationGateService {
     private readonly rightsContentHashService: RightsContentHashService,
     private readonly geoBlockRuleService: GeoBlockRuleService,
     private readonly licenseCoverageService: RightsLicenseCoverageService,
+    private readonly rightsClaimsService: RightsClaimsService,
   ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
@@ -485,6 +487,39 @@ export class PublicationGateService {
       );
     }
 
+    // 6.18 Rights claims (Phase 16)
+    const claimEvaluation = await this.rightsClaimsService.evaluateVersionClaims(versionId);
+
+    for (const blocker of claimEvaluation.blockers) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: blocker.code,
+          severity: 'BLOCKER',
+          messageRu: blocker.messageRu,
+          details: {
+            ...(blocker.details ?? {}),
+            claimId: blocker.claimId,
+            claimNumber: blocker.claimNumber,
+          },
+        }),
+      );
+    }
+
+    for (const warning of claimEvaluation.warnings) {
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: warning.code,
+          severity: 'WARNING',
+          messageRu: warning.messageRu,
+          details: {
+            ...(warning.details ?? {}),
+            claimId: warning.claimId,
+            claimNumber: warning.claimNumber,
+          },
+        }),
+      );
+    }
+
     return new PublicationGateResultDto({
       versionId: version.id,
       bookId: book.id,
@@ -504,6 +539,14 @@ export class PublicationGateService {
       licenseCoveredCountryCodes: licenseCoverage.coveredCountryCodes,
       licenseUncoveredCountryCodes: licenseCoverage.uncoveredCountryCodes,
       licenseIds: licenseCoverage.licenseIds,
+      activeClaimsCount: claimEvaluation.activeClaimsCount,
+      blockingClaimsCount: claimEvaluation.blockingClaimsCount,
+      criticalClaimsCount: claimEvaluation.criticalClaimsCount,
+      overdueClaimsCount: claimEvaluation.overdueClaimsCount,
+      claimBlockedCountryCodes: claimEvaluation.claimBlockedCountryCodes,
+      hasWorldwideClaimBlock: claimEvaluation.hasWorldwideBlock,
+      worstClaimSeverity: claimEvaluation.worstSeverity,
+      claimIds: claimEvaluation.claimIds,
     });
   }
 

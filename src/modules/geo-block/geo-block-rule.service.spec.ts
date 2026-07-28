@@ -1,5 +1,10 @@
 import { BadRequestException, HttpException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ClaimAccessCheckResult,
+  RightsClaimEnforcementService,
+} from '../rights-claims/rights-claim-enforcement.service';
+import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
 import { GeoBlockScope } from './dto/geo-block.dto';
 import { GeoBlockRuleService } from './geo-block-rule.service';
 
@@ -123,13 +128,29 @@ const createPrismaStub = (): PrismaStub => {
   return stub;
 };
 
+const createClaimEnforcementStub = (): { checkClaimAccess: jest.Mock } => ({
+  checkClaimAccess: jest.fn().mockResolvedValue({
+    blocked: false,
+    countryCode: null,
+    scope: ClaimBlockScope.TEXT_READER,
+    matchedBlockId: null,
+    reasonCode: null,
+    messageRu: null,
+  } satisfies ClaimAccessCheckResult),
+});
+
 describe('GeoBlockRuleService', () => {
   let prisma: PrismaStub;
+  let claimEnforcement: { checkClaimAccess: jest.Mock };
   let service: GeoBlockRuleService;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new GeoBlockRuleService(prisma as unknown as PrismaService);
+    claimEnforcement = createClaimEnforcementStub();
+    service = new GeoBlockRuleService(
+      prisma as unknown as PrismaService,
+      claimEnforcement as unknown as RightsClaimEnforcementService,
+    );
   });
 
   it.each([
@@ -224,6 +245,57 @@ describe('GeoBlockRuleService', () => {
 
     expect(result.allowed).toBe(true);
     expect(result.countryCode).toBe('UNKNOWN');
+  });
+
+  it('answers 451 with BLOCKED_BY_RIGHTS_CLAIM when a claim block matched', async () => {
+    claimEnforcement.checkClaimAccess.mockResolvedValue({
+      blocked: true,
+      countryCode: 'GB',
+      scope: ClaimBlockScope.TEXT_READER,
+      matchedBlockId: 'block-1',
+      reasonCode: 'BLOCKED_BY_RIGHTS_CLAIM',
+      messageRu: 'Контент временно недоступен из-за претензии правообладателя.',
+    } satisfies ClaimAccessCheckResult);
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'GB',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasonCode).toBe('BLOCKED_BY_RIGHTS_CLAIM');
+    expect(result.matchedRuleId).toBe('block-1');
+    // The geo-block rules table is never consulted once a claim block matched.
+    expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
+
+    await expect(
+      service.assertAccess({
+        bookVersionId: 'version-1',
+        countryCode: 'GB',
+        scope: GeoBlockScope.TEXT_READER,
+      }),
+    ).rejects.toMatchObject({
+      status: 451,
+      response: expect.objectContaining({ code: 'BLOCKED_BY_RIGHTS_CLAIM' }),
+    });
+  });
+
+  it('keeps the GEO_BLOCKED_BY_RIGHTS contract when no claim block matched', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({ scope: GeoBlockScope.TEXT_READER }),
+    ]);
+
+    await expect(
+      service.assertAccess({
+        bookVersionId: 'version-1',
+        countryCode: 'GB',
+        scope: GeoBlockScope.TEXT_READER,
+      }),
+    ).rejects.toMatchObject({
+      status: 451,
+      response: expect.objectContaining({ code: 'GEO_BLOCKED_BY_RIGHTS' }),
+    });
   });
 
   it('refuses verification when geo-block is required but no active rules exist', async () => {

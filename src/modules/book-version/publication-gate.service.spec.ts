@@ -2,6 +2,8 @@ import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
+import { RightsClaimsService } from '../rights-claims/rights-claims.service';
+import { ClaimGateEvaluationDto } from '../rights-claims/dto/rights-claim-response.dto';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -19,12 +21,29 @@ const notRequiredCoverage = () => ({
   attributionTextsRu: [],
 });
 
+/** Default claim evaluation: the version has no claims at all. */
+const noClaims = (overrides: Partial<ClaimGateEvaluationDto> = {}): ClaimGateEvaluationDto => ({
+  activeClaimsCount: 0,
+  blockingClaimsCount: 0,
+  criticalClaimsCount: 0,
+  overdueClaimsCount: 0,
+  activeBlocksCount: 0,
+  hasWorldwideBlock: false,
+  claimBlockedCountryCodes: [],
+  worstSeverity: null,
+  claimIds: [],
+  blockers: [],
+  warnings: [],
+  ...overrides,
+});
+
 describe('PublicationGateService', () => {
   let service: PublicationGateService;
   let prisma: jest.Mocked<PrismaService>;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
   let mockGeoBlockRuleService: jest.Mocked<GeoBlockRuleService>;
   let mockLicenseCoverageService: { evaluateVersionCoverage: jest.Mock };
+  let mockRightsClaimsService: { evaluateVersionClaims: jest.Mock };
 
   const baseVersion = {
     id: 'v1',
@@ -93,11 +112,16 @@ describe('PublicationGateService', () => {
       evaluateVersionCoverage: jest.fn().mockResolvedValue(notRequiredCoverage()),
     };
 
+    mockRightsClaimsService = {
+      evaluateVersionClaims: jest.fn().mockResolvedValue(noClaims()),
+    };
+
     service = new PublicationGateService(
       prisma,
       mockRightsContentHashService,
       mockGeoBlockRuleService,
       mockLicenseCoverageService as unknown as RightsLicenseCoverageService,
+      mockRightsClaimsService as unknown as RightsClaimsService,
     );
   });
 
@@ -606,5 +630,143 @@ describe('PublicationGateService', () => {
     (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
     (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
     await expect(service.assertVersionCanPublish('v1')).resolves.toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 6.18 Rights claims (Phase 16)
+  // ---------------------------------------------------------------------------
+
+  describe('rights claims', () => {
+    beforeEach(() => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    });
+
+    it('blocks publication when an active blocking claim exists', async () => {
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          activeClaimsCount: 1,
+          blockingClaimsCount: 1,
+          claimIds: ['claim-1'],
+          blockers: [
+            {
+              code: 'ACTIVE_RIGHTS_CLAIM',
+              severity: 'BLOCKER',
+              messageRu: 'Публикация заблокирована активной претензией CLM-2026-000001.',
+              claimId: 'claim-1',
+              claimNumber: 'CLM-2026-000001',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'ACTIVE_RIGHTS_CLAIM')).toBe(true);
+      expect(result.blockingClaimsCount).toBe(1);
+      expect(result.claimIds).toEqual(['claim-1']);
+    });
+
+    it('only warns for an open claim that does not block publication', async () => {
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          activeClaimsCount: 1,
+          warnings: [
+            {
+              code: 'RIGHTS_CLAIM_OPEN_NON_BLOCKING',
+              severity: 'WARNING',
+              messageRu: 'Открытая претензия CLM-2026-000002 не блокирует публикацию.',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.warnings.some((r) => r.code === 'RIGHTS_CLAIM_OPEN_NON_BLOCKING')).toBe(true);
+    });
+
+    it('blocks on an unresolved critical claim', async () => {
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          criticalClaimsCount: 1,
+          worstSeverity: 'CRITICAL' as ClaimGateEvaluationDto['worstSeverity'],
+          blockers: [
+            {
+              code: 'CRITICAL_RIGHTS_CLAIM_UNRESOLVED',
+              severity: 'BLOCKER',
+              messageRu: 'Есть нерешённая критичная претензия CLM-2026-000003.',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(
+        result.blockingReasons.some((r) => r.code === 'CRITICAL_RIGHTS_CLAIM_UNRESOLVED'),
+      ).toBe(true);
+      expect(result.worstClaimSeverity).toBe('CRITICAL');
+    });
+
+    it('blocks when a claim deadline is overdue', async () => {
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          overdueClaimsCount: 1,
+          blockers: [
+            {
+              code: 'RIGHTS_CLAIM_DEADLINE_OVERDUE',
+              severity: 'BLOCKER',
+              messageRu: 'Просрочен срок ответа по претензии CLM-2026-000004.',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CLAIM_DEADLINE_OVERDUE')).toBe(
+        true,
+      );
+      expect(result.overdueClaimsCount).toBe(1);
+    });
+
+    it('warns but does not block when a claim deadline is approaching', async () => {
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          activeClaimsCount: 1,
+          warnings: [
+            {
+              code: 'RIGHTS_CLAIM_DEADLINE_SOON',
+              severity: 'WARNING',
+              messageRu: 'Срок ответа по претензии CLM-2026-000005 истекает через 3 дн.',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.warnings.some((r) => r.code === 'RIGHTS_CLAIM_DEADLINE_SOON')).toBe(true);
+    });
+
+    it('does not block when every claim is resolved', async () => {
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({ claimIds: ['claim-9'] }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.activeClaimsCount).toBe(0);
+      expect(result.blockingReasons).toHaveLength(0);
+    });
   });
 });

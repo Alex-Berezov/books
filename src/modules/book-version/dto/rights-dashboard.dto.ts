@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PublicationGateResultDto } from './publication-gate-result.dto';
 import { RightsContentHashCheckDto } from '../../rights-intake/dto/rights-content-hash.dto';
+import { RightsClaimSummaryDto } from '../../rights-claims/dto/rights-claim-response.dto';
 
 export class BookRightsDashboardBookSummaryDto {
   @ApiProperty({ example: 'a1111111-b222-4c33-d444-555555555555' })
@@ -98,6 +99,13 @@ export class BookRightsDashboardVersionSummaryDto {
 
   @ApiPropertyOptional({ type: [String], nullable: true })
   rightsLicenseIds?: string[] | null;
+
+  // Phase 16: denormalised rights-claim block state
+  @ApiPropertyOptional({ example: false })
+  rightsClaimBlockActive?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-28T12:00:00.000Z' })
+  rightsClaimBlockAppliedAt?: string | null;
 }
 
 export class BookRightsDashboardMetricsDto {
@@ -218,6 +226,34 @@ export class BookRightsDashboardMetricsDto {
 
   @ApiPropertyOptional({ example: 0 })
   licenseUncoveredCountriesCount?: number;
+
+  // Phase 16: rights claims / DMCA
+  @ApiPropertyOptional({ example: 0 })
+  claimsCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  activeClaimsCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  blockingClaimsCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  criticalClaimsCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  overdueClaimsCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  activeClaimBlocksCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  claimBlockedCountriesCount?: number;
+
+  @ApiPropertyOptional({ example: false })
+  hasWorldwideClaimBlock?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, example: 'HIGH' })
+  worstClaimSeverity?: string | null;
 }
 
 export class BookRightsDashboardDto {
@@ -250,6 +286,12 @@ export class BookRightsDashboardDto {
 
   @ApiPropertyOptional({ type: RightsContentHashCheckDto, nullable: true })
   contentHash!: RightsContentHashCheckDto | null;
+
+  @ApiPropertyOptional({
+    type: [RightsClaimSummaryDto],
+    description: 'Phase 16: up to 50 most recent claims for this version and its book',
+  })
+  claims?: RightsClaimSummaryDto[];
 
   @ApiProperty({ type: BookRightsDashboardMetricsDto })
   summary!: BookRightsDashboardMetricsDto;

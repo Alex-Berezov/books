@@ -88,6 +88,31 @@ export class PublicationGateResultDto {
   @ApiProperty({ type: [String] })
   licenseIds!: string[];
 
+  // Phase 16: rights claims / DMCA
+  @ApiProperty()
+  activeClaimsCount!: number;
+
+  @ApiProperty()
+  blockingClaimsCount!: number;
+
+  @ApiProperty()
+  criticalClaimsCount!: number;
+
+  @ApiProperty()
+  overdueClaimsCount!: number;
+
+  @ApiProperty({ type: [String] })
+  claimBlockedCountryCodes!: string[];
+
+  @ApiProperty()
+  hasWorldwideClaimBlock!: boolean;
+
+  @ApiProperty({ nullable: true })
+  worstClaimSeverity!: string | null;
+
+  @ApiProperty({ type: [String] })
+  claimIds!: string[];
+
   constructor(data: {
     versionId: string;
     bookId: string;
@@ -107,6 +132,14 @@ export class PublicationGateResultDto {
     licenseCoveredCountryCodes?: string[];
     licenseUncoveredCountryCodes?: string[];
     licenseIds?: string[];
+    activeClaimsCount?: number;
+    blockingClaimsCount?: number;
+    criticalClaimsCount?: number;
+    overdueClaimsCount?: number;
+    claimBlockedCountryCodes?: string[];
+    hasWorldwideClaimBlock?: boolean;
+    worstClaimSeverity?: string | null;
+    claimIds?: string[];
   }) {
     this.versionId = data.versionId;
     this.bookId = data.bookId;
@@ -126,6 +159,14 @@ export class PublicationGateResultDto {
     this.licenseCoveredCountryCodes = data.licenseCoveredCountryCodes ?? [];
     this.licenseUncoveredCountryCodes = data.licenseUncoveredCountryCodes ?? [];
     this.licenseIds = data.licenseIds ?? [];
+    this.activeClaimsCount = data.activeClaimsCount ?? 0;
+    this.blockingClaimsCount = data.blockingClaimsCount ?? 0;
+    this.criticalClaimsCount = data.criticalClaimsCount ?? 0;
+    this.overdueClaimsCount = data.overdueClaimsCount ?? 0;
+    this.claimBlockedCountryCodes = data.claimBlockedCountryCodes ?? [];
+    this.hasWorldwideClaimBlock = data.hasWorldwideClaimBlock ?? false;
+    this.worstClaimSeverity = data.worstClaimSeverity ?? null;
+    this.claimIds = data.claimIds ?? [];
   }
 }
 

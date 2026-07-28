@@ -4,6 +4,7 @@ import { RightsContentHashService } from '../rights-intake/rights-content-hash.s
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
+import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -144,9 +145,13 @@ describe('BookVersionService', () => {
     isActiveAt: jest.Mock;
     evaluateVersionCoverage: jest.Mock;
   };
+  let rightsClaimsService: { listForVersion: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    rightsClaimsService = {
+      listForVersion: jest.fn().mockResolvedValue({ items: [], total: 0, page: 1, limit: 0 }),
+    };
     licenseCoverageService = {
       loadLicensesForProfile: jest.fn().mockResolvedValue([]),
       effectiveStatus: jest.fn().mockReturnValue('ACTIVE'),
@@ -182,6 +187,7 @@ describe('BookVersionService', () => {
         assertAccess: jest.fn(),
       } as unknown as GeoBlockRuleService,
       licenseCoverageService as unknown as RightsLicenseCoverageService,
+      rightsClaimsService as unknown as RightsClaimsService,
       new TerritoryRegionAggregationService(),
     );
   });
@@ -613,6 +619,103 @@ describe('BookVersionService', () => {
       expect(res.summary.hasClearance).toBe(false);
       expect(res.summary.canPublishCurrentVersion).toBe(false);
       expect(res.summary.publicationGate).toBe('BLOCK');
+      // Phase 16: a version with no claims reports zeroed claim metrics, never undefined.
+      expect(res.claims).toEqual([]);
+      expect(res.summary.claimsCount).toBe(0);
+      expect(res.summary.activeClaimsCount).toBe(0);
+      expect(res.summary.hasWorldwideClaimBlock).toBe(false);
+      expect(res.currentVersion.rightsClaimBlockActive).toBe(false);
+    });
+
+    it('aggregates claim metrics from the claims service (Phase 16)', async () => {
+      const mockVersion = {
+        id: 'v1',
+        bookId: 'b1',
+        language: 'en',
+        type: 'text',
+        status: 'draft',
+        title: 'Title',
+        rightsProfileId: null,
+        approvedRightsReviewId: null,
+        rightsStatus: null,
+        rightsGeoBlockRequired: false,
+        rightsGeoBlockConfigured: false,
+        rightsGeoBlockConfiguredAt: null,
+        rightsGeoBlockNotesRu: null,
+        rightsContentHash: null,
+        rightsContentHashAlgorithmVersion: null,
+        rightsContentHashCalculatedAt: null,
+        rightsRecheckRequired: false,
+        rightsStaleDetectedAt: null,
+        rightsStaleReasonCode: null,
+        rightsStaleReasonRu: null,
+        rightsClaimBlockActive: true,
+        rightsClaimBlockAppliedAt: new Date('2026-07-28T10:00:00.000Z'),
+        book: {
+          id: 'b1',
+          slug: 'slug-b1',
+          rightsIntakeId: null,
+          currentRightsProfileId: null,
+          approvedRightsReviewId: null,
+          rightsCreatedAt: null,
+        },
+      };
+
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(mockVersion);
+      (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([mockVersion]);
+      (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
+        canPublish: false,
+        blockingReasons: [],
+        warnings: [],
+      });
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockResolvedValue({
+        matchesBaseline: false,
+        recheckRequired: false,
+      });
+      rightsClaimsService.listForVersion.mockResolvedValue({
+        items: [
+          {
+            id: 'claim-1',
+            claimNumber: 'CLM-2026-000001',
+            severity: 'CRITICAL',
+            isOpen: true,
+            isOverdue: true,
+            blocksPublication: true,
+            activeBlocksCount: 2,
+            hasWorldwideBlock: true,
+            blockedCountryCodes: ['DE', 'FR'],
+          },
+          {
+            id: 'claim-2',
+            claimNumber: 'CLM-2026-000002',
+            severity: 'LOW',
+            isOpen: false,
+            isOverdue: false,
+            blocksPublication: true,
+            activeBlocksCount: 0,
+            hasWorldwideBlock: false,
+            blockedCountryCodes: [],
+          },
+        ],
+        total: 2,
+        page: 1,
+        limit: 2,
+      });
+
+      const res = await service.getRightsDashboard('v1');
+
+      expect(res.claims).toHaveLength(2);
+      expect(res.summary.claimsCount).toBe(2);
+      expect(res.summary.activeClaimsCount).toBe(1);
+      expect(res.summary.blockingClaimsCount).toBe(1);
+      expect(res.summary.criticalClaimsCount).toBe(1);
+      expect(res.summary.overdueClaimsCount).toBe(1);
+      expect(res.summary.activeClaimBlocksCount).toBe(2);
+      expect(res.summary.claimBlockedCountriesCount).toBe(2);
+      expect(res.summary.hasWorldwideClaimBlock).toBe(true);
+      expect(res.summary.worstClaimSeverity).toBe('CRITICAL');
+      expect(res.currentVersion.rightsClaimBlockActive).toBe(true);
+      expect(res.currentVersion.rightsClaimBlockAppliedAt).toBe('2026-07-28T10:00:00.000Z');
     });
 
     it('should return full rights dashboard payload when clearance profile and history exist', async () => {

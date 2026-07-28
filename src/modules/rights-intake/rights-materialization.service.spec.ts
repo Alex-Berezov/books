@@ -1,6 +1,7 @@
 import { RightsMaterializationService } from './rights-materialization.service';
 import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
 import { PersonResolverService } from '../persons/person-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
@@ -640,7 +641,19 @@ describe('RightsMaterializationService', () => {
       expect(materializedDecision.geoBlockScope).toBe('TEXT_READER');
 
       // Test GeoBlockRule projection from decision
-      const geoBlockRuleService = new GeoBlockRuleService(prisma as unknown as PrismaService);
+      const geoBlockRuleService = new GeoBlockRuleService(
+        prisma as unknown as PrismaService,
+        {
+          checkClaimAccess: jest.fn().mockResolvedValue({
+            blocked: false,
+            countryCode: null,
+            scope: 'TEXT_READER',
+            matchedBlockId: null,
+            reasonCode: null,
+            messageRu: null,
+          }),
+        } as unknown as RightsClaimEnforcementService,
+      );
       (prisma['bookVersion'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
         id: 'v1',
         bookId: 'b1',

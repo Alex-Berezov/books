@@ -35,6 +35,10 @@ model Book {
   // Phase 6: Back-relation to RightsIntake (createdBook)
   sourceRightsIntake RightsIntake? @relation("RightsIntakeCreatedBook")
 
+  // Phase 16: Rights claims / DMCA
+  rightsClaims            RightsClaim[]
+  rightsClaimAccessBlocks RightsClaimAccessBlock[] @relation("RightsClaimBlockBook")
+
   @@index([rightsIntakeId])
   @@index([currentRightsProfileId])
   @@index([approvedRightsReviewId])
@@ -138,6 +142,15 @@ model BookVersion {
   contributors BookVersionContributor[]
   licenseLinks RightsLicenseLink[]
 
+  // Phase 16: Rights claims snapshot
+  /// Denormalised flag: the version is covered by an active rights-claim access block.
+  /// Maintained in the same transaction as apply/lift; RightsClaimAccessBlock stays the source of truth.
+  rightsClaimBlockActive Boolean @default(false)
+  rightsClaimBlockAppliedAt DateTime?
+
+  rightsClaims            RightsClaim[]
+  rightsClaimAccessBlocks RightsClaimAccessBlock[] @relation("RightsClaimBlockVersion")
+
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
@@ -151,6 +164,7 @@ model BookVersion {
   @@index([rightsStaleDetectedAt])
   @@index([rightsGeoBlockVerifiedByUserId])
   @@index([rightsLicenseCoverageStatus])
+  @@index([rightsClaimBlockActive])
 }
 
 model BookSummary {
@@ -230,6 +244,15 @@ model User {
   rightsLicensesRevoked RightsLicense[] @relation("RightsLicenseRevokedBy")
   rightsLicenseLinksCreated RightsLicenseLink[] @relation("RightsLicenseLinkCreatedBy")
   rightsLicenseEventsCreated RightsLicenseEvent[] @relation("RightsLicenseEventCreatedBy")
+  rightsClaimsCreated RightsClaim[] @relation("RightsClaimCreatedBy")
+  rightsClaimsAssigned RightsClaim[] @relation("RightsClaimAssignedTo")
+  rightsClaimsResponded RightsClaim[] @relation("RightsClaimRespondedBy")
+  rightsClaimsResolved RightsClaim[] @relation("RightsClaimResolvedBy")
+  rightsClaimBlocksApplied RightsClaimAccessBlock[] @relation("RightsClaimBlockAppliedBy")
+  rightsClaimBlocksLifted RightsClaimAccessBlock[] @relation("RightsClaimBlockLiftedBy")
+  rightsClaimAttachmentsUploaded RightsClaimAttachment[] @relation("RightsClaimAttachmentUploadedBy")
+  rightsClaimAttachmentsRemoved RightsClaimAttachment[] @relation("RightsClaimAttachmentRemovedBy")
+  rightsClaimEventsCreated RightsClaimEvent[] @relation("RightsClaimEventCreatedBy")
 }
 
 
@@ -397,6 +420,8 @@ model MediaAsset {
   audioChapters AudioChapter[]
   previewVersions BookVersion[] @relation("VersionPreviewMedia")
   rightsLicenseDocuments RightsLicense[] @relation("RightsLicenseDocument")
+  rightsClaimMediaAssets RightsClaim[] @relation("RightsClaimMediaAsset")
+  rightsClaimAttachments RightsClaimAttachment[] @relation("RightsClaimAttachment")
 
   @@index([createdAt])
   @@index([hash])
@@ -692,6 +717,9 @@ model RightsIntake {
   // Phase 6: Back-relation to Book
   book Book? @relation("BookRightsIntake")
 
+  // Phase 16: Rights claims / DMCA
+  rightsClaims RightsClaim[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -792,6 +820,9 @@ model RightsProfile {
   staleReasonRu String? @db.Text
   contentHashEvents RightsContentHashEvent[]
   geoBlockRules GeoBlockRule[]
+
+  // Phase 16: Rights claims / DMCA
+  rightsClaims RightsClaim[]
 
   supersededAt DateTime?
   archivedAt DateTime?
@@ -935,6 +966,7 @@ model RightsComponent {
   territoryAssessments ComponentTerritoryAssessment[]
   contributors         RightsProfileContributor[]
   licenseLinks         RightsLicenseLink[]
+  claimComponents      RightsClaimComponent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1440,6 +1472,7 @@ model Person {
   legacyAuthors Author[]
   bookVersionContributors BookVersionContributor[]
   rightsProfileContributors RightsProfileContributor[]
+  rightsClaims RightsClaim[] @relation("RightsClaimClaimant")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1819,6 +1852,384 @@ model RightsLicenseEvent {
   createdAt DateTime @default(now())
 
   @@index([rightsLicenseId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([createdByUserId])
+}
+
+// =====================
+// Phase 16: Rights Claims / DMCA
+// =====================
+
+enum RightsClaimType {
+  DMCA_TAKEDOWN
+  COPYRIGHT_INFRINGEMENT
+  LICENSE_VIOLATION
+  ATTRIBUTION_MISSING
+  TERRITORY_VIOLATION
+  TRADEMARK
+  PRIVACY_PERSONAL_DATA
+  DEFAMATION
+  COUNTER_NOTICE
+  OTHER
+}
+
+enum RightsClaimStatus {
+  RECEIVED
+  UNDER_REVIEW
+  ACTION_REQUIRED
+  AWAITING_CLAIMANT
+  CONTENT_REMOVED
+  CONTENT_RESTRICTED
+  COUNTER_NOTICE_FILED
+  ESCALATED_TO_LAWYER
+  RESOLVED_VALID
+  RESOLVED_INVALID
+  WITHDRAWN
+  CLOSED
+}
+
+enum RightsClaimSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RightsClaimChannel {
+  EMAIL
+  WEB_FORM
+  POSTAL
+  PHONE
+  LEGAL_COUNSEL
+  PLATFORM_NOTICE
+  OTHER
+}
+
+enum RightsClaimantType {
+  RIGHTS_HOLDER
+  AUTHOR
+  PUBLISHER
+  AGENT
+  LAW_FIRM
+  COLLECTING_SOCIETY
+  PLATFORM
+  INDIVIDUAL
+  UNKNOWN
+}
+
+enum RightsClaimResolution {
+  VALID_CONTENT_REMOVED
+  VALID_LICENSE_OBTAINED
+  VALID_GEO_RESTRICTED
+  VALID_ATTRIBUTION_ADDED
+  INVALID_REJECTED
+  WITHDRAWN_BY_CLAIMANT
+  COUNTER_NOTICE_UPHELD
+  NO_ACTION_NEEDED
+  OTHER
+}
+
+enum RightsClaimBlockStatus {
+  ACTIVE
+  LIFTED
+  EXPIRED
+}
+
+enum RightsClaimAttachmentType {
+  CLAIM_NOTICE
+  EVIDENCE
+  POWER_OF_ATTORNEY
+  LICENSE_DOCUMENT
+  CORRESPONDENCE
+  COUNTER_NOTICE
+  RESPONSE_LETTER
+  LEGAL_OPINION
+  SCREENSHOT
+  OTHER
+}
+
+enum RightsClaimEventType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  ASSIGNED
+  BLOCK_APPLIED
+  BLOCK_LIFTED
+  BLOCK_EXPIRED
+  RESPONSE_RECORDED
+  COUNTER_NOTICE_RECORDED
+  RESOLVED
+  REOPENED
+  ESCALATED
+  DEADLINE_CHANGED
+  COMPONENT_LINKED
+  COMPONENT_UNLINKED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  VERSION_UNPUBLISHED
+}
+
+model RightsClaim {
+  id String @id @default(uuid())
+
+  /// Human-readable number in the form CLM-2026-000123, generated by RightsClaimsService.
+  claimNumber String @unique
+
+  claimType RightsClaimType
+  status    RightsClaimStatus   @default(RECEIVED)
+  severity  RightsClaimSeverity @default(MEDIUM)
+  channel   RightsClaimChannel  @default(EMAIL)
+
+  receivedAt DateTime  @default(now())
+  deadlineAt DateTime?
+  resolvedAt DateTime?
+  closedAt   DateTime?
+
+  // --- Claimant ---
+  claimantName         String
+  claimantType         RightsClaimantType @default(UNKNOWN)
+  claimantOrganization String?
+  claimantEmail        String?
+  claimantPhone        String?
+  claimantAddress      String? @db.Text
+  /// The claimant confirmed they are authorised to act on behalf of the rights holder.
+  claimantIsAuthorized Boolean @default(false)
+  claimantPersonId String?
+  claimantPerson   Person? @relation("RightsClaimClaimant", fields: [claimantPersonId], references: [id], onDelete: SetNull)
+
+  // --- Claim target (polymorphic) ---
+  bookId String?
+  book   Book? @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  bookVersionId String?
+  bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  rightsProfileId String?
+  rightsProfile   RightsProfile? @relation(fields: [rightsProfileId], references: [id], onDelete: SetNull)
+
+  rightsIntakeId String?
+  rightsIntake   RightsIntake? @relation(fields: [rightsIntakeId], references: [id], onDelete: SetNull)
+
+  mediaAssetId String?
+  mediaAsset   MediaAsset? @relation("RightsClaimMediaAsset", fields: [mediaAssetId], references: [id], onDelete: SetNull)
+
+  // --- Territories and languages ---
+  /// Empty array / null = the claim applies in every country.
+  affectedCountryCodes Json?
+  affectedLanguages    Json?
+
+  // --- Substance of the claim ---
+  claimedWorkTitle           String?
+  claimedWorkAuthor          String?
+  claimedRightsDescriptionRu String? @db.Text
+  descriptionRu              String  @db.Text
+  infringingUrls             Json?
+  goodFaithStatement         Boolean @default(false)
+  swornStatement             Boolean @default(false)
+  originalNoticeText         String? @db.Text
+  originalNoticeUrl          String?
+
+  // --- Handling ---
+  assignedToUserId String?
+  assignedToUser   User? @relation("RightsClaimAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  internalNotesRu String? @db.Text
+
+  /// The claim blocks publication. Clearing the flag requires an explicit reason.
+  blocksPublication                 Boolean @default(true)
+  blocksPublicationOverrideReasonRu String? @db.Text
+
+  /// Bridge to Phase 19 (Lawyer Workflow).
+  requiresLawyerReview Boolean @default(false)
+
+  // --- Response to the claimant ---
+  responseSentAt   DateTime?
+  responseChannel  RightsClaimChannel?
+  responseTextRu   String? @db.Text
+  responseByUserId String?
+  responseByUser   User? @relation("RightsClaimRespondedBy", fields: [responseByUserId], references: [id], onDelete: SetNull)
+
+  // --- Counter notice ---
+  counterNoticeReceivedAt   DateTime?
+  counterNoticeClaimantName String?
+  counterNoticeTextRu       String? @db.Text
+
+  // --- Resolution ---
+  resolution        RightsClaimResolution?
+  resolutionNotesRu String? @db.Text
+  resolvedByUserId  String?
+  resolvedByUser    User? @relation("RightsClaimResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  // --- Related claims (duplicates, counter notices) ---
+  parentClaimId String?
+  parentClaim   RightsClaim?  @relation("RightsClaimParent", fields: [parentClaimId], references: [id], onDelete: SetNull)
+  childClaims   RightsClaim[] @relation("RightsClaimParent")
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsClaimCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  components   RightsClaimComponent[]
+  accessBlocks RightsClaimAccessBlock[]
+  attachments  RightsClaimAttachment[]
+  events       RightsClaimEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([claimNumber])
+  @@index([status])
+  @@index([claimType])
+  @@index([severity])
+  @@index([bookId])
+  @@index([bookVersionId])
+  @@index([rightsProfileId])
+  @@index([rightsIntakeId])
+  @@index([assignedToUserId])
+  @@index([claimantPersonId])
+  @@index([deadlineAt])
+  @@index([receivedAt])
+  @@index([resolvedAt])
+  @@index([blocksPublication])
+  @@index([requiresLawyerReview])
+  @@index([parentClaimId])
+  @@index([createdByUserId])
+  @@index([responseByUserId])
+  @@index([resolvedByUserId])
+  @@index([mediaAssetId])
+}
+
+model RightsClaimComponent {
+  id String @id @default(uuid())
+
+  rightsClaimId String
+  rightsClaim   RightsClaim @relation(fields: [rightsClaimId], references: [id], onDelete: Cascade)
+
+  /// Link to the real rights profile component when one exists.
+  rightsComponentId String?
+  rightsComponent   RightsComponent? @relation(fields: [rightsComponentId], references: [id], onDelete: SetNull)
+
+  /// Component type for legacy books that have no rights profile.
+  componentType RightsComponentType?
+  titleRu       String?
+  notesRu       String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsClaimId])
+  @@index([rightsComponentId])
+  @@index([componentType])
+}
+
+model RightsClaimAccessBlock {
+  id String @id @default(uuid())
+
+  rightsClaimId String
+  rightsClaim   RightsClaim @relation(fields: [rightsClaimId], references: [id], onDelete: Cascade)
+
+  bookId String?
+  book   Book? @relation("RightsClaimBlockBook", fields: [bookId], references: [id], onDelete: Cascade)
+
+  bookVersionId String?
+  bookVersion   BookVersion? @relation("RightsClaimBlockVersion", fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  scope GeoBlockScope
+
+  /// null = the block applies worldwide.
+  countryCode String?
+
+  status RightsClaimBlockStatus @default(ACTIVE)
+
+  reasonRu String @db.Text
+
+  appliedAt       DateTime  @default(now())
+  appliedByUserId String?
+  appliedByUser   User? @relation("RightsClaimBlockAppliedBy", fields: [appliedByUserId], references: [id], onDelete: SetNull)
+
+  /// Automatic expiry. Evaluated at runtime, no cron required.
+  expiresAt DateTime?
+
+  liftedAt       DateTime?
+  liftedByUserId String?
+  liftedByUser   User? @relation("RightsClaimBlockLiftedBy", fields: [liftedByUserId], references: [id], onDelete: SetNull)
+  liftReasonRu   String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsClaimId])
+  @@index([bookId, status])
+  @@index([bookVersionId, status])
+  @@index([countryCode])
+  @@index([scope])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([appliedByUserId])
+  @@index([liftedByUserId])
+}
+
+model RightsClaimAttachment {
+  id String @id @default(uuid())
+
+  rightsClaimId String
+  rightsClaim   RightsClaim @relation(fields: [rightsClaimId], references: [id], onDelete: Cascade)
+
+  attachmentType RightsClaimAttachmentType @default(EVIDENCE)
+
+  title    String
+  fileName String?
+
+  mediaAssetId String?
+  mediaAsset   MediaAsset? @relation("RightsClaimAttachment", fields: [mediaAssetId], references: [id], onDelete: SetNull)
+
+  storageKey  String?
+  url         String?
+  sha256      String?
+  contentType String?
+  sizeBytes   Int?
+
+  notesRu String? @db.Text
+
+  uploadedByUserId String?
+  uploadedByUser   User? @relation("RightsClaimAttachmentUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  /// Soft delete: claim materials are never physically removed.
+  isDeleted       Boolean   @default(false)
+  removedAt       DateTime?
+  removedByUserId String?
+  removedByUser   User? @relation("RightsClaimAttachmentRemovedBy", fields: [removedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsClaimId])
+  @@index([attachmentType])
+  @@index([mediaAssetId])
+  @@index([sha256])
+  @@index([isDeleted])
+  @@index([uploadedByUserId])
+  @@index([removedByUserId])
+}
+
+model RightsClaimEvent {
+  id String @id @default(uuid())
+
+  rightsClaimId String
+  rightsClaim   RightsClaim @relation(fields: [rightsClaimId], references: [id], onDelete: Cascade)
+
+  eventType RightsClaimEventType
+
+  previousStatus RightsClaimStatus?
+  currentStatus  RightsClaimStatus?
+
+  notesRu String? @db.Text
+  payload Json?
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsClaimEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsClaimId])
   @@index([eventType])
   @@index([createdAt])
   @@index([createdByUserId])

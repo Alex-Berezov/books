@@ -6,6 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
+import {
+  CLAIM_ACCESS_BLOCK_MESSAGE,
+  CLAIM_ACCESS_BLOCK_MESSAGE_RU,
+  CLAIM_ACCESS_BLOCK_REASON_CODE,
+} from '../rights-claims/rights-claim.constants';
+import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
 import {
   GeoAccessCheckResultDto,
   GeoBlockRuleDto,
@@ -78,7 +85,10 @@ const GEO_BLOCK_MESSAGE_RU = 'Контент недоступен в вашей 
 export class GeoBlockRuleService {
   private readonly logger = new Logger(GeoBlockRuleService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly claimEnforcement: RightsClaimEnforcementService,
+  ) {}
 
   async generateRulesForVersion(bookVersionId: string): Promise<GeoBlockRulesResponseDto> {
     const version = await this.prisma.bookVersion.findUnique({
@@ -225,6 +235,26 @@ export class GeoBlockRuleService {
   }
 
   async checkAccess(input: GeoAccessCheckInput): Promise<GeoAccessCheckResultDto> {
+    // Phase 16: rights-claim blocks are evaluated first — a worldwide block must fire even when
+    // the requesting country is unknown, which the geo-block branch below deliberately allows.
+    const claimResult = await this.claimEnforcement.checkClaimAccess({
+      bookId: input.bookId,
+      bookVersionId: input.bookVersionId,
+      countryCode: input.countryCode,
+      scope: input.scope as unknown as ClaimBlockScope,
+    });
+    if (claimResult.blocked) {
+      return {
+        allowed: false,
+        countryCode: claimResult.countryCode ?? 'UNKNOWN',
+        scope: input.scope,
+        matchedRuleId: claimResult.matchedBlockId,
+        reasonCode: CLAIM_ACCESS_BLOCK_REASON_CODE,
+        messageRu: claimResult.messageRu ?? CLAIM_ACCESS_BLOCK_MESSAGE_RU,
+        bookVersionId: input.bookVersionId ?? null,
+      };
+    }
+
     if (!input.countryCode) {
       this.logger.warn(
         `GeoIP country is unknown for scope ${input.scope}; allowing access by Phase 12 policy`,
@@ -280,6 +310,21 @@ export class GeoBlockRuleService {
   async assertAccess(input: GeoAccessCheckInput): Promise<void> {
     const result = await this.checkAccess(input);
     if (result.allowed) return;
+
+    // Claim blocks answer with their own code; the body never carries claim or claimant data.
+    if (result.reasonCode === CLAIM_ACCESS_BLOCK_REASON_CODE) {
+      throw new HttpException(
+        {
+          statusCode: 451,
+          code: CLAIM_ACCESS_BLOCK_REASON_CODE,
+          message: CLAIM_ACCESS_BLOCK_MESSAGE,
+          messageRu: result.messageRu ?? CLAIM_ACCESS_BLOCK_MESSAGE_RU,
+          countryCode: result.countryCode,
+          scope: result.scope,
+        },
+        451,
+      );
+    }
 
     throw new HttpException(
       {
