@@ -230,7 +230,12 @@ BEGIN
   END IF;
 END $$;
 
--- Backfill legacy Author records into Person (guarded: skips authors already mapped)
+-- Backfill legacy Author records into Person.
+--
+-- `ON CONFLICT DO NOTHING` is the difference from the original Phase 14 statement: `Person.slug`
+-- is unique, and two authors whose translations resolve to the same slug make the plain INSERT
+-- abort the whole (transactional) migration — the most likely reason Phase 14 never landed on
+-- production. Colliding authors are linked to the existing Person by the UPDATE below instead.
 INSERT INTO "Person" ("id", "type", "canonicalName", "sortName", "slug", "birthDate", "deathDate", "birthYear", "deathYear", "createdAt", "updatedAt")
 SELECT DISTINCT ON (a."id")
   gen_random_uuid()::text,
@@ -248,7 +253,8 @@ FROM "Author" a
 JOIN "AuthorTranslation" at ON at."authorId" = a."id"
 LEFT JOIN "Person" p ON p."slug" = at."slug"
 WHERE p."id" IS NULL
-ORDER BY a."id", CASE WHEN at."language" = 'en' THEN 1 WHEN at."language" = 'ru' THEN 2 ELSE 3 END;
+ORDER BY a."id", CASE WHEN at."language" = 'en' THEN 1 WHEN at."language" = 'ru' THEN 2 ELSE 3 END
+ON CONFLICT DO NOTHING;
 
 -- Update Author.personId linking to newly created Person by matching slug from AuthorTranslation
 UPDATE "Author" a
@@ -257,7 +263,9 @@ FROM "AuthorTranslation" at
 JOIN "Person" p ON p."slug" = at."slug"
 WHERE a."id" = at."authorId" AND a."personId" IS NULL;
 
--- Backfill legacy AuthorTranslation records into PersonTranslation
+-- Backfill legacy AuthorTranslation records into PersonTranslation.
+-- Same reasoning as above: (personId, language), (language, slug) and seoId are all unique, and
+-- authors collapsed onto a shared Person by the slug collision above would collide here too.
 INSERT INTO "PersonTranslation" ("id", "personId", "language", "slug", "displayName", "biography", "wikidataUrl", "wikipediaUrl", "photoUrl", "seoId", "createdAt", "updatedAt")
 SELECT
   gen_random_uuid()::text,
@@ -275,4 +283,5 @@ SELECT
 FROM "AuthorTranslation" at
 JOIN "Author" a ON a."id" = at."authorId"
 LEFT JOIN "PersonTranslation" pt ON pt."personId" = a."personId" AND pt."language" = at."language"
-WHERE a."personId" IS NOT NULL AND pt."id" IS NULL;
+WHERE a."personId" IS NOT NULL AND pt."id" IS NULL
+ON CONFLICT DO NOTHING;
