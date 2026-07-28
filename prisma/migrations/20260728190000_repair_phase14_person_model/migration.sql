@@ -23,6 +23,23 @@ BEGIN
   END IF;
 END $$;
 
+-- Reconcile "ContributorRole" with schema.prisma.
+--
+-- Production carries an older value set left by the first Phase 14 attempt
+-- (PHOTOGRAPHER, ANNOTATION_AUTHOR, COVER_DESIGNER, CARTOGRAPHER) and is missing five roles the
+-- application actually writes. The guard above would have skipped the type and left it broken,
+-- so the missing labels are added explicitly. The obsolete ones stay: PostgreSQL cannot drop an
+-- enum value without rebuilding the type, and unused labels are harmless.
+--
+-- These are top-level statements on purpose — `ALTER TYPE ... ADD VALUE` is not allowed inside a
+-- DO block. `IF NOT EXISTS` makes each one idempotent, and on PostgreSQL 12+ (CI and production
+-- both run 14) they are safe inside a transaction as long as the value is not used in it.
+ALTER TYPE "ContributorRole" ADD VALUE IF NOT EXISTS 'NARRATOR';
+ALTER TYPE "ContributorRole" ADD VALUE IF NOT EXISTS 'COMMENTATOR';
+ALTER TYPE "ContributorRole" ADD VALUE IF NOT EXISTS 'AFTERWORD_AUTHOR';
+ALTER TYPE "ContributorRole" ADD VALUE IF NOT EXISTS 'COVER_ARTIST';
+ALTER TYPE "ContributorRole" ADD VALUE IF NOT EXISTS 'RIGHTS_HOLDER';
+
 -- CreateTable
 CREATE TABLE IF NOT EXISTS "Person" (
     "id" TEXT NOT NULL,
