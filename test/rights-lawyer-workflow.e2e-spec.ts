@@ -316,13 +316,28 @@ describe('Rights lawyer workflow e2e', () => {
       .send({ notesRu: 'юрист согласовал' })
       .expect(201);
 
+    // `versions[]` is required (min 1) and the response is `{ book, versions, … }` —
+    // the book id lives under `body.book.id`, not `body.id`.
     const book = await request(http())
       .post(`/admin/rights/intakes/${intakeId}/create-book`)
       .set(...auth())
-      .send({ slug: `lawyer-e2e-${Date.now()}` })
+      .send({
+        slug: `lawyer-e2e-${Date.now()}`,
+        versions: [
+          {
+            language: 'en',
+            title: 'Lawyer workflow e2e',
+            author: 'Test Author',
+            description: 'Книга для e2e-проверки юридического workflow.',
+            coverImageUrl: 'https://example.com/cover.jpg',
+            type: 'text',
+            isFree: true,
+          },
+        ],
+      })
       .expect(201);
 
-    bookId = book.body.id as string;
+    bookId = book.body.book.id as string;
     versionId = book.body.versions[0].id as string;
   });
 
