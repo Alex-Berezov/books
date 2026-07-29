@@ -5,7 +5,16 @@ import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
 
-const ALLOWED_PHASE1_TRANSITIONS: Record<RightsIntakeStatus, RightsIntakeStatus[]> = {
+/**
+ * Manual (Phase 1) status transitions.
+ *
+ * Deliberately `Partial`: a status the editor may never set by hand is simply absent, which the
+ * lookup reads as "no manual transition out of here". A full `Record` would have to name every
+ * value the generated Prisma client knows, and that client is regenerated only on the VPS — so a
+ * status added by a later phase (`LAWYER_REVIEW_REQUIRED`, Phase 19) would break the build on CI
+ * while still compiling locally.
+ */
+const ALLOWED_PHASE1_TRANSITIONS: Partial<Record<RightsIntakeStatus, RightsIntakeStatus[]>> = {
   [RightsIntakeStatus.DRAFT]: [RightsIntakeStatus.READY_FOR_AGENT, RightsIntakeStatus.ARCHIVED],
   [RightsIntakeStatus.READY_FOR_AGENT]: [RightsIntakeStatus.DRAFT, RightsIntakeStatus.ARCHIVED],
   [RightsIntakeStatus.REVIEW_IMPORTED]: [],
@@ -22,6 +31,9 @@ const FORBIDDEN_MANUAL_STATUSES = new Set<RightsIntakeStatus>([
   RightsIntakeStatus.APPROVED,
   RightsIntakeStatus.REJECTED,
   RightsIntakeStatus.BOOK_CREATED,
+  // Phase 19: set only by the lawyer workflow. The literal is cast because the generated client
+  // does not know the value until `prisma generate` runs on the VPS.
+  'LAWYER_REVIEW_REQUIRED' as RightsIntakeStatus,
 ]);
 
 @Injectable()
@@ -278,7 +290,7 @@ export class RightsIntakeService {
       );
     }
 
-    const allowed = ALLOWED_PHASE1_TRANSITIONS[intake.workflowStatus];
+    const allowed = ALLOWED_PHASE1_TRANSITIONS[intake.workflowStatus] ?? [];
     if (!allowed.includes(newStatus)) {
       throw new BadRequestException(
         `Cannot transition from '${intake.workflowStatus}' to '${newStatus}'. ` +
