@@ -123,11 +123,15 @@ describe('Rights agent import e2e', () => {
 
     intakeId = created.body.id as string;
 
-    await request(http())
-      .patch(`/admin/rights/intakes/${intakeId}`)
+    // Status moves go through the dedicated route with `{ status }` — `PATCH /:id` takes
+    // content fields only and would be rejected by `forbidNonWhitelisted`.
+    const updated = await request(http())
+      .patch(`/admin/rights/intakes/${intakeId}/status`)
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ workflowStatus: 'READY_FOR_AGENT' })
+      .send({ status: 'READY_FOR_AGENT' })
       .expect(200);
+
+    expect(updated.body.workflowStatus).toBe('READY_FOR_AGENT');
   });
 
   it('issues a one-time upload token and returns the raw value exactly once', async () => {
@@ -177,7 +181,7 @@ describe('Rights agent import e2e', () => {
       .post('/rights/agent/submissions')
       .set('X-Bibliaris-Agent-Token', rawToken)
       .send({ intakeId, report: report(), agentName: 'e2e-agent', agentVersion: '1.0' })
-      .expect(201);
+      .expect(200);
 
     expect(submitted.body.status).toBe('VALIDATED');
     expect(submitted.body.humanApprovalRequired).toBe(true);

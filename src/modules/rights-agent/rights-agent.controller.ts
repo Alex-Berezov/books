@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Header,
+  HttpCode,
   HttpStatus,
   Param,
   Post,
@@ -79,6 +80,10 @@ export class RightsAgentController {
   }
 
   @Post('submissions')
+  // 200, not Nest's default 201: the documented agent contract is "a submission always
+  // answers 200, even when validation fails" — the agent distinguishes outcomes by the
+  // `status` field, and 2xx-vs-4xx tells it whether the report was accepted at all.
+  @HttpCode(HttpStatus.OK)
   @UseGuards(RightsAgentUploadRateLimitGuard, RightsAgentTokenGuard)
   @ApiOperation({ summary: 'Submit a clearance report. Never auto-approves.' })
   async submit(
