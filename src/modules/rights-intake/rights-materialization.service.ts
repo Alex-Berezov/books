@@ -16,6 +16,10 @@ import { RightsConfidence, Prisma } from '@prisma/client';
 
 type NormalizedContributorConfidence = RightsConfidence | null;
 
+/** Prisma signals a unique-constraint violation with error code `P2002`. */
+const isUniqueConstraintViolation = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+
 interface NormalizedContributorInput {
   role: ContributorRole;
   roleOtherRu: string | null;
@@ -205,6 +209,8 @@ export class RightsMaterializationService {
       const rrTx = t['rightsReview'] as {
         updateMany: (args: Record<string, unknown>) => Promise<{ count: number }>;
         create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+        update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
 
       await rpTx.updateMany({
@@ -285,7 +291,7 @@ export class RightsMaterializationService {
         },
       });
 
-      await rrTx.create({
+      const newReview = await rrTx.create({
         data: {
           rightsProfileId: profile['id'] as string,
           rightsReviewImportId: importId,
@@ -300,6 +306,46 @@ export class RightsMaterializationService {
           nextReviewAt: this.parseDateOrNull(reportJson['nextReviewAt']),
         },
       });
+
+      // Phase 18: link the new review to the previous one (history chain).
+      // Deliberately inline rather than via RightsReviewChainService: RightsIntakeModule
+      // cannot import RightsRecheckModule without creating a module cycle.
+      const newReviewId = newReview['id'] as string;
+      const previousReview = await rrTx.findFirst({
+        where: { rightsProfile: { rightsIntakeId: intakeId }, id: { not: newReviewId } },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const chainData = previousReview
+        ? {
+            previousReviewId: previousReview['id'] as string,
+            chainRootReviewId:
+              (previousReview['chainRootReviewId'] as string | null) ??
+              (previousReview['id'] as string),
+            revisionNumber: ((previousReview['revisionNumber'] as number | null) ?? 1) + 1,
+          }
+        : {
+            previousReviewId: null,
+            chainRootReviewId: newReviewId,
+            revisionNumber: 1,
+          };
+
+      try {
+        await rrTx.update({ where: { id: newReviewId }, data: chainData });
+      } catch (error: unknown) {
+        // `previousReviewId` is @unique: if the predecessor is already claimed (a repeated
+        // materialization after manual intervention), keep the root and revision number and
+        // leave `previousReviewId` empty rather than failing the whole import.
+        if (!isUniqueConstraintViolation(error)) throw error;
+        await rrTx.update({
+          where: { id: newReviewId },
+          data: {
+            previousReviewId: null,
+            chainRootReviewId: chainData.chainRootReviewId,
+            revisionNumber: chainData.revisionNumber,
+          },
+        });
+      }
 
       // Phase 15: licenses are materialized before the entities that reference them,
       // so every licenseRef resolves to an already-persisted license id.

@@ -45,6 +45,7 @@ import { PersonsModule } from './modules/persons/persons.module';
 import { RightsLicensesModule } from './modules/rights-licenses/rights-licenses.module';
 import { RightsClaimsModule } from './modules/rights-claims/rights-claims.module';
 import { RightsAgentModule } from './modules/rights-agent/rights-agent.module';
+import { RightsRecheckModule } from './modules/rights-recheck/rights-recheck.module';
 
 const staticRoot = join(process.cwd(), process.env.LOCAL_UPLOADS_DIR ?? 'var/uploads');
 console.log(`[AppModule] Serving static files from: ${staticRoot}`);
@@ -96,6 +97,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     RightsLicensesModule,
     RightsClaimsModule,
     RightsAgentModule,
+    RightsRecheckModule,
     // ...other modules
   ],
   controllers: [AppController],

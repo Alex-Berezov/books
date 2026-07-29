@@ -135,8 +135,10 @@ const createPrismaStub = (): PrismaStub => {
   };
   stub['rightsReview'] = {
     updateMany: jest.fn(),
-    create: jest.fn(),
-    findFirst: jest.fn(),
+    // Phase 18: the chain linking below needs a review id back from `create`.
+    create: jest.fn().mockResolvedValue({ id: 'review-1' }),
+    findFirst: jest.fn().mockResolvedValue(null),
+    update: jest.fn().mockResolvedValue({ id: 'review-1' }),
   };
   stub['sourceEdition'] = { create: jest.fn(), findUnique: jest.fn() };
   stub['editionRights'] = { create: jest.fn() };
@@ -290,6 +292,15 @@ describe('RightsMaterializationService', () => {
           }),
         }),
       );
+      // Phase 18: the first review of an intake roots its own chain.
+      expect((prisma['rightsReview'] as Record<string, jest.Mock>).update).toHaveBeenCalledWith({
+        where: { id: 'review-1' },
+        data: {
+          previousReviewId: null,
+          chainRootReviewId: 'review-1',
+          revisionNumber: 1,
+        },
+      });
       expect((prisma['sourceEdition'] as Record<string, jest.Mock>).create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({

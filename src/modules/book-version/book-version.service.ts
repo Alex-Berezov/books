@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
@@ -19,6 +19,12 @@ import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { CLAIM_SEVERITY_RANK } from '../rights-claims/rights-claim.constants';
 import { RightsClaimSeverity } from '../rights-claims/rights-claim-interface';
+import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
+import {
+  RightsRecheckReason,
+  RightsRecheckTriggerSource,
+} from '../rights-recheck/rights-recheck-interface';
+import { addDays } from '../rights-recheck/rights-recheck.util';
 
 interface BookWithRights {
   id: string;
@@ -51,6 +57,8 @@ interface SiblingVersionWithRights {
 
 @Injectable()
 export class BookVersionService {
+  private readonly logger = new Logger(BookVersionService.name);
+
   constructor(
     private prisma: PrismaService,
     private publicationGateService: PublicationGateService,
@@ -58,6 +66,9 @@ export class BookVersionService {
     private geoBlockRuleService: GeoBlockRuleService,
     private licenseCoverageService: RightsLicenseCoverageService,
     private rightsClaimsService: RightsClaimsService,
+    // Phase 18: placed before the optional parameter — TypeScript forbids a required
+    // parameter after an optional one, so it cannot literally be last.
+    private rightsRecheckService: RightsRecheckService,
     private regionAggregationService?: TerritoryRegionAggregationService,
   ) {}
 
@@ -287,6 +298,32 @@ export class BookVersionService {
         throw new BadRequestException('Version for this language already exists for this book');
       }
       throw e;
+    }
+
+    // Phase 18: a new language version of a book with approved clearance needs a recheck.
+    // Called outside the transaction and wrapped in try/catch: failing to open a task must
+    // never fail version creation. The initial versions of a book are created directly by
+    // RightsBookCreationService (not through this method), so creating a book from an
+    // approved clearance never triggers a false LANGUAGE_ADDED task here.
+    if (version.rightsProfileId) {
+      try {
+        await this.rightsRecheckService.ensureTask({
+          reason: RightsRecheckReason.LANGUAGE_ADDED,
+          source: RightsRecheckTriggerSource.VERSION_CREATED,
+          rightsProfileId: version.rightsProfileId,
+          rightsIntakeId: book.rightsIntakeId,
+          bookId,
+          bookVersionId: version.id,
+          baselineReviewId: version.approvedRightsReviewId ?? null,
+          dueAt: addDays(new Date(), this.rightsRecheckService.getRuntimeConfig().eventDueDays),
+          titleRu: `Добавлен язык ${effectiveLanguage} — требуется перепроверка прав`,
+          descriptionRu: `К книге добавлена новая языковая версия (${effectiveLanguage}). Права на перевод и связанные компоненты не покрыты действующей проверкой.`,
+        });
+      } catch (e: unknown) {
+        this.logger.warn(
+          `Failed to open LANGUAGE_ADDED recheck task: ${e instanceof Error ? e.message : 'unknown'}`,
+        );
+      }
     }
 
     return version;
@@ -589,6 +626,10 @@ export class BookVersionService {
         return rank > worstRank ? claim.severity : worst;
       }, null) ?? null;
 
+    // Phase 18: recheck tasks and schedule of this version and its rights profile.
+    // Phase 8's `isStale` / `recheckRequired` above stay untouched — they describe content hash.
+    const versionRecheck = await this.rightsRecheckService.getVersionRecheck(versionId);
+
     if (currentProfile) {
       currentProfile = {
         ...currentProfile,
@@ -694,6 +735,8 @@ export class BookVersionService {
       approvalHistory,
       publicationGate,
       contentHash,
+      recheckTasks: versionRecheck.tasks,
+      recheckSchedule: versionRecheck.schedule,
       summary: {
         hasClearance,
         canPublishCurrentVersion,
@@ -745,6 +788,12 @@ export class BookVersionService {
         claimBlockedCountriesCount: claimBlockedCountries.size,
         hasWorldwideClaimBlock: claims.some((claim) => claim.hasWorldwideBlock),
         worstClaimSeverity,
+        openRecheckTasksCount: versionRecheck.openTasksCount,
+        overdueRecheckTasksCount: versionRecheck.overdueTasksCount,
+        blockingRecheckTasksCount: versionRecheck.blockingTasksCount,
+        nextRecheckDueAt: versionRecheck.nextRecheckDueAt,
+        lastRecheckScanAt: versionRecheck.schedule?.lastRecheckScanAt ?? null,
+        recheckPolicy: versionRecheck.schedule?.recheckPolicy ?? null,
       },
     };
   }

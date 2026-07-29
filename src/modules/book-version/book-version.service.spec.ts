@@ -5,6 +5,7 @@ import { TerritoryRegionAggregationService } from '../rights-intake/territory-re
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
+import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -146,6 +147,11 @@ describe('BookVersionService', () => {
     evaluateVersionCoverage: jest.Mock;
   };
   let rightsClaimsService: { listForVersion: jest.Mock };
+  let rightsRecheckService: {
+    ensureTask: jest.Mock;
+    getRuntimeConfig: jest.Mock;
+    getVersionRecheck: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -179,6 +185,30 @@ describe('BookVersionService', () => {
       checkVersionStaleness: jest.fn(),
       markVersionAndClearanceStale: jest.fn(),
     } as unknown as jest.Mocked<RightsContentHashService>;
+    rightsRecheckService = {
+      ensureTask: jest.fn().mockResolvedValue({ task: { id: 'task-1' }, created: true }),
+      getRuntimeConfig: jest.fn().mockReturnValue({
+        defaultIntervalDays: 365,
+        leadDays: [30, 7],
+        graceDays: 30,
+        legalChangeDueDays: 14,
+        eventDueDays: 7,
+        batchSize: 500,
+        blockPublishOnOverdue: true,
+      }),
+      getVersionRecheck: jest.fn().mockResolvedValue({
+        versionId: 'v1',
+        blockers: [],
+        warnings: [],
+        openTasksCount: 0,
+        overdueTasksCount: 0,
+        blockingTasksCount: 0,
+        nextRecheckDueAt: null,
+        taskIds: [],
+        tasks: [],
+        schedule: null,
+      }),
+    };
     service = new BookVersionService(
       prisma as unknown as PrismaService,
       gateService as unknown as PublicationGateService,
@@ -188,6 +218,7 @@ describe('BookVersionService', () => {
       } as unknown as GeoBlockRuleService,
       licenseCoverageService as unknown as RightsLicenseCoverageService,
       rightsClaimsService as unknown as RightsClaimsService,
+      rightsRecheckService as unknown as RightsRecheckService,
       new TerritoryRegionAggregationService(),
     );
   });
@@ -240,6 +271,82 @@ describe('BookVersionService', () => {
     const res = await service.create('b1', dto);
     expect(res.seo?.metaTitle).toBe('MT');
     expect(prisma.bookVersion.create).toHaveBeenCalled();
+  });
+
+  // Phase 18: adding a language version to a cleared book opens a recheck task.
+  describe('Phase 18 LANGUAGE_ADDED hook', () => {
+    const arrangeCreate = (rightsProfileId: string | null) => {
+      (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+        id: 'b1',
+        rightsIntakeId: 'intake-1',
+        currentRightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+      });
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+        id: 'intake-1',
+        targetLanguages: ['en', 'es'],
+      });
+      (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
+      const now = new Date();
+      (prisma.bookVersion.create as jest.Mock).mockResolvedValue({
+        id: 'v-new',
+        bookId: 'b1',
+        language: Language.es,
+        title: 'T',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'u',
+        type: BookType.text,
+        isFree: true,
+        referralUrl: null,
+        createdAt: now,
+        updatedAt: now,
+        seoId: null,
+        rightsProfileId,
+        approvedRightsReviewId: 'review-1',
+      });
+      return {
+        language: Language.es,
+        title: 'T',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'u',
+        type: BookType.text,
+        isFree: true,
+      } as CreateBookVersionDto;
+    };
+
+    it('opens a LANGUAGE_ADDED recheck task for a version with a rights profile', async () => {
+      const dto = arrangeCreate('profile-1');
+
+      await service.create('b1', dto);
+
+      expect(rightsRecheckService.ensureTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: 'LANGUAGE_ADDED',
+          source: 'VERSION_CREATED',
+          rightsProfileId: 'profile-1',
+          bookVersionId: 'v-new',
+        }),
+      );
+    });
+
+    it('does not fail version creation when opening the recheck task throws', async () => {
+      const dto = arrangeCreate('profile-1');
+      rightsRecheckService.ensureTask.mockRejectedValue(new Error('recheck unavailable'));
+
+      const res = await service.create('b1', dto);
+
+      expect(res.id).toBe('v-new');
+    });
+
+    it('skips the hook for a version without a rights profile', async () => {
+      const dto = arrangeCreate(null);
+
+      await service.create('b1', dto);
+
+      expect(rightsRecheckService.ensureTask).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects duplicate language per book', async () => {

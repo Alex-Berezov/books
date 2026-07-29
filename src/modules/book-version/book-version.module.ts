@@ -8,9 +8,16 @@ import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { GeoBlockModule } from '../geo-block/geo-block.module';
 import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module';
 import { RightsClaimsModule } from '../rights-claims/rights-claims.module';
+import { RightsRecheckModule } from '../rights-recheck/rights-recheck.module';
 
 @Module({
-  imports: [RightsIntakeModule, GeoBlockModule, RightsLicensesModule, RightsClaimsModule],
+  imports: [
+    RightsIntakeModule,
+    GeoBlockModule,
+    RightsLicensesModule,
+    RightsClaimsModule,
+    RightsRecheckModule,
+  ],
   controllers: [BookVersionController],
   providers: [BookVersionService, PublicationGateService, PrismaService, RolesGuard],
   exports: [BookVersionService],

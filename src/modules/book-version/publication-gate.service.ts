@@ -8,6 +8,7 @@ import { RightsContentHashService } from '../rights-intake/rights-content-hash.s
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
+import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 
 interface VersionWithGeoBlock {
   id: string;
@@ -39,6 +40,7 @@ export class PublicationGateService {
     private readonly geoBlockRuleService: GeoBlockRuleService,
     private readonly licenseCoverageService: RightsLicenseCoverageService,
     private readonly rightsClaimsService: RightsClaimsService,
+    private readonly rightsRecheckService: RightsRecheckService,
   ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
@@ -520,6 +522,31 @@ export class PublicationGateService {
       );
     }
 
+    // 6.19 Automatic recheck (Phase 18)
+    const recheckEvaluation = await this.rightsRecheckService.evaluateVersionRecheck(versionId);
+
+    for (const blocker of recheckEvaluation.blockers) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: blocker.code,
+          severity: 'BLOCKER',
+          messageRu: blocker.messageRu,
+          details: { ...(blocker.details ?? {}), taskId: blocker.taskId },
+        }),
+      );
+    }
+
+    for (const warning of recheckEvaluation.warnings) {
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: warning.code,
+          severity: 'WARNING',
+          messageRu: warning.messageRu,
+          details: { ...(warning.details ?? {}), taskId: warning.taskId },
+        }),
+      );
+    }
+
     return new PublicationGateResultDto({
       versionId: version.id,
       bookId: book.id,
@@ -547,6 +574,11 @@ export class PublicationGateService {
       hasWorldwideClaimBlock: claimEvaluation.hasWorldwideBlock,
       worstClaimSeverity: claimEvaluation.worstSeverity,
       claimIds: claimEvaluation.claimIds,
+      openRecheckTasksCount: recheckEvaluation.openTasksCount,
+      overdueRecheckTasksCount: recheckEvaluation.overdueTasksCount,
+      blockingRecheckTasksCount: recheckEvaluation.blockingTasksCount,
+      nextRecheckDueAt: recheckEvaluation.nextRecheckDueAt,
+      recheckTaskIds: recheckEvaluation.taskIds,
     });
   }
 

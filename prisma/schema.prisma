@@ -39,6 +39,9 @@ model Book {
   rightsClaims            RightsClaim[]
   rightsClaimAccessBlocks RightsClaimAccessBlock[] @relation("RightsClaimBlockBook")
 
+  // Phase 18: automatic recheck
+  recheckTasks RightsRecheckTask[]
+
   @@index([rightsIntakeId])
   @@index([currentRightsProfileId])
   @@index([approvedRightsReviewId])
@@ -151,6 +154,9 @@ model BookVersion {
   rightsClaims            RightsClaim[]
   rightsClaimAccessBlocks RightsClaimAccessBlock[] @relation("RightsClaimBlockVersion")
 
+  // Phase 18: automatic recheck
+  recheckTasks RightsRecheckTask[]
+
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
@@ -257,6 +263,14 @@ model User {
   rightsAgentTokensRevoked RightsAgentUploadToken[] @relation("RightsAgentTokenRevokedBy")
   rightsNotifications      RightsNotification[]     @relation("RightsNotificationTarget")
   rightsNotificationsRead  RightsNotification[]     @relation("RightsNotificationReadBy")
+  rightsRecheckTasksCreated   RightsRecheckTask[]      @relation("RightsRecheckCreatedBy")
+  rightsRecheckTasksStarted   RightsRecheckTask[]      @relation("RightsRecheckStartedBy")
+  rightsRecheckTasksCompleted RightsRecheckTask[]      @relation("RightsRecheckCompletedBy")
+  rightsRecheckTasksDismissed RightsRecheckTask[]      @relation("RightsRecheckDismissedBy")
+  rightsRecheckEventsCreated  RightsRecheckEvent[]     @relation("RightsRecheckEventCreatedBy")
+  rightsLegalChangesCreated   RightsLegalChangeEvent[] @relation("RightsLegalChangeCreatedBy")
+  rightsLegalChangesApplied   RightsLegalChangeEvent[] @relation("RightsLegalChangeAppliedBy")
+  rightsRecheckScanRuns       RightsRecheckScanRun[]   @relation("RightsRecheckScanTriggeredBy")
 }
 
 
@@ -729,6 +743,9 @@ model RightsIntake {
   agentSubmissions    RightsAgentSubmission[]
   rightsNotifications RightsNotification[]
 
+  // Phase 18: automatic recheck
+  recheckTasks RightsRecheckTask[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -802,6 +819,13 @@ model RightsProfile {
   reasoningRu String? @db.Text
   nextReviewAt DateTime?
 
+  // Phase 18: политика автоматической перепроверки
+  recheckPolicy       RightsRecheckPolicy @default(INHERIT_REPORT)
+  recheckIntervalDays Int?
+  recheckPausedUntil  DateTime?
+  recheckPauseReasonRu String? @db.Text
+  lastRecheckScanAt   DateTime?
+
   sourceEdition SourceEdition?
   reviews RightsReview[]
   territoryDecisions TerritoryDecision[]
@@ -834,6 +858,9 @@ model RightsProfile {
   // Phase 16: Rights claims / DMCA
   rightsClaims RightsClaim[]
 
+  // Phase 18: automatic recheck
+  recheckTasks RightsRecheckTask[]
+
   supersededAt DateTime?
   archivedAt DateTime?
 
@@ -848,6 +875,8 @@ model RightsProfile {
   @@index([publicationGate])
   @@index([contentHash])
   @@index([staleDetectedAt])
+  @@index([nextReviewAt])
+  @@index([recheckPolicy])
 }
 
 model SourceEdition {
@@ -913,6 +942,15 @@ model RightsReview {
   reasoningRu String? @db.Text
   nextReviewAt DateTime?
 
+  // Phase 18: история проверок
+  previousReviewId String?  @unique
+  previousReview   RightsReview?  @relation("RightsReviewChain", fields: [previousReviewId], references: [id], onDelete: SetNull)
+  nextReview       RightsReview?  @relation("RightsReviewChain")
+  /// Корень цепочки — id самой первой проверки интейка. У первой проверки равен её собственному id.
+  chainRootReviewId String?
+  /// Порядковый номер в цепочке, начиная с 1.
+  revisionNumber Int @default(1)
+
   approvedByUserId String?
   approvedByUser User? @relation("RightsReviewApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
@@ -945,6 +983,10 @@ model RightsReview {
   staleReasonRu String? @db.Text
   contentHashEvents RightsContentHashEvent[]
 
+  // Phase 18: automatic recheck
+  recheckTasksAsBaseline  RightsRecheckTask[] @relation("RightsRecheckBaselineReview")
+  recheckTasksAsCompleted RightsRecheckTask[] @relation("RightsRecheckCompletedReview")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -958,6 +1000,8 @@ model RightsReview {
   @@index([rejectedByUserId])
   @@index([approvedAt])
   @@index([rejectedAt])
+  @@index([chainRootReviewId])
+  @@index([revisionNumber])
 }
 
 model RightsComponent {
@@ -2286,6 +2330,14 @@ enum RightsNotificationType {
   HUMAN_REVIEW_REQUIRED
   /// Мост к фазе 18 (Автоматическая перепроверка). В фазе 17 не создаётся.
   RECHECK_DUE
+  /// Фаза 18: срок перепроверки прошёл.
+  RECHECK_OVERDUE
+  /// Фаза 18: открыта задача перепроверки.
+  RECHECK_TASK_OPENED
+  /// Фаза 18: задача перепроверки закрыта.
+  RECHECK_COMPLETED
+  /// Фаза 18: применено изменение законодательства.
+  LEGAL_CHANGE_APPLIED
   /// Мост к фазе 19 (Lawyer Workflow). В фазе 17 не создаётся.
   LAWYER_REVIEW_REQUIRED
   OTHER
@@ -2454,4 +2506,314 @@ model RightsNotification {
   @@index([agentSubmissionId])
   @@index([createdAt])
   @@index([readByUserId])
+}
+
+// =====================
+// Phase 18: Automatic Recheck
+// =====================
+
+enum RightsRecheckReason {
+  /// Наступил (или приближается) плановый срок nextReviewAt.
+  SCHEDULED_DUE
+  /// Изменился контент версии — сработал content hash фазы 8.
+  CONTENT_CHANGED
+  /// Изменились rights-данные / source edition в снимке версии.
+  RIGHTS_DATA_CHANGED
+  /// К книге добавлена новая языковая версия.
+  LANGUAGE_ADDED
+  /// Добавлены или изменены аудио-главы.
+  AUDIO_ADDED
+  /// Добавлен или изменён компонент прав.
+  COMPONENT_ADDED
+  /// Объявлено изменение законодательства в затронутой юрисдикции.
+  LEGAL_CHANGE
+  /// Проверка помечена STALE (профиль или ревью).
+  REVIEW_STALE
+  /// Ручной запрос редактора.
+  MANUAL_REQUEST
+  OTHER
+}
+
+enum RightsRecheckStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DISMISSED
+}
+
+enum RightsRecheckSeverity {
+  /// Информационная: срок ещё не наступил.
+  INFO
+  /// Срок наступил либо контент изменился — редактору пора действовать.
+  WARNING
+  /// Просрочка за пределами grace-периода или критичное изменение закона.
+  BLOCKING
+}
+
+enum RightsRecheckReminderStage {
+  NONE
+  LEAD_30
+  LEAD_7
+  DUE
+  OVERDUE
+  ESCALATED
+}
+
+enum RightsRecheckResolution {
+  /// Пришла и утверждена новая проверка.
+  NEW_REVIEW_APPROVED
+  /// Появилась более свежая утверждённая проверка — задача закрыта автоматически.
+  SUPERSEDED_BY_NEW_REVIEW
+  /// Проверено, изменений не требуется.
+  NO_CHANGE_NEEDED
+  /// Контент возвращён к состоянию на момент clearance.
+  CONTENT_REVERTED
+  /// Закрыто вручную редактором.
+  MANUALLY_CLOSED
+  /// Отклонено как неприменимое.
+  DISMISSED_NOT_APPLICABLE
+  OTHER
+}
+
+enum RightsRecheckTriggerSource {
+  SCHEDULER
+  CONTENT_HASH
+  VERSION_CREATED
+  LEGAL_CHANGE
+  MANUAL
+}
+
+enum RightsRecheckEventType {
+  TASK_CREATED
+  REMINDER_SENT
+  SEVERITY_ESCALATED
+  SNOOZED
+  STARTED
+  COMPLETED
+  DISMISSED
+  REOPENED
+  DUE_DATE_CHANGED
+  LINKED_TO_REVIEW
+  NOTE_ADDED
+}
+
+enum RightsRecheckPolicy {
+  /// Дата берётся из nextReviewAt отчёта агента (текущее поведение).
+  INHERIT_REPORT
+  /// Дата считается как approvedAt + recheckIntervalDays.
+  FIXED_INTERVAL
+  /// Плановые задачи не создаются, только событийные.
+  MANUAL_ONLY
+  /// Плановые задачи приостановлены до recheckPausedUntil.
+  PAUSED
+}
+
+enum RightsLegalChangeType {
+  COPYRIGHT_TERM_CHANGE
+  PUBLIC_DOMAIN_RULE_CHANGE
+  TRANSLATION_RIGHTS_CHANGE
+  NEIGHBOURING_RIGHTS_CHANGE
+  COURT_DECISION
+  TREATY_RATIFICATION
+  PLATFORM_POLICY_CHANGE
+  OTHER
+}
+
+enum RightsLegalChangeStatus {
+  DRAFT
+  APPLIED
+  ARCHIVED
+}
+
+enum RightsRecheckScanStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model RightsLegalChangeEvent {
+  id String @id @default(uuid())
+
+  titleRu       String
+  descriptionRu String @db.Text
+
+  changeType RightsLegalChangeType
+  status     RightsLegalChangeStatus @default(DRAFT)
+  severity   RightsRecheckSeverity   @default(WARNING)
+
+  /// Затронутые юрисдикции (ISO-2). Игнорируется, если appliesToAllCountries = true.
+  jurisdictionCodes Json
+  /// true — изменение затрагивает все страны (например, международный договор).
+  appliesToAllCountries Boolean @default(false)
+
+  /// Дата вступления в силу. Если задана и в будущем — dueAt задач равен ей.
+  effectiveFrom DateTime?
+
+  sourceUrl   String?
+  sourceTitle String?
+
+  appliedAt             DateTime?
+  appliedByUserId       String?
+  appliedByUser         User? @relation("RightsLegalChangeAppliedBy", fields: [appliedByUserId], references: [id], onDelete: SetNull)
+  affectedProfilesCount Int @default(0)
+  createdTasksCount     Int @default(0)
+
+  archivedAt DateTime?
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsLegalChangeCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  recheckTasks RightsRecheckTask[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([changeType])
+  @@index([effectiveFrom])
+  @@index([createdAt])
+  @@index([appliedByUserId])
+  @@index([createdByUserId])
+}
+
+model RightsRecheckTask {
+  id String @id @default(uuid())
+
+  reason   RightsRecheckReason
+  status   RightsRecheckStatus @default(PENDING)
+  severity RightsRecheckSeverity @default(INFO)
+  source   RightsRecheckTriggerSource @default(SCHEDULER)
+
+  /// Цель перепроверки. Профиль — основной адресат; интейк и книга/версия — для навигации и фильтров.
+  rightsProfileId String?
+  rightsProfile   RightsProfile? @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  rightsIntakeId String?
+  rightsIntake   RightsIntake? @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  /// Проверка, относительно которой задача считается актуальной («baseline»).
+  baselineReviewId String?
+  baselineReview   RightsReview? @relation("RightsRecheckBaselineReview", fields: [baselineReviewId], references: [id], onDelete: SetNull)
+
+  bookId String?
+  book   Book? @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  bookVersionId String?
+  bookVersion   BookVersion? @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  legalChangeEventId String?
+  legalChangeEvent   RightsLegalChangeEvent? @relation(fields: [legalChangeEventId], references: [id], onDelete: SetNull)
+
+  titleRu       String
+  descriptionRu String @db.Text
+  /// Машиночитаемая причина: для CONTENT_CHANGED сюда кладётся BookVersion.rightsStaleReasonCode.
+  triggerCode   String?
+  /// Затронутые страны (для LEGAL_CHANGE). Массив ISO-2.
+  affectedCountryCodes Json?
+
+  dueAt DateTime
+
+  reminderStage    RightsRecheckReminderStage @default(NONE)
+  remindersSentCount Int @default(0)
+  lastReminderAt   DateTime?
+
+  snoozedUntil   DateTime?
+  snoozeReasonRu String? @db.Text
+
+  startedAt       DateTime?
+  startedByUserId String?
+  startedByUser   User? @relation("RightsRecheckStartedBy", fields: [startedByUserId], references: [id], onDelete: SetNull)
+
+  completedAt       DateTime?
+  completedByUserId String?
+  completedByUser   User? @relation("RightsRecheckCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  completionNotesRu String? @db.Text
+  /// Проверка, закрывшая задачу.
+  completedReviewId String?
+  completedReview   RightsReview? @relation("RightsRecheckCompletedReview", fields: [completedReviewId], references: [id], onDelete: SetNull)
+
+  dismissedAt       DateTime?
+  dismissedByUserId String?
+  dismissedByUser   User? @relation("RightsRecheckDismissedBy", fields: [dismissedByUserId], references: [id], onDelete: SetNull)
+  dismissReasonRu   String? @db.Text
+
+  resolution RightsRecheckResolution?
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsRecheckCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  events RightsRecheckEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([reason])
+  @@index([severity])
+  @@index([dueAt])
+  @@index([rightsProfileId, status])
+  @@index([rightsIntakeId])
+  @@index([bookVersionId, status])
+  @@index([bookId])
+  @@index([legalChangeEventId])
+  @@index([baselineReviewId])
+  @@index([completedReviewId])
+  @@index([createdAt])
+  @@index([startedByUserId])
+  @@index([completedByUserId])
+  @@index([dismissedByUserId])
+  @@index([createdByUserId])
+}
+
+model RightsRecheckEvent {
+  id String @id @default(uuid())
+
+  recheckTaskId String
+  recheckTask   RightsRecheckTask @relation(fields: [recheckTaskId], references: [id], onDelete: Cascade)
+
+  eventType RightsRecheckEventType
+
+  fromStatus RightsRecheckStatus?
+  toStatus   RightsRecheckStatus?
+
+  messageRu String  @db.Text
+  payload   Json?
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsRecheckEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([recheckTaskId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([createdByUserId])
+}
+
+model RightsRecheckScanRun {
+  id String @id @default(uuid())
+
+  status RightsRecheckScanStatus @default(RUNNING)
+  /// SCHEDULER — авто-прогон, MANUAL — кнопка в админке.
+  source RightsRecheckTriggerSource @default(SCHEDULER)
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+
+  profilesScanned  Int @default(0)
+  versionsScanned  Int @default(0)
+  tasksCreated     Int @default(0)
+  tasksEscalated   Int @default(0)
+  tasksAutoClosed  Int @default(0)
+  remindersSent    Int @default(0)
+
+  errorMessage String? @db.Text
+
+  triggeredByUserId String?
+  triggeredByUser   User? @relation("RightsRecheckScanTriggeredBy", fields: [triggeredByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([startedAt])
+  @@index([triggeredByUserId])
 }

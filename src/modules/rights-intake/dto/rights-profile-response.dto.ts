@@ -50,6 +50,11 @@ export class RightsReviewDto {
   @ApiProperty() reasoningRu!: string | null;
   @ApiProperty() nextReviewAt!: string | null;
 
+  // Phase 18: review history chain
+  @ApiPropertyOptional() previousReviewId?: string | null;
+  @ApiPropertyOptional() chainRootReviewId?: string | null;
+  @ApiPropertyOptional() revisionNumber?: number;
+
   @ApiPropertyOptional()
   approvedByUserId?: string | null;
 

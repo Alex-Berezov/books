@@ -334,6 +334,10 @@ export class RightsProfileService {
       nextReviewAt: record['nextReviewAt']
         ? new Date(record['nextReviewAt'] as string).toISOString()
         : null,
+      // Phase 18: review history chain
+      previousReviewId: (record['previousReviewId'] as string | null) ?? null,
+      chainRootReviewId: (record['chainRootReviewId'] as string | null) ?? null,
+      revisionNumber: (record['revisionNumber'] as number | null) ?? 1,
       approvedByUserId: (record['approvedByUserId'] as string | null) ?? null,
       approvedByUser: approvedByUserRaw
         ? {

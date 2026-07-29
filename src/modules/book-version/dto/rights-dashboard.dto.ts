@@ -2,6 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PublicationGateResultDto } from './publication-gate-result.dto';
 import { RightsContentHashCheckDto } from '../../rights-intake/dto/rights-content-hash.dto';
 import { RightsClaimSummaryDto } from '../../rights-claims/dto/rights-claim-response.dto';
+import {
+  RecheckScheduleDto,
+  RecheckTaskDto,
+} from '../../rights-recheck/dto/recheck-task-response.dto';
 
 export class BookRightsDashboardBookSummaryDto {
   @ApiProperty({ example: 'a1111111-b222-4c33-d444-555555555555' })
@@ -254,6 +258,25 @@ export class BookRightsDashboardMetricsDto {
 
   @ApiPropertyOptional({ nullable: true, example: 'HIGH' })
   worstClaimSeverity?: string | null;
+
+  // Phase 18: automatic recheck
+  @ApiPropertyOptional({ example: 0 })
+  openRecheckTasksCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  overdueRecheckTasksCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  blockingRecheckTasksCount?: number;
+
+  @ApiPropertyOptional({ nullable: true, example: '2027-07-30T00:00:00.000Z' })
+  nextRecheckDueAt?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-30T06:00:00.000Z' })
+  lastRecheckScanAt?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'INHERIT_REPORT' })
+  recheckPolicy?: string | null;
 }
 
 export class BookRightsDashboardDto {
@@ -292,6 +315,15 @@ export class BookRightsDashboardDto {
     description: 'Phase 16: up to 50 most recent claims for this version and its book',
   })
   claims?: RightsClaimSummaryDto[];
+
+  @ApiPropertyOptional({
+    type: [RecheckTaskDto],
+    description: 'Phase 18: up to 50 recheck tasks of this version and its rights profile',
+  })
+  recheckTasks?: RecheckTaskDto[];
+
+  @ApiPropertyOptional({ type: RecheckScheduleDto, nullable: true })
+  recheckSchedule?: RecheckScheduleDto | null;
 
   @ApiProperty({ type: BookRightsDashboardMetricsDto })
   summary!: BookRightsDashboardMetricsDto;

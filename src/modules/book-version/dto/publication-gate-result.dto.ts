@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class PublicationGateReasonDto {
@@ -113,6 +113,22 @@ export class PublicationGateResultDto {
   @ApiProperty({ type: [String] })
   claimIds!: string[];
 
+  // Phase 18: automatic recheck
+  @ApiPropertyOptional()
+  openRecheckTasksCount?: number;
+
+  @ApiPropertyOptional()
+  overdueRecheckTasksCount?: number;
+
+  @ApiPropertyOptional()
+  blockingRecheckTasksCount?: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  nextRecheckDueAt?: string | null;
+
+  @ApiPropertyOptional({ type: [String] })
+  recheckTaskIds?: string[];
+
   constructor(data: {
     versionId: string;
     bookId: string;
@@ -140,6 +156,11 @@ export class PublicationGateResultDto {
     hasWorldwideClaimBlock?: boolean;
     worstClaimSeverity?: string | null;
     claimIds?: string[];
+    openRecheckTasksCount?: number;
+    overdueRecheckTasksCount?: number;
+    blockingRecheckTasksCount?: number;
+    nextRecheckDueAt?: string | null;
+    recheckTaskIds?: string[];
   }) {
     this.versionId = data.versionId;
     this.bookId = data.bookId;
@@ -167,6 +188,11 @@ export class PublicationGateResultDto {
     this.hasWorldwideClaimBlock = data.hasWorldwideClaimBlock ?? false;
     this.worstClaimSeverity = data.worstClaimSeverity ?? null;
     this.claimIds = data.claimIds ?? [];
+    this.openRecheckTasksCount = data.openRecheckTasksCount ?? 0;
+    this.overdueRecheckTasksCount = data.overdueRecheckTasksCount ?? 0;
+    this.blockingRecheckTasksCount = data.blockingRecheckTasksCount ?? 0;
+    this.nextRecheckDueAt = data.nextRecheckDueAt ?? null;
+    this.recheckTaskIds = data.recheckTaskIds ?? [];
   }
 }
 

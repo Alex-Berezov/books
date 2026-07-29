@@ -4,6 +4,8 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { ClaimGateEvaluationDto } from '../rights-claims/dto/rights-claim-response.dto';
+import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
+import { RecheckGateEvaluationDto } from '../rights-recheck/dto/version-recheck-response.dto';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -37,6 +39,21 @@ const noClaims = (overrides: Partial<ClaimGateEvaluationDto> = {}): ClaimGateEva
   ...overrides,
 });
 
+/** Default recheck evaluation (Phase 18): no open recheck task for the version. */
+const noRecheck = (
+  overrides: Partial<RecheckGateEvaluationDto> = {},
+): RecheckGateEvaluationDto => ({
+  versionId: 'v1',
+  blockers: [],
+  warnings: [],
+  openTasksCount: 0,
+  overdueTasksCount: 0,
+  blockingTasksCount: 0,
+  nextRecheckDueAt: null,
+  taskIds: [],
+  ...overrides,
+});
+
 describe('PublicationGateService', () => {
   let service: PublicationGateService;
   let prisma: jest.Mocked<PrismaService>;
@@ -44,6 +61,7 @@ describe('PublicationGateService', () => {
   let mockGeoBlockRuleService: jest.Mocked<GeoBlockRuleService>;
   let mockLicenseCoverageService: { evaluateVersionCoverage: jest.Mock };
   let mockRightsClaimsService: { evaluateVersionClaims: jest.Mock };
+  let mockRightsRecheckService: { evaluateVersionRecheck: jest.Mock };
 
   const baseVersion = {
     id: 'v1',
@@ -116,12 +134,17 @@ describe('PublicationGateService', () => {
       evaluateVersionClaims: jest.fn().mockResolvedValue(noClaims()),
     };
 
+    mockRightsRecheckService = {
+      evaluateVersionRecheck: jest.fn().mockResolvedValue(noRecheck()),
+    };
+
     service = new PublicationGateService(
       prisma,
       mockRightsContentHashService,
       mockGeoBlockRuleService,
       mockLicenseCoverageService as unknown as RightsLicenseCoverageService,
       mockRightsClaimsService as unknown as RightsClaimsService,
+      mockRightsRecheckService as unknown as RightsRecheckService,
     );
   });
 
@@ -767,6 +790,75 @@ describe('PublicationGateService', () => {
       expect(result.canPublish).toBe(true);
       expect(result.activeClaimsCount).toBe(0);
       expect(result.blockingReasons).toHaveLength(0);
+    });
+  });
+
+  // 6.19 Automatic recheck (Phase 18)
+  describe('6.19 Automatic recheck', () => {
+    beforeEach(() => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    });
+
+    it('turns a recheck blocker into a blocking reason', async () => {
+      mockRightsRecheckService.evaluateVersionRecheck.mockResolvedValue(
+        noRecheck({
+          openTasksCount: 1,
+          overdueTasksCount: 1,
+          blockingTasksCount: 1,
+          taskIds: ['task-1'],
+          blockers: [
+            {
+              code: 'RIGHTS_RECHECK_OVERDUE',
+              messageRu: 'Перепроверка прав просрочена.',
+              taskId: 'task-1',
+              details: null,
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_RECHECK_OVERDUE')).toBe(true);
+      expect(result.blockingRecheckTasksCount).toBe(1);
+      expect(result.recheckTaskIds).toEqual(['task-1']);
+    });
+
+    it('turns a recheck warning into a warning without blocking', async () => {
+      mockRightsRecheckService.evaluateVersionRecheck.mockResolvedValue(
+        noRecheck({
+          openTasksCount: 1,
+          taskIds: ['task-2'],
+          nextRecheckDueAt: '2026-09-01T00:00:00.000Z',
+          warnings: [
+            {
+              code: 'RIGHTS_RECHECK_TASK_OPEN',
+              messageRu: 'Открыта задача перепроверки прав.',
+              taskId: 'task-2',
+              details: null,
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.warnings.some((r) => r.code === 'RIGHTS_RECHECK_TASK_OPEN')).toBe(true);
+      expect(result.nextRecheckDueAt).toBe('2026-09-01T00:00:00.000Z');
+    });
+
+    it('leaves the existing gate codes untouched when there is no recheck task', async () => {
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.warnings.some((r) => r.code.startsWith('RIGHTS_RECHECK_'))).toBe(false);
+      expect(result.openRecheckTasksCount).toBe(0);
+      expect(result.rightsRecheckRequired).toBe(false);
     });
   });
 });

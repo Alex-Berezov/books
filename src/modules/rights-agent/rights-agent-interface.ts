@@ -35,8 +35,16 @@ export enum RightsNotificationType {
   AGENT_TOKEN_ISSUED = 'AGENT_TOKEN_ISSUED',
   AGENT_TOKEN_REVOKED = 'AGENT_TOKEN_REVOKED',
   HUMAN_REVIEW_REQUIRED = 'HUMAN_REVIEW_REQUIRED',
-  /** Bridge to Phase 18 (automatic re-check). Never created in Phase 17. */
+  /** Phase 18: a recheck deadline is approaching or has arrived. */
   RECHECK_DUE = 'RECHECK_DUE',
+  /** Phase 18: the recheck deadline has passed. */
+  RECHECK_OVERDUE = 'RECHECK_OVERDUE',
+  /** Phase 18: a recheck task was opened. */
+  RECHECK_TASK_OPENED = 'RECHECK_TASK_OPENED',
+  /** Phase 18: a recheck task was closed. */
+  RECHECK_COMPLETED = 'RECHECK_COMPLETED',
+  /** Phase 18: a legal change was applied across the catalogue. */
+  LEGAL_CHANGE_APPLIED = 'LEGAL_CHANGE_APPLIED',
   /** Bridge to Phase 19 (lawyer workflow). Never created in Phase 17. */
   LAWYER_REVIEW_REQUIRED = 'LAWYER_REVIEW_REQUIRED',
   OTHER = 'OTHER',
