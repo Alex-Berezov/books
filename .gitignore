@@ -1,5 +1,8 @@
 # compiled output
 /dist
+# outDir of test/tsconfig.json — `typecheck:test` runs with --noEmit, but keep it ignored
+# so a run without that flag cannot pollute the working tree.
+/dist-test
 /node_modules
 /build
 *.tsbuildinfo

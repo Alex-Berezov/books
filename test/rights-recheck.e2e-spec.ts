@@ -124,6 +124,10 @@ describe('Rights recheck e2e', () => {
         .$executeRawUnsafe('DELETE FROM "RightsLegalChangeEvent" WHERE id = $1', legalChangeId)
         .catch(() => undefined);
     }
+    // Book first: deleting the intake only nulls Book.rightsIntakeId, it does not remove the book.
+    if (bookId) {
+      await prisma.book.delete({ where: { id: bookId } }).catch(() => undefined);
+    }
     if (intakeId) {
       await prisma.rightsIntake.delete({ where: { id: intakeId } }).catch(() => undefined);
     }
@@ -161,8 +165,9 @@ describe('Rights recheck e2e', () => {
 
     const importId = imported.body.id as string;
 
+    // Materialization lives on RightsProfileController, not nested under the intake.
     const materialized = await request(http())
-      .post(`/admin/rights/intakes/${intakeId}/review-imports/${importId}/materialize`)
+      .post(`/admin/rights/review-imports/${importId}/materialize`)
       .set(...auth())
       .expect(201);
 
@@ -172,35 +177,47 @@ describe('Rights recheck e2e', () => {
     // Phase 18: the first review of an intake roots its own chain.
     expect(materialized.body.reviews[0].revisionNumber).toBe(1);
     expect(materialized.body.reviews[0].previousReviewId).toBeNull();
+    expect(materialized.body.reviews[0].chainRootReviewId).toBe(reviewId);
 
     await request(http())
-      .post(`/admin/rights/reviews/${reviewId}/approve`)
+      .post(`/admin/rights/intakes/${intakeId}/reviews/${reviewId}/approve`)
       .set(...auth())
       .send({ notesRu: 'Утверждено для e2e' })
       .expect(201);
   });
 
   it('creates a book from the approved clearance without opening a false LANGUAGE_ADDED task', async () => {
+    // `versions[]` is mandatory: the endpoint creates the book and its versions in one call
+    // and returns both, so no separate version lookup is needed.
     const book = await request(http())
       .post(`/admin/rights/intakes/${intakeId}/create-book`)
       .set(...auth())
-      .send({ slug: `recheck-e2e-${Date.now()}` })
+      .send({
+        slug: `recheck-e2e-${Date.now()}`,
+        versions: [
+          {
+            language: 'en',
+            title: 'Recheck e2e',
+            author: 'Test Author',
+            description: 'Книга для e2e-проверки перепроверок прав.',
+            coverImageUrl: 'https://example.com/cover.jpg',
+            type: 'text',
+            isFree: true,
+          },
+        ],
+      })
       .expect(201);
 
-    bookId = book.body.id as string;
-
-    const versions = await request(http())
-      .get(`/admin/books/${bookId}/versions`)
-      .set(...auth())
-      .expect(200);
-
-    versionId = versions.body[0].id as string;
+    bookId = book.body.book.id as string;
+    versionId = book.body.versions[0].id as string;
 
     const tasks = await request(http())
       .get(`/admin/rights/recheck/tasks?rightsIntakeId=${intakeId}`)
       .set(...auth())
       .expect(200);
 
+    // Initial versions are created by RightsBookCreationService directly, not through
+    // BookVersionService.create — so the LANGUAGE_ADDED hook must not fire here.
     expect(tasks.body.items.some((t: { reason: string }) => t.reason === 'LANGUAGE_ADDED')).toBe(
       false,
     );
@@ -235,7 +252,11 @@ describe('Rights recheck e2e', () => {
     const scheduled = overdueItems.find(
       (t) => t.reason === 'SCHEDULED_DUE' && t.rightsProfileId === profileId,
     );
-    expect(scheduled).toBeDefined();
+    if (!scheduled) {
+      throw new Error(
+        `No SCHEDULED_DUE task for profile ${profileId}; got: ${JSON.stringify(overdueItems)}`,
+      );
+    }
     expect(scheduled.isOverdue).toBe(true);
     expect(scheduled.effectiveSeverity).toBe('BLOCKING');
     taskId = scheduled.id;
