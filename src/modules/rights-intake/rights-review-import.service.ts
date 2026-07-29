@@ -25,7 +25,11 @@ export class RightsReviewImportService {
     };
   }
 
-  async create(intakeId: string, dto: CreateRightsReviewImportDto, userId: string) {
+  /**
+   * @param userId id of the human importing the report, or `null` when the report
+   *   arrived through the Phase 17 agent API (no human involved).
+   */
+  async create(intakeId: string, dto: CreateRightsReviewImportDto, userId: string | null) {
     const intake = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
     if (!intake) {
       throw new NotFoundException(`Rights intake with ID '${intakeId}' not found`);

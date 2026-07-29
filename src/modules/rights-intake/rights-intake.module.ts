@@ -40,6 +40,9 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsContentHashService,
     TerritoryRegionAggregationService,
     ComponentTerritoryAggregationService,
+    RightsReviewImportService,
+    RightsMaterializationService,
+    RightsIntakeManifestService,
   ],
 })
 export class RightsIntakeModule {}

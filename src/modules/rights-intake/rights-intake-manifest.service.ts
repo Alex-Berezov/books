@@ -4,6 +4,8 @@ import {
   RIGHTS_AGENT_MANIFEST_VERSION,
   RIGHTS_AGENT_MANIFEST_TYPE,
   RIGHTS_AGENT_EXPECTED_REPORT_SCHEMA_VERSION,
+  RIGHTS_AGENT_REPORT_SCHEMA_URL,
+  RIGHTS_AGENT_SUBMISSION_ENDPOINT,
 } from './rights-intake.constants';
 import type { RightsAgentManifestDto } from './dto/rights-agent-manifest.dto';
 
@@ -136,6 +138,7 @@ export class RightsIntakeManifestService {
       expectedResultSchema: {
         schemaVersion: RIGHTS_AGENT_EXPECTED_REPORT_SCHEMA_VERSION,
         format: 'json',
+        schemaUrl: RIGHTS_AGENT_REPORT_SCHEMA_URL,
         requiredTopLevelFields: [
           'schemaVersion',
           'intakeId',
@@ -152,9 +155,16 @@ export class RightsIntakeManifestService {
           'confidence',
           'nextReviewAt',
         ],
+        submission: {
+          endpoint: RIGHTS_AGENT_SUBMISSION_ENDPOINT,
+          method: 'POST',
+          authHeader: 'X-Bibliaris-Agent-Token',
+          note: 'Send the JSON report in the "report" field. The token is single-use and issued by a Bibliaris editor.',
+        },
         notes: [
-          'This phase only exports the input manifest. Import and validation of the agent result will be implemented in a later phase.',
-          'The external agent should return JSON plus a human-readable report, but Bibliaris will not import it until the import phase is implemented.',
+          'The agent may submit the result directly to the submission endpoint using the one-time upload token, or the editor may paste it manually.',
+          'A submitted report is never auto-approved: a Bibliaris human reviewer must approve it.',
+          'The external agent should return JSON plus a human-readable report; both are accepted by the submission endpoint in the "report" and "reportMarkdown" fields.',
           'The optional licenses[] block describes licenses and permissions; licenses[].key values are referenced from licenseRef/licenseRefs.',
         ],
       },

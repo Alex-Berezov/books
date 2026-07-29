@@ -253,6 +253,10 @@ model User {
   rightsClaimAttachmentsUploaded RightsClaimAttachment[] @relation("RightsClaimAttachmentUploadedBy")
   rightsClaimAttachmentsRemoved RightsClaimAttachment[] @relation("RightsClaimAttachmentRemovedBy")
   rightsClaimEventsCreated RightsClaimEvent[] @relation("RightsClaimEventCreatedBy")
+  rightsAgentTokensIssued  RightsAgentUploadToken[] @relation("RightsAgentTokenIssuedBy")
+  rightsAgentTokensRevoked RightsAgentUploadToken[] @relation("RightsAgentTokenRevokedBy")
+  rightsNotifications      RightsNotification[]     @relation("RightsNotificationTarget")
+  rightsNotificationsRead  RightsNotification[]     @relation("RightsNotificationReadBy")
 }
 
 
@@ -720,6 +724,11 @@ model RightsIntake {
   // Phase 16: Rights claims / DMCA
   rightsClaims RightsClaim[]
 
+  // Phase 17: Agent/API import automation
+  agentUploadTokens   RightsAgentUploadToken[]
+  agentSubmissions    RightsAgentSubmission[]
+  rightsNotifications RightsNotification[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -758,6 +767,7 @@ model RightsReviewImport {
   importedByUser   User? @relation(fields: [importedByUserId], references: [id], onDelete: SetNull)
   materializedProfiles RightsProfile[] @relation("ProfileCurrentReviewImport")
   rightsReviews        RightsReview[]
+  agentSubmissions     RightsAgentSubmission[] @relation("AgentSubmissionImport")
 
   supersededAt DateTime?
 
@@ -2233,4 +2243,215 @@ model RightsClaimEvent {
   @@index([eventType])
   @@index([createdAt])
   @@index([createdByUserId])
+}
+
+// =====================
+// Phase 17: Agent/API Import Automation
+// =====================
+
+enum RightsAgentTokenStatus {
+  ACTIVE
+  USED
+  REVOKED
+  EXPIRED
+}
+
+enum RightsAgentSubmissionStatus {
+  /// Запрос принят, обработка ещё не завершена (промежуточное состояние).
+  RECEIVED
+  /// Отчёт прошёл валидацию, создан RightsReviewImport со статусом VALIDATED.
+  VALIDATED
+  /// Отчёт принят и сохранён, но валидация нашла ошибки.
+  VALIDATION_FAILED
+  /// Запрос отклонён до валидации (размер, неподдерживаемая версия схемы, статус интейка).
+  REJECTED
+  /// Внутренняя ошибка обработки.
+  FAILED
+}
+
+enum RightsAgentSubmissionMaterialization {
+  NOT_ATTEMPTED
+  SKIPPED
+  SUCCEEDED
+  FAILED
+}
+
+enum RightsNotificationType {
+  AGENT_REPORT_RECEIVED
+  AGENT_REPORT_VALIDATION_FAILED
+  AGENT_REPORT_MATERIALIZED
+  AGENT_REPORT_MATERIALIZATION_FAILED
+  AGENT_TOKEN_ISSUED
+  AGENT_TOKEN_REVOKED
+  HUMAN_REVIEW_REQUIRED
+  /// Мост к фазе 18 (Автоматическая перепроверка). В фазе 17 не создаётся.
+  RECHECK_DUE
+  /// Мост к фазе 19 (Lawyer Workflow). В фазе 17 не создаётся.
+  LAWYER_REVIEW_REQUIRED
+  OTHER
+}
+
+enum RightsNotificationSeverity {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+model RightsAgentUploadToken {
+  id String @id @default(uuid())
+
+  rightsIntakeId String
+  rightsIntake   RightsIntake @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  /// sha256(hex) от полного токена. Сам токен нигде не сохраняется.
+  tokenHash String @unique
+  /// Первые 12 символов токена — только для отображения в админке ("brat_AbCdEfG…").
+  tokenPrefix String
+
+  status RightsAgentTokenStatus @default(ACTIVE)
+
+  /// Человекочитаемая пометка редактора ("для ChatGPT-агента, попытка 2").
+  labelRu String?
+
+  /// Версии схемы отчёта, которые принимает этот токен. null = все поддерживаемые.
+  allowedSchemaVersions Json?
+
+  /// Сколько успешных сабмишенов разрешено. По умолчанию 1 — одноразовый токен.
+  maxUses   Int @default(1)
+  usedCount Int @default(0)
+
+  /// Неуспешные попытки (провал валидации при allowRetryOnValidationError = true).
+  failedAttempts    Int @default(0)
+  maxFailedAttempts Int @default(5)
+
+  /// true — провал валидации НЕ расходует использование токена, агент может исправиться и прислать снова.
+  allowRetryOnValidationError Boolean @default(true)
+
+  /// true — после успешной валидации сразу материализовать профиль и создать черновую проверку.
+  autoMaterialize Boolean @default(true)
+
+  expiresAt DateTime
+
+  issuedByUserId String?
+  issuedByUser   User? @relation("RightsAgentTokenIssuedBy", fields: [issuedByUserId], references: [id], onDelete: SetNull)
+
+  firstUsedAt       DateTime?
+  lastUsedAt        DateTime?
+  lastUsedIp        String?
+  lastUsedUserAgent String?
+
+  revokedAt       DateTime?
+  revokedByUserId String?
+  revokedByUser   User? @relation("RightsAgentTokenRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  revokeReasonRu  String? @db.Text
+
+  submissions RightsAgentSubmission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsIntakeId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([issuedByUserId])
+  @@index([revokedByUserId])
+  @@index([createdAt])
+}
+
+model RightsAgentSubmission {
+  id String @id @default(uuid())
+
+  rightsIntakeId String
+  rightsIntake   RightsIntake @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  uploadTokenId String?
+  uploadToken   RightsAgentUploadToken? @relation(fields: [uploadTokenId], references: [id], onDelete: SetNull)
+
+  status RightsAgentSubmissionStatus @default(RECEIVED)
+
+  /// Версия схемы, заявленная в теле отчёта (может быть неподдерживаемой).
+  declaredSchemaVersion String?
+
+  reportJsonSha256 String?
+  payloadSizeBytes Int?
+  sourceFileName   String?
+
+  /// Самоидентификация агента из тела запроса — доверия к ней нет, только аудит.
+  agentName    String?
+  agentVersion String?
+
+  submittedIp        String?
+  submittedUserAgent String?
+
+  /// Созданная запись импорта (если запрос дошёл до создания импорта).
+  rightsReviewImportId String?
+  rightsReviewImport   RightsReviewImport? @relation("AgentSubmissionImport", fields: [rightsReviewImportId], references: [id], onDelete: SetNull)
+
+  validationErrorCount   Int @default(0)
+  validationWarningCount Int @default(0)
+
+  /// Код отказа, если status = REJECTED/FAILED.
+  rejectionCode      String?
+  rejectionMessageRu String? @db.Text
+
+  materialization       RightsAgentSubmissionMaterialization @default(NOT_ATTEMPTED)
+  materializationError  String? @db.Text
+  materializedProfileId String?
+
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  notifications RightsNotification[]
+
+  @@index([rightsIntakeId])
+  @@index([uploadTokenId])
+  @@index([status])
+  @@index([rightsReviewImportId])
+  @@index([reportJsonSha256])
+  @@index([createdAt])
+}
+
+model RightsNotification {
+  id String @id @default(uuid())
+
+  type     RightsNotificationType
+  severity RightsNotificationSeverity @default(INFO)
+
+  titleRu   String
+  messageRu String @db.Text
+
+  /// null = уведомление для всех админов/контент-менеджеров.
+  targetUserId String?
+  targetUser   User? @relation("RightsNotificationTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  rightsIntakeId String?
+  rightsIntake   RightsIntake? @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  agentSubmissionId String?
+  agentSubmission   RightsAgentSubmission? @relation(fields: [agentSubmissionId], references: [id], onDelete: SetNull)
+
+  /// Навигационные ссылки без внешних ключей: удаление цели не должно удалять уведомление.
+  rightsReviewImportId String?
+  rightsProfileId      String?
+  bookVersionId        String?
+
+  /// Дополнительные данные для UI (счётчики ошибок, коды и т.п.).
+  payload Json?
+
+  isRead       Boolean   @default(false)
+  readAt       DateTime?
+  readByUserId String?
+  readByUser   User? @relation("RightsNotificationReadBy", fields: [readByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([severity])
+  @@index([targetUserId, isRead])
+  @@index([isRead])
+  @@index([rightsIntakeId])
+  @@index([agentSubmissionId])
+  @@index([createdAt])
+  @@index([readByUserId])
 }

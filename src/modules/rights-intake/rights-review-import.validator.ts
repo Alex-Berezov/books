@@ -1,4 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import {
+  RIGHTS_REPORT_SCHEMA_VERSIONS,
+  isSupportedReportSchemaVersion,
+} from './rights-review-schema.registry';
 
 export interface ValidationIssue {
   path: string;
@@ -261,11 +265,11 @@ export class RightsReviewImportValidator {
     const schemaVersion = reportJson['schemaVersion'] as string | undefined;
     if (!schemaVersion) {
       addError(errors, 'schemaVersion', 'schemaVersion is required', 'MISSING_FIELD');
-    } else if (schemaVersion !== '1.0') {
+    } else if (!isSupportedReportSchemaVersion(schemaVersion)) {
       addError(
         errors,
         'schemaVersion',
-        `schemaVersion must be "1.0", got "${schemaVersion}"`,
+        `schemaVersion must be one of: ${RIGHTS_REPORT_SCHEMA_VERSIONS.map((v) => `"${v}"`).join(', ')}; got "${schemaVersion}"`,
         'INVALID_SCHEMA_VERSION',
       );
     }

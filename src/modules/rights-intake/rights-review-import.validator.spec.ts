@@ -104,6 +104,23 @@ describe('RightsReviewImportValidator', () => {
     expect(errors.some((e) => e.code === 'INVALID_SCHEMA_VERSION')).toBe(true);
   });
 
+  it('schemaVersion "1.0" is accepted by the version registry', () => {
+    const payload = validPayload();
+    payload.schemaVersion = '1.0';
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+    expect(errors.some((e) => e.code === 'INVALID_SCHEMA_VERSION')).toBe(false);
+  });
+
+  it('schemaVersion "2.0" fails and the message lists the supported versions', () => {
+    const payload = validPayload();
+    payload.schemaVersion = '2.0';
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+    const issue = errors.find((e) => e.code === 'INVALID_SCHEMA_VERSION');
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain('"1.0"');
+    expect(issue?.message).toContain('2.0');
+  });
+
   it('missing intakeId fails', () => {
     const payload = validPayload();
     delete payload.intakeId;

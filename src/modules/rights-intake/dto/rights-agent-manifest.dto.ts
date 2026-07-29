@@ -35,10 +35,21 @@ class ManifestAgentTaskDto {
   @ApiProperty({ type: [String] }) importantRules!: string[];
 }
 
+class ManifestSubmissionDto {
+  @ApiProperty({ example: 'https://api.bibliaris.com/api/rights/agent/submissions' })
+  endpoint!: string;
+  @ApiProperty({ example: 'POST' }) method!: string;
+  @ApiProperty({ example: 'X-Bibliaris-Agent-Token' }) authHeader!: string;
+  @ApiProperty() note!: string;
+}
+
 class ManifestExpectedResultSchemaDto {
   @ApiProperty() schemaVersion!: string;
   @ApiProperty({ example: 'json' }) format!: string;
+  @ApiProperty({ example: 'https://api.bibliaris.com/api/rights/agent/report-schema/1.0' })
+  schemaUrl!: string;
   @ApiProperty({ type: [String] }) requiredTopLevelFields!: string[];
+  @ApiProperty({ type: ManifestSubmissionDto }) submission!: ManifestSubmissionDto;
   @ApiProperty({ type: [String] }) notes!: string[];
 }
 
