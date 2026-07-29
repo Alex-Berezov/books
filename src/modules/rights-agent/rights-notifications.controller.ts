@@ -15,7 +15,9 @@ import type {
 @ApiTags('rights-notifications')
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.Admin, Role.ContentManager)
+// Phase 19: юрист должен видеть адресованные ему уведомления — иначе назначение проверки
+// до него просто не дойдёт. Собственные уведомления фильтруются по targetUserId в сервисе.
+@Roles(Role.Admin, Role.ContentManager, Role.Lawyer)
 @ApiBearerAuth()
 export class RightsNotificationsController {
   constructor(private readonly service: RightsNotificationsService) {}

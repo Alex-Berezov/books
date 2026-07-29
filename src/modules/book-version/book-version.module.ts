@@ -9,6 +9,7 @@ import { GeoBlockModule } from '../geo-block/geo-block.module';
 import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module';
 import { RightsClaimsModule } from '../rights-claims/rights-claims.module';
 import { RightsRecheckModule } from '../rights-recheck/rights-recheck.module';
+import { RightsLawyerModule } from '../rights-lawyer/rights-lawyer.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RightsRecheckModule } from '../rights-recheck/rights-recheck.module';
     RightsLicensesModule,
     RightsClaimsModule,
     RightsRecheckModule,
+    RightsLawyerModule,
   ],
   controllers: [BookVersionController],
   providers: [BookVersionService, PublicationGateService, PrismaService, RolesGuard],

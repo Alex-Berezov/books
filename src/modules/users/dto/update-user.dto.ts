@@ -6,10 +6,10 @@ import {
   IsOptional,
   IsBoolean,
   IsArray,
-  IsEnum,
+  IsIn,
   ArrayMinSize,
 } from 'class-validator';
-import { RoleName } from '@prisma/client';
+import { ASSIGNABLE_ROLE_NAMES, type AssignableRoleName } from '../users.constants';
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: 'new-email@example.com' })
@@ -38,10 +38,10 @@ export class UpdateUserDto {
   @MinLength(6)
   password?: string;
 
-  @ApiPropertyOptional({ example: ['user', 'admin'], enum: RoleName, isArray: true })
+  @ApiPropertyOptional({ example: ['user', 'admin'], enum: ASSIGNABLE_ROLE_NAMES, isArray: true })
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @IsEnum(RoleName, { each: true })
-  roles?: RoleName[];
+  @IsIn(ASSIGNABLE_ROLE_NAMES, { each: true })
+  roles?: AssignableRoleName[];
 }

@@ -6,6 +6,7 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
+import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -209,6 +210,27 @@ describe('BookVersionService', () => {
         schedule: null,
       }),
     };
+    const rightsLawyerReviewService = {
+      getVersionLawyerReview: jest.fn().mockResolvedValue({
+        versionId: 'v1',
+        bookId: 'b1',
+        rightsProfileId: null,
+        blockers: [],
+        warnings: [],
+        lawyerReviewRequired: false,
+        lawyerApproved: false,
+        openReviewsCount: 0,
+        pendingConditionsCount: 0,
+        riskLevel: null,
+        lawyerOpinionValidUntil: null,
+        reviewIds: [],
+        lawyerApprovedAt: null,
+        lawyerApprovedLawyerName: null,
+        isExpiringSoon: false,
+        reviews: [],
+        pendingConditions: [],
+      }),
+    };
     service = new BookVersionService(
       prisma as unknown as PrismaService,
       gateService as unknown as PublicationGateService,
@@ -219,6 +241,7 @@ describe('BookVersionService', () => {
       licenseCoverageService as unknown as RightsLicenseCoverageService,
       rightsClaimsService as unknown as RightsClaimsService,
       rightsRecheckService as unknown as RightsRecheckService,
+      rightsLawyerReviewService as unknown as RightsLawyerReviewService,
       new TerritoryRegionAggregationService(),
     );
   });

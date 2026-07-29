@@ -6,6 +6,10 @@ import {
   RecheckScheduleDto,
   RecheckTaskDto,
 } from '../../rights-recheck/dto/recheck-task-response.dto';
+import {
+  LawyerConditionDto,
+  LawyerReviewDto,
+} from '../../rights-lawyer/dto/lawyer-review-response.dto';
 
 export class BookRightsDashboardBookSummaryDto {
   @ApiProperty({ example: 'a1111111-b222-4c33-d444-555555555555' })
@@ -277,6 +281,34 @@ export class BookRightsDashboardMetricsDto {
 
   @ApiPropertyOptional({ nullable: true, example: 'INHERIT_REPORT' })
   recheckPolicy?: string | null;
+
+  // Phase 19: lawyer workflow
+  @ApiPropertyOptional({ nullable: true, example: 'HIGH' })
+  riskLevel?: string | null;
+
+  @ApiPropertyOptional({ example: false })
+  lawyerReviewRequired?: boolean;
+
+  @ApiPropertyOptional({ example: false })
+  lawyerApproved?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-31T00:00:00.000Z' })
+  lawyerApprovedAt?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Иванова А. С.' })
+  lawyerApprovedLawyerName?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2028-07-31T00:00:00.000Z' })
+  lawyerOpinionValidUntil?: string | null;
+
+  @ApiPropertyOptional({ example: 0 })
+  openLawyerReviewsCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  pendingLawyerConditionsCount?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  lawyerReviewsCount?: number;
 }
 
 export class BookRightsDashboardDto {
@@ -324,6 +356,15 @@ export class BookRightsDashboardDto {
 
   @ApiPropertyOptional({ type: RecheckScheduleDto, nullable: true })
   recheckSchedule?: RecheckScheduleDto | null;
+
+  @ApiPropertyOptional({
+    type: [LawyerReviewDto],
+    description: 'Phase 19: up to 50 legal reviews of the rights profile of this version',
+  })
+  lawyerReviews?: LawyerReviewDto[];
+
+  @ApiPropertyOptional({ type: [LawyerConditionDto] })
+  pendingLawyerConditions?: LawyerConditionDto[];
 
   @ApiProperty({ type: BookRightsDashboardMetricsDto })
   summary!: BookRightsDashboardMetricsDto;

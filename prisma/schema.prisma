@@ -42,6 +42,9 @@ model Book {
   // Phase 18: automatic recheck
   recheckTasks RightsRecheckTask[]
 
+  // Phase 19: lawyer workflow
+  lawyerReviews RightsLawyerReview[] @relation("BookLawyerReviews")
+
   @@index([rightsIntakeId])
   @@index([currentRightsProfileId])
   @@index([approvedRightsReviewId])
@@ -157,6 +160,9 @@ model BookVersion {
   // Phase 18: automatic recheck
   recheckTasks RightsRecheckTask[]
 
+  // Phase 19: lawyer workflow
+  lawyerReviews RightsLawyerReview[] @relation("BookVersionLawyerReviews")
+
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
@@ -271,6 +277,19 @@ model User {
   rightsLegalChangesCreated   RightsLegalChangeEvent[] @relation("RightsLegalChangeCreatedBy")
   rightsLegalChangesApplied   RightsLegalChangeEvent[] @relation("RightsLegalChangeAppliedBy")
   rightsRecheckScanRuns       RightsRecheckScanRun[]   @relation("RightsRecheckScanTriggeredBy")
+  rightsLawyerProfile         RightsLawyer?                @relation("RightsLawyerUser")
+  rightsLawyersCreated        RightsLawyer[]               @relation("RightsLawyerCreatedBy")
+  rightsLawyersDeactivated    RightsLawyer[]               @relation("RightsLawyerDeactivatedBy")
+  lawyerReviewsRequested      RightsLawyerReview[]         @relation("RightsLawyerReviewRequestedBy")
+  lawyerReviewsAssigned       RightsLawyerReview[]         @relation("RightsLawyerReviewAssignedBy")
+  lawyerReviewsDecided        RightsLawyerReview[]         @relation("RightsLawyerReviewDecidedBy")
+  lawyerReviewsWithdrawn      RightsLawyerReview[]         @relation("RightsLawyerReviewWithdrawnBy")
+  lawyerReviewsReopened       RightsLawyerReview[]         @relation("RightsLawyerReviewReopenedBy")
+  lawyerReviewEventsCreated   RightsLawyerReviewEvent[]    @relation("RightsLawyerReviewEventCreatedBy")
+  legalOpinionsUploaded       RightsLegalOpinion[]         @relation("RightsLegalOpinionUploadedBy")
+  legalOpinionsArchived       RightsLegalOpinion[]         @relation("RightsLegalOpinionArchivedBy")
+  lawyerConditionsSatisfied   RightsLawyerReviewCondition[] @relation("RightsLawyerConditionSatisfiedBy")
+  lawyerConditionsWaived      RightsLawyerReviewCondition[] @relation("RightsLawyerConditionWaivedBy")
 }
 
 
@@ -746,6 +765,9 @@ model RightsIntake {
   // Phase 18: automatic recheck
   recheckTasks RightsRecheckTask[]
 
+  // Phase 19: lawyer workflow
+  lawyerReviews RightsLawyerReview[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -861,6 +883,26 @@ model RightsProfile {
   // Phase 18: automatic recheck
   recheckTasks RightsRecheckTask[]
 
+  // Phase 19: снимок оценки риска и юридического утверждения
+  riskLevel      RightsRiskLevel @default(LOW)
+  /// [{ code, level, messageRu, details? }] — снимок факторов на момент riskAssessedAt.
+  riskFactors    Json?
+  riskAssessedAt DateTime?
+
+  /// Требуется ли юридическая проверка перед обычным утверждением.
+  lawyerReviewRequired Boolean @default(false)
+  /// Есть ли открытая проверка с blocksApproval = true.
+  lawyerReviewBlocking Boolean @default(false)
+  currentLawyerReviewId String?
+  lawyerApprovedAt      DateTime?
+  lawyerApprovedLawyerId String?
+  /// Снимок имени юриста, чьё положительное заключение действует.
+  lawyerApprovedLawyerName String?
+  /// Срок действия действующего заключения. null = бессрочно.
+  lawyerOpinionValidUntil DateTime?
+
+  lawyerReviews RightsLawyerReview[]
+
   supersededAt DateTime?
   archivedAt DateTime?
 
@@ -877,6 +919,10 @@ model RightsProfile {
   @@index([staleDetectedAt])
   @@index([nextReviewAt])
   @@index([recheckPolicy])
+  @@index([riskLevel])
+  @@index([lawyerReviewRequired])
+  @@index([lawyerReviewBlocking])
+  @@index([lawyerApprovedAt])
 }
 
 model SourceEdition {
@@ -987,11 +1033,20 @@ model RightsReview {
   recheckTasksAsBaseline  RightsRecheckTask[] @relation("RightsRecheckBaselineReview")
   recheckTasksAsCompleted RightsRecheckTask[] @relation("RightsRecheckCompletedReview")
 
+  // Phase 19: юридическое утверждение
+  lawyerReviewRequired Boolean   @default(false)
+  lawyerReviewId       String?
+  lawyerApprovedAt     DateTime?
+  lawyerNameSnapshot   String?
+
+  lawyerReviews RightsLawyerReview[] @relation("RightsLawyerReviewSubject")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([rightsProfileId])
   @@index([status])
+  @@index([lawyerReviewId])
   @@index([contentHash])
   @@index([staleDetectedAt])
   @@index([overallStatus])
@@ -1111,6 +1166,9 @@ model RightsEvidence {
   summaryRu String @db.Text
 
   licenseLinks RightsLicenseLink[]
+
+  // Phase 19: если доказательство создано из юридического заключения
+  legalOpinion RightsLegalOpinion?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1296,6 +1354,11 @@ enum RightsProfileStatus {
   SUPERSEDED
   STALE
   ARCHIVED
+  /// Фаза 19: профиль ушёл на юридическую проверку.
+  /// Физический порядок значений повторяет порядок `ALTER TYPE … ADD VALUE` в БД.
+  LAWYER_REVIEW_REQUIRED
+  /// Фаза 19: юрист дал положительное заключение.
+  LAWYER_APPROVED
 }
 
 enum RightsReviewStatus {
@@ -1306,6 +1369,10 @@ enum RightsReviewStatus {
   HUMAN_REJECTED
   SUPERSEDED
   STALE
+  /// Фаза 19: проверка ждёт заключения юриста.
+  LAWYER_REVIEW_REQUIRED
+  /// Фаза 19: юрист дал положительное заключение; осталось утверждение редактора.
+  LAWYER_APPROVED
 }
 
 enum RightsOverallStatus {
@@ -1453,6 +1520,8 @@ enum RightsIntakeStatus {
   REJECTED
   BOOK_CREATED
   ARCHIVED
+  /// Фаза 19: интейк ушёл на юридическую проверку.
+  LAWYER_REVIEW_REQUIRED
 }
 
 enum RightsSourceProvider {
@@ -1670,6 +1739,8 @@ enum RoleName {
   user
   admin
   content_manager
+  /// Фаза 19: юрист. Доступ только к юридическому workflow.
+  lawyer
 }
 
 // =====================
@@ -2338,9 +2409,21 @@ enum RightsNotificationType {
   RECHECK_COMPLETED
   /// Фаза 18: применено изменение законодательства.
   LEGAL_CHANGE_APPLIED
-  /// Мост к фазе 19 (Lawyer Workflow). В фазе 17 не создаётся.
+  /// Мост к фазе 19 (Lawyer Workflow). С фазы 19 создаётся при открытии юридической проверки.
   LAWYER_REVIEW_REQUIRED
   OTHER
+  /// Фаза 19: юристу назначена проверка.
+  LAWYER_REVIEW_ASSIGNED
+  /// Фаза 19: юрист вынес положительное заключение.
+  LAWYER_REVIEW_APPROVED
+  /// Фаза 19: юрист отказал.
+  LAWYER_REVIEW_REJECTED
+  /// Фаза 19: юридическая проверка отозвана.
+  LAWYER_REVIEW_WITHDRAWN
+  /// Фаза 19: срок действия заключения истекает.
+  LAWYER_OPINION_EXPIRING
+  /// Фаза 19: срок действия заключения истёк.
+  LAWYER_OPINION_EXPIRED
 }
 
 enum RightsNotificationSeverity {
@@ -2816,4 +2899,379 @@ model RightsRecheckScanRun {
   @@index([status])
   @@index([startedAt])
   @@index([triggeredByUserId])
+}
+
+// =====================
+// Lawyer Workflow (Phase 19)
+// =====================
+
+/// Уровень юридического риска профиля прав. Порядок — по возрастанию.
+enum RightsRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// Тип юриста в справочнике.
+enum RightsLawyerType {
+  IN_HOUSE
+  EXTERNAL_COUNSEL
+  LAW_FIRM
+  OTHER
+}
+
+/// Статус юридической проверки.
+enum RightsLawyerReviewStatus {
+  /// Создана, юрист не назначен или ещё не приступил.
+  PENDING
+  /// Юрист взял в работу.
+  IN_PROGRESS
+  /// Положительное заключение без условий.
+  APPROVED
+  /// Положительное заключение с обязательными условиями.
+  APPROVED_WITH_CONDITIONS
+  /// Отказ.
+  REJECTED
+  /// Отозвана редактором до вынесения решения либо после (с причиной).
+  WITHDRAWN
+  /// Срок действия заключения истёк.
+  EXPIRED
+}
+
+/// Решение юриста. Отдельный enum, чтобы не путать статус процесса и вердикт.
+enum RightsLawyerDecision {
+  APPROVED
+  APPROVED_WITH_CONDITIONS
+  REJECTED
+}
+
+/// Почему потребовалась юридическая проверка.
+enum RightsLawyerReviewTrigger {
+  /// В отчёте агента есть RightsAction типа LAWYER_REVIEW.
+  AGENT_REQUESTED
+  /// Автоматическая оценка риска дала уровень >= порога.
+  HIGH_RISK_POLICY
+  /// Ручной запрос редактора.
+  MANUAL_REQUEST
+  /// Претензия правообладателя (фаза 16).
+  RIGHTS_CLAIM
+  /// Изменение законодательства (фаза 18).
+  LEGAL_CHANGE
+  /// Требуется лицензия на территорию.
+  LICENSE_REQUIRED
+  OTHER
+}
+
+/// Тип юридического заключения.
+enum RightsLegalOpinionKind {
+  EXTERNAL_COUNSEL_MEMO
+  IN_HOUSE_MEMO
+  EMAIL_CONFIRMATION
+  COURT_FILING
+  REGULATOR_RESPONSE
+  OTHER
+}
+
+/// Статус обязательного условия из заключения юриста.
+enum RightsLawyerConditionStatus {
+  PENDING
+  SATISFIED
+  WAIVED
+}
+
+/// Тип записи в неудаляемом аудите юридической проверки.
+enum RightsLawyerReviewEventType {
+  REQUESTED
+  ASSIGNED
+  UNASSIGNED
+  STARTED
+  OPINION_ATTACHED
+  OPINION_ARCHIVED
+  CONDITION_ADDED
+  CONDITION_SATISFIED
+  CONDITION_WAIVED
+  DECIDED
+  WITHDRAWN
+  REOPENED
+  EXPIRED
+  DUE_DATE_CHANGED
+  NOTE_ADDED
+}
+
+/// Справочник юристов и юридических организаций. Физического удаления нет — только deactivate.
+model RightsLawyer {
+  id String @id @default(uuid())
+
+  fullName     String
+  lawyerType   RightsLawyerType @default(EXTERNAL_COUNSEL)
+  organization String?
+  /// Регистрационный номер / номер в реестре адвокатов.
+  barId String?
+  email String?
+  phone String?
+  /// Список ISO 3166-1 alpha-2 кодов юрисдикций, в которых юрист компетентен.
+  jurisdictionCodes Json
+  /// Специализация свободным текстом (копирайт, смежные права, издательское право).
+  specializationRu String? @db.Text
+  notesRu          String? @db.Text
+
+  /// Необязательная привязка к пользователю платформы с ролью lawyer.
+  /// Только привязанный юрист может выносить решение сам; иначе решение вносит админ от его имени.
+  userId String? @unique
+  user   User?   @relation("RightsLawyerUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  isActive            Boolean   @default(true)
+  deactivatedAt       DateTime?
+  deactivatedByUserId String?
+  deactivatedByUser   User?     @relation("RightsLawyerDeactivatedBy", fields: [deactivatedByUserId], references: [id], onDelete: SetNull)
+  deactivateReasonRu  String?   @db.Text
+
+  createdByUserId String?
+  createdByUser   User?   @relation("RightsLawyerCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  reviews  RightsLawyerReview[]
+  opinions RightsLegalOpinion[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([lawyerType])
+  @@index([fullName])
+  @@index([userId])
+  @@index([createdByUserId])
+}
+
+model RightsLawyerReview {
+  id String @id @default(uuid())
+
+  /// Человекочитаемый номер вида LR-2026-000123, уникальный.
+  reviewNumber String @unique
+
+  status  RightsLawyerReviewStatus  @default(PENDING)
+  trigger RightsLawyerReviewTrigger
+  /// Снимок уровня риска на момент создания проверки.
+  riskLevel RightsRiskLevel @default(HIGH)
+  /// Снимок факторов риска: [{ code, level, messageRu, details? }].
+  riskFactors Json?
+
+  /// Полиморфные цели. Хотя бы одна из rightsProfileId / rightsIntakeId обязательна.
+  rightsProfileId String?
+  rightsProfile   RightsProfile? @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  rightsIntakeId String?
+  rightsIntake   RightsIntake? @relation(fields: [rightsIntakeId], references: [id], onDelete: Cascade)
+
+  /// Проверка агента, из-за которой возникла эскалация.
+  rightsReviewId String?
+  rightsReview   RightsReview? @relation("RightsLawyerReviewSubject", fields: [rightsReviewId], references: [id], onDelete: SetNull)
+
+  bookId String?
+  book   Book?   @relation("BookLawyerReviews", fields: [bookId], references: [id], onDelete: SetNull)
+
+  bookVersionId String?
+  bookVersion   BookVersion? @relation("BookVersionLawyerReviews", fields: [bookVersionId], references: [id], onDelete: SetNull)
+
+  /// Навигационная ссылка на претензию (фаза 16). БЕЗ внешнего ключа и без relation:
+  /// модуль претензий в фазе 19 не меняется, а каскады не должны связывать два домена.
+  rightsClaimId String?
+
+  titleRu String
+  /// Что именно должен решить юрист.
+  questionRu String @db.Text
+  /// Контекст: сводка профиля, спорные компоненты, ссылки.
+  contextRu String? @db.Text
+
+  affectedCountryCodes Json
+  affectedLanguages    Json
+  /// id спорных RightsComponent — навигационный список без FK.
+  affectedComponentIds Json?
+
+  /// Блокирует ли эта проверка approve интейка и публикацию версий.
+  blocksApproval Boolean @default(true)
+
+  requestedByUserId String?
+  requestedByUser   User?     @relation("RightsLawyerReviewRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  requestedAt       DateTime  @default(now())
+  dueAt             DateTime?
+
+  assignedLawyerId String?
+  assignedLawyer   RightsLawyer? @relation(fields: [assignedLawyerId], references: [id], onDelete: SetNull)
+  assignedAt       DateTime?
+  assignedByUserId String?
+  assignedByUser   User?         @relation("RightsLawyerReviewAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+
+  startedAt DateTime?
+
+  decision  RightsLawyerDecision?
+  decidedAt DateTime?
+  /// Пользователь, физически внёсший решение (юрист или админ от его имени).
+  decidedByUserId String?
+  decidedByUser   User?   @relation("RightsLawyerReviewDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  /// Юрист, которому принадлежит заключение (может отличаться от decidedByUser).
+  decidedLawyerId String?
+  /// Снимок имени юриста на момент решения. Требование roadmap lawyer name.
+  /// Именно снимок: переименование записи в справочнике не должно переписывать историю.
+  lawyerNameSnapshot String?
+
+  opinionSummaryRu String? @db.Text
+  /// Ограничения, которые юрист требует соблюдать (страны, форматы, аудио).
+  restrictionsRu       String? @db.Text
+  approvedCountryCodes Json?
+  blockedCountryCodes  Json?
+
+  /// Срок действия заключения. null = бессрочно.
+  validUntil DateTime?
+  expiredAt  DateTime?
+  /// Когда по этой проверке в последний раз отправлялось уведомление об истечении.
+  /// Нужен для идемпотентности ручного скана.
+  expiryNotifiedAt DateTime?
+
+  withdrawnAt       DateTime?
+  withdrawnByUserId String?
+  withdrawnByUser   User?     @relation("RightsLawyerReviewWithdrawnBy", fields: [withdrawnByUserId], references: [id], onDelete: SetNull)
+  withdrawReasonRu  String?   @db.Text
+
+  reopenedAt       DateTime?
+  reopenedByUserId String?
+  reopenedByUser   User?     @relation("RightsLawyerReviewReopenedBy", fields: [reopenedByUserId], references: [id], onDelete: SetNull)
+
+  opinions   RightsLegalOpinion[]
+  conditions RightsLawyerReviewCondition[]
+  events     RightsLawyerReviewEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([trigger])
+  @@index([riskLevel])
+  @@index([decision])
+  @@index([rightsProfileId])
+  @@index([rightsIntakeId])
+  @@index([rightsReviewId])
+  @@index([bookId])
+  @@index([bookVersionId])
+  @@index([rightsClaimId])
+  @@index([assignedLawyerId])
+  @@index([dueAt])
+  @@index([validUntil])
+  @@index([blocksApproval])
+  @@index([createdAt])
+  @@index([requestedByUserId])
+  @@index([assignedByUserId])
+  @@index([decidedByUserId])
+  @@index([withdrawnByUserId])
+  @@index([reopenedByUserId])
+}
+
+/// Документ заключения. Физического удаления нет — только archive (soft).
+model RightsLegalOpinion {
+  id String @id @default(uuid())
+
+  rightsLawyerReviewId String
+  rightsLawyerReview   RightsLawyerReview @relation(fields: [rightsLawyerReviewId], references: [id], onDelete: Cascade)
+
+  kind    RightsLegalOpinionKind @default(EXTERNAL_COUNSEL_MEMO)
+  titleRu String
+  /// Текст заключения или его существенная выдержка.
+  bodyRu String @db.Text
+
+  lawyerId String?
+  lawyer   RightsLawyer? @relation(fields: [lawyerId], references: [id], onDelete: SetNull)
+  /// Снимок имени на момент прикрепления.
+  lawyerNameSnapshot String?
+
+  documentUrl       String?
+  documentSha256    String?
+  fileName          String?
+  mimeType          String?
+  issuedAt          DateTime?
+  jurisdictionCodes Json?
+
+  /// Автоматически созданная запись доказательства (evidenceType = LEGAL_OPINION).
+  /// Создаётся только если у проверки известен rightsProfileId.
+  rightsEvidenceId String?         @unique
+  rightsEvidence   RightsEvidence? @relation(fields: [rightsEvidenceId], references: [id], onDelete: SetNull)
+
+  uploadedByUserId String?
+  uploadedByUser   User?   @relation("RightsLegalOpinionUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  archivedAt       DateTime?
+  archivedByUserId String?
+  archivedByUser   User?     @relation("RightsLegalOpinionArchivedBy", fields: [archivedByUserId], references: [id], onDelete: SetNull)
+  archiveReasonRu  String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsLawyerReviewId])
+  @@index([kind])
+  @@index([lawyerId])
+  @@index([documentSha256])
+  @@index([archivedAt])
+  @@index([uploadedByUserId])
+  @@index([archivedByUserId])
+}
+
+/// Обязательное условие из положительного заключения с условиями.
+/// Пока есть хотя бы одно PENDING-условие, publication gate блокирует публикацию.
+model RightsLawyerReviewCondition {
+  id String @id @default(uuid())
+
+  rightsLawyerReviewId String
+  rightsLawyerReview   RightsLawyerReview @relation(fields: [rightsLawyerReviewId], references: [id], onDelete: Cascade)
+
+  /// Машинный код условия для UI и gate: REMOVE_ILLUSTRATIONS, GEO_BLOCK_US, ATTRIBUTION_TEXT.
+  code   String
+  textRu String                      @db.Text
+  status RightsLawyerConditionStatus @default(PENDING)
+  /// Условие, невыполнение которого блокирует публикацию. false = рекомендация.
+  isBlocking Boolean @default(true)
+
+  affectedCountryCodes Json?
+
+  satisfiedAt       DateTime?
+  satisfiedByUserId String?
+  satisfiedByUser   User?     @relation("RightsLawyerConditionSatisfiedBy", fields: [satisfiedByUserId], references: [id], onDelete: SetNull)
+  satisfiedNotesRu  String?   @db.Text
+
+  waivedAt       DateTime?
+  waivedByUserId String?
+  waivedByUser   User?     @relation("RightsLawyerConditionWaivedBy", fields: [waivedByUserId], references: [id], onDelete: SetNull)
+  waiveReasonRu  String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rightsLawyerReviewId])
+  @@index([status])
+  @@index([isBlocking])
+  @@index([satisfiedByUserId])
+  @@index([waivedByUserId])
+}
+
+model RightsLawyerReviewEvent {
+  id String @id @default(uuid())
+
+  rightsLawyerReviewId String
+  rightsLawyerReview   RightsLawyerReview @relation(fields: [rightsLawyerReviewId], references: [id], onDelete: Cascade)
+
+  eventType  RightsLawyerReviewEventType
+  fromStatus RightsLawyerReviewStatus?
+  toStatus   RightsLawyerReviewStatus?
+
+  messageRu String @db.Text
+  payload   Json?
+
+  createdByUserId String?
+  createdByUser   User?   @relation("RightsLawyerReviewEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsLawyerReviewId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([createdByUserId])
 }

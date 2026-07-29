@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { RightsApprovalService } from './rights-approval.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsProfileService } from './rights-profile.service';
@@ -9,10 +10,21 @@ const createPrismaStub = () => {
     rightsReviewApproval: { findMany: jest.fn() },
     rightsIntake: { findUnique: jest.fn() },
     rightsAction: { findMany: jest.fn() },
+    // Phase 19: models the risk recomputation reads before approving.
+    sourceEdition: { findUnique: jest.fn().mockResolvedValue(null) },
+    rightsComponent: { findMany: jest.fn().mockResolvedValue([]) },
+    territoryDecision: { findMany: jest.fn().mockResolvedValue([]) },
+    rightsProfileContributor: { findMany: jest.fn().mockResolvedValue([]) },
+    rightsClaim: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
   };
   return stub;
 };
+
+/** Phase 19 env: everything defaults to "enabled, threshold HIGH". */
+const createConfigStub = (values: Record<string, string> = {}) => ({
+  get: jest.fn((key: string) => values[key]),
+});
 
 const createRpStub = () => ({
   getById: jest.fn(),
@@ -80,13 +92,16 @@ describe('RightsApprovalService', () => {
   let service: RightsApprovalService;
   let prisma: Record<string, unknown>;
   let rp: ReturnType<typeof createRpStub>;
+  let config: ReturnType<typeof createConfigStub>;
 
   beforeEach(() => {
     prisma = createPrismaStub();
     rp = createRpStub();
+    config = createConfigStub();
     service = new RightsApprovalService(
       prisma as unknown as PrismaService,
       rp as unknown as RightsProfileService,
+      config as unknown as ConfigService,
     );
   });
 
@@ -601,6 +616,180 @@ describe('RightsApprovalService', () => {
       const result = await service.getApprovalsByReview('review-1');
 
       expect(result).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 19: high-risk clearance may not be approved without a lawyer
+  // -------------------------------------------------------------------------
+  describe('lawyer approval gate (Phase 19)', () => {
+    /** A profile whose LOW confidence makes `computeRiskAssessment` return HIGH. */
+    const highRiskProfile = (overrides: Record<string, unknown> = {}) => ({
+      id: 'profile-1',
+      rightsIntakeId: 'intake-1',
+      isCurrent: true,
+      publicationGate: 'ALLOW',
+      overallStatus: 'PUBLISHABLE',
+      confidence: 'LOW',
+      status: 'HUMAN_REVIEW_REQUIRED',
+      lawyerReviewBlocking: false,
+      lawyerApprovedAt: null,
+      lawyerOpinionValidUntil: null,
+      currentLawyerReviewId: null,
+      ...overrides,
+    });
+
+    const arrange = (profile: Record<string, unknown>, reviewStatus = 'HUMAN_REVIEW_REQUIRED') => {
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview({ status: reviewStatus, rightsProfile: profile }),
+      );
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      const txStub = createTxStub();
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
+      return txStub;
+    };
+
+    it('blocks approval of a HIGH-risk profile without a lawyer opinion', async () => {
+      arrange(highRiskProfile());
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'LAWYER_APPROVAL_REQUIRED',
+          statusCode: 409,
+          details: expect.objectContaining({
+            riskLevel: 'HIGH',
+            factorCodes: expect.arrayContaining(['CONFIDENCE_LOW']),
+          }),
+        },
+      });
+    });
+
+    it('allows approval once a lawyer opinion is in force', async () => {
+      const txStub = arrange(
+        highRiskProfile({
+          lawyerApprovedAt: new Date('2026-07-20T00:00:00.000Z'),
+          lawyerOpinionValidUntil: new Date('2030-01-01T00:00:00.000Z'),
+        }),
+      );
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+      expect(txStub.rightsReviewApproval.create).toHaveBeenCalled();
+    });
+
+    it('accepts an open-ended opinion (validUntil = null)', async () => {
+      arrange(
+        highRiskProfile({
+          lawyerApprovedAt: new Date('2026-07-20T00:00:00.000Z'),
+          lawyerOpinionValidUntil: null,
+        }),
+      );
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('blocks again once the opinion has expired', async () => {
+      arrange(
+        highRiskProfile({
+          lawyerApprovedAt: new Date('2024-01-01T00:00:00.000Z'),
+          lawyerOpinionValidUntil: new Date('2025-01-01T00:00:00.000Z'),
+        }),
+      );
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toMatchObject({ response: { code: 'LAWYER_APPROVAL_REQUIRED' } });
+    });
+
+    it('blocks while another lawyer review still blocks the profile', async () => {
+      arrange(
+        highRiskProfile({
+          lawyerApprovedAt: new Date('2026-07-20T00:00:00.000Z'),
+          lawyerOpinionValidUntil: null,
+          lawyerReviewBlocking: true,
+        }),
+      );
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toMatchObject({ response: { code: 'LAWYER_APPROVAL_REQUIRED' } });
+    });
+
+    it('lets approval through when RIGHTS_LAWYER_BLOCK_APPROVAL_ON_HIGH_RISK=0', async () => {
+      config.get.mockImplementation((key: string) =>
+        key === 'RIGHTS_LAWYER_BLOCK_APPROVAL_ON_HIGH_RISK' ? '0' : '',
+      );
+      arrange(highRiskProfile());
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('lets approval through when the whole workflow is disabled', async () => {
+      config.get.mockImplementation((key: string) =>
+        key === 'RIGHTS_LAWYER_WORKFLOW_ENABLED' ? '0' : '',
+      );
+      arrange(highRiskProfile());
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('lets a MEDIUM-risk profile through at the default HIGH threshold', async () => {
+      arrange(highRiskProfile({ confidence: 'MEDIUM' }));
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('approves a review whose status is LAWYER_APPROVED', async () => {
+      const txStub = arrange(
+        highRiskProfile({
+          lawyerApprovedAt: new Date('2026-07-20T00:00:00.000Z'),
+          lawyerOpinionValidUntil: null,
+        }),
+        'LAWYER_APPROVED',
+      );
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+      expect(txStub.rightsReview.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'HUMAN_APPROVED' }) }),
+      );
+    });
+
+    it('rejects a review that is still in LAWYER_REVIEW_REQUIRED', async () => {
+      const txStub = createTxStub();
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview({ status: 'LAWYER_REVIEW_REQUIRED' }),
+      );
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake({ workflowStatus: 'LAWYER_REVIEW_REQUIRED' }),
+      );
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      rp.getById.mockResolvedValue({ id: 'profile-1', status: 'REJECTED' });
+
+      await expect(
+        service.rejectReview('user-1', 'intake-1', 'review-1', {
+          reasonRu: 'юрист отказал в согласовании',
+        }),
+      ).resolves.toBeDefined();
+      expect(txStub.rightsReview.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'HUMAN_REJECTED' }) }),
+      );
     });
   });
 });

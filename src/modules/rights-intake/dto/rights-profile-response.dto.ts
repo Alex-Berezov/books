@@ -294,6 +294,18 @@ export class RightsProfileDetailDto {
   @ApiPropertyOptional() licenseCoveredCountriesCount?: number;
   @ApiPropertyOptional() licenseUncoveredCountriesCount?: number;
 
+  // Phase 19: снимок оценки риска и юридического утверждения. Читается из уже загруженной
+  // записи профиля — дополнительных запросов маппинг не делает.
+  @ApiPropertyOptional() riskLevel?: string;
+  @ApiPropertyOptional({ type: [Object] }) riskFactors?: Record<string, unknown>[];
+  @ApiPropertyOptional({ nullable: true }) riskAssessedAt?: string | null;
+  @ApiPropertyOptional() lawyerReviewRequired?: boolean;
+  @ApiPropertyOptional() lawyerReviewBlocking?: boolean;
+  @ApiPropertyOptional({ nullable: true }) currentLawyerReviewId?: string | null;
+  @ApiPropertyOptional({ nullable: true }) lawyerApprovedAt?: string | null;
+  @ApiPropertyOptional({ nullable: true }) lawyerApprovedLawyerName?: string | null;
+  @ApiPropertyOptional({ nullable: true }) lawyerOpinionValidUntil?: string | null;
+
   @ApiProperty() supersededAt!: string | null;
   @ApiProperty() archivedAt!: string | null;
   @ApiProperty() createdAt!: string;

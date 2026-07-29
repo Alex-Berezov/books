@@ -20,6 +20,8 @@ import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { CLAIM_SEVERITY_RANK } from '../rights-claims/rights-claim.constants';
 import { RightsClaimSeverity } from '../rights-claims/rights-claim-interface';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
+import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
+import type { VersionLawyerReviewDto } from '../rights-lawyer/dto/version-lawyer-review-response.dto';
 import {
   RightsRecheckReason,
   RightsRecheckTriggerSource,
@@ -69,6 +71,8 @@ export class BookVersionService {
     // Phase 18: placed before the optional parameter — TypeScript forbids a required
     // parameter after an optional one, so it cannot literally be last.
     private rightsRecheckService: RightsRecheckService,
+    // Phase 19: same reason — must sit before the optional parameter.
+    private rightsLawyerReviewService: RightsLawyerReviewService,
     private regionAggregationService?: TerritoryRegionAggregationService,
   ) {}
 
@@ -630,6 +634,15 @@ export class BookVersionService {
     // Phase 8's `isStale` / `recheckRequired` above stay untouched — they describe content hash.
     const versionRecheck = await this.rightsRecheckService.getVersionRecheck(versionId);
 
+    // Phase 19: legal review state. Wrapped in try/catch like the claims and recheck blocks —
+    // a failure of the legal section must not take down the whole dashboard.
+    let versionLawyerReview: VersionLawyerReviewDto | null = null;
+    try {
+      versionLawyerReview = await this.rightsLawyerReviewService.getVersionLawyerReview(versionId);
+    } catch {
+      versionLawyerReview = null;
+    }
+
     if (currentProfile) {
       currentProfile = {
         ...currentProfile,
@@ -737,6 +750,8 @@ export class BookVersionService {
       contentHash,
       recheckTasks: versionRecheck.tasks,
       recheckSchedule: versionRecheck.schedule,
+      lawyerReviews: versionLawyerReview?.reviews ?? [],
+      pendingLawyerConditions: versionLawyerReview?.pendingConditions ?? [],
       summary: {
         hasClearance,
         canPublishCurrentVersion,
@@ -794,6 +809,15 @@ export class BookVersionService {
         nextRecheckDueAt: versionRecheck.nextRecheckDueAt,
         lastRecheckScanAt: versionRecheck.schedule?.lastRecheckScanAt ?? null,
         recheckPolicy: versionRecheck.schedule?.recheckPolicy ?? null,
+        riskLevel: versionLawyerReview?.riskLevel ?? null,
+        lawyerReviewRequired: versionLawyerReview?.lawyerReviewRequired ?? false,
+        lawyerApproved: versionLawyerReview?.lawyerApproved ?? false,
+        lawyerApprovedAt: versionLawyerReview?.lawyerApprovedAt ?? null,
+        lawyerApprovedLawyerName: versionLawyerReview?.lawyerApprovedLawyerName ?? null,
+        lawyerOpinionValidUntil: versionLawyerReview?.lawyerOpinionValidUntil ?? null,
+        openLawyerReviewsCount: versionLawyerReview?.openReviewsCount ?? 0,
+        pendingLawyerConditionsCount: versionLawyerReview?.pendingConditionsCount ?? 0,
+        lawyerReviewsCount: versionLawyerReview?.reviews.length ?? 0,
       },
     };
   }

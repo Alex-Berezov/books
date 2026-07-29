@@ -5,7 +5,9 @@ import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { ClaimGateEvaluationDto } from '../rights-claims/dto/rights-claim-response.dto';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
+import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 import { RecheckGateEvaluationDto } from '../rights-recheck/dto/version-recheck-response.dto';
+import { LawyerGateEvaluationDto } from '../rights-lawyer/dto/version-lawyer-review-response.dto';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -54,6 +56,23 @@ const noRecheck = (
   ...overrides,
 });
 
+/** Default lawyer evaluation (Phase 19): no legal review touches the version. */
+const noLawyerReview = (
+  overrides: Partial<LawyerGateEvaluationDto> = {},
+): LawyerGateEvaluationDto => ({
+  versionId: 'v1',
+  blockers: [],
+  warnings: [],
+  lawyerReviewRequired: false,
+  lawyerApproved: false,
+  openReviewsCount: 0,
+  pendingConditionsCount: 0,
+  riskLevel: null,
+  lawyerOpinionValidUntil: null,
+  reviewIds: [],
+  ...overrides,
+});
+
 describe('PublicationGateService', () => {
   let service: PublicationGateService;
   let prisma: jest.Mocked<PrismaService>;
@@ -62,6 +81,7 @@ describe('PublicationGateService', () => {
   let mockLicenseCoverageService: { evaluateVersionCoverage: jest.Mock };
   let mockRightsClaimsService: { evaluateVersionClaims: jest.Mock };
   let mockRightsRecheckService: { evaluateVersionRecheck: jest.Mock };
+  let mockRightsLawyerReviewService: { evaluateVersionLawyerReview: jest.Mock };
 
   const baseVersion = {
     id: 'v1',
@@ -138,6 +158,10 @@ describe('PublicationGateService', () => {
       evaluateVersionRecheck: jest.fn().mockResolvedValue(noRecheck()),
     };
 
+    mockRightsLawyerReviewService = {
+      evaluateVersionLawyerReview: jest.fn().mockResolvedValue(noLawyerReview()),
+    };
+
     service = new PublicationGateService(
       prisma,
       mockRightsContentHashService,
@@ -145,6 +169,7 @@ describe('PublicationGateService', () => {
       mockLicenseCoverageService as unknown as RightsLicenseCoverageService,
       mockRightsClaimsService as unknown as RightsClaimsService,
       mockRightsRecheckService as unknown as RightsRecheckService,
+      mockRightsLawyerReviewService as unknown as RightsLawyerReviewService,
     );
   });
 
@@ -859,6 +884,98 @@ describe('PublicationGateService', () => {
       expect(result.warnings.some((r) => r.code.startsWith('RIGHTS_RECHECK_'))).toBe(false);
       expect(result.openRecheckTasksCount).toBe(0);
       expect(result.rightsRecheckRequired).toBe(false);
+    });
+  });
+
+  // 6.20 Lawyer workflow (Phase 19)
+  describe('6.20 Lawyer workflow', () => {
+    beforeEach(() => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    });
+
+    const blocker = (code: string, lawyerReviewId: string | null = 'lr-1') => ({
+      code,
+      messageRu: `Блокер ${code}.`,
+      lawyerReviewId,
+      details: null,
+    });
+
+    it.each([
+      'LAWYER_REVIEW_REQUIRED_NOT_APPROVED',
+      'LAWYER_REVIEW_PENDING',
+      'LAWYER_REVIEW_REJECTED',
+      'LAWYER_OPINION_EXPIRED',
+      'LAWYER_CONDITIONS_UNMET',
+    ])('turns the %s blocker into a blocking reason', async (code) => {
+      mockRightsLawyerReviewService.evaluateVersionLawyerReview.mockResolvedValue(
+        noLawyerReview({
+          lawyerReviewRequired: true,
+          riskLevel: 'HIGH' as never,
+          reviewIds: ['lr-1'],
+          blockers: [blocker(code)],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      const reason = result.blockingReasons.find((item) => item.code === code);
+      expect(reason).toBeDefined();
+      expect(reason?.details).toMatchObject({ lawyerReviewId: 'lr-1' });
+      expect(result.lawyerReviewRequired).toBe(true);
+      expect(result.riskLevel).toBe('HIGH');
+      expect(result.lawyerReviewIds).toEqual(['lr-1']);
+    });
+
+    it.each([
+      'LAWYER_REVIEW_OPEN_NON_BLOCKING',
+      'LAWYER_OPINION_EXPIRING_SOON',
+      'LAWYER_APPROVED_WITH_CONDITIONS',
+      'HIGH_RISK_WITHOUT_LAWYER_REVIEW',
+      'LAWYER_REVIEW_OVERDUE',
+    ])('turns the %s warning into a warning without blocking', async (code) => {
+      mockRightsLawyerReviewService.evaluateVersionLawyerReview.mockResolvedValue(
+        noLawyerReview({ warnings: [blocker(code)] }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.warnings.some((item) => item.code === code)).toBe(true);
+    });
+
+    it('reports the lawyer metrics of an approved profile', async () => {
+      mockRightsLawyerReviewService.evaluateVersionLawyerReview.mockResolvedValue(
+        noLawyerReview({
+          lawyerReviewRequired: true,
+          lawyerApproved: true,
+          openReviewsCount: 0,
+          pendingConditionsCount: 2,
+          lawyerOpinionValidUntil: '2030-01-01T00:00:00.000Z',
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.lawyerApproved).toBe(true);
+      expect(result.pendingLawyerConditionsCount).toBe(2);
+      expect(result.lawyerOpinionValidUntil).toBe('2030-01-01T00:00:00.000Z');
+    });
+
+    it('leaves the existing gate codes untouched when there is no legal review', async () => {
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+      expect(result.blockingReasons.some((item) => item.code.startsWith('LAWYER_'))).toBe(false);
+      expect(result.warnings.some((item) => item.code.startsWith('LAWYER_'))).toBe(false);
+      expect(result.lawyerReviewRequired).toBe(false);
+      expect(result.lawyerApproved).toBe(false);
+      expect(result.openLawyerReviewsCount).toBe(0);
+      expect(result.riskLevel).toBeNull();
     });
   });
 });

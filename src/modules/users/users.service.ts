@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { STAFF_ROLE_NAMES } from './users.constants';
 
 type PublicUser = Omit<User, 'passwordHash'>;
 
@@ -263,7 +264,7 @@ export class UsersService {
               {
                 roles: {
                   some: {
-                    role: { name: { in: ['admin', 'content_manager'] as RoleName[] } },
+                    role: { name: { in: [...STAFF_ROLE_NAMES] as RoleName[] } },
                   },
                 },
               },
@@ -284,7 +285,7 @@ export class UsersService {
                 NOT: {
                   roles: {
                     some: {
-                      role: { name: { in: ['admin', 'content_manager'] as RoleName[] } },
+                      role: { name: { in: [...STAFF_ROLE_NAMES] as RoleName[] } },
                     },
                   },
                 },
@@ -343,8 +344,10 @@ export class UsersService {
         isActive: dto.isActive ?? true,
         languagePreference: PrismaLanguage.en, // Default
         roles: {
+          // `lawyer` (Phase 19) is unknown to the generated client until the VPS regenerates it,
+          // so the assignable-role literal is cast rather than typed through `RoleName`.
           create: (dto.roles || [RoleName.user]).map((role) => ({
-            role: { connect: { name: role } },
+            role: { connect: { name: role as RoleName } },
           })),
         },
       },
@@ -393,7 +396,9 @@ export class UsersService {
 
       if (rolesDto) {
         const desired = Array.from(new Set(rolesDto));
-        const dbRoles = await tx.role.findMany({ where: { name: { in: desired } } });
+        const dbRoles = await tx.role.findMany({
+          where: { name: { in: desired as RoleName[] } },
+        });
         if (dbRoles.length !== desired.length) {
           throw new NotFoundException('One or more roles not found');
         }

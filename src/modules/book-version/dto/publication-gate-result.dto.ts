@@ -129,6 +129,28 @@ export class PublicationGateResultDto {
   @ApiPropertyOptional({ type: [String] })
   recheckTaskIds?: string[];
 
+  // Phase 19: lawyer workflow. All optional — existing fields and codes are untouched.
+  @ApiPropertyOptional()
+  lawyerReviewRequired?: boolean;
+
+  @ApiPropertyOptional()
+  lawyerApproved?: boolean;
+
+  @ApiPropertyOptional()
+  openLawyerReviewsCount?: number;
+
+  @ApiPropertyOptional()
+  pendingLawyerConditionsCount?: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  riskLevel?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  lawyerOpinionValidUntil?: string | null;
+
+  @ApiPropertyOptional({ type: [String] })
+  lawyerReviewIds?: string[];
+
   constructor(data: {
     versionId: string;
     bookId: string;
@@ -161,6 +183,13 @@ export class PublicationGateResultDto {
     blockingRecheckTasksCount?: number;
     nextRecheckDueAt?: string | null;
     recheckTaskIds?: string[];
+    lawyerReviewRequired?: boolean;
+    lawyerApproved?: boolean;
+    openLawyerReviewsCount?: number;
+    pendingLawyerConditionsCount?: number;
+    riskLevel?: string | null;
+    lawyerOpinionValidUntil?: string | null;
+    lawyerReviewIds?: string[];
   }) {
     this.versionId = data.versionId;
     this.bookId = data.bookId;
@@ -193,6 +222,13 @@ export class PublicationGateResultDto {
     this.blockingRecheckTasksCount = data.blockingRecheckTasksCount ?? 0;
     this.nextRecheckDueAt = data.nextRecheckDueAt ?? null;
     this.recheckTaskIds = data.recheckTaskIds ?? [];
+    this.lawyerReviewRequired = data.lawyerReviewRequired ?? false;
+    this.lawyerApproved = data.lawyerApproved ?? false;
+    this.openLawyerReviewsCount = data.openLawyerReviewsCount ?? 0;
+    this.pendingLawyerConditionsCount = data.pendingLawyerConditionsCount ?? 0;
+    this.riskLevel = data.riskLevel ?? null;
+    this.lawyerOpinionValidUntil = data.lawyerOpinionValidUntil ?? null;
+    this.lawyerReviewIds = data.lawyerReviewIds ?? [];
   }
 }
 

@@ -51,7 +51,7 @@ class PublicUserDto {
   languagePreference!: string;
   createdAt!: Date;
   lastLogin?: Date | null;
-  roles!: ('user' | 'admin' | 'content_manager')[];
+  roles!: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
 }
 
 class ListUsersQueryDto {

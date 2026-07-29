@@ -45,9 +45,21 @@ export enum RightsNotificationType {
   RECHECK_COMPLETED = 'RECHECK_COMPLETED',
   /** Phase 18: a legal change was applied across the catalogue. */
   LEGAL_CHANGE_APPLIED = 'LEGAL_CHANGE_APPLIED',
-  /** Bridge to Phase 19 (lawyer workflow). Never created in Phase 17. */
+  /** Phase 19: a lawyer review was opened for a high-risk clearance. */
   LAWYER_REVIEW_REQUIRED = 'LAWYER_REVIEW_REQUIRED',
   OTHER = 'OTHER',
+  /** Phase 19: a lawyer review was assigned to a lawyer. */
+  LAWYER_REVIEW_ASSIGNED = 'LAWYER_REVIEW_ASSIGNED',
+  /** Phase 19: the lawyer issued a positive opinion. */
+  LAWYER_REVIEW_APPROVED = 'LAWYER_REVIEW_APPROVED',
+  /** Phase 19: the lawyer refused. */
+  LAWYER_REVIEW_REJECTED = 'LAWYER_REVIEW_REJECTED',
+  /** Phase 19: a lawyer review was withdrawn. */
+  LAWYER_REVIEW_WITHDRAWN = 'LAWYER_REVIEW_WITHDRAWN',
+  /** Phase 19: a legal opinion is about to expire. */
+  LAWYER_OPINION_EXPIRING = 'LAWYER_OPINION_EXPIRING',
+  /** Phase 19: a legal opinion has expired. */
+  LAWYER_OPINION_EXPIRED = 'LAWYER_OPINION_EXPIRED',
 }
 
 export enum RightsNotificationSeverity {

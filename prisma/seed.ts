@@ -26,6 +26,13 @@ async function main() {
       update: {},
       create: { name: RoleName.content_manager },
     }),
+    // Phase 19. Значение отсутствует в сгенерированном клиенте до `prisma generate` на VPS,
+    // поэтому литерал приводится к RoleName вместо RoleName.lawyer.
+    prisma.role.upsert({
+      where: { name: 'lawyer' as RoleName },
+      update: {},
+      create: { name: 'lawyer' as RoleName },
+    }),
   ]);
 
   // Optionally map env emails to roles (idempotent)

@@ -6,9 +6,9 @@ import {
   IsOptional,
   IsBoolean,
   IsArray,
-  IsEnum,
+  IsIn,
 } from 'class-validator';
-import { RoleName } from '@prisma/client';
+import { ASSIGNABLE_ROLE_NAMES, type AssignableRoleName } from '../users.constants';
 
 export class CreateUserDto {
   @ApiProperty({ example: 'user@example.com' })
@@ -30,11 +30,11 @@ export class CreateUserDto {
   @IsString()
   lastName?: string;
 
-  @ApiPropertyOptional({ example: ['user'], enum: RoleName, isArray: true })
+  @ApiPropertyOptional({ example: ['user'], enum: ASSIGNABLE_ROLE_NAMES, isArray: true })
   @IsOptional()
   @IsArray()
-  @IsEnum(RoleName, { each: true })
-  roles?: RoleName[];
+  @IsIn(ASSIGNABLE_ROLE_NAMES, { each: true })
+  roles?: AssignableRoleName[];
 
   @ApiPropertyOptional({ example: true, default: true })
   @IsOptional()

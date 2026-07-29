@@ -135,4 +135,34 @@ describe('RolesGuard', () => {
     const res = await guard.canActivate(makeContext({ email: 'user@example.com', userId: 'u6' }));
     expect(res).toBe(false);
   });
+
+  // Phase 19: the lawyer role comes from the database only — no env escalation exists for it.
+  it('grants a DB lawyer role on a lawyer-only endpoint', async () => {
+    const { guard } = makeGuard({
+      requiredRoles: [Role.Lawyer],
+      dbRoles: [{ role: { name: 'lawyer' } }],
+    });
+    const res = await guard.canActivate(makeContext({ email: 'l@example.com', userId: 'u7' }));
+    expect(res).toBe(true);
+  });
+
+  it('denies a lawyer on an admin-only endpoint', async () => {
+    const { guard } = makeGuard({
+      requiredRoles: [Role.Admin],
+      dbRoles: [{ role: { name: 'lawyer' } }],
+    });
+    const res = await guard.canActivate(makeContext({ email: 'l@example.com', userId: 'u8' }));
+    expect(res).toBe(false);
+  });
+
+  it('never grants the lawyer role through env email lists', async () => {
+    const { guard } = makeGuard({
+      requiredRoles: [Role.Lawyer],
+      dbRoles: [],
+      adminEmails: 'l@example.com',
+      managerEmails: 'l@example.com',
+    });
+    const res = await guard.canActivate(makeContext({ email: 'l@example.com', userId: 'u9' }));
+    expect(res).toBe(false);
+  });
 });

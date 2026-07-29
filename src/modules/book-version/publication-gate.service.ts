@@ -9,6 +9,7 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
+import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 
 interface VersionWithGeoBlock {
   id: string;
@@ -41,6 +42,7 @@ export class PublicationGateService {
     private readonly licenseCoverageService: RightsLicenseCoverageService,
     private readonly rightsClaimsService: RightsClaimsService,
     private readonly rightsRecheckService: RightsRecheckService,
+    private readonly rightsLawyerReviewService: RightsLawyerReviewService,
   ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
@@ -547,6 +549,32 @@ export class PublicationGateService {
       );
     }
 
+    // 6.20 Lawyer workflow (Phase 19)
+    const lawyerEvaluation =
+      await this.rightsLawyerReviewService.evaluateVersionLawyerReview(versionId);
+
+    for (const blocker of lawyerEvaluation.blockers) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: blocker.code,
+          severity: 'BLOCKER',
+          messageRu: blocker.messageRu,
+          details: { ...(blocker.details ?? {}), lawyerReviewId: blocker.lawyerReviewId },
+        }),
+      );
+    }
+
+    for (const warning of lawyerEvaluation.warnings) {
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: warning.code,
+          severity: 'WARNING',
+          messageRu: warning.messageRu,
+          details: { ...(warning.details ?? {}), lawyerReviewId: warning.lawyerReviewId },
+        }),
+      );
+    }
+
     return new PublicationGateResultDto({
       versionId: version.id,
       bookId: book.id,
@@ -579,6 +607,13 @@ export class PublicationGateService {
       blockingRecheckTasksCount: recheckEvaluation.blockingTasksCount,
       nextRecheckDueAt: recheckEvaluation.nextRecheckDueAt,
       recheckTaskIds: recheckEvaluation.taskIds,
+      lawyerReviewRequired: lawyerEvaluation.lawyerReviewRequired,
+      lawyerApproved: lawyerEvaluation.lawyerApproved,
+      openLawyerReviewsCount: lawyerEvaluation.openReviewsCount,
+      pendingLawyerConditionsCount: lawyerEvaluation.pendingConditionsCount,
+      riskLevel: lawyerEvaluation.riskLevel,
+      lawyerOpinionValidUntil: lawyerEvaluation.lawyerOpinionValidUntil,
+      lawyerReviewIds: lawyerEvaluation.reviewIds,
     });
   }
 

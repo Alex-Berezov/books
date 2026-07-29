@@ -268,6 +268,24 @@ export class RightsProfileService {
       translatorsCount,
       narratorsCount,
       contributorsWithoutPersonCount,
+      // Phase 19: снимок риска и юридического утверждения — прямо из загруженной записи.
+      riskLevel: (profile['riskLevel'] as string) ?? undefined,
+      riskFactors: Array.isArray(profile['riskFactors'])
+        ? (profile['riskFactors'] as Record<string, unknown>[])
+        : undefined,
+      riskAssessedAt: profile['riskAssessedAt']
+        ? new Date(profile['riskAssessedAt'] as string).toISOString()
+        : null,
+      lawyerReviewRequired: (profile['lawyerReviewRequired'] as boolean) ?? undefined,
+      lawyerReviewBlocking: (profile['lawyerReviewBlocking'] as boolean) ?? undefined,
+      currentLawyerReviewId: (profile['currentLawyerReviewId'] as string) ?? null,
+      lawyerApprovedAt: profile['lawyerApprovedAt']
+        ? new Date(profile['lawyerApprovedAt'] as string).toISOString()
+        : null,
+      lawyerApprovedLawyerName: (profile['lawyerApprovedLawyerName'] as string) ?? null,
+      lawyerOpinionValidUntil: profile['lawyerOpinionValidUntil']
+        ? new Date(profile['lawyerOpinionValidUntil'] as string).toISOString()
+        : null,
       supersededAt: profile['supersededAt']
         ? new Date(profile['supersededAt'] as string).toISOString()
         : null,
