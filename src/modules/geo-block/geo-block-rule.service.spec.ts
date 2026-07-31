@@ -1,9 +1,11 @@
 import { BadRequestException, HttpException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ClaimAccessCheckResult,
   RightsClaimEnforcementService,
 } from '../rights-claims/rights-claim-enforcement.service';
+import { CLAIM_ACCESS_BLOCK_MESSAGE_RU } from '../rights-claims/rights-claim.constants';
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
 import { GeoBlockScope } from './dto/geo-block.dto';
 import { GeoBlockRuleService } from './geo-block-rule.service';
@@ -139,18 +141,29 @@ const createClaimEnforcementStub = (): { checkClaimAccess: jest.Mock } => ({
   } satisfies ClaimAccessCheckResult),
 });
 
+const createConfigStub = (values: Record<string, string> = {}): { get: jest.Mock } => ({
+  get: jest.fn((key: string) => values[key]),
+});
+
 describe('GeoBlockRuleService', () => {
   let prisma: PrismaStub;
   let claimEnforcement: { checkClaimAccess: jest.Mock };
+  let config: { get: jest.Mock };
   let service: GeoBlockRuleService;
+
+  const createService = (configValues: Record<string, string> = {}): GeoBlockRuleService => {
+    config = createConfigStub(configValues);
+    return new GeoBlockRuleService(
+      prisma as unknown as PrismaService,
+      claimEnforcement as unknown as RightsClaimEnforcementService,
+      config as unknown as ConfigService,
+    );
+  };
 
   beforeEach(() => {
     prisma = createPrismaStub();
     claimEnforcement = createClaimEnforcementStub();
-    service = new GeoBlockRuleService(
-      prisma as unknown as PrismaService,
-      claimEnforcement as unknown as RightsClaimEnforcementService,
-    );
+    service = createService();
   });
 
   it.each([
@@ -236,7 +249,7 @@ describe('GeoBlockRuleService', () => {
     expect(result.reasonCode).toBeNull();
   });
 
-  it('allows access when the country is unknown', async () => {
+  it('allows access when the country is unknown and the version has no active rules', async () => {
     const result = await service.checkAccess({
       bookVersionId: 'version-1',
       countryCode: null,
@@ -245,6 +258,80 @@ describe('GeoBlockRuleService', () => {
 
     expect(result.allowed).toBe(true);
     expect(result.countryCode).toBe('UNKNOWN');
+  });
+
+  it('denies access when the country is unknown and an active rule covers the request', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({ scope: GeoBlockScope.LANGUAGE_EDITION }),
+    ]);
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: null,
+      scope: GeoBlockScope.AUDIO,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.countryCode).toBe('UNKNOWN');
+    expect(result.reasonCode).toBe('GEO_BLOCKED_BY_RIGHTS');
+
+    await expect(
+      service.assertAccess({
+        bookVersionId: 'version-1',
+        countryCode: null,
+        scope: GeoBlockScope.AUDIO,
+      }),
+    ).rejects.toMatchObject({
+      status: 451,
+      response: expect.objectContaining({ code: 'GEO_BLOCKED_BY_RIGHTS' }),
+    });
+  });
+
+  it('looks for any active rule of the request scope, ignoring the country, when the country is unknown', async () => {
+    await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: null,
+      scope: GeoBlockScope.AUDIO,
+    });
+
+    expect(prisma.geoBlockRule.findMany).toHaveBeenCalledWith({
+      where: {
+        isActive: true,
+        OR: [
+          { bookId: 'book-1', scope: GeoBlockScope.ENTIRE_BOOK },
+          { bookVersionId: 'version-1', scope: GeoBlockScope.LANGUAGE_EDITION },
+          { bookVersionId: 'version-1', scope: GeoBlockScope.AUDIO },
+        ],
+      },
+      take: 1,
+    });
+  });
+
+  it('denies an unknown country everywhere when the policy is deny', async () => {
+    service = createService({ RIGHTS_GEO_UNKNOWN_COUNTRY_POLICY: 'deny' });
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: null,
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasonCode).toBe('GEO_BLOCKED_BY_RIGHTS');
+    // The deny policy is unconditional: the rules table is not consulted at all.
+    expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the allow policy when the configured value is not recognised', async () => {
+    service = createService({ RIGHTS_GEO_UNKNOWN_COUNTRY_POLICY: 'whatever' });
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: null,
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(result.allowed).toBe(true);
   });
 
   it('answers 451 with BLOCKED_BY_RIGHTS_CLAIM when a claim block matched', async () => {
@@ -278,6 +365,40 @@ describe('GeoBlockRuleService', () => {
     ).rejects.toMatchObject({
       status: 451,
       response: expect.objectContaining({ code: 'BLOCKED_BY_RIGHTS_CLAIM' }),
+    });
+  });
+
+  it('never leaks the internal block reason into the public 451 body (Phase 16)', async () => {
+    claimEnforcement.checkClaimAccess.mockResolvedValue({
+      blocked: true,
+      countryCode: 'GB',
+      scope: ClaimBlockScope.TEXT_READER,
+      matchedBlockId: 'block-1',
+      reasonCode: 'BLOCKED_BY_RIGHTS_CLAIM',
+      messageRu: 'Заблокировано по жалобе издательства «Пример» от 12.07.2026',
+    } satisfies ClaimAccessCheckResult);
+
+    // The admin-facing check still sees the internal reason...
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'GB',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+    expect(result.messageRu).toContain('издательства');
+
+    // ...but the public response carries the neutral constant only.
+    await expect(
+      service.assertAccess({
+        bookVersionId: 'version-1',
+        countryCode: 'GB',
+        scope: GeoBlockScope.TEXT_READER,
+      }),
+    ).rejects.toMatchObject({
+      status: 451,
+      response: {
+        code: 'BLOCKED_BY_RIGHTS_CLAIM',
+        messageRu: CLAIM_ACCESS_BLOCK_MESSAGE_RU,
+      },
     });
   });
 

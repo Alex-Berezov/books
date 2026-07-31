@@ -13,7 +13,8 @@ import { UpdateBookVersionContributorDto } from './dto/update-version-contributo
 import { ReorderBookVersionContributorsDto } from './dto/reorder-version-contributors.dto';
 import { randomUUID } from 'crypto';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
-import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
+import { GeoBlockScope, GeoCountrySourceStatus } from '../geo-block/dto/geo-block.dto';
+import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
@@ -73,6 +74,8 @@ export class BookVersionService {
     private rightsRecheckService: RightsRecheckService,
     // Phase 19: same reason — must sit before the optional parameter.
     private rightsLawyerReviewService: RightsLawyerReviewService,
+    // WP-1.2а: the dashboard reports whether Phase 12 still has a country source at all.
+    private geoIpCountryService: GeoIpCountryService,
     private regionAggregationService?: TerritoryRegionAggregationService,
   ) {}
 
@@ -667,6 +670,15 @@ export class BookVersionService {
       (r) => r['status'] === 'NOT_TARGETED',
     ).length;
 
+    // WP-1.2а. A version whose market restrictions are mandatory is only actually restricted while
+    // the upstream proxy keeps sending a country. NO_DATA is left silent on purpose: right after a
+    // restart there is nothing to judge by, and a warning that fires on every deploy stops being read.
+    const geoCountrySource = this.geoIpCountryService?.getSourceHealth() ?? null;
+    const geoCountrySourceWarning =
+      version.rightsGeoBlockRequired &&
+      (geoCountrySource?.status === GeoCountrySourceStatus.DEGRADED ||
+        geoCountrySource?.status === GeoCountrySourceStatus.UNAVAILABLE);
+
     return {
       book: {
         id: version.book.id,
@@ -752,6 +764,7 @@ export class BookVersionService {
       recheckSchedule: versionRecheck.schedule,
       lawyerReviews: versionLawyerReview?.reviews ?? [],
       pendingLawyerConditions: versionLawyerReview?.pendingConditions ?? [],
+      geoCountrySource,
       summary: {
         hasClearance,
         canPublishCurrentVersion,
@@ -818,6 +831,7 @@ export class BookVersionService {
         openLawyerReviewsCount: versionLawyerReview?.openReviewsCount ?? 0,
         pendingLawyerConditionsCount: versionLawyerReview?.pendingConditionsCount ?? 0,
         lawyerReviewsCount: versionLawyerReview?.reviews.length ?? 0,
+        geoCountrySourceWarning,
       },
     };
   }

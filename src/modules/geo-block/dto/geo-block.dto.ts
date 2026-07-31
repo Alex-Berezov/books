@@ -134,6 +134,62 @@ export class GeoBlockRulesResponseDto {
   summary!: GeoBlockRulesSummaryDto;
 }
 
+/**
+ * Phase 12 / WP-1.2а. Health of the country source itself, not of any single version.
+ * Phase 12 depends on an upstream proxy header (`CF-IPCountry`) that the application neither
+ * controls nor can probe: turning off Cloudflare proxying or IP Geolocation would silently
+ * disable every geo-block. These counters make that failure visible.
+ */
+export enum GeoCountrySourceStatus {
+  /** No public request has been observed since the process started — nothing to judge by. */
+  NO_DATA = 'NO_DATA',
+  /** Practically every request carries a country. */
+  HEALTHY = 'HEALTHY',
+  /** A noticeable share of requests arrives without a country. */
+  DEGRADED = 'DEGRADED',
+  /** Nothing has resolved at all over a meaningful number of requests — the source is gone. */
+  UNAVAILABLE = 'UNAVAILABLE',
+}
+
+export class GeoCountrySourceHealthDto {
+  @ApiProperty({ enum: GeoCountrySourceStatus })
+  status!: GeoCountrySourceStatus;
+
+  @ApiProperty({ example: 1240, description: 'Requests whose country was resolved' })
+  resolvedCount!: number;
+
+  @ApiProperty({ example: 3, description: 'Requests that arrived without a resolvable country' })
+  unknownCount!: number;
+
+  @ApiProperty({ example: 1243 })
+  totalCount!: number;
+
+  @ApiProperty({
+    example: 0.0024,
+    description: 'unknownCount / totalCount, 0 when no requests yet',
+  })
+  unknownRatio!: number;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'cf-ipcountry',
+    description: 'Header that supplied the most recent country',
+  })
+  lastResolvedHeader!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-31T12:00:00.000Z' })
+  lastResolvedAt!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-07-31T11:59:00.000Z' })
+  lastUnknownAt!: string | null;
+
+  @ApiProperty({
+    example: '2026-07-31T09:00:00.000Z',
+    description: 'Counters live in process memory and reset on restart; this is when they started',
+  })
+  windowStartedAt!: string;
+}
+
 export class GeoAccessCheckResultDto {
   @ApiProperty()
   allowed!: boolean;

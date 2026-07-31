@@ -3,6 +3,7 @@ import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
@@ -153,9 +154,23 @@ describe('BookVersionService', () => {
     getRuntimeConfig: jest.Mock;
     getVersionRecheck: jest.Mock;
   };
+  let geoIpCountryService: { getSourceHealth: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    geoIpCountryService = {
+      getSourceHealth: jest.fn().mockReturnValue({
+        status: 'HEALTHY',
+        resolvedCount: 10,
+        unknownCount: 0,
+        totalCount: 10,
+        unknownRatio: 0,
+        lastResolvedHeader: 'cf-ipcountry',
+        lastResolvedAt: '2026-07-31T12:00:00.000Z',
+        lastUnknownAt: null,
+        windowStartedAt: '2026-07-31T09:00:00.000Z',
+      }),
+    };
     rightsClaimsService = {
       listForVersion: jest.fn().mockResolvedValue({ items: [], total: 0, page: 1, limit: 0 }),
     };
@@ -242,6 +257,7 @@ describe('BookVersionService', () => {
       rightsClaimsService as unknown as RightsClaimsService,
       rightsRecheckService as unknown as RightsRecheckService,
       rightsLawyerReviewService as unknown as RightsLawyerReviewService,
+      geoIpCountryService as unknown as GeoIpCountryService,
       new TerritoryRegionAggregationService(),
     );
   });
@@ -755,6 +771,127 @@ describe('BookVersionService', () => {
       expect(res.summary.activeClaimsCount).toBe(0);
       expect(res.summary.hasWorldwideClaimBlock).toBe(false);
       expect(res.currentVersion.rightsClaimBlockActive).toBe(false);
+    });
+
+    it('warns in the dashboard when geo-block is mandatory but the country source is gone (WP-1.2а)', async () => {
+      const mockVersion = {
+        id: 'v1',
+        bookId: 'b1',
+        language: 'en',
+        type: 'text',
+        status: 'published',
+        title: 'Title',
+        rightsProfileId: null,
+        approvedRightsReviewId: null,
+        rightsStatus: null,
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockConfiguredAt: null,
+        rightsGeoBlockNotesRu: null,
+        rightsContentHash: null,
+        rightsContentHashAlgorithmVersion: null,
+        rightsContentHashCalculatedAt: null,
+        rightsRecheckRequired: false,
+        rightsStaleDetectedAt: null,
+        rightsStaleReasonCode: null,
+        rightsStaleReasonRu: null,
+        book: {
+          id: 'b1',
+          slug: 'slug-b1',
+          rightsIntakeId: null,
+          currentRightsProfileId: null,
+          approvedRightsReviewId: null,
+          rightsCreatedAt: null,
+        },
+      };
+
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(mockVersion);
+      (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([mockVersion]);
+      (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
+        canPublish: true,
+        blockingReasons: [],
+        warnings: [],
+      });
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockResolvedValue({
+        matchesBaseline: true,
+        recheckRequired: false,
+      });
+      geoIpCountryService.getSourceHealth.mockReturnValue({
+        status: 'UNAVAILABLE',
+        resolvedCount: 0,
+        unknownCount: 40,
+        totalCount: 40,
+        unknownRatio: 1,
+        lastResolvedHeader: null,
+        lastResolvedAt: null,
+        lastUnknownAt: '2026-07-31T12:00:00.000Z',
+        windowStartedAt: '2026-07-31T09:00:00.000Z',
+      });
+
+      const res = await service.getRightsDashboard('v1');
+
+      expect(res.geoCountrySource?.status).toBe('UNAVAILABLE');
+      expect(res.summary.geoCountrySourceWarning).toBe(true);
+    });
+
+    it('stays silent about the country source when geo-block is not required (WP-1.2а)', async () => {
+      const mockVersion = {
+        id: 'v1',
+        bookId: 'b1',
+        language: 'en',
+        type: 'text',
+        status: 'published',
+        title: 'Title',
+        rightsProfileId: null,
+        approvedRightsReviewId: null,
+        rightsStatus: null,
+        rightsGeoBlockRequired: false,
+        rightsGeoBlockConfigured: false,
+        rightsGeoBlockConfiguredAt: null,
+        rightsGeoBlockNotesRu: null,
+        rightsContentHash: null,
+        rightsContentHashAlgorithmVersion: null,
+        rightsContentHashCalculatedAt: null,
+        rightsRecheckRequired: false,
+        rightsStaleDetectedAt: null,
+        rightsStaleReasonCode: null,
+        rightsStaleReasonRu: null,
+        book: {
+          id: 'b1',
+          slug: 'slug-b1',
+          rightsIntakeId: null,
+          currentRightsProfileId: null,
+          approvedRightsReviewId: null,
+          rightsCreatedAt: null,
+        },
+      };
+
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(mockVersion);
+      (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([mockVersion]);
+      (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
+        canPublish: true,
+        blockingReasons: [],
+        warnings: [],
+      });
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockResolvedValue({
+        matchesBaseline: true,
+        recheckRequired: false,
+      });
+      geoIpCountryService.getSourceHealth.mockReturnValue({
+        status: 'UNAVAILABLE',
+        resolvedCount: 0,
+        unknownCount: 40,
+        totalCount: 40,
+        unknownRatio: 1,
+        lastResolvedHeader: null,
+        lastResolvedAt: null,
+        lastUnknownAt: '2026-07-31T12:00:00.000Z',
+        windowStartedAt: '2026-07-31T09:00:00.000Z',
+      });
+
+      const res = await service.getRightsDashboard('v1');
+
+      expect(res.summary.geoCountrySourceWarning).toBe(false);
     });
 
     it('aggregates claim metrics from the claims service (Phase 16)', async () => {

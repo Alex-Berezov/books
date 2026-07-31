@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
 import {
@@ -81,6 +82,18 @@ const GEO_BLOCK_REASON_CODE = 'GEO_BLOCKED_BY_RIGHTS';
 const GEO_BLOCK_MESSAGE = 'Content is not available in your country due to rights restrictions.';
 const GEO_BLOCK_MESSAGE_RU = 'Контент недоступен в вашей стране из-за ограничений прав.';
 
+/**
+ * Phase 12 / WP-1.2: what to do when the upstream proxy did not tell us the country.
+ * `allow` keeps the original Phase 12 behaviour and stays the default for backward compatibility;
+ * `deny` closes every geo-checked endpoint for requests without a resolved country.
+ * Regardless of the setting, a request that a rule of the same scope could match is denied —
+ * "we could not tell where you are" must not open a market we know to be closed.
+ */
+const UNKNOWN_COUNTRY_POLICY_ENV = 'RIGHTS_GEO_UNKNOWN_COUNTRY_POLICY';
+const UNKNOWN_COUNTRY_CODE = 'UNKNOWN';
+
+type UnknownCountryPolicy = 'allow' | 'deny';
+
 @Injectable()
 export class GeoBlockRuleService {
   private readonly logger = new Logger(GeoBlockRuleService.name);
@@ -88,6 +101,7 @@ export class GeoBlockRuleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly claimEnforcement: RightsClaimEnforcementService,
+    private readonly config: ConfigService,
   ) {}
 
   async generateRulesForVersion(bookVersionId: string): Promise<GeoBlockRulesResponseDto> {
@@ -256,31 +270,11 @@ export class GeoBlockRuleService {
     }
 
     if (!input.countryCode) {
-      this.logger.warn(
-        `GeoIP country is unknown for scope ${input.scope}; allowing access by Phase 12 policy`,
-      );
-      return this.allowedResult(input, 'UNKNOWN');
+      return this.resolveUnknownCountryAccess(input);
     }
 
     const countryCode = input.countryCode.toUpperCase();
-    const version = input.bookVersionId
-      ? await this.prisma.bookVersion.findUnique({
-          where: { id: input.bookVersionId },
-          select: { id: true, bookId: true },
-        })
-      : null;
-    if (input.bookVersionId && !version) throw new NotFoundException('BookVersion not found');
-
-    const bookId = input.bookId ?? version?.bookId;
-    const conditions: Array<Record<string, unknown>> = [];
-    if (bookId) conditions.push({ bookId, scope: GeoBlockScope.ENTIRE_BOOK });
-    if (input.bookVersionId) {
-      conditions.push({
-        bookVersionId: input.bookVersionId,
-        scope: GeoBlockScope.LANGUAGE_EDITION,
-      });
-      conditions.push({ bookVersionId: input.bookVersionId, scope: input.scope });
-    }
+    const conditions = await this.buildRuleMatchConditions(input);
 
     if (conditions.length === 0) return this.allowedResult(input, countryCode);
 
@@ -312,13 +306,16 @@ export class GeoBlockRuleService {
     if (result.allowed) return;
 
     // Claim blocks answer with their own code; the body never carries claim or claimant data.
+    // `result.messageRu` is the block's internal `reasonRu`, written by an editor and routinely
+    // naming the claimant — it stays in the admin `checkAccess` payload and never reaches the
+    // public response (Phase 16: claim details are not disclosed outward).
     if (result.reasonCode === CLAIM_ACCESS_BLOCK_REASON_CODE) {
       throw new HttpException(
         {
           statusCode: 451,
           code: CLAIM_ACCESS_BLOCK_REASON_CODE,
           message: CLAIM_ACCESS_BLOCK_MESSAGE,
-          messageRu: result.messageRu ?? CLAIM_ACCESS_BLOCK_MESSAGE_RU,
+          messageRu: CLAIM_ACCESS_BLOCK_MESSAGE_RU,
           countryCode: result.countryCode,
           scope: result.scope,
         },
@@ -345,6 +342,88 @@ export class GeoBlockRuleService {
       orderBy: [{ countryCode: 'asc' }, { scope: 'asc' }],
     });
     return rules.map((rule) => this.mapRule(rule));
+  }
+
+  /**
+   * Conditions a rule must satisfy to cover this request, country aside: an `ENTIRE_BOOK` rule of
+   * the book, a `LANGUAGE_EDITION` rule of the version, or a rule of the requested scope.
+   */
+  private async buildRuleMatchConditions(
+    input: GeoAccessCheckInput,
+  ): Promise<Array<Record<string, unknown>>> {
+    const version = input.bookVersionId
+      ? await this.prisma.bookVersion.findUnique({
+          where: { id: input.bookVersionId },
+          select: { id: true, bookId: true },
+        })
+      : null;
+    if (input.bookVersionId && !version) throw new NotFoundException('BookVersion not found');
+
+    const bookId = input.bookId ?? version?.bookId;
+    const conditions: Array<Record<string, unknown>> = [];
+    if (bookId) conditions.push({ bookId, scope: GeoBlockScope.ENTIRE_BOOK });
+    if (input.bookVersionId) {
+      conditions.push({
+        bookVersionId: input.bookVersionId,
+        scope: GeoBlockScope.LANGUAGE_EDITION,
+      });
+      conditions.push({ bookVersionId: input.bookVersionId, scope: input.scope });
+    }
+    return conditions;
+  }
+
+  /**
+   * WP-1.2. The country source is an upstream proxy header we do not control, so "unknown" can mean
+   * either "no such header for this request" or "the whole source is gone". Opening a version whose
+   * market restrictions are already generated would silently undo Phase 12 in the second case.
+   */
+  private async resolveUnknownCountryAccess(
+    input: GeoAccessCheckInput,
+  ): Promise<GeoAccessCheckResultDto> {
+    if (this.getUnknownCountryPolicy() === 'deny') {
+      this.logger.warn(
+        `GeoIP country is unknown for scope ${input.scope}; denying access by ${UNKNOWN_COUNTRY_POLICY_ENV}=deny`,
+      );
+      return this.unknownCountryBlockedResult(input);
+    }
+
+    const conditions = await this.buildRuleMatchConditions(input);
+    const coveringRules =
+      conditions.length > 0
+        ? await this.getDatabase().geoBlockRule.findMany({
+            where: { isActive: true, OR: conditions },
+            take: 1,
+          })
+        : [];
+
+    if (coveringRules.length > 0) {
+      this.logger.warn(
+        `GeoIP country is unknown for scope ${input.scope}; denying access because the version has active geo-block rules`,
+      );
+      return this.unknownCountryBlockedResult(input);
+    }
+
+    this.logger.warn(
+      `GeoIP country is unknown for scope ${input.scope}; allowing access by ${UNKNOWN_COUNTRY_POLICY_ENV}=allow`,
+    );
+    return this.allowedResult(input, UNKNOWN_COUNTRY_CODE);
+  }
+
+  private getUnknownCountryPolicy(): UnknownCountryPolicy {
+    const configured = this.config.get<string>(UNKNOWN_COUNTRY_POLICY_ENV)?.trim().toLowerCase();
+    return configured === 'deny' ? 'deny' : 'allow';
+  }
+
+  private unknownCountryBlockedResult(input: GeoAccessCheckInput): GeoAccessCheckResultDto {
+    return {
+      allowed: false,
+      countryCode: UNKNOWN_COUNTRY_CODE,
+      scope: input.scope,
+      matchedRuleId: null,
+      reasonCode: GEO_BLOCK_REASON_CODE,
+      messageRu: GEO_BLOCK_MESSAGE_RU,
+      bookVersionId: input.bookVersionId ?? null,
+    };
   }
 
   private getDatabase(): GeoBlockDatabaseClient {

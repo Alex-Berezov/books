@@ -5,6 +5,7 @@ import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enf
 import { PersonResolverService } from '../persons/person-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 const makeValidReportJson = (): Record<string, unknown> => ({
   schemaVersion: '1.0',
@@ -664,6 +665,7 @@ describe('RightsMaterializationService', () => {
             messageRu: null,
           }),
         } as unknown as RightsClaimEnforcementService,
+        { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService,
       );
       (prisma['bookVersion'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
         id: 'v1',

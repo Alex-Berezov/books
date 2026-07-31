@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { GeoCountrySourceHealthDto } from '../../geo-block/dto/geo-block.dto';
 import { PublicationGateResultDto } from './publication-gate-result.dto';
 import { RightsContentHashCheckDto } from '../../rights-intake/dto/rights-content-hash.dto';
 import { RightsClaimSummaryDto } from '../../rights-claims/dto/rights-claim-response.dto';
@@ -309,6 +310,10 @@ export class BookRightsDashboardMetricsDto {
 
   @ApiPropertyOptional({ example: 0 })
   lawyerReviewsCount?: number;
+
+  // WP-1.2а: geo-block is mandatory for this version, but the country source looks broken.
+  @ApiPropertyOptional({ example: false })
+  geoCountrySourceWarning?: boolean;
 }
 
 export class BookRightsDashboardDto {
@@ -365,6 +370,14 @@ export class BookRightsDashboardDto {
 
   @ApiPropertyOptional({ type: [LawyerConditionDto] })
   pendingLawyerConditions?: LawyerConditionDto[];
+
+  @ApiPropertyOptional({
+    type: GeoCountrySourceHealthDto,
+    nullable: true,
+    description:
+      'WP-1.2а: health of the GeoIP country source Phase 12 depends on. Counters are per process',
+  })
+  geoCountrySource?: GeoCountrySourceHealthDto | null;
 
   @ApiProperty({ type: BookRightsDashboardMetricsDto })
   summary!: BookRightsDashboardMetricsDto;
