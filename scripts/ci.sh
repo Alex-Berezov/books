@@ -26,6 +26,12 @@ yarn lint
 step "Typecheck"
 yarn typecheck
 
+# Migrations are hand-written and applied by a human on the VPS (ADR-011), so nothing else
+# proves that their sum still equals schema.prisma. Drift surfaces only in production.
+step "Schema/migration drift check"
+yarn drift-check:self-test
+yarn drift-check
+
 step "Unit tests"
 yarn test
 

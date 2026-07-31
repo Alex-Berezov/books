@@ -17,26 +17,37 @@
 
 ## CRITICAL: Backend Execution Environment
 
-**Backend runs ONLY in Docker on a VPS!**
+**Production backend runs ONLY in Docker on a VPS.** Locally there is exactly one thing: a **throwaway PostgreSQL + Redis pair for e2e tests** (added 31.07.2026, WP-0.3). It is not a dev environment and not a copy of production data.
 
-- Database (PostgreSQL) is NOT available on localhost
-- **NEVER** attempt to run database migrations, seeds, or queries locally
-- **NEVER** run `yarn prisma:migrate`, `yarn prisma:seed`, `npx prisma generate`, or `psql` commands locally
-- All backend changes (schema, migrations, DTOs) must be reviewed by the user before deployment
-- To test backend changes, the user will deploy them to VPS manually
-
-**What you CAN do with backend code:**
+**What you CAN do:**
 
 - Read and modify schema, DTOs, services, controllers
-- Create migration SQL files in `prisma/migrations/` (user will apply them on VPS)
-- Review and suggest backend improvements
+- Write migration SQL files in `prisma/migrations/` — the **user** applies them on the VPS
+- Run e2e against the local test DB: `yarn test:e2e` (see below)
+- Start/stop the local test services: `docker compose up -d postgres redis`, `docker compose ps`, `docker compose stop postgres redis`
 
-**What you CANNOT do:**
+**What you STILL CANNOT do:**
 
 - Run the backend server locally
-- Connect to the database locally
-- Execute migrations, seeds, or `prisma generate` locally
-- Test API endpoints against local server
+- Run `yarn prisma:migrate`, `yarn prisma:seed`, `npx prisma generate` or `psql` **directly** — still denied in `.claude/settings.json`. Migrations reach a database only through the e2e harness (throwaway DB) or through the user on the VPS
+- Touch anything pointing at production: `docker-compose.prod.yml`, `--profile prod`, `docker compose down` (it would drop the local volume)
+- Deploy. All backend changes are reviewed by the user before deployment
+
+### Local e2e
+
+```bash
+docker compose up -d postgres redis   # once per session; user starts it if not running
+yarn test:e2e                          # ~6–8 min, 46 suites (sentry self-skips)
+```
+
+`test/setup-e2e.ts` creates a **fresh database `e2e_<timestamp>`** per run, applies all migrations with `prisma migrate deploy`, seeds it, and `teardown-e2e.ts` drops it afterwards. Nothing persists between runs.
+
+Two consequences worth using:
+
+- **A hand-written migration is now testable before the VPS.** A full e2e run replays all migrations onto an empty database, so a broken one fails locally. `yarn drift-check` compares names only — the e2e run is what catches bad types, constraints and FK targets.
+- **A failing trace test can be shown to fail.** The fix protocol (`books-app-docs/tasks/fixes/PLAN.md` §1) requires a test that fails before the change; without a database that was impossible for anything touching rights.
+
+⚠️ **`.env.test` must point at localhost.** The harness runs `CREATE DATABASE` / `DROP DATABASE` against whatever `DATABASE_URL` it finds there. Never edit that file to point anywhere else, and never run e2e if you cannot confirm it is local.
 
 ---
 
