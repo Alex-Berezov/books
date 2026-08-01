@@ -35,6 +35,24 @@ const makeValidReportJson = (): Record<string, unknown> => ({
     gutenbergStatus: 'PUBLIC_DOMAIN',
     notesRu: 'test notes',
   },
+  languageAssessments: [
+    {
+      languageCode: 'en',
+      status: 'ALLOWED',
+      translationOrigin: 'NOT_APPLICABLE_ORIGINAL',
+      translationSourceLanguage: null,
+      requiresGeoBlock: false,
+      notesRu: 'Оригинальный текст',
+    },
+    {
+      languageCode: 'ru',
+      status: 'LICENSE_REQUIRED',
+      translationOrigin: 'BIBLIARIS_TRANSLATION_FROM_INTERMEDIATE_TRANSLATION',
+      translationSourceLanguage: 'fr',
+      requiresGeoBlock: true,
+      notesRu: 'Перевод сделан с французского перевода',
+    },
+  ],
   componentAssessments: [
     {
       componentType: 'ORIGINAL_TEXT',
@@ -407,6 +425,129 @@ describe('RightsMaterializationService', () => {
         }),
       );
       expect(result).toEqual(profile);
+    });
+
+    /**
+     * WP-7.3 (R4-03, R2-01, R3-01): блок `languageAssessments` приходит в отчёте, проверяется
+     * валидатором на покрытие каждого целевого языка — и до WP-7 выбрасывался. `EditionRights`
+     * при этом создавалась одна на исходное издание и дословно копировала его `status`/`notesRu`.
+     */
+    describe('language assessments', () => {
+      const editionRightsCalls = () =>
+        (prisma['editionRights'] as Record<string, jest.Mock>).create.mock.calls.map(
+          (call) => (call[0] as { data: Record<string, unknown> }).data,
+        );
+
+      const materializeWith = async (reportOverrides: Record<string, unknown> = {}) => {
+        setupBasicMocks(
+          Object.keys(reportOverrides).length > 0
+            ? { reportJson: { ...makeValidReportJson(), ...reportOverrides } }
+            : {},
+        );
+        setupTransaction();
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+          makeProfile(),
+        );
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        await service.materializeFromImport('import-1');
+      };
+
+      it('creates one EditionRights record per assessed language', async () => {
+        await materializeWith();
+
+        const calls = editionRightsCalls();
+        expect(calls).toHaveLength(2);
+        expect(calls.map((data) => data['languageCode'])).toEqual(['en', 'ru']);
+        expect(calls.every((data) => data['sourceEditionId'] === 'source-edition-1')).toBe(true);
+      });
+
+      it('keeps the legal verdict of the language, not a copy of the source edition', async () => {
+        await materializeWith();
+
+        const [en, ru] = editionRightsCalls();
+        expect(en).toEqual(
+          expect.objectContaining({
+            languageCode: 'en',
+            status: 'ALLOWED',
+            translationOrigin: 'NOT_APPLICABLE_ORIGINAL',
+            translationSourceLanguage: null,
+            requiresGeoBlock: false,
+            notesRu: 'Оригинальный текст',
+          }),
+        );
+        expect(ru).toEqual(
+          expect.objectContaining({
+            languageCode: 'ru',
+            status: 'LICENSE_REQUIRED',
+            translationOrigin: 'BIBLIARIS_TRANSLATION_FROM_INTERMEDIATE_TRANSLATION',
+            translationSourceLanguage: 'fr',
+            requiresGeoBlock: true,
+          }),
+        );
+      });
+
+      it('normalizes the language code and defaults an unstated translation origin', async () => {
+        await materializeWith({
+          languageAssessments: [{ languageCode: 'RU', status: 'ALLOWED' }],
+        });
+
+        expect(editionRightsCalls()).toEqual([
+          expect.objectContaining({
+            languageCode: 'ru',
+            status: 'ALLOWED',
+            translationOrigin: 'UNKNOWN',
+            translationSourceLanguage: null,
+            requiresGeoBlock: false,
+          }),
+        ]);
+      });
+
+      /**
+       * Fail-closed: строка прав без языка — это и есть дефект R3-01. Пустого «на всякий случай»
+       * дубликата источника быть не должно: отсутствие записи честно означает «язык не оценён».
+       */
+      it('creates no EditionRights at all when the report carries no language block', async () => {
+        await materializeWith({ languageAssessments: [] });
+
+        expect(
+          (prisma['editionRights'] as Record<string, jest.Mock>).create,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('stores the language of a component when the report states one', async () => {
+        await materializeWith({
+          componentAssessments: [
+            {
+              componentType: 'TRANSLATION',
+              titleRu: 'Русский перевод',
+              status: 'COPYRIGHTED',
+              requiredAction: 'RETRANSLATE',
+              confidence: 'HIGH',
+              languageCode: 'ru',
+            },
+          ],
+        });
+
+        expect(
+          (prisma['rightsComponent'] as Record<string, jest.Mock>).create,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ componentType: 'TRANSLATION', languageCode: 'ru' }),
+          }),
+        );
+      });
+
+      it('leaves the component language empty when the report does not state one', async () => {
+        await materializeWith();
+
+        expect(
+          (prisma['rightsComponent'] as Record<string, jest.Mock>).create,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ componentType: 'ORIGINAL_TEXT', languageCode: null }),
+          }),
+        );
+      });
     });
 
     it('should update intake workflowStatus to HUMAN_REVIEW_REQUIRED and clear approvedReviewId', async () => {

@@ -612,5 +612,175 @@ describe('RightsContentHashService', () => {
       expect(result.matchesBaseline).toBe(false);
       expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
     });
+
+    /**
+     * WP-7: состав входа хеша изменился вместе с моделью прав. Если бы несовпадение
+     * baseline'а прошлой версии алгоритма считалось расхождением, выкат пакета отправил бы
+     * в `STALE` клиренс всех уже опубликованных книг — по причине, которой не было.
+     */
+    describe('baseline taken under a previous algorithm version', () => {
+      const setupPreviousAlgorithmBaseline = (recheckRequired = false) => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue({
+          id: 'version-1',
+          rightsContentHash: 'v1-hash',
+          rightsContentHashAlgorithmVersion: 'RIGHTS_CONTENT_HASH_V1',
+          rightsRecheckRequired: recheckRequired,
+          rightsStaleReasonCode: recheckRequired ? 'CHAPTER_UPDATED' : null,
+          rightsStaleReasonRu: recheckRequired ? 'Изменена глава' : null,
+        });
+        jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
+          versionId: 'version-1',
+          rightsProfileId: 'profile-1',
+          approvedRightsReviewId: 'review-1',
+          hash: 'v2-hash',
+          algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+          calculatedAt: new Date().toISOString(),
+          input: {},
+        });
+        mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+      };
+
+      it('does not mark the version stale', async () => {
+        setupPreviousAlgorithmBaseline();
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'MANUAL_HASH_CHECK',
+          null,
+          true,
+        );
+
+        expect(result.matchesBaseline).toBe(true);
+        expect(result.isStale).toBe(false);
+        expect(result.recheckRequired).toBe(false);
+        expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+      });
+
+      it('re-takes the baseline under the new algorithm version and logs it as not stale', async () => {
+        setupPreviousAlgorithmBaseline();
+
+        await service.checkVersionStaleness('version-1', 'MANUAL_HASH_CHECK', null, true);
+
+        expect(mockPrisma.bookVersion.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'version-1' },
+            data: expect.objectContaining({
+              rightsContentHash: 'v2-hash',
+              rightsContentHashAlgorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+            }),
+          }),
+        );
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              staleMarked: false,
+              reasonCode: 'HASH_ALGORITHM_CHANGED',
+              previousHash: 'v1-hash',
+              currentHash: 'v2-hash',
+            }),
+          }),
+        );
+      });
+
+      it('does not clear a stale mark that was already there', async () => {
+        setupPreviousAlgorithmBaseline(true);
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'MANUAL_HASH_CHECK',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(result.recheckRequired).toBe(true);
+        expect(result.reasonCode).toBe('CHAPTER_UPDATED');
+        const updateData = mockPrisma.bookVersion.update.mock.calls[0][0] as {
+          data: Record<string, unknown>;
+        };
+        expect(updateData.data).not.toHaveProperty('rightsRecheckRequired');
+        expect(updateData.data).not.toHaveProperty('rightsStaleDetectedAt');
+      });
+
+      it('writes nothing when the check is read-only', async () => {
+        setupPreviousAlgorithmBaseline();
+
+        await service.checkVersionStaleness('version-1', 'MANUAL_HASH_CHECK', null, false);
+
+        expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsContentHashEvent.create).not.toHaveBeenCalled();
+      });
+    });
+
+    /**
+     * WP-7.1: права издания входят в хеш записью на язык. Смена правового статуса одного
+     * языка обязана двигать хеш — иначе перевод можно подменить под старым клиренсом.
+     */
+    describe('edition rights per language', () => {
+      const versionWithLanguages = (
+        editionRights: Array<Record<string, unknown>>,
+      ): Record<string, unknown> => ({
+        ...baseVersion,
+        rightsProfile: {
+          ...baseVersion.rightsProfile,
+          sourceEdition: {
+            provider: 'PROJECT_GUTENBERG',
+            externalId: 'id',
+            sourceUrl: 'https://example.com',
+            sourceTitle: 'Source',
+            sourceLanguage: 'en',
+            sourceTextType: 'ORIGINAL_TEXT',
+            gutenbergStatus: null,
+            status: 'OK',
+            editionRights,
+          },
+        },
+      });
+
+      const enRow = {
+        languageCode: 'en',
+        status: 'ALLOWED',
+        legalBasisRu: null,
+        notesRu: null,
+        translationOrigin: 'NOT_APPLICABLE_ORIGINAL',
+        translationSourceLanguage: null,
+        requiresGeoBlock: false,
+      };
+      const ruRow = {
+        languageCode: 'ru',
+        status: 'ALLOWED',
+        legalBasisRu: null,
+        notesRu: null,
+        translationOrigin: 'BIBLIARIS_TRANSLATION_FROM_ORIGINAL',
+        translationSourceLanguage: 'en',
+        requiresGeoBlock: false,
+      };
+
+      const hashOf = async (editionRights: Array<Record<string, unknown>>) => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue(versionWithLanguages(editionRights));
+        return (await service.computeVersionHash('version-1')).hash;
+      };
+
+      it('changes the hash when the legal status of one language changes', async () => {
+        const before = await hashOf([enRow, ruRow]);
+        const after = await hashOf([enRow, { ...ruRow, status: 'BLOCKED' }]);
+
+        expect(before).not.toBe(after);
+      });
+
+      it('changes the hash when a language edition is added', async () => {
+        const before = await hashOf([enRow]);
+        const after = await hashOf([enRow, ruRow]);
+
+        expect(before).not.toBe(after);
+      });
+
+      it('does not depend on the order the database returned the languages in', async () => {
+        const straight = await hashOf([enRow, ruRow]);
+        const reversed = await hashOf([ruRow, enRow]);
+
+        expect(straight).toBe(reversed);
+      });
+    });
   });
 });

@@ -945,7 +945,7 @@ model SourceEdition {
   status String
   notesRu String? @db.Text
 
-  editionRights EditionRights?
+  editionRights EditionRights[]
   licenseLinks RightsLicenseLink[]
 
   createdAt DateTime @default(now())
@@ -955,18 +955,34 @@ model SourceEdition {
   @@index([externalId])
 }
 
+/// WP-7.1 (R2-01, R3-01): права языковой версии — запись на язык, а не 1:1-довесок к
+/// исходному изданию. `status`/`notesRu` теперь несут вердикт агента по этому языку
+/// (`languageAssessments[]` отчёта), а не копию полей `SourceEdition`.
 model EditionRights {
   id String @id @default(uuid())
 
-  sourceEditionId String @unique
+  sourceEditionId String
   sourceEdition SourceEdition @relation(fields: [sourceEditionId], references: [id], onDelete: Cascade)
+
+  /// Код целевого языка издания (`SUPPORTED_LANGS`). Значение проверяется валидатором импорта.
+  languageCode String
 
   status String
   notesRu String? @db.Text
   legalBasisRu String? @db.Text
 
+  /// Происхождение текста на этом языке: оригинал, перевод Bibliaris, сторонний перевод.
+  translationOrigin String @default("UNKNOWN")
+  /// Язык, с которого сделан перевод. Заполнен только для промежуточных переводов.
+  translationSourceLanguage String?
+  /// Требование геоблокировки, заявленное агентом на уровне языка.
+  requiresGeoBlock Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([sourceEditionId, languageCode])
+  @@index([languageCode])
 }
 
 model RightsReview {
@@ -1070,6 +1086,9 @@ model RightsComponent {
 
   componentType RightsComponentType
   titleRu String
+  /// WP-7.2 (R3-01): язык, к которому относится компонент. `null` — компонент общий для всех
+  /// языков версии (например, обложка); заполненное значение несёт перевод и переводчика.
+  languageCode String?
   status RightsComponentStatus
   requiredAction RightsComponentRequiredAction
   confidence RightsConfidence
@@ -1085,6 +1104,7 @@ model RightsComponent {
 
   @@index([rightsProfileId])
   @@index([componentType])
+  @@index([languageCode])
   @@index([status])
 }
 

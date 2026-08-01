@@ -6,12 +6,17 @@ import {
 import { TerritoryRegionSummaryDto } from './territory-region-summary.dto';
 import { RightsReviewApprovalDto } from './rights-review-approval.dto';
 
+/** WP-7.1: права одной языковой версии издания. Одна запись на язык. */
 export class EditionRightsDto {
   @ApiProperty() id!: string;
   @ApiProperty() sourceEditionId!: string;
+  @ApiProperty() languageCode!: string;
   @ApiProperty() status!: string;
   @ApiProperty() notesRu!: string | null;
   @ApiProperty() legalBasisRu!: string | null;
+  @ApiProperty() translationOrigin!: string;
+  @ApiProperty() translationSourceLanguage!: string | null;
+  @ApiProperty() requiresGeoBlock!: boolean;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
@@ -31,8 +36,9 @@ export class SourceEditionDto {
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 
-  @ApiPropertyOptional({ type: EditionRightsDto })
-  editionRights!: EditionRightsDto | null;
+  /** WP-7.1: запись на каждый оценённый язык; пустой массив — языковой срез ещё не материализован. */
+  @ApiProperty({ type: [EditionRightsDto] })
+  editionRights!: EditionRightsDto[];
 }
 
 export class RightsReviewDto {
@@ -153,6 +159,8 @@ export class RightsComponentDto {
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty() componentType!: string;
   @ApiProperty() titleRu!: string;
+  /** WP-7.2: `null` — компонент общий для всех языков версии. */
+  @ApiPropertyOptional() languageCode?: string | null;
   @ApiProperty() status!: string;
   @ApiProperty() requiredAction!: string;
   @ApiProperty() confidence!: string;

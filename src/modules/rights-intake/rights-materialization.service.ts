@@ -351,6 +351,9 @@ export class RightsMaterializationService {
       const territoryDecisions = reportJson['territoryDecisions'] as
         | Array<Record<string, unknown>>
         | undefined;
+      const languageAssessments = reportJson['languageAssessments'] as
+        | Array<Record<string, unknown>>
+        | undefined;
       const evidence = reportJson['evidence'] as Array<Record<string, unknown>> | undefined;
       const requiredActions = reportJson['requiredActions'] as
         | Array<Record<string, unknown>>
@@ -476,13 +479,35 @@ export class RightsMaterializationService {
           },
         });
 
-        await erTx.create({
-          data: {
-            sourceEditionId: sourceEdition['id'] as string,
-            status: sourceAssessment['status'] as string,
-            notesRu: (sourceAssessment['notesRu'] as string) ?? null,
-          },
-        });
+        /**
+         * WP-7.3 (R4-03, R2-01, R3-01): `EditionRights` — запись на язык, а не копия источника.
+         *
+         * До WP-7 создавалась ровно одна строка, дословно повторявшая `status`/`notesRu`
+         * исходного издания, а вердикт агента по каждому языку (`languageAssessments`)
+         * уничтожался, хотя валидатор требовал покрытия каждого целевого языка.
+         *
+         * Языкового блока в отчёте нет → строк не создаётся вообще. Пустой дубликат источника
+         * означал бы «язык оценён», хотя он не оценён: отсутствие записи честнее.
+         */
+        for (const assessment of languageAssessments ?? []) {
+          const rawLanguageCode = assessment['languageCode'];
+          const languageCode =
+            typeof rawLanguageCode === 'string' ? rawLanguageCode.trim().toLowerCase() : '';
+          if (!languageCode) continue;
+
+          await erTx.create({
+            data: {
+              sourceEditionId: sourceEdition['id'] as string,
+              languageCode,
+              status: assessment['status'] as string,
+              notesRu: (assessment['notesRu'] as string) ?? null,
+              translationOrigin: (assessment['translationOrigin'] as string) ?? 'UNKNOWN',
+              translationSourceLanguage:
+                (assessment['translationSourceLanguage'] as string) ?? null,
+              requiresGeoBlock: (assessment['requiresGeoBlock'] as boolean) ?? false,
+            },
+          });
+        }
 
         await this.linkLicenses(t, licenseIdByKey, {
           refs: sourceAssessment['licenseRefs'],
@@ -500,11 +525,18 @@ export class RightsMaterializationService {
       if (componentAssessments && componentAssessments.length > 0) {
         for (let idx = 0; idx < componentAssessments.length; idx++) {
           const component = componentAssessments[idx];
+          const componentLanguage =
+            typeof component['languageCode'] === 'string' && component['languageCode'].trim() !== ''
+              ? component['languageCode'].trim().toLowerCase()
+              : null;
+
           const createdComponent = await rcTx.create({
             data: {
               rightsProfileId: profile['id'] as string,
               componentType: component['componentType'] as string,
               titleRu: component['titleRu'] as string,
+              // WP-7.2: `null` — компонент общий для всех языков версии (обложка, иллюстрация).
+              languageCode: componentLanguage,
               status: component['status'] as string,
               requiredAction: component['requiredAction'] as string,
               confidence: component['confidence'] as string,

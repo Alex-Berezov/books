@@ -1,6 +1,13 @@
 import { createHash } from 'crypto';
 
-export const RIGHTS_CONTENT_HASH_ALGORITHM_VERSION = 'RIGHTS_CONTENT_HASH_V1';
+/**
+ * Версия алгоритма хеша. Меняется, когда меняется **состав** входа, а не содержимое книги.
+ *
+ * V2 (WP-7): права издания вошли в хеш записью на каждый язык (`editionRights` стал массивом),
+ * а у компонента появился `languageCode`. Хеши, снятые под V1, сравнивать с V2 бессмысленно —
+ * это делает `checkVersionStaleness`, переснимая baseline вместо пометки stale.
+ */
+export const RIGHTS_CONTENT_HASH_ALGORITHM_VERSION = 'RIGHTS_CONTENT_HASH_V2';
 
 export function stableCanonicalize(value: unknown): unknown {
   if (value === null || value === undefined) {

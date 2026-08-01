@@ -761,6 +761,42 @@ export class RightsReviewImportValidator {
             'BIBLIARIS_TRANSLATION_FROM_INTERMEDIATE_TRANSLATION is used — verify original rights',
             'INTERMEDIATE_TRANSLATION',
           );
+          // WP-7.3: язык-источник для промежуточного перевода — единственное место, где
+          // фиксируется цепочка «оригинал → промежуточный перевод → перевод Bibliaris».
+          // Без него предупреждение выше не на что проверять.
+          const via = la['translationSourceLanguage'];
+          if (via === undefined || via === null || (typeof via === 'string' && via.trim() === '')) {
+            addError(
+              errors,
+              `${prefix}.translationSourceLanguage`,
+              'translationSourceLanguage is required for an intermediate translation',
+              'MISSING_FIELD',
+            );
+          }
+        }
+
+        const translationSourceLanguage = la['translationSourceLanguage'];
+        if (
+          translationSourceLanguage !== undefined &&
+          translationSourceLanguage !== null &&
+          typeof translationSourceLanguage !== 'string'
+        ) {
+          addError(
+            errors,
+            `${prefix}.translationSourceLanguage`,
+            'translationSourceLanguage must be a string or null',
+            'INVALID_TYPE',
+          );
+        }
+
+        const requiresGeoBlock = la['requiresGeoBlock'];
+        if (requiresGeoBlock !== undefined && typeof requiresGeoBlock !== 'boolean') {
+          addError(
+            errors,
+            `${prefix}.requiresGeoBlock`,
+            'requiresGeoBlock must be a boolean',
+            'INVALID_TYPE',
+          );
         }
       }
 
@@ -860,6 +896,23 @@ export class RightsReviewImportValidator {
         const cs = ca['status'] as string | undefined;
         if (cs && !isIn(VALID_COMPONENT_STATUSES, cs)) {
           addError(errors, `${prefix}.status`, `Invalid component status: "${cs}"`, 'INVALID_ENUM');
+        }
+
+        // WP-7.2: язык компонента необязателен — отсутствие значит «компонент общий для всех
+        // языков версии». Но если язык назван, он должен быть целевым языком платформы.
+        const componentLanguage = ca['languageCode'];
+        if (componentLanguage !== undefined && componentLanguage !== null) {
+          if (
+            typeof componentLanguage !== 'string' ||
+            !isIn(VALID_LANGUAGE_CODES, componentLanguage)
+          ) {
+            addError(
+              errors,
+              `${prefix}.languageCode`,
+              `Invalid languageCode: ${JSON.stringify(componentLanguage)}`,
+              'INVALID_ENUM',
+            );
+          }
         }
 
         const caa = ca['requiredAction'] as string | undefined;

@@ -50,7 +50,7 @@ export class RightsProfileService {
 
   private get er() {
     return (this.prisma as unknown as Record<string, unknown>)['editionRights'] as {
-      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
     };
   }
 
@@ -129,10 +129,12 @@ export class RightsProfileService {
       where: { rightsProfileId: profileId },
     });
 
-    let editionRightsRecord: Record<string, unknown> | null = null;
+    // WP-7.1: прав на издание столько, сколько оценённых языков.
+    let editionRightsRecords: Array<Record<string, unknown>> = [];
     if (sourceEditionRecord) {
-      editionRightsRecord = await this.er.findUnique({
+      editionRightsRecords = await this.er.findMany({
         where: { sourceEditionId: sourceEditionRecord['id'] as string },
+        orderBy: { languageCode: 'asc' },
       });
     }
 
@@ -240,7 +242,7 @@ export class RightsProfileService {
         ? new Date(profile['nextReviewAt'] as string).toISOString()
         : null,
       sourceEdition: sourceEditionRecord
-        ? this.mapSourceEdition(sourceEditionRecord, editionRightsRecord)
+        ? this.mapSourceEdition(sourceEditionRecord, editionRightsRecords)
         : null,
       reviews: reviewsData.map((r: Record<string, unknown>) => this.mapReview(r)),
       territoryDecisions: territoryData.map((t: Record<string, unknown>) =>
@@ -300,7 +302,7 @@ export class RightsProfileService {
 
   private mapSourceEdition(
     record: Record<string, unknown>,
-    editionRightsRecord: Record<string, unknown> | null,
+    editionRightsRecords: Array<Record<string, unknown>>,
   ) {
     return {
       id: record['id'] as string,
@@ -316,7 +318,7 @@ export class RightsProfileService {
       notesRu: (record['notesRu'] as string) ?? null,
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
-      editionRights: editionRightsRecord ? this.mapEditionRights(editionRightsRecord) : null,
+      editionRights: editionRightsRecords.map((r) => this.mapEditionRights(r)),
     };
   }
 
@@ -324,9 +326,13 @@ export class RightsProfileService {
     return {
       id: record['id'] as string,
       sourceEditionId: record['sourceEditionId'] as string,
+      languageCode: record['languageCode'] as string,
       status: record['status'] as string,
       notesRu: (record['notesRu'] as string) ?? null,
       legalBasisRu: (record['legalBasisRu'] as string) ?? null,
+      translationOrigin: (record['translationOrigin'] as string) ?? 'UNKNOWN',
+      translationSourceLanguage: (record['translationSourceLanguage'] as string) ?? null,
+      requiresGeoBlock: (record['requiresGeoBlock'] as boolean) ?? false,
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
     };
@@ -523,6 +529,7 @@ export class RightsProfileService {
       rightsProfileId: record['rightsProfileId'],
       componentType: record['componentType'],
       titleRu: record['titleRu'],
+      languageCode: (record['languageCode'] as string | null) ?? null,
       status: record['status'],
       requiredAction: record['requiredAction'],
       confidence: record['confidence'],

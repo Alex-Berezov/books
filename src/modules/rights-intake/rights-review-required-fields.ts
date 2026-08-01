@@ -38,11 +38,13 @@ export const REQUIRED_REPORT_FIELDS = {
   /** `SourceEdition.status` (`schema.prisma`, модель `SourceEdition`). */
   sourceAssessment: ['status'],
   /**
-   * Языковой блок в модель пока не материализуется (R4-03, приёмник появится в WP-7),
-   * но манифест и схема требуют записи на каждый целевой язык — без кода языка запись
-   * бессмысленна и не проходит проверку покрытия.
+   * `EditionRights` (WP-7.1): `languageCode` и `status` — `NOT NULL`, `translationOrigin` —
+   * `NOT NULL` с дефолтом `UNKNOWN`, `requiresGeoBlock` — `NOT NULL` с дефолтом `false`.
+   * Оба поля с дефолтом всё равно обязательны в отчёте: происхождение перевода и требование
+   * геоблокировки — это вопросы манифеста фазы 2, на которые агент обязан ответить явно,
+   * а молчаливый дефолт выглядел бы как ответ «оригинал, блокировка не нужна».
    */
-  languageAssessments: ['languageCode'],
+  languageAssessments: ['languageCode', 'status', 'translationOrigin', 'requiresGeoBlock'],
   /** `RightsComponent`: `componentType`, `titleRu`, `status`, `requiredAction`, `confidence`. */
   componentAssessments: ['componentType', 'titleRu', 'status', 'requiredAction', 'confidence'],
   /**

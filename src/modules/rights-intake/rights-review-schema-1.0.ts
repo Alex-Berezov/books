@@ -3,6 +3,9 @@ import type { RightsReportSchemaDocument } from './rights-review-schema.registry
 
 const CONFIDENCE_ENUM = ['HIGH', 'MEDIUM', 'LOW'];
 
+/** Целевые языки платформы (`SUPPORTED_LANGS`). */
+const LANGUAGE_ENUM = ['en', 'es', 'fr', 'pt', 'ru'];
+
 const ISSUE_LIST_DESCRIPTION =
   'Authoritative validation is performed by the server (RightsReviewImportValidator); ' +
   'this JSON Schema describes the structure and does not replace the server-side cross-checks.';
@@ -96,7 +99,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
         additionalProperties: true,
         required: [...REQUIRED_REPORT_FIELDS.languageAssessments],
         properties: {
-          languageCode: { type: 'string', enum: ['en', 'es', 'fr', 'pt', 'ru'] },
+          languageCode: { type: 'string', enum: LANGUAGE_ENUM },
           status: {
             type: 'string',
             enum: [
@@ -120,6 +123,16 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
               'THIRD_PARTY_LICENSED_TRANSLATION',
               'UNKNOWN',
             ],
+          },
+          translationSourceLanguage: {
+            type: ['string', 'null'],
+            description:
+              'Language the text was translated from. Required in practice for an intermediate ' +
+              'translation, because the chain of rights runs through it.',
+          },
+          requiresGeoBlock: {
+            type: 'boolean',
+            description: 'Whether this language edition needs geo-blocking on its own.',
           },
           notesRu: { type: ['string', 'null'] },
           licenseRefs: { type: 'array', items: { type: 'string' } },
@@ -161,6 +174,13 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
             ],
           },
           titleRu: { type: 'string' },
+          languageCode: {
+            type: ['string', 'null'],
+            enum: [...LANGUAGE_ENUM, null],
+            description:
+              'Language this component belongs to. Omit or set null when the component is shared ' +
+              'by every language edition (a cover, an illustration).',
+          },
           status: {
             type: 'string',
             enum: [

@@ -256,6 +256,9 @@ export class RightsContentHashService {
               (c) => ({
                 componentType: c['componentType'],
                 titleRu: c['titleRu'],
+                // WP-7.2: язык компонента правовой значим — смена языка перевода меняет
+                // и переводчика, и основание для public domain.
+                languageCode: c['languageCode'] ?? null,
                 status: c['status'],
                 requiredAction: c['requiredAction'],
                 confidence: c['confidence'],
@@ -396,6 +399,45 @@ export class RightsContentHashService {
 
     const computation = await this.computeVersionHash(versionId, tx);
     const baselineHash = version.rightsContentHash;
+
+    /**
+     * WP-7: baseline, снятый под прошлой версией алгоритма, с текущим хешем несравним —
+     * различаются они по составу входа, а не по содержимому книги. Пометить такую версию
+     * stale значило бы обнулить клиренс всех книг на выкате (`RightsReview` уходит в `STALE`,
+     * гейт закрывается) по причине, которой не было.
+     *
+     * Поэтому baseline **переснимается**, а уже стоящие метки stale не трогаются: снять их
+     * может только настоящая проверка. Реальное изменение контента поймает следующий же вызов —
+     * он сравнит два хеша одной версии алгоритма.
+     */
+    if (
+      baselineHash &&
+      version.rightsContentHashAlgorithmVersion !== computation.algorithmVersion
+    ) {
+      if (persist) {
+        await this.rebaselineForAlgorithmChange(
+          versionId,
+          computation,
+          baselineHash,
+          userId,
+          client,
+        );
+      }
+
+      return {
+        versionId: version.id,
+        baselineHash,
+        currentHash: computation.hash,
+        algorithmVersion: computation.algorithmVersion,
+        matchesBaseline: true,
+        isStale: version.rightsRecheckRequired,
+        recheckRequired: version.rightsRecheckRequired,
+        reasonCode: version.rightsStaleReasonCode ?? null,
+        reasonRu: version.rightsStaleReasonRu ?? null,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
     const matchesBaseline = baselineHash === computation.hash;
     const isStale = !matchesBaseline || version.rightsRecheckRequired;
 
@@ -441,6 +483,48 @@ export class RightsContentHashService {
         version.rightsStaleReasonRu ?? (!matchesBaseline ? TRIGGER_MESSAGES[trigger] : null),
       checkedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Пересъёмка baseline после смены версии алгоритма хеша. Обновляет только сам снимок:
+   * `rightsRecheckRequired` и метки stale остаются как были — пересъёмка ничего не проверяет
+   * и потому ничего не разблокирует.
+   */
+  private async rebaselineForAlgorithmChange(
+    versionId: string,
+    computation: RightsContentHashComputationDto,
+    previousHash: string,
+    userId: string | null | undefined,
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<void> {
+    await client.bookVersion.update({
+      where: { id: versionId },
+      data: {
+        rightsContentHash: computation.hash,
+        rightsContentHashAlgorithmVersion: computation.algorithmVersion,
+        rightsContentHashInput: JSON.parse(
+          JSON.stringify(computation.input),
+        ) as Prisma.InputJsonValue,
+        rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
+      },
+    });
+
+    await client.rightsContentHashEvent.create({
+      data: {
+        bookVersionId: versionId,
+        rightsProfileId: computation.rightsProfileId,
+        rightsReviewId: computation.approvedRightsReviewId,
+        trigger: 'MANUAL_HASH_CHECK' as never,
+        previousHash,
+        currentHash: computation.hash,
+        hashAlgorithmVersion: computation.algorithmVersion,
+        staleMarked: false,
+        reasonCode: 'HASH_ALGORITHM_CHANGED',
+        reasonRu:
+          'Baseline пересчитан: изменился состав входа хеша, содержимое версии не проверялось',
+        createdByUserId: userId ?? null,
+      },
+    });
   }
 
   async markVersionAndClearanceStale(
@@ -595,14 +679,19 @@ export class RightsContentHashService {
       sourceTextType: sourceEdition['sourceTextType'],
       gutenbergStatus: sourceEdition['gutenbergStatus'] ?? null,
       status: sourceEdition['status'],
-      editionRights: sourceEdition['editionRights']
-        ? {
-            status: (sourceEdition['editionRights'] as Record<string, unknown>)['status'],
-            legalBasisRu:
-              (sourceEdition['editionRights'] as Record<string, unknown>)['legalBasisRu'] ?? null,
-            notesRu: (sourceEdition['editionRights'] as Record<string, unknown>)['notesRu'] ?? null,
-          }
-        : null,
+      // WP-7.1: права издания — запись на язык. Порядок фиксируется по коду языка,
+      // иначе хеш зависел бы от порядка выдачи БД.
+      editionRights: ((sourceEdition['editionRights'] as Array<Record<string, unknown>>) || [])
+        .map((er) => ({
+          languageCode: (er['languageCode'] as string | null) ?? '',
+          status: er['status'],
+          legalBasisRu: er['legalBasisRu'] ?? null,
+          notesRu: er['notesRu'] ?? null,
+          translationOrigin: er['translationOrigin'] ?? null,
+          translationSourceLanguage: er['translationSourceLanguage'] ?? null,
+          requiresGeoBlock: er['requiresGeoBlock'] ?? false,
+        }))
+        .sort((a, b) => a.languageCode.localeCompare(b.languageCode)),
     };
   }
 

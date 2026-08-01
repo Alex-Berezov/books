@@ -166,6 +166,32 @@ describe('RightsReviewImportValidator', () => {
     expect(errors.some((e) => e.code === 'MISSING_LANGUAGE_ASSESSMENT')).toBe(true);
   });
 
+  // WP-7.2: язык компонента необязателен (обложка общая для всех языков), но названный —
+  // обязан быть целевым языком платформы.
+  it('component languageCode is optional', () => {
+    const payload = validPayload();
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+    expect(errors.some((e) => e.path === 'componentAssessments[0].languageCode')).toBe(false);
+  });
+
+  it('component languageCode outside SUPPORTED_LANGS fails', () => {
+    const payload = validPayload();
+    (payload.componentAssessments as Array<Record<string, unknown>>)[0].languageCode = 'de';
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+    expect(
+      errors.some(
+        (e) => e.code === 'INVALID_ENUM' && e.path === 'componentAssessments[0].languageCode',
+      ),
+    ).toBe(true);
+  });
+
+  it('component languageCode from SUPPORTED_LANGS passes', () => {
+    const payload = validPayload();
+    (payload.componentAssessments as Array<Record<string, unknown>>)[0].languageCode = 'fr';
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+    expect(errors.some((e) => e.path === 'componentAssessments[0].languageCode')).toBe(false);
+  });
+
   it('invalid country code fails', () => {
     const payload = validPayload();
     (payload.territoryDecisions as Array<Record<string, unknown>>)[0].countryCode = 'us';
@@ -382,10 +408,30 @@ describe('RightsReviewImportValidator', () => {
       expectMissing(payload, 'sourceAssessment.status');
     });
 
-    it('languageAssessments[0] without languageCode fails', () => {
+    // WP-7.1: языковой блок стал приёмником модели прав, поэтому обязательны все поля,
+    // без которых запись `EditionRights` не имеет смысла.
+    it.each(REQUIRED_REPORT_FIELDS.languageAssessments)(
+      'languageAssessments[0] without %s fails',
+      (field) => {
+        const payload = validPayload();
+        delete (payload.languageAssessments as Array<Record<string, unknown>>)[0][field];
+        expectMissing(payload, `languageAssessments[0].${field}`);
+      },
+    );
+
+    it('requiresGeoBlock=false is an answer, not a missing field', () => {
       const payload = validPayload();
-      delete (payload.languageAssessments as Array<Record<string, unknown>>)[0].languageCode;
-      expectMissing(payload, 'languageAssessments[0].languageCode');
+      (payload.languageAssessments as Array<Record<string, unknown>>)[0].requiresGeoBlock = false;
+      const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+      expect(errors.some((e) => e.path === 'languageAssessments[0].requiresGeoBlock')).toBe(false);
+    });
+
+    // Промежуточный перевод — единственный случай, где цепочка прав идёт через третий язык.
+    it('intermediate translation without translationSourceLanguage fails', () => {
+      const payload = validPayload();
+      (payload.languageAssessments as Array<Record<string, unknown>>)[1].translationOrigin =
+        'BIBLIARIS_TRANSLATION_FROM_INTERMEDIATE_TRANSLATION';
+      expectMissing(payload, 'languageAssessments[1].translationSourceLanguage');
     });
 
     it('blank string counts as missing', () => {

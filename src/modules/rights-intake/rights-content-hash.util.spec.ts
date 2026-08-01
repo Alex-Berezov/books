@@ -100,8 +100,9 @@ describe('RightsContentHashUtil', () => {
   });
 
   describe('RIGHTS_CONTENT_HASH_ALGORITHM_VERSION', () => {
-    it('should be RIGHTS_CONTENT_HASH_V1', () => {
-      expect(RIGHTS_CONTENT_HASH_ALGORITHM_VERSION).toBe('RIGHTS_CONTENT_HASH_V1');
+    // WP-7: состав входа изменился (права издания — записью на язык), версия алгоритма — V2.
+    it('should be RIGHTS_CONTENT_HASH_V2', () => {
+      expect(RIGHTS_CONTENT_HASH_ALGORITHM_VERSION).toBe('RIGHTS_CONTENT_HASH_V2');
     });
   });
 

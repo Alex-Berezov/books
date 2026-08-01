@@ -20,7 +20,7 @@ const createPrismaStub = (): PrismaStub => {
 
   stub['rightsProfile'] = { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() };
   stub['sourceEdition'] = { findUnique: jest.fn() };
-  stub['editionRights'] = { findUnique: jest.fn() };
+  stub['editionRights'] = { findMany: jest.fn().mockResolvedValue([]) };
   stub['rightsReview'] = { findMany: jest.fn() };
   stub['rightsComponent'] = { findMany: jest.fn() };
   stub['territoryDecision'] = { findMany: jest.fn() };
@@ -223,6 +223,71 @@ describe('RightsProfileService', () => {
           },
         },
       });
+    });
+
+    // WP-7.1 (R2-01, R3-01): права издания отдаются записью на язык, а не одним объектом.
+    it('should return edition rights as one record per language', async () => {
+      const profile = makeProfile();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(profile);
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+        id: 'se-1',
+        rightsProfileId: 'profile-1',
+        provider: 'PROJECT_GUTENBERG',
+        sourceTextType: 'ORIGINAL_TEXT',
+        status: 'ALLOWED',
+        createdAt: new Date('2026-07-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+      });
+      (prisma['editionRights'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        {
+          id: 'er-en',
+          sourceEditionId: 'se-1',
+          languageCode: 'en',
+          status: 'ALLOWED',
+          notesRu: 'Оригинал',
+          legalBasisRu: null,
+          translationOrigin: 'NOT_APPLICABLE_ORIGINAL',
+          translationSourceLanguage: null,
+          requiresGeoBlock: false,
+          createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+        },
+        {
+          id: 'er-ru',
+          sourceEditionId: 'se-1',
+          languageCode: 'ru',
+          status: 'LICENSE_REQUIRED',
+          notesRu: null,
+          legalBasisRu: null,
+          translationOrigin: 'BIBLIARIS_TRANSLATION_FROM_INTERMEDIATE_TRANSLATION',
+          translationSourceLanguage: 'fr',
+          requiresGeoBlock: true,
+          createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+        },
+      ]);
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsEvidence'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const result = await service.getById('profile-1');
+
+      expect((prisma['editionRights'] as Record<string, jest.Mock>).findMany).toHaveBeenCalledWith({
+        where: { sourceEditionId: 'se-1' },
+        orderBy: { languageCode: 'asc' },
+      });
+      expect(result.sourceEdition!.editionRights).toHaveLength(2);
+      expect(result.sourceEdition!.editionRights[1]).toEqual(
+        expect.objectContaining({
+          languageCode: 'ru',
+          status: 'LICENSE_REQUIRED',
+          translationOrigin: 'BIBLIARIS_TRANSLATION_FROM_INTERMEDIATE_TRANSLATION',
+          translationSourceLanguage: 'fr',
+          requiresGeoBlock: true,
+        }),
+      );
     });
 
     it('should return nested component territory assessments and normalize missing arrays', async () => {
