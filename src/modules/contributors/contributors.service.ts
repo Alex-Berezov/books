@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { PersonsService } from '../persons/persons.service';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { CreateContributorDto } from './dto/create-contributor.dto';
 import { LinkRightsComponentContributorDto } from './dto/link-rights-component-contributor.dto';
 import { LinkSourceEditionContributorDto } from './dto/link-source-edition-contributor.dto';
@@ -14,14 +15,19 @@ export class ContributorsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly personsService: PersonsService,
+    private readonly rightsContentHashService: RightsContentHashService,
   ) {}
 
-  private get rpcModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['rightsProfileContributor'] as {
+  private rpcModelOf(client: unknown) {
+    return (client as Record<string, unknown>)['rightsProfileContributor'] as {
       create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
       delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
     };
+  }
+
+  private get rpcModel() {
+    return this.rpcModelOf(this.prisma);
   }
 
   private get sourceEditionModel() {
@@ -165,25 +171,27 @@ export class ContributorsService {
       dto.contributorId,
     )) as unknown as PersonRecord;
 
-    return this.rpcModel.create({
-      data: {
-        rightsProfileId: sourceEdition['rightsProfileId'],
-        personId: person.id,
-        role: dto.role,
-        displayName: person.canonicalName,
-        canonicalName: person.canonicalName,
-        creditedName: dto.creditedName ?? person.canonicalName,
-        birthYear: person.birthYear,
-        deathYear: person.deathYear,
-        nationalityCountryCode: person.nationalityCountryCode,
-        wikidataId: person.wikidataId,
-        viafId: person.viafId,
-        isni: person.isni,
-        gutenbergAgentId: person.gutenbergAgentId,
-        publicDomainFromYear: person.publicDomainFromYear,
-        notesRu: dto.notesRu ?? null,
-      },
-    });
+    return this.withProfileStaleness(sourceEdition['rightsProfileId'] as string, (tx) =>
+      this.rpcModelOf(tx).create({
+        data: {
+          rightsProfileId: sourceEdition['rightsProfileId'],
+          personId: person.id,
+          role: dto.role,
+          displayName: person.canonicalName,
+          canonicalName: person.canonicalName,
+          creditedName: dto.creditedName ?? person.canonicalName,
+          birthYear: person.birthYear,
+          deathYear: person.deathYear,
+          nationalityCountryCode: person.nationalityCountryCode,
+          wikidataId: person.wikidataId,
+          viafId: person.viafId,
+          isni: person.isni,
+          gutenbergAgentId: person.gutenbergAgentId,
+          publicDomainFromYear: person.publicDomainFromYear,
+          notesRu: dto.notesRu ?? null,
+        },
+      }),
+    );
   }
 
   async unlinkSourceEdition(sourceEditionId: string, linkId: string) {
@@ -201,7 +209,9 @@ export class ContributorsService {
       );
     }
 
-    return this.rpcModel.delete({ where: { id: linkId } });
+    return this.withProfileStaleness(sourceEdition['rightsProfileId'] as string, (tx) =>
+      this.rpcModelOf(tx).delete({ where: { id: linkId } }),
+    );
   }
 
   async linkRightsComponent(rightsComponentId: string, dto: LinkRightsComponentContributorDto) {
@@ -216,26 +226,28 @@ export class ContributorsService {
       dto.contributorId,
     )) as unknown as PersonRecord;
 
-    return this.rpcModel.create({
-      data: {
-        rightsProfileId: component['rightsProfileId'],
-        rightsComponentId,
-        personId: person.id,
-        role: dto.role,
-        displayName: person.canonicalName,
-        canonicalName: person.canonicalName,
-        creditedName: dto.creditedName ?? person.canonicalName,
-        birthYear: person.birthYear,
-        deathYear: person.deathYear,
-        nationalityCountryCode: person.nationalityCountryCode,
-        wikidataId: person.wikidataId,
-        viafId: person.viafId,
-        isni: person.isni,
-        gutenbergAgentId: person.gutenbergAgentId,
-        publicDomainFromYear: person.publicDomainFromYear,
-        notesRu: dto.notesRu ?? null,
-      },
-    });
+    return this.withProfileStaleness(component['rightsProfileId'] as string, (tx) =>
+      this.rpcModelOf(tx).create({
+        data: {
+          rightsProfileId: component['rightsProfileId'],
+          rightsComponentId,
+          personId: person.id,
+          role: dto.role,
+          displayName: person.canonicalName,
+          canonicalName: person.canonicalName,
+          creditedName: dto.creditedName ?? person.canonicalName,
+          birthYear: person.birthYear,
+          deathYear: person.deathYear,
+          nationalityCountryCode: person.nationalityCountryCode,
+          wikidataId: person.wikidataId,
+          viafId: person.viafId,
+          isni: person.isni,
+          gutenbergAgentId: person.gutenbergAgentId,
+          publicDomainFromYear: person.publicDomainFromYear,
+          notesRu: dto.notesRu ?? null,
+        },
+      }),
+    );
   }
 
   async unlinkRightsComponent(rightsComponentId: string, linkId: string) {
@@ -253,6 +265,37 @@ export class ContributorsService {
       );
     }
 
-    return this.rpcModel.delete({ where: { id: linkId } });
+    return this.withProfileStaleness(component['rightsProfileId'] as string, (tx) =>
+      this.rpcModelOf(tx).delete({ where: { id: linkId } }),
+    );
+  }
+
+  /**
+   * WP-8.1 (R1-01): участники профиля прав входят в content hash — переводчик определяет
+   * правовое основание перевода. Привязка и отвязка проверяют клиренс каждой версии профиля
+   * в той же транзакции, что и сама связь.
+   */
+  private async withProfileStaleness<T>(
+    rightsProfileId: string | null,
+    work: (tx: unknown) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const result = await work(tx);
+
+        if (rightsProfileId) {
+          await this.rightsContentHashService.checkStalenessForRightsProfile(
+            rightsProfileId,
+            'PROFILE_CONTRIBUTOR_CHANGED',
+            null,
+            tx,
+          );
+        }
+
+        return result;
+      },
+      // Пересчёт по всем версиям профиля читает главы целиком — дефолтных 5 секунд мало.
+      { timeout: 30_000, maxWait: 10_000 },
+    );
   }
 }

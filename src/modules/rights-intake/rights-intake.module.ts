@@ -12,7 +12,7 @@ import { RightsActionController } from './rights-action.controller';
 import { RightsActionService } from './rights-action.service';
 import { RightsMaterializationService } from './rights-materialization.service';
 import { RightsProfileService } from './rights-profile.service';
-import { RightsContentHashService } from './rights-content-hash.service';
+import { RightsContentHashModule } from './rights-content-hash.module';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
 import { PersonsModule } from '../persons/persons.module';
@@ -23,9 +23,18 @@ import { PrismaService } from '../../prisma/prisma.service';
 /**
  * `RightsNotificationsModule` — лист графа (WP-6.3): импортировать сам `RightsAgentModule`
  * отсюда нельзя, он импортирует этот модуль.
+ *
+ * `RightsContentHashModule` — лист графа (WP-8.1): вынесен, чтобы пути персон и участников
+ * могли помечать клиренс устаревшим (этот модуль импортирует `PersonsModule`, обратный
+ * импорт был бы циклом). Реэкспортируется целиком — потребители не изменились.
  */
 @Module({
-  imports: [PersonsModule, RightsLicensesModule, RightsNotificationsModule],
+  imports: [
+    PersonsModule,
+    RightsLicensesModule,
+    RightsNotificationsModule,
+    RightsContentHashModule,
+  ],
   controllers: [
     RightsIntakeController,
     RightsReviewImportController,
@@ -42,7 +51,6 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsActionService,
     RightsApprovalService,
     RightsBookCreationService,
-    RightsContentHashService,
     TerritoryRegionAggregationService,
     ComponentTerritoryAggregationService,
     PrismaService,
@@ -50,7 +58,7 @@ import { PrismaService } from '../../prisma/prisma.service';
   exports: [
     RightsIntakeService,
     RightsProfileService,
-    RightsContentHashService,
+    RightsContentHashModule,
     TerritoryRegionAggregationService,
     ComponentTerritoryAggregationService,
     RightsReviewImportService,

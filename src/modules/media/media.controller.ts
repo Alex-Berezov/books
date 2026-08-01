@@ -29,6 +29,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { memoryStorage } from 'multer';
 import { UploadsService } from '../uploads/uploads.service';
@@ -132,6 +133,10 @@ export class MediaController {
         url: direct.publicUrl,
         contentType: ct,
         size,
+        // WP-8.2 (R1-04): контрольная сумма файла — единственное, по чему видно подмену
+        // обложки по тому же адресу. Клиенту её считать не поручаем: обложка входит
+        // в content hash клиренса, а значит источник суммы должен быть на сервере.
+        hash: createHash('sha256').update(buf).digest('hex'),
       },
       userId,
     );

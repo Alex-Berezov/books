@@ -6,8 +6,11 @@ import { createHash } from 'crypto';
  * V2 (WP-7): права издания вошли в хеш записью на каждый язык (`editionRights` стал массивом),
  * а у компонента появился `languageCode`. Хеши, снятые под V1, сравнивать с V2 бессмысленно —
  * это делает `checkVersionStaleness`, переснимая baseline вместо пометки stale.
+ *
+ * V3 (WP-8): в хеш вошли участники версии и профиля прав (год смерти переводчика определяет
+ * public domain) и контрольная сумма файла обложки. Пересъёмка baseline работает так же.
  */
-export const RIGHTS_CONTENT_HASH_ALGORITHM_VERSION = 'RIGHTS_CONTENT_HASH_V2';
+export const RIGHTS_CONTENT_HASH_ALGORITHM_VERSION = 'RIGHTS_CONTENT_HASH_V3';
 
 export function stableCanonicalize(value: unknown): unknown {
   if (value === null || value === undefined) {

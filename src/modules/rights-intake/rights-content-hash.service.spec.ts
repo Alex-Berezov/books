@@ -23,6 +23,15 @@ const mockPrisma = {
   rightsContentHashEvent: {
     create: jest.fn(),
   },
+  mediaAsset: {
+    findFirst: jest.fn(),
+  },
+  bookVersionContributor: {
+    findMany: jest.fn(),
+  },
+  rightsProfileContributor: {
+    findMany: jest.fn(),
+  },
   $transaction: jest.fn(),
 };
 
@@ -31,6 +40,9 @@ describe('RightsContentHashService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.mediaAsset.findFirst.mockResolvedValue(null);
+    mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
+    mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [RightsContentHashService, { provide: PrismaService, useValue: mockPrisma }],
@@ -73,6 +85,7 @@ describe('RightsContentHashService', () => {
     summaryShort: null,
     symbols: null,
     coverAlt: null,
+    contributors: [],
     rightsProfileId: 'profile-1',
     approvedRightsReviewId: 'review-1',
     rightsStatus: 'APPROVED',
@@ -106,6 +119,7 @@ describe('RightsContentHashService', () => {
       territoryDecisions: [],
       evidence: [],
       actions: [],
+      contributors: [],
     },
     approvedRightsReview: {
       id: 'review-1',
@@ -781,6 +795,273 @@ describe('RightsContentHashService', () => {
 
         expect(straight).toBe(reversed);
       });
+    });
+
+    /**
+     * WP-8.1 (R1-01): участники — юридически значимый вход. Год смерти переводчика решает,
+     * находится ли перевод в public domain, поэтому подмена участника обязана двигать хеш.
+     */
+    describe('contributors', () => {
+      const translator = {
+        id: 'bvc-1',
+        role: 'TRANSLATOR',
+        roleOtherRu: null,
+        displayOrder: 0,
+        isPrimary: false,
+        creditedName: 'И. Иванов',
+        creditedLanguage: 'ru',
+        contributionNoteRu: null,
+        confidence: 'HIGH',
+        personId: 'person-1',
+        person: {
+          id: 'person-1',
+          canonicalName: 'Иванов Иван',
+          birthYear: 1870,
+          deathYear: 1940,
+          publicDomainFromYear: 2011,
+          nationalityCountryCode: 'RU',
+        },
+      };
+      const author = {
+        ...translator,
+        id: 'bvc-2',
+        role: 'AUTHOR',
+        displayOrder: 1,
+        personId: 'person-2',
+        creditedName: 'П. Петров',
+        person: {
+          id: 'person-2',
+          canonicalName: 'Петров Пётр',
+          birthYear: 1860,
+          deathYear: 1930,
+          publicDomainFromYear: 2001,
+          nationalityCountryCode: 'RU',
+        },
+      };
+
+      const hashOf = async (contributors: Array<Record<string, unknown>>) => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue({ ...baseVersion, contributors });
+        return (await service.computeVersionHash('version-1')).hash;
+      };
+
+      it('changes the hash when a translator is replaced', async () => {
+        const before = await hashOf([translator]);
+        const after = await hashOf([
+          {
+            ...translator,
+            personId: 'person-3',
+            person: {
+              id: 'person-3',
+              canonicalName: 'Сидоров Семён',
+              birthYear: 1920,
+              deathYear: 1990,
+              publicDomainFromYear: 2061,
+              nationalityCountryCode: 'RU',
+            },
+          },
+        ]);
+
+        expect(before).not.toBe(after);
+      });
+
+      it('changes the hash when the death year of a contributor changes', async () => {
+        const before = await hashOf([translator]);
+        const after = await hashOf([
+          { ...translator, person: { ...translator.person, deathYear: 1990 } },
+        ]);
+
+        expect(before).not.toBe(after);
+      });
+
+      it('changes the hash when a contributor is added or removed', async () => {
+        const one = await hashOf([translator]);
+        const two = await hashOf([translator, author]);
+
+        expect(one).not.toBe(two);
+      });
+
+      it('does not depend on the order the database returned the contributors in', async () => {
+        const straight = await hashOf([translator, author]);
+        const reversed = await hashOf([author, translator]);
+
+        expect(straight).toBe(reversed);
+      });
+
+      it('does not change the hash on a pure reorder of the credits', async () => {
+        const before = await hashOf([translator, author]);
+        const after = await hashOf([
+          { ...translator, displayOrder: 1 },
+          { ...author, displayOrder: 0, isPrimary: true },
+        ]);
+
+        expect(before).toBe(after);
+      });
+
+      it('changes the hash when a rights profile contributor changes', async () => {
+        const profileContributor = {
+          id: 'rpc-1',
+          role: 'TRANSLATOR',
+          roleOtherRu: null,
+          rightsComponentId: null,
+          personId: 'person-1',
+          displayName: 'Иванов Иван',
+          canonicalName: 'Иванов Иван',
+          creditedName: 'И. Иванов',
+          birthYear: 1870,
+          deathYear: 1940,
+          publicDomainFromYear: 2011,
+          nationalityCountryCode: 'RU',
+          confidence: 'HIGH',
+        };
+        const withContributor = (contributors: Array<Record<string, unknown>>) => ({
+          ...baseVersion,
+          rightsProfile: { ...baseVersion.rightsProfile, contributors },
+        });
+
+        mockPrisma.bookVersion.findUnique.mockResolvedValue(withContributor([profileContributor]));
+        const before = (await service.computeVersionHash('version-1')).hash;
+
+        mockPrisma.bookVersion.findUnique.mockResolvedValue(
+          withContributor([{ ...profileContributor, deathYear: 1990 }]),
+        );
+        const after = (await service.computeVersionHash('version-1')).hash;
+
+        expect(before).not.toBe(after);
+      });
+    });
+
+    /**
+     * WP-8.2 (R1-04): обложка хешировалась по URL, поэтому подмена файла по тому же адресу
+     * оставалась невидимой. Контрольная сумма берётся из `MediaAsset`, найденного по URL.
+     */
+    describe('cover file checksum', () => {
+      const asset = (hash: string | null) => ({
+        id: 'media-cover',
+        key: 'covers/cover.jpg',
+        url: 'https://example.com/cover.jpg',
+        contentType: 'image/jpeg',
+        size: 2048,
+        hash,
+        isDeleted: false,
+      });
+
+      it('changes the hash when the cover file is replaced at the same URL', async () => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue(baseVersion);
+
+        mockPrisma.mediaAsset.findFirst.mockResolvedValue(asset('sha-old'));
+        const before = (await service.computeVersionHash('version-1')).hash;
+
+        mockPrisma.mediaAsset.findFirst.mockResolvedValue(asset('sha-new'));
+        const after = (await service.computeVersionHash('version-1')).hash;
+
+        expect(before).not.toBe(after);
+      });
+
+      it('looks the cover asset up by its URL', async () => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue(baseVersion);
+        mockPrisma.mediaAsset.findFirst.mockResolvedValue(asset('sha-old'));
+
+        await service.computeVersionHash('version-1');
+
+        expect(mockPrisma.mediaAsset.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ url: 'https://example.com/cover.jpg' }),
+          }),
+        );
+      });
+
+      it('still computes a hash when the cover has no media asset', async () => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue(baseVersion);
+        mockPrisma.mediaAsset.findFirst.mockResolvedValue(null);
+
+        const result = await service.computeVersionHash('version-1');
+
+        expect(result.hash).toHaveLength(64);
+      });
+    });
+  });
+
+  /**
+   * WP-8.1: правка данных персоны и связей профиля не проходит через версию, поэтому
+   * пересчёт разворачивается от участника ко всем затронутым версиям.
+   */
+  describe('checkStalenessForPerson', () => {
+    let checkVersionStaleness: jest.SpyInstance;
+
+    beforeEach(() => {
+      checkVersionStaleness = jest.spyOn(service, 'checkVersionStaleness').mockResolvedValue({
+        versionId: 'version-1',
+        baselineHash: 'old',
+        currentHash: 'new',
+        algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+        matchesBaseline: false,
+        isStale: true,
+        recheckRequired: true,
+        reasonCode: 'CONTRIBUTOR_PERSON_CHANGED',
+        reasonRu: null,
+        checkedAt: new Date().toISOString(),
+      });
+    });
+
+    it('checks every version the person contributes to', async () => {
+      mockPrisma.bookVersionContributor.findMany.mockResolvedValue([
+        { bookVersionId: 'version-1' },
+        { bookVersionId: 'version-2' },
+      ]);
+      mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
+      mockPrisma.bookVersion.findMany.mockResolvedValue([]);
+
+      const result = await service.checkStalenessForPerson(
+        'person-1',
+        'CONTRIBUTOR_PERSON_CHANGED',
+      );
+
+      expect(result).toHaveLength(2);
+      expect(checkVersionStaleness.mock.calls.map((call) => call[0] as string).sort()).toEqual([
+        'version-1',
+        'version-2',
+      ]);
+      expect(checkVersionStaleness).toHaveBeenCalledTimes(2);
+      expect(checkVersionStaleness).toHaveBeenCalledWith(
+        'version-1',
+        'CONTRIBUTOR_PERSON_CHANGED',
+        null,
+        true,
+        undefined,
+      );
+    });
+
+    it('reaches versions through the rights profile the person is listed in', async () => {
+      mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
+      mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([
+        { rightsProfileId: 'profile-1' },
+      ]);
+      mockPrisma.bookVersion.findMany.mockResolvedValue([{ id: 'version-3' }]);
+
+      const result = await service.checkStalenessForPerson(
+        'person-1',
+        'CONTRIBUTOR_PERSON_CHANGED',
+      );
+
+      expect(result).toHaveLength(1);
+      expect(mockPrisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ rightsProfileId: { in: ['profile-1'] } }),
+        }),
+      );
+    });
+
+    it('does nothing when the person is not linked to any version', async () => {
+      mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
+      mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
+
+      const result = await service.checkStalenessForPerson(
+        'person-1',
+        'CONTRIBUTOR_PERSON_CHANGED',
+      );
+
+      expect(result).toEqual([]);
+      expect(checkVersionStaleness).not.toHaveBeenCalled();
     });
   });
 });

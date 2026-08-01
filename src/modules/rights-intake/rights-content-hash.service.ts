@@ -24,6 +24,9 @@ type Trigger =
   | 'RIGHTS_SNAPSHOT_CHANGED'
   | 'SOURCE_EDITION_CHANGED'
   | 'REVIEW_IMPORT_CHANGED'
+  | 'VERSION_CONTRIBUTOR_CHANGED'
+  | 'PROFILE_CONTRIBUTOR_CHANGED'
+  | 'CONTRIBUTOR_PERSON_CHANGED'
   | 'MANUAL_HASH_CHECK';
 
 const TRIGGER_MESSAGES: Record<Trigger, string> = {
@@ -39,8 +42,48 @@ const TRIGGER_MESSAGES: Record<Trigger, string> = {
   RIGHTS_SNAPSHOT_CHANGED: 'Изменён слепок прав',
   SOURCE_EDITION_CHANGED: 'Изменены данные исходного издания',
   REVIEW_IMPORT_CHANGED: 'Изменён импорт проверки прав',
+  VERSION_CONTRIBUTOR_CHANGED: 'Изменён состав участников версии',
+  PROFILE_CONTRIBUTOR_CHANGED: 'Изменён состав участников профиля прав',
+  CONTRIBUTOR_PERSON_CHANGED: 'Изменены правовые данные участника',
   MANUAL_HASH_CHECK: 'Ручная проверка хеша контента',
 };
+
+/**
+ * WP-8.1: три триггера участников — новые значения enum'а `RightsContentChangeTrigger`,
+ * а значение enum'а PostgreSQL требует отдельной, более ранней миграции (§0.2 плана).
+ * WP-8 миграции не имеет, поэтому в колонку `trigger` пишется существующее значение
+ * `RIGHTS_SNAPSHOT_CHANGED` — участники и есть часть слепка прав, — а точная причина
+ * сохраняется в `reasonCode` / `rightsStaleReasonCode` (свободные строки).
+ * То же решение, что в WP-6.3 с типом уведомления.
+ */
+const TRIGGER_DB_VALUES: Partial<Record<Trigger, Trigger>> = {
+  VERSION_CONTRIBUTOR_CHANGED: 'RIGHTS_SNAPSHOT_CHANGED',
+  PROFILE_CONTRIBUTOR_CHANGED: 'RIGHTS_SNAPSHOT_CHANGED',
+  CONTRIBUTOR_PERSON_CHANGED: 'RIGHTS_SNAPSHOT_CHANGED',
+};
+
+const triggerDbValue = (trigger: Trigger): Trigger => TRIGGER_DB_VALUES[trigger] ?? trigger;
+
+/**
+ * Порядок участников в выдаче БД не определён, а хеш обязан быть от него независим:
+ * иначе клиренс «протухал» бы от любого пересчёта.
+ */
+const contributorSortKey = (contributor: Record<string, unknown>): string =>
+  [contributor['role'], contributor['personId'], contributor['creditedName']]
+    .map((part) => (typeof part === 'string' ? part : ''))
+    .join('|');
+
+/**
+ * Поля персоны, от которых зависит правовое основание: год смерти решает, в public domain ли
+ * перевод. Правка имени в карточке или заметок редактора клиренс не трогает.
+ */
+export const RIGHTS_RELEVANT_PERSON_FIELDS = [
+  'canonicalName',
+  'birthYear',
+  'deathYear',
+  'publicDomainFromYear',
+  'nationalityCountryCode',
+] as const;
 
 @Injectable()
 export class RightsContentHashService {
@@ -93,8 +136,24 @@ export class RightsContentHashService {
             isDeleted: true,
           },
         },
+        // WP-8.1: участники версии — вход хеша, без них смена переводчика невидима для клиренса.
+        contributors: {
+          include: {
+            person: {
+              select: {
+                id: true,
+                canonicalName: true,
+                birthYear: true,
+                deathYear: true,
+                publicDomainFromYear: true,
+                nationalityCountryCode: true,
+              },
+            },
+          },
+        },
         rightsProfile: {
           include: {
+            contributors: true,
             sourceEdition: {
               include: {
                 editionRights: true,
@@ -172,6 +231,11 @@ export class RightsContentHashService {
       unknown
     > | null;
 
+    const coverMedia = await this.resolveCoverMedia(
+      (versionAny['coverImageUrl'] as string | null) ?? null,
+      client,
+    );
+
     const input: Record<string, unknown> = {
       algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
       identity: {
@@ -200,6 +264,9 @@ export class RightsContentHashService {
         coverImageUrl: versionAny['coverImageUrl'],
         coverAlt: versionAny['coverAlt'] ?? null,
         previewMediaId: versionAny['previewMediaId'] ?? null,
+        // WP-8.2: сам файл, а не только его адрес — подмена картинки по тому же URL
+        // раньше оставалась невидимой для клиренса.
+        coverMedia,
       },
       structuredEditorialFields: {
         alternativeTitles: versionAny['alternativeTitles'] ?? null,
@@ -211,6 +278,9 @@ export class RightsContentHashService {
       },
       chapters,
       audioChapters,
+      contributors: this.serializeVersionContributors(
+        (versionAny['contributors'] as Array<Record<string, unknown>>) || [],
+      ),
       previewMedia: versionAny['previewMedia']
         ? {
             id: (versionAny['previewMedia'] as Record<string, unknown>)['id'],
@@ -294,6 +364,9 @@ export class RightsContentHashService {
                 isBlocking: a['isBlocking'] ?? false,
               }),
             ),
+            contributors: this.serializeProfileContributors(
+              (rightsProfile['contributors'] as Array<Record<string, unknown>>) || [],
+            ),
           }
         : null,
       rightsReview: approvedRightsReview
@@ -360,7 +433,7 @@ export class RightsContentHashService {
         bookVersionId: versionId,
         rightsProfileId: computation.rightsProfileId,
         rightsReviewId: computation.approvedRightsReviewId,
-        trigger: trigger as never,
+        trigger: triggerDbValue(trigger) as never,
         previousHash: null,
         currentHash: computation.hash,
         hashAlgorithmVersion: computation.algorithmVersion,
@@ -458,7 +531,7 @@ export class RightsContentHashService {
           bookVersionId: versionId,
           rightsProfileId: computation.rightsProfileId,
           rightsReviewId: computation.approvedRightsReviewId,
-          trigger: trigger as never,
+          trigger: triggerDbValue(trigger) as never,
           previousHash: baselineHash,
           currentHash: computation.hash,
           hashAlgorithmVersion: computation.algorithmVersion,
@@ -647,7 +720,7 @@ export class RightsContentHashService {
           bookVersionId: versionId,
           rightsProfileId: version.rightsProfileId,
           rightsReviewId: version.approvedRightsReviewId,
-          trigger: trigger as never,
+          trigger: triggerDbValue(trigger) as never,
           previousHash,
           currentHash,
           hashAlgorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
@@ -664,6 +737,177 @@ export class RightsContentHashService {
     } else {
       await this.prisma.$transaction((innerTx) => doMark(innerTx));
     }
+  }
+
+  /**
+   * WP-8.1. В хеш входит то, от чего зависит правовое основание: кто участник, в какой роли
+   * и какие у него годы жизни. Порядок в списке кредитов (`displayOrder`, `isPrimary`) и
+   * редакционная заметка — оформление: перестановка кредитов не должна закрывать гейт.
+   */
+  private serializeVersionContributors(
+    contributors: Array<Record<string, unknown>>,
+  ): Array<Record<string, unknown>> {
+    return contributors
+      .map((c) => {
+        const person = (c['person'] as Record<string, unknown> | null) ?? null;
+        return {
+          role: c['role'],
+          roleOtherRu: c['roleOtherRu'] ?? null,
+          personId: c['personId'] ?? null,
+          creditedName: c['creditedName'] ?? null,
+          confidence: c['confidence'] ?? null,
+          person: person
+            ? {
+                canonicalName: person['canonicalName'] ?? null,
+                birthYear: person['birthYear'] ?? null,
+                deathYear: person['deathYear'] ?? null,
+                publicDomainFromYear: person['publicDomainFromYear'] ?? null,
+                nationalityCountryCode: person['nationalityCountryCode'] ?? null,
+              }
+            : null,
+        };
+      })
+      .sort((a, b) => contributorSortKey(a).localeCompare(contributorSortKey(b)));
+  }
+
+  /**
+   * Участники профиля прав хранят годы жизни собственной копией (`RightsProfileContributor`
+   * заполняется материализацией отчёта), поэтому персона здесь не догружается.
+   */
+  private serializeProfileContributors(
+    contributors: Array<Record<string, unknown>>,
+  ): Array<Record<string, unknown>> {
+    return contributors
+      .map((c) => ({
+        role: c['role'],
+        roleOtherRu: c['roleOtherRu'] ?? null,
+        rightsComponentId: c['rightsComponentId'] ?? null,
+        personId: c['personId'] ?? null,
+        displayName: c['displayName'] ?? null,
+        canonicalName: c['canonicalName'] ?? null,
+        creditedName: c['creditedName'] ?? null,
+        birthYear: c['birthYear'] ?? null,
+        deathYear: c['deathYear'] ?? null,
+        publicDomainFromYear: c['publicDomainFromYear'] ?? null,
+        nationalityCountryCode: c['nationalityCountryCode'] ?? null,
+        confidence: c['confidence'] ?? null,
+      }))
+      .sort((a, b) => contributorSortKey(a).localeCompare(contributorSortKey(b)));
+  }
+
+  /**
+   * WP-8.2. У обложки нет отношения к `MediaAsset` — в модели это строка URL, — поэтому
+   * ассет ищется по адресу. Не нашли (внешний CDN, ручная правка URL) → в хеш идёт `null`,
+   * то есть остаётся прежнее поведение «только адрес», а не ошибка.
+   */
+  private async resolveCoverMedia(
+    coverImageUrl: string | null,
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<Record<string, unknown> | null> {
+    if (!coverImageUrl) return null;
+
+    const asset = await client.mediaAsset.findFirst({
+      where: { url: coverImageUrl },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        key: true,
+        contentType: true,
+        size: true,
+        hash: true,
+        isDeleted: true,
+      },
+    });
+
+    if (!asset) return null;
+
+    return {
+      id: asset.id,
+      key: asset.key,
+      contentType: asset.contentType ?? null,
+      size: asset.size ?? null,
+      hash: asset.hash ?? null,
+      isDeleted: asset.isDeleted ?? false,
+    };
+  }
+
+  /**
+   * WP-8.1. Правка персоны и связей профиля не проходит через версию, поэтому проверка
+   * разворачивается в обратную сторону: от участника ко всем версиям, где он учтён —
+   * напрямую (`BookVersionContributor`) или через профиль прав (`RightsProfileContributor`).
+   */
+  async checkStalenessForPerson(
+    personId: string,
+    trigger: Trigger,
+    userId?: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<RightsContentHashCheckDto[]> {
+    const client = tx ?? this.prisma;
+
+    const directLinks = await client.bookVersionContributor.findMany({
+      where: { personId },
+      select: { bookVersionId: true },
+    });
+
+    const profileLinks = await client.rightsProfileContributor.findMany({
+      where: { personId },
+      select: { rightsProfileId: true },
+    });
+
+    const versionIds = new Set(directLinks.map((link) => link.bookVersionId));
+
+    const profileIds = [...new Set(profileLinks.map((link) => link.rightsProfileId))];
+    if (profileIds.length > 0) {
+      const profileVersions = await client.bookVersion.findMany({
+        where: { rightsProfileId: { in: profileIds } },
+        select: { id: true },
+      });
+      for (const version of profileVersions) {
+        versionIds.add(version.id);
+      }
+    }
+
+    return this.checkStalenessForVersions([...versionIds], trigger, userId, tx);
+  }
+
+  /**
+   * Версии профиля прав: используется при привязке и отвязке участника профиля, где
+   * конкретная персона может быть неизвестна (связь допускает `personId = null`).
+   */
+  async checkStalenessForRightsProfile(
+    rightsProfileId: string,
+    trigger: Trigger,
+    userId?: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<RightsContentHashCheckDto[]> {
+    const client = tx ?? this.prisma;
+
+    const versions = await client.bookVersion.findMany({
+      where: { rightsProfileId },
+      select: { id: true },
+    });
+
+    return this.checkStalenessForVersions(
+      versions.map((version) => version.id),
+      trigger,
+      userId,
+      tx,
+    );
+  }
+
+  private async checkStalenessForVersions(
+    versionIds: string[],
+    trigger: Trigger,
+    userId?: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<RightsContentHashCheckDto[]> {
+    const results: RightsContentHashCheckDto[] = [];
+
+    for (const versionId of versionIds) {
+      results.push(await this.checkVersionStaleness(versionId, trigger, userId ?? null, true, tx));
+    }
+
+    return results;
   }
 
   private serializeSourceEdition(

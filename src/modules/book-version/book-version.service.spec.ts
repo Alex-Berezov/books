@@ -75,6 +75,16 @@ interface PrismaStub {
   rightsReview: {
     findMany: jest.Mock;
   };
+  bookVersionContributor: {
+    findFirst: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+    delete: jest.Mock;
+    count: jest.Mock;
+  };
+  person: {
+    findUnique: jest.Mock;
+  };
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
 
@@ -129,6 +139,16 @@ const createPrismaStub = (): PrismaStub => {
     bookTag: {
       createMany: jest.fn(),
       findMany: jest.fn(),
+    },
+    bookVersionContributor: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
+    },
+    person: {
+      findUnique: jest.fn(),
     },
     $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
   } as unknown as PrismaStub;
@@ -1317,6 +1337,56 @@ describe('BookVersionService', () => {
       expect(res.currentProfile?.['licenses'] as unknown[]).toHaveLength(1);
       expect(res.currentVersion.rightsLicenseCoverageStatus).toBe('COVERED');
       expect(res.currentVersion.rightsLicenseIds).toEqual(['lic-1']);
+    });
+  });
+
+  /**
+   * WP-8.1 (R1-01). Смена переводчика — правовое событие: год его смерти определяет,
+   * в public domain ли перевод. До WP-8 состав участников менялся, не задевая клиренс.
+   */
+  describe('version contributors trigger the content hash check', () => {
+    beforeEach(() => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        id: 'v1',
+      } as unknown as BookVersionWithSeo);
+      prisma.person.findUnique.mockResolvedValue({ id: 'person-1' });
+      prisma.bookVersionContributor.create.mockResolvedValue({ id: 'bvc-1' });
+      prisma.bookVersionContributor.update.mockResolvedValue({ id: 'bvc-1' });
+      prisma.bookVersionContributor.delete.mockResolvedValue({ id: 'bvc-1' });
+      prisma.bookVersionContributor.findFirst.mockResolvedValue({
+        id: 'bvc-1',
+        bookVersionId: 'v1',
+        role: 'TRANSLATOR',
+        isPrimary: false,
+      });
+    });
+
+    const expectStalenessChecked = () => {
+      const calls = (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mock.calls;
+      expect(calls).toContainEqual(['v1', 'VERSION_CONTRIBUTOR_CHANGED', null, true, prisma]);
+    };
+
+    it('checks the clearance when a contributor is added', async () => {
+      await service.addVersionContributor('v1', {
+        personId: 'person-1',
+        role: 'TRANSLATOR',
+      } as never);
+
+      expect(prisma.bookVersionContributor.create).toHaveBeenCalled();
+      expectStalenessChecked();
+    });
+
+    it('checks the clearance when a contributor is updated', async () => {
+      await service.updateVersionContributor('v1', 'bvc-1', { creditedName: 'Новый' } as never);
+
+      expectStalenessChecked();
+    });
+
+    it('checks the clearance when a contributor is removed', async () => {
+      await service.removeVersionContributor('v1', 'bvc-1');
+
+      expect(prisma.bookVersionContributor.delete).toHaveBeenCalled();
+      expectStalenessChecked();
     });
   });
 });

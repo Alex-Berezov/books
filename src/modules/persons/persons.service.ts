@@ -1,12 +1,26 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  RIGHTS_RELEVANT_PERSON_FIELDS,
+  RightsContentHashService,
+} from '../rights-intake/rights-content-hash.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { QueryPersonsDto } from './dto/query-persons.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
+import type { Prisma } from '@prisma/client';
 
 @Injectable()
 export class PersonsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rightsContentHashService: RightsContentHashService,
+  ) {}
+
+  private personModelOf(client: Prisma.TransactionClient | PrismaService) {
+    return (client as unknown as Record<string, unknown>)['person'] as {
+      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+  }
 
   private get personModel() {
     return (this.prisma as unknown as Record<string, unknown>)['person'] as {
@@ -128,37 +142,72 @@ export class PersonsService {
   }
 
   public async update(id: string, dto: UpdatePersonDto) {
-    await this.findOne(id);
+    const before = (await this.findOne(id)) as unknown as Record<string, unknown>;
 
-    return this.personModel.update({
-      where: { id },
-      data: {
-        ...(dto.type !== undefined ? { type: dto.type } : {}),
-        ...(dto.canonicalName !== undefined ? { canonicalName: dto.canonicalName } : {}),
-        ...(dto.sortName !== undefined ? { sortName: dto.sortName || null } : {}),
-        ...(dto.slug !== undefined ? { slug: dto.slug || null } : {}),
-        ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate || null } : {}),
-        ...(dto.deathDate !== undefined ? { deathDate: dto.deathDate || null } : {}),
-        ...(dto.birthYear !== undefined ? { birthYear: dto.birthYear || null } : {}),
-        ...(dto.deathYear !== undefined ? { deathYear: dto.deathYear || null } : {}),
-        ...(dto.nationalityCountryCode !== undefined
-          ? { nationalityCountryCode: dto.nationalityCountryCode || null }
-          : {}),
-        ...(dto.publicDomainFromYear !== undefined
-          ? { publicDomainFromYear: dto.publicDomainFromYear || null }
-          : {}),
-        ...(dto.wikidataId !== undefined ? { wikidataId: dto.wikidataId?.trim() || null } : {}),
-        ...(dto.viafId !== undefined ? { viafId: dto.viafId?.trim() || null } : {}),
-        ...(dto.isni !== undefined ? { isni: dto.isni?.trim() || null } : {}),
-        ...(dto.gutenbergAgentId !== undefined
-          ? { gutenbergAgentId: dto.gutenbergAgentId?.trim() || null }
-          : {}),
-        ...(dto.notesRu !== undefined ? { notesRu: dto.notesRu || null } : {}),
+    const data: Record<string, unknown> = {
+      ...(dto.type !== undefined ? { type: dto.type } : {}),
+      ...(dto.canonicalName !== undefined ? { canonicalName: dto.canonicalName } : {}),
+      ...(dto.sortName !== undefined ? { sortName: dto.sortName || null } : {}),
+      ...(dto.slug !== undefined ? { slug: dto.slug || null } : {}),
+      ...(dto.birthDate !== undefined ? { birthDate: dto.birthDate || null } : {}),
+      ...(dto.deathDate !== undefined ? { deathDate: dto.deathDate || null } : {}),
+      ...(dto.birthYear !== undefined ? { birthYear: dto.birthYear || null } : {}),
+      ...(dto.deathYear !== undefined ? { deathYear: dto.deathYear || null } : {}),
+      ...(dto.nationalityCountryCode !== undefined
+        ? { nationalityCountryCode: dto.nationalityCountryCode || null }
+        : {}),
+      ...(dto.publicDomainFromYear !== undefined
+        ? { publicDomainFromYear: dto.publicDomainFromYear || null }
+        : {}),
+      ...(dto.wikidataId !== undefined ? { wikidataId: dto.wikidataId?.trim() || null } : {}),
+      ...(dto.viafId !== undefined ? { viafId: dto.viafId?.trim() || null } : {}),
+      ...(dto.isni !== undefined ? { isni: dto.isni?.trim() || null } : {}),
+      ...(dto.gutenbergAgentId !== undefined
+        ? { gutenbergAgentId: dto.gutenbergAgentId?.trim() || null }
+        : {}),
+      ...(dto.notesRu !== undefined ? { notesRu: dto.notesRu || null } : {}),
+    };
+
+    /**
+     * WP-8.1 (R1-01): год смерти и год перехода в public domain определяют правовое основание
+     * перевода, а участники входят в content hash. Значит, правка персоны должна доходить до
+     * клиренса каждой версии, где участник учтён, — и в той же транзакции, что сама правка.
+     * Проверка сужена до правовых полей: правка заметки или имени в карточке клиренс не трогает.
+     */
+    const touchesRights = RIGHTS_RELEVANT_PERSON_FIELDS.some(
+      (field) => field in data && data[field] !== before[field],
+    );
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const updated = await this.personModelOf(tx).update({
+          where: { id },
+          data,
+          include: {
+            translations: true,
+          },
+        });
+
+        if (touchesRights) {
+          await this.rightsContentHashService.checkStalenessForPerson(
+            id,
+            'CONTRIBUTOR_PERSON_CHANGED',
+            null,
+            tx,
+          );
+        }
+
+        return updated;
       },
-      include: {
-        translations: true,
-      },
-    });
+      /**
+       * Пересчёт идёт по всем версиям участника, а хеш версии читает главы целиком, поэтому
+       * дефолтных 5 секунд Prisma на транзакцию не хватает уже на десятке версий. Предел
+       * всё равно есть: у автора с очень большим каталогом правка упрётся в таймаут и
+       * откатится целиком. Это безопасный отказ — клиренс остаётся прежним, а гейт
+       * пересчитывает живой хеш при каждой попытке публикации (ADR-010).
+       */
+      { timeout: 30_000, maxWait: 10_000 },
+    );
   }
 
   public async search(q: string) {

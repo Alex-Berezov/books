@@ -1016,8 +1016,8 @@ export class BookVersionService {
     });
   }
 
-  private get bvcModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['bookVersionContributor'] as {
+  private bvcModelOf(client: Prisma.TransactionClient | PrismaService) {
+    return (client as unknown as Record<string, unknown>)['bookVersionContributor'] as {
       findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
       findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
       create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -1026,6 +1026,10 @@ export class BookVersionService {
       delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
       count: (args: Record<string, unknown>) => Promise<number>;
     };
+  }
+
+  private get bvcModel() {
+    return this.bvcModelOf(this.prisma);
   }
 
   private get personModel() {
@@ -1054,22 +1058,36 @@ export class BookVersionService {
     const person = await this.personModel.findUnique({ where: { id: dto.personId } });
     if (!person) throw new NotFoundException(`Person with ID "${dto.personId}" not found`);
 
-    return this.bvcModel.create({
-      data: {
-        bookVersionId: versionId,
-        personId: dto.personId,
-        role: dto.role,
-        roleOtherRu: dto.roleOtherRu || null,
-        displayOrder: dto.displayOrder ?? 0,
-        isPrimary: dto.isPrimary ?? false,
-        creditedName: dto.creditedName || null,
-        creditedLanguage: dto.creditedLanguage || null,
-        contributionNoteRu: dto.contributionNoteRu || null,
-        confidence: dto.confidence || null,
-      },
-      include: {
-        person: true,
-      },
+    // WP-8.1: участник входит в content hash, поэтому смена состава участников проверяется
+    // на устаревание клиренса в той же транзакции, что и сама запись.
+    return this.prisma.$transaction(async (tx) => {
+      const created = await this.bvcModelOf(tx).create({
+        data: {
+          bookVersionId: versionId,
+          personId: dto.personId,
+          role: dto.role,
+          roleOtherRu: dto.roleOtherRu || null,
+          displayOrder: dto.displayOrder ?? 0,
+          isPrimary: dto.isPrimary ?? false,
+          creditedName: dto.creditedName || null,
+          creditedLanguage: dto.creditedLanguage || null,
+          contributionNoteRu: dto.contributionNoteRu || null,
+          confidence: dto.confidence || null,
+        },
+        include: {
+          person: true,
+        },
+      });
+
+      await this.rightsContentHashService.checkVersionStaleness(
+        versionId,
+        'VERSION_CONTRIBUTOR_CHANGED',
+        null,
+        true,
+        tx,
+      );
+
+      return created;
     });
   }
 
@@ -1087,25 +1105,37 @@ export class BookVersionService {
       );
     }
 
-    return this.bvcModel.update({
-      where: { id: contributorId },
-      data: {
-        ...(dto.role !== undefined ? { role: dto.role } : {}),
-        ...(dto.roleOtherRu !== undefined ? { roleOtherRu: dto.roleOtherRu || null } : {}),
-        ...(dto.displayOrder !== undefined ? { displayOrder: dto.displayOrder } : {}),
-        ...(dto.isPrimary !== undefined ? { isPrimary: dto.isPrimary } : {}),
-        ...(dto.creditedName !== undefined ? { creditedName: dto.creditedName || null } : {}),
-        ...(dto.creditedLanguage !== undefined
-          ? { creditedLanguage: dto.creditedLanguage || null }
-          : {}),
-        ...(dto.contributionNoteRu !== undefined
-          ? { contributionNoteRu: dto.contributionNoteRu || null }
-          : {}),
-        ...(dto.confidence !== undefined ? { confidence: dto.confidence || null } : {}),
-      },
-      include: {
-        person: true,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await this.bvcModelOf(tx).update({
+        where: { id: contributorId },
+        data: {
+          ...(dto.role !== undefined ? { role: dto.role } : {}),
+          ...(dto.roleOtherRu !== undefined ? { roleOtherRu: dto.roleOtherRu || null } : {}),
+          ...(dto.displayOrder !== undefined ? { displayOrder: dto.displayOrder } : {}),
+          ...(dto.isPrimary !== undefined ? { isPrimary: dto.isPrimary } : {}),
+          ...(dto.creditedName !== undefined ? { creditedName: dto.creditedName || null } : {}),
+          ...(dto.creditedLanguage !== undefined
+            ? { creditedLanguage: dto.creditedLanguage || null }
+            : {}),
+          ...(dto.contributionNoteRu !== undefined
+            ? { contributionNoteRu: dto.contributionNoteRu || null }
+            : {}),
+          ...(dto.confidence !== undefined ? { confidence: dto.confidence || null } : {}),
+        },
+        include: {
+          person: true,
+        },
+      });
+
+      await this.rightsContentHashService.checkVersionStaleness(
+        versionId,
+        'VERSION_CONTRIBUTOR_CHANGED',
+        null,
+        true,
+        tx,
+      );
+
+      return updated;
     });
   }
 
@@ -1119,8 +1149,18 @@ export class BookVersionService {
       );
     }
 
-    await this.bvcModel.delete({
-      where: { id: contributorId },
+    await this.prisma.$transaction(async (tx) => {
+      await this.bvcModelOf(tx).delete({
+        where: { id: contributorId },
+      });
+
+      await this.rightsContentHashService.checkVersionStaleness(
+        versionId,
+        'VERSION_CONTRIBUTOR_CHANGED',
+        null,
+        true,
+        tx,
+      );
     });
 
     let warning: string | undefined = undefined;

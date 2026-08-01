@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ContributorRole } from '../persons/person-interface';
 import { PersonsService } from '../persons/persons.service';
+import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { ContributorsService } from './contributors.service';
 
 describe('ContributorsService', () => {
@@ -55,6 +56,11 @@ describe('ContributorsService', () => {
       findUnique: jest.fn().mockResolvedValue({ id: 'author-1' }),
       update: jest.fn().mockResolvedValue({ id: 'author-1', personId: 'person-1' }),
     },
+    $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(mockPrismaService)),
+  };
+
+  const mockRightsContentHashService = {
+    checkStalenessForRightsProfile: jest.fn().mockResolvedValue([]),
   };
 
   beforeEach(async () => {
@@ -65,6 +71,7 @@ describe('ContributorsService', () => {
         ContributorsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: PersonsService, useValue: mockPersonsService },
+        { provide: RightsContentHashService, useValue: mockRightsContentHashService },
       ],
     }).compile();
 
@@ -195,5 +202,36 @@ describe('ContributorsService', () => {
 
     await expect(service.unlinkSourceEdition('se-1', 'rpc-1')).rejects.toThrow(NotFoundException);
     expect(mockPrismaService.rightsProfileContributor.delete).not.toHaveBeenCalled();
+  });
+
+  /**
+   * WP-8.1 (R1-01): участник профиля прав входит в content hash, поэтому привязка и отвязка
+   * обязаны проверить клиренс версий этого профиля — до WP-8 связь менялась молча.
+   */
+  describe('rights content hash', () => {
+    it('checks the clearance of the profile when a contributor is linked', async () => {
+      await service.linkSourceEdition('se-1', {
+        contributorId: 'person-1',
+        role: ContributorRole.TRANSLATOR,
+      });
+
+      expect(mockRightsContentHashService.checkStalenessForRightsProfile).toHaveBeenCalledWith(
+        'profile-1',
+        'PROFILE_CONTRIBUTOR_CHANGED',
+        null,
+        mockPrismaService,
+      );
+    });
+
+    it('checks the clearance of the profile when a contributor is unlinked', async () => {
+      await service.unlinkRightsComponent('rc-1', 'rpc-1');
+
+      expect(mockRightsContentHashService.checkStalenessForRightsProfile).toHaveBeenCalledWith(
+        'profile-1',
+        'PROFILE_CONTRIBUTOR_CHANGED',
+        null,
+        mockPrismaService,
+      );
+    });
   });
 });
