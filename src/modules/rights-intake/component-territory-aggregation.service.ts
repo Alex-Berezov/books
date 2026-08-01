@@ -79,17 +79,6 @@ const CONFIDENCE_RANK: Record<ComponentTerritoryConfidence, number> = {
   HIGH: 2,
 };
 
-const TEXT_COMPONENT_TYPES = new Set([
-  'ORIGINAL_TEXT',
-  'TRANSLATION',
-  'ADAPTATION',
-  'ABRIDGMENT',
-  'COMPILATION',
-  'COMPILATION_STRUCTURE',
-]);
-
-const AUDIO_COMPONENT_TYPES = new Set(['AUDIO', 'NARRATION', 'AUDIO_NARRATION', 'AUDIO_RECORDING']);
-
 @Injectable()
 export class ComponentTerritoryAggregationService {
   aggregateTerritoryDecisionsFromComponents(
@@ -235,12 +224,6 @@ export class ComponentTerritoryAggregationService {
       assessment: ComponentTerritoryAssessmentInput;
     }>,
   ): AggregatedTerritoryDecision {
-    const componentTypes = new Set(blockers.map(({ component }) => component.componentType));
-    const scopes = new Set(
-      blockers.map(({ component }) => this.getScopeForComponent(component.componentType)),
-    );
-    const geoBlockScope =
-      componentTypes.size > 1 || scopes.size > 1 ? GeoBlockScope.LANGUAGE_EDITION : [...scopes][0];
     const titles = blockers.map(({ component }) => `«${component.titleRu}»`).join(', ');
     const legalBasisRu = this.joinUnique(blockers.map(({ assessment }) => assessment.legalBasisRu));
 
@@ -250,7 +233,11 @@ export class ComponentTerritoryAggregationService {
       finalStatus: 'BLOCKED',
       accessPolicy: 'BLOCK',
       geoBlockRequired: true,
-      geoBlockScope,
+      // WP-3.2: the verdict for the country is `BLOCK`, so the block covers the whole edition.
+      // Narrowing the scope to the blocking component's type left the audio edition of a text
+      // forbidden in that country fully reachable, while the gate and the admin UI both reported
+      // the market as closed (R6-01). Which components caused it stays in `reasonRu`.
+      geoBlockScope: GeoBlockScope.LANGUAGE_EDITION,
       reasonRu: `Блокирующие компоненты: ${titles}.`,
       legalBasisRu,
       confidence: this.getMinimumConfidence(
@@ -324,12 +311,6 @@ export class ComponentTerritoryAggregationService {
     if (accessPolicy === 'BLOCK') return 2;
     if (accessPolicy === 'REVIEW_REQUIRED') return 1;
     return 0;
-  }
-
-  private getScopeForComponent(componentType: string): GeoBlockScope {
-    if (TEXT_COMPONENT_TYPES.has(componentType)) return GeoBlockScope.TEXT_READER;
-    if (AUDIO_COMPONENT_TYPES.has(componentType)) return GeoBlockScope.AUDIO;
-    return GeoBlockScope.LANGUAGE_EDITION;
   }
 
   private normalizeScope(scope: string | null | undefined): GeoBlockScope | null {

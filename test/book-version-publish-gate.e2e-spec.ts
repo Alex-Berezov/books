@@ -433,6 +433,139 @@ describe('BookVersion Publication Gate (e2e)', () => {
     });
   });
 
+  // WP-3: "the market is closed" and "the rule closes the market" must agree (R5-02, R6-01).
+  describe('scope of the block matches the verdict', () => {
+    /** Book + version whose clearance closes RU with the given scope, rules generated and verified. */
+    const arrangeClosedMarket = async (
+      prefix: string,
+      language: Language,
+      geoBlockScope: string,
+    ) => {
+      const bookSlug = `${prefix}-${Date.now()}`;
+      const rights = await createBookWithRights(prisma, bookSlug);
+      createdSlugs.push(bookSlug);
+
+      const createRes = await request(http())
+        .post(`/books/${rights.book.id}/versions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          language,
+          title: 'Scope Test',
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: BookType.text,
+          isFree: true,
+        })
+        .expect(201);
+      const scopeVersionId = createRes.body.id as string;
+
+      await prisma.bookVersion.update({
+        where: { id: scopeVersionId },
+        data: { rightsGeoBlockRequired: true },
+      });
+      await prisma.territoryDecision.create({
+        data: {
+          rightsProfileId: rights.profile.id,
+          countryCode: 'RU',
+          finalStatus: 'BLOCKED',
+          accessPolicy: 'BLOCK',
+          geoBlockRequired: true,
+          geoBlockScope,
+          reasonRu: 'Рынок закрыт целиком',
+          confidence: 'HIGH',
+        },
+      });
+      await rightsContentHashService.initializeVersionBaseline(
+        scopeVersionId,
+        'INITIAL_VERSION_SNAPSHOT',
+        null,
+      );
+
+      await request(http())
+        .post(`/admin/versions/${scopeVersionId}/geo-block-rules/generate`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(http())
+        .patch(`/admin/versions/${scopeVersionId}/rights-geo-block`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ configured: true, notesRu: 'Configured for testing' })
+        .expect(200);
+
+      return scopeVersionId;
+    };
+
+    const gateOf = async (id: string) =>
+      request(http())
+        .get(`/admin/versions/${id}/publication-gate`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+    const accessCheck = async (id: string, scope: string) =>
+      request(http())
+        .post(`/admin/versions/${id}/geo-block-check`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ countryCode: 'RU', scope })
+        .expect(201);
+
+    it('refuses to publish a closed market covered only by a text rule', async () => {
+      const partialVersionId = await arrangeClosedMarket(
+        'scope-partial',
+        Language.en,
+        'TEXT_READER',
+      );
+
+      const gate = await gateOf(partialVersionId);
+      const reason = (
+        gate.body.blockingReasons as Array<{ code: string; details?: Record<string, unknown> }>
+      ).find((item) => item.code === 'GEO_BLOCK_SCOPE_INSUFFICIENT');
+
+      expect(gate.body.canPublish).toBe(false);
+      expect(reason?.details).toEqual({
+        countryCodes: ['RU'],
+        scopesByCountry: { RU: ['TEXT_READER'] },
+        requiredScopes: ['ENTIRE_BOOK', 'LANGUAGE_EDITION'],
+      });
+
+      // The blocker is not bookkeeping: the audio edition of the forbidden text really is open.
+      expect((await accessCheck(partialVersionId, 'AUDIO')).body.allowed).toBe(true);
+
+      await request(http())
+        .patch(`/versions/${partialVersionId}/publish`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it('turns a SPECIFIC_ASSET decision into a rule that actually blocks', async () => {
+      const assetVersionId = await arrangeClosedMarket(
+        'scope-asset',
+        Language.es,
+        'SPECIFIC_ASSET',
+      );
+
+      const rules = await request(http())
+        .get(`/admin/versions/${assetVersionId}/geo-block-rules`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const activeScopes = (rules.body.rules as Array<{ isActive: boolean; scope: string }>)
+        .filter((rule) => rule.isActive)
+        .map((rule) => rule.scope);
+
+      expect(activeScopes).toEqual(['LANGUAGE_EDITION']);
+      expect((await accessCheck(assetVersionId, 'AUDIO')).body.allowed).toBe(false);
+      expect((await accessCheck(assetVersionId, 'TEXT_READER')).body.allowed).toBe(false);
+
+      const gate = await gateOf(assetVersionId);
+
+      expect(
+        (gate.body.blockingReasons as Array<{ code: string }>).some(
+          (item) => item.code === 'GEO_BLOCK_SCOPE_INSUFFICIENT',
+        ),
+      ).toBe(false);
+      expect(gate.body.canPublish).toBe(true);
+    });
+  });
+
   // unpublish works regardless of gate
   it('unpublish works regardless of rights gate', async () => {
     // Create a version with BLOCK gate

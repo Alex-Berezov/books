@@ -219,6 +219,53 @@ describe('GeoBlockRuleService', () => {
     );
   });
 
+  // WP-3.3: `SPECIFIC_ASSET` has nothing to match on — `GeoBlockRule` carries no asset and no
+  // call-site asks for that scope — so such a rule blocked nothing while the gate counted it as
+  // coverage (R5-02). Until an asset-level link exists the block widens to the edition.
+  it('never generates a SPECIFIC_ASSET rule and widens it to the edition', async () => {
+    prisma.territoryDecision.findMany.mockResolvedValue([
+      createDecision({ geoBlockScope: GeoBlockScope.SPECIFIC_ASSET }),
+    ]);
+
+    await service.generateRulesForVersion('version-1');
+
+    expect(prisma.geoBlockRule.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.geoBlockRule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          countryCode: 'GB',
+          scope: GeoBlockScope.LANGUAGE_EDITION,
+        }),
+      }),
+    );
+  });
+
+  it('blocks an audio request with the rule generated from a SPECIFIC_ASSET decision', async () => {
+    prisma.territoryDecision.findMany.mockResolvedValue([
+      createDecision({ geoBlockScope: GeoBlockScope.SPECIFIC_ASSET }),
+    ]);
+    await service.generateRulesForVersion('version-1');
+    const generatedScope = (
+      prisma.geoBlockRule.upsert.mock.calls[0][0] as { create: { scope: GeoBlockScope } }
+    ).create.scope;
+    prisma.geoBlockRule.findMany.mockImplementation(
+      ({ where }: { where: { OR?: Array<{ scope: GeoBlockScope }> } }) =>
+        Promise.resolve(
+          (where.OR ?? []).some((condition) => condition.scope === generatedScope)
+            ? [createRule({ scope: generatedScope })]
+            : [],
+        ),
+    );
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'GB',
+      scope: GeoBlockScope.AUDIO,
+    });
+
+    expect(result.allowed).toBe(false);
+  });
+
   it('does not generate a rule for an allowed country', async () => {
     prisma.territoryDecision.findMany.mockResolvedValue([
       createDecision({

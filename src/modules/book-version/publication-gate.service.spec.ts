@@ -1,6 +1,7 @@
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { ClaimGateEvaluationDto } from '../rights-claims/dto/rights-claim-response.dto';
@@ -674,7 +675,12 @@ describe('PublicationGateService', () => {
         countryListsSource: 'EFFECTIVE_PROFILE',
       });
       mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
-        { id: 'rule-1', countryCode: 'GB', verifiedAt: new Date() },
+        {
+          id: 'rule-1',
+          countryCode: 'GB',
+          scope: GeoBlockScope.LANGUAGE_EDITION,
+          verifiedAt: new Date(),
+        },
       ] as never);
 
       const result = await service.checkVersionCanPublish('v1');
@@ -746,7 +752,12 @@ describe('PublicationGateService', () => {
       rightsGeoBlockVerifiedAt: new Date(),
     };
     mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
-      { id: 'rule-1', countryCode: 'GB', verifiedAt: new Date() },
+      {
+        id: 'rule-1',
+        countryCode: 'GB',
+        scope: GeoBlockScope.LANGUAGE_EDITION,
+        verifiedAt: new Date(),
+      },
     ] as never);
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
     (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
@@ -767,7 +778,7 @@ describe('PublicationGateService', () => {
       rightsGeoBlockVerifiedAt: new Date(),
     };
     mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
-      { id: 'rule-1', countryCode: 'GB', verifiedAt: null },
+      { id: 'rule-1', countryCode: 'GB', scope: GeoBlockScope.LANGUAGE_EDITION, verifiedAt: null },
     ] as never);
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
     (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
@@ -790,7 +801,7 @@ describe('PublicationGateService', () => {
       rightsGeoBlockVerifiedAt: verifiedAt,
     };
     mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
-      { id: 'rule-1', countryCode: 'GB', verifiedAt },
+      { id: 'rule-1', countryCode: 'GB', scope: GeoBlockScope.LANGUAGE_EDITION, verifiedAt },
     ] as never);
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(version);
     (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
@@ -800,6 +811,109 @@ describe('PublicationGateService', () => {
     const result = await service.checkVersionCanPublish('v1');
 
     expect(result.canPublish).toBe(true);
+  });
+
+  // WP-3.1: "the country is closed" and "the rule closes the country" are two different statements.
+  // Counting rules by country accepted a TEXT_READER rule as coverage for a fully blocked market,
+  // so the audio edition of the same text stayed reachable from it (R5-02, R6-01).
+  describe('rule scope matches the verdict for the country', () => {
+    const arrangeBlockedCountry = (blockedCountryCodes: string[] = ['GB']) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockVerifiedAt: new Date(),
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      arrangeClearance({ blockedCountryCodes, countryListsSource: 'EFFECTIVE_PROFILE' });
+    };
+
+    const arrangeRules = (rules: Array<{ countryCode: string; scope: GeoBlockScope }>) => {
+      mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue(
+        rules.map((rule, index) => ({
+          id: `rule-${index + 1}`,
+          countryCode: rule.countryCode,
+          scope: rule.scope,
+          verifiedAt: new Date(),
+        })) as never,
+      );
+    };
+
+    it('blocks when a fully blocked country is covered only by a text rule', async () => {
+      arrangeBlockedCountry();
+      arrangeRules([{ countryCode: 'GB', scope: GeoBlockScope.TEXT_READER }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find(
+        (item) => item.code === 'GEO_BLOCK_SCOPE_INSUFFICIENT',
+      );
+
+      expect(result.canPublish).toBe(false);
+      expect(reason?.details).toEqual({
+        countryCodes: ['GB'],
+        scopesByCountry: { GB: ['TEXT_READER'] },
+        requiredScopes: [GeoBlockScope.ENTIRE_BOOK, GeoBlockScope.LANGUAGE_EDITION],
+      });
+    });
+
+    it('blocks when a fully blocked country is covered only by a downloads rule', async () => {
+      arrangeBlockedCountry();
+      arrangeRules([{ countryCode: 'GB', scope: GeoBlockScope.DOWNLOADS }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(
+        result.blockingReasons.some((item) => item.code === 'GEO_BLOCK_SCOPE_INSUFFICIENT'),
+      ).toBe(true);
+    });
+
+    it('accepts a LANGUAGE_EDITION rule as coverage of a fully blocked country', async () => {
+      arrangeBlockedCountry();
+      arrangeRules([{ countryCode: 'GB', scope: GeoBlockScope.LANGUAGE_EDITION }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(
+        result.blockingReasons.some((item) => item.code === 'GEO_BLOCK_SCOPE_INSUFFICIENT'),
+      ).toBe(false);
+      expect(result.canPublish).toBe(true);
+    });
+
+    it('accepts an ENTIRE_BOOK rule as coverage of a fully blocked country', async () => {
+      arrangeBlockedCountry();
+      arrangeRules([{ countryCode: 'GB', scope: GeoBlockScope.ENTIRE_BOOK }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+    });
+
+    it('leaves a partial-scope rule alone when the country is not blocked outright', async () => {
+      arrangeBlockedCountry([]);
+      arrangeRules([{ countryCode: 'DE', scope: GeoBlockScope.AUDIO }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(
+        result.blockingReasons.some((item) => item.code === 'GEO_BLOCK_SCOPE_INSUFFICIENT'),
+      ).toBe(false);
+    });
+
+    it('reports a country with no rule at all as missing, not as insufficient scope', async () => {
+      arrangeBlockedCountry(['GB', 'DE']);
+      arrangeRules([{ countryCode: 'GB', scope: GeoBlockScope.LANGUAGE_EDITION }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(
+        result.blockingReasons.find((item) => item.code === 'GEO_BLOCK_RULES_MISSING')?.details,
+      ).toEqual({ missingCountryCodes: ['DE'] });
+      expect(
+        result.blockingReasons.some((item) => item.code === 'GEO_BLOCK_SCOPE_INSUFFICIENT'),
+      ).toBe(false);
+    });
   });
 
   it('blocks publishing when hash computation fails', async () => {

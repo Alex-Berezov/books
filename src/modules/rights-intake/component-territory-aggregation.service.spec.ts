@@ -45,7 +45,9 @@ describe('ComponentTerritoryAggregationService', () => {
     ]);
   });
 
-  it('blocks text access when one text component is blocked', () => {
+  // WP-3.2: a country the aggregation marks BLOCKED is closed as a whole. Deriving the scope from
+  // the blocking component left the audio edition of a forbidden text reachable (R6-01).
+  it('blocks the whole edition when one text component is blocked', () => {
     const result = service.aggregateTerritoryDecisionsFromComponents({
       rightsProfileId: 'profile-1',
       components: [
@@ -69,7 +71,7 @@ describe('ComponentTerritoryAggregationService', () => {
         finalStatus: 'BLOCKED',
         accessPolicy: 'BLOCK',
         geoBlockRequired: true,
-        geoBlockScope: GeoBlockScope.TEXT_READER,
+        geoBlockScope: GeoBlockScope.LANGUAGE_EDITION,
         confidence: 'MEDIUM',
         legalBasisRu: 'Translation term is active.',
       }),
@@ -77,7 +79,7 @@ describe('ComponentTerritoryAggregationService', () => {
     expect(result[0].reasonRu).toContain('Оригинальный текст');
   });
 
-  it('uses AUDIO scope for a blocked audio component', () => {
+  it('blocks the whole edition when an audio component is blocked', () => {
     const result = service.aggregateTerritoryDecisionsFromComponents({
       rightsProfileId: 'profile-1',
       components: [
@@ -96,7 +98,7 @@ describe('ComponentTerritoryAggregationService', () => {
       ],
     });
 
-    expect(result[0].geoBlockScope).toBe(GeoBlockScope.AUDIO);
+    expect(result[0].geoBlockScope).toBe(GeoBlockScope.LANGUAGE_EDITION);
   });
 
   it('uses LANGUAGE_EDITION scope when different component types are blocked', () => {

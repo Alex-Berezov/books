@@ -1,41 +1,8 @@
 {
   "permissions": {
     "additionalDirectories": ["../books-front", "../books-app-docs"],
-    "allow": [
-      "Bash(yarn lint)",
-      "Bash(yarn lint:*)",
-      "Bash(yarn typecheck)",
-      "Bash(yarn test)",
-      "Bash(yarn test:*)",
-      "Bash(yarn build)",
-      "Bash(yarn format:check)",
-      "Bash(npx eslint:*)",
-      "Bash(npx tsc:*)",
-      "Bash(docker compose ps:*)",
-      "Bash(docker compose up:*)",
-      "Bash(docker compose start:*)",
-      "Bash(docker compose stop:*)",
-      "Bash(docker compose logs:*)",
-      "Bash(git status:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
-      "Bash(git branch:*)",
-      "Bash(git -C D:\\newDev\\books-front status:*)",
-      "Bash(git -C D:\\newDev\\books-front diff:*)",
-      "Bash(git -C D:\\newDev\\books-app-docs status:*)",
-      "Bash(git -C D:\\newDev\\books-app-docs diff:*)",
-      "Read(//d/newDev/**)"
-    ],
-    "ask": [
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
-      "Bash(git reset:*)",
-      "Bash(git checkout:*)",
-      "Bash(yarn add:*)",
-      "Bash(yarn remove:*)",
-      "Bash(npm install:*)"
-    ],
+    "allow": ["Bash", "Read", "Edit", "Write", "Glob", "Grep"],
+    "ask": ["Bash(git commit:*)", "Bash(git push:*)"],
     "deny": [
       "Bash(yarn prisma:migrate:*)",
       "Bash(yarn prisma:seed:*)",

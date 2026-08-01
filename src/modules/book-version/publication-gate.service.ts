@@ -6,6 +6,7 @@ import {
 } from './dto/publication-gate-result.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoBlockRuleDto, GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
@@ -30,6 +31,12 @@ interface VersionWithGeoBlock {
     approvedRightsReviewId: string | null;
   };
 }
+
+/** Scopes that close a market as a whole; every other scope closes only a part of the content. */
+const FULL_BLOCK_SCOPES: GeoBlockScope[] = [
+  GeoBlockScope.ENTIRE_BOOK,
+  GeoBlockScope.LANGUAGE_EDITION,
+];
 
 @Injectable()
 export class PublicationGateService {
@@ -404,6 +411,33 @@ export class PublicationGateService {
         (countryCode) => !activeCountryCodes.has(countryCode.toUpperCase()),
       );
 
+      // WP-3.1: counting rules per country accepted any scope as coverage, so a country the
+      // clearance closed outright could be covered by a `TEXT_READER` rule alone — the audio
+      // edition of the same forbidden text stayed reachable from it (R5-02, R6-01). A market
+      // closed as a whole needs a rule that closes it as a whole.
+      const insufficientScopesByCountry = this.collectInsufficientScopes(
+        blockedCountryCodes,
+        activeRules,
+      );
+      const insufficientCountryCodes = Object.keys(insufficientScopesByCountry).sort();
+
+      if (insufficientCountryCodes.length > 0) {
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'GEO_BLOCK_SCOPE_INSUFFICIENT',
+            severity: 'BLOCKER',
+            messageRu:
+              'Страна закрыта целиком, но правило geo-block закрывает только часть контента. ' +
+              'Требуется правило со скоупом ENTIRE_BOOK или LANGUAGE_EDITION.',
+            details: {
+              countryCodes: insufficientCountryCodes,
+              scopesByCountry: insufficientScopesByCountry,
+              requiredScopes: [...FULL_BLOCK_SCOPES],
+            },
+          }),
+        );
+      }
+
       if (activeRules.length === 0 || missingCountryCodes.length > 0) {
         blockingReasons.push(
           new PublicationGateReasonDto({
@@ -624,6 +658,31 @@ export class PublicationGateService {
       lawyerOpinionValidUntil: lawyerEvaluation.lawyerOpinionValidUntil,
       lawyerReviewIds: lawyerEvaluation.reviewIds,
     });
+  }
+
+  /**
+   * For every country blocked outright: the scopes of its rules, when none of them closes the
+   * whole edition. Countries without any rule are left to `GEO_BLOCK_RULES_MISSING` — "no rule"
+   * and "rule too narrow" are different problems and need different fixes from the editor.
+   */
+  private collectInsufficientScopes(
+    blockedCountryCodes: string[],
+    activeRules: GeoBlockRuleDto[],
+  ): Record<string, string[]> {
+    const scopesByCountry: Record<string, string[]> = {};
+
+    for (const countryCode of blockedCountryCodes) {
+      const normalizedCountryCode = countryCode.toUpperCase();
+      const countryRules = activeRules.filter(
+        (rule) => rule.countryCode.toUpperCase() === normalizedCountryCode,
+      );
+      if (countryRules.length === 0) continue;
+      if (countryRules.some((rule) => FULL_BLOCK_SCOPES.includes(rule.scope))) continue;
+
+      scopesByCountry[normalizedCountryCode] = [...new Set(countryRules.map((rule) => rule.scope))];
+    }
+
+    return scopesByCountry;
   }
 
   async assertVersionCanPublish(versionId: string): Promise<void> {

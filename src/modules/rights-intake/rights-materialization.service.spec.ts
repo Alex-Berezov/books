@@ -630,6 +630,8 @@ describe('RightsMaterializationService', () => {
           rightsExpireAt: new Date('2031-01-01T00:00:00.000Z'),
         }),
       });
+      // WP-3.2: one blocking component closes the country as a whole, so the scope is the edition
+      // and not the component's own medium — otherwise the audio of a forbidden text stays open.
       expect(
         (prisma['territoryDecision'] as Record<string, jest.Mock>).create,
       ).toHaveBeenCalledWith({
@@ -638,7 +640,7 @@ describe('RightsMaterializationService', () => {
           finalStatus: 'BLOCKED',
           accessPolicy: 'BLOCK',
           geoBlockRequired: true,
-          geoBlockScope: 'TEXT_READER',
+          geoBlockScope: 'LANGUAGE_EDITION',
         }),
       });
 
@@ -651,7 +653,7 @@ describe('RightsMaterializationService', () => {
 
       expect(materializedDecision).toBeDefined();
       expect(materializedDecision.geoBlockRequired).toBe(true);
-      expect(materializedDecision.geoBlockScope).toBe('TEXT_READER');
+      expect(materializedDecision.geoBlockScope).toBe('LANGUAGE_EDITION');
 
       // Test GeoBlockRule projection from decision
       const geoBlockRuleService = new GeoBlockRuleService(
@@ -693,7 +695,7 @@ describe('RightsMaterializationService', () => {
             finalStatus: 'BLOCKED',
             accessPolicy: 'BLOCK',
             geoBlockRequired: true,
-            geoBlockScope: 'TEXT_READER',
+            geoBlockScope: 'LANGUAGE_EDITION',
             reasonRu: 'Translation copyright active in GB',
             legalBasisRu: 'UK Copyright Law',
           },
@@ -711,7 +713,7 @@ describe('RightsMaterializationService', () => {
           bookVersionId: 'v1',
           rightsProfileId: 'profile-1',
           territoryDecisionId: 'td-gb',
-          scope: 'TEXT_READER',
+          scope: 'LANGUAGE_EDITION',
           countryCode: 'GB',
           accessPolicy: 'BLOCK',
           sourceFinalStatus: 'BLOCKED',
@@ -731,9 +733,9 @@ describe('RightsMaterializationService', () => {
 
       const rulesResult = await geoBlockRuleService.generateRulesForVersion('v1');
       expect(rulesResult.summary.blockedCountries).toContain('GB');
-      expect(rulesResult.summary.scopes).toContain('TEXT_READER');
+      expect(rulesResult.summary.scopes).toContain('LANGUAGE_EDITION');
       expect(rulesResult.rules[0].countryCode).toBe('GB');
-      expect(rulesResult.rules[0].scope).toBe('TEXT_READER');
+      expect(rulesResult.rules[0].scope).toBe('LANGUAGE_EDITION');
     });
 
     it('should inherit component confidence for a territory assessment', async () => {

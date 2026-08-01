@@ -456,7 +456,21 @@ export class GeoBlockRuleService {
     };
   }
 
+  /**
+   * WP-3.3: `SPECIFIC_ASSET` is not enforceable. `GeoBlockRule` carries no asset reference, the
+   * matching conditions never look at `mediaAssetId` and no call-site asks for that scope, so such
+   * a rule blocked nothing while the gate counted it as coverage of the country (R5-02). Until an
+   * asset-level link exists, the block widens to the edition: over-blocking a market the clearance
+   * already closed is the fail-closed side of the choice. The scope the report asked for stays on
+   * the `TerritoryDecision` the rule was generated from.
+   */
   private resolveScope(value: string | null): GeoBlockScope {
+    if (value === GeoBlockScope.SPECIFIC_ASSET) {
+      this.logger.warn(
+        'Territory decision asks for SPECIFIC_ASSET geo-block; generating a LANGUAGE_EDITION rule instead — asset-level rules cannot be enforced',
+      );
+      return GeoBlockScope.LANGUAGE_EDITION;
+    }
     if (value && Object.values(GeoBlockScope).includes(value as GeoBlockScope)) {
       return value as GeoBlockScope;
     }
