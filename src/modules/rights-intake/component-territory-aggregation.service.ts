@@ -153,6 +153,22 @@ export class ComponentTerritoryAggregationService {
 
     const problems: ProblematicComponent[] = [];
     for (const { component, assessment } of assessments) {
+      // WP-4.1: `LICENSE_REQUIRED` is a known verdict with a known remedy, not an open question,
+      // so it must not be folded into the review pile. Doing so turned every market that needed a
+      // license into `PENDING_REVIEW`, whose gate blocker no license can lift, and dropped the
+      // country out of the Phase 15 coverage check altogether (R6-02). Expired rights stay a
+      // problem even here: the assessment itself says the term has run out.
+      if (assessment.status === 'LICENSE_REQUIRED') {
+        if (assessment.rightsExpireAt && assessment.rightsExpireAt.getTime() <= now.getTime()) {
+          problems.push({
+            component,
+            assessment,
+            reason: 'Срок указанных прав или лицензии истёк.',
+          });
+        }
+        continue;
+      }
+
       if (assessment.accessPolicy === 'REVIEW_REQUIRED') {
         problems.push({
           component,
@@ -186,6 +202,21 @@ export class ComponentTerritoryAggregationService {
 
     if (problems.length > 0) {
       return this.createReviewDecision(input.rightsProfileId, countryCode, problems);
+    }
+
+    // WP-4.1: nothing is unresolved for this country, but at least one component may only be used
+    // under a license. The verdict says so, and the gate then asks the coverage check whether a
+    // valid license is in place — that is the central scenario of Phase 15.
+    const licenseRequired = assessments.filter(
+      ({ assessment }) => assessment.status === 'LICENSE_REQUIRED',
+    );
+    if (licenseRequired.length > 0) {
+      return this.createLicenseRequiredDecision(
+        input.rightsProfileId,
+        countryCode,
+        licenseRequired,
+        assessments,
+      );
     }
 
     // Phase 15: a country cleared only thanks to a license is reported as such, so the
@@ -242,6 +273,46 @@ export class ComponentTerritoryAggregationService {
       legalBasisRu,
       confidence: this.getMinimumConfidence(
         blockers.map(({ component, assessment }) => assessment.confidence ?? component.confidence),
+      ),
+      nextReviewAt: null,
+    };
+  }
+
+  private createLicenseRequiredDecision(
+    rightsProfileId: string,
+    countryCode: string,
+    licenseRequired: Array<{
+      component: ComponentTerritoryAggregationComponent;
+      assessment: ComponentTerritoryAssessmentInput;
+    }>,
+    assessments: Array<{
+      component: ComponentTerritoryAggregationComponent;
+      assessment: ComponentTerritoryAssessmentInput;
+    }>,
+  ): AggregatedTerritoryDecision {
+    const titles = licenseRequired.map(({ component }) => `«${component.titleRu}»`).join(', ');
+    // The access policy stays `REVIEW_REQUIRED`: the market is not open, but it is not closed for
+    // good either — a stricter profile-level decision still overrides it, and a valid license
+    // clears it. Whether readers are geo-blocked meanwhile is what the assessment says.
+    const geoBlockRequired = licenseRequired.some(
+      ({ assessment }) => assessment.geoBlockRequired === true,
+    );
+
+    return {
+      rightsProfileId,
+      countryCode,
+      finalStatus: 'LICENSE_REQUIRED',
+      accessPolicy: 'REVIEW_REQUIRED',
+      geoBlockRequired,
+      geoBlockScope: geoBlockRequired ? GeoBlockScope.LANGUAGE_EDITION : null,
+      reasonRu: `Требуется лицензия. Компоненты под лицензией: ${titles}.`,
+      legalBasisRu: this.joinUnique(
+        licenseRequired.map(({ assessment }) => assessment.legalBasisRu),
+      ),
+      confidence: this.getMinimumConfidence(
+        assessments.map(
+          ({ component, assessment }) => assessment.confidence ?? component.confidence,
+        ),
       ),
       nextReviewAt: null,
     };

@@ -566,6 +566,149 @@ describe('BookVersion Publication Gate (e2e)', () => {
     });
   });
 
+  // WP-4: the whole license path, from "this market needs a license" to a published version.
+  // Both ways the scenario used to be lost meet here: the country arrives as LICENSE_REQUIRED with
+  // access closed (R8-01), which is also what the component aggregation now produces (R6-02).
+  describe('a market that may only be published under a license', () => {
+    const gateOf = async (id: string) =>
+      request(http())
+        .get(`/admin/versions/${id}/publication-gate`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+    const blockerCodes = (gate: { body: { blockingReasons: Array<{ code: string }> } }) =>
+      gate.body.blockingReasons.map((reason) => reason.code);
+
+    it('blocks until a valid license covers the country, language and format', async () => {
+      const bookSlug = `license-path-${Date.now()}`;
+      const rights = await createBookWithRights(prisma, bookSlug);
+      createdSlugs.push(bookSlug);
+
+      const createRes = await request(http())
+        .post(`/books/${rights.book.id}/versions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          language: Language.fr,
+          title: 'Licensed Path',
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: BookType.text,
+          isFree: true,
+        })
+        .expect(201);
+      const licenseVersionId = createRes.body.id as string;
+
+      // "A license is needed, and until it is bought the market stays closed" — the pair that
+      // used to be swallowed by the blocked list, where coverage never looked.
+      await prisma.territoryDecision.create({
+        data: {
+          rightsProfileId: rights.profile.id,
+          countryCode: 'DE',
+          finalStatus: 'LICENSE_REQUIRED',
+          accessPolicy: 'BLOCK',
+          geoBlockRequired: false,
+          reasonRu: 'Права на немецкое издание у стороннего правообладателя.',
+          confidence: 'HIGH',
+        },
+      });
+      await rightsContentHashService.initializeVersionBaseline(
+        licenseVersionId,
+        'INITIAL_VERSION_SNAPSHOT',
+        null,
+      );
+
+      const before = await gateOf(licenseVersionId);
+
+      expect(before.body.licenseRequiredCountryCodes).toEqual(['DE']);
+      expect(before.body.licenseCoverageStatus).toBe('NOT_COVERED');
+      expect(blockerCodes(before)).toContain('LICENSE_MISSING_FOR_COUNTRY');
+      // The country is a license question, not a geo-block one: demanding geo-block for it is
+      // what made the license irrelevant.
+      expect(blockerCodes(before)).not.toContain('BLOCKED_COUNTRIES_REQUIRE_GEO_BLOCK');
+      expect(before.body.canPublish).toBe(false);
+
+      await request(http())
+        .patch(`/versions/${licenseVersionId}/publish`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+
+      // A license that does not reach the published language changes nothing.
+      const wrongLanguage = await request(http())
+        .post('/admin/rights/licenses')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          licenseKey: `license:wrong-lang-${Date.now()}`,
+          title: 'Лицензия на испанское издание',
+          licensor: 'Test Licensor',
+          status: 'ACTIVE',
+          territoryScope: 'COUNTRY_LIST',
+          countryCodes: ['DE'],
+          languageCodes: ['es'],
+          mediaFormats: ['TEXT_ONLINE'],
+          isPerpetual: true,
+        })
+        .expect(201);
+      await request(http())
+        .post(`/admin/rights/licenses/${wrongLanguage.body.id as string}/links`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ linkType: 'RIGHTS_PROFILE', rightsProfileId: rights.profile.id })
+        .expect(201);
+
+      const stillBlocked = await gateOf(licenseVersionId);
+      expect(blockerCodes(stillBlocked)).toContain('LICENSE_SCOPE_LANGUAGE_MISMATCH');
+      expect(stillBlocked.body.canPublish).toBe(false);
+
+      // The right license: country, language and media format all covered.
+      const license = await request(http())
+        .post('/admin/rights/licenses')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          licenseKey: `license:de-fr-${Date.now()}`,
+          title: 'Лицензия на французское издание в Германии',
+          licensor: 'Test Licensor',
+          status: 'ACTIVE',
+          territoryScope: 'COUNTRY_LIST',
+          countryCodes: ['DE'],
+          languageCodes: ['fr'],
+          mediaFormats: ['TEXT_ONLINE'],
+          isPerpetual: true,
+        })
+        .expect(201);
+      const licenseId = license.body.id as string;
+      await request(http())
+        .post(`/admin/rights/licenses/${licenseId}/links`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ linkType: 'RIGHTS_PROFILE', rightsProfileId: rights.profile.id })
+        .expect(201);
+
+      const covered = await gateOf(licenseVersionId);
+
+      expect(covered.body.licenseCoverageStatus).toBe('COVERED');
+      expect(covered.body.licenseCoveredCountryCodes).toEqual(['DE']);
+      expect(covered.body.licenseIds).toContain(licenseId);
+      expect(covered.body.canPublish).toBe(true);
+
+      await request(http())
+        .patch(`/versions/${licenseVersionId}/publish`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      // The license going away closes the market again — coverage is evaluated on read.
+      await request(http())
+        .post(`/admin/rights/licenses/${licenseId}/revoke`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ reasonRu: 'Договор расторгнут.' })
+        .expect(201);
+
+      const revoked = await gateOf(licenseVersionId);
+
+      expect(revoked.body.licenseCoverageStatus).toBe('NOT_COVERED');
+      expect(blockerCodes(revoked)).toContain('LICENSE_REVOKED');
+      expect(revoked.body.canPublish).toBe(false);
+    });
+  });
+
   // unpublish works regardless of gate
   it('unpublish works regardless of rights gate', async () => {
     // Create a version with BLOCK gate

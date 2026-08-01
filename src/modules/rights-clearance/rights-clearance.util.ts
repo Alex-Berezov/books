@@ -39,10 +39,15 @@ export const classifyTerritoryDecisions = (
     // Phase 15: a country cleared by license is an allowed market, not a pending one.
     if (accessPolicy === 'ALLOW' || finalStatus === 'ALLOWED_BY_LICENSE') {
       lists.allowedCountryCodes.push(countryCode);
+    } else if (finalStatus === 'LICENSE_REQUIRED') {
+      // WP-4.2 / R8-01: "a license is needed, and until it is bought the access is closed" is the
+      // pair Phase 15 exists for, and it arrives as `LICENSE_REQUIRED` + `BLOCK`. While the block
+      // was tested first, such a country went into the blocked list, where the coverage check
+      // never looks — the license could not open it, ever. The runtime projection is unaffected:
+      // geo-block rules are generated from the decision itself, not from these lists.
+      lists.licenseRequiredCountryCodes.push(countryCode);
     } else if (accessPolicy === 'BLOCK' || finalStatus === 'BLOCKED') {
       lists.blockedCountryCodes.push(countryCode);
-    } else if (finalStatus === 'LICENSE_REQUIRED') {
-      lists.licenseRequiredCountryCodes.push(countryCode);
     } else if (
       accessPolicy === 'REVIEW_REQUIRED' ||
       finalStatus === 'PENDING_REVIEW' ||

@@ -283,6 +283,115 @@ describe('Rights licenses e2e', () => {
       });
   });
 
+  // WP-4.1 / R6-02: a component that may only be used under a license used to be aggregated into
+  // PENDING_REVIEW, and the country then fell out of the coverage check entirely — the presence of
+  // Phase 13 data switched off the central scenario of Phase 15.
+  it('carries a license-required component through to the coverage check', async () => {
+    const intake = await prisma.rightsIntake.create({
+      data: {
+        candidateTitle: 'Component needs a license',
+        candidateAuthor: 'Test Author',
+        targetLanguages: ['pt'],
+        targetCountryCodes: ['BR'],
+        plannedContentTypes: ['TEXT'],
+        workflowStatus: 'READY_FOR_AGENT',
+      },
+    });
+
+    const reportJson = {
+      schemaVersion: '1.0',
+      intakeId: intake.id,
+      overallStatus: 'LICENSE_REQUIRED',
+      publicationGate: 'BLOCK',
+      confidence: 'HIGH',
+      summaryRu: 'Требуется лицензия на перевод',
+      conclusionRu: 'Публикация в Бразилии только по лицензии',
+      sourceAssessment: { provider: 'OTHER', status: 'LICENSE_REQUIRED' },
+      languageAssessments: [
+        {
+          languageCode: 'pt',
+          status: 'LICENSE_REQUIRED',
+          translationOrigin: 'THIRD_PARTY_LICENSED_TRANSLATION',
+          requiresGeoBlock: false,
+        },
+      ],
+      componentAssessments: [
+        {
+          componentType: 'TRANSLATION',
+          titleRu: 'Португальский перевод',
+          status: 'COPYRIGHTED',
+          requiredAction: 'OBTAIN_LICENSE',
+          confidence: 'HIGH',
+          territoryAssessments: [
+            {
+              countryCode: 'BR',
+              status: 'LICENSE_REQUIRED',
+              accessPolicy: 'REVIEW_REQUIRED',
+              geoBlockRequired: false,
+              reasonRu: 'Права на перевод принадлежат издательству.',
+              confidence: 'HIGH',
+            },
+          ],
+        },
+      ],
+      territoryDecisions: [
+        {
+          countryCode: 'BR',
+          finalStatus: 'LICENSE_REQUIRED',
+          accessPolicy: 'REVIEW_REQUIRED',
+          geoBlockRequired: false,
+          reasonRu: 'Нужна лицензия на португальское издание.',
+          confidence: 'HIGH',
+        },
+      ],
+      requiredActions: [],
+      evidence: [
+        {
+          evidenceType: 'PERMISSION_LETTER',
+          sourceLevel: 'PRIMARY',
+          title: 'Ответ издательства',
+          authority: 'Editora',
+          summaryRu: 'Права на перевод не истекли',
+        },
+      ],
+      nextReviewAt: '2028-01-01T00:00:00.000Z',
+    };
+
+    const imported = await request(http())
+      .post(`/admin/rights/intakes/${intake.id}/review-imports`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ reportJson })
+      .expect(201);
+
+    const materialized = await request(http())
+      .post(`/admin/rights/review-imports/${imported.body.id as string}/materialize`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(201);
+
+    const componentProfileId = materialized.body.id as string;
+    const decision = await prisma.territoryDecision.findFirst({
+      where: { rightsProfileId: componentProfileId, countryCode: 'BR' },
+      select: { finalStatus: true, accessPolicy: true },
+    });
+
+    expect(decision?.finalStatus).toBe('LICENSE_REQUIRED');
+    expect(decision?.accessPolicy).toBe('REVIEW_REQUIRED');
+
+    await request(http())
+      .get(`/admin/rights/profiles/${componentProfileId}/license-coverage`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.requiredCountryCodes).toContain('BR');
+        expect(body.status).toBe('NOT_COVERED');
+        expect(
+          body.blockers.some((b: { code: string }) => b.code === 'LICENSE_MISSING_FOR_COUNTRY'),
+        ).toBe(true);
+      });
+
+    await prisma.rightsIntake.delete({ where: { id: intake.id } }).catch(() => undefined);
+  });
+
   it('returns 403 for the user role on every license endpoint', async () => {
     const auth = { Authorization: `Bearer ${userAccess}` };
 

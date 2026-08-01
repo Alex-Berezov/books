@@ -306,6 +306,159 @@ describe('ComponentTerritoryAggregationService', () => {
       expect(result[0].accessPolicy).toBe('ALLOW');
     });
 
+    // WP-4.1: a component that needs a license is an actionable verdict, not an open question.
+    // Reporting the country as PENDING_REVIEW dropped it out of the coverage check of Phase 15,
+    // and its gate blocker is one no license can lift (R6-02).
+    const licenseRequiredComponent = (
+      overrides: Partial<ComponentTerritoryAggregationComponent> = {},
+    ) =>
+      createComponent({
+        rightsComponentId: 'component-license-required',
+        componentType: 'TRANSLATION',
+        titleRu: 'Немецкий перевод',
+        status: 'COPYRIGHTED',
+        requiredAction: 'OBTAIN_LICENSE',
+        territoryAssessments: [
+          {
+            countryCode: 'DE',
+            status: 'LICENSE_REQUIRED',
+            accessPolicy: 'REVIEW_REQUIRED',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+            legalBasisRu: 'Права на перевод у издательства.',
+          },
+        ],
+        ...overrides,
+      });
+
+    it('reports a country that needs a license as LICENSE_REQUIRED', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [licenseRequiredComponent()],
+        targetCountryCodes: ['DE'],
+      });
+
+      expect(result[0]).toEqual(
+        expect.objectContaining({
+          countryCode: 'DE',
+          finalStatus: 'LICENSE_REQUIRED',
+          accessPolicy: 'REVIEW_REQUIRED',
+          geoBlockRequired: false,
+          geoBlockScope: null,
+          legalBasisRu: 'Права на перевод у издательства.',
+          confidence: 'HIGH',
+        }),
+      );
+      expect(result[0].reasonRu).toContain('Немецкий перевод');
+    });
+
+    it('keeps the geo-block requirement of the license-required assessment', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          licenseRequiredComponent({
+            territoryAssessments: [
+              {
+                countryCode: 'DE',
+                status: 'LICENSE_REQUIRED',
+                accessPolicy: 'REVIEW_REQUIRED',
+                geoBlockRequired: true,
+                confidence: 'MEDIUM',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['DE'],
+      });
+
+      expect(result[0]).toEqual(
+        expect.objectContaining({
+          finalStatus: 'LICENSE_REQUIRED',
+          geoBlockRequired: true,
+          geoBlockScope: GeoBlockScope.LANGUAGE_EDITION,
+        }),
+      );
+    });
+
+    it('still reports PENDING_REVIEW when another component is unassessed', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [licenseRequiredComponent(), createComponent()],
+        targetCountryCodes: ['DE'],
+      });
+
+      expect(result[0].finalStatus).toBe('PENDING_REVIEW');
+      expect(result[0].reasonRu).toContain('Нет компонентной оценки');
+    });
+
+    it('still reports PENDING_REVIEW when the rights of the license-required component expired', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          licenseRequiredComponent({
+            territoryAssessments: [
+              {
+                countryCode: 'DE',
+                status: 'LICENSE_REQUIRED',
+                accessPolicy: 'REVIEW_REQUIRED',
+                geoBlockRequired: false,
+                rightsExpireAt: new Date('2026-01-01T00:00:00.000Z'),
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['DE'],
+        now: new Date('2026-08-01T00:00:00.000Z'),
+      });
+
+      expect(result[0].finalStatus).toBe('PENDING_REVIEW');
+    });
+
+    it('lets a blocking component win over a license-required one', () => {
+      const blocked = createComponent({
+        rightsComponentId: 'component-blocked',
+        componentType: 'ILLUSTRATION',
+        titleRu: 'Иллюстрации',
+        status: 'COPYRIGHTED',
+        territoryAssessments: [
+          {
+            countryCode: 'DE',
+            status: 'BLOCKED',
+            accessPolicy: 'BLOCK',
+            geoBlockRequired: true,
+          },
+        ],
+      });
+
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [licenseRequiredComponent(), blocked],
+        targetCountryCodes: ['DE'],
+      });
+
+      expect(result[0].finalStatus).toBe('BLOCKED');
+      expect(result[0].accessPolicy).toBe('BLOCK');
+    });
+
+    it('keeps the profile-level license requirement over an allowed component decision', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [createComponent()],
+        existingTerritoryDecisions: [
+          {
+            countryCode: 'US',
+            finalStatus: 'LICENSE_REQUIRED',
+            accessPolicy: 'REVIEW_REQUIRED',
+            geoBlockRequired: false,
+            reasonRu: 'Нужна лицензия на публикацию в США.',
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      expect(result[0].finalStatus).toBe('LICENSE_REQUIRED');
+    });
+
     it('lets a blocking component win over a licensed one', () => {
       const blocked = createComponent({
         rightsComponentId: 'component-blocked',
