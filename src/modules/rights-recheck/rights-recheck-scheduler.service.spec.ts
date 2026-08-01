@@ -365,6 +365,56 @@ describe('RightsRecheckSchedulerService', () => {
       );
     });
 
+    // WP-2.5 / R9-01: the version keeps pointing at the old review (R5-03), so closing the task on
+    // the mere existence of a newer approved review reported a re-check that never reached the
+    // published book — and shut the audit trail while it was at it.
+    it('keeps a version task open while the version is still on the old review', async () => {
+      stub.rightsRecheckTask.findMany.mockResolvedValue([task({ bookVersionId: 'v1' })]);
+      stub.rightsReview.findFirst.mockImplementation(
+        ({ where }: { where: Record<string, unknown> }) =>
+          where['status'] === 'HUMAN_APPROVED' && where['approvedAt']
+            ? Promise.resolve({ id: 'review-new', rightsProfileId: 'profile-2', approvedAt: NOW })
+            : Promise.resolve(null),
+      );
+      stub.bookVersion.findUnique.mockResolvedValue(
+        version({ approvedRightsReviewId: 'review-1' }),
+      );
+
+      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+
+      expect(stub.rightsRecheckTask.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            resolution: RightsRecheckResolution.SUPERSEDED_BY_NEW_REVIEW,
+          }),
+        }),
+      );
+    });
+
+    it('closes a version task once the version was moved onto the newer review', async () => {
+      stub.rightsRecheckTask.findMany.mockResolvedValue([task({ bookVersionId: 'v1' })]);
+      stub.rightsReview.findFirst.mockImplementation(
+        ({ where }: { where: Record<string, unknown> }) =>
+          where['status'] === 'HUMAN_APPROVED' && where['approvedAt']
+            ? Promise.resolve({ id: 'review-new', rightsProfileId: 'profile-2', approvedAt: NOW })
+            : Promise.resolve(null),
+      );
+      stub.bookVersion.findUnique.mockResolvedValue(
+        version({ approvedRightsReviewId: 'review-new', rightsProfileId: 'profile-2' }),
+      );
+
+      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+
+      expect(stub.rightsRecheckTask.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            resolution: RightsRecheckResolution.SUPERSEDED_BY_NEW_REVIEW,
+            completedReviewId: 'review-new',
+          }),
+        }),
+      );
+    });
+
     it('closes a content task with CONTENT_REVERTED once the version is clean again', async () => {
       stub.rightsRecheckTask.findMany.mockResolvedValue([
         task({ reason: RightsRecheckReason.CONTENT_CHANGED, bookVersionId: 'v1' }),

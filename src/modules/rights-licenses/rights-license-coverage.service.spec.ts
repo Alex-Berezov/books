@@ -1,4 +1,6 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
+import type { EffectiveClearance } from '../rights-clearance/rights-clearance-resolver.service';
 import { RightsLicenseCoverageService } from './rights-license-coverage.service';
 import {
   RightsLicenseMediaFormat,
@@ -56,18 +58,50 @@ const makeLicense = (overrides: Partial<RightsLicenseRecord> = {}): RightsLicens
   ...overrides,
 });
 
+const makeClearance = (overrides: Partial<EffectiveClearance> = {}): EffectiveClearance => ({
+  bookVersionId: 'v1',
+  bookId: 'b1',
+  rightsIntakeId: 'intake-1',
+  snapshotProfileId: 'profile-1',
+  snapshotReviewId: 'review-1',
+  effectiveProfileId: 'profile-1',
+  effectiveReviewId: 'review-1',
+  profileOutdated: false,
+  reviewOutdated: false,
+  countryListsSource: 'EFFECTIVE_PROFILE',
+  allowedCountryCodes: [],
+  blockedCountryCodes: [],
+  licenseRequiredCountryCodes: [],
+  pendingCountryCodes: [],
+  ...overrides,
+});
+
 describe('RightsLicenseCoverageService', () => {
   let service: RightsLicenseCoverageService;
+  let prisma: {
+    bookVersion: { findUnique: jest.Mock };
+    rightsComponent: { findMany: jest.Mock };
+    rightsLicense: { findMany: jest.Mock };
+    rightsLicenseLink: { findMany: jest.Mock };
+    territoryDecision: { findMany: jest.Mock };
+  };
+  let clearanceResolver: { resolveForVersion: jest.Mock };
 
   beforeEach(() => {
-    const prisma = {
+    prisma = {
       bookVersion: { findUnique: jest.fn() },
       rightsComponent: { findMany: jest.fn().mockResolvedValue([]) },
       rightsLicense: { findMany: jest.fn().mockResolvedValue([]) },
       rightsLicenseLink: { findMany: jest.fn().mockResolvedValue([]) },
       territoryDecision: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    service = new RightsLicenseCoverageService(prisma as unknown as PrismaService);
+    clearanceResolver = {
+      resolveForVersion: jest.fn().mockResolvedValue(makeClearance()),
+    };
+    service = new RightsLicenseCoverageService(
+      prisma as unknown as PrismaService,
+      clearanceResolver as unknown as RightsClearanceResolverService,
+    );
   });
 
   describe('effectiveStatus', () => {
@@ -309,6 +343,42 @@ describe('RightsLicenseCoverageService', () => {
       });
 
       expect(result.blockers[0].code).toBe('LICENSE_STATUS_NOT_ACTIVE');
+    });
+  });
+
+  // WP-2.4 / R8-03: the requirement was a write-once column on the version, so a market that a
+  // later review moved to LICENSE_REQUIRED never reached the coverage check.
+  describe('evaluateVersionCoverage', () => {
+    const arrangeVersion = () => {
+      prisma.bookVersion.findUnique.mockResolvedValue({
+        id: 'v1',
+        language: 'es',
+        type: 'text',
+        rightsProfileId: 'profile-2',
+      });
+    };
+
+    it('takes the required markets from the clearance in force', async () => {
+      arrangeVersion();
+      clearanceResolver.resolveForVersion.mockResolvedValue(
+        makeClearance({ effectiveProfileId: 'profile-2', licenseRequiredCountryCodes: ['ES'] }),
+      );
+
+      const result = await service.evaluateVersionCoverage('v1');
+
+      expect(clearanceResolver.resolveForVersion).toHaveBeenCalledWith('v1');
+      expect(result.requiredCountryCodes).toEqual(['ES']);
+      expect(result.status).toBe('NOT_COVERED');
+      expect(result.blockers.some((issue) => issue.countryCode === 'ES')).toBe(true);
+    });
+
+    it('stops requiring a license once the clearance no longer asks for one', async () => {
+      arrangeVersion();
+
+      const result = await service.evaluateVersionCoverage('v1');
+
+      expect(result.requiredCountryCodes).toEqual([]);
+      expect(result.status).toBe('NOT_REQUIRED');
     });
   });
 

@@ -288,6 +288,151 @@ describe('BookVersion Publication Gate (e2e)', () => {
     expect(gateAfter.body.canPublish).toBe(true);
   });
 
+  // WP-2: the clearance in force, not the snapshot the version was created with.
+  describe('clearance moves on after publication', () => {
+    /** Book + published version, ready to be left behind by a newer clearance. */
+    const arrangePublishedVersion = async (prefix: string, language: Language) => {
+      const bookSlug = `${prefix}-${Date.now()}`;
+      const rights = await createBookWithRights(prisma, bookSlug);
+      createdSlugs.push(bookSlug);
+
+      const createRes = await request(http())
+        .post(`/books/${rights.book.id}/versions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          language,
+          title: 'Clearance Drift',
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: BookType.text,
+          isFree: true,
+        })
+        .expect(201);
+
+      return { rights, bookSlug, versionId: createRes.body.id as string };
+    };
+
+    const gateOf = async (id: string) =>
+      request(http())
+        .get(`/admin/versions/${id}/publication-gate`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+    it('blocks a version left on the review the intake no longer points at', async () => {
+      const {
+        rights,
+        bookSlug,
+        versionId: driftVersionId,
+      } = await arrangePublishedVersion('review-drift', Language.en);
+
+      expect((await gateOf(driftVersionId)).body.canPublish).toBe(true);
+
+      // A re-check of the same profile: new review approved, intake repointed. Nothing writes to
+      // Book or BookVersion — that is exactly the gap WP-2 closes.
+      const newerImport = await prisma.rightsReviewImport.create({
+        data: {
+          id: `test-import2-${bookSlug}`,
+          rightsIntakeId: rights.intake.id,
+          importStatus: 'VALIDATED',
+          isCurrent: true,
+          reportJson: { source: 'test-helper-recheck' },
+        },
+      });
+      const newerReview = await prisma.rightsReview.create({
+        data: {
+          id: `test-review2-${bookSlug}`,
+          rightsProfileId: rights.profile.id,
+          rightsReviewImportId: newerImport.id,
+          status: 'HUMAN_APPROVED',
+          reviewerType: 'HUMAN',
+          overallStatus: 'PUBLISHABLE',
+          publicationGate: 'ALLOW',
+          confidence: 'HIGH',
+          summaryRu: 'Повторная проверка',
+          conclusionRu: 'Утверждено',
+          approvedAt: new Date(),
+        },
+      });
+      await prisma.rightsIntake.update({
+        where: { id: rights.intake.id },
+        data: { approvedReviewId: newerReview.id },
+      });
+
+      const gate = await gateOf(driftVersionId);
+      const blockers = gate.body.blockingReasons as Array<{ code: string; details?: unknown }>;
+      const reason = blockers.find((r) => r.code === 'RIGHTS_REVIEW_SNAPSHOT_OUTDATED');
+
+      expect(gate.body.canPublish).toBe(false);
+      expect(reason).toBeDefined();
+      expect(reason?.details).toEqual({
+        versionReviewId: rights.review.id,
+        effectiveReviewId: newerReview.id,
+      });
+
+      await request(http())
+        .patch(`/versions/${driftVersionId}/publish`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it('requires geo-block for a market only the new clearance closed', async () => {
+      const {
+        rights,
+        bookSlug,
+        versionId: driftVersionId,
+      } = await arrangePublishedVersion('market-drift', Language.es);
+
+      expect((await gateOf(driftVersionId)).body.canPublish).toBe(true);
+
+      // A new report materialises a new current profile that closes RU.
+      await prisma.rightsProfile.update({
+        where: { id: rights.profile.id },
+        data: { isCurrent: false, status: 'SUPERSEDED', supersededAt: new Date() },
+      });
+      const newerProfile = await prisma.rightsProfile.create({
+        data: {
+          id: `test-profile2-${bookSlug}`,
+          rightsIntakeId: rights.intake.id,
+          status: 'APPROVED',
+          isCurrent: true,
+          overallStatus: 'PUBLISHABLE',
+          publicationGate: 'ALLOW',
+          confidence: 'HIGH',
+          summaryRu: 'Новый профиль',
+          conclusionRu: 'Рынок RU закрыт',
+        },
+      });
+      await prisma.territoryDecision.create({
+        data: {
+          rightsProfileId: newerProfile.id,
+          countryCode: 'RU',
+          finalStatus: 'BLOCKED',
+          accessPolicy: 'BLOCK',
+          geoBlockRequired: true,
+          geoBlockScope: 'LANGUAGE_EDITION',
+          reasonRu: 'Рынок закрыт новой проверкой',
+          confidence: 'HIGH',
+        },
+      });
+
+      const gate = await gateOf(driftVersionId);
+      const storedSnapshot = await prisma.bookVersion.findUnique({
+        where: { id: driftVersionId },
+        select: { rightsBlockedCountryCodes: true, rightsProfileId: true },
+      });
+
+      expect(
+        gate.body.blockingReasons.some(
+          (r: any) => r.code === 'BLOCKED_COUNTRIES_REQUIRE_GEO_BLOCK',
+        ),
+      ).toBe(true);
+      // The audit snapshot is untouched: the requirement was resolved, not rewritten.
+      expect(storedSnapshot?.rightsBlockedCountryCodes ?? []).toEqual([]);
+      expect(storedSnapshot?.rightsProfileId).toBe(rights.profile.id);
+    });
+  });
+
   // unpublish works regardless of gate
   it('unpublish works regardless of rights gate', async () => {
     // Create a version with BLOCK gate

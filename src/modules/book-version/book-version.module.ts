@@ -8,6 +8,7 @@ import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { GeoBlockModule } from '../geo-block/geo-block.module';
 import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module';
 import { RightsClaimsModule } from '../rights-claims/rights-claims.module';
+import { RightsClearanceModule } from '../rights-clearance/rights-clearance.module';
 import { RightsRecheckModule } from '../rights-recheck/rights-recheck.module';
 import { RightsLawyerModule } from '../rights-lawyer/rights-lawyer.module';
 
@@ -17,6 +18,7 @@ import { RightsLawyerModule } from '../rights-lawyer/rights-lawyer.module';
     GeoBlockModule,
     RightsLicensesModule,
     RightsClaimsModule,
+    RightsClearanceModule,
     RightsRecheckModule,
     RightsLawyerModule,
   ],

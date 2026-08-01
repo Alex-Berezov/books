@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { classifyTerritoryDecisions } from '../rights-clearance/rights-clearance.util';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
 import { RightsContentHashService } from './rights-content-hash.service';
@@ -161,32 +162,20 @@ export class RightsBookCreationService {
       where: { rightsProfileId: profileId },
     });
 
-    // 16. Compute rights snapshot
-    const allowedCountries: string[] = [];
-    const blockedCountries: string[] = [];
-    const licenseRequiredCountries: string[] = [];
-    const pendingCountries: string[] = [];
-
-    for (const td of territoryDecisions) {
-      const countryCode = td['countryCode'] as string;
-      const accessPolicy = td['accessPolicy'] as string;
-      const finalStatus = td['finalStatus'] as string;
-
-      // Phase 15: a country cleared by license is an allowed market, not a pending one.
-      if (accessPolicy === 'ALLOW' || finalStatus === 'ALLOWED_BY_LICENSE') {
-        allowedCountries.push(countryCode);
-      } else if (accessPolicy === 'BLOCK' || finalStatus === 'BLOCKED') {
-        blockedCountries.push(countryCode);
-      } else if (finalStatus === 'LICENSE_REQUIRED') {
-        licenseRequiredCountries.push(countryCode);
-      } else if (
-        accessPolicy === 'REVIEW_REQUIRED' ||
-        finalStatus === 'PENDING_REVIEW' ||
-        finalStatus === 'NOT_CHECKED'
-      ) {
-        pendingCountries.push(countryCode);
-      }
-    }
+    // 16. Compute rights snapshot. Same classifier the read-side resolver uses, so the audit
+    // snapshot and the clearance in force can only differ because the clearance changed.
+    const {
+      allowedCountryCodes: allowedCountries,
+      blockedCountryCodes: blockedCountries,
+      licenseRequiredCountryCodes: licenseRequiredCountries,
+      pendingCountryCodes: pendingCountries,
+    } = classifyTerritoryDecisions(
+      territoryDecisions.map((td) => ({
+        countryCode: td['countryCode'] as string,
+        accessPolicy: td['accessPolicy'] as string,
+        finalStatus: td['finalStatus'] as string,
+      })),
+    );
 
     // 17. Get required actions snapshot
     const actions = await this.ra.findMany({

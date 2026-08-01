@@ -4,6 +4,8 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { ClaimGateEvaluationDto } from '../rights-claims/dto/rights-claim-response.dto';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
+import type { EffectiveClearance } from '../rights-clearance/rights-clearance-resolver.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 import { RecheckGateEvaluationDto } from '../rights-recheck/dto/version-recheck-response.dto';
@@ -73,6 +75,46 @@ const noLawyerReview = (
   ...overrides,
 });
 
+/** One row of `BookVersion` as the gate spec mocks it. */
+type MockVersion = Record<string, unknown> & {
+  book: {
+    id: string;
+    currentRightsProfileId: string | null;
+    approvedRightsReviewId: string | null;
+  };
+};
+
+const asCodes = (value: unknown): string[] => (Array.isArray(value) ? (value as string[]) : []);
+
+/**
+ * What the real resolver returns for a version whose clearance never moved: the effective ids come
+ * from the book columns and the market lists from the version snapshot. Tests that need a version
+ * left behind by a newer clearance override the fields they care about.
+ */
+const snapshotClearance = (version: MockVersion): EffectiveClearance => {
+  const snapshotProfileId = (version.rightsProfileId as string | null) ?? null;
+  const snapshotReviewId = (version.approvedRightsReviewId as string | null) ?? null;
+  const effectiveProfileId = version.book.currentRightsProfileId ?? snapshotProfileId;
+  const effectiveReviewId = version.book.approvedRightsReviewId ?? snapshotReviewId;
+
+  return {
+    bookVersionId: version.id as string,
+    bookId: version.bookId as string,
+    rightsIntakeId: 'intake-1',
+    snapshotProfileId,
+    snapshotReviewId,
+    effectiveProfileId,
+    effectiveReviewId,
+    profileOutdated: snapshotProfileId !== null && effectiveProfileId !== snapshotProfileId,
+    reviewOutdated: snapshotReviewId !== null && effectiveReviewId !== snapshotReviewId,
+    countryListsSource: 'VERSION_SNAPSHOT',
+    allowedCountryCodes: asCodes(version.rightsAllowedCountryCodes),
+    blockedCountryCodes: asCodes(version.rightsBlockedCountryCodes),
+    licenseRequiredCountryCodes: asCodes(version.rightsLicenseRequiredCountryCodes),
+    pendingCountryCodes: asCodes(version.rightsPendingCountryCodes),
+  };
+};
+
 describe('PublicationGateService', () => {
   let service: PublicationGateService;
   let prisma: jest.Mocked<PrismaService>;
@@ -82,6 +124,17 @@ describe('PublicationGateService', () => {
   let mockRightsClaimsService: { evaluateVersionClaims: jest.Mock };
   let mockRightsRecheckService: { evaluateVersionRecheck: jest.Mock };
   let mockRightsLawyerReviewService: { evaluateVersionLawyerReview: jest.Mock };
+  let mockClearanceResolver: { resolveForVersion: jest.Mock };
+
+  /** Makes the resolver answer with a clearance built on top of the currently mocked version. */
+  const arrangeClearance = (overrides: Partial<EffectiveClearance> = {}) => {
+    mockClearanceResolver.resolveForVersion.mockImplementation(async () => {
+      const version = (await (prisma.bookVersion.findUnique as jest.Mock)(
+        {},
+      )) as MockVersion | null;
+      return { ...snapshotClearance(version ?? (baseVersion as MockVersion)), ...overrides };
+    });
+  };
 
   const baseVersion = {
     id: 'v1',
@@ -162,6 +215,9 @@ describe('PublicationGateService', () => {
       evaluateVersionLawyerReview: jest.fn().mockResolvedValue(noLawyerReview()),
     };
 
+    mockClearanceResolver = { resolveForVersion: jest.fn() };
+    arrangeClearance();
+
     service = new PublicationGateService(
       prisma,
       mockRightsContentHashService,
@@ -170,6 +226,7 @@ describe('PublicationGateService', () => {
       mockRightsClaimsService as unknown as RightsClaimsService,
       mockRightsRecheckService as unknown as RightsRecheckService,
       mockRightsLawyerReviewService as unknown as RightsLawyerReviewService,
+      mockClearanceResolver as unknown as RightsClearanceResolverService,
     );
   });
 
@@ -529,6 +586,122 @@ describe('PublicationGateService', () => {
     expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_REVIEW_SNAPSHOT_OUTDATED')).toBe(
       true,
     );
+  });
+
+  // WP-2.2: approving a new review updates the intake, not the book — the two snapshot codes have
+  // to be driven by the resolved clearance, otherwise they can never fire (R5-03, R10-02).
+  describe('6.16 snapshot mismatch against the clearance in force', () => {
+    const arrangeUnchangedBookColumns = () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    it('blocks when a newer review was approved for the intake', async () => {
+      arrangeUnchangedBookColumns();
+      arrangeClearance({ effectiveReviewId: 'review-2', reviewOutdated: true });
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find(
+        (item) => item.code === 'RIGHTS_REVIEW_SNAPSHOT_OUTDATED',
+      );
+
+      expect(result.canPublish).toBe(false);
+      expect(reason?.details).toEqual({
+        versionReviewId: 'review-1',
+        effectiveReviewId: 'review-2',
+      });
+    });
+
+    it('blocks when a newer profile was materialised for the intake', async () => {
+      arrangeUnchangedBookColumns();
+      arrangeClearance({ effectiveProfileId: 'profile-2', profileOutdated: true });
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find(
+        (item) => item.code === 'RIGHTS_PROFILE_SNAPSHOT_OUTDATED',
+      );
+
+      expect(result.canPublish).toBe(false);
+      expect(reason?.details).toEqual({
+        versionProfileId: 'profile-1',
+        effectiveProfileId: 'profile-2',
+      });
+    });
+
+    it('does not block while the version still sits on the clearance in force', async () => {
+      arrangeUnchangedBookColumns();
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code.endsWith('_SNAPSHOT_OUTDATED'))).toBe(false);
+    });
+  });
+
+  // WP-2.4: the four country lists on BookVersion are write-once too (R8-01, R8-03).
+  describe('market lists come from the clearance in force', () => {
+    const arrangeVersion = (overrides: Record<string, unknown> = {}) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        ...overrides,
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    it('requires geo-block for a country the new review blocked', async () => {
+      arrangeVersion();
+      arrangeClearance({ blockedCountryCodes: ['RU'], countryListsSource: 'EFFECTIVE_PROFILE' });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(
+        result.blockingReasons.some((r) => r.code === 'BLOCKED_COUNTRIES_REQUIRE_GEO_BLOCK'),
+      ).toBe(true);
+    });
+
+    it('requires a runtime rule for a country the new review blocked', async () => {
+      arrangeVersion({
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockVerifiedAt: new Date(),
+      });
+      arrangeClearance({
+        blockedCountryCodes: ['GB', 'DE'],
+        countryListsSource: 'EFFECTIVE_PROFILE',
+      });
+      mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
+        { id: 'rule-1', countryCode: 'GB', verifiedAt: new Date() },
+      ] as never);
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find((item) => item.code === 'GEO_BLOCK_RULES_MISSING');
+
+      expect(reason?.details).toEqual({ missingCountryCodes: ['DE'] });
+    });
+
+    it('blocks on a territory the new review left pending', async () => {
+      arrangeVersion();
+      arrangeClearance({ pendingCountryCodes: ['FR'], countryListsSource: 'EFFECTIVE_PROFILE' });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'PENDING_TERRITORIES')).toBe(true);
+    });
+
+    it('stops requiring geo-block once the new review reopened the market', async () => {
+      arrangeVersion({ rightsBlockedCountryCodes: ['RU'] });
+      arrangeClearance({ blockedCountryCodes: [], countryListsSource: 'EFFECTIVE_PROFILE' });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(
+        result.blockingReasons.some((r) => r.code === 'BLOCKED_COUNTRIES_REQUIRE_GEO_BLOCK'),
+      ).toBe(false);
+    });
   });
 
   // 6.17 Geo-block required but not configured

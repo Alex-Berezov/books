@@ -1,6 +1,7 @@
 import { RightsProfileService } from './rights-profile.service';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
 import { NotFoundException } from '@nestjs/common';
@@ -59,7 +60,10 @@ describe('RightsProfileService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    const coverageService = new RightsLicenseCoverageService(prisma as unknown as PrismaService);
+    const coverageService = new RightsLicenseCoverageService(
+      prisma as unknown as PrismaService,
+      new RightsClearanceResolverService(prisma as unknown as PrismaService),
+    );
     service = new RightsProfileService(
       prisma as unknown as PrismaService,
       new TerritoryRegionAggregationService(),

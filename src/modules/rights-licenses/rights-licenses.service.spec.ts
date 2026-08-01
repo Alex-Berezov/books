@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateRightsLicenseDto } from './dto/create-rights-license.dto';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import { RightsLicenseCoverageService } from './rights-license-coverage.service';
 import { RightsLicensesService } from './rights-licenses.service';
 import {
@@ -109,7 +110,10 @@ describe('RightsLicensesService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    const coverage = new RightsLicenseCoverageService(prisma as unknown as PrismaService);
+    const coverage = new RightsLicenseCoverageService(
+      prisma as unknown as PrismaService,
+      new RightsClearanceResolverService(prisma as unknown as PrismaService),
+    );
     service = new RightsLicensesService(prisma as unknown as PrismaService, coverage);
   });
 

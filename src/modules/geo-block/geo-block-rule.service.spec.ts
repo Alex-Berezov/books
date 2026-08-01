@@ -7,6 +7,8 @@ import {
 } from '../rights-claims/rights-claim-enforcement.service';
 import { CLAIM_ACCESS_BLOCK_MESSAGE_RU } from '../rights-claims/rights-claim.constants';
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
+import type { EffectiveClearance } from '../rights-clearance/rights-clearance-resolver.service';
 import { GeoBlockScope } from './dto/geo-block.dto';
 import { GeoBlockRuleService } from './geo-block-rule.service';
 
@@ -145,10 +147,34 @@ const createConfigStub = (values: Record<string, string> = {}): { get: jest.Mock
   get: jest.fn((key: string) => values[key]),
 });
 
+/** Default: the version still sits on the clearance it was created under. */
+const createClearanceStub = (
+  overrides: Partial<EffectiveClearance> = {},
+): { resolveForVersion: jest.Mock } => ({
+  resolveForVersion: jest.fn().mockResolvedValue({
+    bookVersionId: 'version-1',
+    bookId: 'book-1',
+    rightsIntakeId: 'intake-1',
+    snapshotProfileId: 'profile-1',
+    snapshotReviewId: 'review-1',
+    effectiveProfileId: 'profile-1',
+    effectiveReviewId: 'review-1',
+    profileOutdated: false,
+    reviewOutdated: false,
+    countryListsSource: 'EFFECTIVE_PROFILE',
+    allowedCountryCodes: [],
+    blockedCountryCodes: [],
+    licenseRequiredCountryCodes: [],
+    pendingCountryCodes: [],
+    ...overrides,
+  } satisfies EffectiveClearance),
+});
+
 describe('GeoBlockRuleService', () => {
   let prisma: PrismaStub;
   let claimEnforcement: { checkClaimAccess: jest.Mock };
   let config: { get: jest.Mock };
+  let clearanceResolver: { resolveForVersion: jest.Mock };
   let service: GeoBlockRuleService;
 
   const createService = (configValues: Record<string, string> = {}): GeoBlockRuleService => {
@@ -157,12 +183,14 @@ describe('GeoBlockRuleService', () => {
       prisma as unknown as PrismaService,
       claimEnforcement as unknown as RightsClaimEnforcementService,
       config as unknown as ConfigService,
+      clearanceResolver as unknown as RightsClearanceResolverService,
     );
   };
 
   beforeEach(() => {
     prisma = createPrismaStub();
     claimEnforcement = createClaimEnforcementStub();
+    clearanceResolver = createClearanceStub();
     service = createService();
   });
 
@@ -203,6 +231,40 @@ describe('GeoBlockRuleService', () => {
     await service.generateRulesForVersion('version-1');
 
     expect(prisma.geoBlockRule.upsert).not.toHaveBeenCalled();
+  });
+
+  // WP-2.3: the version keeps pointing at the profile it was created under, so reading
+  // `rightsProfileId` regenerated the rules from a superseded clearance (R5-03).
+  it('generates rules from the clearance in force, not from the version snapshot', async () => {
+    clearanceResolver.resolveForVersion = jest.fn().mockResolvedValue({
+      ...(await createClearanceStub().resolveForVersion()),
+      effectiveProfileId: 'profile-2',
+      profileOutdated: true,
+    });
+    prisma.territoryDecision.findMany.mockResolvedValue([createDecision({ countryCode: 'DE' })]);
+
+    await service.generateRulesForVersion('version-1');
+
+    expect(prisma.territoryDecision.findMany).toHaveBeenCalledWith({
+      where: { rightsProfileId: 'profile-2' },
+    });
+    expect(prisma.geoBlockRule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ countryCode: 'DE', rightsProfileId: 'profile-2' }),
+      }),
+    );
+  });
+
+  it('refuses to generate rules when no clearance can be resolved', async () => {
+    clearanceResolver.resolveForVersion = jest.fn().mockResolvedValue({
+      ...(await createClearanceStub().resolveForVersion()),
+      effectiveProfileId: null,
+      snapshotProfileId: null,
+    });
+
+    await expect(service.generateRulesForVersion('version-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('deactivates stale rules before upserting the current projection', async () => {

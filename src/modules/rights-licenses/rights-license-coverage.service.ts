@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import {
   RightsLicenseDelegate,
   RightsLicenseLinkDelegate,
@@ -88,12 +89,14 @@ interface VersionCoverageContext {
   language: string;
   type: string;
   rightsProfileId: string | null;
-  rightsLicenseRequiredCountryCodes: unknown;
 }
 
 @Injectable()
 export class RightsLicenseCoverageService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly clearanceResolver: RightsClearanceResolverService,
+  ) {}
 
   private get licenseDelegate(): RightsLicenseDelegate {
     return (this.prisma as unknown as Record<string, unknown>)[
@@ -481,7 +484,6 @@ export class RightsLicenseCoverageService {
         language: true,
         type: true,
         rightsProfileId: true,
-        rightsLicenseRequiredCountryCodes: true,
       },
     })) as VersionCoverageContext | null;
 
@@ -496,13 +498,18 @@ export class RightsLicenseCoverageService {
       });
     }
 
+    // WP-2.4 / R8-03: `rightsLicenseRequiredCountryCodes` on the version is written once at book
+    // creation, so a market that a later review moved to LICENSE_REQUIRED was never checked for
+    // coverage. The requirement is resolved from the clearance in force; coverage itself was
+    // already live.
+    const clearance = await this.clearanceResolver.resolveForVersion(bookVersionId);
     const licenses = await this.loadLicensesForVersion(bookVersionId);
     const hasTranslationComponent = version.rightsProfileId
       ? await this.hasTranslationComponent(version.rightsProfileId)
       : false;
 
     return this.evaluateCoverage({
-      requiredCountryCodes: toStringArray(version.rightsLicenseRequiredCountryCodes),
+      requiredCountryCodes: clearance.licenseRequiredCountryCodes,
       languageCode: version.language,
       requiredMediaFormats: this.mediaFormatsForVersionType(version.type),
       licenses,

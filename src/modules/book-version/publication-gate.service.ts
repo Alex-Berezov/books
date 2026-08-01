@@ -8,6 +8,7 @@ import { RightsContentHashService } from '../rights-intake/rights-content-hash.s
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 
@@ -17,9 +18,6 @@ interface VersionWithGeoBlock {
   rightsProfileId: string | null;
   approvedRightsReviewId: string | null;
   rightsStatus: string | null;
-  rightsBlockedCountryCodes: unknown;
-  rightsLicenseRequiredCountryCodes: unknown;
-  rightsPendingCountryCodes: unknown;
   rightsGeoBlockRequired: boolean;
   rightsGeoBlockConfigured: boolean;
   rightsGeoBlockVerifiedAt: Date | null;
@@ -43,6 +41,7 @@ export class PublicationGateService {
     private readonly rightsClaimsService: RightsClaimsService,
     private readonly rightsRecheckService: RightsRecheckService,
     private readonly rightsLawyerReviewService: RightsLawyerReviewService,
+    private readonly clearanceResolver: RightsClearanceResolverService,
   ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
@@ -68,6 +67,10 @@ export class PublicationGateService {
 
     const version = rawVersion as unknown as VersionWithGeoBlock;
     const book = version.book;
+
+    // WP-2: everything below that asks "what does the clearance say" asks the resolver, not the
+    // write-once columns on the version. The columns stay the audit record of the publication.
+    const clearance = await this.clearanceResolver.resolveForVersion(versionId);
 
     // 6.2 No rightsProfileId
     if (!version.rightsProfileId) {
@@ -282,8 +285,8 @@ export class PublicationGateService {
     }
 
     // 6.13 Blocked countries require geo-block
-    const blockedCountryCodes = version.rightsBlockedCountryCodes as string[] | null;
-    if (blockedCountryCodes && blockedCountryCodes.length > 0) {
+    const blockedCountryCodes = clearance.blockedCountryCodes;
+    if (blockedCountryCodes.length > 0) {
       if (!version.rightsGeoBlockConfigured) {
         blockingReasons.push(
           new PublicationGateReasonDto({
@@ -338,8 +341,8 @@ export class PublicationGateService {
     }
 
     // 6.15 Pending countries
-    const pendingCountryCodes = version.rightsPendingCountryCodes as string[] | null;
-    if (pendingCountryCodes && pendingCountryCodes.length > 0) {
+    const pendingCountryCodes = clearance.pendingCountryCodes;
+    if (pendingCountryCodes.length > 0) {
       blockingReasons.push(
         new PublicationGateReasonDto({
           code: 'PENDING_TERRITORIES',
@@ -349,31 +352,37 @@ export class PublicationGateService {
       );
     }
 
-    // 6.16 Snapshot mismatch
-    if (version.rightsProfileId && book.currentRightsProfileId) {
-      if (version.rightsProfileId !== book.currentRightsProfileId) {
-        blockingReasons.push(
-          new PublicationGateReasonDto({
-            code: 'RIGHTS_PROFILE_SNAPSHOT_OUTDATED',
-            severity: 'BLOCKER',
-            messageRu:
-              'Версия ссылается на устаревший rights profile. Текущий profile книги отличается.',
-          }),
-        );
-      }
+    // 6.16 Snapshot mismatch. Approving a new review writes to the intake and the profile, never
+    // to the book, so comparing the version against `Book.*` could not detect the drift these two
+    // codes were written for (R5-03) — the comparison is against the resolved clearance instead.
+    if (clearance.profileOutdated) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: 'RIGHTS_PROFILE_SNAPSHOT_OUTDATED',
+          severity: 'BLOCKER',
+          messageRu:
+            'Версия ссылается на устаревший rights profile. Действующий профиль клиренса отличается.',
+          details: {
+            versionProfileId: clearance.snapshotProfileId,
+            effectiveProfileId: clearance.effectiveProfileId,
+          },
+        }),
+      );
     }
 
-    if (version.approvedRightsReviewId && book.approvedRightsReviewId) {
-      if (version.approvedRightsReviewId !== book.approvedRightsReviewId) {
-        blockingReasons.push(
-          new PublicationGateReasonDto({
-            code: 'RIGHTS_REVIEW_SNAPSHOT_OUTDATED',
-            severity: 'BLOCKER',
-            messageRu:
-              'Версия ссылается на устаревшую проверку. Текущая утверждённая проверка книги отличается.',
-          }),
-        );
-      }
+    if (clearance.reviewOutdated) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: 'RIGHTS_REVIEW_SNAPSHOT_OUTDATED',
+          severity: 'BLOCKER',
+          messageRu:
+            'Версия ссылается на устаревшую проверку. Действующая утверждённая проверка отличается.',
+          details: {
+            versionReviewId: clearance.snapshotReviewId,
+            effectiveReviewId: clearance.effectiveReviewId,
+          },
+        }),
+      );
     }
 
     // 6.17 Geo-block required but not configured
@@ -391,7 +400,7 @@ export class PublicationGateService {
     if (version.rightsGeoBlockRequired) {
       const activeRules = await this.geoBlockRuleService.getActiveRulesForVersion(versionId);
       const activeCountryCodes = new Set(activeRules.map((rule) => rule.countryCode.toUpperCase()));
-      const missingCountryCodes = (blockedCountryCodes ?? []).filter(
+      const missingCountryCodes = blockedCountryCodes.filter(
         (countryCode) => !activeCountryCodes.has(countryCode.toUpperCase()),
       );
 

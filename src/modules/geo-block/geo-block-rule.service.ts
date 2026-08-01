@@ -14,6 +14,7 @@ import {
   CLAIM_ACCESS_BLOCK_REASON_CODE,
 } from '../rights-claims/rights-claim.constants';
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import {
   GeoAccessCheckResultDto,
   GeoBlockRuleDto,
@@ -102,6 +103,7 @@ export class GeoBlockRuleService {
     private readonly prisma: PrismaService,
     private readonly claimEnforcement: RightsClaimEnforcementService,
     private readonly config: ConfigService,
+    private readonly clearanceResolver: RightsClearanceResolverService,
   ) {}
 
   async generateRulesForVersion(bookVersionId: string): Promise<GeoBlockRulesResponseDto> {
@@ -110,12 +112,18 @@ export class GeoBlockRuleService {
       select: { id: true, bookId: true, rightsProfileId: true },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
-    if (!version.rightsProfileId) {
+
+    // WP-2.3: `version.rightsProfileId` is the profile the book was created under and is never
+    // updated, so regenerating from it reprojected a superseded clearance (R5-03). The rules must
+    // describe the markets as the clearance in force sees them.
+    const clearance = await this.clearanceResolver.resolveForVersion(bookVersionId);
+    const rightsProfileId = clearance.effectiveProfileId;
+    if (!rightsProfileId) {
       throw new BadRequestException('Cannot generate geo-block rules without a rights profile');
     }
 
     const territoryDecisions = await this.prisma.territoryDecision.findMany({
-      where: { rightsProfileId: version.rightsProfileId },
+      where: { rightsProfileId },
     });
     const blockedDecisions = territoryDecisions.filter(
       (decision) =>
@@ -138,7 +146,7 @@ export class GeoBlockRuleService {
         const ruleData = {
           bookId: version.bookId,
           bookVersionId,
-          rightsProfileId: version.rightsProfileId,
+          rightsProfileId,
           territoryDecisionId: decision.id,
           scope,
           countryCode,

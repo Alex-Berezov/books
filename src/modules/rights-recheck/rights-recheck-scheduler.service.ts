@@ -548,7 +548,7 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
           })
         : null;
 
-      if (newerReview) {
+      if (newerReview && (await this.isSupersedeReflectedOnVersion(database, task, newerReview))) {
         await database.$transaction(async (client) => {
           await this.recheckService.closeTask(client, task, {
             resolution: RightsRecheckResolution.SUPERSEDED_BY_NEW_REVIEW,
@@ -591,6 +591,30 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
     }
 
     void now;
+  }
+
+  /**
+   * WP-2.5 / R9-01. A newer approved review at the intake proves the clearance was redone, not that
+   * the book followed it: the version keeps its own `approvedRightsReviewId`. Closing the task on
+   * the intake alone reported a finished re-check for a book still published under the old
+   * clearance — and closed the audit trail that would have shown it.
+   *
+   * A task not tied to a version has nothing to verify against and keeps the previous behaviour.
+   * Same shape as the `CONTENT_REVERTED` branch: the effect is checked on the version itself.
+   */
+  private async isSupersedeReflectedOnVersion(
+    database: RecheckDatabaseClient,
+    task: RightsRecheckTaskRecord,
+    newerReview: { id: string },
+  ): Promise<boolean> {
+    if (!task.bookVersionId) return true;
+
+    const version = await database.bookVersion.findUnique({
+      where: { id: task.bookVersionId },
+      select: { id: true, rightsProfileId: true, approvedRightsReviewId: true },
+    });
+
+    return version?.approvedRightsReviewId === newerReview.id;
   }
 
   // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { RightsBookCreationService } from './rights-book-creation.service';
 import { RightsContentHashService } from './rights-content-hash.service';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
@@ -82,7 +83,10 @@ describe('RightsBookCreationService', () => {
     service = new RightsBookCreationService(
       prisma as unknown as PrismaService,
       mockRightsContentHashService,
-      new RightsLicenseCoverageService(prisma as unknown as PrismaService),
+      new RightsLicenseCoverageService(
+        prisma as unknown as PrismaService,
+        new RightsClearanceResolverService(prisma as unknown as PrismaService),
+      ),
     );
   });
 

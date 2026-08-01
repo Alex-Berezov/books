@@ -2,6 +2,7 @@ import { RightsMaterializationService } from './rights-materialization.service';
 import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
+import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import { PersonResolverService } from '../persons/person-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
@@ -666,6 +667,7 @@ describe('RightsMaterializationService', () => {
           }),
         } as unknown as RightsClaimEnforcementService,
         { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService,
+        new RightsClearanceResolverService(prisma as unknown as PrismaService),
       );
       (prisma['bookVersion'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
         id: 'v1',
@@ -673,6 +675,13 @@ describe('RightsMaterializationService', () => {
         rightsProfileId: 'profile-1',
         rightsGeoBlockRequired: true,
         rightsGeoBlockConfigured: false,
+        // Read by the clearance resolver behind `generateRulesForVersion`.
+        book: {
+          id: 'b1',
+          rightsIntakeId: null,
+          currentRightsProfileId: 'profile-1',
+          approvedRightsReviewId: null,
+        },
       });
       (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany = jest
         .fn()
