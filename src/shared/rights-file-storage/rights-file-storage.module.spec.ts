@@ -44,6 +44,12 @@ describe('RightsFileStorageModule', () => {
     delete process.env.R2_KEY_PREFIX;
     expect(resolveR2PrefixForTests()).toBe('rights-private');
 
+    // Фактическая конфигурация прода на 02.08.2026: переменная объявлена, но пустая.
+    // Пустая строка обязана вести себя как отсутствие, а не давать ключ `/rights-private`.
+    process.env.R2_KEY_PREFIX = '';
+    expect(resolveR2PrefixForTests()).toBe('rights-private');
+
+    delete process.env.R2_KEY_PREFIX;
     delete process.env.RIGHTS_FILES_KEY_PREFIX;
   });
 
