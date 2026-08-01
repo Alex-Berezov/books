@@ -25,6 +25,24 @@ export class RightsReviewImportDetailDto extends RightsReviewImportListItemDto {
   @ApiProperty() reportJsonSha256!: string | null;
   @ApiProperty() reportMarkdownSha256!: string | null;
   @ApiProperty() rawAgentOutputSha256!: string | null;
+
+  /**
+   * WP-9.2 (R4-02): PDF-отчёт. Ключ хранилища наружу не отдаётся — файл скачивается через
+   * `GET /admin/rights/review-imports/:importId/report-pdf` под ролями Admin/ContentManager.
+   */
+  @ApiProperty({ description: 'PDF-версия отчёта загружена' }) hasReportPdf!: boolean;
+  @ApiProperty() reportPdfSha256!: string | null;
+  @ApiProperty() reportPdfFileName!: string | null;
+  @ApiProperty() reportPdfContentType!: string | null;
+  @ApiProperty() reportPdfSizeBytes!: number | null;
+  @ApiProperty() reportPdfUploadedAt!: string | null;
+
+  /** WP-9.1 (essence §15): под каким заданием и чем сделан отчёт. */
+  @ApiProperty() inputManifestSha256!: string | null;
+  @ApiProperty() inputManifestVersion!: string | null;
+  @ApiProperty() promptVersion!: string | null;
+  @ApiProperty() agentModel!: string | null;
+
   @ApiProperty({ type: [ValidationIssueDto] }) validationErrors!: ValidationIssueDto[] | null;
   @ApiProperty({ type: [ValidationIssueDto] }) validationWarnings!: ValidationIssueDto[] | null;
 }

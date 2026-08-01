@@ -36,6 +36,19 @@ export class SourceEditionDto {
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 
+  /**
+   * WP-9.1 / WP-8.3: файл исходного издания. Ключ хранилища наружу не отдаётся —
+   * скачивание идёт через `GET /admin/rights/profiles/:profileId/source-file`.
+   * `sourceFileSha256` показывается: по нему видно, что клиренс снят именно с этого файла.
+   */
+  @ApiProperty() sourceFileSha256!: string | null;
+  @ApiProperty() sourceFileName!: string | null;
+  @ApiProperty() sourceFileContentType!: string | null;
+  @ApiProperty() sourceFileSizeBytes!: number | null;
+  @ApiProperty() sourceFileUploadedAt!: string | null;
+  @ApiProperty({ description: 'Файл загружен и доступен для скачивания' })
+  hasSourceFile!: boolean;
+
   /** WP-7.1: запись на каждый оценённый язык; пустой массив — языковой срез ещё не материализован. */
   @ApiProperty({ type: [EditionRightsDto] })
   editionRights!: EditionRightsDto[];
@@ -209,6 +222,22 @@ export class RightsEvidenceDto {
   @ApiProperty() summaryRu!: string;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
+
+  /**
+   * WP-9.3 (R3-08): архивная копия. Ключ хранилища наружу не отдаётся — скачивание идёт
+   * через `GET /admin/rights/evidence/:evidenceId/archive-copy`.
+   */
+  @ApiProperty({ description: 'Архивная копия документа загружена' })
+  isArchivedCopy!: boolean;
+  @ApiProperty() fileSha256!: string | null;
+  @ApiProperty() fileName!: string | null;
+  @ApiProperty() contentType!: string | null;
+  @ApiProperty() sizeBytes!: number | null;
+  @ApiProperty() archivedAt!: string | null;
+
+  /** WP-9.3: доказательство не удаляется, а помечается заменённым другим (ADR-009). */
+  @ApiProperty() isCurrent!: boolean;
+  @ApiProperty() supersededById!: string | null;
 }
 
 export class RightsActionDto {

@@ -502,6 +502,62 @@ describe('RightsContentHashService', () => {
 
       expect(hash1).not.toBe(hash2);
     });
+
+    /**
+     * WP-8.3 (R3-05). До этого пакета в хеш входили только метаданные источника, поэтому
+     * замена файла по тому же адресу оставалась невидимой для клиренса — тот же класс, что
+     * подмена обложки до WP-8.2.
+     */
+    const sourceEditionWith = (sourceFileSha256: string | null) => ({
+      provider: 'PROJECT_GUTENBERG',
+      externalId: 'id-1',
+      sourceUrl: 'https://gutenberg.org/ebooks/1',
+      sourceTitle: 'Source',
+      sourceLanguage: 'en',
+      sourceTextType: 'ORIGINAL_TEXT',
+      gutenbergStatus: null,
+      status: 'OK',
+      sourceFileSha256,
+      editionRights: null,
+    });
+
+    const versionWithSourceFile = (sourceFileSha256: string | null) => ({
+      ...baseVersion,
+      rightsProfile: {
+        ...baseVersion.rightsProfile,
+        sourceEdition: sourceEditionWith(sourceFileSha256),
+      },
+    });
+
+    it('should change hash when the source file checksum changes', async () => {
+      mockPrisma.bookVersion.findUnique.mockResolvedValue(versionWithSourceFile('a'.repeat(64)));
+      const hash1 = (await service.computeVersionHash('version-1')).hash;
+
+      mockPrisma.bookVersion.findUnique.mockResolvedValue(versionWithSourceFile('b'.repeat(64)));
+      const hash2 = (await service.computeVersionHash('version-1')).hash;
+
+      expect(hash1).not.toBe(hash2);
+    });
+
+    it('should change hash when a source file appears where there was none', async () => {
+      mockPrisma.bookVersion.findUnique.mockResolvedValue(versionWithSourceFile(null));
+      const hashWithout = (await service.computeVersionHash('version-1')).hash;
+
+      mockPrisma.bookVersion.findUnique.mockResolvedValue(versionWithSourceFile('c'.repeat(64)));
+      const hashWith = (await service.computeVersionHash('version-1')).hash;
+
+      expect(hashWithout).not.toBe(hashWith);
+    });
+
+    it('should expose the source file checksum in the hash input', async () => {
+      mockPrisma.bookVersion.findUnique.mockResolvedValue(versionWithSourceFile('d'.repeat(64)));
+
+      const { input } = await service.computeVersionHash('version-1');
+      const profile = input['rightsProfile'] as Record<string, unknown>;
+      const sourceEdition = profile['sourceEdition'] as Record<string, unknown>;
+
+      expect(sourceEdition['sourceFileSha256']).toBe('d'.repeat(64));
+    });
   });
 
   describe('initializeVersionBaseline', () => {

@@ -293,6 +293,9 @@ model User {
   rightsActionsAssigned       RightsAction[]               @relation("RightsActionAssignedTo")
   rightsActionsCompleted      RightsAction[]               @relation("RightsActionCompletedBy")
   rightsActionEventsCreated   RightsActionEvent[]          @relation("RightsActionEventCreatedBy")
+  rightsReportPdfsUploaded    RightsReviewImport[]         @relation("RightsReportPdfUploadedBy")
+  rightsSourceFilesUploaded   SourceEdition[]              @relation("RightsSourceFileUploadedBy")
+  rightsEvidenceArchived      RightsEvidence[]             @relation("RightsEvidenceArchivedBy")
 }
 
 
@@ -771,6 +774,15 @@ model RightsIntake {
   // Phase 19: lawyer workflow
   lawyerReviews RightsLawyerReview[]
 
+  /// WP-9.1 (R4-02): снимок манифеста, отданного агенту. Манифест собирается на лету и
+  /// содержит `generatedAt`, поэтому повторный GET даёт другие байты — сохраняются ровно те,
+  /// которые ушли агенту. Импорт копирует эти три поля в `inputManifest*`, отвечая на вопрос
+  /// «под каким заданием сделан этот отчёт». Файл лежит в приватном хранилище прав.
+  manifestStorageKey  String?
+  manifestSha256      String?
+  manifestVersion     String?
+  manifestGeneratedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -802,6 +814,39 @@ model RightsReviewImport {
   reportMarkdownSha256 String?
   rawAgentOutputSha256 String?
 
+  /// WP-9.1 (R4-02, essence §15): архивные копии текстовых артефактов отчёта в приватном
+  /// хранилище прав. Источником истины остаётся `reportJson` в БД — ключи нужны, чтобы
+  /// юридический пакет можно было выгрузить целиком, а не собирать из колонок.
+  /// Запись best-effort: недоступность хранилища не отменяет импорт, ключ остаётся `null`.
+  reportJsonStorageKey     String?
+  reportMarkdownStorageKey String?
+  rawAgentOutputStorageKey String?
+
+  /// WP-9.2 (R4-02): PDF-отчёт — требование roadmap фазы 3, не реализованное ни одной из
+  /// 20 фаз. Публичный URL не сохраняется и не отдаётся: файл скачивается только через
+  /// админский эндпоинт под ролями Admin/ContentManager.
+  reportPdfStorageKey       String?
+  reportPdfSha256           String?
+  reportPdfFileName         String?
+  reportPdfContentType      String?
+  reportPdfSizeBytes        Int?
+  reportPdfUploadedAt       DateTime?
+  reportPdfUploadedByUserId String?
+  reportPdfUploadedByUser   User? @relation("RightsReportPdfUploadedBy", fields: [reportPdfUploadedByUserId], references: [id], onDelete: SetNull)
+
+  /// WP-9.1 (essence §15): снимок задания, под которое агент писал отчёт. Копируется из
+  /// `RightsIntake.manifest*` в момент импорта, поэтому переиздание манифеста задним числом
+  /// не меняет того, что было у уже принятого отчёта.
+  inputManifestStorageKey String?
+  inputManifestSha256     String?
+  inputManifestVersion    String?
+
+  /// WP-9.1 (essence §15): версия задания и самоидентификация агента. `promptVersion` —
+  /// версия манифеста, `agentModel` — то, чем агент себя назвал (`agentName`/`agentVersion`
+  /// агентского канала, audit only). В ручном канале заполняются редактором.
+  promptVersion String?
+  agentModel    String?
+
   validationErrors   Json?
   validationWarnings Json?
 
@@ -821,6 +866,8 @@ model RightsReviewImport {
   @@index([isCurrent])
   @@index([createdAt])
   @@index([importedByUserId])
+  @@index([reportPdfSha256])
+  @@index([reportPdfUploadedByUserId])
 }
 
 model RightsProfile {
@@ -945,6 +992,19 @@ model SourceEdition {
   status String
   notesRu String? @db.Text
 
+  /// WP-9.1 / WP-8.3 (R3-05): сам файл источника. До этого хешировались только метаданные —
+  /// подмена файла по тому же адресу оставалась невидимой для клиренса (тот же класс, что
+  /// R1-04 у обложки). В content hash входит **только** `sourceFileSha256`; ключ, имя, MIME
+  /// и размер — сопровождение файла и на клиренс не влияют (ADR-010).
+  sourceFileStorageKey       String?
+  sourceFileSha256           String?
+  sourceFileName             String?
+  sourceFileContentType      String?
+  sourceFileSizeBytes        Int?
+  sourceFileUploadedAt       DateTime?
+  sourceFileUploadedByUserId String?
+  sourceFileUploadedByUser   User? @relation("RightsSourceFileUploadedBy", fields: [sourceFileUploadedByUserId], references: [id], onDelete: SetNull)
+
   editionRights EditionRights[]
   licenseLinks RightsLicenseLink[]
 
@@ -953,6 +1013,8 @@ model SourceEdition {
 
   @@index([provider])
   @@index([externalId])
+  @@index([sourceFileSha256])
+  @@index([sourceFileUploadedByUserId])
 }
 
 /// WP-7.1 (R2-01, R3-01): права языковой версии — запись на язык, а не 1:1-довесок к
@@ -997,6 +1059,15 @@ model RightsReview {
   status RightsReviewStatus @default(HUMAN_REVIEW_REQUIRED)
   schemaVersion String?
   reviewerType String @default("EXTERNAL_CHATGPT_AGENT")
+
+  /// WP-9.1 (essence §15): снимок «под каким заданием и чем проверяли». Копируется из импорта
+  /// при материализации тем же приёмом, что и `schemaVersion`: проверка — акт, и она обязана
+  /// нести эти сведения сама, даже если импорт потом станет `SUPERSEDED`.
+  /// Файлы отчёта на проверку **не дублируются** — они живут на `RightsReviewImport`,
+  /// связанном через `rightsReviewImportId @unique` (отступление от essence §15 осознанное:
+  /// вторая копия тех же путей повторила бы судьбу мёртвых `contentHash*`-колонок).
+  promptVersion String?
+  agentModel    String?
 
   overallStatus RightsOverallStatus
   publicationGate RightsPublicationGate
@@ -1188,6 +1259,29 @@ model RightsEvidence {
   relevantExcerpt String? @db.Text
   summaryRu String @db.Text
 
+  /// WP-9.3 (R3-08): архивная копия доказательства. До этого доказательство было только
+  /// `url` — ссылкой, которая завтра отдаст 404, и тогда обоснование блокировки страны
+  /// перестаёт существовать. Копию загружает редактор: сервер не ходит по внешним адресам
+  /// сам. В content hash файл доказательства не входит (ADR-010): доказательство —
+  /// обоснование вердикта, а не содержимое книги.
+  storageKey  String?
+  fileSha256  String?
+  fileName    String?
+  contentType String?
+  sizeBytes   Int?
+
+  isArchivedCopy   Boolean   @default(false)
+  archivedAt       DateTime?
+  archivedByUserId String?
+  archivedByUser   User? @relation("RightsEvidenceArchivedBy", fields: [archivedByUserId], references: [id], onDelete: SetNull)
+
+  /// WP-9.3 (R3-08): доказательство нельзя удалить (ADR-009), но можно пометить устаревшим.
+  /// `supersededById` указывает на доказательство, которое пришло ему на смену.
+  isCurrent      Boolean @default(true)
+  supersededById String? @unique
+  supersededBy   RightsEvidence? @relation("RightsEvidenceSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     RightsEvidence? @relation("RightsEvidenceSupersession")
+
   licenseLinks RightsLicenseLink[]
 
   // Phase 19: если доказательство создано из юридического заключения
@@ -1200,6 +1294,9 @@ model RightsEvidence {
   @@index([evidenceType])
   @@index([sourceLevel])
   @@index([jurisdictionCode])
+  @@index([fileSha256])
+  @@index([isCurrent])
+  @@index([archivedByUserId])
 }
 
 model RightsAction {

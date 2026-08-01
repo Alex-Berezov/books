@@ -9,8 +9,14 @@ import { createHash } from 'crypto';
  *
  * V3 (WP-8): в хеш вошли участники версии и профиля прав (год смерти переводчика определяет
  * public domain) и контрольная сумма файла обложки. Пересъёмка baseline работает так же.
+ *
+ * V4 (WP-9 / WP-8.3): в хеш вошла контрольная сумма файла исходного издания
+ * (`SourceEdition.sourceFileSha256`) — до неё подмена файла источника была невидима, как
+ * подмена обложки до V3. Путь к файлу, имя, MIME и размер в хеш **не** входят, равно как и
+ * файлы отчёта и архивные копии доказательств: это сопровождение и обоснование, а не
+ * содержимое произведения (решение записано в ADR-010).
  */
-export const RIGHTS_CONTENT_HASH_ALGORITHM_VERSION = 'RIGHTS_CONTENT_HASH_V3';
+export const RIGHTS_CONTENT_HASH_ALGORITHM_VERSION = 'RIGHTS_CONTENT_HASH_V4';
 
 export function stableCanonicalize(value: unknown): unknown {
   if (value === null || value === undefined) {

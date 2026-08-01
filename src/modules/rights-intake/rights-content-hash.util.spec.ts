@@ -100,9 +100,11 @@ describe('RightsContentHashUtil', () => {
   });
 
   describe('RIGHTS_CONTENT_HASH_ALGORITHM_VERSION', () => {
-    // WP-8: в состав входа добавлены участники и контрольная сумма обложки — версия V3.
-    it('should be RIGHTS_CONTENT_HASH_V3', () => {
-      expect(RIGHTS_CONTENT_HASH_ALGORITHM_VERSION).toBe('RIGHTS_CONTENT_HASH_V3');
+    // WP-9 / WP-8.3: в состав входа добавлена контрольная сумма файла исходного издания —
+    // версия V4. Проверка намеренно жёсткая: смена состава входа без смены версии отправила
+    // бы весь опубликованный каталог в STALE (ADR-010, пункт 4).
+    it('should be RIGHTS_CONTENT_HASH_V4', () => {
+      expect(RIGHTS_CONTENT_HASH_ALGORITHM_VERSION).toBe('RIGHTS_CONTENT_HASH_V4');
     });
   });
 

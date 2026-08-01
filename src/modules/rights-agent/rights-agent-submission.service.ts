@@ -334,6 +334,10 @@ export class RightsAgentSubmissionService {
           reportMarkdown: dto.reportMarkdown ?? null,
           rawAgentOutput: dto.rawAgentOutput ?? null,
           sourceFileName: dto.sourceFileName ?? null,
+          // WP-9.1 (essence §15 `agent_model`): самоидентификация агента переносится из
+          // журнала подачи в сам импорт — до этого она оставалась только в
+          // `RightsAgentSubmission` и не доходила ни до импорта, ни до проверки.
+          agentModel: buildAgentModel(dto.agentName, dto.agentVersion),
         },
         null,
       );
@@ -544,4 +548,19 @@ export class RightsAgentSubmissionService {
       createdAt: new Date(record.createdAt).toISOString(),
     };
   }
+}
+
+/**
+ * WP-9.1: `agentName` + `agentVersion` — самодекларация агента (audit only). Склеиваются в
+ * одно значение `agentModel`, потому что essence §15 хранит на проверке именно «чем проверяли»
+ * одной строкой, а раздельные колонки на импорте дублировали бы журнал подачи.
+ */
+function buildAgentModel(
+  agentName: string | null | undefined,
+  agentVersion: string | null | undefined,
+): string | null {
+  const parts = [agentName, agentVersion].filter(
+    (part): part is string => typeof part === 'string' && part.trim().length > 0,
+  );
+  return parts.length > 0 ? parts.join(' ') : null;
 }

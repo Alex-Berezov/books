@@ -432,6 +432,82 @@ describe('RightsMaterializationService', () => {
      * валидатором на покрытие каждого целевого языка — и до WP-7 выбрасывался. `EditionRights`
      * при этом создавалась одна на исходное издание и дословно копировала его `status`/`notesRu`.
      */
+    /**
+     * WP-9.1 / WP-8.3. Проверка — акт, и она обязана нести «под каким заданием и чем
+     * проверяли» сама: импорт может уйти в SUPERSEDED. Сумма файла источника входит в
+     * content hash, поэтому мусор в ней хуже пустоты — «изменение» закрывало бы гейт.
+     */
+    describe('WP-9: снимок задания и сумма файла источника', () => {
+      const materialize = async (
+        importOverrides: Record<string, unknown> = {},
+        reportOverrides: Record<string, unknown> = {},
+      ) => {
+        setupBasicMocks({
+          ...importOverrides,
+          ...(Object.keys(reportOverrides).length > 0
+            ? { reportJson: { ...makeValidReportJson(), ...reportOverrides } }
+            : {}),
+        });
+        setupTransaction();
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+          makeProfile(),
+        );
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        await service.materializeFromImport('import-1');
+      };
+
+      const reviewData = () =>
+        (prisma['rightsReview'] as Record<string, jest.Mock>).create.mock.calls[0][0]
+          .data as Record<string, unknown>;
+
+      const sourceEditionData = () =>
+        (prisma['sourceEdition'] as Record<string, jest.Mock>).create.mock.calls[0][0]
+          .data as Record<string, unknown>;
+
+      it('копирует promptVersion и agentModel импорта на проверку', async () => {
+        await materialize({ promptVersion: '1.1', agentModel: 'ChatGPT o3' });
+
+        expect(reviewData().promptVersion).toBe('1.1');
+        expect(reviewData().agentModel).toBe('ChatGPT o3');
+      });
+
+      it('обходится без них, если импорт их не нёс', async () => {
+        await materialize();
+
+        expect(reviewData().promptVersion).toBeNull();
+        expect(reviewData().agentModel).toBeNull();
+      });
+
+      it('переносит контрольную сумму файла источника из отчёта', async () => {
+        const sourceAssessment = {
+          ...(makeValidReportJson().sourceAssessment as Record<string, unknown>),
+          sourceFileSha256: 'A'.repeat(64),
+        };
+
+        await materialize({}, { sourceAssessment });
+
+        // Приводится к нижнему регистру: хеш клиренса не должен зависеть от регистра ввода.
+        expect(sourceEditionData().sourceFileSha256).toBe('a'.repeat(64));
+      });
+
+      it('отбрасывает значение, не похожее на sha256', async () => {
+        const sourceAssessment = {
+          ...(makeValidReportJson().sourceAssessment as Record<string, unknown>),
+          sourceFileSha256: 'not-a-hash',
+        };
+
+        await materialize({}, { sourceAssessment });
+
+        expect(sourceEditionData().sourceFileSha256).toBeNull();
+      });
+
+      it('оставляет null, когда агент сумму не прислал', async () => {
+        await materialize();
+
+        expect(sourceEditionData().sourceFileSha256).toBeNull();
+      });
+    });
+
     describe('language assessments', () => {
       const editionRightsCalls = () =>
         (prisma['editionRights'] as Record<string, jest.Mock>).create.mock.calls.map(

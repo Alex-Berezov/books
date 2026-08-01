@@ -103,6 +103,12 @@ export class RightsLegalOpinionService {
             accessedAt: dto.issuedAt ? new Date(dto.issuedAt) : now,
             relevantExcerpt: dto.bodyRu.slice(0, EVIDENCE_EXCERPT_LENGTH),
             summaryRu: `${dto.titleRu} — ${lawyer.fullName}`,
+            // WP-9.3 (R3-08): у заключения юриста сумма документа уже приходит в DTO и
+            // используется для дедупликации — но до сих пор не доходила до доказательства,
+            // и именно у этих доказательств реальный файл существует чаще всего.
+            fileSha256: dto.documentSha256 ?? null,
+            fileName: dto.fileName ?? null,
+            contentType: dto.mimeType ?? null,
           },
         });
         evidenceId = evidence.id;

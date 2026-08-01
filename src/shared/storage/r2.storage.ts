@@ -4,6 +4,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
+  GetObjectCommand,
 } from '@aws-sdk/client-s3';
 import { Readable } from 'node:stream';
 import { StorageService, StorageSaveOptions, StorageStat } from './storage.interface';
@@ -17,7 +18,12 @@ export class R2StorageService implements StorageService {
   private readonly keyPrefix: string;
   private readonly cacheControl: string;
 
-  constructor() {
+  /**
+   * @param keyPrefixOverride WP-9: lets a second instance write under its own prefix. Rights
+   *   files never get a public URL from the application; the prefix is what a deployment
+   *   excludes from the CDN so the object is not reachable from outside either.
+   */
+  constructor(keyPrefixOverride?: string) {
     const endpoint = process.env.R2_ENDPOINT;
     const accessKeyId = process.env.R2_ACCESS_KEY_ID;
     const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
@@ -40,7 +46,7 @@ export class R2StorageService implements StorageService {
     });
     this.bucket = bucket;
     this.publicBaseUrl = publicBaseUrl.replace(/\/$/, '');
-    this.keyPrefix = this.normalizePrefix(process.env.R2_KEY_PREFIX || '');
+    this.keyPrefix = this.normalizePrefix(keyPrefixOverride ?? process.env.R2_KEY_PREFIX ?? '');
     this.cacheControl = process.env.R2_CACHE_CONTROL || '';
   }
 
@@ -138,6 +144,21 @@ export class R2StorageService implements StorageService {
   getLocalPath(_key: string): string | null {
     void _key;
     return null;
+  }
+
+  async read(key: string): Promise<Buffer | null> {
+    const objectKey = this.prefixedKey(key);
+    try {
+      const resp = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }),
+      );
+      if (!resp.Body) return null;
+      return await this.streamToBuffer(resp.Body as Readable);
+    } catch (e) {
+      if (this.isNotFoundError(e)) return null;
+      this.logger.error(`read() failed for ${objectKey}: ${(e as Error).message}`);
+      throw e;
+    }
   }
 
   private inferCacheControl(contentType: string): string {

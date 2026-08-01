@@ -2,6 +2,7 @@ import { RightsReviewImportService } from './rights-review-import.service';
 import { RightsReviewImportValidator } from './rights-review-import.validator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException } from '@nestjs/common';
+import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 
 interface PrismaStub {
   rightsIntake: {
@@ -28,6 +29,31 @@ const createPrismaStub = (): PrismaStub => ({
     updateMany: jest.fn(),
   },
   $transaction: jest.fn(),
+});
+
+/**
+ * WP-9.1: импорт архивирует текстовые артефакты отчёта в приватное хранилище прав.
+ * Запись best-effort, поэтому заглушка возвращает готовые дескрипторы, а отдельный тест
+ * проверяет, что отказ хранилища импорт не роняет.
+ */
+type ArchivedArtefact = {
+  storageKey: string;
+  sha256: string;
+  sizeBytes: number;
+  contentType: string;
+  fileName: string | null;
+} | null;
+
+const createFilesStub = () => ({
+  trySaveText: jest.fn<Promise<ArchivedArtefact>, [string]>((kind: string) =>
+    Promise.resolve({
+      storageKey: `${kind}/2026/08/01/artefact.bin`,
+      sha256: 'b'.repeat(64),
+      sizeBytes: 10,
+      contentType: 'application/octet-stream',
+      fileName: null,
+    }),
+  ),
 });
 
 const createDto = (overrides: Record<string, unknown> = {}) => ({
@@ -83,11 +109,17 @@ describe('RightsReviewImportService', () => {
   let service: RightsReviewImportService;
   let prisma: PrismaStub;
   let validator: RightsReviewImportValidator;
+  let files: ReturnType<typeof createFilesStub>;
 
   beforeEach(() => {
     prisma = createPrismaStub();
     validator = new RightsReviewImportValidator();
-    service = new RightsReviewImportService(prisma as unknown as PrismaService, validator);
+    files = createFilesStub();
+    service = new RightsReviewImportService(
+      prisma as unknown as PrismaService,
+      validator,
+      files as unknown as RightsFileStorageService,
+    );
   });
 
   it('valid import creates VALIDATED', async () => {
@@ -310,5 +342,111 @@ describe('RightsReviewImportService', () => {
     expect(result.reportJsonSha256).toBeTruthy();
     expect(result.reportMarkdownSha256).toBeTruthy();
     expect(result.rawAgentOutputSha256).toBeTruthy();
+  });
+
+  /**
+   * WP-9.1 (R4-02, essence §15). До этого пакета текстовые артефакты отчёта жили только как
+   * `@db.Text`, а под каким заданием агент писал отчёт — не фиксировалось нигде.
+   */
+  describe('WP-9.1: архивные копии артефактов и снимок задания', () => {
+    const setupValidImport = () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        mockIntake({
+          manifestStorageKey: 'input-manifest/2026/08/01/m.json',
+          manifestSha256: 'e'.repeat(64),
+          manifestVersion: '1.1',
+        }),
+      );
+      prisma.rightsReviewImport.updateMany.mockResolvedValue({ count: 0 });
+      prisma.$transaction.mockImplementation((fn: (tx: PrismaStub) => unknown) => fn(prisma));
+      prisma.rightsReviewImport.create.mockResolvedValue({ id: 'import-1' });
+      prisma.rightsIntake.update.mockResolvedValue({});
+    };
+
+    const createdData = () =>
+      prisma.rightsReviewImport.create.mock.calls[0][0].data as Record<string, unknown>;
+
+    it('архивирует JSON-отчёт и пишет его ключ', async () => {
+      setupValidImport();
+
+      await service.create('intake-1', createDto(), 'user-1');
+
+      expect(files.trySaveText).toHaveBeenCalledWith(
+        'report-json',
+        expect.any(String),
+        'application/json',
+        expect.stringContaining('intake-1'),
+      );
+      expect(createdData().reportJsonStorageKey).toBe('report-json/2026/08/01/artefact.bin');
+    });
+
+    it('не архивирует markdown и сырой вывод, когда их не прислали', async () => {
+      setupValidImport();
+
+      await service.create('intake-1', createDto(), 'user-1');
+
+      expect(createdData().reportMarkdownStorageKey).toBeNull();
+      expect(createdData().rawAgentOutputStorageKey).toBeNull();
+    });
+
+    it('архивирует markdown и сырой вывод, когда они есть', async () => {
+      setupValidImport();
+
+      await service.create(
+        'intake-1',
+        createDto({ reportMarkdown: '# hello', rawAgentOutput: 'raw' }),
+        'user-1',
+      );
+
+      expect(createdData().reportMarkdownStorageKey).toBe(
+        'report-markdown/2026/08/01/artefact.bin',
+      );
+      expect(createdData().rawAgentOutputStorageKey).toBe(
+        'raw-agent-output/2026/08/01/artefact.bin',
+      );
+    });
+
+    it('копирует снимок манифеста интейка: под каким заданием сделан отчёт', async () => {
+      setupValidImport();
+
+      await service.create('intake-1', createDto(), 'user-1');
+
+      expect(createdData().inputManifestStorageKey).toBe('input-manifest/2026/08/01/m.json');
+      expect(createdData().inputManifestSha256).toBe('e'.repeat(64));
+      expect(createdData().inputManifestVersion).toBe('1.1');
+      expect(createdData().promptVersion).toBe('1.1');
+    });
+
+    it('обходится без снимка, если манифест ни разу не скачивали', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(mockIntake());
+      prisma.rightsReviewImport.updateMany.mockResolvedValue({ count: 0 });
+      prisma.$transaction.mockImplementation((fn: (tx: PrismaStub) => unknown) => fn(prisma));
+      prisma.rightsReviewImport.create.mockResolvedValue({ id: 'import-1' });
+      prisma.rightsIntake.update.mockResolvedValue({});
+
+      await service.create('intake-1', createDto(), 'user-1');
+
+      expect(createdData().inputManifestStorageKey).toBeNull();
+      expect(createdData().promptVersion).toBeNull();
+    });
+
+    it('сохраняет самоидентификацию агента', async () => {
+      setupValidImport();
+
+      await service.create('intake-1', createDto({ agentModel: 'ChatGPT o3' }), 'user-1');
+
+      expect(createdData().agentModel).toBe('ChatGPT o3');
+    });
+
+    it('отказ хранилища не отменяет импорт: ключи остаются пустыми', async () => {
+      setupValidImport();
+      files.trySaveText.mockResolvedValue(null);
+
+      const result = await service.create('intake-1', createDto(), 'user-1');
+
+      expect(result).toBeTruthy();
+      expect(createdData().reportJsonStorageKey).toBeNull();
+      expect(createdData().reportJsonSha256).toBeTruthy();
+    });
   });
 });

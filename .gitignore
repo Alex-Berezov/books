@@ -68,3 +68,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Documentation moved to books-app-docs repository
 docs/
+
+# Локальные хранилища файлов: медиа (LOCAL_UPLOADS_DIR) и приватные юридические
+# файлы системы прав (RIGHTS_FILES_LOCAL_DIR, WP-9). Прогон e2e пишет сюда реальные
+# объекты, и уборки у них нет — ADR-009 запрещает удалять юридический след.
+/var/

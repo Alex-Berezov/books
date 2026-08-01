@@ -23,4 +23,18 @@ export class CreateRightsReviewImportDto {
   @IsString()
   @MaxLength(255)
   sourceFileName?: string | null;
+
+  /**
+   * WP-9.1 (essence §15 `agent_model`): чем именно проверяли. Самодекларация — audit only,
+   * ровно как `agentName`/`agentVersion` в агентском канале. Версия задания (`promptVersion`)
+   * берётся не отсюда, а из манифеста интейка: её знает сервер, а не тот, кто импортирует.
+   */
+  @ApiPropertyOptional({
+    description: 'Agent model self-identification (audit only)',
+    maxLength: 120,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  agentModel?: string | null;
 }

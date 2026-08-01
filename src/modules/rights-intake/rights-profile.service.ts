@@ -318,6 +318,16 @@ export class RightsProfileService {
       notesRu: (record['notesRu'] as string) ?? null,
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
+      // WP-9.1 / WP-8.3: файл источника. `sourceFileStorageKey` наружу не уходит; наличие
+      // файла выражается флагом, скачивание — отдельным админским эндпоинтом.
+      sourceFileSha256: (record['sourceFileSha256'] as string) ?? null,
+      sourceFileName: (record['sourceFileName'] as string) ?? null,
+      sourceFileContentType: (record['sourceFileContentType'] as string) ?? null,
+      sourceFileSizeBytes: (record['sourceFileSizeBytes'] as number) ?? null,
+      sourceFileUploadedAt: record['sourceFileUploadedAt']
+        ? new Date(record['sourceFileUploadedAt'] as string).toISOString()
+        : null,
+      hasSourceFile: Boolean(record['sourceFileStorageKey']),
       editionRights: editionRightsRecords.map((r) => this.mapEditionRights(r)),
     };
   }
@@ -664,6 +674,18 @@ export class RightsProfileService {
       summaryRu: record['summaryRu'],
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
+      // WP-9.3 (R3-08): архивная копия и статус актуальности. `storageKey` наружу не уходит —
+      // файл скачивается отдельным админским эндпоинтом.
+      isArchivedCopy: (record['isArchivedCopy'] as boolean) ?? false,
+      fileSha256: (record['fileSha256'] as string) ?? null,
+      fileName: (record['fileName'] as string) ?? null,
+      contentType: (record['contentType'] as string) ?? null,
+      sizeBytes: (record['sizeBytes'] as number) ?? null,
+      archivedAt: record['archivedAt']
+        ? new Date(record['archivedAt'] as string).toISOString()
+        : null,
+      isCurrent: (record['isCurrent'] as boolean) ?? true,
+      supersededById: (record['supersededById'] as string) ?? null,
     };
   }
 

@@ -90,6 +90,11 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
         notesRu: { type: ['string', 'null'] },
         contributors: { type: 'array', items: { $ref: '#/$defs/contributor' } },
         licenseRefs: { type: 'array', items: { type: 'string' } },
+        // WP-8.3 (R3-05): контрольная сумма файла, по которому агент делал вывод. Поле
+        // **необязательное**, поэтому `schemaVersion` остаётся 1.0 (правило §8 контракта):
+        // если агент её не прислал, файл прикрепляет редактор и сумму считает сервер.
+        // Значение входит в content hash клиренса — не похожее на sha256 отбрасывается.
+        sourceFileSha256: { type: ['string', 'null'], pattern: '^[a-fA-F0-9]{64}$' },
       },
     },
     languageAssessments: {

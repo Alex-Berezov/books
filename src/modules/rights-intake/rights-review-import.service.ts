@@ -6,6 +6,7 @@ import {
 } from './rights-review-import.validator';
 import { stableJsonStringify, sha256Hex } from './rights-review-import-hash';
 import { RIGHTS_REVIEW_IMPORT_SCHEMA_VERSION } from './rights-review-import.constants';
+import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 import type { CreateRightsReviewImportDto } from './dto/create-rights-review-import.dto';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class RightsReviewImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly validator: RightsReviewImportValidator,
+    private readonly files: RightsFileStorageService,
   ) {}
 
   private get ri() {
@@ -42,6 +44,15 @@ export class RightsReviewImportService {
       );
     }
 
+    // WP-9.1: манифест, отданный агенту. Колонки добавлены этим же пакетом, поэтому читаются
+    // кастом (ADR-011): сгенерированный клиент про них узнает только после `prisma generate`.
+    const intakeRecord = intake as unknown as Record<string, unknown>;
+    const intakeManifest = {
+      storageKey: (intakeRecord['manifestStorageKey'] as string | undefined) ?? null,
+      sha256: (intakeRecord['manifestSha256'] as string | undefined) ?? null,
+      version: (intakeRecord['manifestVersion'] as string | undefined) ?? null,
+    };
+
     const reportJson = dto.reportJson;
     const targetLanguages = intake.targetLanguages as string[];
     const targetCountryCodes = intake.targetCountryCodes as string[];
@@ -58,6 +69,35 @@ export class RightsReviewImportService {
     const reportMarkdownSha256 = dto.reportMarkdown ? sha256Hex(dto.reportMarkdown) : null;
     const rawAgentOutputSha256 = dto.rawAgentOutput ? sha256Hex(dto.rawAgentOutput) : null;
 
+    // WP-9.1 (essence §15): архивные копии текстовых артефактов отчёта в приватном хранилище.
+    // Источником истины остаётся `reportJson` в БД — ключи нужны, чтобы юридический пакет
+    // выгружался целиком. Best-effort: недоступность хранилища не отменяет импорт, иначе
+    // архивирование стало бы новым способом уронить единственный рабочий путь приёма отчёта.
+    const [archivedJson, archivedMarkdown, archivedRaw] = await Promise.all([
+      this.files.trySaveText(
+        'report-json',
+        reportJsonString,
+        'application/json',
+        `rights-report-${intakeId}.json`,
+      ),
+      dto.reportMarkdown
+        ? this.files.trySaveText(
+            'report-markdown',
+            dto.reportMarkdown,
+            'text/markdown',
+            `rights-report-${intakeId}.md`,
+          )
+        : Promise.resolve(null),
+      dto.rawAgentOutput
+        ? this.files.trySaveText(
+            'raw-agent-output',
+            dto.rawAgentOutput,
+            'text/plain',
+            `rights-raw-agent-output-${intakeId}.txt`,
+          )
+        : Promise.resolve(null),
+    ]);
+
     const baseData = {
       rightsIntakeId: intakeId,
       schemaVersion: RIGHTS_REVIEW_IMPORT_SCHEMA_VERSION,
@@ -68,6 +108,17 @@ export class RightsReviewImportService {
       reportJsonSha256,
       reportMarkdownSha256,
       rawAgentOutputSha256,
+      reportJsonStorageKey: archivedJson?.storageKey ?? null,
+      reportMarkdownStorageKey: archivedMarkdown?.storageKey ?? null,
+      rawAgentOutputStorageKey: archivedRaw?.storageKey ?? null,
+      // WP-9.1: снимок задания, под которое написан отчёт. Копируется из интейка в момент
+      // импорта, поэтому переиздание манифеста задним числом не меняет того, что было у уже
+      // принятого отчёта. `promptVersion` — версия того же манифеста.
+      inputManifestStorageKey: intakeManifest.storageKey,
+      inputManifestSha256: intakeManifest.sha256,
+      inputManifestVersion: intakeManifest.version,
+      promptVersion: intakeManifest.version,
+      agentModel: dto.agentModel ?? null,
       importedByUserId: userId,
     };
 
@@ -217,6 +268,19 @@ export class RightsReviewImportService {
       reportJsonSha256: importRecord['reportJsonSha256'],
       reportMarkdownSha256: importRecord['reportMarkdownSha256'],
       rawAgentOutputSha256: importRecord['rawAgentOutputSha256'],
+      // WP-9.2: сам ключ хранилища наружу не отдаётся, наличие файла — флагом.
+      hasReportPdf: Boolean(importRecord['reportPdfStorageKey']),
+      reportPdfSha256: (importRecord['reportPdfSha256'] as string) ?? null,
+      reportPdfFileName: (importRecord['reportPdfFileName'] as string) ?? null,
+      reportPdfContentType: (importRecord['reportPdfContentType'] as string) ?? null,
+      reportPdfSizeBytes: (importRecord['reportPdfSizeBytes'] as number) ?? null,
+      reportPdfUploadedAt: importRecord['reportPdfUploadedAt']
+        ? new Date(importRecord['reportPdfUploadedAt'] as string).toISOString()
+        : null,
+      inputManifestSha256: (importRecord['inputManifestSha256'] as string) ?? null,
+      inputManifestVersion: (importRecord['inputManifestVersion'] as string) ?? null,
+      promptVersion: (importRecord['promptVersion'] as string) ?? null,
+      agentModel: (importRecord['agentModel'] as string) ?? null,
       validationErrors,
       validationWarnings,
       importedByUserId: importRecord['importedByUserId'],

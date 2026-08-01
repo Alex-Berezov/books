@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 import {
   RIGHTS_AGENT_MANIFEST_VERSION,
   RIGHTS_AGENT_MANIFEST_TYPE,
@@ -19,7 +20,12 @@ function assertArray(value: unknown, fieldName: string): asserts value is unknow
 
 @Injectable()
 export class RightsIntakeManifestService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(RightsIntakeManifestService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly files: RightsFileStorageService,
+  ) {}
 
   async generate(id: string): Promise<RightsAgentManifestDto> {
     const intake = await this.prisma.rightsIntake.findUnique({ where: { id } });
@@ -60,6 +66,85 @@ export class RightsIntakeManifestService {
 
     const now = new Date().toISOString();
 
+    const manifest = this.build(intake, now);
+
+    // WP-9.1 (essence §15): манифест собирается на лету и несёт `generatedAt`, поэтому
+    // повторный GET даёт другие байты — восстановить задним числом, что именно получил агент,
+    // невозможно. Сохраняем ровно то, что уходит на провод, и запоминаем ключ на интейке;
+    // импорт отчёта скопирует его в `inputManifest*`.
+    // Best-effort: недоступность хранилища не должна отнимать у редактора манифест.
+    const stored = await this.files.trySaveText(
+      'input-manifest',
+      JSON.stringify(manifest),
+      'application/json',
+      `rights-agent-manifest-${intake.id}.json`,
+    );
+
+    if (stored) {
+      await this.rememberManifestSnapshot(intake.id, stored, now);
+    }
+
+    return manifest;
+  }
+
+  /**
+   * Снимок манифеста — вспомогательная запись, а не то, ради чего эндпоинт существует.
+   * Поэтому её отказ не должен превращать выдачу манифеста в 500: и при недоступной базе,
+   * и — важнее — если код выкатили раньше миграции WP-9, редактор всё равно получает файл,
+   * а причина уходит в лог. Ответить «под каким заданием сделан отчёт» в этом случае будет
+   * нечем, но это меньшая беда, чем неработающая фаза 2.
+   */
+  private async rememberManifestSnapshot(
+    intakeId: string,
+    stored: { storageKey: string; sha256: string },
+    generatedAt: string,
+  ): Promise<void> {
+    try {
+      await (
+        this.prisma as unknown as {
+          rightsIntake: { update: (args: Record<string, unknown>) => Promise<unknown> };
+        }
+      ).rightsIntake.update({
+        where: { id: intakeId },
+        data: {
+          manifestStorageKey: stored.storageKey,
+          manifestSha256: stored.sha256,
+          manifestVersion: RIGHTS_AGENT_MANIFEST_VERSION,
+          manifestGeneratedAt: new Date(generatedAt),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `Failed to record the agent manifest snapshot for intake ${intakeId}: ` +
+          `${(e as Error).message}. The manifest itself was returned to the editor.`,
+      );
+    }
+  }
+
+  private build(
+    intake: {
+      id: string;
+      workflowStatus: string;
+      candidateTitle: string;
+      candidateAuthor: string;
+      originalTitle: string | null;
+      originalLanguage: string | null;
+      authorBirthYear: number | null;
+      authorDeathYear: number | null;
+      notesRu: string | null;
+      sourceProvider: unknown;
+      sourceExternalId: string | null;
+      sourceUrl: string | null;
+      sourceTitle: string | null;
+      sourceLanguage: string | null;
+      sourceTextType: unknown;
+      targetLanguages: unknown;
+      targetCountryCodes: unknown;
+      plannedContentTypes: unknown;
+      plannedComponents: unknown;
+    },
+    now: string,
+  ): RightsAgentManifestDto {
     return {
       manifestVersion: RIGHTS_AGENT_MANIFEST_VERSION,
       manifestType: RIGHTS_AGENT_MANIFEST_TYPE,

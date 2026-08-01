@@ -923,6 +923,11 @@ export class RightsContentHashService {
       sourceTextType: sourceEdition['sourceTextType'],
       gutenbergStatus: sourceEdition['gutenbergStatus'] ?? null,
       status: sourceEdition['status'],
+      // WP-8.3 (R3-05): контрольная сумма самого файла источника. До неё хешировались только
+      // метаданные, поэтому подмена файла по тому же адресу оставалась невидимой — ровно тот
+      // класс, что WP-8.2 закрыл для обложки. Ключ, имя, MIME и размер в хеш не входят:
+      // они сопровождают файл, но не меняют произведение (ADR-010).
+      sourceFileSha256: sourceEdition['sourceFileSha256'] ?? null,
       // WP-7.1: права издания — запись на язык. Порядок фиксируется по коду языка,
       // иначе хеш зависел бы от порядка выдачи БД.
       editionRights: ((sourceEdition['editionRights'] as Array<Record<string, unknown>>) || [])

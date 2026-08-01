@@ -9,9 +9,14 @@ export class LocalStorageService implements StorageService {
   private baseDir: string;
   private publicBaseUrl: string | undefined;
 
-  constructor() {
+  /**
+   * @param baseDirOverride WP-9: lets a second instance live outside the statically served
+   *   uploads root. Rights files must not be reachable by URL — `ServeStaticModule` publishes
+   *   the whole of `LOCAL_UPLOADS_DIR`, so a separate directory is the only local-mode barrier.
+   */
+  constructor(baseDirOverride?: string) {
     // Defaults match TASKS.md suggestions
-    const configured = process.env.LOCAL_UPLOADS_DIR || './var/uploads';
+    const configured = baseDirOverride || process.env.LOCAL_UPLOADS_DIR || './var/uploads';
     this.baseDir = resolve(configured);
     // Default to 5000 to match dev server port; can be overridden via env
     this.publicBaseUrl = process.env.LOCAL_PUBLIC_BASE_URL || 'http://localhost:5000';
@@ -81,5 +86,16 @@ export class LocalStorageService implements StorageService {
 
   getLocalPath(key: string): string {
     return this.resolvePath(key);
+  }
+
+  async read(key: string): Promise<Buffer | null> {
+    const filePath = this.resolvePath(key);
+    try {
+      return await fs.readFile(filePath);
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err && err.code === 'ENOENT') return null;
+      throw e;
+    }
   }
 }

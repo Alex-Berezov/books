@@ -20,6 +20,12 @@ export interface StorageService {
    * Non-local drivers (S3 etc.) may return null.
    */
   getLocalPath?(key: string): string | null;
+  /**
+   * WP-9: reads an object back into memory. Needed by the rights file store, whose objects
+   * are never exposed through a public URL and can only be served by the backend itself.
+   * Returns null when the key does not exist.
+   */
+  read?(key: string): Promise<Buffer | null>;
 }
 
 export const STORAGE_SERVICE = Symbol('STORAGE_SERVICE');

@@ -45,6 +45,18 @@ const isReportShapeError = (error: unknown): boolean =>
   error instanceof Prisma.PrismaClientValidationError ||
   error instanceof Prisma.PrismaClientKnownRequestError;
 
+const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+
+/**
+ * WP-8.3: контрольная сумма файла источника из отчёта агента. Значение попадает в content
+ * hash клиренса, поэтому мусор в нём хуже пустоты — «изменение» строки закрывало бы гейт
+ * публикации без причины. Не похоже на sha256 → считаем, что суммы нет.
+ */
+const normalizeSha256 = (value: unknown): string | null =>
+  typeof value === 'string' && SHA256_PATTERN.test(value.trim())
+    ? value.trim().toLowerCase()
+    : null;
+
 interface NormalizedContributorInput {
   role: ContributorRole;
   roleOtherRu: string | null;
@@ -405,6 +417,11 @@ export class RightsMaterializationService {
           rightsReviewImportId: importId,
           status: 'HUMAN_REVIEW_REQUIRED',
           schemaVersion: reportJson['schemaVersion'] as string,
+          // WP-9.1 (essence §15): проверка — акт, и она несёт сведения «под каким заданием
+          // и чем проверяли» сама, тем же приёмом, что и `schemaVersion`. Импорт может уйти
+          // в `SUPERSEDED`, а проверка обязана оставаться самодостаточной.
+          promptVersion: (importRecord['promptVersion'] as string | null) ?? null,
+          agentModel: (importRecord['agentModel'] as string | null) ?? null,
           overallStatus: reportJson['overallStatus'] as string,
           publicationGate: reportJson['publicationGate'] as string,
           confidence: reportJson['confidence'] as string,
@@ -476,6 +493,13 @@ export class RightsMaterializationService {
             gutenbergStatus: (sourceAssessment['gutenbergStatus'] as string) ?? null,
             status: sourceAssessment['status'] as string,
             notesRu: (sourceAssessment['notesRu'] as string) ?? null,
+            // WP-8.3 (R3-05): контрольная сумма файла источника. Поле в отчёте необязательное
+            // (`additionalProperties: true`, `schemaVersion` не поднимается), поэтому агент
+            // может её не прислать — тогда файл прикрепляет редактор через
+            // `POST /admin/rights/profiles/:id/source-file`, и сумму считает сервер.
+            // Явно мусорное значение отбрасывается: в хеш клиренса попадает только то,
+            // что похоже на sha256.
+            sourceFileSha256: normalizeSha256(sourceAssessment['sourceFileSha256']),
           },
         });
 

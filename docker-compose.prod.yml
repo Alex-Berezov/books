@@ -16,6 +16,12 @@ services:
     # Port 5000 is accessible only on localhost for the Caddy reverse proxy
     volumes:
       - uploads_data_prod:/app/var/uploads
+      # WP-9: приватное хранилище юридических файлов прав (`RIGHTS_FILES_LOCAL_DIR`).
+      # Отдельный том, а не подкаталог uploads: uploads раздаётся статикой, а отчёт о правах
+      # публичного адреса иметь не должен (ADR-015). Том нужен даже при `STORAGE_DRIVER=r2` —
+      # иначе откат на local тихо сложил бы юридические документы внутрь контейнера, и
+      # ближайший редеплой их уничтожил бы, вопреки ADR-009.
+      - rights_files_data_prod:/app/var/rights-files
     ports:
       - '127.0.0.1:${PORT:-5000}:5000'
     depends_on:
@@ -49,3 +55,4 @@ services:
 volumes:
   postgres_data_prod:
   uploads_data_prod:
+  rights_files_data_prod:
