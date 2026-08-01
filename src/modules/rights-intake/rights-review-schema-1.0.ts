@@ -1,3 +1,4 @@
+import { REQUIRED_REPORT_FIELDS } from './rights-review-required-fields';
 import type { RightsReportSchemaDocument } from './rights-review-schema.registry';
 
 const CONFIDENCE_ENUM = ['HIGH', 'MEDIUM', 'LOW'];
@@ -18,22 +19,9 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
   schemaVersion: '1.0',
   type: 'object',
   additionalProperties: true,
-  required: [
-    'schemaVersion',
-    'intakeId',
-    'overallStatus',
-    'publicationGate',
-    'summaryRu',
-    'conclusionRu',
-    'sourceAssessment',
-    'languageAssessments',
-    'componentAssessments',
-    'territoryDecisions',
-    'requiredActions',
-    'evidence',
-    'confidence',
-    'nextReviewAt',
-  ],
+  // WP-6.2: списки `required` во всём документе приходят из `REQUIRED_REPORT_FIELDS` —
+  // одного источника с рантайм-валидатором и колонками `NOT NULL` в `schema.prisma`.
+  required: [...REQUIRED_REPORT_FIELDS.root],
   properties: {
     schemaVersion: {
       type: 'string',
@@ -70,7 +58,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
     sourceAssessment: {
       type: 'object',
       additionalProperties: true,
-      required: ['status'],
+      required: [...REQUIRED_REPORT_FIELDS.sourceAssessment],
       properties: {
         provider: { type: 'string', enum: ['PROJECT_GUTENBERG', 'OTHER', 'UNKNOWN'] },
         externalId: { type: ['string', 'null'] },
@@ -106,7 +94,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['languageCode'],
+        required: [...REQUIRED_REPORT_FIELDS.languageAssessments],
         properties: {
           languageCode: { type: 'string', enum: ['en', 'es', 'fr', 'pt', 'ru'] },
           status: {
@@ -143,7 +131,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['componentType', 'status'],
+        required: [...REQUIRED_REPORT_FIELDS.componentAssessments],
         properties: {
           componentType: {
             type: 'string',
@@ -172,7 +160,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
               'OTHER',
             ],
           },
-          titleRu: { type: ['string', 'null'] },
+          titleRu: { type: 'string' },
           status: {
             type: 'string',
             enum: [
@@ -209,7 +197,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
             items: {
               type: 'object',
               additionalProperties: true,
-              required: ['countryCode'],
+              required: [...REQUIRED_REPORT_FIELDS.componentTerritoryAssessments],
               properties: {
                 countryCode: { type: 'string', pattern: '^[A-Z]{2}$' },
                 status: {
@@ -244,7 +232,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['countryCode'],
+        required: [...REQUIRED_REPORT_FIELDS.territoryDecisions],
         properties: {
           countryCode: {
             type: 'string',
@@ -278,7 +266,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
             ],
           },
           confidence: { type: 'string', enum: CONFIDENCE_ENUM },
-          reasonRu: { type: ['string', 'null'] },
+          reasonRu: { type: 'string' },
           licenseRefs: { type: 'array', items: { type: 'string' } },
         },
       },
@@ -288,7 +276,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['actionType', 'descriptionRu'],
+        required: [...REQUIRED_REPORT_FIELDS.requiredActions],
         properties: {
           actionType: {
             type: 'string',
@@ -330,7 +318,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['evidenceType', 'sourceLevel', 'title', 'authority', 'summaryRu'],
+        required: [...REQUIRED_REPORT_FIELDS.evidence],
         properties: {
           evidenceType: {
             type: 'string',
@@ -381,7 +369,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
       items: {
         type: 'object',
         additionalProperties: true,
-        required: ['key'],
+        required: [...REQUIRED_REPORT_FIELDS.licenses],
         properties: {
           key: { type: 'string', description: 'Report-local identifier used by licenseRef(s).' },
           title: { type: 'string' },
@@ -443,7 +431,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
     contributor: {
       type: 'object',
       additionalProperties: true,
-      required: ['key', 'role', 'displayName'],
+      required: [...REQUIRED_REPORT_FIELDS.contributors],
       properties: {
         key: { type: 'string', description: 'Report-local identifier used by contributorRefs.' },
         role: {

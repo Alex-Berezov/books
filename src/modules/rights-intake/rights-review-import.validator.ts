@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { REQUIRED_REPORT_FIELDS } from './rights-review-required-fields';
 import {
   RIGHTS_REPORT_SCHEMA_VERSIONS,
   isSupportedReportSchemaVersion,
@@ -251,6 +252,44 @@ function addWarning(warnings: ValidationIssue[], path: string, message: string, 
   warnings.push({ path, message, code });
 }
 
+/**
+ * WP-6.1 (R4-01): элемент массива обязан быть объектом. Раньше `null` в любом из блоков
+ * ронял сам валидатор, то есть импорт отвечал 500 вместо списка ошибок.
+ */
+function assertReportObject(
+  value: unknown,
+  path: string,
+  errors: ValidationIssue[],
+): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    addError(errors, path, 'must be an object', 'INVALID_TYPE');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * WP-6.1 (R4-01): наличие полей, которые `NOT NULL` в `schema.prisma`. До правки валидатор
+ * проверял только значения (`if (value && !isIn(...))`), поэтому отчёт без обязательного поля
+ * сохранялся как `VALIDATED` и ронял материализацию `PrismaClientValidationError`.
+ * Пустая строка считается отсутствием: `NOT NULL` она удовлетворяет, но смысла не несёт.
+ */
+function requireFields(
+  record: Record<string, unknown>,
+  fields: readonly string[],
+  prefix: string,
+  errors: ValidationIssue[],
+): void {
+  for (const field of fields) {
+    const value = record[field];
+    const isMissing =
+      value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+    if (isMissing) {
+      addError(errors, `${prefix}.${field}`, `${field} is required`, 'MISSING_FIELD');
+    }
+  }
+}
+
 @Injectable()
 export class RightsReviewImportValidator {
   validate(
@@ -486,9 +525,12 @@ export class RightsReviewImportValidator {
       addError(errors, 'conclusionRu', 'conclusionRu is required', 'MISSING_FIELD');
     }
 
-    const sourceAssessment = reportJson['sourceAssessment'] as Record<string, unknown> | undefined;
-    if (!sourceAssessment) {
+    const rawSourceAssessment: unknown = reportJson['sourceAssessment'];
+    let sourceAssessment: Record<string, unknown> | undefined;
+    if (rawSourceAssessment === undefined || rawSourceAssessment === null) {
       addError(errors, 'sourceAssessment', 'sourceAssessment is required', 'MISSING_FIELD');
+    } else if (assertReportObject(rawSourceAssessment, 'sourceAssessment', errors)) {
+      sourceAssessment = rawSourceAssessment;
     }
 
     const languageAssessments = reportJson['languageAssessments'];
@@ -542,21 +584,26 @@ export class RightsReviewImportValidator {
       const componentCoveredCountries =
         this.getComponentTerritoryCountryCodes(componentAssessments);
       for (let i = 0; i < territoryDecisions.length; i++) {
-        const td = territoryDecisions[i] as Record<string, unknown>;
         const prefix = `territoryDecisions[${i}]`;
+        const entry: unknown = territoryDecisions[i];
+        if (!assertReportObject(entry, prefix, errors)) continue;
+        const td = entry;
 
+        requireFields(td, REQUIRED_REPORT_FIELDS.territoryDecisions, prefix, errors);
+
+        // Наличие `countryCode` сообщает requireFields — здесь остаётся только формат.
         const cc = td['countryCode'] as string | undefined;
-        if (!cc) {
-          addError(errors, `${prefix}.countryCode`, 'countryCode is required', 'MISSING_FIELD');
-        } else if (typeof cc === 'string' && !/^[A-Z]{2}$/.test(cc)) {
-          addError(
-            errors,
-            `${prefix}.countryCode`,
-            `Invalid countryCode: "${cc}". Must be uppercase ISO alpha-2`,
-            'INVALID_COUNTRY_CODE',
-          );
-        } else if (typeof cc === 'string') {
-          coveredCountries.add(cc);
+        if (typeof cc === 'string' && cc.trim() !== '') {
+          if (!/^[A-Z]{2}$/.test(cc)) {
+            addError(
+              errors,
+              `${prefix}.countryCode`,
+              `Invalid countryCode: "${cc}". Must be uppercase ISO alpha-2`,
+              'INVALID_COUNTRY_CODE',
+            );
+          } else {
+            coveredCountries.add(cc);
+          }
         }
 
         const finalStatus = td['finalStatus'] as string | undefined;
@@ -636,9 +683,9 @@ export class RightsReviewImportValidator {
 
       // Check for NOT_CHECKED entries for target countries
       for (let i = 0; i < territoryDecisions.length; i++) {
-        const td = territoryDecisions[i] as Record<string, unknown>;
+        const td = territoryDecisions[i] as Record<string, unknown> | null;
         if (
-          td['finalStatus'] === 'NOT_CHECKED' &&
+          td?.['finalStatus'] === 'NOT_CHECKED' &&
           targetCountryCodes.includes(td['countryCode'] as string)
         ) {
           addWarning(
@@ -652,8 +699,8 @@ export class RightsReviewImportValidator {
 
       // Check for PENDING_REVIEW
       for (let i = 0; i < territoryDecisions.length; i++) {
-        const td = territoryDecisions[i] as Record<string, unknown>;
-        if (td['finalStatus'] === 'PENDING_REVIEW') {
+        const td = territoryDecisions[i] as Record<string, unknown> | null;
+        if (td?.['finalStatus'] === 'PENDING_REVIEW') {
           addWarning(
             warnings,
             `territoryDecisions[${i}].finalStatus`,
@@ -668,8 +715,12 @@ export class RightsReviewImportValidator {
     if (Array.isArray(languageAssessments)) {
       const coveredLanguages = new Set<string>();
       for (let i = 0; i < languageAssessments.length; i++) {
-        const la = languageAssessments[i] as Record<string, unknown>;
         const prefix = `languageAssessments[${i}]`;
+        const entry: unknown = languageAssessments[i];
+        if (!assertReportObject(entry, prefix, errors)) continue;
+        const la = entry;
+
+        requireFields(la, REQUIRED_REPORT_FIELDS.languageAssessments, prefix, errors);
 
         const lc = la['languageCode'];
         if (lc && typeof lc === 'string') {
@@ -729,15 +780,25 @@ export class RightsReviewImportValidator {
     // Validate requiredActions
     if (Array.isArray(requiredActions)) {
       for (let i = 0; i < requiredActions.length; i++) {
-        const ra = requiredActions[i] as Record<string, unknown>;
         const prefix = `requiredActions[${i}]`;
+        const entry: unknown = requiredActions[i];
+        if (!assertReportObject(entry, prefix, errors)) continue;
+        const ra = entry;
+
+        const isBlocking = ra['isBlocking'];
+        // `descriptionRu` — NOT NULL для любого действия. У блокирующего сохраняется
+        // собственный код ошибки ТЗ фазы 3, иначе поле проверяется как обычное обязательное.
+        const requiredActionFields =
+          isBlocking === true
+            ? REQUIRED_REPORT_FIELDS.requiredActions.filter((field) => field !== 'descriptionRu')
+            : REQUIRED_REPORT_FIELDS.requiredActions;
+        requireFields(ra, requiredActionFields, prefix, errors);
 
         const at = ra['actionType'] as string | undefined;
         if (at && !isIn(VALID_ACTION_TYPES, at)) {
           addError(errors, `${prefix}.actionType`, `Invalid actionType: "${at}"`, 'INVALID_ENUM');
         }
 
-        const isBlocking = ra['isBlocking'];
         if (isBlocking === true && !ra['descriptionRu']) {
           addError(
             errors,
@@ -752,8 +813,12 @@ export class RightsReviewImportValidator {
     // Validate evidence
     if (Array.isArray(evidence)) {
       for (let i = 0; i < evidence.length; i++) {
-        const ev = evidence[i] as Record<string, unknown>;
         const prefix = `evidence[${i}]`;
+        const entry: unknown = evidence[i];
+        if (!assertReportObject(entry, prefix, errors)) continue;
+        const ev = entry;
+
+        requireFields(ev, REQUIRED_REPORT_FIELDS.evidence, prefix, errors);
 
         const et = ev['evidenceType'] as string | undefined;
         if (et && !isIn(VALID_EVIDENCE_TYPES, et)) {
@@ -775,8 +840,12 @@ export class RightsReviewImportValidator {
     // Validate component assessments
     if (Array.isArray(componentAssessments)) {
       for (let i = 0; i < componentAssessments.length; i++) {
-        const ca = componentAssessments[i] as Record<string, unknown>;
         const prefix = `componentAssessments[${i}]`;
+        const entry: unknown = componentAssessments[i];
+        if (!assertReportObject(entry, prefix, errors)) continue;
+        const ca = entry;
+
+        requireFields(ca, REQUIRED_REPORT_FIELDS.componentAssessments, prefix, errors);
 
         const ct = ca['componentType'] as string | undefined;
         if (ct && !isIn(VALID_COMPONENT_TYPES, ct)) {
@@ -901,6 +970,13 @@ export class RightsReviewImportValidator {
 
     // Validate source assessment
     if (sourceAssessment) {
+      requireFields(
+        sourceAssessment,
+        REQUIRED_REPORT_FIELDS.sourceAssessment,
+        'sourceAssessment',
+        errors,
+      );
+
       const sp = sourceAssessment['provider'] as string | undefined;
       if (sp && !isIn(VALID_SOURCE_PROVIDERS, sp)) {
         addError(errors, 'sourceAssessment.provider', `Invalid provider: "${sp}"`, 'INVALID_ENUM');

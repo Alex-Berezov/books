@@ -10,11 +10,12 @@ import { RightsAgentTokenGuard } from './rights-agent-token.guard';
 import { RightsAgentTokenService } from './rights-agent-token.service';
 import { RightsAgentUploadRateLimitGuard } from './rights-agent-upload-rate-limit.guard';
 import { RightsNotificationsController } from './rights-notifications.controller';
-import { RightsNotificationsService } from './rights-notifications.service';
+import { RightsNotificationsModule } from './rights-notifications.module';
 
 /**
  * `RightsIntakeModule` must never import this module back — that would be a cycle.
- * This is why the manual Phase 3 import path creates no notifications.
+ * Notifications themselves live in the leaf `RightsNotificationsModule`, which is what the
+ * manual Phase 3 import path imports instead (WP-6.3).
  *
  * `RateLimitModule` is NOT global: it only exports `RATE_LIMITER`, so every module whose
  * providers inject it must import it explicitly (same as auth/comments/uploads/view-stats).
@@ -22,17 +23,18 @@ import { RightsNotificationsService } from './rights-notifications.service';
  * whole application down.
  */
 @Module({
-  imports: [RightsIntakeModule, RateLimitModule],
+  imports: [RightsIntakeModule, RateLimitModule, RightsNotificationsModule],
   controllers: [RightsAgentController, RightsAgentAdminController, RightsNotificationsController],
   providers: [
     RightsAgentTokenService,
     RightsAgentSubmissionService,
-    RightsNotificationsService,
     RightsAgentTokenGuard,
     RightsAgentUploadRateLimitGuard,
     RolesGuard,
     PrismaService,
   ],
-  exports: [RightsNotificationsService, RightsAgentTokenService],
+  // Модуль-лист реэкспортируется целиком: провайдер чужого модуля экспортировать нельзя,
+  // а `rights-lawyer` и `rights-recheck` получают `RightsNotificationsService` отсюда.
+  exports: [RightsNotificationsModule, RightsAgentTokenService],
 })
 export class RightsAgentModule {}

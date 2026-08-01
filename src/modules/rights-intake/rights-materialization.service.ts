@@ -1,4 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ComponentTerritoryAggregationService,
@@ -16,6 +23,11 @@ import {
 
 import { PersonResolverService } from '../persons/person-resolver.service';
 import { ContributorRole } from '../persons/person-interface';
+import {
+  RightsNotificationSeverity,
+  RightsNotificationType,
+} from '../rights-agent/rights-agent-interface';
+import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
 import { RightsConfidence, Prisma } from '@prisma/client';
 
 type NormalizedContributorConfidence = RightsConfidence | null;
@@ -23,6 +35,15 @@ type NormalizedContributorConfidence = RightsConfidence | null;
 /** Prisma signals a unique-constraint violation with error code `P2002`. */
 const isUniqueConstraintViolation = (error: unknown): boolean =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+
+/**
+ * Сбой из-за формы отчёта, а не из-за инфраструктуры: отсутствующее обязательное поле,
+ * неизвестное значение enum'а, нарушенный констрейнт. Такой отчёт не разложится никогда,
+ * сколько ни повторяй запрос, поэтому ответ — 422, а не 500 (WP-6.3).
+ */
+const isReportShapeError = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientValidationError ||
+  error instanceof Prisma.PrismaClientKnownRequestError;
 
 interface NormalizedContributorInput {
   role: ContributorRole;
@@ -62,12 +83,21 @@ const IDENTITY_CONFIDENCE_TO_RIGHTS_CONFIDENCE: Record<string, RightsConfidence 
   UNKNOWN: null,
 };
 
+/** Кто запустил материализацию — от этого зависит только адресация уведомления. */
+export interface MaterializationContext {
+  /** Идентификатор сабмишена агентского канала (фаза 17); у ручного импорта отсутствует. */
+  agentSubmissionId?: string | null;
+}
+
 @Injectable()
 export class RightsMaterializationService {
+  private readonly logger = new Logger(RightsMaterializationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly componentTerritoryAggregationService: ComponentTerritoryAggregationService,
     private readonly personResolverService: PersonResolverService,
+    private readonly notifications: RightsNotificationsService,
   ) {}
 
   private get rp() {
@@ -139,7 +169,78 @@ export class RightsMaterializationService {
     return null;
   }
 
-  async materializeFromImport(importId: string) {
+  /**
+   * WP-6.3 (R9-02): обработка сбоя живёт здесь, в общем сервисе, а не в агентском канале.
+   * Раньше `try/catch` был только в фазе 17: агент получал уведомление и диагностику,
+   * а редактор на `POST /admin/rights/review-imports/:id/materialize` — голый 500 без тела
+   * и без следа, то есть автоматический путь деградировал аккуратнее интерактивного.
+   */
+  async materializeFromImport(importId: string, context: MaterializationContext = {}) {
+    try {
+      return await this.runMaterialization(importId);
+    } catch (error) {
+      await this.reportMaterializationFailure(error, importId, context);
+      throw this.toDiagnosticError(error, importId);
+    }
+  }
+
+  /**
+   * Уведомление пишется одинаково для обоих каналов; агентский добавляет к нему
+   * `agentSubmissionId`. Ошибка самого уведомления не должна подменять исходную —
+   * поэтому она только логируется.
+   */
+  private async reportMaterializationFailure(
+    error: unknown,
+    importId: string,
+    context: MaterializationContext,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Materialization failed for import ${importId}: ${message}`);
+
+    try {
+      const importRecord = await this.ri.findUnique({ where: { id: importId } });
+      if (!importRecord) return;
+
+      const intakeId = importRecord['rightsIntakeId'] as string;
+      const intake = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
+      const title = intake?.candidateTitle ?? intakeId;
+
+      await this.notifications.create({
+        type: RightsNotificationType.AGENT_REPORT_MATERIALIZATION_FAILED,
+        severity: RightsNotificationSeverity.ERROR,
+        titleRu: 'Не удалось построить профиль прав',
+        messageRu: `Отчёт по интейку «${title}» импортирован, но материализация упала: ${message}.`,
+        rightsIntakeId: intakeId,
+        agentSubmissionId: context.agentSubmissionId ?? null,
+        rightsReviewImportId: importId,
+      });
+    } catch (notificationError) {
+      const notificationMessage =
+        notificationError instanceof Error ? notificationError.message : String(notificationError);
+      this.logger.error(
+        `Failed to record a materialization failure notification for import ${importId}: ${notificationMessage}`,
+      );
+    }
+  }
+
+  private toDiagnosticError(error: unknown, importId: string): unknown {
+    if (error instanceof HttpException) return error;
+    if (!isReportShapeError(error)) return error;
+
+    const message = error instanceof Error ? error.message : String(error);
+    return new UnprocessableEntityException({
+      code: 'REPORT_NOT_MATERIALIZABLE',
+      message:
+        'The report passed validation but cannot be materialized into the rights model. ' +
+        'Import a corrected report.',
+      messageRu:
+        'Отчёт прошёл валидацию, но не раскладывается в модель прав. Нужен исправленный отчёт.',
+      importId,
+      reason: message,
+    });
+  }
+
+  private async runMaterialization(importId: string) {
     const importRecord = await this.ri.findUnique({ where: { id: importId } });
     if (!importRecord) {
       throw new NotFoundException(`RightsReviewImport with ID '${importId}' not found`);

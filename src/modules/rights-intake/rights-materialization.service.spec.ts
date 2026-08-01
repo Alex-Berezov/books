@@ -4,9 +4,15 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import { PersonResolverService } from '../persons/person-resolver.service';
+import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 
 const makeValidReportJson = (): Record<string, unknown> => ({
   schemaVersion: '1.0',
@@ -170,16 +176,19 @@ describe('RightsMaterializationService', () => {
   let service: RightsMaterializationService;
   let prisma: PrismaStub;
   let personResolver: { resolveOrCreatePerson: jest.Mock };
+  let notifications: { create: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
     personResolver = {
       resolveOrCreatePerson: jest.fn().mockResolvedValue({ id: 'person-1' }),
     };
+    notifications = { create: jest.fn().mockResolvedValue({ id: 'notification-1' }) };
     service = new RightsMaterializationService(
       prisma as unknown as PrismaService,
       new ComponentTerritoryAggregationService(),
       personResolver as unknown as PersonResolverService,
+      notifications as unknown as RightsNotificationsService,
     );
     (prisma['rightsComponent'] as Record<string, jest.Mock>).create.mockResolvedValue({
       id: 'component-1',
@@ -253,6 +262,85 @@ describe('RightsMaterializationService', () => {
       });
 
       await expect(service.materializeFromImport('import-1')).rejects.toThrow(BadRequestException);
+    });
+
+    // WP-6.3 (R9-02): сбой диагностируется одинаково в обоих каналах.
+    describe('failure handling', () => {
+      const failWith = (error: unknown) => {
+        setupBasicMocks();
+        prisma.$transaction.mockRejectedValue(error);
+      };
+
+      const prismaShapeError = () =>
+        new Prisma.PrismaClientValidationError('Argument reasonRu is missing', {
+          clientVersion: 'test',
+        });
+
+      it('turns a report-shaped Prisma failure into 422 instead of a bare 500', async () => {
+        failWith(prismaShapeError());
+
+        await expect(service.materializeFromImport('import-1')).rejects.toThrow(
+          UnprocessableEntityException,
+        );
+      });
+
+      it('reports the import id and the underlying reason in the 422 body', async () => {
+        failWith(prismaShapeError());
+
+        const error = await service.materializeFromImport('import-1').catch((e: unknown) => e);
+        const response = (error as UnprocessableEntityException).getResponse() as Record<
+          string,
+          unknown
+        >;
+
+        expect(response['code']).toBe('REPORT_NOT_MATERIALIZABLE');
+        expect(response['importId']).toBe('import-1');
+        expect(String(response['reason'])).toContain('reasonRu');
+      });
+
+      it('records a notification for the manual channel', async () => {
+        failWith(prismaShapeError());
+
+        await service.materializeFromImport('import-1').catch(() => undefined);
+
+        expect(notifications.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'AGENT_REPORT_MATERIALIZATION_FAILED',
+            rightsIntakeId: 'intake-1',
+            rightsReviewImportId: 'import-1',
+            agentSubmissionId: null,
+          }),
+        );
+      });
+
+      it('attributes the notification to the agent submission when there is one', async () => {
+        failWith(prismaShapeError());
+
+        await service
+          .materializeFromImport('import-1', { agentSubmissionId: 'submission-1' })
+          .catch(() => undefined);
+
+        expect(notifications.create).toHaveBeenCalledWith(
+          expect.objectContaining({ agentSubmissionId: 'submission-1' }),
+        );
+      });
+
+      it('keeps an infrastructure failure a 500 and does not disguise it as a bad report', async () => {
+        const infrastructureError = new Error('connection terminated');
+        failWith(infrastructureError);
+
+        await expect(service.materializeFromImport('import-1')).rejects.toBe(infrastructureError);
+        expect(notifications.create).toHaveBeenCalled();
+      });
+
+      it('does not let a failing notification mask the original error', async () => {
+        failWith(prismaShapeError());
+        notifications.create.mockRejectedValue(new Error('notifications are down'));
+
+        await expect(service.materializeFromImport('import-1')).rejects.toThrow(
+          UnprocessableEntityException,
+        );
+      });
     });
 
     it('should create RightsProfile, RightsReview, SourceEdition, EditionRights', async () => {

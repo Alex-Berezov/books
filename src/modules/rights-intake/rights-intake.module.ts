@@ -16,11 +16,16 @@ import { RightsContentHashService } from './rights-content-hash.service';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import { ComponentTerritoryAggregationService } from './component-territory-aggregation.service';
 import { PersonsModule } from '../persons/persons.module';
+import { RightsNotificationsModule } from '../rights-agent/rights-notifications.module';
 import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module';
 import { PrismaService } from '../../prisma/prisma.service';
 
+/**
+ * `RightsNotificationsModule` — лист графа (WP-6.3): импортировать сам `RightsAgentModule`
+ * отсюда нельзя, он импортирует этот модуль.
+ */
 @Module({
-  imports: [PersonsModule, RightsLicensesModule],
+  imports: [PersonsModule, RightsLicensesModule, RightsNotificationsModule],
   controllers: [
     RightsIntakeController,
     RightsReviewImportController,

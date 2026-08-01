@@ -161,7 +161,9 @@ describe('RightsAgentSubmissionService', () => {
     expect(result.reviewImportId).toBe('import-1');
     expect(result.materialization).toBe(RightsAgentSubmissionMaterialization.SUCCEEDED);
     expect(tokens.registerSuccess).toHaveBeenCalledWith('token-1');
-    expect(materialization.materializeFromImport).toHaveBeenCalledWith('import-1');
+    expect(materialization.materializeFromImport).toHaveBeenCalledWith('import-1', {
+      agentSubmissionId: 'submission-1',
+    });
     expect(notificationTypes()).toEqual([
       RightsNotificationType.AGENT_REPORT_RECEIVED,
       RightsNotificationType.AGENT_REPORT_MATERIALIZED,
@@ -299,12 +301,19 @@ describe('RightsAgentSubmissionService', () => {
 
     expect(result.status).toBe('VALIDATED');
     expect(result.materialization).toBe(RightsAgentSubmissionMaterialization.FAILED);
-    expect(notificationTypes()).toContain(
-      RightsNotificationType.AGENT_REPORT_MATERIALIZATION_FAILED,
-    );
     expect(prisma.rightsAgentSubmission.update).toHaveBeenCalledWith({
       where: { id: 'submission-1' },
       data: expect.objectContaining({ materializationError: 'materialization boom' }),
+    });
+  });
+
+  // WP-6.3 (R9-02): уведомление о сбое пишет сама материализация — одинаково для обоих
+  // каналов, — поэтому агентский канал передаёт ей только идентификатор сабмишена.
+  it('hands the submission id to materialization so the failure notification is attributed', async () => {
+    await service.submit(context, dto, meta);
+
+    expect(materialization.materializeFromImport).toHaveBeenCalledWith('import-1', {
+      agentSubmissionId: 'submission-1',
     });
   });
 

@@ -433,7 +433,9 @@ export class RightsAgentSubmissionService {
     }
 
     try {
-      const profile = await this.materialization.materializeFromImport(importId);
+      const profile = await this.materialization.materializeFromImport(importId, {
+        agentSubmissionId: submissionId,
+      });
       const profileId = (profile['id'] as string | undefined) ?? null;
 
       await this.notifications.create({
@@ -464,18 +466,11 @@ export class RightsAgentSubmissionService {
         profileId,
       };
     } catch (error) {
+      // WP-6.3: уведомление `AGENT_REPORT_MATERIALIZATION_FAILED` пишет сама материализация —
+      // одинаково для агентского и ручного каналов (R9-02). Здесь остаётся только то, что
+      // специфично для фазы 17: сабмишен помечается FAILED, а ответ остаётся 200 с диагностикой.
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Agent materialization failed for import ${importId}: ${message}`);
-
-      await this.notifications.create({
-        type: RightsNotificationType.AGENT_REPORT_MATERIALIZATION_FAILED,
-        severity: RightsNotificationSeverity.ERROR,
-        titleRu: 'Не удалось построить профиль прав',
-        messageRu: `Отчёт по интейку «${candidateTitle}» импортирован, но материализация упала: ${message}.`,
-        rightsIntakeId: intakeId,
-        agentSubmissionId: submissionId,
-        rightsReviewImportId: importId,
-      });
 
       return {
         materialization: RightsAgentSubmissionMaterialization.FAILED,

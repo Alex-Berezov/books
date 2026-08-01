@@ -1,4 +1,5 @@
 import { RightsReviewImportValidator } from './rights-review-import.validator';
+import { REQUIRED_REPORT_FIELDS } from './rights-review-required-fields';
 
 const TARGET_LANGUAGES = ['en', 'fr'];
 const TARGET_COUNTRIES = ['US', 'FR', 'GB'];
@@ -327,6 +328,92 @@ describe('RightsReviewImportValidator', () => {
     expect(warnings).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'COMPONENT_TERRITORY_CONFLICT' })]),
     );
+  });
+
+  // WP-6.1 (R4-01): наличие полей, которые NOT NULL в schema.prisma. До правки отчёт без них
+  // проходил как VALIDATED и ронял материализацию 500-й.
+  describe('required fields of nested blocks', () => {
+    const expectMissing = (payload: Record<string, unknown>, path: string): void => {
+      const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+      expect(errors.some((e) => e.code === 'MISSING_FIELD' && e.path === path)).toBe(true);
+    };
+
+    it.each(REQUIRED_REPORT_FIELDS.territoryDecisions.filter((field) => field !== 'countryCode'))(
+      'territoryDecisions[0] without %s fails',
+      (field) => {
+        const payload = validPayload();
+        delete (payload.territoryDecisions as Array<Record<string, unknown>>)[0][field];
+        expectMissing(payload, `territoryDecisions[0].${field}`);
+      },
+    );
+
+    it.each(REQUIRED_REPORT_FIELDS.componentAssessments)(
+      'componentAssessments[0] without %s fails',
+      (field) => {
+        const payload = validPayload();
+        delete (payload.componentAssessments as Array<Record<string, unknown>>)[0][field];
+        expectMissing(payload, `componentAssessments[0].${field}`);
+      },
+    );
+
+    it.each(REQUIRED_REPORT_FIELDS.evidence)('evidence[0] without %s fails', (field) => {
+      const payload = validPayload();
+      delete (payload.evidence as Array<Record<string, unknown>>)[0][field];
+      expectMissing(payload, `evidence[0].${field}`);
+    });
+
+    it('requiredActions[0] without actionType fails', () => {
+      const payload = validPayload();
+      payload.requiredActions = [{ descriptionRu: 'Удалить иллюстрации', isBlocking: false }];
+      expectMissing(payload, 'requiredActions[0].actionType');
+    });
+
+    // descriptionRu — NOT NULL независимо от isBlocking; блокирующее действие сохраняет
+    // собственный код ошибки ТЗ фазы 3.
+    it('non-blocking requiredActions[0] without descriptionRu fails', () => {
+      const payload = validPayload();
+      payload.requiredActions = [{ actionType: 'RECHECK_LATER', isBlocking: false }];
+      expectMissing(payload, 'requiredActions[0].descriptionRu');
+    });
+
+    it('sourceAssessment without status fails', () => {
+      const payload = validPayload();
+      delete (payload.sourceAssessment as Record<string, unknown>).status;
+      expectMissing(payload, 'sourceAssessment.status');
+    });
+
+    it('languageAssessments[0] without languageCode fails', () => {
+      const payload = validPayload();
+      delete (payload.languageAssessments as Array<Record<string, unknown>>)[0].languageCode;
+      expectMissing(payload, 'languageAssessments[0].languageCode');
+    });
+
+    it('blank string counts as missing', () => {
+      const payload = validPayload();
+      (payload.territoryDecisions as Array<Record<string, unknown>>)[0].reasonRu = '   ';
+      expectMissing(payload, 'territoryDecisions[0].reasonRu');
+    });
+
+    it('a non-object array element is reported instead of crashing the validator', () => {
+      const payload = validPayload();
+      (payload.territoryDecisions as unknown[])[0] = null;
+
+      const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+      expect(
+        errors.some((e) => e.code === 'INVALID_TYPE' && e.path === 'territoryDecisions[0]'),
+      ).toBe(true);
+    });
+
+    it('a complete report produces no MISSING_FIELD errors', () => {
+      const { errors } = validator.validate(
+        validPayload(),
+        INTAKE_ID,
+        TARGET_LANGUAGES,
+        TARGET_COUNTRIES,
+      );
+      expect(errors.filter((e) => e.code === 'MISSING_FIELD')).toEqual([]);
+    });
   });
 
   // Phase 15: optional licenses[] block
