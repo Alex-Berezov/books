@@ -326,14 +326,11 @@ export class RightsBookCreationService {
         versions.push(version);
       }
 
-      // Phase 8: Initialize content hash baselines for all created versions
+      // Phase 8: Initialize content hash baselines for all created versions.
+      // WP-8.1: участники проецируются ДО снятия baseline — с WP-8 они входят в хеш,
+      // и снимок, снятый до них, сразу расходился бы с живым хешем: гейт закрывал бы
+      // публикацию новой книги кодом RIGHTS_CONTENT_HASH_CHANGED.
       for (const v of versions) {
-        await this.rightsContentHashService.initializeVersionBaseline(
-          v['id'] as string,
-          'INITIAL_VERSION_SNAPSHOT',
-          null,
-          tx,
-        );
         await this.projectContributorsToVersion(
           tx as unknown as Prisma.TransactionClient,
           v['id'] as string,
@@ -341,6 +338,12 @@ export class RightsBookCreationService {
           v['type'] as string,
           profileId,
           (intake['originalLanguage'] as string) || undefined,
+        );
+        await this.rightsContentHashService.initializeVersionBaseline(
+          v['id'] as string,
+          'INITIAL_VERSION_SNAPSHOT',
+          null,
+          tx,
         );
       }
 

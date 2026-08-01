@@ -26,6 +26,8 @@ describe('Rights content hash — contributors (e2e)', () => {
   let bookWithRights: Awaited<ReturnType<typeof createBookWithRights>>;
 
   const slug = `hash-contributors-${Date.now()}`;
+  const createdSlugs: string[] = [];
+  const createdPersonIds: string[] = [];
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   const versionRow = async () =>
@@ -122,7 +124,13 @@ describe('Rights content hash — contributors (e2e)', () => {
   afterAll(async () => {
     await prisma.bookVersionContributor.deleteMany({ where: { bookVersionId: versionId } });
     await cleanupBookWithRights(prisma, slug);
-    await prisma.person.deleteMany({ where: { id: personId } });
+    for (const extraSlug of createdSlugs) {
+      await prisma.rightsProfileContributor.deleteMany({
+        where: { rightsProfileId: `test-profile-${extraSlug}` },
+      });
+      await cleanupBookWithRights(prisma, extraSlug);
+    }
+    await prisma.person.deleteMany({ where: { id: { in: [personId, ...createdPersonIds] } } });
     await app.close();
   });
 
@@ -199,6 +207,84 @@ describe('Rights content hash — contributors (e2e)', () => {
       .patch(`/versions/${versionId}/publish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
+  });
+
+  /**
+   * WP-8.1, регрессия из CI. Участники профиля проецируются на версию при создании книги из
+   * клиренса, а baseline снимался до проекции — новорождённая книга сразу не проходила гейт
+   * с `RIGHTS_CONTENT_HASH_CHANGED`. Трассировка идёт по реальному пути создания книги.
+   */
+  it('publishes a book created from clearance whose profile has contributors', async () => {
+    const freshSlug = `hash-creation-${Date.now()}`;
+    const fresh = await createBookWithRights(prisma, freshSlug, { languages: [Language.en] });
+    createdSlugs.push(freshSlug);
+
+    const contributorPerson = await prisma.person.create({
+      data: {
+        canonicalName: `Автор ${Date.now()}`,
+        birthYear: 1860,
+        deathYear: 1930,
+        publicDomainFromYear: 2001,
+      },
+    });
+    createdPersonIds.push(contributorPerson.id);
+
+    await prisma.rightsProfileContributor.create({
+      data: {
+        rightsProfileId: fresh.profile.id,
+        personId: contributorPerson.id,
+        role: 'AUTHOR',
+        displayName: contributorPerson.canonicalName,
+        canonicalName: contributorPerson.canonicalName,
+        creditedName: contributorPerson.canonicalName,
+        birthYear: contributorPerson.birthYear,
+        deathYear: contributorPerson.deathYear,
+        publicDomainFromYear: contributorPerson.publicDomainFromYear,
+      },
+    });
+
+    // Книга создаётся штатным путём: интейк → create-book, а не помощником.
+    await prisma.book.delete({ where: { id: fresh.book.id } });
+
+    const created = await request(http())
+      .post(`/admin/rights/intakes/${fresh.intake.id}/create-book`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        slug: freshSlug,
+        versions: [
+          {
+            language: 'en',
+            title: 'Created from clearance',
+            author: contributorPerson.canonicalName,
+            description: 'Desc',
+            coverImageUrl: 'https://example.com/cover.jpg',
+            type: 'text',
+            isFree: true,
+          },
+        ],
+      })
+      .expect(201);
+
+    const createdVersionId = (created.body.versions as Array<{ id: string }>)[0].id;
+
+    // Участник действительно спроецирован — иначе тест ничего не проверяет.
+    const projected = await prisma.bookVersionContributor.count({
+      where: { bookVersionId: createdVersionId },
+    });
+    expect(projected).toBe(1);
+
+    const gate = await request(http())
+      .get(`/admin/versions/${createdVersionId}/publication-gate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const codes = (gate.body.blockingReasons as Array<{ code: string }>).map((r) => r.code);
+    expect(codes).not.toContain('RIGHTS_CONTENT_HASH_CHANGED');
+
+    await request(http())
+      .patch(`/versions/${createdVersionId}/publish`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
   });
 
   it('leaves the clearance alone when only editorial fields of the person change', async () => {

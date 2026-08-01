@@ -820,4 +820,80 @@ describe('RightsBookCreationService', () => {
       expect(txStub.rightsLicenseLink.create).not.toHaveBeenCalled();
     });
   });
+
+  /**
+   * WP-8.1 (регрессия, найдена в CI). Участники версии входят в content hash, а baseline
+   * снимался до их проекции из профиля — живой хеш сразу расходился со снимком, и книга,
+   * созданная из клиренса, не проходила гейт с `RIGHTS_CONTENT_HASH_CHANGED`.
+   */
+  describe('content hash baseline vs projected contributors', () => {
+    const arrangeWithContributor = () => {
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview(),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const order: string[] = [];
+
+      const txStub = {
+        book: {
+          create: jest.fn().mockResolvedValue({
+            id: 'book-1',
+            slug: 'test-book',
+            rightsIntakeId: 'intake-1',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        },
+        bookVersion: {
+          create: jest.fn().mockResolvedValue({ id: 'version-1', language: 'en', type: 'text' }),
+        },
+        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+        rightsProfileContributor: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'rpc-1',
+              personId: 'person-1',
+              role: 'AUTHOR',
+              displayName: 'Test Author',
+              creditedName: 'Test Author',
+              rightsComponent: null,
+            },
+          ]),
+        },
+        bookVersionContributor: {
+          create: jest.fn().mockImplementation(() => {
+            order.push('contributor');
+            return Promise.resolve({ id: 'bvc-1' });
+          }),
+        },
+      };
+
+      (mockRightsContentHashService.initializeVersionBaseline as jest.Mock).mockImplementation(
+        () => {
+          order.push('baseline');
+          return Promise.resolve({});
+        },
+      );
+
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+
+      return { txStub, order };
+    };
+
+    it('projects contributors before taking the baseline', async () => {
+      const { txStub, order } = arrangeWithContributor();
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(txStub.bookVersionContributor.create).toHaveBeenCalled();
+      // Порядок и есть проверяемое свойство: baseline снимается уже с участниками.
+      expect(order).toEqual(['contributor', 'baseline']);
+    });
+  });
 });
