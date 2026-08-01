@@ -530,16 +530,22 @@ deploy_services() {
             break
         fi
         
-    # Checking Docker healthcheck status of the 'app' container
-        local health_status
-        health_status=$(docker compose -f docker-compose.prod.yml ps --format json app 2>/dev/null | jq -r '.Health // "none"')
-        
+    # Checking Docker healthcheck status of the 'app' container.
+    # The status read must never abort the deployment: under `set -o pipefail` a hiccup in
+    # `docker compose ps` or `jq` would otherwise kill the wait instead of retrying it.
+        local health_status="unknown"
+        health_status=$(docker compose -f docker-compose.prod.yml ps --format json app 2>/dev/null \
+            | jq -r '.Health // "none"' 2>/dev/null) || health_status="unknown"
+
         if [[ "$health_status" == "healthy" ]]; then
             log_success "Service is healthy"
             return 0
         fi
-        
-        ((attempt++))
+
+    # `$(( ))` in an assignment, not `(( ))` as a statement: `((attempt++))` returns the *old*
+    # value, so on the first iteration it exits with 1 and `set -e` aborts the whole deployment
+    # before this loop ever retries or prints the container logs below.
+        attempt=$((attempt + 1))
     log_info "Attempt $attempt/$max_attempts (status: $health_status)..."
         sleep 5
     done
@@ -570,7 +576,7 @@ verify_deployment() {
     # 1. Check that containers are running
     if docker compose -f docker-compose.prod.yml ps --format json | jq -e '.State == "running"' &> /dev/null; then
     log_success "✓ Containers running"
-        ((checks_passed++))
+        checks_passed=$((checks_passed + 1))
     else
     log_error "✗ Containers not running"
     fi
@@ -578,7 +584,7 @@ verify_deployment() {
     # 2. Health check via Node (wget may be missing in the image)
     if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/health/liveness',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
     log_success "✓ Health check passed"
-        ((checks_passed++))
+        checks_passed=$((checks_passed + 1))
     else
     log_error "✗ Health check failed"
     fi
@@ -586,7 +592,7 @@ verify_deployment() {
     # 3. Database readiness check
     if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/health/readiness',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
     log_success "✓ Database connected"
-        ((checks_passed++))
+        checks_passed=$((checks_passed + 1))
     else
     log_error "✗ Database not reachable"
     fi
@@ -594,7 +600,7 @@ verify_deployment() {
     # 4. Metrics endpoint check
     if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/metrics',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
     log_success "✓ Metrics accessible"
-        ((checks_passed++))
+        checks_passed=$((checks_passed + 1))
     else
     log_error "✗ Metrics not accessible"
     fi
@@ -604,7 +610,7 @@ verify_deployment() {
     health_status=$(docker compose -f docker-compose.prod.yml ps --format json app 2>/dev/null | jq -r '.Health // "none"')
     if [[ "$health_status" == "healthy" ]]; then
     log_success "✓ Docker healthcheck: $health_status"
-        ((checks_passed++))
+        checks_passed=$((checks_passed + 1))
     else
     log_warning "? Docker healthcheck: $health_status"
     fi
@@ -797,7 +803,10 @@ main() {
     fi
 }
 
-# Error handling
+# Error handling.
+# `set -E` (errtrace) is required for the ERR trap to fire inside shell functions — the whole
+# deployment runs in functions, so without it a `set -e` abort produced no message at all.
+set -E
 trap 'log_error "Error at line $LINENO. Exit code: $?"; send_notification "ERROR" "Deployment error at line $LINENO"' ERR
 
 # Execute script
