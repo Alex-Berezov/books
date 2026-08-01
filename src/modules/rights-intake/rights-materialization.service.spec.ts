@@ -459,6 +459,73 @@ describe('RightsMaterializationService', () => {
       );
     });
 
+    // WP-5.3: the agent proposes an action, a human closes it. A report that arrives with
+    // `suggestedStatus: WAIVED` used to create the action already closed, so the agent lifted its
+    // own blocker before anyone saw it (R3-03).
+    it('should ignore a closed suggestedStatus from the agent report', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.requiredActions = [
+        {
+          actionType: 'OBTAIN_LICENSE',
+          descriptionRu: 'Купить лицензию',
+          affectedCountryCodes: ['US'],
+          isBlocking: true,
+          suggestedStatus: 'WAIVED',
+        },
+      ];
+      setupBasicMocks({ reportJson });
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).create.mockResolvedValue({
+        id: 'source-edition-1',
+      });
+
+      await service.materializeFromImport('import-1');
+
+      expect((prisma['rightsAction'] as Record<string, jest.Mock>).create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            actionType: 'OBTAIN_LICENSE',
+            isBlocking: true,
+            status: 'PENDING',
+          }),
+        }),
+      );
+    });
+
+    it('should keep IN_PROGRESS as a suggested status', async () => {
+      const reportJson = makeValidReportJson();
+      reportJson.requiredActions = [
+        {
+          actionType: 'OBTAIN_LICENSE',
+          descriptionRu: 'Купить лицензию',
+          affectedCountryCodes: ['US'],
+          isBlocking: true,
+          suggestedStatus: 'IN_PROGRESS',
+        },
+      ];
+      setupBasicMocks({ reportJson });
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).create.mockResolvedValue({
+        id: 'source-edition-1',
+      });
+
+      await service.materializeFromImport('import-1');
+
+      expect((prisma['rightsAction'] as Record<string, jest.Mock>).create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'IN_PROGRESS' }),
+        }),
+      );
+    });
+
     it('should supersede previous current profile on new materialization', async () => {
       setupBasicMocks();
       setupTransaction();
@@ -1196,6 +1263,129 @@ describe('RightsMaterializationService', () => {
 
       expect(rl().create).not.toHaveBeenCalled();
       expect(rll().create).not.toHaveBeenCalled();
+    });
+  });
+  // WP-5.5: пересчёт вердиктов по странам после того, как человек закрыл действие на
+  // удаление компонента. Без него ветка «удаление подтверждено» недостижима (R6-06).
+  describe('recomputeTerritoryDecisionsFromComponents', () => {
+    const blockingIllustration = {
+      id: 'component-illustration',
+      componentType: 'ILLUSTRATION',
+      titleRu: 'Иллюстрации',
+      status: 'COPYRIGHTED',
+      requiredAction: 'REMOVE',
+      confidence: 'HIGH',
+      territoryAssessments: [
+        {
+          countryCode: 'GB',
+          status: 'BLOCKED',
+          accessPolicy: 'BLOCK',
+          geoBlockRequired: true,
+          reasonRu: 'Иллюстрации под охраной.',
+          legalBasisRu: null,
+          confidence: 'HIGH',
+          rightsExpireAt: null,
+        },
+      ],
+    };
+
+    const setupRecompute = (options: { actions: Array<Record<string, unknown>> }) => {
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany = jest
+        .fn()
+        .mockResolvedValue([blockingIllustration]);
+      (prisma['rightsReviewImport'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeImportRecord({ reportJson: { ...makeValidReportJson(), territoryDecisions: [] } }),
+      );
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake({ targetCountryCodes: ['GB'] }));
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany = jest
+        .fn()
+        .mockResolvedValue(options.actions);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findUnique = jest
+        .fn()
+        .mockResolvedValue({
+          id: 'decision-gb',
+          finalStatus: 'BLOCKED',
+          accessPolicy: 'BLOCK',
+          geoBlockRequired: true,
+          geoBlockScope: 'LANGUAGE_EDITION',
+          reasonRu: 'Блокирующие компоненты: «Иллюстрации».',
+          legalBasisRu: null,
+          confidence: 'HIGH',
+          nextReviewAt: null,
+        });
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).update = jest.fn();
+    };
+
+    it('opens the country once the removal action is closed', async () => {
+      setupRecompute({
+        actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'COMPLETED' }],
+      });
+
+      const result = await service.recomputeTerritoryDecisionsFromComponents(
+        prisma as unknown as Record<string, unknown>,
+        'profile-1',
+      );
+
+      expect(result).toEqual({ changedCountryCodes: ['GB'] });
+      expect(
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).update,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'decision-gb' },
+          data: expect.objectContaining({ finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' }),
+        }),
+      );
+    });
+
+    it('leaves the country closed while the removal action is open', async () => {
+      setupRecompute({
+        actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'PENDING' }],
+      });
+
+      const result = await service.recomputeTerritoryDecisionsFromComponents(
+        prisma as unknown as Record<string, unknown>,
+        'profile-1',
+      );
+
+      expect(result).toEqual({ changedCountryCodes: [] });
+      expect(
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).update,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the profile is no longer current', async () => {
+      setupRecompute({
+        actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'COMPLETED' }],
+      });
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeProfile({ isCurrent: false }),
+      );
+
+      const result = await service.recomputeTerritoryDecisionsFromComponents(
+        prisma as unknown as Record<string, unknown>,
+        'profile-1',
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it('does nothing when the source report is no longer available', async () => {
+      setupRecompute({
+        actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'COMPLETED' }],
+      });
+      (prisma['rightsReviewImport'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        null,
+      );
+
+      const result = await service.recomputeTerritoryDecisionsFromComponents(
+        prisma as unknown as Record<string, unknown>,
+        'profile-1',
+      );
+
+      expect(result).toBeNull();
     });
   });
 });

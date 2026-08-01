@@ -9,6 +9,10 @@ import {
   type ComponentTerritoryFinalStatus,
   type ExistingTerritoryDecisionInput,
 } from './component-territory-aggregation.service';
+import {
+  AGENT_SUGGESTABLE_ACTION_STATUSES,
+  areComponentRemovalsConfirmed,
+} from './rights-action.constants';
 
 import { PersonResolverService } from '../persons/person-resolver.service';
 import { ContributorRole } from '../persons/person-interface';
@@ -483,6 +487,10 @@ export class RightsMaterializationService {
       }
 
       const existingTerritoryDecisions = this.mapExistingTerritoryDecisions(territoryDecisions);
+      // WP-5.5: `componentRemovalsConfirmed` здесь всегда ложно и потому не передаётся — все
+      // действия отчёта создаются открытыми (WP-5.3), значит подтверждать удаление нечем.
+      // Подтверждение приходит позже, когда редактор закрывает действие: тогда
+      // `recomputeTerritoryDecisionsFromComponents` пересчитывает решения по странам.
       const decisionsToCreate = hasComponentTerritoryAssessments
         ? this.componentTerritoryAggregationService.aggregateTerritoryDecisionsFromComponents({
             rightsProfileId: profile['id'] as string,
@@ -566,10 +574,15 @@ export class RightsMaterializationService {
 
       if (requiredActions && requiredActions.length > 0) {
         for (const action of requiredActions) {
+          // WP-5.3: агент предлагает действие, закрывает его человек. Раньше принимались все
+          // пять статусов, поэтому отчёт с `suggestedStatus: COMPLETED` создавал уже закрытое
+          // блокирующее действие — условие №5 фазы 7 оказывалось под контролем проверяемой
+          // стороны (R3-03). Закрытие теперь возможно только через
+          // `PATCH /admin/rights/actions/:id`, то есть с автором и событием в аудите.
           const suggestedStatus = action['suggestedStatus'] as string | undefined;
-          const validStatuses = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'WAIVED', 'CANCELLED'];
           const finalStatus =
-            suggestedStatus && validStatuses.includes(suggestedStatus)
+            suggestedStatus &&
+            (AGENT_SUGGESTABLE_ACTION_STATUSES as readonly string[]).includes(suggestedStatus)
               ? suggestedStatus
               : 'PENDING';
 
@@ -819,6 +832,163 @@ export class RightsMaterializationService {
       }
     }
     return refs;
+  }
+
+  /**
+   * WP-5.5: пересчёт решений по странам после того, как человек изменил статус действия
+   * на удаление компонента.
+   *
+   * Материализация — единственный писатель правовой модели (R3-02), поэтому пересчёт живёт
+   * здесь, а не в сервисе действий. Вызывается **внутри транзакции вызывающего**: смена
+   * статуса, событие аудита и новый вердикт по стране обязаны примениться вместе.
+   *
+   * Пересчёт идемпотентен: компоненты и их оценки берутся из БД, а профильные решения агента —
+   * из исходного отчёта, а не из уже смёржанных строк `TerritoryDecision`.
+   *
+   * Возвращает `null`, если пересчитывать нечего или небезопасно: профиль не текущий,
+   * компонентных оценок нет (решения пришли из отчёта дословно, агрегация не применялась),
+   * либо исходный отчёт недоступен — без профильных решений агента пересчёт мог бы ослабить
+   * вердикт, который агент выставил на уровне профиля.
+   */
+  async recomputeTerritoryDecisionsFromComponents(
+    tx: Record<string, unknown>,
+    profileId: string,
+  ): Promise<{ changedCountryCodes: string[] } | null> {
+    const profileTx = tx['rightsProfile'] as {
+      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+    };
+    const profile = await profileTx.findUnique({ where: { id: profileId } });
+    if (!profile || profile['isCurrent'] !== true) return null;
+
+    const componentTx = tx['rightsComponent'] as {
+      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    };
+    const components = await componentTx.findMany({
+      where: { rightsProfileId: profileId },
+      include: { territoryAssessments: true },
+    });
+
+    const aggregationComponents: ComponentTerritoryAggregationComponent[] = components.map(
+      (component) => ({
+        rightsComponentId: component['id'] as string,
+        componentType: component['componentType'] as string,
+        titleRu: component['titleRu'] as string,
+        status: component['status'] as string,
+        requiredAction: component['requiredAction'] as string,
+        confidence: component['confidence'] as ComponentTerritoryConfidence,
+        territoryAssessments: (
+          (component['territoryAssessments'] as Array<Record<string, unknown>> | undefined) ?? []
+        ).map((assessment) => ({
+          countryCode: (assessment['countryCode'] as string).toUpperCase(),
+          status: assessment['status'] as ComponentTerritoryFinalStatus,
+          accessPolicy: assessment['accessPolicy'] as ComponentTerritoryAccessPolicy,
+          geoBlockRequired: (assessment['geoBlockRequired'] as boolean) ?? false,
+          reasonRu: (assessment['reasonRu'] as string) ?? null,
+          legalBasisRu: (assessment['legalBasisRu'] as string) ?? null,
+          confidence: (assessment['confidence'] as ComponentTerritoryConfidence | null) ?? null,
+          rightsExpireAt: this.parseDateOrNull(assessment['rightsExpireAt']),
+        })),
+      }),
+    );
+
+    const hasComponentTerritoryAssessments = aggregationComponents.some(
+      (component) => component.territoryAssessments.length > 0,
+    );
+    if (!hasComponentTerritoryAssessments) return null;
+
+    const importId = profile['currentReviewImportId'];
+    if (typeof importId !== 'string') return null;
+
+    const importTx = tx['rightsReviewImport'] as {
+      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+    };
+    const importRecord = await importTx.findUnique({ where: { id: importId } });
+    const reportJson = importRecord?.['reportJson'] as Record<string, unknown> | undefined;
+    if (!reportJson) return null;
+
+    const intakeTx = tx['rightsIntake'] as {
+      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+    };
+    const intake = await intakeTx.findUnique({
+      where: { id: profile['rightsIntakeId'] as string },
+    });
+
+    const actionTx = tx['rightsAction'] as {
+      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    };
+    const actions = await actionTx.findMany({ where: { rightsProfileId: profileId } });
+
+    const decisions =
+      this.componentTerritoryAggregationService.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: profileId,
+        components: aggregationComponents,
+        targetCountryCodes: Array.isArray(intake?.['targetCountryCodes'])
+          ? (intake['targetCountryCodes'] as string[])
+          : [],
+        existingTerritoryDecisions: this.mapExistingTerritoryDecisions(
+          reportJson['territoryDecisions'] as Array<Record<string, unknown>> | undefined,
+        ),
+        componentRemovalsConfirmed: areComponentRemovalsConfirmed(
+          actions.map((action) => ({
+            actionType: action['actionType'] as string,
+            status: action['status'] as string,
+          })),
+        ),
+      });
+
+    const decisionTx = tx['territoryDecision'] as {
+      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    const changedCountryCodes: string[] = [];
+    for (const decision of decisions) {
+      const data = {
+        finalStatus: decision.finalStatus,
+        accessPolicy: decision.accessPolicy,
+        geoBlockRequired: decision.geoBlockRequired,
+        geoBlockScope: decision.geoBlockScope ?? null,
+        reasonRu: decision.reasonRu,
+        legalBasisRu: decision.legalBasisRu ?? null,
+        confidence: decision.confidence,
+        nextReviewAt: decision.nextReviewAt ?? null,
+      };
+
+      const existing = await decisionTx.findUnique({
+        where: {
+          rightsProfileId_countryCode: {
+            rightsProfileId: profileId,
+            countryCode: decision.countryCode,
+          },
+        },
+      });
+
+      if (!existing) {
+        await decisionTx.create({
+          data: { rightsProfileId: profileId, countryCode: decision.countryCode, ...data },
+        });
+        changedCountryCodes.push(decision.countryCode);
+        continue;
+      }
+
+      const unchanged = (Object.keys(data) as Array<keyof typeof data>).every((key) => {
+        const next = data[key];
+        const prev = existing[key];
+        if (next instanceof Date || prev instanceof Date) {
+          const nextTime = next instanceof Date ? next.getTime() : null;
+          const prevTime = prev instanceof Date ? prev.getTime() : null;
+          return nextTime === prevTime;
+        }
+        return (prev ?? null) === (next ?? null);
+      });
+      if (unchanged) continue;
+
+      await decisionTx.update({ where: { id: existing['id'] as string }, data });
+      changedCountryCodes.push(decision.countryCode);
+    }
+
+    return { changedCountryCodes };
   }
 
   private mapExistingTerritoryDecisions(

@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
 import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
+import { mapRightsAction } from './rights-action.mapper';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import type { RightsLicenseSummaryDto } from '../rights-licenses/dto/rights-license-response.dto';
 import type { RightsLicenseRecord } from '../rights-licenses/rights-license-interface';
@@ -660,16 +661,6 @@ export class RightsProfileService {
   }
 
   private mapAction(record: Record<string, unknown>) {
-    return {
-      id: record['id'],
-      rightsProfileId: record['rightsProfileId'],
-      actionType: record['actionType'],
-      status: record['status'],
-      descriptionRu: record['descriptionRu'],
-      affectedCountryCodes: record['affectedCountryCodes'],
-      isBlocking: record['isBlocking'],
-      createdAt: new Date(record['createdAt'] as string).toISOString(),
-      updatedAt: new Date(record['updatedAt'] as string).toISOString(),
-    };
+    return mapRightsAction(record);
   }
 }

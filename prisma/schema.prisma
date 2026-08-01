@@ -290,6 +290,9 @@ model User {
   legalOpinionsArchived       RightsLegalOpinion[]         @relation("RightsLegalOpinionArchivedBy")
   lawyerConditionsSatisfied   RightsLawyerReviewCondition[] @relation("RightsLawyerConditionSatisfiedBy")
   lawyerConditionsWaived      RightsLawyerReviewCondition[] @relation("RightsLawyerConditionWaivedBy")
+  rightsActionsAssigned       RightsAction[]               @relation("RightsActionAssignedTo")
+  rightsActionsCompleted      RightsAction[]               @relation("RightsActionCompletedBy")
+  rightsActionEventsCreated   RightsActionEvent[]          @relation("RightsActionEventCreatedBy")
 }
 
 
@@ -1192,6 +1195,21 @@ model RightsAction {
   affectedCountryCodes Json
   isBlocking Boolean @default(false)
 
+  // WP-5.1: жизненный цикл действия. Действие предлагает агент, закрывает человек —
+  // без этих полей статус записывался один раз при материализации и не менялся никогда (R3-02).
+  assignedToUserId String?
+  assignedToUser   User? @relation("RightsActionAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  dueAt DateTime?
+
+  completedAt DateTime?
+  completedByUserId String?
+  completedByUser   User? @relation("RightsActionCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+
+  completionNotesRu String? @db.Text
+
+  events RightsActionEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1199,6 +1217,36 @@ model RightsAction {
   @@index([actionType])
   @@index([status])
   @@index([isBlocking])
+  @@index([assignedToUserId])
+  @@index([completedByUserId])
+  @@index([dueAt])
+}
+
+/// WP-5.2: неудаляемый след по каждому изменению действия. Пишется в той же транзакции,
+/// что и само изменение (ADR-009).
+model RightsActionEvent {
+  id String @id @default(uuid())
+
+  rightsActionId String
+  rightsAction   RightsAction @relation(fields: [rightsActionId], references: [id], onDelete: Cascade)
+
+  eventType RightsActionEventType
+
+  fromStatus RightsActionStatus?
+  toStatus   RightsActionStatus?
+
+  notesRu String? @db.Text
+  payload Json?
+
+  createdByUserId String?
+  createdByUser   User? @relation("RightsActionEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsActionId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([createdByUserId])
 }
 
 model RightsReviewApproval {
@@ -1484,6 +1532,14 @@ enum RightsActionStatus {
   COMPLETED
   WAIVED
   CANCELLED
+}
+
+enum RightsActionEventType {
+  STATUS_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  DUE_DATE_CHANGED
+  NOTE_ADDED
 }
 
 enum RightsEvidenceType {

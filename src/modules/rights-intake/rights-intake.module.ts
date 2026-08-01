@@ -8,6 +8,8 @@ import { RightsReviewImportController } from './rights-review-import.controller'
 import { RightsReviewImportValidator } from './rights-review-import.validator';
 import { RightsIntakeController } from './rights-intake.controller';
 import { RightsProfileController } from './rights-profile.controller';
+import { RightsActionController } from './rights-action.controller';
+import { RightsActionService } from './rights-action.service';
 import { RightsMaterializationService } from './rights-materialization.service';
 import { RightsProfileService } from './rights-profile.service';
 import { RightsContentHashService } from './rights-content-hash.service';
@@ -19,7 +21,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 @Module({
   imports: [PersonsModule, RightsLicensesModule],
-  controllers: [RightsIntakeController, RightsReviewImportController, RightsProfileController],
+  controllers: [
+    RightsIntakeController,
+    RightsReviewImportController,
+    RightsProfileController,
+    RightsActionController,
+  ],
   providers: [
     RightsIntakeService,
     RightsIntakeManifestService,
@@ -27,6 +34,7 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsReviewImportValidator,
     RightsMaterializationService,
     RightsProfileService,
+    RightsActionService,
     RightsApprovalService,
     RightsBookCreationService,
     RightsContentHashService,
@@ -43,6 +51,7 @@ import { PrismaService } from '../../prisma/prisma.service';
     RightsReviewImportService,
     RightsMaterializationService,
     RightsIntakeManifestService,
+    RightsActionService,
   ],
 })
 export class RightsIntakeModule {}

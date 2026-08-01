@@ -211,6 +211,17 @@ export class RightsActionDto {
   @ApiProperty() descriptionRu!: string;
   @ApiProperty() affectedCountryCodes!: unknown;
   @ApiProperty() isBlocking!: boolean;
+
+  // WP-5.1: жизненный цикл действия — кто взял, к какому сроку, кто и когда закрыл.
+  @ApiProperty({ nullable: true }) assignedToUserId!: string | null;
+  @ApiProperty({ nullable: true }) dueAt!: string | null;
+  @ApiProperty({ nullable: true }) completedAt!: string | null;
+  @ApiProperty({ nullable: true }) completedByUserId!: string | null;
+  @ApiProperty({ nullable: true }) completionNotesRu!: string | null;
+
+  /** Закрыто ли действие: `COMPLETED` или `WAIVED`. `CANCELLED` закрытым не считается. */
+  @ApiProperty() isResolved!: boolean;
+
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }

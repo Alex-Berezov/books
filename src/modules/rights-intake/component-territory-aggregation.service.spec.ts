@@ -257,6 +257,90 @@ describe('ComponentTerritoryAggregationService', () => {
       }),
     );
   });
+  // WP-5.5: a component the report only *promises* to remove is still part of the edition until a
+  // human closes the matching removal action. Clearing the country on the promise declared a market
+  // open while the illustration or preface that closed it was physically still there (R6-06).
+  describe('components promised for removal', () => {
+    const blockingIllustration = () =>
+      createComponent({
+        rightsComponentId: 'component-illustration',
+        componentType: 'ILLUSTRATION',
+        titleRu: 'Иллюстрации',
+        status: 'COPYRIGHTED',
+        requiredAction: 'REMOVE',
+        territoryAssessments: [
+          {
+            countryCode: 'GB',
+            status: 'BLOCKED',
+            accessPolicy: 'BLOCK',
+            geoBlockRequired: true,
+            reasonRu: 'Иллюстрации под охраной.',
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+    it('counts a component marked for removal while the removal is unconfirmed', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [blockingIllustration()],
+        targetCountryCodes: ['GB'],
+      });
+
+      expect(result[0]).toEqual(
+        expect.objectContaining({
+          countryCode: 'GB',
+          finalStatus: 'BLOCKED',
+          accessPolicy: 'BLOCK',
+        }),
+      );
+      expect(result[0].reasonRu).toContain('Иллюстрации');
+    });
+
+    it('counts an EXCLUDED component while the removal is unconfirmed', () => {
+      const excluded = blockingIllustration();
+      excluded.status = 'EXCLUDED';
+      excluded.requiredAction = 'KEEP';
+
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [excluded],
+        targetCountryCodes: ['GB'],
+      });
+
+      expect(result[0].finalStatus).toBe('BLOCKED');
+    });
+
+    it('drops the component once the removal is confirmed', () => {
+      const allowedText = createComponent({
+        territoryAssessments: [
+          {
+            countryCode: 'GB',
+            status: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [allowedText, blockingIllustration()],
+        targetCountryCodes: ['GB'],
+        componentRemovalsConfirmed: true,
+      });
+
+      expect(result[0]).toEqual(
+        expect.objectContaining({
+          countryCode: 'GB',
+          finalStatus: 'ALLOWED',
+          accessPolicy: 'ALLOW',
+        }),
+      );
+    });
+  });
+
   // Phase 15: ALLOWED_BY_LICENSE
   describe('license-based clearance', () => {
     const licensedComponent = (overrides: Partial<ComponentTerritoryAggregationComponent> = {}) =>

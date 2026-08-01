@@ -318,7 +318,10 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
             type: 'array',
             items: { type: 'string', pattern: '^[A-Z]{2}$' },
           },
-          suggestedStatus: { type: ['string', 'null'] },
+          // WP-5.3: агент предлагает действие, закрывает его человек. Закрытые статусы
+          // (`COMPLETED`, `WAIVED`, `CANCELLED`) из контракта убраны — отчёт, закрывающий
+          // собственное блокирующее действие, снимал условие №5 фазы 7 без человека (R3-03).
+          suggestedStatus: { type: ['string', 'null'], enum: ['PENDING', 'IN_PROGRESS', null] },
         },
       },
     },

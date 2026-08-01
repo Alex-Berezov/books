@@ -64,6 +64,13 @@ export interface ComponentTerritoryAggregationInput {
   components: ComponentTerritoryAggregationComponent[];
   targetCountryCodes?: string[];
   existingTerritoryDecisions?: ExistingTerritoryDecisionInput[];
+  /**
+   * WP-5.5: подтверждено ли, что компоненты, помеченные к удалению, действительно убраны
+   * из издания. Пока подтверждения нет, такой компонент участвует в оценке страны наравне
+   * с остальными — правовой вердикт не может опираться на обещание (R6-06). Подтверждением
+   * служит закрытие всех действий на удаление (`areComponentRemovalsConfirmed`).
+   */
+  componentRemovalsConfirmed?: boolean;
   now?: Date;
 }
 
@@ -126,9 +133,16 @@ export class ComponentTerritoryAggregationService {
     countryCode: string,
     now: Date,
   ): AggregatedTerritoryDecision {
-    const applicableComponents = input.components.filter(
-      (component) => component.status !== 'EXCLUDED' && component.requiredAction !== 'REMOVE',
-    );
+    // WP-5.5: компонент, который «должен быть удалён», остаётся частью издания, пока удаление
+    // не подтверждено закрытием соответствующих действий. Безусловное исключение объявляло
+    // рынок открытым, тогда как иллюстрация или предисловие физически оставались в версии
+    // (R6-06). Обратной связи «компонент прав → контент версии» в модели нет, поэтому
+    // подтверждение профильное — см. `areComponentRemovalsConfirmed`.
+    const applicableComponents = input.componentRemovalsConfirmed
+      ? input.components.filter(
+          (component) => component.status !== 'EXCLUDED' && component.requiredAction !== 'REMOVE',
+        )
+      : input.components;
     const assessments = applicableComponents
       .map((component) => ({
         component,
