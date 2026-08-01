@@ -11,6 +11,8 @@ services:
       NODE_ENV: production
       PORT: ${PORT:-5000}
       HOST: 0.0.0.0
+      # Set by scripts/deploy_production.sh from the deployed image tag; reported by liveness.
+      APP_VERSION: ${APP_VERSION:-unknown}
     # Port 5000 is accessible only on localhost for the Caddy reverse proxy
     volumes:
       - uploads_data_prod:/app/var/uploads

@@ -26,6 +26,35 @@ describe('HealthService', () => {
     expect(typeof res.timestamp).toBe('string');
   });
 
+  // The deploy pipeline compares this field with the tag it built; without it the check silently
+  // read "unknown" on every deployment and could not tell a stale container from a fresh one.
+  describe('liveness version', () => {
+    const originalVersion = process.env.APP_VERSION;
+
+    afterEach(() => {
+      if (originalVersion === undefined) {
+        delete process.env.APP_VERSION;
+      } else {
+        process.env.APP_VERSION = originalVersion;
+      }
+    });
+
+    it('reports the image tag the container was started with', () => {
+      process.env.APP_VERSION = 'main-b39ea21';
+      expect(service.liveness().version).toBe('main-b39ea21');
+    });
+
+    it('reports unknown when the deploy passed no tag', () => {
+      delete process.env.APP_VERSION;
+      expect(service.liveness().version).toBe('unknown');
+    });
+
+    it('reports unknown for an empty tag rather than an empty string', () => {
+      process.env.APP_VERSION = '   ';
+      expect(service.liveness().version).toBe('unknown');
+    });
+  });
+
   it('readiness up when prisma ok and redis configured+ok', async () => {
     prisma.$queryRaw.mockResolvedValueOnce(1 as any);
     redis.isConfigured.mockReturnValue(true);

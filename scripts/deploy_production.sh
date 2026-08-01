@@ -511,6 +511,10 @@ deploy_services() {
     
     cd "$DEPLOY_DIR"
     
+    # The tag the container is started with, so `GET /api/health/liveness` can report which image
+    # actually answers and the pipeline can tell "deployed" from "the old container still serves".
+    export APP_VERSION="$IMAGE_TAG"
+
     # Starting new services / updating existing ones (avoids downtime and container conflicts)
     execute "docker compose -f docker-compose.prod.yml up -d"
     

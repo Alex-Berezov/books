@@ -15,6 +15,8 @@ export interface LivenessResult {
   status: HealthStatus;
   uptime: number;
   timestamp: string;
+  /** Image tag the container was started with; `unknown` when the deploy did not pass one. */
+  version: string;
 }
 
 export interface RedisProbe {
@@ -36,6 +38,9 @@ export class HealthService {
       status: 'up',
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
+      // The deploy pipeline compares this with the tag it just built. Without it the comparison
+      // was decorative: liveness carried no version, so the check always read "unknown".
+      version: process.env.APP_VERSION?.trim() || 'unknown',
     };
   }
 

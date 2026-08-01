@@ -314,45 +314,70 @@ jobs:
         run: |
           echo "🏥 Running post-deployment health checks..."
 
-          # Wait for service readiness
+          # The container healthcheck probes /api/metrics and the deploy script waits on it, so
+          # "healthy" means the process listens — not that it ever talked to Postgres. Liveness
+          # says the same and nothing more. The wait must therefore end on *readiness reporting
+          # `status: up`*, otherwise verification races the app's first database query
+          # (01.08.2026: readiness hung ~20 s and failed 14 s after container start).
           max_attempts=20
           attempt=0
 
-          while [[ $attempt -lt $max_attempts ]]; do
-            if curl -sf "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness"; then
-              echo "✅ Service is healthy!"
-              break
+          until
+            curl -sf --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness" > /dev/null &&
+            [[ "$(curl -sf --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/readiness" | jq -r '.status // "down"')" == "up" ]]
+          do
+            # `$(( ))` in an assignment, not `((attempt++))` as a statement: the latter returns the
+            # *old* value, so on the first iteration it exits 1 and `bash -e` kills the step before
+            # a single retry happens. Same bug as the one fixed in scripts/deploy_production.sh.
+            attempt=$((attempt + 1))
+            if [[ $attempt -ge $max_attempts ]]; then
+              echo "❌ Health check failed after $max_attempts attempts"
+              curl -s --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/readiness" || true
+              exit 1
             fi
-            
-            ((attempt++))
             echo "⏳ Attempt $attempt/$max_attempts..."
             sleep 15
           done
 
-          if [[ $attempt -eq $max_attempts ]]; then
-            echo "❌ Health check failed after $max_attempts attempts"
-            exit 1
-          fi
+          echo "✅ Service is healthy!"
 
       - name: 📊 Verify Deployment
         run: |
           echo "📊 Verifying deployment..."
 
-          # Check API version
-          api_response=$(curl -sf "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness")
-          api_version=$(echo "$api_response" | jq -r '.version // "unknown"')
+          # Which image actually answers. `unknown` means the running container predates the
+          # APP_VERSION plumbing — reported, but not treated as a failed deployment.
+          api_version=$(curl -sf --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness" | jq -r '.version // "unknown"')
 
           echo "🔍 API Version: $api_version"
           echo "🎯 Expected Version: ${{ needs.build.outputs.version }}"
 
-          # Check main endpoints
+          if [[ "$api_version" == "unknown" ]]; then
+            echo "⚠️  Running container does not report its version — skipping the version check."
+          elif [[ "$api_version" != "${{ needs.build.outputs.version }}" ]]; then
+            echo "❌ Deployed version does not match the built one — the old container is still serving."
+            exit 1
+          fi
+
+          # Check main endpoints. Retried: a single attempt right after a container swap tests the
+          # timing of the deployment, not the health of the application.
           endpoints=(
             "/api/health/readiness"
             "/api/metrics"
           )
 
           for endpoint in "${endpoints[@]}"; do
-            if curl -sf "https://${{ vars.PRODUCTION_DOMAIN }}$endpoint" > /dev/null; then
+            ok=false
+            for attempt in 1 2 3 4 5; do
+              if curl -sf --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}$endpoint" > /dev/null; then
+                ok=true
+                break
+              fi
+              echo "⏳ $endpoint - attempt $attempt/5 failed, retrying..."
+              sleep 10
+            done
+
+            if [[ "$ok" == true ]]; then
               echo "✅ $endpoint - OK"
             else
               echo "❌ $endpoint - FAILED"
