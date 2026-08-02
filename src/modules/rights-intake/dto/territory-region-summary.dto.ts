@@ -34,6 +34,14 @@ export class TerritoryRegionSummaryDto {
   @ApiProperty() status!: RegionalRightsStatus;
   @ApiProperty() countryCount!: number;
   @ApiProperty() targetedCountryCount!: number;
+  /**
+   * WP-C.4: второй знаменатель — сколько стран региона входит в план публикации версии.
+   * `0` означает «план неизвестен либо регион вне плана»; доля по справочнику региона
+   * (`countryCount`) остаётся на месте и по-прежнему решает, зелёный ли регион (R6-04).
+   */
+  @ApiProperty() targetCountryCount!: number;
+  /** WP-C.4: числитель доли по плану публикации — разрешённые страны плана в этом регионе. */
+  @ApiProperty() targetAllowedCountryCount!: number;
   @ApiProperty() allowedCountryCount!: number;
   @ApiProperty() licensedCountryCount!: number;
   @ApiProperty() blockedCountryCount!: number;

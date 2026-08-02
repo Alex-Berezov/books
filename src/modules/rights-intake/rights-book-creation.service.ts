@@ -278,10 +278,13 @@ export class RightsBookCreationService {
             rightsLicenseRequiredCountryCodes: licenseRequiredCountries,
             rightsPendingCountryCodes: pendingCountries,
             rightsRequiredActions: requiredActions,
-            // Phase 7: Publication gate geo-block fields
-            rightsGeoBlockRequired:
-              blockedCountries.length > 0 ||
-              profile['publicationGate'] === 'ALLOW_AFTER_GEO_CONFIGURATION',
+            // Phase 7: Publication gate geo-block fields.
+            // WP-A.1: `ALLOW_AFTER_GEO_CONFIGURATION` on its own no longer raises the flag — with
+            // an empty list of blocked countries there is nothing to write a rule for, and the
+            // gate demanded a rule that could not exist. The verdict of the agent is not weakened:
+            // it still drives `rightsStatus` (APPROVED_WITH_GEO_RESTRICTIONS) and, as soon as it
+            // names a closed market, that market raises the flag by itself.
+            rightsGeoBlockRequired: blockedCountries.length > 0,
             rightsGeoBlockConfigured: false,
             rightsGeoBlockConfiguredAt: null,
             rightsGeoBlockNotesRu: null,

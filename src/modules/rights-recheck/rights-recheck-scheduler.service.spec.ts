@@ -280,6 +280,33 @@ describe('RightsRecheckSchedulerService', () => {
     });
   });
 
+  /**
+   * WP-D.3: черновик живёт в окне наполнения — его метки staleness обслуживает само окно,
+   * а задача перепроверки на неопубликованный текст только добавляет просрочку
+   * (`RIGHTS_RECHECK_OVERDUE` через 37 дней). Опубликованные версии сканируются как прежде.
+   */
+  describe('step B — draft fill window (WP-D.3)', () => {
+    it('excludes drafts at the query level', async () => {
+      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+
+      expect(stub.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: { not: 'draft' } }),
+        }),
+      );
+    });
+
+    it('still opens a task for a published stale version', async () => {
+      stub.bookVersion.findMany.mockResolvedValueOnce([version({ status: 'published' })]);
+
+      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+
+      expect(stub.rightsRecheckTask.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ bookVersionId: 'v1' }) }),
+      );
+    });
+  });
+
   describe('step C — stale reviews', () => {
     it('opens REVIEW_STALE for a review in STALE status', async () => {
       stub.rightsReview.findMany.mockResolvedValueOnce([

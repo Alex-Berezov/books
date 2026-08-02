@@ -9,7 +9,12 @@ import {
   RIGHTS_AGENT_REPORT_SCHEMA_URL,
   RIGHTS_AGENT_SUBMISSION_ENDPOINT,
 } from './rights-intake.constants';
+import { deriveSourceFromUrl } from './rights-intake-source-url.util';
 import type { RightsAgentManifestDto } from './dto/rights-agent-manifest.dto';
+import type {
+  RightsIntakeReadinessDto,
+  RightsIntakeReadinessItemDto,
+} from './dto/rights-intake-readiness.dto';
 
 function assertArray(value: unknown, fieldName: string): asserts value is unknown[] {
   if (value === null || value === undefined || !Array.isArray(value)) {
@@ -17,6 +22,55 @@ function assertArray(value: unknown, fieldName: string): asserts value is unknow
       `Rights intake contains invalid manifest data: ${fieldName} must be an array`,
     );
   }
+}
+
+/** Компоненты, наличие которых в плане публикации включает соответствующий пункт задания. */
+const TRANSLATION_COMPONENTS: readonly string[] = ['TRANSLATION'];
+const COVER_COMPONENTS: readonly string[] = ['COVER'];
+const AUDIO_COMPONENTS: readonly string[] = ['AUDIO_NARRATION', 'AUDIO_RECORDING'];
+const VISUAL_COMPONENTS: readonly string[] = ['ILLUSTRATION', 'PHOTOGRAPH', 'MAP'];
+const EDITORIAL_COMPONENTS: readonly string[] = [
+  'INTRODUCTION',
+  'PREFACE',
+  'AFTERWORD',
+  'ANNOTATIONS',
+  'FOOTNOTES',
+];
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function isBlank(value: unknown): boolean {
+  return typeof value !== 'string' || value.trim() === '';
+}
+
+function gap(code: string, field: string, messageRu: string): RightsIntakeReadinessItemDto {
+  return { code, field, messageRu };
+}
+
+interface ManifestIntakeRecord {
+  id: string;
+  workflowStatus: string;
+  candidateTitle: string;
+  candidateAuthor: string;
+  originalTitle: string | null;
+  originalLanguage: string | null;
+  authorBirthYear: number | null;
+  authorDeathYear: number | null;
+  notesRu: string | null;
+  sourceProvider: unknown;
+  sourceExternalId: string | null;
+  sourceUrl: string | null;
+  sourceTitle: string | null;
+  sourceLanguage: string | null;
+  sourceTextType: unknown;
+  targetLanguages: unknown;
+  targetCountryCodes: unknown;
+  plannedContentTypes: unknown;
+  plannedComponents: unknown;
 }
 
 @Injectable()
@@ -57,7 +111,9 @@ export class RightsIntakeManifestService {
 
     const now = new Date().toISOString();
 
-    const manifest = this.build(intake, now);
+    // WP-F.5: пробелы интейка уезжают агенту как справка и остаются видимыми редактору.
+    // Выдачу манифеста они не останавливают — блокирующая проверка сделала бы вход строже.
+    const manifest = this.build(intake, now, this.assessReadiness(intake));
 
     // WP-9.1 (essence §15): манифест собирается на лету и несёт `generatedAt`, поэтому
     // повторный GET даёт другие байты — восстановить задним числом, что именно получил агент,
@@ -76,6 +132,87 @@ export class RightsIntakeManifestService {
     }
 
     return manifest;
+  }
+
+  /**
+   * WP-F.5: пробелы интейка до отправки агенту. Доступна в любом статусе — именно в `DRAFT`
+   * она и нужна, — и **никогда** не запрещает ни манифест, ни смену статуса.
+   */
+  async readiness(id: string): Promise<RightsIntakeReadinessDto> {
+    const intake = await this.prisma.rightsIntake.findUnique({ where: { id } });
+    if (!intake) {
+      throw new NotFoundException(`Rights intake with ID '${id}' not found`);
+    }
+
+    const { missing, warnings } = this.assessReadiness(intake as unknown as ManifestIntakeRecord);
+
+    return { intakeId: intake.id, isReady: missing.length === 0, missing, warnings };
+  }
+
+  private assessReadiness(intake: ManifestIntakeRecord): {
+    missing: RightsIntakeReadinessItemDto[];
+    warnings: RightsIntakeReadinessItemDto[];
+  } {
+    const missing: RightsIntakeReadinessItemDto[] = [];
+    const warnings: RightsIntakeReadinessItemDto[] = [];
+
+    if (toStringArray(intake.targetCountryCodes).length === 0) {
+      missing.push(
+        gap('TARGET_COUNTRIES_EMPTY', 'targetCountryCodes', 'Не указана ни одна целевая страна.'),
+      );
+    }
+    if (toStringArray(intake.targetLanguages).length === 0) {
+      missing.push(
+        gap('TARGET_LANGUAGES_EMPTY', 'targetLanguages', 'Не указан ни один целевой язык.'),
+      );
+    }
+    if (isBlank(intake.sourceUrl)) {
+      missing.push(gap('SOURCE_URL_MISSING', 'sourceUrl', 'Не указана ссылка на источник.'));
+    }
+    if (isBlank(intake.sourceExternalId)) {
+      missing.push(
+        gap('SOURCE_EXTERNAL_ID_MISSING', 'sourceExternalId', 'Не указан внешний ID источника.'),
+      );
+    }
+    if (toStringArray(intake.plannedComponents).length === 0) {
+      missing.push(
+        gap(
+          'PLANNED_COMPONENTS_EMPTY',
+          'plannedComponents',
+          'Не выбран ни один планируемый компонент — агент не поймёт, что именно оценивать.',
+        ),
+      );
+    }
+
+    if (intake.sourceProvider === 'UNKNOWN' || isBlank(intake.sourceProvider)) {
+      warnings.push(
+        gap('SOURCE_PROVIDER_UNKNOWN', 'sourceProvider', 'Провайдер источника не определён.'),
+      );
+    }
+    if (intake.sourceTextType === 'UNKNOWN' || isBlank(intake.sourceTextType)) {
+      warnings.push(
+        gap('SOURCE_TEXT_TYPE_UNKNOWN', 'sourceTextType', 'Тип текста источника не определён.'),
+      );
+    }
+    if (isBlank(intake.sourceLanguage)) {
+      warnings.push(gap('SOURCE_LANGUAGE_MISSING', 'sourceLanguage', 'Не указан язык источника.'));
+    }
+    if (intake.authorDeathYear === null || intake.authorDeathYear === undefined) {
+      warnings.push(
+        gap(
+          'AUTHOR_DEATH_YEAR_MISSING',
+          'authorDeathYear',
+          'Не указан год смерти автора — без него агенту нечем считать срок охраны.',
+        ),
+      );
+    }
+    if (toStringArray(intake.plannedContentTypes).length === 0) {
+      warnings.push(
+        gap('PLANNED_CONTENT_TYPES_EMPTY', 'plannedContentTypes', 'Не выбран формат публикации.'),
+      );
+    }
+
+    return { missing, warnings };
   }
 
   /**
@@ -113,29 +250,26 @@ export class RightsIntakeManifestService {
   }
 
   private build(
-    intake: {
-      id: string;
-      workflowStatus: string;
-      candidateTitle: string;
-      candidateAuthor: string;
-      originalTitle: string | null;
-      originalLanguage: string | null;
-      authorBirthYear: number | null;
-      authorDeathYear: number | null;
-      notesRu: string | null;
-      sourceProvider: unknown;
-      sourceExternalId: string | null;
-      sourceUrl: string | null;
-      sourceTitle: string | null;
-      sourceLanguage: string | null;
-      sourceTextType: unknown;
-      targetLanguages: unknown;
-      targetCountryCodes: unknown;
-      plannedContentTypes: unknown;
-      plannedComponents: unknown;
-    },
+    intake: ManifestIntakeRecord,
     now: string,
+    readiness: {
+      missing: RightsIntakeReadinessItemDto[];
+      warnings: RightsIntakeReadinessItemDto[];
+    },
   ): RightsAgentManifestDto {
+    const plannedComponents = toStringArray(intake.plannedComponents);
+    const sourceTextType = typeof intake.sourceTextType === 'string' ? intake.sourceTextType : '';
+
+    // WP-F.1: провайдер и внешний ID достраиваются из ссылки только там, где интейк их не
+    // несёт. Признак `derivedFromUrl` говорит агенту, что перед ним догадка приложения.
+    const derived = deriveSourceFromUrl(intake.sourceUrl);
+    const storedProvider = typeof intake.sourceProvider === 'string' ? intake.sourceProvider : '';
+    const provider =
+      storedProvider === '' || storedProvider === 'UNKNOWN'
+        ? (derived?.provider ?? storedProvider)
+        : storedProvider;
+    const externalId = intake.sourceExternalId ?? derived?.externalId ?? null;
+
     return {
       manifestVersion: RIGHTS_AGENT_MANIFEST_VERSION,
       manifestType: RIGHTS_AGENT_MANIFEST_TYPE,
@@ -156,12 +290,13 @@ export class RightsIntakeManifestService {
         notesRu: intake.notesRu,
       },
       source: {
-        provider: intake.sourceProvider as string,
-        externalId: intake.sourceExternalId,
+        provider,
+        externalId,
         url: intake.sourceUrl,
         title: intake.sourceTitle,
         language: intake.sourceLanguage,
-        textType: intake.sourceTextType as string,
+        textType: sourceTextType,
+        derivedFromUrl: derived !== null && provider === derived.provider,
       },
       publicationPlan: {
         targetLanguages: intake.targetLanguages as string[],
@@ -172,44 +307,9 @@ export class RightsIntakeManifestService {
       agentTask: {
         objective:
           'Check whether Bibliaris may create and later publish this work and planned language/content versions, considering copyright status, source edition status, translation rights, component rights, target countries, required removals/replacements, and possible geo restrictions.',
-        requiredChecks: [
-          'Identify whether the source edition is an original text, translation, adaptation, abridgment, compilation, or unknown.',
-          'Check Project Gutenberg status and notices if the source provider is PROJECT_GUTENBERG.',
-          'Check whether the original work appears to be public domain in target countries.',
-          'Check whether the source edition itself appears to be public domain or otherwise usable in target countries.',
-          'Check whether translator/editor/illustrator/cover/audio-related rights may affect publication.',
-          'Identify all contributors (author, translator, editor, illustrator, photographer, cover designer, etc.) with life dates, nationality, authority IDs (VIAF/LoC), and identity confidence.',
-          'Check each planned target language separately.',
-          'Check each target country separately, not only regions.',
-          'Identify countries where publication should be allowed, blocked, license-required, pending review, or not targeted.',
-          'Identify required actions before book creation or publication.',
-          'Identify whether geo restrictions are required.',
-          'Check whether a license is required for each target market and each component.',
-          'If publication is possible only under a license, fill in the licenses[] block and set licenseRef in component and country decisions.',
-          'Collect evidence URLs, source titles, jurisdictions, excerpts or summaries, and access dates.',
-          'Call out uncertainty explicitly instead of guessing.',
-        ],
-        requiredOutputs: [
-          'Human-readable Russian summary.',
-          'Final recommendation.',
-          'Country-level decisions.',
-          'Language-level rights notes.',
-          'Component-level rights notes.',
-          'Required actions.',
-          'Evidence list.',
-          'Confidence level.',
-          'Structured JSON compatible with the expected schema.',
-        ],
-        importantRules: [
-          'Do not assume that a Gutenberg file is globally public domain.',
-          'Do not treat a translation as equivalent to the original work.',
-          'Do not collapse country-level decisions into broad regional decisions.',
-          'If data is insufficient, mark it as insufficient data or pending review.',
-          'If license is required, say so explicitly.',
-          'If publication is possible only with geo restrictions, list countries to block.',
-          'If an intermediate translation is used as a source, evaluate rights for both the original work and the intermediate translation.',
-          'The result is not approved automatically; a Bibliaris human reviewer must approve it later.',
-        ],
+        requiredChecks: this.buildRequiredChecks(plannedComponents, sourceTextType),
+        requiredOutputs: this.buildRequiredOutputs(plannedComponents),
+        importantRules: this.buildImportantRules(),
       },
       expectedResultSchema: {
         schemaVersion: RIGHTS_AGENT_EXPECTED_REPORT_SCHEMA_VERSION,
@@ -237,13 +337,129 @@ export class RightsIntakeManifestService {
           authHeader: 'X-Bibliaris-Agent-Token',
           note: 'Send the JSON report in the "report" field. The token is single-use and issued by a Bibliaris editor.',
         },
-        notes: [
-          'The agent may submit the result directly to the submission endpoint using the one-time upload token, or the editor may paste it manually.',
-          'A submitted report is never auto-approved: a Bibliaris human reviewer must approve it.',
-          'The external agent should return JSON plus a human-readable report; both are accepted by the submission endpoint in the "report" and "reportMarkdown" fields.',
-          'The optional licenses[] block describes licenses and permissions; licenses[].key values are referenced from licenseRef/licenseRefs.',
-        ],
+        notes: this.buildSchemaNotes(plannedComponents),
       },
+      readiness: { missing: readiness.missing, warnings: readiness.warnings },
     };
+  }
+
+  /**
+   * WP-F.2 (исток Б1): пункты про переводчика, обложку, озвучку и иллюстрации попадают в
+   * задание только когда соответствующий компонент есть в плане публикации. Раньше их
+   * заказывали всегда, агент честно заводил спекулятивные `COVER` / `AUDIO_NARRATION` со
+   * статусом `UNCERTAIN`, и эти несуществующие материалы роняли страны в `PENDING_REVIEW`.
+   */
+  private buildRequiredChecks(plannedComponents: string[], sourceTextType: string): string[] {
+    const has = (group: readonly string[]): boolean =>
+      plannedComponents.some((component) => group.includes(component));
+
+    const checks = [
+      'Identify whether the source edition is an original text, translation, adaptation, abridgment, compilation, or unknown.',
+      'Check Project Gutenberg status and notices if the source provider is PROJECT_GUTENBERG.',
+      'Check whether the original work appears to be public domain in target countries.',
+      'Check whether the source edition itself appears to be public domain or otherwise usable in target countries.',
+      'Identify the author and every contributor whose work is part of the planned components, with life dates, nationality, authority IDs (VIAF/LoC), and identity confidence.',
+    ];
+
+    if (has(TRANSLATION_COMPONENTS) || sourceTextType === 'TRANSLATION') {
+      checks.push(
+        'Check whether translator rights may affect publication, and identify the translator.',
+      );
+    }
+    if (has(COVER_COMPONENTS)) {
+      checks.push('Check whether cover rights may affect publication.');
+    }
+    if (has(AUDIO_COMPONENTS)) {
+      checks.push('Check whether audio narration or recording rights may affect publication.');
+    }
+    if (has(VISUAL_COMPONENTS)) {
+      checks.push('Check whether illustration, photograph or map rights may affect publication.');
+    }
+    if (has(EDITORIAL_COMPONENTS)) {
+      checks.push(
+        'Check whether editorial rights on introduction, preface, afterword, annotations or footnotes may affect publication.',
+      );
+    }
+
+    checks.push(
+      'Check each planned target language separately.',
+      'Check each target country separately, not only regions.',
+      'Identify countries where publication should be allowed, blocked, license-required, pending review, or not targeted.',
+      'Identify required actions before book creation or publication.',
+      'Identify whether geo restrictions are required.',
+      'Check whether a license is required for each target market and each planned component.',
+      'If publication is possible only under a license, fill in the licenses[] block and set licenseRef in component and country decisions.',
+      'Collect evidence URLs, source titles, jurisdictions, excerpts or summaries, and access dates.',
+      'Call out uncertainty explicitly instead of guessing.',
+    );
+
+    return checks;
+  }
+
+  private buildRequiredOutputs(plannedComponents: string[]): string[] {
+    const outputs = [
+      'Human-readable Russian summary.',
+      'Final recommendation.',
+      'Country-level decisions.',
+      'Language-level rights notes.',
+    ];
+
+    if (plannedComponents.length > 0) {
+      outputs.push('Component-level rights notes.');
+    }
+
+    outputs.push(
+      'Required actions.',
+      'Evidence list.',
+      'Confidence level.',
+      'Structured JSON compatible with the expected schema.',
+    );
+
+    return outputs;
+  }
+
+  /**
+   * WP-F.3: восемь правил задания были только ограничительными, поэтому осторожный агент
+   * уходил в `PENDING_REVIEW` даже на чистом public domain. Ориентиры на разрешение
+   * добавлены **условными по юрисдикции** — универсального «PD везде» не существует — и
+   * касаются только полноты отчёта: `accessPolicy` сервер из них никогда не выводит (ADR-006).
+   */
+  private buildImportantRules(): string[] {
+    return [
+      'Do not assume that a Gutenberg file is globally public domain.',
+      'Do not treat a translation as equivalent to the original work.',
+      'Do not collapse country-level decisions into broad regional decisions.',
+      'If data is insufficient, mark it as insufficient data or pending review.',
+      'If license is required, say so explicitly.',
+      'If publication is possible only with geo restrictions, list countries to block.',
+      'If an intermediate translation is used as a source, evaluate rights for both the original work and the intermediate translation.',
+      'The result is not approved automatically; a Bibliaris human reviewer must approve it later.',
+      'A public-domain answer is an expected outcome, not a failure: when the evidence supports it, answer ALLOWED instead of falling back to pending review.',
+      'Term orientation, not a rule of law: in jurisdictions with a life+70 or life+80 term, an original text whose author died more than 100 years ago is normally already in the public domain — verify it country by country instead of defaulting to pending review.',
+      'The orientation above does not hold everywhere: Mexico applies life+100, France adds wartime extensions, and some jurisdictions restored expired rights — check such countries separately.',
+      'United States orientation: works published before 1929 are in the public domain there.',
+      'These orientations concern only the completeness of your report. Bibliaris never derives accessPolicy from them: every country decision is yours and must rest on evidence.',
+      'Assess only the components listed in publicationPlan.plannedComponents. A speculative component that nobody plans to publish blocks the whole release.',
+    ];
+  }
+
+  private buildSchemaNotes(plannedComponents: string[]): string[] {
+    const notes = [
+      'The agent may submit the result directly to the submission endpoint using the one-time upload token, or the editor may paste it manually.',
+      'A submitted report is never auto-approved: a Bibliaris human reviewer must approve it.',
+      'The external agent should return JSON plus a human-readable report; both are accepted by the submission endpoint in the "report" and "reportMarkdown" fields.',
+      'The optional licenses[] block describes licenses and permissions; licenses[].key values are referenced from licenseRef/licenseRefs.',
+    ];
+
+    // WP-F.2: `componentAssessments` перестаёт быть безусловно заполняемым полем. Ключ
+    // остаётся обязательным по схеме 1.0 — его отсутствие валидатор импорта считает ошибкой, —
+    // но без запланированных компонентов ожидаемый ответ именно пустой массив.
+    notes.push(
+      plannedComponents.length > 0
+        ? 'componentAssessments must cover only the components listed in publicationPlan.plannedComponents.'
+        : 'componentAssessments must cover only the components listed in publicationPlan.plannedComponents. None are planned for this intake, so an empty array is the expected answer; the key itself must still be present.',
+    );
+
+    return notes;
   }
 }

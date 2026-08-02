@@ -18,6 +18,10 @@ export const REQUIRED_REPORT_FIELDS = {
    * `nextReviewAt` в списке потому, что агент обязан ответить на вопрос о следующей
    * перепроверке; значение при этом nullable (колонка тоже), поэтому пустой ответ сервер
    * встречает предупреждением `MISSING_NEXT_REVIEW`, а не ошибкой.
+   *
+   * WP-G.6: `requiredActions` и `evidence` выведены из списка. Манифест по-прежнему просит
+   * агента прислать оба блока, но их отсутствие ничего не ломает: материализация создаёт из
+   * них ноль строк, ни одной колонки `NOT NULL` они не питают, и ни один гейт их не читает.
    */
   root: [
     'schemaVersion',
@@ -30,8 +34,6 @@ export const REQUIRED_REPORT_FIELDS = {
     'languageAssessments',
     'componentAssessments',
     'territoryDecisions',
-    'requiredActions',
-    'evidence',
     'confidence',
     'nextReviewAt',
   ],
@@ -52,8 +54,15 @@ export const REQUIRED_REPORT_FIELDS = {
    * `geoBlockRequired` — `NOT NULL` с дефолтом, но валидатор требует явного булева значения.
    */
   componentTerritoryAssessments: ['countryCode', 'status', 'accessPolicy', 'geoBlockRequired'],
-  /** `TerritoryDecision`: `countryCode`, `finalStatus`, `accessPolicy`, `reasonRu`, `confidence`. */
-  territoryDecisions: ['countryCode', 'finalStatus', 'accessPolicy', 'reasonRu', 'confidence'],
+  /** `TerritoryDecision`: `countryCode`, `finalStatus`, `accessPolicy` — безусловно. */
+  territoryDecisions: ['countryCode', 'finalStatus', 'accessPolicy'],
+  /**
+   * WP-G.2: `reasonRu` и `confidence` требуются только от ограничивающего решения — как и во
+   * вложенном блоке `componentAssessments[].territoryAssessments[]`. Разрешающее решение без
+   * геоблокировки объяснять нечего. Обе колонки `NOT NULL`, поэтому материализация подставляет
+   * дефолты (`TERRITORY_DECISION_DEFAULT_REASON_RU` и уверенность отчёта целиком).
+   */
+  territoryDecisionsWhenRestricted: ['reasonRu', 'confidence'],
   /** `RightsAction`: `actionType` и `descriptionRu` — оба `NOT NULL`. */
   requiredActions: ['actionType', 'descriptionRu'],
   /** `RightsEvidence`: `evidenceType`, `sourceLevel`, `title`, `authority`, `summaryRu`. */

@@ -63,6 +63,15 @@ describe('Rights lawyer workflow e2e', () => {
         requiredAction: 'KEEP',
         confidence: 'LOW',
       },
+      {
+        // WP-E.1: сохраняемый компонент со статусом UNCERTAIN — риск HIGH и после смягчения;
+        // именно на нём держится 409 этого сьюта (осторожный confidence сам по себе — MEDIUM).
+        componentType: 'ILLUSTRATION',
+        titleRu: 'Иллюстрации издания',
+        status: 'UNCERTAIN',
+        requiredAction: 'KEEP',
+        confidence: 'LOW',
+      },
     ],
     territoryDecisions: [
       {

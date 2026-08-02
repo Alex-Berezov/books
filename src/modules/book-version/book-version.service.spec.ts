@@ -162,6 +162,7 @@ describe('BookVersionService', () => {
     Pick<PublicationGateService, 'assertVersionCanPublish' | 'checkVersionCanPublish'>
   >;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
+  let finalizeBaselineOnPublish: jest.Mock;
   let licenseCoverageService: {
     loadLicensesForProfile: jest.Mock;
     effectiveStatus: jest.Mock;
@@ -215,11 +216,13 @@ describe('BookVersionService', () => {
       assertVersionCanPublish: jest.fn().mockResolvedValue(undefined),
       checkVersionCanPublish: jest.fn(),
     };
+    finalizeBaselineOnPublish = jest.fn();
     mockRightsContentHashService = {
       computeVersionHash: jest.fn(),
       initializeVersionBaseline: jest.fn(),
       checkVersionStaleness: jest.fn(),
       markVersionAndClearanceStale: jest.fn(),
+      finalizeBaselineOnPublish,
     } as unknown as jest.Mocked<RightsContentHashService>;
     rightsRecheckService = {
       ensureTask: jest.fn().mockResolvedValue({ task: { id: 'task-1' }, created: true }),
@@ -756,6 +759,45 @@ describe('BookVersionService', () => {
     expect(unpub.status).toBe('draft');
     // unpublish should NOT call publication gate
     expect(gateService.assertVersionCanPublish).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * WP-D.4: публикация — жёсткий выход из окна наполнения черновика. Слепок фиксируется
+   * в той же транзакции, что и смена статуса, иначе окно осталось бы открытым.
+   */
+  it('publish fixes the content hash baseline in the same transaction', async () => {
+    const now = new Date();
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      publishedAt: now,
+    });
+
+    await service.publish('v1');
+
+    expect(finalizeBaselineOnPublish).toHaveBeenCalledWith('v1', null, prisma);
+  });
+
+  it('publish does not fix the baseline when the gate blocks', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
+    gateService.assertVersionCanPublish.mockRejectedValue(new BadRequestException('blocked'));
+
+    await expect(service.publish('v1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(finalizeBaselineOnPublish).not.toHaveBeenCalled();
+  });
+
+  it('unpublish does not reopen the draft fill window', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+      publishedAt: null,
+    });
+
+    await service.unpublish('v1');
+
+    expect(finalizeBaselineOnPublish).not.toHaveBeenCalled();
   });
 
   it('publish throws if gate blocks', async () => {

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { TERRITORY_FINAL_STATUS_SYNONYMS } from './rights-review-import.constants';
 import { REQUIRED_REPORT_FIELDS } from './rights-review-required-fields';
 import {
   RIGHTS_REPORT_SCHEMA_VERSIONS,
@@ -274,6 +275,14 @@ function assertReportObject(
  * сохранялся как `VALIDATED` и ронял материализацию `PrismaClientValidationError`.
  * Пустая строка считается отсутствием: `NOT NULL` она удовлетворяет, но смысла не несёт.
  */
+/**
+ * WP-G.6: отсутствующая необязательная коллекция читается как пустая. Материализация из
+ * пустого блока создаёт ноль строк, поэтому `NOT_ARRAY` отклонял отчёт без единого следствия.
+ */
+function optionalCollection(value: unknown): unknown {
+  return value === undefined || value === null ? [] : value;
+}
+
 function requireFields(
   record: Record<string, unknown>,
   fields: readonly string[],
@@ -382,8 +391,12 @@ export class RightsReviewImportValidator {
         addError(errors, 'contributors', 'contributors must be an array', 'INVALID_TYPE');
       } else {
         for (let i = 0; i < contributors.length; i++) {
-          const item = contributors[i] as Record<string, unknown>;
           const prefix = `contributors[${i}]`;
+          // WP-G.7: единственный блок без этой защиты — `null` в массиве ронял валидатор
+          // TypeError'ом, и импорт отвечал 500 вместо списка ошибок.
+          const entry: unknown = contributors[i];
+          if (!assertReportObject(entry, prefix, errors)) continue;
+          const item = entry;
 
           const key = item['key'] as string | undefined;
           if (!key || typeof key !== 'string') {
@@ -492,7 +505,11 @@ export class RightsReviewImportValidator {
           }
 
           const sourceEvidenceIds = item['sourceEvidenceIds'];
-          if (sourceEvidenceIds !== undefined && !Array.isArray(sourceEvidenceIds)) {
+          if (
+            sourceEvidenceIds !== undefined &&
+            sourceEvidenceIds !== null &&
+            !Array.isArray(sourceEvidenceIds)
+          ) {
             addError(
               errors,
               `${prefix}.sourceEvidenceIds`,
@@ -555,12 +572,12 @@ export class RightsReviewImportValidator {
       addError(errors, 'territoryDecisions', 'territoryDecisions must be an array', 'NOT_ARRAY');
     }
 
-    const requiredActions = reportJson['requiredActions'];
+    const requiredActions = optionalCollection(reportJson['requiredActions']);
     if (!Array.isArray(requiredActions)) {
       addError(errors, 'requiredActions', 'requiredActions must be an array', 'NOT_ARRAY');
     }
 
-    const evidence = reportJson['evidence'];
+    const evidence = optionalCollection(reportJson['evidence']);
     if (!Array.isArray(evidence)) {
       addError(errors, 'evidence', 'evidence must be an array', 'NOT_ARRAY');
     } else if (evidence.length === 0) {
@@ -592,22 +609,31 @@ export class RightsReviewImportValidator {
         requireFields(td, REQUIRED_REPORT_FIELDS.territoryDecisions, prefix, errors);
 
         // Наличие `countryCode` сообщает requireFields — здесь остаётся только формат.
+        // WP-G.3: регистр нормализуется так же, как во вложенном блоке компонента.
         const cc = td['countryCode'] as string | undefined;
         if (typeof cc === 'string' && cc.trim() !== '') {
-          if (!/^[A-Z]{2}$/.test(cc)) {
+          if (!/^[A-Za-z]{2}$/.test(cc)) {
             addError(
               errors,
               `${prefix}.countryCode`,
-              `Invalid countryCode: "${cc}". Must be uppercase ISO alpha-2`,
+              `Invalid countryCode: "${cc}". Must be ISO alpha-2`,
               'INVALID_COUNTRY_CODE',
             );
           } else {
-            coveredCountries.add(cc);
+            coveredCountries.add(cc.toUpperCase());
           }
         }
 
         const finalStatus = td['finalStatus'] as string | undefined;
-        if (finalStatus && !isIn(VALID_TERRITORY_FINAL_STATUSES, finalStatus)) {
+        if (finalStatus && TERRITORY_FINAL_STATUS_SYNONYMS[finalStatus] !== undefined) {
+          // WP-G.4: значение принимается, но редактор обязан увидеть, что сервер его заменил.
+          addWarning(
+            warnings,
+            `${prefix}.finalStatus`,
+            `finalStatus "${finalStatus}" is normalized to "${TERRITORY_FINAL_STATUS_SYNONYMS[finalStatus]}"`,
+            'ENUM_SYNONYM_NORMALIZED',
+          );
+        } else if (finalStatus && !isIn(VALID_TERRITORY_FINAL_STATUSES, finalStatus)) {
           addError(
             errors,
             `${prefix}.finalStatus`,
@@ -632,6 +658,17 @@ export class RightsReviewImportValidator {
             `${prefix}.accessPolicy`,
             `publicationGate=ALLOW conflicts with accessPolicy=BLOCK for country "${cc}"`,
             'ALLOW_BLOCK_CONFLICT',
+          );
+        }
+
+        // WP-G.2: объяснение требуется только от ограничивающего решения — точно та же
+        // граница, что во вложенном блоке `territoryAssessments[]`.
+        if (accessPolicy !== 'ALLOW' || td['geoBlockRequired'] === true) {
+          requireFields(
+            td,
+            REQUIRED_REPORT_FIELDS.territoryDecisionsWhenRestricted,
+            prefix,
+            errors,
           );
         }
 
@@ -684,9 +721,11 @@ export class RightsReviewImportValidator {
       // Check for NOT_CHECKED entries for target countries
       for (let i = 0; i < territoryDecisions.length; i++) {
         const td = territoryDecisions[i] as Record<string, unknown> | null;
+        const tdCountry = td?.['countryCode'];
         if (
           td?.['finalStatus'] === 'NOT_CHECKED' &&
-          targetCountryCodes.includes(td['countryCode'] as string)
+          typeof tdCountry === 'string' &&
+          targetCountryCodes.includes(tdCountry.toUpperCase())
         ) {
           addWarning(
             warnings,
@@ -706,6 +745,30 @@ export class RightsReviewImportValidator {
             `territoryDecisions[${i}].finalStatus`,
             `Country "${td['countryCode'] as string}" has status PENDING_REVIEW`,
             'PENDING_REVIEW',
+          );
+        }
+      }
+
+      /**
+       * WP-G.8: cross-field-правила были асимметричны — избыточное разрешение ловилось
+       * ошибкой (`ALLOW_BLOCK_CONFLICT`), избыточный запрет проходил молча. Запрет при всех
+       * разрешённых странах остаётся допустимым (вердикт агента сервер не ослабляет, ADR-006),
+       * но редактор обязан увидеть расхождение.
+       */
+      if (publicationGate === 'BLOCK' && territoryDecisions.length > 0) {
+        const everyCountryAllowed = territoryDecisions.every(
+          (entry) =>
+            !!entry &&
+            typeof entry === 'object' &&
+            !Array.isArray(entry) &&
+            (entry as Record<string, unknown>)['accessPolicy'] === 'ALLOW',
+        );
+        if (everyCountryAllowed) {
+          addWarning(
+            warnings,
+            'publicationGate',
+            'publicationGate=BLOCK while every territory decision is accessPolicy=ALLOW',
+            'REDUNDANT_BLOCK_GATE',
           );
         }
       }
@@ -800,13 +863,18 @@ export class RightsReviewImportValidator {
         }
       }
 
-      // Check all target languages are covered
+      /**
+       * WP-G.5: интейк на пять языков не обязан приносить четыре записи о переводах, которых
+       * не существует. Правило покрытия из ADR-014 не отменяется — меняется только строгость
+       * валидации: язык без оценки материализуется как `NOT_TARGETED`, то есть не разрешён,
+       * а редактор видит предупреждение вместо отказа во всём отчёте.
+       */
       for (const lang of targetLanguages) {
         if (!coveredLanguages.has(lang)) {
-          addError(
-            errors,
+          addWarning(
+            warnings,
             'languageAssessments',
-            `Missing language assessment for target language: "${lang}"`,
+            `Missing language assessment for target language: "${lang}" — it is materialized as NOT_TARGETED`,
             'MISSING_LANGUAGE_ASSESSMENT',
           );
         }
@@ -1019,6 +1087,8 @@ export class RightsReviewImportValidator {
           territoryDecisions,
         );
       }
+
+      this.warnAboutComponentsWithoutTerritoryAssessments(componentAssessments, warnings);
     }
 
     // Validate source assessment
@@ -1559,6 +1629,40 @@ export class RightsReviewImportValidator {
     return countryCodes;
   }
 
+  /**
+   * WP-B.5: компенсация ослабления B.1. Компонент, который агент не оценивал по странам вовсе,
+   * больше не роняет целевые рынки в `PENDING_REVIEW` — значит, редактор обязан увидеть, что
+   * именно осталось непроверенным. Предупреждение выдаётся только тогда, когда хотя бы один
+   * компонент оценён по странам: пока страновых оценок нет ни у кого, агрегация по компонентам
+   * не включается и ослаблять нечего.
+   */
+  private warnAboutComponentsWithoutTerritoryAssessments(
+    componentAssessments: unknown[],
+    warnings: ValidationIssue[],
+  ): void {
+    const hasAssessments = (entry: unknown): boolean => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+      const territoryAssessments = (entry as Record<string, unknown>)['territoryAssessments'];
+      return Array.isArray(territoryAssessments) && territoryAssessments.length > 0;
+    };
+
+    if (!componentAssessments.some(hasAssessments)) return;
+
+    for (let i = 0; i < componentAssessments.length; i++) {
+      const entry = componentAssessments[i];
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      if (hasAssessments(entry)) continue;
+
+      const titleRu = (entry as Record<string, unknown>)['titleRu'];
+      addWarning(
+        warnings,
+        `componentAssessments[${i}].territoryAssessments`,
+        `Component ${typeof titleRu === 'string' ? `"${titleRu}"` : `#${i}`} has no territory assessments: it is excluded from the per-country aggregation instead of pending it`,
+        'COMPONENT_WITHOUT_TERRITORY_ASSESSMENTS',
+      );
+    }
+  }
+
   private validateComponentTerritoryAssessments(
     value: unknown,
     componentPrefix: string,
@@ -1566,7 +1670,8 @@ export class RightsReviewImportValidator {
     warnings: ValidationIssue[],
     territoryDecisions: unknown,
   ): void {
-    if (value === undefined) return;
+    // WP-G.1: `null` — тот же ответ, что и отсутствие ключа.
+    if (value === undefined || value === null) return;
     if (!Array.isArray(value)) {
       addError(
         errors,
@@ -1672,6 +1777,7 @@ export class RightsReviewImportValidator {
       const sourceEvidenceIds = record['sourceEvidenceIds'];
       if (
         sourceEvidenceIds !== undefined &&
+        sourceEvidenceIds !== null &&
         (!Array.isArray(sourceEvidenceIds) ||
           sourceEvidenceIds.some((evidenceId) => typeof evidenceId !== 'string'))
       ) {
@@ -1692,6 +1798,7 @@ export class RightsReviewImportValidator {
             : '';
       if (
         assessmentConfidence !== undefined &&
+        assessmentConfidence !== null &&
         (typeof assessmentConfidence !== 'string' || !isIn(VALID_CONFIDENCE, assessmentConfidence))
       ) {
         addError(

@@ -6,7 +6,7 @@ import {
   LAWYER_ENV,
   riskLevelRank,
 } from '../rights-lawyer/rights-lawyer.constants';
-import { RightsRiskLevel } from '../rights-lawyer/rights-lawyer-interface';
+import { RightsRiskLevel, toStringArray } from '../rights-lawyer/rights-lawyer-interface';
 import {
   computeRiskAssessment,
   parseBooleanFlag,
@@ -136,10 +136,14 @@ export class RightsApprovalService {
   private async loadRiskInput(profile: Record<string, unknown>): Promise<RiskAssessmentInput> {
     const profileId = profile['id'] as string;
 
-    const [sourceEdition, components, territoryDecisions, actions, contributors, claims] =
+    const [sourceEdition, components, territoryDecisions, actions, contributors, claims, intake] =
       await Promise.all([
         this.oneOf('sourceEdition').findUnique({ where: { rightsProfileId: profileId } }),
-        this.manyOf('rightsComponent').findMany({ where: { rightsProfileId: profileId } }),
+        this.manyOf('rightsComponent').findMany({
+          where: { rightsProfileId: profileId },
+          // WP-E.1: нужен только факт наличия страновых оценок у компонента.
+          include: { territoryAssessments: { select: { countryCode: true } } },
+        }),
         this.manyOf('territoryDecision').findMany({ where: { rightsProfileId: profileId } }),
         this.manyOf('rightsAction').findMany({ where: { rightsProfileId: profileId } }),
         this.manyOf('rightsProfileContributor').findMany({
@@ -147,6 +151,9 @@ export class RightsApprovalService {
           include: { person: true },
         }),
         this.manyOf('rightsClaim').findMany({ where: { rightsProfileId: profileId } }),
+        this.oneOf('rightsIntake').findUnique({
+          where: { id: profile['rightsIntakeId'] as string },
+        }),
       ]);
 
     return {
@@ -164,11 +171,15 @@ export class RightsApprovalService {
         requiredAction: asString(component['requiredAction']),
         confidence: (component['confidence'] as string | null) ?? null,
         titleRu: asString(component['titleRu']),
+        territoryAssessmentCount: Array.isArray(component['territoryAssessments'])
+          ? component['territoryAssessments'].length
+          : 0,
       })),
       territoryDecisions: territoryDecisions.map((decision) => ({
         countryCode: asString(decision['countryCode']),
         finalStatus: asString(decision['finalStatus']),
       })),
+      targetCountryCodes: toStringArray(intake?.['targetCountryCodes']),
       actions: actions.map((action) => ({
         actionType: asString(action['actionType']),
         status: asString(action['status']),

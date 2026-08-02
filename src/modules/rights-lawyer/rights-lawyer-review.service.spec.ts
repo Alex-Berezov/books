@@ -98,8 +98,9 @@ const makeProfile = (overrides: Record<string, unknown> = {}) => ({
   isCurrent: true,
   overallStatus: 'PUBLISHABLE',
   publicationGate: 'ALLOW',
-  // LOW confidence is a HIGH risk factor, so the default profile of this suite is one that
-  // genuinely requires a lawyer — which is what almost every case below is about.
+  // LOW confidence over a contested target country (see the territoryDecision stub) is a HIGH
+  // risk factor, so the default profile of this suite genuinely requires a lawyer — which is
+  // what almost every case below is about.
   confidence: 'LOW',
   riskLevel: RightsRiskLevel.HIGH,
   riskFactors: [],
@@ -190,7 +191,13 @@ const createPrismaStub = () => {
     },
     bookVersion: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn() },
     rightsComponent: { findMany: jest.fn().mockResolvedValue([]) },
-    territoryDecision: { findMany: jest.fn().mockResolvedValue([]) },
+    // WP-E: с 02.08.2026 гейт считает риск заново. Чтобы профиль этого сьюта действительно
+    // требовал юриста, у него есть целевая страна с LICENSE_REQUIRED — фактор HIGH сам по себе.
+    territoryDecision: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([{ countryCode: 'US', finalStatus: 'LICENSE_REQUIRED' }]),
+    },
     rightsAction: { findMany: jest.fn().mockResolvedValue([]) },
     rightsProfileContributor: { findMany: jest.fn().mockResolvedValue([]) },
     rightsClaim: { findMany: jest.fn().mockResolvedValue([]) },
@@ -795,9 +802,13 @@ describe('RightsLawyerReviewService', () => {
     });
 
     it('warns with LAWYER_REVIEW_OPEN_NON_BLOCKING for an informational review', async () => {
+      // Профиль, который юриста действительно не требует: свежий расчёт должен дать LOW.
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'ALLOWED' },
+      ]);
       withVersion(
         [makeReview({ blocksApproval: false })],
-        makeProfile({ lawyerReviewRequired: false }),
+        makeProfile({ confidence: 'HIGH', lawyerReviewRequired: false }),
       );
       const result = await service.evaluateVersionLawyerReview('v1');
       expect(result.warnings.map((item) => item.code)).toContain('LAWYER_REVIEW_OPEN_NON_BLOCKING');
@@ -843,6 +854,44 @@ describe('RightsLawyerReviewService', () => {
       withVersion([makeReview({ dueAt: new Date('2020-01-01T00:00:00.000Z') })]);
       const result = await service.evaluateVersionLawyerReview('v1');
       expect(result.warnings.map((item) => item.code)).toContain('LAWYER_REVIEW_OVERDUE');
+    });
+
+    it('WP-E.4: drops the blocker when the fresh risk no longer requires a lawyer', async () => {
+      // Снимок липкий: `lawyerReviewRequired = true`, а причина (LICENSE_REQUIRED в целевой
+      // стране и confidence LOW) уже устранена.
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'ALLOWED' },
+      ]);
+      withVersion(
+        [],
+        makeProfile({ confidence: 'HIGH', lawyerReviewRequired: true, riskLevel: 'HIGH' }),
+      );
+
+      const result = await service.evaluateVersionLawyerReview('v1');
+
+      expect(result.blockers.map((item) => item.code)).not.toContain(
+        'LAWYER_REVIEW_REQUIRED_NOT_APPROVED',
+      );
+      expect(result.lawyerReviewRequired).toBe(false);
+      expect(result.riskLevel).toBe(RightsRiskLevel.LOW);
+    });
+
+    it('WP-E.4: still blocks when the fresh risk is HIGH even if the snapshot says otherwise', async () => {
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'BLOCKED' },
+      ]);
+      withVersion(
+        [],
+        makeProfile({ confidence: 'LOW', lawyerReviewRequired: false, riskLevel: 'LOW' }),
+      );
+
+      const result = await service.evaluateVersionLawyerReview('v1');
+
+      expect(result.blockers.map((item) => item.code)).toContain(
+        'LAWYER_REVIEW_REQUIRED_NOT_APPROVED',
+      );
+      expect(result.lawyerReviewRequired).toBe(true);
+      expect(result.riskLevel).toBe(RightsRiskLevel.HIGH);
     });
 
     it('returns empty blockers and warnings when the workflow is disabled', async () => {

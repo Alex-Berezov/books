@@ -183,6 +183,16 @@ export class RightsProfileService {
       where: { rightsProfileId: profileId },
     });
 
+    const intake = await this.prisma.rightsIntake.findUnique({
+      where: { id: profile['rightsIntakeId'] as string },
+      select: { targetCountryCodes: true },
+    });
+    const intakeTargetCountryCodes = Array.isArray(intake?.targetCountryCodes)
+      ? intake.targetCountryCodes.filter(
+          (countryCode): countryCode is string => typeof countryCode === 'string',
+        )
+      : [];
+
     const evidence = (await (this.prisma as unknown as Record<string, unknown>)[
       'rightsEvidence'
     ]) as {
@@ -248,8 +258,12 @@ export class RightsProfileService {
       territoryDecisions: territoryData.map((t: Record<string, unknown>) =>
         this.mapTerritoryDecision(t),
       ),
-      regionalTerritorySummary:
-        this.regionAggregationService.aggregateTerritoryDecisions(territoryData),
+      // WP-C.4: региональная сводка знает план публикации, поэтому показывает обе доли —
+      // по справочнику региона и по целевым странам интейка.
+      regionalTerritorySummary: this.regionAggregationService.aggregateTerritoryDecisions(
+        territoryData,
+        intakeTargetCountryCodes,
+      ),
       components: componentsData.map((c: Record<string, unknown>) =>
         this.mapComponent(c, licensesByComponentId, licenseByAssessmentId),
       ),

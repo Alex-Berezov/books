@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
+import { deriveSourceFromUrl, isSameLanguage } from './rights-intake-source-url.util';
 
 /**
  * Manual (Phase 1) status transitions.
@@ -208,6 +209,19 @@ export class RightsIntakeService {
   }
 
   async create(dto: CreateRightsIntakeDto, userId: string) {
+    const derived = deriveSourceFromUrl(dto.sourceUrl);
+    const sourceProvider =
+      dto.sourceProvider && dto.sourceProvider !== 'UNKNOWN'
+        ? dto.sourceProvider
+        : (derived?.provider ?? 'UNKNOWN');
+    const sourceExternalId = dto.sourceExternalId ?? derived?.externalId ?? null;
+    const sourceTextType =
+      dto.sourceTextType && dto.sourceTextType !== 'UNKNOWN'
+        ? dto.sourceTextType
+        : derived && isSameLanguage(dto.sourceLanguage, dto.originalLanguage)
+          ? 'ORIGINAL_TEXT'
+          : 'UNKNOWN';
+
     return this.prisma.rightsIntake.create({
       data: {
         candidateTitle: dto.candidateTitle,
@@ -216,12 +230,12 @@ export class RightsIntakeService {
         originalLanguage: dto.originalLanguage ?? null,
         authorBirthYear: dto.authorBirthYear ?? null,
         authorDeathYear: dto.authorDeathYear ?? null,
-        sourceProvider: dto.sourceProvider ?? 'UNKNOWN',
-        sourceExternalId: dto.sourceExternalId ?? null,
+        sourceProvider,
+        sourceExternalId,
         sourceUrl: dto.sourceUrl ?? null,
         sourceTitle: dto.sourceTitle ?? null,
         sourceLanguage: dto.sourceLanguage ?? null,
-        sourceTextType: dto.sourceTextType ?? 'UNKNOWN',
+        sourceTextType,
         targetLanguages: dto.targetLanguages as Prisma.InputJsonValue,
         targetCountryCodes: dto.targetCountryCodes as Prisma.InputJsonValue,
         plannedContentTypes: dto.plannedContentTypes as Prisma.InputJsonValue,
@@ -274,10 +288,59 @@ export class RightsIntakeService {
       data['plannedComponents'] = dto.plannedComponents as Prisma.InputJsonValue;
     if (dto.notesRu !== undefined) data['notesRu'] = dto.notesRu;
 
+    this.fillSourceGapsFromUrl(intake, dto, data);
+
     return this.prisma.rightsIntake.update({
       where: { id },
       data,
     });
+  }
+
+  /**
+   * WP-F.1: ссылка на Gutenberg заполняет только пробелы источника. Явно выбранные редактором
+   * провайдер, ID и тип текста приложение не переписывает: вывод из URL — его собственная
+   * догадка, а не установленный человеком факт.
+   */
+  private fillSourceGapsFromUrl(
+    intake: {
+      sourceProvider: string;
+      sourceExternalId: string | null;
+      sourceUrl: string | null;
+      sourceLanguage: string | null;
+      originalLanguage: string | null;
+      sourceTextType: string;
+    },
+    dto: UpdateRightsIntakeDto,
+    data: Record<string, unknown>,
+  ): void {
+    const derived = deriveSourceFromUrl(
+      dto.sourceUrl !== undefined ? dto.sourceUrl : intake.sourceUrl,
+    );
+    if (!derived) {
+      return;
+    }
+
+    const provider = dto.sourceProvider !== undefined ? dto.sourceProvider : intake.sourceProvider;
+    if (!provider || provider === 'UNKNOWN') {
+      data['sourceProvider'] = derived.provider;
+    }
+
+    const externalId =
+      dto.sourceExternalId !== undefined ? dto.sourceExternalId : intake.sourceExternalId;
+    if (derived.externalId && (externalId === null || externalId === '')) {
+      data['sourceExternalId'] = derived.externalId;
+    }
+
+    const textType = dto.sourceTextType !== undefined ? dto.sourceTextType : intake.sourceTextType;
+    if (!textType || textType === 'UNKNOWN') {
+      const sourceLanguage =
+        dto.sourceLanguage !== undefined ? dto.sourceLanguage : intake.sourceLanguage;
+      const originalLanguage =
+        dto.originalLanguage !== undefined ? dto.originalLanguage : intake.originalLanguage;
+      if (isSameLanguage(sourceLanguage, originalLanguage)) {
+        data['sourceTextType'] = 'ORIGINAL_TEXT';
+      }
+    }
   }
 
   async changeStatus(id: string, newStatus: RightsIntakeStatus) {

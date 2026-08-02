@@ -8,7 +8,11 @@ import {
   riskLevelRank,
 } from './rights-lawyer.constants';
 import { lawyerError } from './rights-lawyer.errors';
-import { RightsRiskLevel, type LawyerDatabaseClient } from './rights-lawyer-interface';
+import {
+  RightsRiskLevel,
+  toStringArray,
+  type LawyerDatabaseClient,
+} from './rights-lawyer-interface';
 import {
   computeRiskAssessment,
   meetsRiskThreshold,
@@ -69,10 +73,14 @@ export class RightsRiskAssessmentService {
       });
     }
 
-    const [sourceEdition, components, territoryDecisions, actions, contributors, claims] =
+    const [sourceEdition, components, territoryDecisions, actions, contributors, claims, intake] =
       await Promise.all([
         database.sourceEdition.findUnique({ where: { rightsProfileId: profileId } }),
-        database.rightsComponent.findMany({ where: { rightsProfileId: profileId } }),
+        database.rightsComponent.findMany({
+          where: { rightsProfileId: profileId },
+          // WP-E.1: нужен только факт наличия страновых оценок у компонента.
+          include: { territoryAssessments: { select: { countryCode: true } } },
+        }),
         database.territoryDecision.findMany({ where: { rightsProfileId: profileId } }),
         database.rightsAction.findMany({ where: { rightsProfileId: profileId } }),
         database.rightsProfileContributor.findMany({
@@ -80,6 +88,7 @@ export class RightsRiskAssessmentService {
           include: { person: true },
         }),
         database.rightsClaim.findMany({ where: { rightsProfileId: profileId } }),
+        database.rightsIntake.findUnique({ where: { id: profile.rightsIntakeId } }),
       ]);
 
     return {
@@ -97,11 +106,13 @@ export class RightsRiskAssessmentService {
         requiredAction: component.requiredAction,
         confidence: component.confidence ?? null,
         titleRu: component.titleRu,
+        territoryAssessmentCount: component.territoryAssessments?.length ?? 0,
       })),
       territoryDecisions: territoryDecisions.map((decision) => ({
         countryCode: decision.countryCode,
         finalStatus: decision.finalStatus,
       })),
+      targetCountryCodes: toStringArray(intake?.targetCountryCodes),
       actions: actions.map((action) => ({
         actionType: action.actionType,
         status: action.status,

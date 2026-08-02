@@ -584,10 +584,19 @@ export class BookVersionService {
       !!version.rightsStaleDetectedAt || !contentHash.matchesBaseline || contentHash.isStale;
     const recheckRequired = version.rightsRecheckRequired || contentHash.recheckRequired;
 
+    // WP-C.4: план публикации берётся из интейка версии — региональная сводка отдаёт долю
+    // и по справочнику региона, и по целевым странам.
+    const intakeTargetCountryCodes = Array.isArray(intake?.['targetCountryCodes'])
+      ? (intake['targetCountryCodes'] as unknown[]).filter(
+          (countryCode): countryCode is string => typeof countryCode === 'string',
+        )
+      : [];
+
     const regionalTerritorySummary =
       (currentProfile?.['regionalTerritorySummary'] as Array<Record<string, unknown>>) ||
       (this.regionAggregationService?.aggregateTerritoryDecisions(
         territoryDecisions,
+        intakeTargetCountryCodes,
       ) as unknown as Array<Record<string, unknown>>) ||
       [];
 
@@ -994,21 +1003,30 @@ export class BookVersionService {
     const existingAttribution = (existing as unknown as { rightsLicenseAttributionTextRu?: string })
       .rightsLicenseAttributionTextRu;
 
-    return this.prisma.bookVersion.update({
-      where: { id },
-      data: {
-        status: 'published',
-        publishedAt: new Date(),
-        rightsLicenseIds: coverage.licenseIds,
-        rightsLicenseCoverageStatus: coverage.status,
-        rightsLicenseCheckedAt: new Date(),
-        rightsLicenseUncoveredCountryCodes: coverage.uncoveredCountryCodes,
-        rightsLicenseAttributionTextRu:
-          existingAttribution && existingAttribution.trim() !== ''
-            ? existingAttribution
-            : coverage.attributionTextsRu.join('\n') || null,
-      } as unknown as Prisma.BookVersionUpdateInput,
-      include: { seo: true },
+    // WP-D.4: жёсткий выход из окна наполнения черновика. Публикация фиксирует слепок контента
+    // окончательно и в той же транзакции пишет событие закрытия окна (ADR-009), после которого
+    // правка главы снова уводит клиренс в `STALE`.
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.bookVersion.update({
+        where: { id },
+        data: {
+          status: 'published',
+          publishedAt: new Date(),
+          rightsLicenseIds: coverage.licenseIds,
+          rightsLicenseCoverageStatus: coverage.status,
+          rightsLicenseCheckedAt: new Date(),
+          rightsLicenseUncoveredCountryCodes: coverage.uncoveredCountryCodes,
+          rightsLicenseAttributionTextRu:
+            existingAttribution && existingAttribution.trim() !== ''
+              ? existingAttribution
+              : coverage.attributionTextsRu.join('\n') || null,
+        } as unknown as Prisma.BookVersionUpdateInput,
+        include: { seo: true },
+      });
+
+      await this.rightsContentHashService.finalizeBaselineOnPublish(id, null, tx);
+
+      return updated;
     });
   }
 

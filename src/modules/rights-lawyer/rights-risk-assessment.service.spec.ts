@@ -15,6 +15,10 @@ const createPrismaStub = () => ({
   rightsProfileContributor: { findMany: jest.fn().mockResolvedValue([]) },
   rightsClaim: { findMany: jest.fn().mockResolvedValue([]) },
   rightsLawyerReview: { findUnique: jest.fn().mockResolvedValue(null) },
+  // WP-E.3: целевые страны интейка входят в риск-вход.
+  rightsIntake: {
+    findUnique: jest.fn().mockResolvedValue({ id: 'intake-1', targetCountryCodes: ['US'] }),
+  },
 });
 
 const createConfigStub = (values: Record<string, string> = {}) => ({
@@ -80,6 +84,35 @@ describe('RightsRiskAssessmentService', () => {
         { role: 'TRANSLATOR', fullName: 'Иванов', deathYear: null },
         { role: 'AUTHOR', fullName: '', deathYear: null },
       ]);
+    });
+
+    it('WP-E: carries the component assessment count and the target countries into the input', async () => {
+      prisma.rightsProfile.findUnique.mockResolvedValue(makeProfile());
+      prisma.rightsComponent.findMany.mockResolvedValue([
+        {
+          id: 'c1',
+          componentType: 'COVER',
+          status: 'UNCERTAIN',
+          requiredAction: 'VERIFY',
+          confidence: 'LOW',
+          titleRu: 'Обложка',
+          territoryAssessments: [],
+        },
+        {
+          id: 'c2',
+          componentType: 'ORIGINAL_TEXT',
+          status: 'PUBLIC_DOMAIN',
+          requiredAction: 'KEEP',
+          confidence: 'HIGH',
+          titleRu: 'Оригинальный текст',
+          territoryAssessments: [{ countryCode: 'US' }, { countryCode: 'GB' }],
+        },
+      ]);
+
+      const input = await service.loadInput('profile-1');
+
+      expect(input.components.map((item) => item.territoryAssessmentCount)).toEqual([0, 2]);
+      expect(input.targetCountryCodes).toEqual(['US']);
     });
 
     it('reads the source text type from the source edition', async () => {
@@ -162,6 +195,10 @@ describe('RightsRiskAssessmentService', () => {
     it('honours a raised RIGHTS_LAWYER_MIN_RISK_LEVEL', async () => {
       build({ RIGHTS_LAWYER_MIN_RISK_LEVEL: 'CRITICAL' });
       prisma.rightsProfile.findUnique.mockResolvedValue(makeProfile({ confidence: 'LOW' }));
+      // WP-E.2: осторожный confidence поднимается до HIGH только над спорной целевой страной.
+      prisma.territoryDecision.findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'PENDING_REVIEW' },
+      ]);
       prisma.rightsProfile.update.mockImplementation(
         ({ data }: { data: Record<string, unknown> }) =>
           Promise.resolve(makeProfile({ confidence: 'LOW', ...data })),

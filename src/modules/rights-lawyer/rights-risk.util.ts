@@ -1,7 +1,9 @@
 import {
   CLOSED_ACTION_STATUSES,
   CLOSED_CLAIM_STATUSES,
+  CONTESTED_TERRITORY_STATUSES,
   DERIVATIVE_SOURCE_TEXT_TYPES,
+  PLANNED_MATERIAL_REQUIRED_ACTIONS,
   RISK_FACTOR_LEVELS,
   RISK_FACTOR_MESSAGES_RU,
   RISKY_CONTRIBUTOR_ROLES,
@@ -37,8 +39,15 @@ export interface RiskAssessmentInput {
     requiredAction: string;
     confidence: string | null;
     titleRu: string;
+    /** Сколько страновых оценок агент выставил компоненту. `0` — компонент по странам не оценивался. */
+    territoryAssessmentCount: number;
   }>;
   territoryDecisions: Array<{ countryCode: string; finalStatus: string }>;
+  /**
+   * Целевые страны интейка. Пустой список — целевое множество неизвестно; тогда в риск идут
+   * все страны, то есть поведение остаётся прежним (fail-closed).
+   */
+  targetCountryCodes: string[];
   actions: Array<{ actionType: string; status: string; isBlocking: boolean }>;
   contributors: Array<{ role: string; fullName: string; deathYear: number | null }>;
   claims: Array<{ id: string; status: string; severity: string; requiresLawyerReview: boolean }>;
@@ -70,14 +79,19 @@ export const EMPTY_RISK_ASSESSMENT_INPUT: RiskAssessmentInput = {
   sourceTextType: null,
   components: [],
   territoryDecisions: [],
+  targetCountryCodes: [],
   actions: [],
   contributors: [],
   claims: [],
 };
 
-const makeFactor = (code: RightsRiskFactorCode, details?: Record<string, unknown>): RiskFactor => ({
+const makeFactor = (
+  code: RightsRiskFactorCode,
+  details?: Record<string, unknown>,
+  level?: RightsRiskLevel,
+): RiskFactor => ({
   code,
-  level: RISK_FACTOR_LEVELS[code],
+  level: level ?? RISK_FACTOR_LEVELS[code],
   messageRu: RISK_FACTOR_MESSAGES_RU[code],
   ...(details ? { details } : {}),
 });
@@ -85,8 +99,36 @@ const makeFactor = (code: RightsRiskFactorCode, details?: Record<string, unknown
 const isOpenClaim = (status: string): boolean => !CLOSED_CLAIM_STATUSES.includes(status);
 const isOpenAction = (status: string): boolean => !CLOSED_ACTION_STATUSES.includes(status);
 
+const normaliseCountry = (code: string): string => code.trim().toUpperCase();
+
+/**
+ * WP-E.1: компонент, который агент не оценивал ни по одной стране и по которому не просит
+ * ничего, кроме проверки, — это «материала ещё нет» (спекулятивные обложка, озвучка, перевод из
+ * манифеста), а не правовая неопределённость. Компонент с оценками по странам или с действием
+ * `KEEP` / `RETRANSLATE` / `OBTAIN_LICENSE` по-прежнему поднимает `UNCERTAIN_COMPONENT`.
+ */
+const isPlannedButUnassessedMaterial = (component: {
+  requiredAction: string;
+  territoryAssessmentCount: number;
+}): boolean =>
+  component.territoryAssessmentCount === 0 &&
+  PLANNED_MATERIAL_REQUIRED_ACTIONS.includes(component.requiredAction);
+
 export const computeRiskAssessment = (input: RiskAssessmentInput): RiskAssessmentResult => {
   const factors: RiskFactor[] = [];
+
+  // WP-E.3: в риск идут только целевые рынки. Страна, упомянутая агентом вскользь, и страна,
+  // помеченная `NOT_TARGETED`, юриста не требуют. Пустой список целевых стран означает «множество
+  // неизвестно» — тогда считаются все страны, как раньше.
+  const targetCountries = new Set(input.targetCountryCodes.map(normaliseCountry).filter(Boolean));
+  const targetedDecisions = input.territoryDecisions.filter(
+    (decision) =>
+      decision.finalStatus !== 'NOT_TARGETED' &&
+      (targetCountries.size === 0 || targetCountries.has(normaliseCountry(decision.countryCode))),
+  );
+  const contestedTargetCountries = targetedDecisions
+    .filter((decision) => CONTESTED_TERRITORY_STATUSES.includes(decision.finalStatus))
+    .map((decision) => decision.countryCode);
 
   // --- CRITICAL -----------------------------------------------------------
   if (input.profile.publicationGate === 'BLOCK') {
@@ -135,8 +177,17 @@ export const computeRiskAssessment = (input: RiskAssessmentInput): RiskAssessmen
     );
   }
 
+  // WP-E.2: осторожный `confidence` — HIGH только когда спорна хотя бы одна целевая страна.
   if (input.profile.confidence === 'LOW') {
-    factors.push(makeFactor(RightsRiskFactorCode.CONFIDENCE_LOW));
+    factors.push(
+      contestedTargetCountries.length > 0
+        ? makeFactor(
+            RightsRiskFactorCode.CONFIDENCE_LOW,
+            { countryCodes: contestedTargetCountries },
+            RightsRiskLevel.HIGH,
+          )
+        : makeFactor(RightsRiskFactorCode.CONFIDENCE_LOW),
+    );
   }
 
   if (input.profile.overallStatus === 'INSUFFICIENT_DATA') {
@@ -151,7 +202,8 @@ export const computeRiskAssessment = (input: RiskAssessmentInput): RiskAssessmen
     (component) =>
       component.status === 'UNCERTAIN' &&
       component.requiredAction !== 'REMOVE' &&
-      component.requiredAction !== 'REPLACE',
+      component.requiredAction !== 'REPLACE' &&
+      !isPlannedButUnassessedMaterial(component),
   );
   if (uncertainComponents.length > 0) {
     factors.push(
@@ -174,7 +226,7 @@ export const computeRiskAssessment = (input: RiskAssessmentInput): RiskAssessmen
     );
   }
 
-  const licenseRequiredCountries = input.territoryDecisions
+  const licenseRequiredCountries = targetedDecisions
     .filter((decision) => decision.finalStatus === 'LICENSE_REQUIRED')
     .map((decision) => decision.countryCode);
   if (licenseRequiredCountries.length > 0) {
@@ -197,7 +249,7 @@ export const computeRiskAssessment = (input: RiskAssessmentInput): RiskAssessmen
     );
   }
 
-  const pendingCountries = input.territoryDecisions
+  const pendingCountries = targetedDecisions
     .filter(
       (decision) =>
         decision.finalStatus === 'PENDING_REVIEW' || decision.finalStatus === 'NOT_CHECKED',
@@ -239,7 +291,7 @@ export const computeRiskAssessment = (input: RiskAssessmentInput): RiskAssessmen
   }
 
   // --- LOW ----------------------------------------------------------------
-  const blockedCountries = input.territoryDecisions
+  const blockedCountries = targetedDecisions
     .filter((decision) => decision.finalStatus === 'BLOCKED')
     .map((decision) => decision.countryCode);
   if (blockedCountries.length > 0) {

@@ -65,6 +65,54 @@ const TRIGGER_DB_VALUES: Partial<Record<Trigger, Trigger>> = {
 const triggerDbValue = (trigger: Trigger): Trigger => TRIGGER_DB_VALUES[trigger] ?? trigger;
 
 /**
+ * WP-D.1. Окно наполнения черновика. Клиренс снимается ради того, чтобы залить текст, —
+ * и первая же глава этот клиренс аннулировала (шесть блокеров гейта разом). Правило не
+ * отменяется, а **сужается**: расхождение хеша переснимает baseline вместо `STALE`, только если
+ * выполнено всё сразу —
+ *  1) триггер из списка ниже (правка самой версии, её текстовых глав или состава участников);
+ *  2) версия в статусе `draft`;
+ *  3) окно ещё не закрыто — версия ни разу не публиковалась (D.4).
+ *
+ * Аудио-главы и изменения слепка прав в окно не входят: у озвучки собственные правообладатели.
+ * Компенсация за ослабление — событие `rightsContentHashEvent` пишется всегда, в той же
+ * транзакции (ADR-009), поэтому подмена текста в черновике остаётся видимой в аудите.
+ * Состав входа хеша не меняется, версия алгоритма остаётся прежней (ADR-010): меняется
+ * только реакция на расхождение.
+ */
+const DRAFT_FILL_WINDOW_TRIGGERS: readonly Trigger[] = [
+  'BOOK_VERSION_UPDATED',
+  'CHAPTER_CREATED',
+  'CHAPTER_UPDATED',
+  'CHAPTER_DELETED',
+  'VERSION_CONTRIBUTOR_CHANGED',
+];
+
+/** Признак пересъёмки baseline внутри окна наполнения черновика. */
+export const DRAFT_FILL_WINDOW_REASON_CODE = 'DRAFT_FILL_WINDOW';
+
+/**
+ * Признак закрытия окна. Хранится событием, а не колонкой: снятие версии с публикации
+ * (`unpublish` обнуляет `publishedAt`) не должно открывать окно заново, а миграций в этом
+ * пакете нет.
+ */
+export const DRAFT_FILL_WINDOW_CLOSED_REASON_CODE = 'DRAFT_FILL_WINDOW_CLOSED';
+
+/**
+ * Признак открытия окна: пишется вместе с первым baseline версии, заведённой черновиком.
+ *
+ * Одного события закрытия недостаточно: его пишет только новый код `finalizeBaselineOnPublish`,
+ * поэтому у версии, опубликованной до выката, такого события в базе нет — а `publishedAt`
+ * обнуляется при `unpublish` и признаком «уже публиковалась» быть не может. Колонки под это
+ * нет, миграций в пакете нет, поэтому окно открывается **явной отметкой**: нет отметки —
+ * окно считается закрытым (fail-closed). Так все версии, заведённые до выката, и все версии,
+ * созданные сразу опубликованными, остаются на прежнем строгом правиле.
+ */
+export const DRAFT_FILL_WINDOW_OPENED_REASON_CODE = 'DRAFT_FILL_WINDOW_OPENED';
+
+/** Первое появление файла источника: артефакт происхождения, а не смена произведения (D.2). */
+export const SOURCE_FILE_FIRST_UPLOAD_REASON_CODE = 'SOURCE_FILE_FIRST_UPLOAD';
+
+/**
  * Порядок участников в выдаче БД не определён, а хеш обязан быть от него независим:
  * иначе клиренс «протухал» бы от любого пересчёта.
  */
@@ -412,6 +460,15 @@ export class RightsContentHashService {
     const computation = await this.computeVersionHash(versionId, tx);
     const client = tx ?? this.prisma;
 
+    // WP-D.1: окно наполнения открывается только здесь и только для версии, заведённой
+    // черновиком. Версия, созданная сразу опубликованной, окна не получает вовсе — иначе
+    // последующий `unpublish` открыл бы его задним числом.
+    const versionState = await client.bookVersion.findUnique({
+      where: { id: versionId },
+      select: { status: true, publishedAt: true },
+    });
+    const opensDraftFillWindow = versionState?.status === 'draft' && !versionState.publishedAt;
+
     await client.bookVersion.update({
       where: { id: versionId },
       data: {
@@ -438,6 +495,10 @@ export class RightsContentHashService {
         currentHash: computation.hash,
         hashAlgorithmVersion: computation.algorithmVersion,
         staleMarked: false,
+        reasonCode: opensDraftFillWindow ? DRAFT_FILL_WINDOW_OPENED_REASON_CODE : null,
+        reasonRu: opensDraftFillWindow
+          ? 'Версия заведена черновиком: открыто окно наполнения, до первой публикации правка текста переснимает baseline'
+          : null,
         createdByUserId: userId ?? null,
       },
     });
@@ -458,6 +519,8 @@ export class RightsContentHashService {
       where: { id: versionId },
       select: {
         id: true,
+        status: true,
+        publishedAt: true,
         rightsContentHash: true,
         rightsContentHashAlgorithmVersion: true,
         rightsRecheckRequired: true,
@@ -515,6 +578,38 @@ export class RightsContentHashService {
     const isStale = !matchesBaseline || version.rightsRecheckRequired;
 
     if (!matchesBaseline && persist) {
+      // Окно переснимает **существующий** baseline. Версия без снимка вообще — не случай окна:
+      // её блокирует `MISSING_RIGHTS_CONTENT_HASH`, и заводить снимок правкой главы значило бы
+      // снимать блокер, а не сужать правило.
+      const insideDraftFillWindow =
+        baselineHash !== null &&
+        DRAFT_FILL_WINDOW_TRIGGERS.includes(trigger) &&
+        (await this.isDraftFillWindowOpen(versionId, version.status, version.publishedAt, client));
+
+      if (insideDraftFillWindow) {
+        await this.rebaselineWithinDraftFillWindow(
+          versionId,
+          computation,
+          baselineHash,
+          trigger,
+          userId,
+          client,
+        );
+
+        return {
+          versionId: version.id,
+          baselineHash,
+          currentHash: computation.hash,
+          algorithmVersion: computation.algorithmVersion,
+          matchesBaseline: true,
+          isStale: version.rightsRecheckRequired,
+          recheckRequired: version.rightsRecheckRequired,
+          reasonCode: version.rightsStaleReasonCode ?? null,
+          reasonRu: version.rightsStaleReasonRu ?? null,
+          checkedAt: new Date().toISOString(),
+        };
+      }
+
       await this.markVersionAndClearanceStale(
         versionId,
         trigger,
@@ -598,6 +693,207 @@ export class RightsContentHashService {
         createdByUserId: userId ?? null,
       },
     });
+  }
+
+  /**
+   * WP-D.1 / D.4. Открыто ли окно наполнения для этой версии. Единственное место, где это
+   * решается: тем же условием пользуется пересъёмка baseline по профилю прав (D.2).
+   *
+   * Правило fail-closed — окно открыто, только если это доказано данными:
+   *  1) версия сейчас черновик и никогда не была опубликована (`publishedAt` пуст);
+   *  2) окно не закрывалось публикацией (событие `DRAFT_FILL_WINDOW_CLOSED`);
+   *  3) окно было явно открыто при заведении версии (`DRAFT_FILL_WINDOW_OPENED`).
+   *
+   * Третий пункт закрывает версии, опубликованные до выката пакета: события закрытия у них
+   * нет и быть не может, а `unpublish` обнуляет `publishedAt`, — без отметки открытия такая
+   * версия молча переснимала бы baseline вместо `STALE`.
+   */
+  private async isDraftFillWindowOpen(
+    versionId: string,
+    status: string | null | undefined,
+    publishedAt: Date | null | undefined,
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<boolean> {
+    if (status !== 'draft') return false;
+    if (publishedAt) return false;
+
+    const closingEvent = await client.rightsContentHashEvent.findFirst({
+      where: { bookVersionId: versionId, reasonCode: DRAFT_FILL_WINDOW_CLOSED_REASON_CODE },
+      select: { id: true },
+    });
+    if (closingEvent) return false;
+
+    const openingEvent = await client.rightsContentHashEvent.findFirst({
+      where: { bookVersionId: versionId, reasonCode: DRAFT_FILL_WINDOW_OPENED_REASON_CODE },
+      select: { id: true },
+    });
+
+    return Boolean(openingEvent);
+  }
+
+  /**
+   * WP-D.1. Пересъёмка baseline внутри окна наполнения: обновляется только снимок.
+   * `rightsRecheckRequired` и уже стоящие метки stale не трогаются — окно ничего не проверяет
+   * и потому ничего не разблокирует. Статусы `RightsReview` и `RightsProfile` не меняются.
+   */
+  private async rebaselineWithinDraftFillWindow(
+    versionId: string,
+    computation: RightsContentHashComputationDto,
+    previousHash: string | null,
+    trigger: Trigger,
+    userId: string | null | undefined,
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<void> {
+    await client.bookVersion.update({
+      where: { id: versionId },
+      data: {
+        rightsContentHash: computation.hash,
+        rightsContentHashAlgorithmVersion: computation.algorithmVersion,
+        rightsContentHashInput: JSON.parse(
+          JSON.stringify(computation.input),
+        ) as Prisma.InputJsonValue,
+        rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
+      },
+    });
+
+    await client.rightsContentHashEvent.create({
+      data: {
+        bookVersionId: versionId,
+        rightsProfileId: computation.rightsProfileId,
+        rightsReviewId: computation.approvedRightsReviewId,
+        trigger: triggerDbValue(trigger) as never,
+        previousHash,
+        currentHash: computation.hash,
+        hashAlgorithmVersion: computation.algorithmVersion,
+        staleMarked: false,
+        reasonCode: DRAFT_FILL_WINDOW_REASON_CODE,
+        reasonRu: `${TRIGGER_MESSAGES[trigger]}. Версия в черновике: baseline переснят, клиренс не аннулирован`,
+        createdByUserId: userId ?? null,
+      },
+    });
+  }
+
+  /**
+   * WP-D.4. Жёсткий выход из окна наполнения: первая публикация фиксирует слепок окончательно.
+   * Событие с `reasonCode = DRAFT_FILL_WINDOW_CLOSED` и есть признак закрытия — после него
+   * правка главы снова уводит клиренс в `STALE`, даже если версию потом снимут с публикации.
+   * Метки stale не снимаются: фиксация ничего не проверяет.
+   */
+  async finalizeBaselineOnPublish(
+    versionId: string,
+    userId?: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const client = tx ?? this.prisma;
+
+    const version = await client.bookVersion.findUnique({
+      where: { id: versionId },
+      select: { id: true, rightsContentHash: true },
+    });
+
+    if (!version) {
+      throw new NotFoundException('BookVersion not found');
+    }
+
+    const computation = await this.computeVersionHash(versionId, tx);
+
+    await client.bookVersion.update({
+      where: { id: versionId },
+      data: {
+        rightsContentHash: computation.hash,
+        rightsContentHashAlgorithmVersion: computation.algorithmVersion,
+        rightsContentHashInput: JSON.parse(
+          JSON.stringify(computation.input),
+        ) as Prisma.InputJsonValue,
+        rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
+      },
+    });
+
+    await client.rightsContentHashEvent.create({
+      data: {
+        bookVersionId: versionId,
+        rightsProfileId: computation.rightsProfileId,
+        rightsReviewId: computation.approvedRightsReviewId,
+        trigger: 'MANUAL_HASH_CHECK' as never,
+        previousHash: version.rightsContentHash,
+        currentHash: computation.hash,
+        hashAlgorithmVersion: computation.algorithmVersion,
+        staleMarked: false,
+        reasonCode: DRAFT_FILL_WINDOW_CLOSED_REASON_CODE,
+        reasonRu:
+          'Публикация версии: слепок контента зафиксирован окончательно, окно наполнения черновика закрыто',
+        createdByUserId: userId ?? null,
+      },
+    });
+  }
+
+  /**
+   * WP-D.2. Пересъёмка baseline версий профиля прав без пометки stale.
+   * Используется там, где вход хеша меняет артефакт происхождения, а не само произведение:
+   * первое появление файла источника там, где его не было.
+   *
+   * Послабление действует только внутри окна наполнения черновика — того же, что и в D.1.
+   * У версии, чьё окно закрыто публикацией, слепок зафиксирован, и смена входа обязана уводить
+   * клиренс в `STALE` по прежнему правилу. Событие в аудит пишется в обоих случаях (ADR-009).
+   */
+  async rebaselineForRightsProfile(
+    rightsProfileId: string,
+    trigger: Trigger,
+    reasonCode: string,
+    reasonRu: string,
+    userId?: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const client = tx ?? this.prisma;
+
+    const versions = await client.bookVersion.findMany({
+      where: { rightsProfileId },
+      select: { id: true, rightsContentHash: true, status: true, publishedAt: true },
+    });
+
+    for (const version of versions) {
+      const insideDraftFillWindow = await this.isDraftFillWindowOpen(
+        version.id,
+        version.status,
+        version.publishedAt,
+        client,
+      );
+
+      if (!insideDraftFillWindow) {
+        await this.checkVersionStaleness(version.id, trigger, userId ?? null, true, tx);
+        continue;
+      }
+
+      const computation = await this.computeVersionHash(version.id, tx);
+
+      await client.bookVersion.update({
+        where: { id: version.id },
+        data: {
+          rightsContentHash: computation.hash,
+          rightsContentHashAlgorithmVersion: computation.algorithmVersion,
+          rightsContentHashInput: JSON.parse(
+            JSON.stringify(computation.input),
+          ) as Prisma.InputJsonValue,
+          rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
+        },
+      });
+
+      await client.rightsContentHashEvent.create({
+        data: {
+          bookVersionId: version.id,
+          rightsProfileId: computation.rightsProfileId,
+          rightsReviewId: computation.approvedRightsReviewId,
+          trigger: triggerDbValue(trigger) as never,
+          previousHash: version.rightsContentHash,
+          currentHash: computation.hash,
+          hashAlgorithmVersion: computation.algorithmVersion,
+          staleMarked: false,
+          reasonCode,
+          reasonRu,
+          createdByUserId: userId ?? null,
+        },
+      });
+    }
   }
 
   async markVersionAndClearanceStale(

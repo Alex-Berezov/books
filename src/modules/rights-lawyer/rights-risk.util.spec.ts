@@ -25,6 +25,7 @@ const component = (overrides: Partial<RiskAssessmentInput['components'][number]>
   requiredAction: 'KEEP',
   confidence: 'HIGH',
   titleRu: 'Основной текст',
+  territoryAssessmentCount: 1,
   ...overrides,
 });
 
@@ -139,9 +140,12 @@ describe('computeRiskAssessment', () => {
       expect(result.suggestedTrigger).toBe(RightsLawyerReviewTrigger.AGENT_REQUESTED);
     });
 
-    it('flags CONFIDENCE_LOW', () => {
+    it('flags CONFIDENCE_LOW at HIGH when a target country is contested', () => {
       const result = computeRiskAssessment(
-        input({ profile: { ...EMPTY_RISK_ASSESSMENT_INPUT.profile, confidence: 'LOW' } }),
+        input({
+          profile: { ...EMPTY_RISK_ASSESSMENT_INPUT.profile, confidence: 'LOW' },
+          territoryDecisions: [{ countryCode: 'US', finalStatus: 'PENDING_REVIEW' }],
+        }),
       );
       expect(result.riskLevel).toBe(RightsRiskLevel.HIGH);
       expect(codesOf(result)).toContain(RightsRiskFactorCode.CONFIDENCE_LOW);
@@ -304,6 +308,138 @@ describe('computeRiskAssessment', () => {
           RightsRiskFactorCode.CONFIDENCE_MEDIUM,
         ]),
       );
+    });
+
+    it('does not flag UNCERTAIN_COMPONENT for a component the agent never assessed by country', () => {
+      const verify = computeRiskAssessment(
+        input({
+          components: [
+            component({
+              status: 'UNCERTAIN',
+              requiredAction: 'VERIFY',
+              territoryAssessmentCount: 0,
+              titleRu: 'Обложка',
+            }),
+          ],
+        }),
+      );
+      const none = computeRiskAssessment(
+        input({
+          components: [
+            component({ status: 'UNCERTAIN', requiredAction: 'NONE', territoryAssessmentCount: 0 }),
+          ],
+        }),
+      );
+
+      expect(verify.factors).toHaveLength(0);
+      expect(verify.riskLevel).toBe(RightsRiskLevel.LOW);
+      expect(none.factors).toHaveLength(0);
+    });
+
+    it('still flags UNCERTAIN_COMPONENT once the agent assessed it by country', () => {
+      const result = computeRiskAssessment(
+        input({
+          components: [
+            component({
+              status: 'UNCERTAIN',
+              requiredAction: 'VERIFY',
+              territoryAssessmentCount: 2,
+            }),
+          ],
+        }),
+      );
+
+      expect(result.riskLevel).toBe(RightsRiskLevel.HIGH);
+      expect(codesOf(result)).toContain(RightsRiskFactorCode.UNCERTAIN_COMPONENT);
+    });
+
+    it('still flags UNCERTAIN_COMPONENT that is kept even without country assessments', () => {
+      const result = computeRiskAssessment(
+        input({
+          components: [
+            component({ status: 'UNCERTAIN', requiredAction: 'KEEP', territoryAssessmentCount: 0 }),
+          ],
+        }),
+      );
+
+      expect(result.riskLevel).toBe(RightsRiskLevel.HIGH);
+      expect(codesOf(result)).toContain(RightsRiskFactorCode.UNCERTAIN_COMPONENT);
+    });
+
+    it('keeps CONFIDENCE_LOW at MEDIUM when no target country is contested', () => {
+      const result = computeRiskAssessment(
+        input({
+          profile: { ...EMPTY_RISK_ASSESSMENT_INPUT.profile, confidence: 'LOW' },
+          territoryDecisions: [{ countryCode: 'US', finalStatus: 'ALLOWED' }],
+          targetCountryCodes: ['US'],
+        }),
+      );
+
+      expect(result.riskLevel).toBe(RightsRiskLevel.MEDIUM);
+      const factor = result.factors.find(
+        (item) => item.code === RightsRiskFactorCode.CONFIDENCE_LOW,
+      );
+      expect(factor?.level).toBe(RightsRiskLevel.MEDIUM);
+    });
+
+    it('raises CONFIDENCE_LOW back to HIGH for a blocked target country', () => {
+      const result = computeRiskAssessment(
+        input({
+          profile: { ...EMPTY_RISK_ASSESSMENT_INPUT.profile, confidence: 'LOW' },
+          territoryDecisions: [{ countryCode: 'US', finalStatus: 'BLOCKED' }],
+          targetCountryCodes: ['US'],
+        }),
+      );
+
+      expect(result.riskLevel).toBe(RightsRiskLevel.HIGH);
+      const factor = result.factors.find(
+        (item) => item.code === RightsRiskFactorCode.CONFIDENCE_LOW,
+      );
+      expect(factor?.level).toBe(RightsRiskLevel.HIGH);
+      expect(factor?.details).toEqual({ countryCodes: ['US'] });
+    });
+
+    it('ignores countries outside the target markets', () => {
+      const result = computeRiskAssessment(
+        input({
+          profile: { ...EMPTY_RISK_ASSESSMENT_INPUT.profile, confidence: 'LOW' },
+          territoryDecisions: [
+            { countryCode: 'us', finalStatus: 'ALLOWED' },
+            { countryCode: 'DE', finalStatus: 'LICENSE_REQUIRED' },
+            { countryCode: 'MX', finalStatus: 'PENDING_REVIEW' },
+          ],
+          targetCountryCodes: ['US'],
+        }),
+      );
+
+      expect(codesOf(result)).not.toContain(RightsRiskFactorCode.LICENSE_REQUIRED_TERRITORY);
+      expect(codesOf(result)).not.toContain(RightsRiskFactorCode.PENDING_REVIEW_TERRITORY);
+      expect(result.riskLevel).toBe(RightsRiskLevel.MEDIUM);
+    });
+
+    it('keeps territory factors for countries inside the target markets', () => {
+      const result = computeRiskAssessment(
+        input({
+          territoryDecisions: [
+            { countryCode: 'US', finalStatus: 'ALLOWED' },
+            { countryCode: 'DE', finalStatus: 'LICENSE_REQUIRED' },
+          ],
+          targetCountryCodes: ['US', 'DE'],
+        }),
+      );
+
+      expect(codesOf(result)).toContain(RightsRiskFactorCode.LICENSE_REQUIRED_TERRITORY);
+      expect(result.riskLevel).toBe(RightsRiskLevel.HIGH);
+    });
+
+    it('never counts a NOT_TARGETED decision as a pending territory', () => {
+      const result = computeRiskAssessment(
+        input({
+          territoryDecisions: [{ countryCode: 'MX', finalStatus: 'NOT_TARGETED' }],
+        }),
+      );
+
+      expect(result.factors).toHaveLength(0);
     });
 
     it('prefers AGENT_REQUESTED over RIGHTS_CLAIM when both are present', () => {

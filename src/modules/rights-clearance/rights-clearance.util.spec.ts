@@ -56,4 +56,26 @@ describe('classifyTerritoryDecisions', () => {
 
     expect(lists.pendingCountryCodes).toEqual(['IT', 'PL']);
   });
+
+  // WP-C.1: a market nobody plans to publish in is not an open question about publishing there.
+  it('keeps a country outside the publication plan out of every market list', () => {
+    const lists = classifyTerritoryDecisions([
+      { countryCode: 'JP', accessPolicy: 'REVIEW_REQUIRED', finalStatus: 'NOT_TARGETED' },
+    ]);
+
+    expect(lists.pendingCountryCodes).toEqual([]);
+    expect(lists.allowedCountryCodes).toEqual([]);
+    expect(lists.blockedCountryCodes).toEqual([]);
+    expect(lists.licenseRequiredCountryCodes).toEqual([]);
+  });
+
+  // WP-C.1, обратная сторона: `NOT_TARGETED` не отменяет явный запрет.
+  it('keeps a not-targeted country blocked when the decision says BLOCK', () => {
+    const lists = classifyTerritoryDecisions([
+      { countryCode: 'JP', accessPolicy: 'BLOCK', finalStatus: 'NOT_TARGETED' },
+    ]);
+
+    expect(lists.blockedCountryCodes).toEqual(['JP']);
+    expect(lists.pendingCountryCodes).toEqual([]);
+  });
 });

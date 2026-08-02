@@ -5,6 +5,7 @@ import {
   PublicationGateReasonDto,
 } from './dto/publication-gate-result.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { UNASSESSED_LANGUAGE_STATUS } from '../rights-intake/rights-review-import.constants';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockRuleDto, GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
@@ -16,6 +17,7 @@ import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review
 interface VersionWithGeoBlock {
   id: string;
   bookId: string;
+  language: string | null;
   rightsProfileId: string | null;
   approvedRightsReviewId: string | null;
   rightsStatus: string | null;
@@ -50,6 +52,16 @@ export class PublicationGateService {
     private readonly rightsLawyerReviewService: RightsLawyerReviewService,
     private readonly clearanceResolver: RightsClearanceResolverService,
   ) {}
+
+  /**
+   * `prisma generate` локально запрещён, поэтому модель читается тем же приёмом, что и в
+   * `rights-profile.service.ts`: делегат берётся с клиента по имени.
+   */
+  private get editionRights() {
+    return (this.prisma as unknown as Record<string, unknown>)['editionRights'] as {
+      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    };
+  }
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
     const blockingReasons: PublicationGateReasonDto[] = [];
@@ -121,18 +133,11 @@ export class PublicationGateService {
       );
     }
 
-    // 6.5 Review not HUMAN_APPROVED
-    if (review && review.status !== 'HUMAN_APPROVED') {
-      blockingReasons.push(
-        new PublicationGateReasonDto({
-          code: 'RIGHTS_REVIEW_NOT_APPROVED',
-          severity: 'BLOCKER',
-          messageRu: 'Проверка авторских прав не утверждена. Текущий статус: ' + review.status,
-        }),
-      );
-    }
-
-    // 6.6 Review stale/superseded/rejected
+    // 6.5-6.6 Review not usable. WP-A.3: the named statuses say the same thing as
+    // `RIGHTS_REVIEW_NOT_APPROVED`, only precisely — emitting both turned one cause into two
+    // blockers and made an ordinary stale clearance look like a pile of legal problems.
+    // `RIGHTS_REVIEW_NOT_APPROVED` stays as the else branch for every other status (ADR-008:
+    // codes are never removed).
     if (review) {
       if (review.status === 'STALE') {
         blockingReasons.push(
@@ -142,8 +147,7 @@ export class PublicationGateService {
             messageRu: 'Проверка авторских прав устарела (STALE). Требуется повторная проверка.',
           }),
         );
-      }
-      if (review.status === 'SUPERSEDED') {
+      } else if (review.status === 'SUPERSEDED') {
         blockingReasons.push(
           new PublicationGateReasonDto({
             code: 'RIGHTS_REVIEW_SUPERSEDED',
@@ -151,13 +155,20 @@ export class PublicationGateService {
             messageRu: 'Проверка авторских прав заменена новой (SUPERSEDED).',
           }),
         );
-      }
-      if (review.status === 'HUMAN_REJECTED') {
+      } else if (review.status === 'HUMAN_REJECTED') {
         blockingReasons.push(
           new PublicationGateReasonDto({
             code: 'RIGHTS_REVIEW_REJECTED',
             severity: 'BLOCKER',
             messageRu: 'Проверка авторских прав отклонена (REJECTED).',
+          }),
+        );
+      } else if (review.status !== 'HUMAN_APPROVED') {
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'RIGHTS_REVIEW_NOT_APPROVED',
+            severity: 'BLOCKER',
+            messageRu: 'Проверка авторских прав не утверждена. Текущий статус: ' + review.status,
           }),
         );
       }
@@ -192,18 +203,8 @@ export class PublicationGateService {
       );
     }
 
-    // 6.8 Profile not APPROVED
-    if (profile && profile.status !== 'APPROVED') {
-      blockingReasons.push(
-        new PublicationGateReasonDto({
-          code: 'RIGHTS_PROFILE_NOT_APPROVED',
-          severity: 'BLOCKER',
-          messageRu: 'Rights profile не утверждён. Текущий статус: ' + profile.status,
-        }),
-      );
-    }
-
-    // 6.9 Profile stale/superseded/rejected/archived
+    // 6.8-6.9 Profile not usable. WP-A.3: same rule as for the review — the precise status wins,
+    // `RIGHTS_PROFILE_NOT_APPROVED` covers everything else.
     if (profile) {
       if (profile.status === 'STALE') {
         blockingReasons.push(
@@ -213,8 +214,7 @@ export class PublicationGateService {
             messageRu: 'Rights profile устарел (STALE).',
           }),
         );
-      }
-      if (profile.status === 'SUPERSEDED') {
+      } else if (profile.status === 'SUPERSEDED') {
         blockingReasons.push(
           new PublicationGateReasonDto({
             code: 'RIGHTS_PROFILE_SUPERSEDED',
@@ -222,8 +222,7 @@ export class PublicationGateService {
             messageRu: 'Rights profile заменён (SUPERSEDED).',
           }),
         );
-      }
-      if (profile.status === 'REJECTED') {
+      } else if (profile.status === 'REJECTED') {
         blockingReasons.push(
           new PublicationGateReasonDto({
             code: 'RIGHTS_PROFILE_REJECTED',
@@ -231,13 +230,20 @@ export class PublicationGateService {
             messageRu: 'Rights profile отклонён (REJECTED).',
           }),
         );
-      }
-      if (profile.status === 'ARCHIVED') {
+      } else if (profile.status === 'ARCHIVED') {
         blockingReasons.push(
           new PublicationGateReasonDto({
             code: 'RIGHTS_PROFILE_ARCHIVED',
             severity: 'BLOCKER',
             messageRu: 'Rights profile архивирован (ARCHIVED).',
+          }),
+        );
+      } else if (profile.status !== 'APPROVED') {
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'RIGHTS_PROFILE_NOT_APPROVED',
+            severity: 'BLOCKER',
+            messageRu: 'Rights profile не утверждён. Текущий статус: ' + profile.status,
           }),
         );
       }
@@ -347,14 +353,48 @@ export class PublicationGateService {
       );
     }
 
-    // 6.15 Pending countries
+    // 6.15 Pending countries. WP-C.3: сужение области, а не отмена правила — `PENDING_TERRITORIES`
+    // остаётся кодом ядра и по-прежнему блокирует, но считается только по целевым странам версии.
+    // Страна вне плана публикации запрещала релиз на целевых рынках, хотя публиковаться там никто
+    // не собирался. Компенсация — отдельный код-предупреждение: непроверенный рынок остаётся
+    // видимым (ADR-008: коды добавляются, не переименовываются). Неизвестный план публикации
+    // (нет интейка или список пуст) означает прежнее поведение: блокирует любой пендинг.
+    const targetCountryCodes = await this.loadTargetCountryCodes(clearance.rightsIntakeId);
     const pendingCountryCodes = clearance.pendingCountryCodes;
-    if (pendingCountryCodes.length > 0) {
+    const pendingInTargetMarkets =
+      targetCountryCodes.length === 0
+        ? pendingCountryCodes
+        : pendingCountryCodes.filter((countryCode) =>
+            targetCountryCodes.includes(countryCode.toUpperCase()),
+          );
+    const pendingOutsideTargetMarkets =
+      targetCountryCodes.length === 0
+        ? []
+        : pendingCountryCodes.filter(
+            (countryCode) => !targetCountryCodes.includes(countryCode.toUpperCase()),
+          );
+
+    if (pendingInTargetMarkets.length > 0) {
       blockingReasons.push(
         new PublicationGateReasonDto({
           code: 'PENDING_TERRITORIES',
           severity: 'BLOCKER',
           messageRu: 'Есть территории с незавершённым решением по правам.',
+          // WP-A.2: without the list the editor could not tell which market to finish.
+          details: { countryCodes: pendingInTargetMarkets },
+        }),
+      );
+    }
+
+    if (pendingOutsideTargetMarkets.length > 0) {
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: 'PENDING_TERRITORIES_OUTSIDE_TARGET_MARKETS',
+          severity: 'WARNING',
+          messageRu:
+            'Есть территории с незавершённым решением по правам вне целевых рынков версии. ' +
+            'Публикацию это не блокирует.',
+          details: { countryCodes: pendingOutsideTargetMarkets },
         }),
       );
     }
@@ -392,8 +432,36 @@ export class PublicationGateService {
       );
     }
 
-    // 6.17 Geo-block required but not configured
-    if (version.rightsGeoBlockRequired && !version.rightsGeoBlockConfigured) {
+    // 6.17 Geo-block chain. WP-A.1: the flag alone used to demand configuration, runtime rules and
+    // verification even when the clearance closed no market — and a rule cannot be created for a
+    // country nobody blocked, so the editor was stuck in a loop with no exit. The chain is now
+    // demanded only where there is something to close: a blocked market or one that needs a
+    // license. The flag itself is not ignored — when it points at nothing, the gate says so.
+    const geoRestrictedCountryCodes = [
+      ...new Set(
+        [
+          ...blockedCountryCodes,
+          ...clearance.licenseRequiredCountryCodes,
+          ...licenseCoverage.requiredCountryCodes,
+        ].map((countryCode) => countryCode.toUpperCase()),
+      ),
+    ].sort();
+    const geoBlockChainRequired =
+      version.rightsGeoBlockRequired && geoRestrictedCountryCodes.length > 0;
+
+    if (version.rightsGeoBlockRequired && geoRestrictedCountryCodes.length === 0) {
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: 'GEO_BLOCK_REQUIRED_WITHOUT_RESTRICTED_COUNTRIES',
+          severity: 'WARNING',
+          messageRu:
+            'Версия помечена как требующая geo-block, но ни одна страна не закрыта и не требует лицензии. ' +
+            'Правила geo-block не требуются.',
+        }),
+      );
+    }
+
+    if (geoBlockChainRequired && !version.rightsGeoBlockConfigured) {
       blockingReasons.push(
         new PublicationGateReasonDto({
           code: 'GEO_BLOCK_NOT_CONFIGURED',
@@ -404,7 +472,7 @@ export class PublicationGateService {
       );
     }
 
-    if (version.rightsGeoBlockRequired) {
+    if (geoBlockChainRequired) {
       const activeRules = await this.geoBlockRuleService.getActiveRulesForVersion(versionId);
       const activeCountryCodes = new Set(activeRules.map((rule) => rule.countryCode.toUpperCase()));
       const missingCountryCodes = blockedCountryCodes.filter(
@@ -618,6 +686,31 @@ export class PublicationGateService {
       );
     }
 
+    // 6.21 Language rights coverage. WP-G.5 понизил `MISSING_LANGUAGE_ASSESSMENT` до
+    // предупреждения, а компенсацией объявил запись `EditionRights` со статусом `NOT_TARGETED`
+    // на непокрытый целевой язык — но эту заглушку не читал ни один гейт, и версия на
+    // неоценённом языке уходила в публикацию. ADR-014 требует, чтобы клиренс покрывал целевые
+    // языки целиком, поэтому смягчение валидации держится на блокере здесь: публикуется только
+    // язык, по которому есть реальная правовая оценка. Код новый и добавлен аддитивно (ADR-008),
+    // существующие коды не тронуты.
+    const versionLanguage =
+      typeof version.language === 'string' ? version.language.trim().toLowerCase() : '';
+    if (version.rightsProfileId && versionLanguage) {
+      const assessedLanguageCodes = await this.loadAssessedLanguageCodes(version.rightsProfileId);
+
+      if (!assessedLanguageCodes.includes(versionLanguage)) {
+        blockingReasons.push(
+          new PublicationGateReasonDto({
+            code: 'MISSING_LANGUAGE_RIGHTS_ASSESSMENT',
+            severity: 'BLOCKER',
+            messageRu:
+              'По языку версии нет правовой оценки в клиренсе. Требуется отчёт с оценкой этого языка.',
+            details: { languageCode: versionLanguage, assessedLanguageCodes },
+          }),
+        );
+      }
+    }
+
     return new PublicationGateResultDto({
       versionId: version.id,
       bookId: book.id,
@@ -683,6 +776,46 @@ export class PublicationGateService {
     }
 
     return scopesByCountry;
+  }
+
+  /**
+   * Языки, по которым клиренс профиля несёт реальную оценку агента. `NOT_TARGETED` — заглушка
+   * материализации на целевой язык без оценки (WP-G.5), покрытием она не является.
+   */
+  private async loadAssessedLanguageCodes(rightsProfileId: string): Promise<string[]> {
+    const records = await this.editionRights.findMany({
+      where: { sourceEdition: { rightsProfileId } },
+      select: { languageCode: true, status: true },
+    });
+
+    return records
+      .filter((record) => record['status'] !== UNASSESSED_LANGUAGE_STATUS)
+      .map((record) =>
+        typeof record['languageCode'] === 'string'
+          ? record['languageCode'].trim().toLowerCase()
+          : '',
+      )
+      .filter((languageCode) => languageCode !== '');
+  }
+
+  /**
+   * WP-C.3: план публикации версии — целевые страны её интейка. Пустой результат означает
+   * «план неизвестен», и правило работает в прежнем, более строгом виде.
+   */
+  private async loadTargetCountryCodes(rightsIntakeId: string | null): Promise<string[]> {
+    if (!rightsIntakeId) return [];
+
+    const intake = (await this.prisma.rightsIntake.findUnique({
+      where: { id: rightsIntakeId },
+      select: { targetCountryCodes: true },
+    })) as { targetCountryCodes?: unknown } | null;
+
+    const rawCountryCodes = intake?.targetCountryCodes;
+    if (!Array.isArray(rawCountryCodes)) return [];
+
+    return rawCountryCodes
+      .filter((countryCode): countryCode is string => typeof countryCode === 'string')
+      .map((countryCode) => countryCode.toUpperCase());
   }
 
   async assertVersionCanPublish(versionId: string): Promise<void> {

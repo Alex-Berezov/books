@@ -307,6 +307,8 @@ export interface LawyerComponentRecord {
   requiredAction: string;
   confidence: string | null;
   titleRu: string;
+  /** WP-E.1: подгружается только ради вопроса «оценивал ли агент компонент по странам вообще». */
+  territoryAssessments?: Array<{ countryCode: string }>;
 }
 
 export interface LawyerTerritoryDecisionRecord {

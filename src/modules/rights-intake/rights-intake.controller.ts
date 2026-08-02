@@ -27,6 +27,7 @@ import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 import { RightsProfileDetailDto } from './dto/rights-profile-response.dto';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
+import { RightsIntakeReadinessDto } from './dto/rights-intake-readiness.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -59,6 +60,14 @@ export class RightsIntakeController {
   @ApiOperation({ summary: 'Export agent manifest for external ChatGPT-based rights check' })
   agentManifest(@Param('id') id: string) {
     return this.manifestService.generate(id);
+  }
+
+  @Get(':id/readiness')
+  @ApiOperation({
+    summary: 'Non-blocking readiness check of a rights intake before sending it to the agent',
+  })
+  readiness(@Param('id') id: string): Promise<RightsIntakeReadinessDto> {
+    return this.manifestService.readiness(id);
   }
 
   @Get(':id')

@@ -48,6 +48,12 @@ export const classifyTerritoryDecisions = (
       lists.licenseRequiredCountryCodes.push(countryCode);
     } else if (accessPolicy === 'BLOCK' || finalStatus === 'BLOCKED') {
       lists.blockedCountryCodes.push(countryCode);
+    } else if (finalStatus === 'NOT_TARGETED' && accessPolicy !== 'BLOCK') {
+      // WP-C.1: сужение области `pendingCountryCodes`, а не отмена правила. «Рынок не
+      // обслуживается» — это решение, а не открытый вопрос: страна вне плана публикации
+      // попадала в pending и через `PENDING_TERRITORIES` запрещала релиз на целевых рынках.
+      // Явный запрет сильнее: ветка выше уже забрала `accessPolicy = BLOCK` в blocked, а
+      // условие здесь фиксирует это намерение на случай перестановки веток.
     } else if (
       accessPolicy === 'REVIEW_REQUIRED' ||
       finalStatus === 'PENDING_REVIEW' ||

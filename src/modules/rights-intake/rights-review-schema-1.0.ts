@@ -224,7 +224,7 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
               additionalProperties: true,
               required: [...REQUIRED_REPORT_FIELDS.componentTerritoryAssessments],
               properties: {
-                countryCode: { type: 'string', pattern: '^[A-Z]{2}$' },
+                countryCode: { type: 'string', pattern: '^[A-Za-z]{2}$' },
                 status: {
                   type: 'string',
                   enum: [
@@ -258,11 +258,27 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
         type: 'object',
         additionalProperties: true,
         required: [...REQUIRED_REPORT_FIELDS.territoryDecisions],
+        // WP-G.2: обоснование и уверенность требуются только от ограничивающего решения.
+        // Условие описано в схеме тем же списком, что применяет сервер.
+        allOf: [
+          {
+            if: {
+              anyOf: [
+                { properties: { accessPolicy: { not: { const: 'ALLOW' } } } },
+                {
+                  properties: { geoBlockRequired: { const: true } },
+                  required: ['geoBlockRequired'],
+                },
+              ],
+            },
+            then: { required: [...REQUIRED_REPORT_FIELDS.territoryDecisionsWhenRestricted] },
+          },
+        ],
         properties: {
           countryCode: {
             type: 'string',
-            pattern: '^[A-Z]{2}$',
-            description: 'Uppercase ISO 3166-1 alpha-2 country code.',
+            pattern: '^[A-Za-z]{2}$',
+            description: 'ISO 3166-1 alpha-2 country code; the server normalizes it to uppercase.',
           },
           finalStatus: {
             type: 'string',

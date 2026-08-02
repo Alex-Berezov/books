@@ -22,6 +22,7 @@ const mockPrisma = {
   },
   rightsContentHashEvent: {
     create: jest.fn(),
+    findFirst: jest.fn(),
   },
   mediaAsset: {
     findFirst: jest.fn(),
@@ -40,6 +41,7 @@ describe('RightsContentHashService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.rightsContentHashEvent.findFirst.mockResolvedValue(null);
     mockPrisma.mediaAsset.findFirst.mockResolvedValue(null);
     mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
     mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
@@ -583,6 +585,40 @@ describe('RightsContentHashService', () => {
       );
       expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalled();
     });
+
+    /**
+     * WP-D.1: окно наполнения открывается явной отметкой в аудите. Без неё окно считается
+     * закрытым, поэтому версии, заведённые до выката пакета, остаются на строгом правиле.
+     */
+    it('opens the draft fill window for a version created as a draft', async () => {
+      mockPrisma.bookVersion.findUnique.mockResolvedValue({ ...baseVersion, publishedAt: null });
+      mockPrisma.bookVersion.update.mockResolvedValue(baseVersion);
+      mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+
+      await service.initializeVersionBaseline('version-1', 'INITIAL_VERSION_SNAPSHOT');
+
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ reasonCode: 'DRAFT_FILL_WINDOW_OPENED' }),
+        }),
+      );
+    });
+
+    it('does not open the window for a version created already published', async () => {
+      mockPrisma.bookVersion.findUnique.mockResolvedValue({
+        ...baseVersion,
+        status: 'published',
+        publishedAt: new Date('2026-07-01T00:00:00.000Z'),
+      });
+      mockPrisma.bookVersion.update.mockResolvedValue(baseVersion);
+      mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+
+      await service.initializeVersionBaseline('version-1', 'INITIAL_VERSION_SNAPSHOT');
+
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ reasonCode: null }) }),
+      );
+    });
   });
 
   describe('checkVersionStaleness', () => {
@@ -779,6 +815,236 @@ describe('RightsContentHashService', () => {
 
         expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
         expect(mockPrisma.rightsContentHashEvent.create).not.toHaveBeenCalled();
+      });
+    });
+
+    /**
+     * WP-D.1: окно наполнения черновика. Клиренс снимается ради заливки текста — и первая же
+     * глава этот клиренс аннулировала. В черновике расхождение хеша переснимает baseline;
+     * во всех остальных случаях правило работает как прежде.
+     */
+    describe('draft fill window (WP-D.1)', () => {
+      /**
+       * Окно открывается отметкой в аудите при заведении версии черновиком
+       * (`initializeVersionBaseline`) и закрывается отметкой публикации. Здесь задаётся,
+       * какие из этих отметок есть у версии.
+       */
+      const auditMarkers = (codes: string[]): void => {
+        mockPrisma.rightsContentHashEvent.findFirst.mockImplementation(
+          (args: { where: { reasonCode: string } }) =>
+            Promise.resolve(
+              codes.includes(args.where.reasonCode)
+                ? { id: `${args.where.reasonCode}-event` }
+                : null,
+            ),
+        );
+      };
+
+      const setupMismatch = (overrides: Record<string, unknown> = {}): void => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue({
+          id: 'version-1',
+          status: 'draft',
+          publishedAt: null,
+          rightsContentHash: 'baseline-hash',
+          rightsContentHashAlgorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+          rightsRecheckRequired: false,
+          rightsStaleReasonCode: null,
+          rightsStaleReasonRu: null,
+          rightsStaleDetectedAt: null,
+          rightsProfileId: 'profile-1',
+          approvedRightsReviewId: 'review-1',
+          ...overrides,
+        });
+        jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
+          versionId: 'version-1',
+          rightsProfileId: 'profile-1',
+          approvedRightsReviewId: 'review-1',
+          hash: 'hash-with-chapter',
+          algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+          calculatedAt: new Date().toISOString(),
+          input: {},
+        });
+        mockPrisma.bookVersion.findMany.mockResolvedValue([]);
+        mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+        mockPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
+          cb(mockPrisma),
+        );
+        auditMarkers(['DRAFT_FILL_WINDOW_OPENED']);
+      };
+
+      it('re-takes the baseline instead of invalidating the clearance', async () => {
+        setupMismatch();
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_CREATED',
+          null,
+          true,
+        );
+
+        expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
+        expect(result.isStale).toBe(false);
+        expect(result.recheckRequired).toBe(false);
+
+        const updateData = mockPrisma.bookVersion.update.mock.calls[0][0] as {
+          data: Record<string, unknown>;
+        };
+        expect(updateData.data.rightsContentHash).toBe('hash-with-chapter');
+        expect(updateData.data).not.toHaveProperty('rightsRecheckRequired');
+      });
+
+      it('always writes the audit event — the compensation for the relaxation', async () => {
+        setupMismatch();
+
+        await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', 'user-1', true);
+
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              bookVersionId: 'version-1',
+              trigger: 'CHAPTER_CREATED',
+              previousHash: 'baseline-hash',
+              currentHash: 'hash-with-chapter',
+              staleMarked: false,
+              reasonCode: 'DRAFT_FILL_WINDOW',
+              createdByUserId: 'user-1',
+            }),
+          }),
+        );
+      });
+
+      it('still marks a published version stale', async () => {
+        setupMismatch({ status: 'published' });
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_CREATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(result.recheckRequired).toBe(true);
+        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
+        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
+      });
+
+      it('still marks a draft stale once the window was closed by a publication', async () => {
+        setupMismatch();
+        auditMarkers(['DRAFT_FILL_WINDOW_OPENED', 'DRAFT_FILL_WINDOW_CLOSED']);
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_UPDATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
+      });
+
+      /**
+       * Дыра в первой редакции WP-D.1: закрытие окна опознавалось исключительно по событию
+       * `DRAFT_FILL_WINDOW_CLOSED`, которое пишет только новый код публикации. У версии,
+       * опубликованной до выката, такого события в базе нет, а `unpublish` обнуляет
+       * `publishedAt` — значит правка главы после снятия с публикации молча переснимала
+       * baseline вместо `STALE`, хотя клиренс снимался с другого текста.
+       */
+      it('still marks a draft stale when it was published before the window mechanism existed', async () => {
+        setupMismatch();
+        auditMarkers([]);
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_UPDATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(result.recheckRequired).toBe(true);
+        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
+        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
+      });
+
+      /** Дата публикации на черновике — тоже след публикации: сомнение трактуется в пользу `STALE`. */
+      it('still marks a draft stale when it carries a publication date', async () => {
+        setupMismatch({ publishedAt: new Date('2026-07-01T00:00:00.000Z') });
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_UPDATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
+      });
+
+      it('still marks a draft stale for a trigger outside the window', async () => {
+        setupMismatch();
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'AUDIO_CHAPTER_CREATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
+      });
+
+      it('does not clear a stale mark that was already there', async () => {
+        setupMismatch({
+          rightsRecheckRequired: true,
+          rightsStaleReasonCode: 'SOURCE_EDITION_CHANGED',
+          rightsStaleReasonRu: 'Изменены данные исходного издания',
+        });
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_CREATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(result.recheckRequired).toBe(true);
+        expect(result.reasonCode).toBe('SOURCE_EDITION_CHANGED');
+      });
+
+      it('still marks a draft stale when there is no baseline to re-take', async () => {
+        setupMismatch({ rightsContentHash: null });
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_CREATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        );
       });
     });
 
@@ -1034,6 +1300,189 @@ describe('RightsContentHashService', () => {
 
         expect(result.hash).toHaveLength(64);
       });
+    });
+  });
+
+  /**
+   * WP-D.4: жёсткий выход из окна. Публикация фиксирует слепок окончательно и оставляет
+   * в аудите признак закрытия — снятие с публикации окно обратно не открывает.
+   */
+  describe('finalizeBaselineOnPublish (WP-D.4)', () => {
+    beforeEach(() => {
+      mockPrisma.bookVersion.findUnique.mockResolvedValue({
+        id: 'version-1',
+        rightsContentHash: 'draft-hash',
+      });
+      jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
+        versionId: 'version-1',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        hash: 'published-hash',
+        algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+        calculatedAt: new Date().toISOString(),
+        input: {},
+      });
+      mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+    });
+
+    it('fixes the baseline and records the window as closed', async () => {
+      await service.finalizeBaselineOnPublish('version-1');
+
+      expect(mockPrisma.bookVersion.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'version-1' },
+          data: expect.objectContaining({ rightsContentHash: 'published-hash' }),
+        }),
+      );
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            previousHash: 'draft-hash',
+            currentHash: 'published-hash',
+            staleMarked: false,
+            reasonCode: 'DRAFT_FILL_WINDOW_CLOSED',
+          }),
+        }),
+      );
+    });
+
+    it('does not clear stale marks', async () => {
+      await service.finalizeBaselineOnPublish('version-1');
+
+      const updateData = mockPrisma.bookVersion.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(updateData.data).not.toHaveProperty('rightsRecheckRequired');
+      expect(updateData.data).not.toHaveProperty('rightsStaleDetectedAt');
+    });
+  });
+
+  /**
+   * WP-D.2: первое появление файла источника меняет вход хеша, но не произведение —
+   * baseline переснимается, статусы клиренса не трогаются.
+   */
+  describe('rebaselineForRightsProfile (WP-D.2)', () => {
+    const openWindow = (): void => {
+      mockPrisma.rightsContentHashEvent.findFirst.mockImplementation(
+        (args: { where: { reasonCode: string } }) =>
+          Promise.resolve(
+            args.where.reasonCode === 'DRAFT_FILL_WINDOW_OPENED' ? { id: 'opened-event' } : null,
+          ),
+      );
+    };
+
+    it('re-takes the baseline of every version of the profile without marking it stale', async () => {
+      openWindow();
+      mockPrisma.bookVersion.findMany.mockResolvedValue([
+        { id: 'version-1', rightsContentHash: 'hash-before', status: 'draft', publishedAt: null },
+        { id: 'version-2', rightsContentHash: null, status: 'draft', publishedAt: null },
+      ]);
+      jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
+        versionId: 'version-1',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        hash: 'hash-after',
+        algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+        calculatedAt: new Date().toISOString(),
+        input: {},
+      });
+      mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+
+      await service.rebaselineForRightsProfile(
+        'profile-1',
+        'SOURCE_EDITION_CHANGED',
+        'SOURCE_FILE_FIRST_UPLOAD',
+        'Первая загрузка файла источника',
+        'user-1',
+      );
+
+      expect(mockPrisma.bookVersion.update).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            bookVersionId: 'version-1',
+            trigger: 'SOURCE_EDITION_CHANGED',
+            previousHash: 'hash-before',
+            currentHash: 'hash-after',
+            staleMarked: false,
+            reasonCode: 'SOURCE_FILE_FIRST_UPLOAD',
+          }),
+        }),
+      );
+    });
+
+    /**
+     * Дыра в первой редакции WP-D.2: пересъёмка шла по всем версиям профиля без проверки
+     * статуса. У опубликованной версии окно закрыто публикацией, её слепок зафиксирован —
+     * появление файла источника обязано уводить клиренс в `STALE`, как и прежде.
+     */
+    it('marks a published version stale instead of re-taking its baseline', async () => {
+      openWindow();
+      mockPrisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'version-1',
+          rightsContentHash: 'hash-before',
+          status: 'published',
+          publishedAt: new Date('2026-07-01T00:00:00.000Z'),
+        },
+      ]);
+      mockPrisma.bookVersion.findUnique.mockResolvedValue({
+        id: 'version-1',
+        status: 'published',
+        publishedAt: new Date('2026-07-01T00:00:00.000Z'),
+        rightsContentHash: 'hash-before',
+        rightsContentHashAlgorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+        rightsRecheckRequired: false,
+        rightsStaleReasonCode: null,
+        rightsStaleReasonRu: null,
+        rightsStaleDetectedAt: null,
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+      });
+      jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
+        versionId: 'version-1',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        hash: 'hash-after',
+        algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+        calculatedAt: new Date().toISOString(),
+        input: {},
+      });
+      mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+      mockPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
+        cb(mockPrisma),
+      );
+
+      await service.rebaselineForRightsProfile(
+        'profile-1',
+        'SOURCE_EDITION_CHANGED',
+        'SOURCE_FILE_FIRST_UPLOAD',
+        'Первая загрузка файла источника',
+        'user-1',
+      );
+
+      expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+      );
+      expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+      );
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            bookVersionId: 'version-1',
+            staleMarked: true,
+            reasonCode: 'SOURCE_EDITION_CHANGED',
+          }),
+        }),
+      );
+      expect(mockPrisma.rightsContentHashEvent.create).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ reasonCode: 'SOURCE_FILE_FIRST_UPLOAD' }),
+        }),
+      );
     });
   });
 

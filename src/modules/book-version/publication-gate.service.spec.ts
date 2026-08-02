@@ -140,6 +140,7 @@ describe('PublicationGateService', () => {
   const baseVersion = {
     id: 'v1',
     bookId: 'b1',
+    language: 'en',
     rightsProfileId: 'profile-1',
     approvedRightsReviewId: 'review-1',
     rightsStatus: 'APPROVED',
@@ -184,6 +185,13 @@ describe('PublicationGateService', () => {
       },
       rightsAction: {
         findMany: jest.fn(),
+      },
+      rightsIntake: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      // Языковой клиренс профиля: по умолчанию язык версии оценён агентом.
+      editionRights: {
+        findMany: jest.fn().mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]),
       },
     } as unknown as jest.Mocked<PrismaService>;
 
@@ -710,10 +718,13 @@ describe('PublicationGateService', () => {
     });
   });
 
-  // 6.17 Geo-block required but not configured
+  // 6.17 Geo-block required but not configured.
+  // WP-A.1: the chain is demanded only for a market that is actually closed, so these cases now
+  // carry a blocked country — the flag on its own no longer stands for one.
   it('blocks if geoBlockRequired is true and not configured', async () => {
     const version = {
       ...baseVersion,
+      rightsBlockedCountryCodes: ['GB'],
       rightsGeoBlockRequired: true,
       rightsGeoBlockConfigured: false,
     };
@@ -729,6 +740,7 @@ describe('PublicationGateService', () => {
   it('blocks if geo-block rules are missing', async () => {
     const version = {
       ...baseVersion,
+      rightsBlockedCountryCodes: ['GB'],
       rightsGeoBlockRequired: true,
       rightsGeoBlockConfigured: true,
       rightsGeoBlockVerifiedAt: new Date(),
@@ -773,6 +785,7 @@ describe('PublicationGateService', () => {
   it('blocks if active geo-block rules are not verified', async () => {
     const version = {
       ...baseVersion,
+      rightsBlockedCountryCodes: ['GB'],
       rightsGeoBlockRequired: true,
       rightsGeoBlockConfigured: true,
       rightsGeoBlockVerifiedAt: new Date(),
@@ -796,6 +809,7 @@ describe('PublicationGateService', () => {
     const verifiedAt = new Date();
     const version = {
       ...baseVersion,
+      rightsBlockedCountryCodes: ['GB'],
       rightsGeoBlockRequired: true,
       rightsGeoBlockConfigured: true,
       rightsGeoBlockVerifiedAt: verifiedAt,
@@ -1022,6 +1036,7 @@ describe('PublicationGateService', () => {
 
     it('blocks when the version carries no confirmation that geo-block was verified', async () => {
       arrange({
+        rightsBlockedCountryCodes: ['GB'],
         rightsGeoBlockRequired: true,
         rightsGeoBlockConfigured: true,
         rightsGeoBlockVerifiedAt: null,
@@ -1383,6 +1398,305 @@ describe('PublicationGateService', () => {
       expect(result.lawyerApproved).toBe(false);
       expect(result.openLawyerReviewsCount).toBe(0);
       expect(result.riskLevel).toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // WP-A: the gate stops demanding what the editor cannot produce.
+  // ---------------------------------------------------------------------------
+
+  describe('WP-A.1 geo-block chain only for restricted markets', () => {
+    const arrange = (versionOverrides: Record<string, unknown> = {}) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        ...versionOverrides,
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    it('publishes a version flagged for geo-block that closes no market at all', async () => {
+      arrange({
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: false,
+        rightsGeoBlockVerifiedAt: null,
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.map((reason) => reason.code)).toEqual([]);
+      expect(result.canPublish).toBe(true);
+    });
+
+    it('says out loud that the geo-block flag was left without effect', async () => {
+      arrange({ rightsGeoBlockRequired: true });
+
+      const result = await service.checkVersionCanPublish('v1');
+      const warning = result.warnings.find(
+        (item) => item.code === 'GEO_BLOCK_REQUIRED_WITHOUT_RESTRICTED_COUNTRIES',
+      );
+
+      expect(warning).toBeDefined();
+    });
+
+    it('still requires a verified rule for a country the clearance closed', async () => {
+      arrange({
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockVerifiedAt: new Date(),
+      });
+      arrangeClearance({ blockedCountryCodes: ['RU'], countryListsSource: 'EFFECTIVE_PROFILE' });
+      mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
+        { id: 'rule-1', countryCode: 'RU', scope: GeoBlockScope.ENTIRE_BOOK, verifiedAt: null },
+      ] as never);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'GEO_BLOCK_RULES_NOT_VERIFIED')).toBe(
+        true,
+      );
+      expect(
+        result.warnings.some(
+          (item) => item.code === 'GEO_BLOCK_REQUIRED_WITHOUT_RESTRICTED_COUNTRIES',
+        ),
+      ).toBe(false);
+    });
+
+    it('still requires the geo chain for a market that needs a license', async () => {
+      arrange({
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockVerifiedAt: null,
+      });
+      arrangeClearance({
+        licenseRequiredCountryCodes: ['DE'],
+        countryListsSource: 'EFFECTIVE_PROFILE',
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'GEO_BLOCK_VERIFICATION_MISSING')).toBe(
+        true,
+      );
+    });
+  });
+
+  describe('WP-A.2 pending territories explain themselves', () => {
+    it('names the countries that hold the release', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      arrangeClearance({
+        pendingCountryCodes: ['FR', 'ES'],
+        countryListsSource: 'EFFECTIVE_PROFILE',
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find((item) => item.code === 'PENDING_TERRITORIES');
+
+      expect(reason?.details).toEqual({ countryCodes: ['FR', 'ES'] });
+    });
+  });
+
+  describe('WP-C.3 pending territories are judged against the publication plan', () => {
+    const arrangeIntake = (targetCountryCodes: string[]) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      (
+        prisma as unknown as { rightsIntake: { findUnique: jest.Mock } }
+      ).rightsIntake.findUnique.mockResolvedValue({ targetCountryCodes });
+    };
+
+    it('does not block on a pending country outside the target markets', async () => {
+      arrangeIntake(['US', 'GB']);
+      arrangeClearance({ pendingCountryCodes: ['JP'], countryListsSource: 'EFFECTIVE_PROFILE' });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'PENDING_TERRITORIES')).toBe(false);
+      const warning = result.warnings.find(
+        (item) => item.code === 'PENDING_TERRITORIES_OUTSIDE_TARGET_MARKETS',
+      );
+      expect(warning?.details).toEqual({ countryCodes: ['JP'] });
+    });
+
+    it('обратная сторона: пендинг на целевом рынке по-прежнему блокирует', async () => {
+      arrangeIntake(['US', 'GB']);
+      arrangeClearance({
+        pendingCountryCodes: ['GB', 'JP'],
+        countryListsSource: 'EFFECTIVE_PROFILE',
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find((item) => item.code === 'PENDING_TERRITORIES');
+
+      expect(result.canPublish).toBe(false);
+      expect(reason?.details).toEqual({ countryCodes: ['GB'] });
+      expect(
+        result.warnings.find((item) => item.code === 'PENDING_TERRITORIES_OUTSIDE_TARGET_MARKETS')
+          ?.details,
+      ).toEqual({ countryCodes: ['JP'] });
+    });
+
+    it('обратная сторона: без известного плана публикации блокирует любой пендинг', async () => {
+      arrangeIntake([]);
+      arrangeClearance({ pendingCountryCodes: ['JP'], countryListsSource: 'EFFECTIVE_PROFILE' });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'PENDING_TERRITORIES')).toBe(true);
+    });
+  });
+
+  describe('WP-A.3 one cause — one message', () => {
+    const arrange = (rows: {
+      review?: Record<string, unknown>;
+      profile?: Record<string, unknown>;
+    }) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue({
+        ...baseReview,
+        ...(rows.review ?? {}),
+      });
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue({
+        ...baseProfile,
+        ...(rows.profile ?? {}),
+      });
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    it('reports a stale clearance with two blockers, not four', async () => {
+      arrange({ review: { status: 'STALE' }, profile: { status: 'STALE' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.map((reason) => reason.code)).toEqual([
+        'RIGHTS_REVIEW_STALE',
+        'RIGHTS_PROFILE_STALE',
+      ]);
+    });
+
+    it('does not add NOT_APPROVED to a rejected review or an archived profile', async () => {
+      arrange({ review: { status: 'HUMAN_REJECTED' }, profile: { status: 'ARCHIVED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.map((reason) => reason.code)).toEqual([
+        'RIGHTS_REVIEW_REJECTED',
+        'RIGHTS_PROFILE_ARCHIVED',
+      ]);
+    });
+
+    it('still blocks a review that was never approved', async () => {
+      arrange({ review: { status: 'HUMAN_REVIEW_REQUIRED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_REVIEW_NOT_APPROVED')).toBe(
+        true,
+      );
+    });
+
+    it('still blocks a profile that was never approved', async () => {
+      arrange({ profile: { status: 'IMPORTED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_PROFILE_NOT_APPROVED')).toBe(
+        true,
+      );
+    });
+  });
+
+  /**
+   * V2 (компенсация к WP-G.5, ADR-014). Пропуск языка в отчёте перестал быть ошибкой импорта,
+   * материализация пишет на такой язык заглушку `NOT_TARGETED` — и до этого блока заглушку
+   * не читал никто. Клиренс обязан покрывать целевые языки целиком, поэтому право на публикацию
+   * даёт только реальная языковая оценка.
+   */
+  describe('language rights coverage', () => {
+    const editionRightsFindMany = () =>
+      (prisma as unknown as Record<string, { findMany: jest.Mock }>)['editionRights'].findMany;
+
+    const arrangeVersion = (language: string) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ ...baseVersion, language });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    /** Интейк на en/ru/fr: агент оценил en и ru, на fr материализация положила заглушку. */
+    const partiallyAssessedProfile = () => {
+      editionRightsFindMany().mockResolvedValue([
+        { languageCode: 'en', status: 'ALLOWED' },
+        { languageCode: 'ru', status: 'ALLOWED' },
+        { languageCode: 'fr', status: 'NOT_TARGETED' },
+      ]);
+    };
+
+    it('blocks a version whose language carries only a NOT_TARGETED stub', async () => {
+      arrangeVersion('fr');
+      partiallyAssessedProfile();
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      const reason = result.blockingReasons.find(
+        (r) => r.code === 'MISSING_LANGUAGE_RIGHTS_ASSESSMENT',
+      );
+      expect(reason).toBeDefined();
+      expect(reason?.details).toEqual({
+        languageCode: 'fr',
+        assessedLanguageCodes: ['en', 'ru'],
+      });
+    });
+
+    it('refuses to publish that version through the publish path', async () => {
+      arrangeVersion('fr');
+      partiallyAssessedProfile();
+
+      await expect(service.assertVersionCanPublish('v1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('blocks a version whose language has no EditionRights row at all', async () => {
+      arrangeVersion('fr');
+      editionRightsFindMany().mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(
+        result.blockingReasons.some((r) => r.code === 'MISSING_LANGUAGE_RIGHTS_ASSESSMENT'),
+      ).toBe(true);
+    });
+
+    // Обратная сторона: смягчение остаётся рабочим — оценённый язык публикуется свободно.
+    it('publishes a version whose language the agent did assess', async () => {
+      arrangeVersion('ru');
+      partiallyAssessedProfile();
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons).toEqual([]);
+      expect(result.canPublish).toBe(true);
+    });
+
+    // Кейс По: интейк ровно на те языки, которые агент оценил, — нового блокера нет.
+    it('adds no blocker to a single-language clearance that covers the version', async () => {
+      arrangeVersion('en');
+      editionRightsFindMany().mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
     });
   });
 });

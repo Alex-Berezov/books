@@ -54,12 +54,20 @@ export const COMPONENT_REMOVAL_ACTION_TYPES = [
 /**
  * Подтверждены ли удаления компонентов для профиля.
  *
- * `false`, если действий на удаление нет вовсе: компонент помечен к удалению, но
- * подтвердить факт нечем — это fail-closed сторона.
+ * WP-A.4: «нечего подтверждать» — не то же самое, что «не подтверждено». Профиль, в котором ни
+ * один компонент не помечен к удалению, объявлялся неподтверждённым только из-за отсутствия
+ * действий, хотя подтверждать в нём нечего. Fail-closed сторона сохраняется без изменений:
+ * компонент к удалению есть, а закрытых действий нет — `false`.
+ *
+ * @param hasComponentsMarkedForRemoval есть ли у профиля компоненты со `status = EXCLUDED`
+ *   или `requiredAction = REMOVE` — те самые, которые исключаются из оценки страны.
  */
 export const areComponentRemovalsConfirmed = (
   actions: Array<{ actionType: string; status: string }>,
+  hasComponentsMarkedForRemoval: boolean,
 ): boolean => {
+  if (!hasComponentsMarkedForRemoval) return true;
+
   const removalActions = actions.filter((action) =>
     (COMPONENT_REMOVAL_ACTION_TYPES as readonly string[]).includes(action.actionType),
   );
@@ -71,3 +79,9 @@ export const areComponentRemovalsConfirmed = (
     )
   );
 };
+
+/** Компонент, помеченный к удалению из издания, — единый признак для обоих потребителей. */
+export const isComponentMarkedForRemoval = (component: {
+  status: string;
+  requiredAction: string;
+}): boolean => component.status === 'EXCLUDED' || component.requiredAction === 'REMOVE';

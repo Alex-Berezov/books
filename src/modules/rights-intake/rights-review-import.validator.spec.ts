@@ -152,7 +152,9 @@ describe('RightsReviewImportValidator', () => {
     expect(errors.some((e) => e.code === 'MISSING_COUNTRY_DECISION')).toBe(true);
   });
 
-  it('missing target language assessment fails', () => {
+  // WP-G.5: пробел в покрытии языков — предупреждение; правило покрытия ADR-014 держит
+  // материализация, помечая язык без оценки как NOT_TARGETED.
+  it('missing target language assessment warns instead of failing', () => {
     const payload = validPayload();
     (payload.languageAssessments as Array<Record<string, unknown>>) = [
       {
@@ -162,8 +164,14 @@ describe('RightsReviewImportValidator', () => {
         requiresGeoBlock: false,
       },
     ];
-    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
-    expect(errors.some((e) => e.code === 'MISSING_LANGUAGE_ASSESSMENT')).toBe(true);
+    const { errors, warnings } = validator.validate(
+      payload,
+      INTAKE_ID,
+      TARGET_LANGUAGES,
+      TARGET_COUNTRIES,
+    );
+    expect(errors.some((e) => e.code === 'MISSING_LANGUAGE_ASSESSMENT')).toBe(false);
+    expect(warnings.some((w) => w.code === 'MISSING_LANGUAGE_ASSESSMENT')).toBe(true);
   });
 
   // WP-7.2: язык компонента необязателен (обложка общая для всех языков), но названный —
@@ -192,9 +200,10 @@ describe('RightsReviewImportValidator', () => {
     expect(errors.some((e) => e.path === 'componentAssessments[0].languageCode')).toBe(false);
   });
 
+  // WP-G.3: регистр нормализуется, а вот код не из двух букв по-прежнему ошибка.
   it('invalid country code fails', () => {
     const payload = validPayload();
-    (payload.territoryDecisions as Array<Record<string, unknown>>)[0].countryCode = 'us';
+    (payload.territoryDecisions as Array<Record<string, unknown>>)[0].countryCode = 'usa';
     const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
     expect(errors.some((e) => e.code === 'INVALID_COUNTRY_CODE')).toBe(true);
   });
@@ -356,6 +365,84 @@ describe('RightsReviewImportValidator', () => {
     );
   });
 
+  // WP-B.5: компонент без страновых оценок больше не роняет страны в PENDING_REVIEW, поэтому
+  // ослабление обязано быть видно редактору предупреждением, а не молчать.
+  describe('WP-B.5: components without territory assessments', () => {
+    const withAssessedText = (payload: Record<string, unknown>) => {
+      (payload.componentAssessments as Array<Record<string, unknown>>)[0].territoryAssessments = [
+        {
+          countryCode: 'US',
+          status: 'ALLOWED',
+          accessPolicy: 'ALLOW',
+          geoBlockRequired: false,
+          confidence: 'HIGH',
+        },
+      ];
+      return payload;
+    };
+
+    it('warns about a component the agent never assessed by country', () => {
+      const payload = withAssessedText(validPayload());
+      (payload.componentAssessments as Array<Record<string, unknown>>).push({
+        componentType: 'COVER',
+        titleRu: 'Обложка',
+        status: 'UNCERTAIN',
+        requiredAction: 'VERIFY',
+        confidence: 'LOW',
+      });
+
+      const { warnings } = validator.validate(
+        payload,
+        INTAKE_ID,
+        TARGET_LANGUAGES,
+        TARGET_COUNTRIES,
+      );
+
+      expect(warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'COMPONENT_WITHOUT_TERRITORY_ASSESSMENTS',
+            path: 'componentAssessments[1].territoryAssessments',
+          }),
+        ]),
+      );
+    });
+
+    it('warns about an empty territoryAssessments array as well', () => {
+      const payload = withAssessedText(validPayload());
+      (payload.componentAssessments as Array<Record<string, unknown>>).push({
+        componentType: 'AUDIO_NARRATION',
+        titleRu: 'Озвучка',
+        status: 'UNCERTAIN',
+        requiredAction: 'VERIFY',
+        confidence: 'LOW',
+        territoryAssessments: [],
+      });
+
+      const { warnings } = validator.validate(
+        payload,
+        INTAKE_ID,
+        TARGET_LANGUAGES,
+        TARGET_COUNTRIES,
+      );
+
+      expect(warnings.some((w) => w.code === 'COMPONENT_WITHOUT_TERRITORY_ASSESSMENTS')).toBe(true);
+    });
+
+    it('stays silent when no component was assessed by country at all', () => {
+      const { warnings } = validator.validate(
+        validPayload(),
+        INTAKE_ID,
+        TARGET_LANGUAGES,
+        TARGET_COUNTRIES,
+      );
+
+      expect(warnings.some((w) => w.code === 'COMPONENT_WITHOUT_TERRITORY_ASSESSMENTS')).toBe(
+        false,
+      );
+    });
+  });
+
   // WP-6.1 (R4-01): наличие полей, которые NOT NULL в schema.prisma. До правки отчёт без них
   // проходил как VALIDATED и ронял материализацию 500-й.
   describe('required fields of nested blocks', () => {
@@ -436,8 +523,8 @@ describe('RightsReviewImportValidator', () => {
 
     it('blank string counts as missing', () => {
       const payload = validPayload();
-      (payload.territoryDecisions as Array<Record<string, unknown>>)[0].reasonRu = '   ';
-      expectMissing(payload, 'territoryDecisions[0].reasonRu');
+      (payload.componentAssessments as Array<Record<string, unknown>>)[0].titleRu = '   ';
+      expectMissing(payload, 'componentAssessments[0].titleRu');
     });
 
     it('a non-object array element is reported instead of crashing the validator', () => {

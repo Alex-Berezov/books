@@ -2,7 +2,10 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 import type { RightsFileUpload } from '../../shared/rights-file-storage/rights-file-storage.types';
-import { RightsContentHashService } from './rights-content-hash.service';
+import {
+  RightsContentHashService,
+  SOURCE_FILE_FIRST_UPLOAD_REASON_CODE,
+} from './rights-content-hash.service';
 
 const fail: (code: string, messageRu: string) => never = (code, messageRu) => {
   throw new BadRequestException({ message: messageRu, code });
@@ -135,7 +138,7 @@ export class RightsFilesService {
   ): Promise<RightsFileDescriptorDto> {
     const sourceEdition = await this.delegate('sourceEdition').findUnique({
       where: { rightsProfileId: profileId },
-      select: { id: true, sourceFileStorageKey: true },
+      select: { id: true, sourceFileStorageKey: true, sourceFileSha256: true },
     });
     if (!sourceEdition) {
       failNotFound(
@@ -149,6 +152,8 @@ export class RightsFilesService {
         'Файл источника уже загружен. Замена запрещена: она сделала бы недействительным клиренс, снятый с прежнего файла.',
       );
     }
+
+    const previousSha256 = (sourceEdition.sourceFileSha256 as string | null) ?? null;
 
     const stored = await this.files.saveUpload('source-file', upload);
     const uploadedAt = new Date();
@@ -169,11 +174,27 @@ export class RightsFilesService {
     // WP-8.3: сумма файла источника входит в content hash — появление файла меняет вход
     // и обязано быть замечено клиренсом ровно так же, как смена переводчика (WP-8.1).
     // Триггер `SOURCE_EDITION_CHANGED` уже есть в enum'е, поэтому пары миграций не нужно.
-    await this.contentHash.checkStalenessForRightsProfile(
-      profileId,
-      'SOURCE_EDITION_CHANGED',
-      userId,
-    );
+    //
+    // WP-D.2: сужение области. Первое появление суммы (её не было вовсе) — это приложенный
+    // артефакт происхождения, а не подмена издания: клиренс снимался с этого же текста, файл
+    // лишь фиксирует, с какого. Такой случай переснимает baseline с записью события в аудит.
+    // Замена уже известной суммы (её мог проставить отчёт агента) остаётся
+    // `SOURCE_EDITION_CHANGED` → `STALE`.
+    if (previousSha256) {
+      await this.contentHash.checkStalenessForRightsProfile(
+        profileId,
+        'SOURCE_EDITION_CHANGED',
+        userId,
+      );
+    } else {
+      await this.contentHash.rebaselineForRightsProfile(
+        profileId,
+        'SOURCE_EDITION_CHANGED',
+        SOURCE_FILE_FIRST_UPLOAD_REASON_CODE,
+        'Первая загрузка файла источника: baseline переснят, клиренс не аннулирован',
+        userId,
+      );
+    }
 
     return toDescriptor(stored, uploadedAt);
   }

@@ -117,10 +117,30 @@ const readNullableString = (value: unknown): string | null =>
 
 @Injectable()
 export class TerritoryRegionAggregationService {
-  aggregateTerritoryDecisions(decisions: TerritoryDecisionRecord[]): TerritoryRegionSummaryDto[] {
+  /**
+   * WP-C.4: `targetCountryCodes` — план публикации версии. Он даёт **второй** знаменатель
+   * рядом со справочником региона, а не вместо него: «2/2 целевых, 2/27 региона». Условие
+   * «регион зелёный» по-прежнему считается по справочнику — регион, 25 стран которого никто
+   * не смотрел, разрешённым не объявляется (R6-04).
+   */
+  aggregateTerritoryDecisions(
+    decisions: TerritoryDecisionRecord[],
+    targetCountryCodes: string[] = [],
+  ): TerritoryRegionSummaryDto[] {
+    const targetCountries = new Set(
+      targetCountryCodes
+        .filter((countryCode): countryCode is string => typeof countryCode === 'string')
+        .map((countryCode) => countryCode.toUpperCase()),
+    );
+
     if (!decisions || decisions.length === 0) {
       return FIXED_REGIONS.map((r) =>
-        this.createEmptyRegionSummary(r.regionCode, r.label, r.countryCodes.length),
+        this.createEmptyRegionSummary(
+          r.regionCode,
+          r.label,
+          r.countryCodes.length,
+          this.countTargetsInRegion(r.countryCodes, targetCountries),
+        ),
       );
     }
 
@@ -157,6 +177,8 @@ export class TerritoryRegionAggregationService {
           reg.label,
           reg.countryCodes.length,
           regionDecisions,
+          this.countTargetsInRegion(reg.countryCodes, targetCountries),
+          targetCountries,
         ),
       );
     }
@@ -170,12 +192,18 @@ export class TerritoryRegionAggregationService {
     }
 
     if (otherDecisions.length > 0) {
+      const otherCountryCodes = otherDecisions
+        .map((decision) => readNullableString(decision['countryCode']))
+        .filter((countryCode): countryCode is string => countryCode !== null);
+
       result.push(
         this.buildRegionSummary(
           'OTHER',
           'Other / Ungrouped',
           otherDecisions.length,
           otherDecisions,
+          this.countTargetsInRegion(otherCountryCodes, targetCountries),
+          targetCountries,
         ),
       );
     }
@@ -183,10 +211,18 @@ export class TerritoryRegionAggregationService {
     return result;
   }
 
+  /** WP-C.4: сколько стран справочника региона входит в план публикации версии. */
+  private countTargetsInRegion(regionCountryCodes: string[], targetCountries: Set<string>): number {
+    return regionCountryCodes.filter((countryCode) =>
+      targetCountries.has(countryCode.toUpperCase()),
+    ).length;
+  }
+
   private createEmptyRegionSummary(
     regionCode: string,
     label: string,
     countryCount: number,
+    targetCountryCount = 0,
   ): TerritoryRegionSummaryDto {
     return {
       regionCode,
@@ -194,6 +230,8 @@ export class TerritoryRegionAggregationService {
       status: 'NOT_TARGETED',
       countryCount,
       targetedCountryCount: 0,
+      targetCountryCount,
+      targetAllowedCountryCount: 0,
       allowedCountryCount: 0,
       licensedCountryCount: 0,
       blockedCountryCount: 0,
@@ -212,11 +250,19 @@ export class TerritoryRegionAggregationService {
     label: string,
     totalCountryCount: number,
     decisions: TerritoryDecisionRecord[],
+    targetCountryCount: number,
+    targetCountries: Set<string>,
   ): TerritoryRegionSummaryDto {
     if (decisions.length === 0) {
-      return this.createEmptyRegionSummary(regionCode, label, totalCountryCount);
+      return this.createEmptyRegionSummary(
+        regionCode,
+        label,
+        totalCountryCount,
+        targetCountryCount,
+      );
     }
 
+    let targetAllowedCount = 0;
     let allowedCount = 0;
     let licensedCount = 0;
     let blockedCount = 0;
@@ -263,6 +309,10 @@ export class TerritoryRegionAggregationService {
       // вопрос. Такая страна не «на проверке», не блокирует регион и не является причиной
       // блокировки: публиковаться там никто не собирался, блокировать нечего.
       const isNotTargeted = finalStatus === 'NOT_TARGETED';
+
+      if (isAllowed && !isNotTargeted && targetCountries.has(countryCode)) {
+        targetAllowedCount++;
+      }
 
       if (isNotTargeted) {
         notTargetedDecisionCount++;
@@ -335,6 +385,8 @@ export class TerritoryRegionAggregationService {
       status,
       countryCount: totalCountryCount,
       targetedCountryCount: targetedCount,
+      targetCountryCount,
+      targetAllowedCountryCount: targetAllowedCount,
       allowedCountryCount: allowedCount,
       licensedCountryCount: licensedCount,
       blockedCountryCount: blockedCount,

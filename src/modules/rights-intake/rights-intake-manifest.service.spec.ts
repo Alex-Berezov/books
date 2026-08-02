@@ -135,11 +135,11 @@ describe('RightsIntakeManifestService', () => {
       expect(manifest.publicationPlan.plannedComponents).toEqual([]);
     });
 
-    it('includes manifestVersion = 1.1', async () => {
+    it('includes manifestVersion = 1.2', async () => {
       prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
 
       const manifest = await service.generate('intake-1');
-      expect(manifest.manifestVersion).toBe('1.1');
+      expect(manifest.manifestVersion).toBe('1.2');
     });
 
     it('includes expectedResultSchema.requiredTopLevelFields', async () => {
@@ -216,6 +216,207 @@ describe('RightsIntakeManifestService', () => {
       const manifest = await service.generate('intake-1');
       expect(manifest.generatedBy.product).toBe('Bibliaris');
       expect(manifest.generatedBy.module).toBe('rights-intake');
+    });
+  });
+
+  /**
+   * WP-F.2 (исток Б1): манифест заказывал оценку обложки, озвучки, иллюстраций и перевода
+   * независимо от плана публикации. Агент честно заводил спекулятивные `COVER` /
+   * `AUDIO_NARRATION` со статусом `UNCERTAIN`, и именно они роняли все страны в
+   * `PENDING_REVIEW`.
+   */
+  describe('WP-F.2: requiredChecks зависят от plannedComponents', () => {
+    const joined = (parts: string[]): string => parts.join(' ').toLowerCase();
+
+    it('интейк на ORIGINAL_TEXT не заказывает оценку озвучки, обложки и иллюстраций', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ plannedComponents: ['ORIGINAL_TEXT'] }),
+      );
+
+      const manifest = await service.generate('intake-1');
+      const checks = joined(manifest.agentTask.requiredChecks);
+
+      expect(checks).not.toContain('audio');
+      expect(checks).not.toContain('cover');
+      expect(checks).not.toContain('illustrat');
+      expect(checks).not.toContain('translator');
+    });
+
+    it('интейк с COVER и AUDIO_NARRATION по-прежнему заказывает их оценку', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ plannedComponents: ['ORIGINAL_TEXT', 'COVER', 'AUDIO_NARRATION'] }),
+      );
+
+      const manifest = await service.generate('intake-1');
+      const checks = joined(manifest.agentTask.requiredChecks);
+
+      expect(checks).toContain('cover');
+      expect(checks).toContain('audio');
+    });
+
+    it('перевод оценивается, если источник сам является переводом', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ plannedComponents: ['ORIGINAL_TEXT'], sourceTextType: 'TRANSLATION' }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(joined(manifest.agentTask.requiredChecks)).toContain('translator');
+    });
+
+    it('без запланированных компонентов пустой componentAssessments объявлен ожидаемым ответом', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake({ plannedComponents: [] }));
+
+      const manifest = await service.generate('intake-1');
+      const notes = joined(manifest.expectedResultSchema.notes);
+
+      expect(notes).toContain('componentassessments');
+      expect(notes).toContain('empty array');
+      // Ключ остаётся в контракте схемы 1.0: его отсутствие валидатор импорта считает ошибкой.
+      expect(manifest.expectedResultSchema.requiredTopLevelFields).toContain(
+        'componentAssessments',
+      );
+    });
+
+    it('с запланированными компонентами пустой componentAssessments ожидаемым не объявляется', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ plannedComponents: ['ORIGINAL_TEXT', 'COVER'] }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(joined(manifest.expectedResultSchema.notes)).not.toContain('empty array');
+    });
+  });
+
+  /**
+   * WP-F.3: восемь правил манифеста были только ограничительными, и `importantRules`
+   * прямо толкали агента в `PENDING_REVIEW`. Ориентиры на разрешение обязаны быть
+   * условными по юрисдикции и касаться только полноты отчёта.
+   */
+  describe('WP-F.3: симметричные importantRules', () => {
+    it('ориентир на public domain сформулирован через срок охраны юрисдикции', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
+
+      const rules = (await service.generate('intake-1')).agentTask.importantRules.join(' ');
+
+      expect(rules).toContain('life+70');
+      expect(rules).toContain('life+80');
+      expect(rules).toContain('1929');
+    });
+
+    it('оговорены Мексика (life+100) и французские военные продления', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
+
+      const rules = (await service.generate('intake-1')).agentTask.importantRules.join(' ');
+
+      expect(rules).toContain('Mexico');
+      expect(rules).toContain('life+100');
+      expect(rules.toLowerCase()).toContain('wartime');
+    });
+
+    it('ориентир касается полноты отчёта и никогда — accessPolicy сервера', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
+
+      const rules = (await service.generate('intake-1')).agentTask.importantRules.join(' ');
+
+      expect(rules).toContain('accessPolicy');
+      // Обратная сторона: универсального «PD везде» в манифесте по-прежнему нет.
+      expect(rules).toContain('Do not assume that a Gutenberg file is globally public domain.');
+      expect(rules.toLowerCase()).not.toContain('public domain worldwide');
+    });
+  });
+
+  /**
+   * WP-F.1: агент получал `provider: UNKNOWN` при очевидной ссылке на Gutenberg.
+   * Нормализация — вывод приложения, поэтому она помечена `derivedFromUrl`.
+   */
+  describe('WP-F.1: нормализация источника по ссылке', () => {
+    it('заполняет провайдера и ID из ссылки и помечает вывод приложения', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          sourceProvider: 'UNKNOWN',
+          sourceExternalId: null,
+          sourceUrl: 'https://www.gutenberg.org/ebooks/932',
+        }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(manifest.source.provider).toBe('PROJECT_GUTENBERG');
+      expect(manifest.source.externalId).toBe('932');
+      expect(manifest.source.derivedFromUrl).toBe(true);
+    });
+
+    it('чужой домен провайдера не выводит', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          sourceProvider: 'UNKNOWN',
+          sourceExternalId: null,
+          sourceUrl: 'https://example.com/books/932',
+        }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(manifest.source.provider).toBe('UNKNOWN');
+      expect(manifest.source.externalId).toBeNull();
+      expect(manifest.source.derivedFromUrl).toBe(false);
+    });
+  });
+
+  /**
+   * WP-F.5: `readiness` показывает пробелы интейка до отправки агенту и **никогда** не
+   * блокирует ни манифест, ни переход статуса — блокирующая проверка сделала бы вход строже.
+   */
+  describe('WP-F.5: неблокирующий readiness', () => {
+    it('перечисляет пробелы минимального пакета в любом статусе, включая DRAFT', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          workflowStatus: 'DRAFT',
+          targetCountryCodes: [],
+          sourceUrl: null,
+          sourceExternalId: null,
+          plannedComponents: [],
+        }),
+      );
+
+      const readiness = await service.readiness('intake-1');
+      const codes = readiness.missing.map((item) => item.code);
+
+      expect(codes).toContain('TARGET_COUNTRIES_EMPTY');
+      expect(codes).toContain('SOURCE_URL_MISSING');
+      expect(codes).toContain('SOURCE_EXTERNAL_ID_MISSING');
+      expect(codes).toContain('PLANNED_COMPONENTS_EMPTY');
+      expect(readiness.isReady).toBe(false);
+    });
+
+    it('полный интейк не даёт пробелов', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ plannedComponents: ['ORIGINAL_TEXT'] }),
+      );
+
+      const readiness = await service.readiness('intake-1');
+
+      expect(readiness.missing).toEqual([]);
+      expect(readiness.isReady).toBe(true);
+    });
+
+    it('пробелы не мешают выдать манифест — проверка неблокирующая', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ targetCountryCodes: [], sourceUrl: null, plannedComponents: [] }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(manifest.manifestVersion).toBe(RIGHTS_AGENT_MANIFEST_VERSION);
+      expect(manifest.readiness.missing.length).toBeGreaterThan(0);
+    });
+
+    it('несуществующий интейк по-прежнему 404', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(null);
+
+      await expect(service.readiness('missing')).rejects.toThrow(NotFoundException);
     });
   });
 

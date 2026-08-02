@@ -293,4 +293,71 @@ describe('TerritoryRegionAggregationService', () => {
     expect(ukRegion?.licensedCountryCount).toBe(0);
     expect(ukRegion?.blockedCountryCount).toBe(1);
   });
+
+  /**
+   * WP-C.4: у региона два знаменателя — справочник региона и план публикации. Раньше был
+   * только первый, поэтому ЕС с двумя целевыми странами выглядел непройденным целиком,
+   * и редактор не видел, что по его собственному плану регион закрыт полностью.
+   */
+  describe('WP-C.4: обе доли покрытия региона', () => {
+    it('reports both denominators for a region with two target countries out of 27', () => {
+      const decisions = [
+        { countryCode: 'FR', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' },
+        { countryCode: 'ES', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' },
+      ];
+
+      const result = service.aggregateTerritoryDecisions(decisions, ['US', 'FR', 'ES']);
+      const euRegion = result.find((r) => r.regionCode === 'EU');
+
+      expect(euRegion?.countryCount).toBe(27);
+      expect(euRegion?.allowedCountryCount).toBe(2);
+      expect(euRegion?.targetCountryCount).toBe(2);
+      expect(euRegion?.targetAllowedCountryCount).toBe(2);
+    });
+
+    // R6-04 не возвращается ни при каких условиях: полное покрытие плана не красит регион в зелёный.
+    it('обратная сторона: полное покрытие плана не делает регион зелёным при неполном покрытии справочника', () => {
+      const decisions = [
+        { countryCode: 'FR', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' },
+        { countryCode: 'ES', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' },
+      ];
+
+      const result = service.aggregateTerritoryDecisions(decisions, ['FR', 'ES']);
+      const euRegion = result.find((r) => r.regionCode === 'EU');
+
+      expect(euRegion?.status).not.toBe('ALLOWED');
+      expect(euRegion?.undecidedCountryCount).toBe(25);
+    });
+
+    it('обратная сторона: страна плана без решения не засчитывается как разрешённая', () => {
+      const decisions = [{ countryCode: 'FR', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' }];
+
+      const result = service.aggregateTerritoryDecisions(decisions, ['FR', 'DE']);
+      const euRegion = result.find((r) => r.regionCode === 'EU');
+
+      expect(euRegion?.targetCountryCount).toBe(2);
+      expect(euRegion?.targetAllowedCountryCount).toBe(1);
+    });
+
+    it('без плана публикации доля по плану пуста', () => {
+      const decisions = [{ countryCode: 'FR', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' }];
+
+      const result = service.aggregateTerritoryDecisions(decisions);
+      const euRegion = result.find((r) => r.regionCode === 'EU');
+
+      expect(euRegion?.targetCountryCount).toBe(0);
+      expect(euRegion?.targetAllowedCountryCount).toBe(0);
+    });
+
+    it('регион без решений всё равно показывает знаменатель по плану', () => {
+      const result = service.aggregateTerritoryDecisions(
+        [{ countryCode: 'US', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' }],
+        ['US', 'CA'],
+      );
+      const caRegion = result.find((r) => r.regionCode === 'CA');
+
+      expect(caRegion?.targetCountryCount).toBe(1);
+      expect(caRegion?.targetAllowedCountryCount).toBe(0);
+    });
+  });
 });

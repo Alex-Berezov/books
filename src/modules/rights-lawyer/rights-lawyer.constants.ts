@@ -126,6 +126,25 @@ export const RISKY_CONTRIBUTOR_ROLES: readonly string[] = [
   'ADAPTER',
 ];
 
+/**
+ * WP-E.1: действия, которые агент назначает материалу, которого ещё нет — «проверить» и «ничего».
+ * Вместе с пустым списком страновых оценок это признак «материала ещё нет», а не правовой
+ * неопределённости: `KEEP`, `RETRANSLATE` и `OBTAIN_LICENSE` сюда не входят и по-прежнему
+ * поднимают `UNCERTAIN_COMPONENT`.
+ */
+export const PLANNED_MATERIAL_REQUIRED_ACTIONS: readonly string[] = ['VERIFY', 'NONE'];
+
+/**
+ * WP-E.2: статусы страны, при которых осторожный `confidence: LOW` — действительно правовая
+ * неопределённость, а не осторожность формулировки.
+ */
+export const CONTESTED_TERRITORY_STATUSES: readonly string[] = [
+  'BLOCKED',
+  'LICENSE_REQUIRED',
+  'PENDING_REVIEW',
+  'NOT_CHECKED',
+];
+
 /** Source text types that are derivative works and carry their own layer of rights. */
 export const DERIVATIVE_SOURCE_TEXT_TYPES: readonly string[] = [
   'TRANSLATION',
@@ -156,7 +175,10 @@ export const RISK_FACTOR_LEVELS: Record<RightsRiskFactorCode, RightsRiskLevel> =
   [RightsRiskFactorCode.CLAIM_ESCALATED_TO_LAWYER]: RightsRiskLevel.CRITICAL,
   [RightsRiskFactorCode.CRITICAL_CLAIM_OPEN]: RightsRiskLevel.CRITICAL,
   [RightsRiskFactorCode.AGENT_REQUESTED_LAWYER_REVIEW]: RightsRiskLevel.HIGH,
-  [RightsRiskFactorCode.CONFIDENCE_LOW]: RightsRiskLevel.HIGH,
+  // WP-E.2: базовый уровень понижен до MEDIUM. Сам по себе осторожный `confidence` юриста не
+  // требует; `computeRiskAssessment` поднимает фактор обратно до HIGH, как только среди целевых
+  // стран есть BLOCKED / LICENSE_REQUIRED / PENDING_REVIEW / NOT_CHECKED.
+  [RightsRiskFactorCode.CONFIDENCE_LOW]: RightsRiskLevel.MEDIUM,
   [RightsRiskFactorCode.OVERALL_STATUS_INSUFFICIENT_DATA]: RightsRiskLevel.HIGH,
   [RightsRiskFactorCode.OVERALL_STATUS_LICENSE_REQUIRED]: RightsRiskLevel.HIGH,
   [RightsRiskFactorCode.UNCERTAIN_COMPONENT]: RightsRiskLevel.HIGH,

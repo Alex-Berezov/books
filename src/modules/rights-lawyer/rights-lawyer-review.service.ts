@@ -954,9 +954,14 @@ export class RightsLawyerReviewService {
     ).length;
 
     const lawyerApproved = inForce.length > 0;
-    const lawyerReviewRequired = profile.lawyerReviewRequired;
     const blockingOpen = openReviews.filter((review) => review.blocksApproval);
     const policy = this.risk.getRiskPolicy();
+    // WP-E.4: денормализованный `profile.lawyerReviewRequired` липкий — он переписывается только
+    // в `assessAndSync`, поэтому устранённая причина оставляла блокер до ручного пересчёта. Гейт
+    // считает риск заново той же чистой функцией (`assess` ничего не пишет, ADR-003 не нарушен).
+    const freshRisk = await this.risk.assess(profile.id);
+    const riskLevel = freshRisk.riskLevel;
+    const lawyerReviewRequired = this.risk.isLawyerRequired(riskLevel, policy);
 
     // --- blockers ---------------------------------------------------------
     if (lawyerReviewRequired && !lawyerApproved && policy.blockApprovalOnHighRisk) {
@@ -965,7 +970,7 @@ export class RightsLawyerReviewService {
           LAWYER_GATE_CODES.LAWYER_REVIEW_REQUIRED_NOT_APPROVED,
           'Для профиля прав требуется положительное заключение юриста — его нет или оно недействительно.',
           profile.currentLawyerReviewId,
-          { riskLevel: profile.riskLevel },
+          { riskLevel },
         ),
       );
     }
@@ -1065,9 +1070,9 @@ export class RightsLawyerReviewService {
       warnings.push(
         reason(
           LAWYER_GATE_CODES.HIGH_RISK_WITHOUT_LAWYER_REVIEW,
-          `Уровень риска ${profile.riskLevel} требует юриста, но блокировка отключена настройкой.`,
+          `Уровень риска ${riskLevel} требует юриста, но блокировка отключена настройкой.`,
           profile.currentLawyerReviewId,
-          { riskLevel: profile.riskLevel },
+          { riskLevel },
         ),
       );
     }
@@ -1093,7 +1098,7 @@ export class RightsLawyerReviewService {
       lawyerApproved,
       openReviewsCount: openReviews.length,
       pendingConditionsCount,
-      riskLevel: profile.riskLevel,
+      riskLevel,
       lawyerOpinionValidUntil: profile.lawyerOpinionValidUntil?.toISOString() ?? null,
       reviewIds: reviews.map((review) => review.id),
     };

@@ -464,10 +464,16 @@ describe('ComponentTerritoryAggregationService', () => {
       );
     });
 
+    // WP-B.1: компонент берётся защищённый и уже оценённый по другой стране — именно такой
+    // пробел остаётся проблемой. Пропуск оценки у public-domain компонента с этого пакета
+    // проблемой не считается.
     it('still reports PENDING_REVIEW when another component is unassessed', () => {
       const result = service.aggregateTerritoryDecisionsFromComponents({
         rightsProfileId: 'profile-1',
-        components: [licenseRequiredComponent(), createComponent()],
+        components: [
+          licenseRequiredComponent(),
+          createComponent({ status: 'COPYRIGHTED', requiredAction: 'VERIFY' }),
+        ],
         targetCountryCodes: ['DE'],
       });
 
@@ -569,6 +575,459 @@ describe('ComponentTerritoryAggregationService', () => {
 
       expect(result[0].finalStatus).toBe('BLOCKED');
       expect(result[0].accessPolicy).toBe('BLOCK');
+    });
+  });
+
+  // WP-B: манифест до WP-F безусловно заказывал агенту обложку и озвучку, поэтому честный
+  // подробный отчёт оказывался хуже пустого — компонент, которого в издании нет, ронял все
+  // страны в PENDING_REVIEW. Ослабление сужено: страна без единой компонентной оценки и
+  // компонент, помеченный к удалению без подтверждения, остаются проблемой (R6-06).
+  describe('WP-B: missing component assessment', () => {
+    const originalText = (countryCodes: string[]) =>
+      createComponent({
+        rightsComponentId: 'component-text',
+        territoryAssessments: countryCodes.map((countryCode) => ({
+          countryCode,
+          status: 'ALLOWED' as const,
+          accessPolicy: 'ALLOW' as const,
+          geoBlockRequired: false,
+          confidence: 'HIGH' as const,
+          legalBasisRu: 'Автор умер в 1849 году.',
+        })),
+      });
+
+    const speculativeCover = () =>
+      createComponent({
+        rightsComponentId: 'component-cover',
+        componentType: 'COVER',
+        titleRu: 'Обложка',
+        status: 'UNCERTAIN',
+        requiredAction: 'VERIFY',
+        confidence: 'LOW',
+        territoryAssessments: [],
+      });
+
+    it('B.1: does not treat a component the agent never assessed by country as a problem', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [originalText(['US', 'GB']), speculativeCover()],
+        targetCountryCodes: ['US', 'GB'],
+      });
+
+      expect(result).toHaveLength(2);
+      for (const decision of result) {
+        expect(decision.finalStatus).toBe('ALLOWED');
+        expect(decision.accessPolicy).toBe('ALLOW');
+      }
+    });
+
+    it('B.1: keeps PENDING_REVIEW when an assessed protected component skips a target country', () => {
+      const illustrations = createComponent({
+        rightsComponentId: 'component-illustration',
+        componentType: 'ILLUSTRATION',
+        titleRu: 'Иллюстрации',
+        status: 'COPYRIGHTED',
+        requiredAction: 'VERIFY',
+        territoryAssessments: [
+          {
+            countryCode: 'US',
+            status: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [originalText(['US', 'GB']), illustrations],
+        targetCountryCodes: ['GB'],
+      });
+
+      const gb = result.find((decision) => decision.countryCode === 'GB');
+      expect(gb?.finalStatus).toBe('PENDING_REVIEW');
+      expect(gb?.reasonRu).toContain('Иллюстрации');
+    });
+
+    it('B.1: keeps PENDING_REVIEW when no component assessed the country at all', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [originalText(['US']), speculativeCover()],
+        targetCountryCodes: ['FR'],
+      });
+
+      const fr = result.find((decision) => decision.countryCode === 'FR');
+      expect(fr?.finalStatus).toBe('PENDING_REVIEW');
+      expect(fr?.accessPolicy).toBe('REVIEW_REQUIRED');
+    });
+
+    it('B.1: an EXCLUDED component assessed elsewhere still blocks an unassessed country until removal is confirmed', () => {
+      const excludedWrapper = createComponent({
+        rightsComponentId: 'component-wrapper',
+        componentType: 'OTHER',
+        titleRu: 'Обвязка Gutenberg',
+        status: 'EXCLUDED',
+        requiredAction: 'REMOVE',
+        territoryAssessments: [
+          {
+            countryCode: 'US',
+            status: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [originalText(['US', 'GB']), excludedWrapper],
+        targetCountryCodes: ['GB'],
+      });
+
+      const gb = result.find((decision) => decision.countryCode === 'GB');
+      expect(gb?.finalStatus).toBe('PENDING_REVIEW');
+      expect(gb?.reasonRu).toContain('Обвязка Gutenberg');
+    });
+
+    it('B.2: marks a decision derived only from missing assessments', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          originalText(['US']),
+          createComponent({
+            rightsComponentId: 'component-translation',
+            componentType: 'TRANSLATION',
+            titleRu: 'Перевод',
+            status: 'COPYRIGHTED',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'FR',
+                status: 'ALLOWED',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: false,
+                confidence: 'HIGH',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+      });
+
+      const us = result.find((decision) => decision.countryCode === 'US');
+      expect(us?.finalStatus).toBe('PENDING_REVIEW');
+      expect(us?.derivedFromMissingAssessment).toBe(true);
+    });
+
+    it('B.2: does not mark a decision that rests on a real REVIEW_REQUIRED assessment', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          createComponent({
+            status: 'UNCERTAIN',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'US',
+                status: 'PENDING_REVIEW',
+                accessPolicy: 'REVIEW_REQUIRED',
+                geoBlockRequired: false,
+                reasonRu: 'Нужна проверка срока охраны.',
+                confidence: 'MEDIUM',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+      });
+
+      expect(result[0].finalStatus).toBe('PENDING_REVIEW');
+      expect(result[0].derivedFromMissingAssessment).not.toBe(true);
+    });
+
+    it('B.3: a substantiated agent decision survives a review derived from emptiness', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          originalText(['US']),
+          createComponent({
+            rightsComponentId: 'component-translation',
+            componentType: 'TRANSLATION',
+            titleRu: 'Перевод',
+            status: 'COPYRIGHTED',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'FR',
+                status: 'ALLOWED',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: false,
+                confidence: 'HIGH',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+        existingTerritoryDecisions: [
+          {
+            countryCode: 'US',
+            finalStatus: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            reasonRu: 'Public domain: автор умер в 1849 году.',
+            legalBasisRu: '17 U.S.C. § 304, публикация до 1929 года.',
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const us = result.find((decision) => decision.countryCode === 'US');
+      expect(us?.accessPolicy).toBe('ALLOW');
+      expect(us?.finalStatus).toBe('ALLOWED');
+      expect(us?.reasonRu).toContain('Public domain');
+    });
+
+    it('B.3: an agent decision without reasoning does not survive', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          originalText(['US']),
+          createComponent({
+            rightsComponentId: 'component-translation',
+            componentType: 'TRANSLATION',
+            titleRu: 'Перевод',
+            status: 'COPYRIGHTED',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'FR',
+                status: 'ALLOWED',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: false,
+                confidence: 'HIGH',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+        existingTerritoryDecisions: [
+          {
+            countryCode: 'US',
+            finalStatus: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            reasonRu: '   ',
+            legalBasisRu: null,
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const us = result.find((decision) => decision.countryCode === 'US');
+      expect(us?.accessPolicy).toBe('REVIEW_REQUIRED');
+      expect(us?.finalStatus).toBe('PENDING_REVIEW');
+    });
+
+    it('B.3: an agent decision with LOW confidence does not survive', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          originalText(['US']),
+          createComponent({
+            rightsComponentId: 'component-translation',
+            componentType: 'TRANSLATION',
+            titleRu: 'Перевод',
+            status: 'COPYRIGHTED',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'FR',
+                status: 'ALLOWED',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: false,
+                confidence: 'HIGH',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+        existingTerritoryDecisions: [
+          {
+            countryCode: 'US',
+            finalStatus: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            reasonRu: 'Скорее всего public domain.',
+            legalBasisRu: 'Предположительно срок истёк.',
+            confidence: 'LOW',
+          },
+        ],
+      });
+
+      const us = result.find((decision) => decision.countryCode === 'US');
+      expect(us?.accessPolicy).toBe('REVIEW_REQUIRED');
+    });
+
+    it('B.3: a substantiated agent allow does not survive a real component review', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          createComponent({
+            status: 'UNCERTAIN',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'US',
+                status: 'PENDING_REVIEW',
+                accessPolicy: 'REVIEW_REQUIRED',
+                geoBlockRequired: false,
+                reasonRu: 'Нужна проверка срока охраны.',
+                confidence: 'MEDIUM',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+        existingTerritoryDecisions: [
+          {
+            countryCode: 'US',
+            finalStatus: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            reasonRu: 'Public domain: автор умер в 1849 году.',
+            legalBasisRu: '17 U.S.C. § 304.',
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      expect(result[0].accessPolicy).toBe('REVIEW_REQUIRED');
+      expect(result[0].finalStatus).toBe('PENDING_REVIEW');
+    });
+  });
+
+  describe('WP-C.2: страны вне плана публикации', () => {
+    it('C.2: a country mentioned only in passing becomes NOT_TARGETED instead of PENDING_REVIEW', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          createComponent({
+            territoryAssessments: [
+              {
+                countryCode: 'US',
+                status: 'ALLOWED',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: false,
+                confidence: 'HIGH',
+              },
+            ],
+          }),
+          createComponent({
+            rightsComponentId: 'component-cover',
+            componentType: 'COVER',
+            titleRu: 'Обложка',
+            status: 'UNCERTAIN',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'JP',
+                status: 'PENDING_REVIEW',
+                accessPolicy: 'REVIEW_REQUIRED',
+                geoBlockRequired: false,
+                reasonRu: 'Нужна проверка.',
+                confidence: 'LOW',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+      });
+
+      const jp = result.find((decision) => decision.countryCode === 'JP');
+      expect(jp?.finalStatus).toBe('NOT_TARGETED');
+      expect(jp?.accessPolicy).not.toBe('BLOCK');
+      expect(jp?.geoBlockRequired).toBe(false);
+    });
+
+    it('C.2: обратная сторона — явный запрет вне плана публикации остаётся запретом', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          createComponent({
+            territoryAssessments: [
+              {
+                countryCode: 'US',
+                status: 'ALLOWED',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: false,
+                confidence: 'HIGH',
+              },
+              {
+                countryCode: 'DE',
+                status: 'BLOCKED',
+                accessPolicy: 'BLOCK',
+                geoBlockRequired: true,
+                legalBasisRu: 'Срок охраны перевода не истёк.',
+                confidence: 'HIGH',
+              },
+            ],
+          }),
+        ],
+        targetCountryCodes: ['US'],
+      });
+
+      const de = result.find((decision) => decision.countryCode === 'DE');
+      expect(de?.finalStatus).toBe('BLOCKED');
+      expect(de?.accessPolicy).toBe('BLOCK');
+    });
+
+    it('C.2: обратная сторона — запрет из решения агента вне плана публикации остаётся запретом', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [createComponent()],
+        targetCountryCodes: ['US'],
+        existingTerritoryDecisions: [
+          {
+            countryCode: 'DE',
+            finalStatus: 'BLOCKED',
+            accessPolicy: 'BLOCK',
+            geoBlockRequired: true,
+            reasonRu: 'Права на перевод активны.',
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const de = result.find((decision) => decision.countryCode === 'DE');
+      expect(de?.finalStatus).toBe('BLOCKED');
+      expect(de?.accessPolicy).toBe('BLOCK');
+    });
+
+    it('C.2: без плана публикации набор стран прежний — ни одна не считается нецелевой', () => {
+      const result = service.aggregateTerritoryDecisionsFromComponents({
+        rightsProfileId: 'profile-1',
+        components: [
+          createComponent({
+            status: 'UNCERTAIN',
+            requiredAction: 'VERIFY',
+            territoryAssessments: [
+              {
+                countryCode: 'JP',
+                status: 'PENDING_REVIEW',
+                accessPolicy: 'REVIEW_REQUIRED',
+                geoBlockRequired: false,
+                reasonRu: 'Нужна проверка.',
+                confidence: 'LOW',
+              },
+            ],
+          }),
+        ],
+      });
+
+      expect(result[0].countryCode).toBe('JP');
+      expect(result[0].finalStatus).toBe('PENDING_REVIEW');
     });
   });
 });

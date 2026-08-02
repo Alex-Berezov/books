@@ -44,6 +44,14 @@ export interface ExistingTerritoryDecisionInput {
   legalBasisRu?: string | null;
   confidence: ComponentTerritoryConfidence;
   nextReviewAt?: Date | null;
+  /**
+   * WP-G.2 × WP-B.3: `reasonRu` и `confidence` — колонки `NOT NULL` (инцидент R4-01), поэтому
+   * отсутствующие значения заполняются дефолтом приложения ещё до агрегации. Заполнитель — не
+   * обоснование, поэтому источник каждого поля отмечается отдельно: `false` — значение
+   * подставлено приложением, `true`/`undefined` — прислано агентом.
+   */
+  reasonRuFromAgent?: boolean;
+  confidenceFromAgent?: boolean;
 }
 
 export interface AggregatedTerritoryDecision {
@@ -57,6 +65,12 @@ export interface AggregatedTerritoryDecision {
   legalBasisRu: string | null;
   confidence: ComponentTerritoryConfidence;
   nextReviewAt: Date | null;
+  /**
+   * WP-B.2: решение выведено **только** из того, что часть компонентов не оценена по этой
+   * стране, — ни одного собственного вердикта «на проверку» в оценках нет. Такой признак
+   * нужен `applyProfileOverride`: пустота не должна затирать явное решение агента.
+   */
+  derivedFromMissingAssessment?: boolean;
 }
 
 export interface ComponentTerritoryAggregationInput {
@@ -91,7 +105,7 @@ export class ComponentTerritoryAggregationService {
   aggregateTerritoryDecisionsFromComponents(
     input: ComponentTerritoryAggregationInput,
   ): AggregatedTerritoryDecision[] {
-    const countries = this.collectCountries(input);
+    const { targeted, extra } = this.collectCountries(input);
     const existingByCountry = new Map(
       (input.existingTerritoryDecisions ?? []).map((decision) => [
         decision.countryCode.toUpperCase(),
@@ -99,8 +113,13 @@ export class ComponentTerritoryAggregationService {
       ]),
     );
     const now = input.now ?? new Date();
+    const extraCountries = new Set(extra);
 
-    return countries.map((countryCode) => {
+    return [...targeted, ...extra].sort().map((countryCode) => {
+      if (extraCountries.has(countryCode) && !this.hasExplicitBlock(input, countryCode)) {
+        return this.createNotTargetedDecision(input.rightsProfileId, countryCode);
+      }
+
       const componentDecision = this.aggregateCountry(input, countryCode, now);
       return this.applyProfileOverride(
         componentDecision,
@@ -110,22 +129,81 @@ export class ComponentTerritoryAggregationService {
     });
   }
 
-  private collectCountries(input: ComponentTerritoryAggregationInput): string[] {
-    const countries = new Set<string>();
+  /**
+   * WP-C.2: целевые страны версии — ведущее множество. Страна, упомянутая агентом вскользь,
+   * раньше проходила полную агрегацию наравне с рынком из плана публикации: любой компонент
+   * без её оценки ронял её в `PENDING_REVIEW`, а `PENDING_TERRITORIES` запрещал релиз везде.
+   * Пустой план публикации оставляет прежнее поведение — «нецелевых» стран тогда нет.
+   */
+  private collectCountries(input: ComponentTerritoryAggregationInput): {
+    targeted: string[];
+    extra: string[];
+  } {
+    const targetCountryCodes = (input.targetCountryCodes ?? []).map((countryCode) =>
+      countryCode.toUpperCase(),
+    );
+    const targeted = new Set(targetCountryCodes);
+    const mentioned = new Set<string>();
 
-    for (const countryCode of input.targetCountryCodes ?? []) {
-      countries.add(countryCode.toUpperCase());
-    }
     for (const decision of input.existingTerritoryDecisions ?? []) {
-      countries.add(decision.countryCode.toUpperCase());
+      mentioned.add(decision.countryCode.toUpperCase());
     }
     for (const component of input.components) {
       for (const assessment of component.territoryAssessments) {
-        countries.add(assessment.countryCode.toUpperCase());
+        mentioned.add(assessment.countryCode.toUpperCase());
       }
     }
 
-    return [...countries].sort();
+    if (targeted.size === 0) {
+      return { targeted: [...mentioned].sort(), extra: [] };
+    }
+
+    return {
+      targeted: [...targeted].sort(),
+      extra: [...mentioned].filter((countryCode) => !targeted.has(countryCode)).sort(),
+    };
+  }
+
+  /**
+   * Компенсация ослабления WP-C.2: страна с явным запретом не становится «нецелевой» молча.
+   * Проверяются оба источника запрета — решение агента по стране и любая компонентная оценка.
+   */
+  private hasExplicitBlock(
+    input: ComponentTerritoryAggregationInput,
+    countryCode: string,
+  ): boolean {
+    const existing = (input.existingTerritoryDecisions ?? []).find(
+      (decision) => decision.countryCode.toUpperCase() === countryCode,
+    );
+    if (existing && (existing.accessPolicy === 'BLOCK' || existing.finalStatus === 'BLOCKED')) {
+      return true;
+    }
+
+    return input.components.some((component) =>
+      component.territoryAssessments.some(
+        (assessment) =>
+          assessment.countryCode.toUpperCase() === countryCode &&
+          (assessment.accessPolicy === 'BLOCK' || assessment.status === 'BLOCKED'),
+      ),
+    );
+  }
+
+  private createNotTargetedDecision(
+    rightsProfileId: string,
+    countryCode: string,
+  ): AggregatedTerritoryDecision {
+    return {
+      rightsProfileId,
+      countryCode,
+      finalStatus: 'NOT_TARGETED',
+      accessPolicy: 'REVIEW_REQUIRED',
+      geoBlockRequired: false,
+      geoBlockScope: null,
+      reasonRu: `Страна ${countryCode} не входит в план публикации версии, решение по правам не требуется.`,
+      legalBasisRu: null,
+      confidence: 'HIGH',
+      nextReviewAt: null,
+    };
   }
 
   private aggregateCountry(
@@ -205,13 +283,16 @@ export class ComponentTerritoryAggregationService {
       const hasAssessment = assessments.some(
         (item) => item.component.rightsComponentId === component.rightsComponentId,
       );
-      if (!hasAssessment) {
-        problems.push({
-          component,
-          assessment: null,
-          reason: `Нет компонентной оценки для «${component.titleRu}».`,
-        });
-      }
+      if (hasAssessment) continue;
+      // WP-B.1: страна, по которой нет **ни одной** компонентной оценки, остаётся проблемой
+      // всегда — иначе вердикт брался бы из пустоты.
+      if (assessments.length > 0 && this.toleratesMissingAssessment(component)) continue;
+
+      problems.push({
+        component,
+        assessment: null,
+        reason: `Нет компонентной оценки для «${component.titleRu}».`,
+      });
     }
 
     if (problems.length > 0) {
@@ -259,6 +340,25 @@ export class ComponentTerritoryAggregationService {
       ),
       nextReviewAt: null,
     };
+  }
+
+  /**
+   * WP-B.1: отсутствие страновой оценки — не всегда пробел в проверке. Манифест безусловно
+   * заказывал агенту обложку, озвучку и перевод, поэтому в отчёте появлялись компоненты,
+   * которых в издании нет, и подробный честный отчёт оказывался хуже пустого: любой такой
+   * компонент ронял все страны в `PENDING_REVIEW`.
+   *
+   * Это **сужение** R6-06, а не его отмена. Освобождается только компонент, про который по
+   * стране сказать нечего: агент не оценивал его по странам вовсе, либо он объявлен public
+   * domain, либо действий по нему не требуется. Компонент, помеченный к удалению, освобождается
+   * не здесь, а фильтром `applicableComponents` — и только после подтверждения удаления: пока
+   * контент физически в версии, вердикт на обещание не опирается. Компенсация ослабления —
+   * предупреждение импорта `COMPONENT_WITHOUT_TERRITORY_ASSESSMENTS`.
+   */
+  private toleratesMissingAssessment(component: ComponentTerritoryAggregationComponent): boolean {
+    if (component.territoryAssessments.length === 0) return true;
+    if (component.status === 'PUBLIC_DOMAIN') return true;
+    return component.requiredAction === 'NONE';
   }
 
   private createBlockedDecision(
@@ -360,6 +460,9 @@ export class ComponentTerritoryAggregationService {
         problems.map(({ component, assessment }) => assessment?.confidence ?? component.confidence),
       ),
       nextReviewAt: null,
+      // WP-B.2: ни одна оценка сама по себе не потребовала проверки — «на проверку» вывела
+      // только незаполненность.
+      derivedFromMissingAssessment: problems.every(({ assessment }) => assessment === null),
     };
   }
 
@@ -374,7 +477,17 @@ export class ComponentTerritoryAggregationService {
 
     const componentRank = this.getPolicyRank(componentDecision.accessPolicy);
     const existingRank = this.getPolicyRank(existingDecision.accessPolicy);
-    if (componentRank >= existingRank) {
+    // WP-B.3: сужение R6-06. Правило «вердикт не опирается на обещание» остаётся: явное решение
+    // агента переживает агрегацию только тогда, когда та ужесточила страну **исключительно**
+    // из-за незаполненности, и только если решение обосновано — непустой `legalBasisRu`/
+    // `reasonRu` и `confidence !== 'LOW'`. Решение без обоснования, как и любая настоящая
+    // компонентная проверка или блок, по-прежнему сильнее.
+    const substantiatedDecisionWins =
+      componentDecision.derivedFromMissingAssessment === true &&
+      existingRank < componentRank &&
+      this.isSubstantiatedDecision(existingDecision);
+
+    if (componentRank >= existingRank && !substantiatedDecisionWins) {
       return componentDecision;
     }
 
@@ -390,6 +503,16 @@ export class ComponentTerritoryAggregationService {
       confidence: existingDecision.confidence,
       nextReviewAt: existingDecision.nextReviewAt ?? null,
     };
+  }
+
+  private isSubstantiatedDecision(decision: ExistingTerritoryDecisionInput): boolean {
+    // WP-G.2 × WP-B.3: обоснованность определяется по тому, что прислал агент, а не по тому, что
+    // подставило приложение. Иначе дефолтный `reasonRu` и унаследованный от корня отчёта
+    // `confidence` делали обоснованным любое голое разрешающее решение (регрессия R6-06).
+    const hasAgentReason =
+      decision.reasonRuFromAgent !== false && decision.reasonRu.trim().length > 0;
+    const hasReasoning = (decision.legalBasisRu ?? '').trim().length > 0 || hasAgentReason;
+    return hasReasoning && decision.confidenceFromAgent !== false && decision.confidence !== 'LOW';
   }
 
   private getPolicyRank(accessPolicy: ComponentTerritoryAccessPolicy): number {

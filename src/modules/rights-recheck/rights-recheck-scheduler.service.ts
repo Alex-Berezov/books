@@ -324,6 +324,10 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
       const versions = await database.bookVersion.findMany({
         where: {
           rightsProfileId: { not: null },
+          // WP-D.3: черновик находится в окне наполнения (см. `RightsContentHashService`) —
+          // его метки staleness обслуживает само окно, задача перепроверки на неопубликованный
+          // текст только добавляет просрочку. Опубликованные версии сканируются как прежде.
+          status: { not: 'draft' },
           OR: [{ rightsRecheckRequired: true }, { rightsStaleDetectedAt: { not: null } }],
         },
         orderBy: { id: 'asc' },

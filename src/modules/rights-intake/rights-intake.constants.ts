@@ -1,6 +1,6 @@
 import { LATEST_RIGHTS_REPORT_SCHEMA_VERSION } from './rights-review-schema.registry';
 
-export const RIGHTS_AGENT_MANIFEST_VERSION = '1.1';
+export const RIGHTS_AGENT_MANIFEST_VERSION = '1.2';
 
 export const RIGHTS_AGENT_MANIFEST_TYPE = 'BIBLIARIS_RIGHTS_CLEARANCE_INPUT';
 

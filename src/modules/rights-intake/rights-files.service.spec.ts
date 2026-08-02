@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { RightsContentHashService } from './rights-content-hash.service';
 import { RightsFilesService } from './rights-files.service';
 import type { PrismaService } from '../../prisma/prisma.service';
-import type { RightsContentHashService } from './rights-content-hash.service';
 import type { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 
 /**
@@ -33,6 +33,7 @@ const createFilesStub = () => ({
 
 const createHashStub = () => ({
   checkStalenessForRightsProfile: jest.fn().mockResolvedValue([]),
+  rebaselineForRightsProfile: jest.fn().mockResolvedValue(undefined),
 });
 
 const upload = {
@@ -142,10 +143,38 @@ describe('RightsFilesService', () => {
       prisma.sourceEdition.findUnique.mockResolvedValue({
         id: 'se-1',
         sourceFileStorageKey: null,
+        sourceFileSha256: null,
       });
     });
 
-    it('пересчитывает свежесть клиренса: сумма файла входит в content hash', async () => {
+    /**
+     * WP-D.2: суммы не было вовсе — файл прикладывают к уже снятому клиренсу, а не подменяют
+     * издание. Baseline переснимается, клиренс не аннулируется.
+     */
+    it('первое появление суммы переснимает baseline, а не роняет клиренс в STALE', async () => {
+      await service.uploadSourceFile('profile-1', upload, 'user-1');
+
+      expect(hash.rebaselineForRightsProfile).toHaveBeenCalledWith(
+        'profile-1',
+        'SOURCE_EDITION_CHANGED',
+        'SOURCE_FILE_FIRST_UPLOAD',
+        expect.any(String),
+        'user-1',
+      );
+      expect(hash.checkStalenessForRightsProfile).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Обратная сторона: сумму мог проставить отчёт агента. Тогда загруженный файл заменяет
+     * известное издание — это по-прежнему `SOURCE_EDITION_CHANGED` со всеми последствиями.
+     */
+    it('замена уже известной суммы по-прежнему пересчитывает свежесть клиренса', async () => {
+      prisma.sourceEdition.findUnique.mockResolvedValue({
+        id: 'se-1',
+        sourceFileStorageKey: null,
+        sourceFileSha256: 'a'.repeat(64),
+      });
+
       await service.uploadSourceFile('profile-1', upload, 'user-1');
 
       expect(hash.checkStalenessForRightsProfile).toHaveBeenCalledWith(
@@ -153,6 +182,7 @@ describe('RightsFilesService', () => {
         'SOURCE_EDITION_CHANGED',
         'user-1',
       );
+      expect(hash.rebaselineForRightsProfile).not.toHaveBeenCalled();
     });
 
     it('пишет сумму в исходное издание', async () => {
@@ -180,6 +210,124 @@ describe('RightsFilesService', () => {
 
       await expect(service.uploadSourceFile('profile-1', upload, null)).rejects.toBeInstanceOf(
         NotFoundException,
+      );
+    });
+  });
+
+  /**
+   * WP-D.2 по реальному конвейеру: загрузка идёт через настоящий `RightsContentHashService`,
+   * а не через заглушку. Только так видно, что послабление применяется к каждой версии
+   * профиля по отдельности — по состоянию её окна наполнения, а не оптом.
+   */
+  describe('файл источника через реальный конвейер (WP-D.2)', () => {
+    const createHashPrismaStub = () => ({
+      bookVersion: {
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      rightsReview: { update: jest.fn().mockResolvedValue({}) },
+      rightsProfile: { update: jest.fn().mockResolvedValue({}) },
+      rightsContentHashEvent: {
+        create: jest.fn().mockResolvedValue({ id: 'event-1' }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      $transaction: jest.fn(),
+    });
+
+    let hashPrisma: ReturnType<typeof createHashPrismaStub>;
+    let contentHash: RightsContentHashService;
+
+    const eventReasonCodes = (): unknown[] =>
+      hashPrisma.rightsContentHashEvent.create.mock.calls.map(
+        (call) => (call[0] as { data: { reasonCode?: unknown } }).data.reasonCode,
+      );
+
+    beforeEach(() => {
+      hashPrisma = createHashPrismaStub();
+      hashPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
+        cb(hashPrisma),
+      );
+      contentHash = new RightsContentHashService(hashPrisma as unknown as PrismaService);
+      jest.spyOn(contentHash, 'computeVersionHash').mockResolvedValue({
+        versionId: 'version-1',
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        hash: 'hash-with-source-file',
+        algorithmVersion: 'RIGHTS_CONTENT_HASH_V4',
+        calculatedAt: new Date().toISOString(),
+        input: {},
+      });
+      service = new RightsFilesService(
+        prisma as unknown as PrismaService,
+        files as unknown as RightsFileStorageService,
+        contentHash,
+      );
+      prisma.sourceEdition.findUnique.mockResolvedValue({
+        id: 'se-1',
+        sourceFileStorageKey: null,
+        sourceFileSha256: null,
+      });
+    });
+
+    const versionRecord = (overrides: Record<string, unknown>) => ({
+      id: 'version-1',
+      rightsContentHash: 'baseline-hash',
+      rightsContentHashAlgorithmVersion: 'RIGHTS_CONTENT_HASH_V4',
+      rightsRecheckRequired: false,
+      rightsStaleReasonCode: null,
+      rightsStaleReasonRu: null,
+      rightsStaleDetectedAt: null,
+      rightsProfileId: 'profile-1',
+      approvedRightsReviewId: 'review-1',
+      ...overrides,
+    });
+
+    /**
+     * Обратная сторона послабления: у опубликованной версии окно закрыто публикацией,
+     * слепок зафиксирован — первая загрузка файла источника обязана уводить клиренс в `STALE`.
+     */
+    it('первая загрузка на опубликованной версии по-прежнему даёт STALE', async () => {
+      const published = versionRecord({
+        status: 'published',
+        publishedAt: new Date('2026-07-01T00:00:00.000Z'),
+      });
+      hashPrisma.bookVersion.findMany.mockResolvedValueOnce([published]).mockResolvedValue([]);
+      hashPrisma.bookVersion.findUnique.mockResolvedValue(published);
+
+      await service.uploadSourceFile('profile-1', upload, 'user-1');
+
+      expect(hashPrisma.rightsReview.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+      );
+      expect(hashPrisma.rightsProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+      );
+      expect(eventReasonCodes()).toContain('SOURCE_EDITION_CHANGED');
+      expect(eventReasonCodes()).not.toContain('SOURCE_FILE_FIRST_UPLOAD');
+    });
+
+    /** Смягчение живо: у черновика с открытым окном baseline переснимается, клиренс цел. */
+    it('первая загрузка в черновике с открытым окном переснимает baseline', async () => {
+      const draft = versionRecord({ status: 'draft', publishedAt: null });
+      hashPrisma.bookVersion.findMany.mockResolvedValueOnce([draft]).mockResolvedValue([]);
+      hashPrisma.bookVersion.findUnique.mockResolvedValue(draft);
+      hashPrisma.rightsContentHashEvent.findFirst.mockImplementation(
+        (args: { where: { reasonCode: string } }) =>
+          Promise.resolve(
+            args.where.reasonCode === 'DRAFT_FILL_WINDOW_OPENED' ? { id: 'opened-event' } : null,
+          ),
+      );
+
+      await service.uploadSourceFile('profile-1', upload, 'user-1');
+
+      expect(hashPrisma.rightsReview.update).not.toHaveBeenCalled();
+      expect(hashPrisma.rightsProfile.update).not.toHaveBeenCalled();
+      expect(eventReasonCodes()).toContain('SOURCE_FILE_FIRST_UPLOAD');
+      expect(hashPrisma.bookVersion.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ rightsContentHash: 'hash-with-source-file' }),
+        }),
       );
     });
   });

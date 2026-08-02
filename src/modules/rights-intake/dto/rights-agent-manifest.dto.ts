@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { RightsIntakeReadinessItemDto } from './rights-intake-readiness.dto';
 
 class ManifestIntakeDto {
   @ApiProperty() id!: string;
@@ -19,6 +20,18 @@ class ManifestSourceDto {
   @ApiProperty() title!: string | null;
   @ApiProperty() language!: string | null;
   @ApiProperty() textType!: string;
+  /**
+   * WP-F.1: `true` — провайдер и внешний ID выведены приложением из ссылки. Это догадка
+   * Bibliaris, а не факт, установленный человеком, и агент обязан её проверить.
+   */
+  @ApiProperty({ example: false }) derivedFromUrl!: boolean;
+}
+
+class ManifestReadinessDto {
+  @ApiProperty({ type: [RightsIntakeReadinessItemDto] })
+  missing!: RightsIntakeReadinessItemDto[];
+  @ApiProperty({ type: [RightsIntakeReadinessItemDto] })
+  warnings!: RightsIntakeReadinessItemDto[];
 }
 
 class ManifestPublicationPlanDto {
@@ -69,4 +82,6 @@ export class RightsAgentManifestDto {
   @ApiProperty({ type: ManifestAgentTaskDto }) agentTask!: ManifestAgentTaskDto;
   @ApiProperty({ type: ManifestExpectedResultSchemaDto })
   expectedResultSchema!: ManifestExpectedResultSchemaDto;
+  /** WP-F.5: пробелы интейка. Справочные — выдачу манифеста они не останавливают. */
+  @ApiProperty({ type: ManifestReadinessDto }) readiness!: ManifestReadinessDto;
 }

@@ -46,11 +46,21 @@ describe('rights report schema registry', () => {
     }
   });
 
-  it('requires exactly the 14 top-level fields the agent manifest announces', () => {
+  /**
+   * WP-G.6: манифест по-прежнему просит у агента все 14 блоков, но два из них сервер больше
+   * не требует — их отсутствие ничего не ломает. Расхождение допустимо ровно в эту сторону
+   * и ровно на эти два поля: схема не может требовать больше, чем просит манифест.
+   */
+  it('requires a subset of the top-level fields the agent manifest announces', () => {
     const document = RIGHTS_REPORT_JSON_SCHEMAS[LATEST_RIGHTS_REPORT_SCHEMA_VERSION];
 
-    expect(document.required).toHaveLength(14);
-    expect([...document.required].sort()).toEqual([...MANIFEST_REQUIRED_TOP_LEVEL_FIELDS].sort());
+    expect(document.required).toHaveLength(12);
+    expect(
+      MANIFEST_REQUIRED_TOP_LEVEL_FIELDS.filter((field) => !document.required.includes(field)),
+    ).toEqual(['requiredActions', 'evidence']);
+    expect(
+      document.required.every((field) => MANIFEST_REQUIRED_TOP_LEVEL_FIELDS.includes(field)),
+    ).toBe(true);
     expect(document.additionalProperties).toBe(true);
   });
 });

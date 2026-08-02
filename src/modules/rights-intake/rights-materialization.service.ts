@@ -19,7 +19,13 @@ import {
 import {
   AGENT_SUGGESTABLE_ACTION_STATUSES,
   areComponentRemovalsConfirmed,
+  isComponentMarkedForRemoval,
 } from './rights-action.constants';
+import {
+  TERRITORY_DECISION_DEFAULT_REASON_RU,
+  UNASSESSED_LANGUAGE_STATUS,
+  normalizeTerritoryFinalStatus,
+} from './rights-review-import.constants';
 
 import { PersonResolverService } from '../persons/person-resolver.service';
 import { ContributorRole } from '../persons/person-interface';
@@ -513,11 +519,14 @@ export class RightsMaterializationService {
          * Языкового блока в отчёте нет → строк не создаётся вообще. Пустой дубликат источника
          * означал бы «язык оценён», хотя он не оценён: отсутствие записи честнее.
          */
+        const assessedLanguages = new Set<string>();
+
         for (const assessment of languageAssessments ?? []) {
           const rawLanguageCode = assessment['languageCode'];
           const languageCode =
             typeof rawLanguageCode === 'string' ? rawLanguageCode.trim().toLowerCase() : '';
           if (!languageCode) continue;
+          assessedLanguages.add(languageCode);
 
           await erTx.create({
             data: {
@@ -529,6 +538,33 @@ export class RightsMaterializationService {
               translationSourceLanguage:
                 (assessment['translationSourceLanguage'] as string) ?? null,
               requiresGeoBlock: (assessment['requiresGeoBlock'] as boolean) ?? false,
+            },
+          });
+        }
+
+        /**
+         * WP-G.5: пробел в покрытии языков перестал быть ошибкой валидации, поэтому целевой
+         * язык без оценки обязан получить явную запись. Молчаливый пропуск читался бы как
+         * «языка нет в контракте»; `NOT_TARGETED` означает «не разрешён» и сохраняет правило
+         * ADR-014: клиренс покрывает целевые языки целиком, подмножество не разрешается.
+         */
+        const targetLanguages = Array.isArray(intake.targetLanguages)
+          ? (intake.targetLanguages as unknown[])
+          : [];
+        for (const rawTarget of targetLanguages) {
+          const languageCode = typeof rawTarget === 'string' ? rawTarget.trim().toLowerCase() : '';
+          if (!languageCode || assessedLanguages.has(languageCode)) continue;
+          assessedLanguages.add(languageCode);
+
+          await erTx.create({
+            data: {
+              sourceEditionId: sourceEdition['id'] as string,
+              languageCode,
+              status: UNASSESSED_LANGUAGE_STATUS,
+              notesRu: null,
+              translationOrigin: 'UNKNOWN',
+              translationSourceLanguage: null,
+              requiresGeoBlock: false,
             },
           });
         }
@@ -643,11 +679,45 @@ export class RightsMaterializationService {
         }
       }
 
-      const existingTerritoryDecisions = this.mapExistingTerritoryDecisions(territoryDecisions);
-      // WP-5.5: `componentRemovalsConfirmed` здесь всегда ложно и потому не передаётся — все
-      // действия отчёта создаются открытыми (WP-5.3), значит подтверждать удаление нечем.
-      // Подтверждение приходит позже, когда редактор закрывает действие: тогда
-      // `recomputeTerritoryDecisionsFromComponents` пересчитывает решения по странам.
+      // WP-B.4: действия создаются до расчёта решений по странам, чтобы в агрегацию ушёл
+      // реальный `componentRemovalsConfirmed`, а не подразумеваемое «не подтверждено».
+      // Порядок важен только относительно блока `territoryDecision` ниже: собственных
+      // `linkLicenses` у действий нет.
+      const createdActions: Array<{ actionType: string; status: string }> = [];
+      if (requiredActions && requiredActions.length > 0) {
+        for (const action of requiredActions) {
+          // WP-5.3: агент предлагает действие, закрывает его человек. Раньше принимались все
+          // пять статусов, поэтому отчёт с `suggestedStatus: COMPLETED` создавал уже закрытое
+          // блокирующее действие — условие №5 фазы 7 оказывалось под контролем проверяемой
+          // стороны (R3-03). Закрытие теперь возможно только через
+          // `PATCH /admin/rights/actions/:id`, то есть с автором и событием в аудите.
+          const suggestedStatus = action['suggestedStatus'] as string | undefined;
+          const finalStatus =
+            suggestedStatus &&
+            (AGENT_SUGGESTABLE_ACTION_STATUSES as readonly string[]).includes(suggestedStatus)
+              ? suggestedStatus
+              : 'PENDING';
+          const actionType = action['actionType'] as string;
+
+          await raTx.create({
+            data: {
+              rightsProfileId: profile['id'] as string,
+              actionType,
+              status: finalStatus,
+              descriptionRu: action['descriptionRu'] as string,
+              affectedCountryCodes: (action['affectedCountryCodes'] as unknown[]) ?? [],
+              isBlocking: (action['isBlocking'] as boolean) ?? false,
+            },
+          });
+
+          createdActions.push({ actionType, status: finalStatus });
+        }
+      }
+
+      const existingTerritoryDecisions = this.mapExistingTerritoryDecisions(
+        territoryDecisions,
+        reportJson['confidence'],
+      );
       const decisionsToCreate = hasComponentTerritoryAssessments
         ? this.componentTerritoryAggregationService.aggregateTerritoryDecisionsFromComponents({
             rightsProfileId: profile['id'] as string,
@@ -656,6 +726,13 @@ export class RightsMaterializationService {
               ? (intake.targetCountryCodes as string[])
               : [],
             existingTerritoryDecisions,
+            // Все действия отчёта создаются открытыми (WP-5.3), поэтому подтверждением здесь
+            // может быть только отсутствие компонентов к удалению (WP-A.4). Компонент,
+            // помеченный к удалению, по-прежнему участвует в оценке страны (R6-06).
+            componentRemovalsConfirmed: areComponentRemovalsConfirmed(
+              createdActions,
+              aggregationComponents.some((component) => isComponentMarkedForRemoval(component)),
+            ),
           })
         : existingTerritoryDecisions.map((territory) => ({
             rightsProfileId: profile['id'] as string,
@@ -726,33 +803,6 @@ export class RightsMaterializationService {
               createdByUserId: importedByUserId,
             });
           }
-        }
-      }
-
-      if (requiredActions && requiredActions.length > 0) {
-        for (const action of requiredActions) {
-          // WP-5.3: агент предлагает действие, закрывает его человек. Раньше принимались все
-          // пять статусов, поэтому отчёт с `suggestedStatus: COMPLETED` создавал уже закрытое
-          // блокирующее действие — условие №5 фазы 7 оказывалось под контролем проверяемой
-          // стороны (R3-03). Закрытие теперь возможно только через
-          // `PATCH /admin/rights/actions/:id`, то есть с автором и событием в аудите.
-          const suggestedStatus = action['suggestedStatus'] as string | undefined;
-          const finalStatus =
-            suggestedStatus &&
-            (AGENT_SUGGESTABLE_ACTION_STATUSES as readonly string[]).includes(suggestedStatus)
-              ? suggestedStatus
-              : 'PENDING';
-
-          await raTx.create({
-            data: {
-              rightsProfileId: profile['id'] as string,
-              actionType: action['actionType'] as string,
-              status: finalStatus,
-              descriptionRu: action['descriptionRu'] as string,
-              affectedCountryCodes: (action['affectedCountryCodes'] as unknown[]) ?? [],
-              isBlocking: (action['isBlocking'] as boolean) ?? false,
-            },
-          });
         }
       }
 
@@ -1084,12 +1134,14 @@ export class RightsMaterializationService {
           : [],
         existingTerritoryDecisions: this.mapExistingTerritoryDecisions(
           reportJson['territoryDecisions'] as Array<Record<string, unknown>> | undefined,
+          reportJson['confidence'],
         ),
         componentRemovalsConfirmed: areComponentRemovalsConfirmed(
           actions.map((action) => ({
             actionType: action['actionType'] as string,
             status: action['status'] as string,
           })),
+          aggregationComponents.some((component) => isComponentMarkedForRemoval(component)),
         ),
       });
 
@@ -1148,20 +1200,52 @@ export class RightsMaterializationService {
     return { changedCountryCodes };
   }
 
+  /**
+   * WP-G.2/G.3/G.4: единственная воронка, через которую решения отчёта попадают и в запись,
+   * и в агрегацию по компонентам. Нормализация и дефолты живут здесь, потому что валидатор
+   * теперь пропускает строчный код страны, синоним `finalStatus` и разрешающее решение без
+   * `reasonRu`/`confidence` — а обе колонки `NOT NULL`, и `finalStatus` — Prisma-enum.
+   */
   private mapExistingTerritoryDecisions(
     territoryDecisions: Array<Record<string, unknown>> | undefined,
+    reportConfidence: unknown,
   ): ExistingTerritoryDecisionInput[] {
-    return (territoryDecisions ?? []).map((territory) => ({
-      countryCode: territory['countryCode'] as string,
-      finalStatus: territory['finalStatus'] as ComponentTerritoryFinalStatus,
-      accessPolicy: territory['accessPolicy'] as ComponentTerritoryAccessPolicy,
-      geoBlockRequired: (territory['geoBlockRequired'] as boolean) ?? false,
-      geoBlockScope: (territory['geoBlockScope'] as string) ?? null,
-      reasonRu: territory['reasonRu'] as string,
-      legalBasisRu: (territory['legalBasisRu'] as string) ?? null,
-      confidence: territory['confidence'] as ComponentTerritoryConfidence,
-      nextReviewAt: this.parseDateOrNull(territory['nextReviewAt']),
-    }));
+    const fallbackConfidence = this.readConfidence(reportConfidence) ?? 'LOW';
+
+    return (territoryDecisions ?? []).map((territory) => {
+      const rawCountryCode = territory['countryCode'];
+      const rawFinalStatus = territory['finalStatus'];
+      const rawReasonRu = territory['reasonRu'];
+      // WP-G.2 × WP-B.3: дефолт для записи сохраняется (колонки `NOT NULL`, инцидент R4-01),
+      // но помечается синтетическим — иначе он выглядел бы обоснованием агента в агрегации.
+      const agentReasonRu =
+        typeof rawReasonRu === 'string' && rawReasonRu.trim() !== '' ? rawReasonRu : null;
+      const agentConfidence = this.readConfidence(territory['confidence']);
+
+      return {
+        countryCode: typeof rawCountryCode === 'string' ? rawCountryCode.toUpperCase() : '',
+        finalStatus: (typeof rawFinalStatus === 'string'
+          ? normalizeTerritoryFinalStatus(rawFinalStatus)
+          : rawFinalStatus) as ComponentTerritoryFinalStatus,
+        accessPolicy: territory['accessPolicy'] as ComponentTerritoryAccessPolicy,
+        geoBlockRequired: (territory['geoBlockRequired'] as boolean) ?? false,
+        geoBlockScope: (territory['geoBlockScope'] as string) ?? null,
+        reasonRu: agentReasonRu ?? TERRITORY_DECISION_DEFAULT_REASON_RU,
+        legalBasisRu: (territory['legalBasisRu'] as string) ?? null,
+        confidence: agentConfidence ?? fallbackConfidence,
+        reasonRuFromAgent: agentReasonRu !== null,
+        confidenceFromAgent: agentConfidence !== null,
+        nextReviewAt: this.parseDateOrNull(territory['nextReviewAt']),
+      };
+    });
+  }
+
+  private readConfidence(value: unknown): ComponentTerritoryConfidence | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toUpperCase();
+    return normalized === 'HIGH' || normalized === 'MEDIUM' || normalized === 'LOW'
+      ? normalized
+      : null;
   }
 
   private readContributorString(raw: Record<string, unknown>, ...keys: string[]): string | null {

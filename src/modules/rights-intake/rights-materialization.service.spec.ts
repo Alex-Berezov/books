@@ -195,16 +195,18 @@ describe('RightsMaterializationService', () => {
   let prisma: PrismaStub;
   let personResolver: { resolveOrCreatePerson: jest.Mock };
   let notifications: { create: jest.Mock };
+  let aggregationService: ComponentTerritoryAggregationService;
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    aggregationService = new ComponentTerritoryAggregationService();
     personResolver = {
       resolveOrCreatePerson: jest.fn().mockResolvedValue({ id: 'person-1' }),
     };
     notifications = { create: jest.fn().mockResolvedValue({ id: 'notification-1' }) };
     service = new RightsMaterializationService(
       prisma as unknown as PrismaService,
-      new ComponentTerritoryAggregationService(),
+      aggregationService,
       personResolver as unknown as PersonResolverService,
       notifications as unknown as RightsNotificationsService,
     );
@@ -903,6 +905,139 @@ describe('RightsMaterializationService', () => {
       expect(
         (prisma['territoryDecision'] as Record<string, jest.Mock>).create,
       ).toHaveBeenCalledTimes(2);
+    });
+
+    // WP-B: подробный отчёт перестаёт быть хуже пустого. Компонент, которого в издании нет,
+    // не роняет целевые страны в PENDING_REVIEW; компонент, помеченный к удалению, — роняет,
+    // пока удаление не подтверждено (R6-06).
+    describe('WP-B: components without territory assessments', () => {
+      const setupTwoComponents = (
+        componentAssessments: unknown[],
+        requiredActions: unknown[] = [],
+      ) => {
+        const reportJson = makeValidReportJson();
+        reportJson.componentAssessments = componentAssessments;
+        reportJson.requiredActions = requiredActions;
+        reportJson.territoryDecisions = [];
+        setupBasicMocks({ reportJson });
+        prisma.rightsIntake.findUnique.mockResolvedValue(
+          makeIntake({ targetCountryCodes: ['US', 'FR'] }),
+        );
+        setupTransaction();
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+          makeProfile(),
+        );
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        let index = 0;
+        (prisma['rightsComponent'] as Record<string, jest.Mock>).create.mockImplementation(() => {
+          index += 1;
+          return Promise.resolve({ id: `component-${index}` });
+        });
+      };
+
+      const publicDomainText = () => ({
+        componentType: 'ORIGINAL_TEXT',
+        titleRu: 'Оригинальный текст',
+        status: 'PUBLIC_DOMAIN',
+        requiredAction: 'KEEP',
+        confidence: 'HIGH',
+        territoryAssessments: [
+          {
+            countryCode: 'US',
+            status: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+          },
+          {
+            countryCode: 'FR',
+            status: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      it('B.1/B.4: a speculative cover without country assessments does not pend the target markets', async () => {
+        setupTwoComponents([
+          publicDomainText(),
+          {
+            componentType: 'COVER',
+            titleRu: 'Обложка',
+            status: 'UNCERTAIN',
+            requiredAction: 'VERIFY',
+            confidence: 'LOW',
+            territoryAssessments: [],
+          },
+        ]);
+        const aggregate = jest.spyOn(
+          aggregationService,
+          'aggregateTerritoryDecisionsFromComponents',
+        );
+
+        await service.materializeFromImport('import-1');
+
+        expect(aggregate).toHaveBeenCalledWith(
+          expect.objectContaining({ componentRemovalsConfirmed: true }),
+        );
+        const created = (prisma['territoryDecision'] as Record<string, jest.Mock>).create.mock
+          .calls;
+        expect(created).toHaveLength(2);
+        for (const call of created) {
+          expect(call[0].data.finalStatus).toBe('ALLOWED');
+          expect(call[0].data.accessPolicy).toBe('ALLOW');
+        }
+      });
+
+      it('B.4: a component marked for removal still counts while its action is open', async () => {
+        setupTwoComponents(
+          [
+            publicDomainText(),
+            {
+              componentType: 'OTHER',
+              titleRu: 'Обвязка Gutenberg',
+              status: 'EXCLUDED',
+              requiredAction: 'REMOVE',
+              confidence: 'HIGH',
+              territoryAssessments: [
+                {
+                  countryCode: 'US',
+                  status: 'BLOCKED',
+                  accessPolicy: 'BLOCK',
+                  geoBlockRequired: true,
+                  reasonRu: 'Лицензия Gutenberg.',
+                  confidence: 'HIGH',
+                },
+              ],
+            },
+          ],
+          [
+            {
+              actionType: 'REMOVE_GUTENBERG_HEADER',
+              descriptionRu: 'Убрать шапку Gutenberg',
+              isBlocking: false,
+            },
+          ],
+        );
+        const aggregate = jest.spyOn(
+          aggregationService,
+          'aggregateTerritoryDecisionsFromComponents',
+        );
+
+        await service.materializeFromImport('import-1');
+
+        expect(aggregate).toHaveBeenCalledWith(
+          expect.objectContaining({ componentRemovalsConfirmed: false }),
+        );
+        const usDecision = (
+          prisma['territoryDecision'] as Record<string, jest.Mock>
+        ).create.mock.calls.find(
+          (call: Array<{ data: { countryCode: string } }>) => call[0]?.data?.countryCode === 'US',
+        )?.[0]?.data;
+        expect(usDecision.finalStatus).toBe('BLOCKED');
+        expect(usDecision.accessPolicy).toBe('BLOCK');
+      });
     });
 
     it('should handle null/empty optional dates gracefully', async () => {
@@ -1691,6 +1826,164 @@ describe('RightsMaterializationService', () => {
       );
 
       expect(result).toBeNull();
+    });
+  });
+
+  /**
+   * WP-G: валидатор перестал требовать часть полей и стал принимать синонимы enum.
+   * Каждому выведенному из `required` полю обязан быть дефолт здесь — иначе валидный отчёт
+   * роняет запись в колонку `NOT NULL` и превращается в 500 уже после `VALIDATED` (R4-01).
+   */
+  describe('WP-G: дефолты и нормализация ослабленного отчёта', () => {
+    const materializeJson = async (
+      reportJson: Record<string, unknown>,
+      intakeOverrides: Record<string, unknown> = {},
+    ) => {
+      (prisma['rightsReviewImport'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeImportRecord({ reportJson }),
+      );
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake(intakeOverrides));
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findFirst.mockResolvedValue(null);
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      await service.materializeFromImport('import-1');
+    };
+
+    const dataOf = (model: string): Array<Record<string, unknown>> =>
+      (prisma[model] as Record<string, jest.Mock>).create.mock.calls.map(
+        (call) => (call[0] as Record<string, unknown>)['data'] as Record<string, unknown>,
+      );
+
+    it('G.4: синоним finalStatus доезжает до записи нормализованным', async () => {
+      const report = makeValidReportJson();
+      (report['territoryDecisions'] as Array<Record<string, unknown>>)[0]['finalStatus'] =
+        'PUBLIC_DOMAIN';
+
+      await materializeJson(report);
+
+      expect(dataOf('territoryDecision')[0]['finalStatus']).toBe('ALLOWED');
+    });
+
+    it('G.3: строчный код страны записывается в верхнем регистре', async () => {
+      const report = makeValidReportJson();
+      (report['territoryDecisions'] as Array<Record<string, unknown>>)[0]['countryCode'] = 'us';
+
+      await materializeJson(report);
+
+      expect(dataOf('territoryDecision')[0]['countryCode']).toBe('US');
+    });
+
+    it('G.2: разрешающее решение без reasonRu и confidence получает дефолты, а не null', async () => {
+      const report = makeValidReportJson();
+      report['territoryDecisions'] = [
+        { countryCode: 'US', finalStatus: 'ALLOWED', accessPolicy: 'ALLOW' },
+      ];
+
+      await materializeJson(report);
+
+      const created = dataOf('territoryDecision')[0];
+      expect(typeof created['reasonRu']).toBe('string');
+      expect((created['reasonRu'] as string).trim()).not.toBe('');
+      expect(created['confidence']).toBe('HIGH');
+    });
+
+    it('G.6: отчёт без requiredActions и evidence материализуется без этих записей', async () => {
+      const report = makeValidReportJson();
+      delete report['requiredActions'];
+      delete report['evidence'];
+
+      await materializeJson(report);
+
+      expect((prisma['rightsAction'] as Record<string, jest.Mock>).create).not.toHaveBeenCalled();
+      expect((prisma['rightsEvidence'] as Record<string, jest.Mock>).create).not.toHaveBeenCalled();
+      expect(dataOf('territoryDecision')).toHaveLength(2);
+    });
+
+    it('G.5: целевой язык без оценки материализуется как NOT_TARGETED', async () => {
+      await materializeJson(makeValidReportJson(), { targetLanguages: ['en', 'ru', 'fr'] });
+
+      const byLanguage = new Map(
+        dataOf('editionRights').map((data) => [data['languageCode'], data]),
+      );
+      expect(byLanguage.get('fr')?.['status']).toBe('NOT_TARGETED');
+      expect(byLanguage.get('fr')?.['requiresGeoBlock']).toBe(false);
+    });
+
+    // WP-G.2 × WP-B.3: дефолты не должны превращать голое решение агента в «обоснованное».
+    // Проверка идёт по реальному конвейеру — от reportJson до записанного TerritoryDecision.
+    describe('G.2 × B.3: дефолты не подменяют обоснование агента', () => {
+      const unassessedTranslation = () => ({
+        componentType: 'TRANSLATION',
+        titleRu: 'Перевод',
+        status: 'COPYRIGHTED',
+        requiredAction: 'VERIFY',
+        confidence: 'HIGH',
+        territoryAssessments: [
+          {
+            countryCode: 'FR',
+            status: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            geoBlockRequired: false,
+            confidence: 'HIGH',
+          },
+        ],
+      });
+
+      const reportWithUsDecision = (usDecision: Record<string, unknown>) => {
+        const report = makeValidReportJson();
+        report['confidence'] = 'HIGH';
+        report['componentAssessments'] = [unassessedTranslation()];
+        report['requiredActions'] = [];
+        report['territoryDecisions'] = [usDecision];
+        return report;
+      };
+
+      const usDecisionData = () =>
+        dataOf('territoryDecision').find((data) => data['countryCode'] === 'US');
+
+      it('голое ALLOW без reasonRu и legalBasisRu не переживает PENDING_REVIEW из пустоты', async () => {
+        await materializeJson(
+          reportWithUsDecision({
+            countryCode: 'US',
+            finalStatus: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+          }),
+        );
+
+        const us = usDecisionData();
+        expect(us?.['finalStatus']).toBe('PENDING_REVIEW');
+        expect(us?.['accessPolicy']).toBe('REVIEW_REQUIRED');
+      });
+
+      it('кейс По: обоснованное решение агента по-прежнему доживает до записи', async () => {
+        await materializeJson(
+          reportWithUsDecision({
+            countryCode: 'US',
+            finalStatus: 'ALLOWED',
+            accessPolicy: 'ALLOW',
+            legalBasisRu: 'PD, автор †1849',
+            confidence: 'HIGH',
+          }),
+        );
+
+        const us = usDecisionData();
+        expect(us?.['finalStatus']).toBe('ALLOWED');
+        expect(us?.['accessPolicy']).toBe('ALLOW');
+        expect(us?.['legalBasisRu']).toBe('PD, автор †1849');
+      });
+    });
+
+    it('обратная сторона G.5: оценённый язык сохраняет вердикт агента', async () => {
+      await materializeJson(makeValidReportJson(), { targetLanguages: ['en', 'ru', 'fr'] });
+
+      const byLanguage = new Map(
+        dataOf('editionRights').map((data) => [data['languageCode'], data]),
+      );
+      expect(byLanguage.get('ru')?.['status']).toBe('LICENSE_REQUIRED');
+      expect(byLanguage.get('en')?.['status']).toBe('ALLOWED');
     });
   });
 });

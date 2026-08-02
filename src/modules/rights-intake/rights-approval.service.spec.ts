@@ -649,7 +649,10 @@ describe('RightsApprovalService', () => {
   // Phase 19: high-risk clearance may not be approved without a lawyer
   // -------------------------------------------------------------------------
   describe('lawyer approval gate (Phase 19)', () => {
-    /** A profile whose LOW confidence makes `computeRiskAssessment` return HIGH. */
+    /**
+     * A genuinely high-risk profile: LOW confidence over a target country that still needs a
+     * licence. Since WP-E.2 a cautious `confidence` alone is only MEDIUM.
+     */
     const highRiskProfile = (overrides: Record<string, unknown> = {}) => ({
       id: 'profile-1',
       rightsIntakeId: 'intake-1',
@@ -673,11 +676,135 @@ describe('RightsApprovalService', () => {
         makeIntake(),
       );
       (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'LICENSE_REQUIRED' },
+      ]);
       const txStub = createTxStub();
       (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
       rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
       return txStub;
     };
+
+    // -----------------------------------------------------------------------
+    // WP-E: риск не наказывает за материалы, которых ещё нет (кейс По)
+    // -----------------------------------------------------------------------
+    const pdComponent = (overrides: Record<string, unknown> = {}) => ({
+      id: 'component-1',
+      componentType: 'ORIGINAL_TEXT',
+      status: 'PUBLIC_DOMAIN',
+      requiredAction: 'NONE',
+      confidence: 'HIGH',
+      titleRu: 'Оригинальный текст',
+      territoryAssessments: [{ countryCode: 'US' }],
+      ...overrides,
+    });
+
+    /** Чистая PD-книга: все целевые страны разрешены, отчёт осторожен (confidence LOW). */
+    const arrangePublicDomain = (components: Array<Record<string, unknown>>) => {
+      const txStub = arrange(highRiskProfile());
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake({ targetCountryCodes: ['US', 'GB', 'FR'] }),
+      );
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'ALLOWED' },
+        { countryCode: 'GB', finalStatus: 'ALLOWED' },
+        { countryCode: 'FR', finalStatus: 'ALLOWED' },
+        { countryCode: 'DE', finalStatus: 'PENDING_REVIEW' },
+      ]);
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue(
+        components,
+      );
+      return txStub;
+    };
+
+    it('WP-E: approves a public-domain clearance whose only UNCERTAIN component was never assessed', async () => {
+      const txStub = arrangePublicDomain([
+        pdComponent(),
+        pdComponent({
+          id: 'component-2',
+          componentType: 'COVER',
+          status: 'UNCERTAIN',
+          requiredAction: 'VERIFY',
+          titleRu: 'Обложка',
+          territoryAssessments: [],
+        }),
+      ]);
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+      expect(txStub.rightsReviewApproval.create).toHaveBeenCalled();
+    });
+
+    it('WP-E: still requires a lawyer when the agent assessed the UNCERTAIN component by country', async () => {
+      arrangePublicDomain([
+        pdComponent(),
+        pdComponent({
+          id: 'component-2',
+          componentType: 'COVER',
+          status: 'UNCERTAIN',
+          requiredAction: 'VERIFY',
+          titleRu: 'Обложка',
+          territoryAssessments: [{ countryCode: 'US' }],
+        }),
+      ]);
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'LAWYER_APPROVAL_REQUIRED',
+          details: expect.objectContaining({
+            factorCodes: expect.arrayContaining(['UNCERTAIN_COMPONENT']),
+          }),
+        },
+      });
+    });
+
+    it('WP-E: still requires a lawyer when a COPYRIGHTED component is kept', async () => {
+      arrangePublicDomain([
+        pdComponent(),
+        pdComponent({
+          id: 'component-2',
+          componentType: 'ILLUSTRATIONS',
+          status: 'COPYRIGHTED',
+          requiredAction: 'KEEP',
+          titleRu: 'Иллюстрации',
+          territoryAssessments: [],
+        }),
+      ]);
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'LAWYER_APPROVAL_REQUIRED',
+          details: expect.objectContaining({
+            factorCodes: expect.arrayContaining(['COPYRIGHTED_COMPONENT_KEPT']),
+          }),
+        },
+      });
+    });
+
+    it('WP-E: still requires a lawyer when a target country is blocked', async () => {
+      arrangePublicDomain([pdComponent()]);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'ALLOWED' },
+        { countryCode: 'GB', finalStatus: 'BLOCKED' },
+      ]);
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'LAWYER_APPROVAL_REQUIRED',
+          details: expect.objectContaining({
+            riskLevel: 'HIGH',
+            factorCodes: expect.arrayContaining(['CONFIDENCE_LOW']),
+          }),
+        },
+      });
+    });
 
     it('blocks approval of a HIGH-risk profile without a lawyer opinion', async () => {
       arrange(highRiskProfile());
@@ -774,6 +901,9 @@ describe('RightsApprovalService', () => {
 
     it('lets a MEDIUM-risk profile through at the default HIGH threshold', async () => {
       arrange(highRiskProfile({ confidence: 'MEDIUM' }));
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { countryCode: 'US', finalStatus: 'ALLOWED' },
+      ]);
 
       await expect(
         service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),

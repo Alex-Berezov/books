@@ -822,6 +822,88 @@ describe('RightsBookCreationService', () => {
   });
 
   /**
+   * WP-A.1. `ALLOW_AFTER_GEO_CONFIGURATION` без единой закрытой страны поднимал
+   * `rightsGeoBlockRequired`, после чего гейт требовал правило для страны, которой нет в списке:
+   * тупик без выхода. Флаг теперь поднимает только закрытый рынок.
+   */
+  describe('WP-A.1 geo-block flag follows the closed markets', () => {
+    const arrange = (options: {
+      publicationGate: string;
+      territories: Array<Record<string, unknown>>;
+    }) => {
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview({
+          rightsProfile: {
+            id: 'profile-1',
+            rightsIntakeId: 'intake-1',
+            isCurrent: true,
+            status: 'APPROVED',
+            publicationGate: options.publicationGate,
+          },
+        }),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue(
+        options.territories,
+      );
+
+      const txStub = {
+        book: {
+          create: jest.fn().mockResolvedValue({
+            id: 'book-1',
+            slug: 'test-book',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        },
+        bookVersion: { create: jest.fn().mockResolvedValue({ id: 'version-1' }) },
+        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+      };
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      return txStub;
+    };
+
+    it('leaves the flag down when the clearance closed no country', async () => {
+      const txStub = arrange({
+        publicationGate: 'ALLOW_AFTER_GEO_CONFIGURATION',
+        territories: [{ countryCode: 'US', accessPolicy: 'ALLOW', finalStatus: 'ALLOWED' }],
+      });
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(txStub.bookVersion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          rightsGeoBlockRequired: false,
+          rightsStatus: 'APPROVED_WITH_GEO_RESTRICTIONS',
+        }),
+      });
+    });
+
+    it('raises the flag as soon as one country is closed', async () => {
+      const txStub = arrange({
+        publicationGate: 'ALLOW_AFTER_GEO_CONFIGURATION',
+        territories: [
+          { countryCode: 'US', accessPolicy: 'ALLOW', finalStatus: 'ALLOWED' },
+          { countryCode: 'RU', accessPolicy: 'BLOCK', finalStatus: 'BLOCKED' },
+        ],
+      });
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(txStub.bookVersion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          rightsGeoBlockRequired: true,
+          rightsBlockedCountryCodes: ['RU'],
+        }),
+      });
+    });
+  });
+
+  /**
    * WP-8.1 (регрессия, найдена в CI). Участники версии входят в content hash, а baseline
    * снимался до их проекции из профиля — живой хеш сразу расходился со снимком, и книга,
    * созданная из клиренса, не проходила гейт с `RIGHTS_CONTENT_HASH_CHANGED`.

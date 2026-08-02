@@ -73,6 +73,24 @@ export async function createBookWithRights(
     },
   });
 
+  // Языковой клиренс профиля: гейт публикации требует реальной оценки на язык версии
+  // (`MISSING_LANGUAGE_RIGHTS_ASSESSMENT`), поэтому фикстура покрывает все целевые языки.
+  await prisma.sourceEdition.create({
+    data: {
+      rightsProfileId: profile.id,
+      provider: 'UNKNOWN',
+      sourceTextType: 'ORIGINAL_TEXT',
+      status: 'ALLOWED',
+      editionRights: {
+        create: languages.map((languageCode) => ({
+          languageCode,
+          status: 'ALLOWED',
+          translationOrigin: 'NOT_APPLICABLE_ORIGINAL',
+        })),
+      },
+    },
+  });
+
   // Create Rights Review Import (required by RightsReview)
   const reviewImport = await prisma.rightsReviewImport.create({
     data: {

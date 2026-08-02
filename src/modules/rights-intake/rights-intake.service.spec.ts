@@ -81,6 +81,142 @@ describe('RightsIntakeService', () => {
     });
   });
 
+  /**
+   * WP-F.1 (исток Б1): при очевидной ссылке на Gutenberg агент получал `provider: UNKNOWN`
+   * и `textType: UNKNOWN`, а правило манифеста «при нехватке данных — pending review»
+   * превращало это в осторожный отчёт. Вывод из ссылки заполняет только пробелы: явный
+   * выбор редактора приложение не переписывает.
+   */
+  describe('WP-F.1: нормализация источника по URL', () => {
+    const baseDto = {
+      candidateTitle: 'The Fall of the House of Usher',
+      candidateAuthor: 'Edgar Allan Poe',
+      targetLanguages: ['en'],
+      targetCountryCodes: ['US'],
+      plannedContentTypes: ['TEXT'],
+    };
+
+    const createdData = (): Record<string, unknown> =>
+      prisma.rightsIntake.create.mock.calls[0][0].data as Record<string, unknown>;
+
+    const updatedData = (): Record<string, unknown> =>
+      prisma.rightsIntake.update.mock.calls[0][0].data as Record<string, unknown>;
+
+    it('выводит провайдера и внешний ID из ссылки на Gutenberg', async () => {
+      prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
+
+      await service.create(
+        { ...baseDto, sourceUrl: 'https://www.gutenberg.org/ebooks/932' },
+        'user-1',
+      );
+
+      expect(createdData().sourceProvider).toBe('PROJECT_GUTENBERG');
+      expect(createdData().sourceExternalId).toBe('932');
+    });
+
+    it('ставит ORIGINAL_TEXT при совпадении языка источника и оригинала', async () => {
+      prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
+
+      await service.create(
+        {
+          ...baseDto,
+          sourceUrl: 'https://www.gutenberg.org/files/932/932-0.txt',
+          sourceLanguage: 'en',
+          originalLanguage: 'en',
+        },
+        'user-1',
+      );
+
+      expect(createdData().sourceTextType).toBe('ORIGINAL_TEXT');
+    });
+
+    it('не выводит ORIGINAL_TEXT, когда языки не совпадают', async () => {
+      prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
+
+      await service.create(
+        {
+          ...baseDto,
+          sourceUrl: 'https://www.gutenberg.org/ebooks/932',
+          sourceLanguage: 'ru',
+          originalLanguage: 'en',
+        },
+        'user-1',
+      );
+
+      expect(createdData().sourceTextType).toBe('UNKNOWN');
+    });
+
+    it('не трогает ссылку чужого домена', async () => {
+      prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
+
+      await service.create({ ...baseDto, sourceUrl: 'https://example.com/ebooks/932' }, 'user-1');
+
+      expect(createdData().sourceProvider).toBe('UNKNOWN');
+      expect(createdData().sourceExternalId).toBeNull();
+    });
+
+    it('не переписывает явный выбор редактора', async () => {
+      prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
+
+      await service.create(
+        {
+          ...baseDto,
+          sourceProvider: 'OTHER',
+          sourceExternalId: 'manual-7',
+          sourceTextType: 'TRANSLATION',
+          sourceUrl: 'https://www.gutenberg.org/ebooks/932',
+          sourceLanguage: 'en',
+          originalLanguage: 'en',
+        },
+        'user-1',
+      );
+
+      expect(createdData().sourceProvider).toBe('OTHER');
+      expect(createdData().sourceExternalId).toBe('manual-7');
+      expect(createdData().sourceTextType).toBe('TRANSLATION');
+    });
+
+    it('update заполняет пробел, когда ссылку добавили позже', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'DRAFT',
+        sourceProvider: 'UNKNOWN',
+        sourceExternalId: null,
+        sourceUrl: null,
+        sourceLanguage: 'en',
+        originalLanguage: 'en',
+        sourceTextType: 'UNKNOWN',
+      });
+      prisma.rightsIntake.update.mockResolvedValue({ id: 'i1' });
+
+      await service.update('i1', { sourceUrl: 'https://gutenberg.org/cache/epub/932/pg932.txt' });
+
+      expect(updatedData().sourceProvider).toBe('PROJECT_GUTENBERG');
+      expect(updatedData().sourceExternalId).toBe('932');
+      expect(updatedData().sourceTextType).toBe('ORIGINAL_TEXT');
+    });
+
+    it('update не переписывает уже заполненный провайдер', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'DRAFT',
+        sourceProvider: 'OTHER',
+        sourceExternalId: 'manual-7',
+        sourceUrl: null,
+        sourceLanguage: 'en',
+        originalLanguage: 'en',
+        sourceTextType: 'TRANSLATION',
+      });
+      prisma.rightsIntake.update.mockResolvedValue({ id: 'i1' });
+
+      await service.update('i1', { sourceUrl: 'https://www.gutenberg.org/ebooks/932' });
+
+      expect(updatedData().sourceProvider).toBeUndefined();
+      expect(updatedData().sourceExternalId).toBeUndefined();
+      expect(updatedData().sourceTextType).toBeUndefined();
+    });
+  });
+
   describe('list', () => {
     it('lists intakes with pagination', async () => {
       const items = [{ id: 'i1' }, { id: 'i2' }];

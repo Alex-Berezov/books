@@ -23,6 +23,7 @@ describe('Rights content hash — contributors (e2e)', () => {
   let adminToken: string;
   let versionId: string;
   let personId: string;
+  let contributorId: string;
   let bookWithRights: Awaited<ReturnType<typeof createBookWithRights>>;
 
   const slug = `hash-contributors-${Date.now()}`;
@@ -134,15 +135,69 @@ describe('Rights content hash — contributors (e2e)', () => {
     await app.close();
   });
 
-  it('marks the clearance stale when a translator is added to the version', async () => {
+  /**
+   * WP-D.1: версия ещё черновик — она в окне наполнения. Состав участников уточняют до
+   * публикации, ради этого клиренс и снимали, поэтому baseline переснимается, а клиренс
+   * остаётся утверждённым. Компенсация за ослабление — событие аудита пишется всегда.
+   */
+  it('re-takes the baseline when a translator is added to a draft version', async () => {
     const before = await versionRow();
     expect(before?.rightsRecheckRequired).toBe(false);
 
-    await request(http())
+    const created = await request(http())
       .post(`/admin/versions/${versionId}/contributors`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ personId, role: 'TRANSLATOR' })
       .expect(201);
+    contributorId = created.body.id as string;
+
+    const after = await versionRow();
+    expect(after?.rightsRecheckRequired).toBe(false);
+    expect(after?.rightsStaleReasonCode).toBeNull();
+    // Baseline переснят: слепок черновика догоняет его содержимое.
+    expect(after?.rightsContentHash).not.toBe(before?.rightsContentHash);
+
+    const review = await prisma.rightsReview.findUnique({
+      where: { id: bookWithRights.review.id },
+      select: { status: true },
+    });
+    expect(review?.status).toBe('HUMAN_APPROVED');
+    const profile = await prisma.rightsProfile.findUnique({
+      where: { id: bookWithRights.profile.id },
+      select: { status: true },
+    });
+    expect(profile?.status).toBe('APPROVED');
+
+    // Событие аудита: значение enum'а — существующее, точная причина в reasonCode (WP-8.1).
+    const events = await prisma.rightsContentHashEvent.findMany({
+      where: { bookVersionId: versionId, reasonCode: 'DRAFT_FILL_WINDOW' },
+      select: { trigger: true, staleMarked: true, previousHash: true, currentHash: true },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].trigger).toBe('RIGHTS_SNAPSHOT_CHANGED');
+    expect(events[0].staleMarked).toBe(false);
+    expect(events[0].previousHash).toBe(before?.rightsContentHash);
+    expect(events[0].currentHash).toBe(after?.rightsContentHash);
+  });
+
+  /**
+   * Обратная сторона WP-D.4: окно закрывается публикацией. Та же правка состава участников
+   * в опубликованной версии по-прежнему аннулирует клиренс целиком.
+   */
+  it('marks the clearance stale when a translator changes in a published version', async () => {
+    await rebaseline();
+    await prisma.bookVersion.update({
+      where: { id: versionId },
+      data: { status: 'published', publishedAt: new Date() },
+    });
+    const before = await versionRow();
+    expect(before?.rightsRecheckRequired).toBe(false);
+
+    await request(http())
+      .patch(`/admin/versions/${versionId}/contributors/${contributorId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ creditedName: 'Иной перевод' })
+      .expect(200);
 
     const after = await versionRow();
     expect(after?.rightsRecheckRequired).toBe(true);
@@ -157,7 +212,6 @@ describe('Rights content hash — contributors (e2e)', () => {
     });
     expect(review?.status).toBe('STALE');
 
-    // Событие аудита: значение enum'а — существующее, точная причина в reasonCode (WP-8.1).
     const events = await prisma.rightsContentHashEvent.findMany({
       where: { bookVersionId: versionId, reasonCode: 'VERSION_CONTRIBUTOR_CHANGED' },
       select: { trigger: true, staleMarked: true, previousHash: true, currentHash: true },
