@@ -131,9 +131,17 @@ describe('Rights review import validation e2e', () => {
   });
 
   // R4-01: отчёт без полей, которые NOT NULL в схеме, до WP-6.1 проходил валидацию.
+  //
+  // WP-G.2 сузил требование к `reasonRu`: разрешающее решение (`accessPolicy: 'ALLOW'`)
+  // объяснять не обязано, ограничительное — обязано. Поэтому здесь решение переведено в
+  // `BLOCK`: это обратная сторона смягчения, она обязана по-прежнему отклоняться.
+  // Смягчённая сторона (ALLOW без `reasonRu` проходит) проверяется следующим тестом.
   it('rejects a report whose nested blocks miss required fields and leaves the intake untouched', async () => {
     const report = completeReport();
-    delete (report.territoryDecisions as Array<Record<string, unknown>>)[0].reasonRu;
+    const decision = (report.territoryDecisions as Array<Record<string, unknown>>)[0];
+    decision.finalStatus = 'BLOCKED';
+    decision.accessPolicy = 'BLOCK';
+    delete decision.reasonRu;
     delete (report.componentAssessments as Array<Record<string, unknown>>)[0].requiredAction;
     delete (report.evidence as Array<Record<string, unknown>>)[0].authority;
 
@@ -160,11 +168,16 @@ describe('Rights review import validation e2e', () => {
     expect(intake?.workflowStatus).toBe('READY_FOR_AGENT');
   });
 
+  // WP-G.2, смягчённая сторона: разрешающее решение без `reasonRu` больше не отклоняется —
+  // объяснять, почему разрешено, отчёт не обязан.
   it('accepts the corrected report and materializes it', async () => {
+    const report = completeReport();
+    delete (report.territoryDecisions as Array<Record<string, unknown>>)[0].reasonRu;
+
     const imported = await request(http())
       .post(`/admin/rights/intakes/${intakeId}/review-imports`)
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ reportJson: completeReport() })
+      .send({ reportJson: report })
       .expect(201);
 
     expect(imported.body.importStatus).toBe('VALIDATED');
@@ -182,7 +195,10 @@ describe('Rights review import validation e2e', () => {
   it('answers 422 with a diagnosis instead of a bare 500 when a validated import cannot be materialized', async () => {
     const record = await prisma.rightsReviewImport.findUnique({ where: { id: importId } });
     const broken = record!.reportJson as unknown as Record<string, unknown>;
-    delete (broken.territoryDecisions as Array<Record<string, unknown>>)[0].reasonRu;
+    // Раньше здесь удалялся `reasonRu`. После WP-G.4 у него есть дефолт материализации, и
+    // отчёт раскладывается штатно, поэтому ломаем поле без дефолта и без нормализации:
+    // `accessPolicy` уходит в enum-колонку как есть, и Prisma отвечает ошибкой валидации.
+    (broken.territoryDecisions as Array<Record<string, unknown>>)[0].accessPolicy = 'NOT_A_POLICY';
 
     await prisma.rightsReviewImport.update({
       where: { id: importId },
