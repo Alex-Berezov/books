@@ -296,6 +296,7 @@ model User {
   rightsReportPdfsUploaded    RightsReviewImport[]         @relation("RightsReportPdfUploadedBy")
   rightsSourceFilesUploaded   SourceEdition[]              @relation("RightsSourceFileUploadedBy")
   rightsEvidenceArchived      RightsEvidence[]             @relation("RightsEvidenceArchivedBy")
+  profileContributorEvents    RightsProfileContributorEvent[] @relation("RightsProfileContributorEventCreatedBy")
 }
 
 
@@ -906,21 +907,23 @@ model RightsProfile {
   actions RightsAction[]
   approvals RightsReviewApproval[]
   contributors RightsProfileContributor[]
+  contributorEvents RightsProfileContributorEvent[]
   licenseLinks RightsLicenseLink[]
 
   // Phase 6: Back-relations to Book/BookVersion
   books Book[] @relation("BookCurrentRightsProfile")
   bookVersions BookVersion[] @relation("BookVersionRightsProfile")
 
-  // Phase 8: Content hash & stale detection — fields reserved for future clearance-level
-  // content hashing. In Phase 8, the canonical source (content) hash lives on BookVersion
-  // (rightsContentHash*). These profile-level fields are defined here for potential future
-  // use (e.g., hashing the clearance/rights-rule data itself) but are NOT populated by
-  // the current RightsContentHashService.
-  contentHash String?
-  contentHashAlgorithmVersion String?
-  contentHashInput Json?
-  contentHashCalculatedAt DateTime?
+  // Phase 8: устаревание клиренса. Канонический хеш контента живёт на `BookVersion`
+  // (`rightsContentHash*`) — здесь только отметка «этот профиль признан устаревшим»,
+  // которую ставит `RightsContentHashService.markStale`.
+  //
+  // WP-10.4 (R3-07): четыре зеркальных колонки хеша (`contentHash`,
+  // `contentHashAlgorithmVersion`, `contentHashInput`, `contentHashCalculatedAt`) удалены
+  // миграцией `20260802010000`. Они были заведены «на будущее», ни одна строка кода их
+  // не писала и не читала, а `RightsProfile.contentHash` рядом с настоящим
+  // `BookVersion.rightsContentHash` — ловушка: прочитавший его получит `null`
+  // и решит, что хеша нет.
   staleDetectedAt DateTime?
   staleReasonCode String?
   staleReasonRu String? @db.Text
@@ -965,7 +968,6 @@ model RightsProfile {
   @@index([isCurrent])
   @@index([overallStatus])
   @@index([publicationGate])
-  @@index([contentHash])
   @@index([staleDetectedAt])
   @@index([nextReviewAt])
   @@index([recheckPolicy])
@@ -1105,15 +1107,12 @@ model RightsReview {
   approvedBooks Book[] @relation("BookApprovedRightsReview")
   approvedBookVersions BookVersion[] @relation("BookVersionApprovedRightsReview")
 
-  // Phase 8: Content hash & stale detection — fields reserved for future clearance-level
-  // content hashing. In Phase 8, the canonical source (content) hash lives on BookVersion
-  // (rightsContentHash*). These profile-level fields are defined here for potential future
-  // use (e.g., hashing the clearance/rights-rule data itself) but are NOT populated by
-  // the current RightsContentHashService.
-  contentHash String?
-  contentHashAlgorithmVersion String?
-  contentHashInput Json?
-  contentHashCalculatedAt DateTime?
+  // Phase 8: устаревание клиренса. Канонический хеш контента живёт на `BookVersion`
+  // (`rightsContentHash*`) — здесь только отметка «эта проверка признана устаревшей»,
+  // которую ставит `RightsContentHashService.markStale` вместе со статусом `STALE`.
+  //
+  // WP-10.4 (R3-07): четыре зеркальных колонки хеша удалены миграцией `20260802010000` —
+  // обоснование то же, что и у `RightsProfile`.
   staleDetectedAt DateTime?
   staleReasonCode String?
   staleReasonRu String? @db.Text
@@ -1137,7 +1136,6 @@ model RightsReview {
   @@index([rightsProfileId])
   @@index([status])
   @@index([lawyerReviewId])
-  @@index([contentHash])
   @@index([staleDetectedAt])
   @@index([overallStatus])
   @@index([publicationGate])
@@ -1887,6 +1885,53 @@ model RightsProfileContributor {
   @@index([personId])
   @@index([role])
   @@index([publicDomainFromYear])
+}
+
+enum RightsProfileContributorEventType {
+  LINKED
+  UNLINKED
+}
+
+/// WP-10.1 (R8-02): связь участника с профилем прав удаляется физически — решение WP-0.4
+/// от 31.07.2026 оставило физическое удаление связей, потому что мягкое требовало бы
+/// фильтрации во всех выборках. Взамен каждая привязка и каждая отвязка пишет сюда
+/// неудаляемое событие в той же транзакции, что и сама связь (ADR-009).
+///
+/// `rightsProfileContributorId`, `personId` и `sourceEditionId` — идентификаторы без внешнего
+/// ключа: строка связи к моменту чтения журнала уже удалена, а FK с каскадом снёс бы вместе
+/// с ней и запись о том, что связь существовала.
+model RightsProfileContributorEvent {
+  id String @id @default(uuid())
+
+  rightsProfileId String
+  rightsProfile RightsProfile @relation(fields: [rightsProfileId], references: [id], onDelete: Cascade)
+
+  rightsProfileContributorId String
+  rightsComponentId String?
+  sourceEditionId String?
+  personId String?
+
+  eventType RightsProfileContributorEventType
+
+  role ContributorRole?
+  displayName String?
+  creditedName String?
+
+  payload Json?
+
+  createdByUserId String?
+  createdByUser User? @relation("RightsProfileContributorEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([rightsProfileId])
+  @@index([rightsProfileContributorId])
+  @@index([rightsComponentId])
+  @@index([sourceEditionId])
+  @@index([personId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([createdByUserId])
 }
 
 // =====================

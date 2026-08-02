@@ -1,10 +1,12 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ClaimComponentType } from './dto/link-claim-component.dto';
 import { CreateRightsClaimDto } from './dto/create-rights-claim.dto';
 import { RightsClaimsService } from './rights-claims.service';
 import {
   ClaimBlockScope,
   RightsClaimAccessBlockRecord,
+  RightsClaimAttachmentType,
   RightsClaimBlockStatus,
   RightsClaimEventType,
   RightsClaimRecord,
@@ -616,5 +618,261 @@ describe('RightsClaimsService', () => {
     await expect(
       service.recordResponse('claim-1', { responseTextRu: 'Ответ' }, 'user-1'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+/**
+ * WP-10.1 / WP-10.2 (R0-01, R0-03). Фаза 16 обещает: каждая мутация претензии пишет событие
+ * в той же транзакции. Фактически часть вызовов `recordEvent` шла обычным клиентом, то есть
+ * вторым независимым `await`: отказ между мутацией и записью оставлял изменённое состояние
+ * претензии без строки в неудаляемом журнале. Для `unlinkComponent` цена выше — связь
+ * удаляется физически, и событие остаётся единственным следом.
+ *
+ * Двойник ниже имитирует транзакцию: запись через tx-клиент попадает в «БД» только после
+ * успешного завершения коллбэка. Поэтому проверки на откат подтверждают атомарность,
+ * а не факт вызова.
+ */
+describe('RightsClaimsService — атомарность аудита (WP-10.2)', () => {
+  interface Write {
+    model: string;
+    data: Record<string, unknown>;
+  }
+
+  const componentRow = {
+    id: 'claim-component-1',
+    rightsClaimId: 'claim-1',
+    rightsComponentId: 'component-9',
+    componentType: 'TRANSLATION',
+    titleRu: 'Перевод Гнедича',
+    notesRu: 'Заявитель ссылается на перевод',
+    createdAt: new Date('2026-07-27T12:00:00.000Z'),
+    updatedAt: new Date('2026-07-27T12:00:00.000Z'),
+  };
+
+  const createDouble = (onEventCreate?: () => void) => {
+    const committed: Write[] = [];
+
+    const clientFor = (buffer: Write[]) => {
+      const record =
+        (model: string) =>
+        (args: { data?: Record<string, unknown>; where?: Record<string, unknown> }) => {
+          if (model === 'rightsClaimEvent.create') onEventCreate?.();
+          buffer.push({ model, data: args.data ?? args.where ?? {} });
+          return Promise.resolve({ id: 'row-1', ...(args.data ?? {}) });
+        };
+
+      return {
+        rightsClaim: {
+          findUnique: jest.fn().mockResolvedValue(createClaim()),
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null),
+          count: jest.fn().mockResolvedValue(0),
+          create: jest.fn((args: { data: Record<string, unknown> }) => {
+            buffer.push({ model: 'rightsClaim.create', data: args.data });
+            return Promise.resolve(createClaim(args.data as Partial<RightsClaimRecord>));
+          }),
+          update: jest.fn((args: { data: Record<string, unknown> }) => {
+            buffer.push({ model: 'rightsClaim.update', data: args.data });
+            return Promise.resolve(createClaim(args.data as Partial<RightsClaimRecord>));
+          }),
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        rightsClaimComponent: {
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(componentRow),
+          create: jest.fn(record('rightsClaimComponent.create')),
+          delete: jest.fn((args: { where: Record<string, unknown> }) => {
+            buffer.push({ model: 'rightsClaimComponent.delete', data: args.where });
+            return Promise.resolve(componentRow);
+          }),
+        },
+        rightsClaimAccessBlock: {
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn(record('rightsClaimAccessBlock.create')),
+          update: jest.fn(record('rightsClaimAccessBlock.update')),
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        rightsClaimAttachment: {
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue({
+            id: 'attachment-1',
+            rightsClaimId: 'claim-1',
+            isDeleted: false,
+          }),
+          create: jest.fn(record('rightsClaimAttachment.create')),
+          update: jest.fn(record('rightsClaimAttachment.update')),
+        },
+        rightsClaimEvent: {
+          findMany: jest.fn().mockResolvedValue([]),
+          create: jest.fn(record('rightsClaimEvent.create')),
+        },
+        bookVersion: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ id: 'version-1', bookId: 'book-1', status: 'draft' }),
+          findMany: jest.fn().mockResolvedValue([]),
+          update: jest.fn(),
+        },
+        user: { findUnique: jest.fn().mockResolvedValue({ id: 'user-9' }) },
+        rightsComponent: { findUnique: jest.fn().mockResolvedValue(null) },
+        mediaAsset: { findUnique: jest.fn().mockResolvedValue(null) },
+      };
+    };
+
+    const base = clientFor(committed);
+
+    const client = {
+      ...base,
+      $transaction: async <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => {
+        const pending: Write[] = [];
+        const result = await callback(clientFor(pending));
+        committed.push(...pending);
+        return result;
+      },
+    };
+
+    return { committed, client };
+  };
+
+  const buildService = (client: unknown): RightsClaimsService =>
+    new RightsClaimsService(client as PrismaService);
+
+  const eventsOf = (writes: Write[]): Array<Record<string, unknown>> =>
+    writes.filter((write) => write.model === 'rightsClaimEvent.create').map((write) => write.data);
+
+  const failingJournal = () => () => {
+    throw new Error('journal write failed');
+  };
+
+  it('unlinkComponent пишет событие, по которому восстанавливается отвязанный компонент', async () => {
+    const double = createDouble();
+
+    await buildService(double.client).unlinkComponent('claim-1', 'claim-component-1', 'user-42');
+
+    const events = eventsOf(double.committed);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(
+      expect.objectContaining({
+        rightsClaimId: 'claim-1',
+        eventType: RightsClaimEventType.COMPONENT_UNLINKED,
+        createdByUserId: 'user-42',
+      }),
+    );
+    expect(events[0].payload).toEqual(
+      expect.objectContaining({
+        claimComponentId: 'claim-component-1',
+        rightsComponentId: 'component-9',
+        componentType: 'TRANSLATION',
+        titleRu: 'Перевод Гнедича',
+      }),
+    );
+  });
+
+  it('откат транзакции не оставляет ни удалённой связи с компонентом, ни события', async () => {
+    const double = createDouble(failingJournal());
+
+    await expect(
+      buildService(double.client).unlinkComponent('claim-1', 'claim-component-1', 'user-42'),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('assign: отказ журнала откатывает и назначение исполнителя', async () => {
+    const double = createDouble(failingJournal());
+
+    await expect(
+      buildService(double.client).assign('claim-1', { assignedToUserId: 'user-9' }, 'user-42'),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('reopen: отказ журнала откатывает и переоткрытие претензии', async () => {
+    const double = createDouble(failingJournal());
+    double.client.rightsClaim.findUnique = jest
+      .fn()
+      .mockResolvedValue(createClaim({ status: RightsClaimStatus.CLOSED }));
+
+    await expect(
+      buildService(double.client).reopen(
+        'claim-1',
+        { reasonRu: 'Появились новые данные' },
+        'user-42',
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('removeAttachment: отказ журнала откатывает и мягкое удаление вложения', async () => {
+    const double = createDouble(failingJournal());
+
+    await expect(
+      buildService(double.client).removeAttachment('claim-1', 'attachment-1', 'user-42'),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('create: отказ журнала не оставляет претензию без записи о её появлении', async () => {
+    const double = createDouble(failingJournal());
+
+    await expect(
+      buildService(double.client).create(
+        {
+          claimType: RightsClaimType.DMCA_TAKEDOWN,
+          claimantName: 'Acme Publishing',
+          descriptionRu: 'Нарушение авторских прав на текст',
+          bookVersionId: 'version-1',
+        },
+        'user-42',
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('recordResponse: отказ журнала откатывает и сам ответ заявителю', async () => {
+    const double = createDouble(failingJournal());
+
+    await expect(
+      buildService(double.client).recordResponse('claim-1', { responseTextRu: 'Ответ' }, 'user-42'),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('linkComponent: отказ журнала не оставляет связь без записи о привязке', async () => {
+    const double = createDouble(failingJournal());
+
+    await expect(
+      buildService(double.client).linkComponent(
+        'claim-1',
+        { componentType: ClaimComponentType.TRANSLATION, titleRu: 'Перевод Гнедича' },
+        'user-42',
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('addAttachment: отказ журнала откатывает и само вложение', async () => {
+    const double = createDouble(failingJournal());
+
+    await expect(
+      buildService(double.client).addAttachment(
+        'claim-1',
+        {
+          attachmentType: RightsClaimAttachmentType.CLAIM_NOTICE,
+          title: 'Уведомление',
+          url: 'https://example.com/notice.pdf',
+        },
+        'user-42',
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
   });
 });

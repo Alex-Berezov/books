@@ -30,6 +30,12 @@ export class ContributorsService {
     return this.rpcModelOf(this.prisma);
   }
 
+  private rpcEventModelOf(client: unknown) {
+    return (client as Record<string, unknown>)['rightsProfileContributorEvent'] as {
+      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+  }
+
   private get sourceEditionModel() {
     return (this.prisma as unknown as Record<string, unknown>)['sourceEdition'] as {
       findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
@@ -159,7 +165,11 @@ export class ContributorsService {
     return await this.personsService.remove(id);
   }
 
-  async linkSourceEdition(sourceEditionId: string, dto: LinkSourceEditionContributorDto) {
+  async linkSourceEdition(
+    sourceEditionId: string,
+    dto: LinkSourceEditionContributorDto,
+    userId: string,
+  ) {
     const sourceEdition = await this.sourceEditionModel.findUnique({
       where: { id: sourceEditionId },
     });
@@ -171,30 +181,38 @@ export class ContributorsService {
       dto.contributorId,
     )) as unknown as PersonRecord;
 
-    return this.withProfileStaleness(sourceEdition['rightsProfileId'] as string, (tx) =>
-      this.rpcModelOf(tx).create({
-        data: {
-          rightsProfileId: sourceEdition['rightsProfileId'],
-          personId: person.id,
-          role: dto.role,
-          displayName: person.canonicalName,
-          canonicalName: person.canonicalName,
-          creditedName: dto.creditedName ?? person.canonicalName,
-          birthYear: person.birthYear,
-          deathYear: person.deathYear,
-          nationalityCountryCode: person.nationalityCountryCode,
-          wikidataId: person.wikidataId,
-          viafId: person.viafId,
-          isni: person.isni,
-          gutenbergAgentId: person.gutenbergAgentId,
-          publicDomainFromYear: person.publicDomainFromYear,
-          notesRu: dto.notesRu ?? null,
-        },
-      }),
-    );
+    const rightsProfileId = sourceEdition['rightsProfileId'] as string;
+    const data: Record<string, unknown> = {
+      rightsProfileId,
+      personId: person.id,
+      role: dto.role,
+      displayName: person.canonicalName,
+      canonicalName: person.canonicalName,
+      creditedName: dto.creditedName ?? person.canonicalName,
+      birthYear: person.birthYear,
+      deathYear: person.deathYear,
+      nationalityCountryCode: person.nationalityCountryCode,
+      wikidataId: person.wikidataId,
+      viafId: person.viafId,
+      isni: person.isni,
+      gutenbergAgentId: person.gutenbergAgentId,
+      publicDomainFromYear: person.publicDomainFromYear,
+      notesRu: dto.notesRu ?? null,
+    };
+
+    return this.withProfileStaleness(rightsProfileId, async (tx) => {
+      const created = await this.rpcModelOf(tx).create({ data });
+      await this.recordContributorEvent(
+        tx,
+        'LINKED',
+        { ...data, id: created['id'] },
+        { rightsProfileId, sourceEditionId, userId },
+      );
+      return created;
+    });
   }
 
-  async unlinkSourceEdition(sourceEditionId: string, linkId: string) {
+  async unlinkSourceEdition(sourceEditionId: string, linkId: string, userId: string) {
     const sourceEdition = await this.sourceEditionModel.findUnique({
       where: { id: sourceEditionId },
     });
@@ -209,12 +227,24 @@ export class ContributorsService {
       );
     }
 
-    return this.withProfileStaleness(sourceEdition['rightsProfileId'] as string, (tx) =>
-      this.rpcModelOf(tx).delete({ where: { id: linkId } }),
-    );
+    const rightsProfileId = sourceEdition['rightsProfileId'] as string;
+
+    return this.withProfileStaleness(rightsProfileId, async (tx) => {
+      const removed = await this.rpcModelOf(tx).delete({ where: { id: linkId } });
+      await this.recordContributorEvent(tx, 'UNLINKED', link, {
+        rightsProfileId,
+        sourceEditionId,
+        userId,
+      });
+      return removed;
+    });
   }
 
-  async linkRightsComponent(rightsComponentId: string, dto: LinkRightsComponentContributorDto) {
+  async linkRightsComponent(
+    rightsComponentId: string,
+    dto: LinkRightsComponentContributorDto,
+    userId: string,
+  ) {
     const component = await this.rightsComponentModel.findUnique({
       where: { id: rightsComponentId },
     });
@@ -226,31 +256,39 @@ export class ContributorsService {
       dto.contributorId,
     )) as unknown as PersonRecord;
 
-    return this.withProfileStaleness(component['rightsProfileId'] as string, (tx) =>
-      this.rpcModelOf(tx).create({
-        data: {
-          rightsProfileId: component['rightsProfileId'],
-          rightsComponentId,
-          personId: person.id,
-          role: dto.role,
-          displayName: person.canonicalName,
-          canonicalName: person.canonicalName,
-          creditedName: dto.creditedName ?? person.canonicalName,
-          birthYear: person.birthYear,
-          deathYear: person.deathYear,
-          nationalityCountryCode: person.nationalityCountryCode,
-          wikidataId: person.wikidataId,
-          viafId: person.viafId,
-          isni: person.isni,
-          gutenbergAgentId: person.gutenbergAgentId,
-          publicDomainFromYear: person.publicDomainFromYear,
-          notesRu: dto.notesRu ?? null,
-        },
-      }),
-    );
+    const rightsProfileId = component['rightsProfileId'] as string;
+    const data: Record<string, unknown> = {
+      rightsProfileId,
+      rightsComponentId,
+      personId: person.id,
+      role: dto.role,
+      displayName: person.canonicalName,
+      canonicalName: person.canonicalName,
+      creditedName: dto.creditedName ?? person.canonicalName,
+      birthYear: person.birthYear,
+      deathYear: person.deathYear,
+      nationalityCountryCode: person.nationalityCountryCode,
+      wikidataId: person.wikidataId,
+      viafId: person.viafId,
+      isni: person.isni,
+      gutenbergAgentId: person.gutenbergAgentId,
+      publicDomainFromYear: person.publicDomainFromYear,
+      notesRu: dto.notesRu ?? null,
+    };
+
+    return this.withProfileStaleness(rightsProfileId, async (tx) => {
+      const created = await this.rpcModelOf(tx).create({ data });
+      await this.recordContributorEvent(
+        tx,
+        'LINKED',
+        { ...data, id: created['id'] },
+        { rightsProfileId, rightsComponentId, userId },
+      );
+      return created;
+    });
   }
 
-  async unlinkRightsComponent(rightsComponentId: string, linkId: string) {
+  async unlinkRightsComponent(rightsComponentId: string, linkId: string, userId: string) {
     const component = await this.rightsComponentModel.findUnique({
       where: { id: rightsComponentId },
     });
@@ -265,9 +303,63 @@ export class ContributorsService {
       );
     }
 
-    return this.withProfileStaleness(component['rightsProfileId'] as string, (tx) =>
-      this.rpcModelOf(tx).delete({ where: { id: linkId } }),
-    );
+    const rightsProfileId = component['rightsProfileId'] as string;
+
+    return this.withProfileStaleness(rightsProfileId, async (tx) => {
+      const removed = await this.rpcModelOf(tx).delete({ where: { id: linkId } });
+      await this.recordContributorEvent(tx, 'UNLINKED', link, {
+        rightsProfileId,
+        rightsComponentId,
+        userId,
+      });
+      return removed;
+    });
+  }
+
+  /**
+   * WP-10.1 (R8-02): связь `RightsProfileContributor` удаляется физически — решение WP-0.4
+   * оставило физическое удаление связей и потребовало взамен неудаляемое событие в той же
+   * транзакции. Событие пишется через переданный tx-клиент: при откате транзакции не остаётся
+   * ни удаления, ни следа о нём, а при успехе — и то и другое.
+   *
+   * Снимок связи кладётся в событие целиком: строка к моменту чтения журнала уже удалена,
+   * и восстановить, кого именно отвязали от какого компонента, будет больше неоткуда.
+   */
+  private async recordContributorEvent(
+    tx: unknown,
+    eventType: 'LINKED' | 'UNLINKED',
+    link: Record<string, unknown>,
+    context: {
+      rightsProfileId: string;
+      rightsComponentId?: string | null;
+      sourceEditionId?: string | null;
+      userId: string;
+    },
+  ): Promise<void> {
+    const linkedAt = link['createdAt'];
+
+    await this.rpcEventModelOf(tx).create({
+      data: {
+        rightsProfileId: context.rightsProfileId,
+        rightsProfileContributorId: link['id'],
+        rightsComponentId: context.rightsComponentId ?? link['rightsComponentId'] ?? null,
+        sourceEditionId: context.sourceEditionId ?? null,
+        personId: link['personId'] ?? null,
+        eventType,
+        role: link['role'] ?? null,
+        displayName: link['displayName'] ?? null,
+        creditedName: link['creditedName'] ?? null,
+        payload: {
+          canonicalName: link['canonicalName'] ?? null,
+          birthYear: link['birthYear'] ?? null,
+          deathYear: link['deathYear'] ?? null,
+          nationalityCountryCode: link['nationalityCountryCode'] ?? null,
+          notesRu: link['notesRu'] ?? null,
+          linkedAt: linkedAt instanceof Date ? linkedAt.toISOString() : null,
+        },
+        createdByUserId: context.userId,
+      },
+    });
   }
 
   /**

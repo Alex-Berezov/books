@@ -5,6 +5,7 @@ import {
   type ValidationIssue,
 } from './rights-review-import.validator';
 import { stableJsonStringify, sha256Hex } from './rights-review-import-hash';
+import { REVIEW_IMPORTABLE_INTAKE_STATUSES } from './rights-intake.constants';
 import { RIGHTS_REVIEW_IMPORT_SCHEMA_VERSION } from './rights-review-import.constants';
 import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 import type { CreateRightsReviewImportDto } from './dto/create-rights-review-import.dto';
@@ -37,10 +38,10 @@ export class RightsReviewImportService {
       throw new NotFoundException(`Rights intake with ID '${intakeId}' not found`);
     }
 
-    const forbiddenStatuses = ['DRAFT', 'ARCHIVED', 'BOOK_CREATED'];
-    if (forbiddenStatuses.includes(intake.workflowStatus)) {
+    // WP-10.3 (R4-04): белый список вместо чёрного — см. `REVIEW_IMPORTABLE_INTAKE_STATUSES`.
+    if (!REVIEW_IMPORTABLE_INTAKE_STATUSES.includes(intake.workflowStatus)) {
       throw new BadRequestException(
-        'Review result can only be imported for READY_FOR_AGENT, REVIEW_IMPORTED, HUMAN_REVIEW_REQUIRED, APPROVED, or REJECTED intakes.',
+        `Review result can only be imported for ${REVIEW_IMPORTABLE_INTAKE_STATUSES.join(', ')} intakes.`,
       );
     }
 

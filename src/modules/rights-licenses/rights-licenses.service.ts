@@ -14,6 +14,7 @@ import {
 import { UpdateRightsLicenseDto } from './dto/update-rights-license.dto';
 import { RightsLicenseCoverageService } from './rights-license-coverage.service';
 import {
+  RightsLicenseDatabaseClient,
   RightsLicenseDelegate,
   RightsLicenseEventDelegate,
   RightsLicenseEventRecord,
@@ -82,6 +83,10 @@ export class RightsLicensesService {
     return (this.prisma as unknown as Record<string, unknown>)[
       'rightsLicenseEvent'
     ] as RightsLicenseEventDelegate;
+  }
+
+  private get database(): RightsLicenseDatabaseClient {
+    return this.prisma as unknown as RightsLicenseDatabaseClient;
   }
 
   // ---------------------------------------------------------------------------
@@ -357,14 +362,48 @@ export class RightsLicensesService {
     });
     if (!link) throw new NotFoundException('RightsLicenseLink not found');
 
-    await this.linkDelegate.delete({ where: { id: linkId } });
-    await this.recordEvent(licenseId, RightsLicenseEventType.UNLINKED, {
-      currentStatus: license.status,
-      userId,
-      payload: { linkType: link.linkType, linkId },
+    // WP-10.1 (R0-01): связь удаляется физически — решение WP-0.4 оставило это как есть,
+    // потребовав взамен неудаляемое событие в той же транзакции. Раньше удаление и запись
+    // события были двумя независимыми `await`: отказ между ними стирал единственное
+    // доказательство того, что покрытие лицензией существовало.
+    await this.database.$transaction(async (transaction) => {
+      await transaction.rightsLicenseLink.delete({ where: { id: linkId } });
+      await this.recordEvent(
+        licenseId,
+        RightsLicenseEventType.UNLINKED,
+        {
+          currentStatus: license.status,
+          userId,
+          payload: this.buildUnlinkPayload(link),
+        },
+        transaction.rightsLicenseEvent,
+      );
     });
 
     return { success: true };
+  }
+
+  /**
+   * Снимок отвязанной связи: строка удалена физически, и восстановить, что именно покрывала
+   * лицензия, можно будет только отсюда. До WP-10.1 в payload попадали лишь `linkType` и
+   * `linkId`, поэтому цель связи приходилось искать корреляцией с более ранним `LINKED`.
+   */
+  private buildUnlinkPayload(link: RightsLicenseLinkRecord): Record<string, unknown> {
+    return {
+      linkId: link.id,
+      linkType: link.linkType,
+      rightsProfileId: link.rightsProfileId,
+      rightsComponentId: link.rightsComponentId,
+      componentTerritoryAssessmentId: link.componentTerritoryAssessmentId,
+      territoryDecisionId: link.territoryDecisionId,
+      sourceEditionId: link.sourceEditionId,
+      rightsEvidenceId: link.rightsEvidenceId,
+      bookVersionId: link.bookVersionId,
+      coversCountryCodes: toStringArray(link.coversCountryCodes),
+      notesRu: link.notesRu,
+      linkedAt: link.createdAt.toISOString(),
+      linkedByUserId: link.createdByUserId,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -571,8 +610,9 @@ export class RightsLicensesService {
       userId?: string;
       payload?: Record<string, unknown>;
     },
+    eventDelegate: RightsLicenseEventDelegate = this.eventDelegate,
   ): Promise<void> {
-    await this.eventDelegate.create({
+    await eventDelegate.create({
       data: {
         rightsLicenseId,
         eventType,

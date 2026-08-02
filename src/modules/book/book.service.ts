@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
@@ -17,10 +16,6 @@ export class BookService {
     private prisma: PrismaService,
     private geoBlockRuleService: GeoBlockRuleService,
   ) {}
-
-  async create(data: CreateBookDto) {
-    return this.prisma.book.create({ data });
-  }
 
   async rateBook(userId: string, bookId: string, score: number) {
     const book = await this.prisma.book.findUnique({ where: { id: bookId } });

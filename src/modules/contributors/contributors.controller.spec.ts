@@ -83,15 +83,29 @@ describe('ContributorsController', () => {
 
   it('should call linkSourceEdition', async () => {
     const dto = { contributorId: 'c1', role: ContributorRole.AUTHOR };
-    const res = await controller.linkSourceEdition('se-1', dto);
+    const res = await controller.linkSourceEdition('se-1', dto, { user: { userId: 'user-1' } });
     expect(res).toEqual({ id: 'rpc-1' });
-    expect(service['linkSourceEdition']).toHaveBeenCalledWith('se-1', dto);
+    expect(service['linkSourceEdition']).toHaveBeenCalledWith('se-1', dto, 'user-1');
   });
 
   it('should call linkRightsComponent with a role that exists in the Prisma enum', async () => {
     const dto = { contributorId: 'c1', role: ContributorRole.NARRATOR };
-    const res = await controller.linkRightsComponent('rc-1', dto);
+    const res = await controller.linkRightsComponent('rc-1', dto, { user: { userId: 'user-1' } });
     expect(res).toEqual({ id: 'rpc-2' });
-    expect(service['linkRightsComponent']).toHaveBeenCalledWith('rc-1', dto);
+    expect(service['linkRightsComponent']).toHaveBeenCalledWith('rc-1', dto, 'user-1');
+  });
+
+  /**
+   * WP-10.1 (R8-02): отвязка удаляет связь физически, поэтому автор действия обязан дойти
+   * до сервиса — иначе в журнале не окажется того, кто отвязал участника.
+   */
+  it('should pass the acting user down to unlinkRightsComponent', async () => {
+    await controller.unlinkRightsComponent('rc-1', 'rpc-2', { user: { userId: 'user-7' } });
+    expect(service['unlinkRightsComponent']).toHaveBeenCalledWith('rc-1', 'rpc-2', 'user-7');
+  });
+
+  it('should pass the acting user down to unlinkSourceEdition', async () => {
+    await controller.unlinkSourceEdition('se-1', 'rpc-1', { user: { userId: 'user-7' } });
+    expect(service['unlinkSourceEdition']).toHaveBeenCalledWith('se-1', 'rpc-1', 'user-7');
   });
 });

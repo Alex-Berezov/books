@@ -1,0 +1,64 @@
+import { ConfigModule } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
+import { PrismaService } from '../../prisma/prisma.service';
+import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
+import { RightsLicenseCoverageService } from './rights-license-coverage.service';
+import { RightsLicensesModule } from './rights-licenses.module';
+import { RightsLicensesService } from './rights-licenses.service';
+
+/**
+ * DI smoke test для фазы 15 (R0-04).
+ *
+ * Модуль импортируется ядром (`RightsIntakeModule`), поэтому обратной зависимости иметь не может:
+ * добавить `RightsIntakeModule` в `imports` — и второй кейс краснеет. Первый кейс ловит
+ * незарегистрированный провайдер: `RolesGuard` тянет `ConfigService` и `PrismaService`, а покрытие
+ * лицензий — `RightsClearanceModule`; убрать любой из них из метаданных модуля, и container не
+ * соберётся (ADR-003).
+ */
+describe('RightsLicensesModule', () => {
+  it('compiles the dependency container', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        RightsLicensesModule,
+      ],
+    })
+      .overrideProvider(PrismaService)
+      .useValue({})
+      .compile();
+
+    expect(moduleRef.get(RightsLicensesService)).toBeDefined();
+    expect(moduleRef.get(RightsLicenseCoverageService)).toBeDefined();
+
+    await moduleRef.close();
+  });
+
+  it('keeps the module graph acyclic and never reaches back into the rights core', () => {
+    const reachable = collectTransitiveImports(RightsLicensesModule);
+
+    expect(reachable).not.toContain(undefined);
+    expect(reachable).not.toContain(RightsLicensesModule);
+    expect(reachable).not.toContain(RightsIntakeModule);
+  });
+});
+
+/**
+ * Обход метаданных `imports` вширь. `undefined` в результате оставляет циклический require: при
+ * цикле модуль-константа ещё не инициализирована в момент выполнения декоратора, и в массиве
+ * `imports` остаётся дыра. Поэтому `undefined` не пропускается, а попадает в множество и
+ * проверяется тестом наравне с самой ссылкой на модуль.
+ */
+function collectTransitiveImports(root: unknown): Set<unknown> {
+  const visited = new Set<unknown>();
+  const queue: unknown[] = [root];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const imports = (Reflect.getMetadata('imports', current as object) as unknown[]) ?? [];
+    for (const imported of imports) {
+      if (visited.has(imported)) continue;
+      visited.add(imported);
+      if (imported !== undefined) queue.push(imported);
+    }
+  }
+  return visited;
+}

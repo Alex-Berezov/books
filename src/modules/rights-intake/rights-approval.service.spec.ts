@@ -164,7 +164,7 @@ describe('RightsApprovalService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw BadRequestException if intake status is not HUMAN_REVIEW_REQUIRED or REVIEW_IMPORTED', async () => {
+    it('should throw BadRequestException if intake status is not HUMAN_REVIEW_REQUIRED', async () => {
       const review = makeReview();
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
       (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
@@ -174,6 +174,32 @@ describe('RightsApprovalService', () => {
       await expect(
         service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    /**
+     * WP-10.3 (R3-06): `REVIEW_IMPORTED` на момент утверждения достижим ровно в одном
+     * сценарии — поверх материализованного профиля загружен более свежий отчёт, который ещё
+     * не материализован. Утверждать в этот момент старую проверку нельзя: `approvedReviewId`
+     * укажет на заведомо устаревший вердикт, и из него будет создана книга.
+     */
+    it('refuses to approve while a newer, not yet materialized report is pending (REVIEW_IMPORTED)', async () => {
+      const review = makeReview();
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake({ workflowStatus: 'REVIEW_IMPORTED' }),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const txStub = createTxStub();
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma['$transaction']).not.toHaveBeenCalled();
+      expect(txStub.rightsReviewApproval.create).not.toHaveBeenCalled();
+      expect(txStub.rightsIntake.update).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if publicationGate is BLOCK', async () => {

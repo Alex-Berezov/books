@@ -40,6 +40,7 @@ export class TerritoryRegionSummaryDto {
   @ApiProperty() licenseRequiredCountryCount!: number;
   @ApiProperty() pendingReviewCountryCount!: number;
   @ApiProperty() notTargetedCountryCount!: number;
+  @ApiProperty() undecidedCountryCount!: number;
   @ApiProperty() geoBlockRequiredCount!: number;
   @ApiProperty({ type: [TerritoryRegionCountryDto] }) countries!: TerritoryRegionCountryDto[];
   @ApiProperty({ type: [TerritoryRegionReasonDto] }) blockingReasons!: TerritoryRegionReasonDto[];

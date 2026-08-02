@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 import {
+  MANIFEST_GENERATABLE_INTAKE_STATUSES,
   RIGHTS_AGENT_MANIFEST_VERSION,
   RIGHTS_AGENT_MANIFEST_TYPE,
   RIGHTS_AGENT_EXPECTED_REPORT_SCHEMA_VERSION,
@@ -39,21 +40,11 @@ export class RightsIntakeManifestService {
       );
     }
 
-    if (intake.workflowStatus === 'ARCHIVED') {
-      throw new BadRequestException('Cannot generate manifest for ARCHIVED intake.');
-    }
-
-    const terminalOrFutureStatuses = [
-      'APPROVED',
-      'REJECTED',
-      'BOOK_CREATED',
-      'REVIEW_IMPORTED',
-      'HUMAN_REVIEW_REQUIRED',
-    ];
-    if (terminalOrFutureStatuses.includes(intake.workflowStatus)) {
+    // WP-10.3 (R4-04): белый список вместо чёрного — см. `MANIFEST_GENERATABLE_INTAKE_STATUSES`.
+    if (!MANIFEST_GENERATABLE_INTAKE_STATUSES.includes(intake.workflowStatus)) {
       throw new BadRequestException(
         `Cannot generate manifest for intake in '${intake.workflowStatus}' status. ` +
-          'Manifest must be generated before importing the review.',
+          `Expected one of ${MANIFEST_GENERATABLE_INTAKE_STATUSES.join(', ')}.`,
       );
     }
 

@@ -165,6 +165,18 @@ export interface RightsLicenseEventDelegate {
   create(args: Record<string, unknown>): Promise<RightsLicenseEventRecord>;
 }
 
+/**
+ * WP-10.1 (R0-01): отвязка удаляет `RightsLicenseLink` физически, поэтому удаление и запись
+ * события обязаны идти одной транзакцией. Транзакционный клиент описан здесь той же
+ * дельегатной парой, что и обычный: сгенерированный Prisma-клиент новых моделей не знает.
+ */
+export interface RightsLicenseDatabaseClient {
+  rightsLicense: RightsLicenseDelegate;
+  rightsLicenseLink: RightsLicenseLinkDelegate;
+  rightsLicenseEvent: RightsLicenseEventDelegate;
+  $transaction<T>(callback: (client: RightsLicenseDatabaseClient) => Promise<T>): Promise<T>;
+}
+
 /** Reads a `Json?` column that is expected to hold an array of strings. */
 export const toStringArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];

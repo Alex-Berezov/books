@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -68,15 +69,24 @@ export class ContributorsController {
   async linkSourceEdition(
     @Param('id') sourceEditionId: string,
     @Body() dto: LinkSourceEditionContributorDto,
+    @Req() request: { user: { userId: string } },
   ) {
-    return this.contributorsService.linkSourceEdition(sourceEditionId, dto);
+    return this.contributorsService.linkSourceEdition(sourceEditionId, dto, request.user.userId);
   }
 
   @Delete('source-editions/:id/contributors/:linkId')
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Unlink contributor from a source edition' })
-  async unlinkSourceEdition(@Param('id') sourceEditionId: string, @Param('linkId') linkId: string) {
-    return this.contributorsService.unlinkSourceEdition(sourceEditionId, linkId);
+  async unlinkSourceEdition(
+    @Param('id') sourceEditionId: string,
+    @Param('linkId') linkId: string,
+    @Req() request: { user: { userId: string } },
+  ) {
+    return this.contributorsService.unlinkSourceEdition(
+      sourceEditionId,
+      linkId,
+      request.user.userId,
+    );
   }
 
   @Post('rights-components/:id/contributors')
@@ -85,8 +95,13 @@ export class ContributorsController {
   async linkRightsComponent(
     @Param('id') rightsComponentId: string,
     @Body() dto: LinkRightsComponentContributorDto,
+    @Req() request: { user: { userId: string } },
   ) {
-    return this.contributorsService.linkRightsComponent(rightsComponentId, dto);
+    return this.contributorsService.linkRightsComponent(
+      rightsComponentId,
+      dto,
+      request.user.userId,
+    );
   }
 
   @Delete('rights-components/:id/contributors/:linkId')
@@ -95,7 +110,12 @@ export class ContributorsController {
   async unlinkRightsComponent(
     @Param('id') rightsComponentId: string,
     @Param('linkId') linkId: string,
+    @Req() request: { user: { userId: string } },
   ) {
-    return this.contributorsService.unlinkRightsComponent(rightsComponentId, linkId);
+    return this.contributorsService.unlinkRightsComponent(
+      rightsComponentId,
+      linkId,
+      request.user.userId,
+    );
   }
 }

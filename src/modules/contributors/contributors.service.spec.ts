@@ -46,6 +46,9 @@ describe('ContributorsService', () => {
       }),
       delete: jest.fn().mockResolvedValue({ id: 'rpc-1' }),
     },
+    rightsProfileContributorEvent: {
+      create: jest.fn().mockResolvedValue({ id: 'rpce-1' }),
+    },
     sourceEdition: {
       findUnique: jest.fn().mockResolvedValue({ id: 'se-1', rightsProfileId: 'profile-1' }),
     },
@@ -151,10 +154,11 @@ describe('ContributorsService', () => {
   });
 
   it('should link source edition contributor', async () => {
-    const res = await service.linkSourceEdition('se-1', {
-      contributorId: 'person-1',
-      role: ContributorRole.AUTHOR,
-    });
+    const res = await service.linkSourceEdition(
+      'se-1',
+      { contributorId: 'person-1', role: ContributorRole.AUTHOR },
+      'user-1',
+    );
 
     expect(res).toBeDefined();
     expect(mockPrismaService.rightsProfileContributor.create).toHaveBeenCalledWith({
@@ -168,10 +172,11 @@ describe('ContributorsService', () => {
   });
 
   it('should link rights component contributor with any valid Prisma role', async () => {
-    const res = await service.linkRightsComponent('rc-1', {
-      contributorId: 'person-1',
-      role: ContributorRole.NARRATOR,
-    });
+    const res = await service.linkRightsComponent(
+      'rc-1',
+      { contributorId: 'person-1', role: ContributorRole.NARRATOR },
+      'user-1',
+    );
 
     expect(res).toBeDefined();
     expect(mockPrismaService.rightsProfileContributor.create).toHaveBeenCalledWith({
@@ -189,7 +194,9 @@ describe('ContributorsService', () => {
       rightsComponentId: 'other-component',
     });
 
-    await expect(service.unlinkRightsComponent('rc-1', 'rpc-1')).rejects.toThrow(NotFoundException);
+    await expect(service.unlinkRightsComponent('rc-1', 'rpc-1', 'user-1')).rejects.toThrow(
+      NotFoundException,
+    );
     expect(mockPrismaService.rightsProfileContributor.delete).not.toHaveBeenCalled();
   });
 
@@ -200,7 +207,9 @@ describe('ContributorsService', () => {
       rightsComponentId: null,
     });
 
-    await expect(service.unlinkSourceEdition('se-1', 'rpc-1')).rejects.toThrow(NotFoundException);
+    await expect(service.unlinkSourceEdition('se-1', 'rpc-1', 'user-1')).rejects.toThrow(
+      NotFoundException,
+    );
     expect(mockPrismaService.rightsProfileContributor.delete).not.toHaveBeenCalled();
   });
 
@@ -210,10 +219,11 @@ describe('ContributorsService', () => {
    */
   describe('rights content hash', () => {
     it('checks the clearance of the profile when a contributor is linked', async () => {
-      await service.linkSourceEdition('se-1', {
-        contributorId: 'person-1',
-        role: ContributorRole.TRANSLATOR,
-      });
+      await service.linkSourceEdition(
+        'se-1',
+        { contributorId: 'person-1', role: ContributorRole.TRANSLATOR },
+        'user-1',
+      );
 
       expect(mockRightsContentHashService.checkStalenessForRightsProfile).toHaveBeenCalledWith(
         'profile-1',
@@ -224,7 +234,7 @@ describe('ContributorsService', () => {
     });
 
     it('checks the clearance of the profile when a contributor is unlinked', async () => {
-      await service.unlinkRightsComponent('rc-1', 'rpc-1');
+      await service.unlinkRightsComponent('rc-1', 'rpc-1', 'user-1');
 
       expect(mockRightsContentHashService.checkStalenessForRightsProfile).toHaveBeenCalledWith(
         'profile-1',
@@ -233,5 +243,189 @@ describe('ContributorsService', () => {
         mockPrismaService,
       );
     });
+  });
+});
+
+/**
+ * WP-10.1 (R8-02): связь `RightsProfileContributor` удаляется физически по решению WP-0.4,
+ * поэтому отвязка обязана оставить неудаляемое событие — и записать его В ТОЙ ЖЕ транзакции,
+ * что и само удаление. До правки отвязка не писала событий вообще: кто был отвязан от какого
+ * компонента, восстановить было нечем.
+ *
+ * Двойник ниже — не мок проверяемого поведения, а имитация транзакции: запись, сделанная
+ * через tx-клиент, попадает в БД только если коллбэк завершился успешно. Поэтому тест
+ * «откат не оставляет события» проверяет атомарность, а не факт вызова.
+ */
+describe('ContributorsService — след отвязки участника (WP-10.1)', () => {
+  interface Write {
+    model: string;
+    op: string;
+    args: Record<string, unknown>;
+  }
+
+  const linkRow = {
+    id: 'rpc-1',
+    rightsProfileId: 'profile-1',
+    rightsComponentId: 'rc-1',
+    personId: 'person-1',
+    role: ContributorRole.TRANSLATOR,
+    displayName: 'Гнедич',
+    creditedName: 'Н. И. Гнедич',
+    canonicalName: 'Гнедич',
+    birthYear: 1784,
+    deathYear: 1833,
+    notesRu: null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  };
+
+  const createDouble = () => {
+    const committed: Write[] = [];
+
+    const clientFor = (buffer: Write[]) => ({
+      rightsProfileContributor: {
+        create: jest.fn((args: Record<string, unknown>) => {
+          buffer.push({ model: 'rightsProfileContributor', op: 'create', args });
+          return Promise.resolve({ id: 'rpc-1' });
+        }),
+        findUnique: jest.fn(() => Promise.resolve(linkRow)),
+        delete: jest.fn((args: Record<string, unknown>) => {
+          buffer.push({ model: 'rightsProfileContributor', op: 'delete', args });
+          return Promise.resolve(linkRow);
+        }),
+      },
+      rightsProfileContributorEvent: {
+        create: jest.fn((args: Record<string, unknown>) => {
+          buffer.push({ model: 'rightsProfileContributorEvent', op: 'create', args });
+          return Promise.resolve({ id: 'evt-1' });
+        }),
+      },
+      sourceEdition: {
+        findUnique: jest.fn(() => Promise.resolve({ id: 'se-1', rightsProfileId: 'profile-1' })),
+      },
+      rightsComponent: {
+        findUnique: jest.fn(() => Promise.resolve({ id: 'rc-1', rightsProfileId: 'profile-1' })),
+      },
+      author: { findUnique: jest.fn(), update: jest.fn() },
+    });
+
+    const base = clientFor(committed);
+
+    return {
+      committed,
+      prisma: {
+        ...base,
+        $transaction: async <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => {
+          const pending: Write[] = [];
+          const result = await callback(clientFor(pending));
+          committed.push(...pending);
+          return result;
+        },
+      },
+    };
+  };
+
+  const eventsIn = (writes: Write[]): Array<Record<string, unknown>> =>
+    writes
+      .filter((write) => write.model === 'rightsProfileContributorEvent')
+      .map((write) => write.args.data as Record<string, unknown>);
+
+  const personForDouble = {
+    id: 'person-1',
+    canonicalName: 'Гнедич',
+    birthYear: 1784,
+    deathYear: 1833,
+    nationalityCountryCode: 'RU',
+    wikidataId: null,
+    viafId: null,
+    isni: null,
+    gutenbergAgentId: null,
+    publicDomainFromYear: 1904,
+  };
+
+  const build = (
+    double: ReturnType<typeof createDouble>,
+    hash: { checkStalenessForRightsProfile: jest.Mock },
+  ) =>
+    new ContributorsService(
+      double.prisma as unknown as PrismaService,
+      { findOne: jest.fn().mockResolvedValue(personForDouble) } as unknown as PersonsService,
+      hash as unknown as RightsContentHashService,
+    );
+
+  const passingHash = () => ({ checkStalenessForRightsProfile: jest.fn().mockResolvedValue([]) });
+
+  it('пишет событие UNLINKED с обеими сторонами связи, автором и временем', async () => {
+    const double = createDouble();
+    const service = build(double, passingHash());
+
+    await service.unlinkRightsComponent('rc-1', 'rpc-1', 'user-42');
+
+    const events = eventsIn(double.committed);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(
+      expect.objectContaining({
+        eventType: 'UNLINKED',
+        rightsProfileId: 'profile-1',
+        rightsProfileContributorId: 'rpc-1',
+        rightsComponentId: 'rc-1',
+        personId: 'person-1',
+        role: ContributorRole.TRANSLATOR,
+        displayName: 'Гнедич',
+        createdByUserId: 'user-42',
+      }),
+    );
+  });
+
+  it('пишет событие UNLINKED и при отвязке от исходного издания', async () => {
+    const double = createDouble();
+    const service = build(double, passingHash());
+
+    await service.unlinkSourceEdition('se-1', 'rpc-1', 'user-42');
+
+    expect(eventsIn(double.committed)[0]).toEqual(
+      expect.objectContaining({
+        eventType: 'UNLINKED',
+        rightsProfileContributorId: 'rpc-1',
+        sourceEditionId: 'se-1',
+        personId: 'person-1',
+        createdByUserId: 'user-42',
+      }),
+    );
+  });
+
+  it('откат транзакции не оставляет ни удаления связи, ни события', async () => {
+    const double = createDouble();
+    const failingHash = {
+      checkStalenessForRightsProfile: jest.fn().mockRejectedValue(new Error('DB gone')),
+    };
+    const service = build(double, failingHash);
+
+    await expect(service.unlinkRightsComponent('rc-1', 'rpc-1', 'user-42')).rejects.toThrow(
+      'DB gone',
+    );
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('привязка тоже оставляет след — событие LINKED в той же транзакции', async () => {
+    const double = createDouble();
+    const service = build(double, passingHash());
+
+    await service.linkRightsComponent(
+      'rc-1',
+      { contributorId: 'person-1', role: ContributorRole.TRANSLATOR },
+      'user-42',
+    );
+
+    expect(eventsIn(double.committed)[0]).toEqual(
+      expect.objectContaining({
+        eventType: 'LINKED',
+        rightsProfileId: 'profile-1',
+        rightsProfileContributorId: 'rpc-1',
+        personId: 'person-1',
+        role: ContributorRole.TRANSLATOR,
+        createdByUserId: 'user-42',
+      }),
+    );
   });
 });

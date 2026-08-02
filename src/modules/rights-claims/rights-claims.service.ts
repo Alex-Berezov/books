@@ -305,12 +305,7 @@ export class RightsClaimsService {
       createdByUserId: userId,
     };
 
-    const claim = await this.createWithClaimNumber(data, receivedAt.getUTCFullYear());
-    await this.recordEvent(this.getDatabase(), claim.id, RightsClaimEventType.CREATED, {
-      currentStatus: claim.status,
-      userId,
-      payload: { claimType: claim.claimType, severity: claim.severity },
-    });
+    const claim = await this.createWithClaimNumber(data, receivedAt.getUTCFullYear(), userId);
 
     return this.buildDetail(claim);
   }
@@ -318,12 +313,18 @@ export class RightsClaimsService {
   /**
    * Claim numbers are `CLM-<year>-<6 digits>`. Concurrent creation can collide on the unique
    * index, so a bounded retry walks the counter forward instead of failing the request.
+   *
+   * WP-10.2 (R0-03): претензия и событие `CREATED` пишутся одной транзакцией. Транзакция
+   * заводится на каждую попытку отдельно: в PostgreSQL неудачная вставка прерывает транзакцию
+   * целиком, поэтому повторить номер внутри той же транзакции невозможно.
    */
   private async createWithClaimNumber(
     data: Record<string, unknown>,
     year: number,
+    userId: string,
   ): Promise<RightsClaimRecord> {
     const prefix = `CLM-${year}-`;
+    const database = this.getDatabase();
     const existingCount = await this.claimDelegate.count({
       where: { claimNumber: { startsWith: prefix } },
     });
@@ -331,7 +332,15 @@ export class RightsClaimsService {
     for (let attempt = 0; attempt < CLAIM_NUMBER_MAX_ATTEMPTS; attempt += 1) {
       const claimNumber = `${prefix}${String(existingCount + 1 + attempt).padStart(6, '0')}`;
       try {
-        return await this.claimDelegate.create({ data: { ...data, claimNumber } });
+        return await database.$transaction(async (transaction) => {
+          const claim = await transaction.rightsClaim.create({ data: { ...data, claimNumber } });
+          await this.recordEvent(transaction, claim.id, RightsClaimEventType.CREATED, {
+            currentStatus: claim.status,
+            userId,
+            payload: { claimType: claim.claimType, severity: claim.severity },
+          });
+          return claim;
+        });
       } catch (error) {
         if (!isUniqueViolation(error)) throw error;
       }
@@ -363,30 +372,33 @@ export class RightsClaimsService {
     await this.resolveClaimTargets(dto);
     this.validatePayload(dto, existing);
 
-    const updated = await this.claimDelegate.update({
-      where: { id },
-      data: this.buildWriteData(dto),
-    });
+    const updated = await this.getDatabase().$transaction(async (transaction) => {
+      const claim = await transaction.rightsClaim.update({
+        where: { id },
+        data: this.buildWriteData(dto),
+      });
 
-    const database = this.getDatabase();
-    await this.recordEvent(database, id, RightsClaimEventType.UPDATED, {
-      previousStatus: existing.status,
-      currentStatus: updated.status,
-      userId,
-      payload: { changedFields: Object.keys(dto) },
-    });
+      await this.recordEvent(transaction, id, RightsClaimEventType.UPDATED, {
+        previousStatus: existing.status,
+        currentStatus: claim.status,
+        userId,
+        payload: { changedFields: Object.keys(dto) },
+      });
 
-    if (dto.deadlineAt !== undefined) {
-      const previous = existing.deadlineAt ? existing.deadlineAt.toISOString() : null;
-      const next = updated.deadlineAt ? updated.deadlineAt.toISOString() : null;
-      if (previous !== next) {
-        await this.recordEvent(database, id, RightsClaimEventType.DEADLINE_CHANGED, {
-          currentStatus: updated.status,
-          userId,
-          payload: { previousDeadlineAt: previous, deadlineAt: next },
-        });
+      if (dto.deadlineAt !== undefined) {
+        const previous = existing.deadlineAt ? existing.deadlineAt.toISOString() : null;
+        const next = claim.deadlineAt ? claim.deadlineAt.toISOString() : null;
+        if (previous !== next) {
+          await this.recordEvent(transaction, id, RightsClaimEventType.DEADLINE_CHANGED, {
+            currentStatus: claim.status,
+            userId,
+            payload: { previousDeadlineAt: previous, deadlineAt: next },
+          });
+        }
       }
-    }
+
+      return claim;
+    });
 
     return this.buildDetail(updated);
   }
@@ -403,23 +415,26 @@ export class RightsClaimsService {
     if (dto.status === RightsClaimStatus.CLOSED) data.closedAt = new Date();
     if (dto.status === RightsClaimStatus.ESCALATED_TO_LAWYER) data.requiresLawyerReview = true;
 
-    const updated = await this.claimDelegate.update({ where: { id }, data });
+    const updated = await this.getDatabase().$transaction(async (transaction) => {
+      const claim = await transaction.rightsClaim.update({ where: { id }, data });
 
-    const database = this.getDatabase();
-    await this.recordEvent(database, id, RightsClaimEventType.STATUS_CHANGED, {
-      previousStatus: existing.status,
-      currentStatus: updated.status,
-      notesRu: dto.notesRu,
-      userId,
-    });
-    if (dto.status === RightsClaimStatus.ESCALATED_TO_LAWYER) {
-      await this.recordEvent(database, id, RightsClaimEventType.ESCALATED, {
+      await this.recordEvent(transaction, id, RightsClaimEventType.STATUS_CHANGED, {
         previousStatus: existing.status,
-        currentStatus: updated.status,
+        currentStatus: claim.status,
         notesRu: dto.notesRu,
         userId,
       });
-    }
+      if (dto.status === RightsClaimStatus.ESCALATED_TO_LAWYER) {
+        await this.recordEvent(transaction, id, RightsClaimEventType.ESCALATED, {
+          previousStatus: existing.status,
+          currentStatus: claim.status,
+          notesRu: dto.notesRu,
+          userId,
+        });
+      }
+
+      return claim;
+    });
 
     return this.buildDetail(updated);
   }
@@ -441,17 +456,21 @@ export class RightsClaimsService {
       }
     }
 
-    const updated = await this.claimDelegate.update({
-      where: { id },
-      data: { assignedToUserId: dto.assignedToUserId ?? null },
-    });
+    const updated = await this.getDatabase().$transaction(async (transaction) => {
+      const claim = await transaction.rightsClaim.update({
+        where: { id },
+        data: { assignedToUserId: dto.assignedToUserId ?? null },
+      });
 
-    await this.recordEvent(this.getDatabase(), id, RightsClaimEventType.ASSIGNED, {
-      previousStatus: existing.status,
-      currentStatus: updated.status,
-      notesRu: dto.notesRu,
-      userId,
-      payload: { assignedToUserId: dto.assignedToUserId ?? null },
+      await this.recordEvent(transaction, id, RightsClaimEventType.ASSIGNED, {
+        previousStatus: existing.status,
+        currentStatus: claim.status,
+        notesRu: dto.notesRu,
+        userId,
+        payload: { assignedToUserId: dto.assignedToUserId ?? null },
+      });
+
+      return claim;
     });
 
     return this.buildDetail(updated);
@@ -469,21 +488,25 @@ export class RightsClaimsService {
       fail('RESPONSE_TEXT_REQUIRED', 'Текст ответа заявителю обязателен.');
     }
 
-    const updated = await this.claimDelegate.update({
-      where: { id },
-      data: {
-        responseTextRu: dto.responseTextRu,
-        responseChannel: dto.responseChannel ?? existing.channel,
-        responseSentAt: dto.responseSentAt ? new Date(dto.responseSentAt) : new Date(),
-        responseByUserId: userId,
-      },
-    });
+    const updated = await this.getDatabase().$transaction(async (transaction) => {
+      const claim = await transaction.rightsClaim.update({
+        where: { id },
+        data: {
+          responseTextRu: dto.responseTextRu,
+          responseChannel: dto.responseChannel ?? existing.channel,
+          responseSentAt: dto.responseSentAt ? new Date(dto.responseSentAt) : new Date(),
+          responseByUserId: userId,
+        },
+      });
 
-    await this.recordEvent(this.getDatabase(), id, RightsClaimEventType.RESPONSE_RECORDED, {
-      previousStatus: existing.status,
-      currentStatus: updated.status,
-      userId,
-      payload: { responseChannel: updated.responseChannel },
+      await this.recordEvent(transaction, id, RightsClaimEventType.RESPONSE_RECORDED, {
+        previousStatus: existing.status,
+        currentStatus: claim.status,
+        userId,
+        payload: { responseChannel: claim.responseChannel },
+      });
+
+      return claim;
     });
 
     return this.buildDetail(updated);
@@ -515,21 +538,24 @@ export class RightsClaimsService {
     );
     if (movesToCounterNotice) data.status = RightsClaimStatus.COUNTER_NOTICE_FILED;
 
-    const updated = await this.claimDelegate.update({ where: { id }, data });
+    const updated = await this.getDatabase().$transaction(async (transaction) => {
+      const claim = await transaction.rightsClaim.update({ where: { id }, data });
 
-    const database = this.getDatabase();
-    await this.recordEvent(database, id, RightsClaimEventType.COUNTER_NOTICE_RECORDED, {
-      previousStatus: existing.status,
-      currentStatus: updated.status,
-      userId,
-    });
-    if (movesToCounterNotice) {
-      await this.recordEvent(database, id, RightsClaimEventType.STATUS_CHANGED, {
+      await this.recordEvent(transaction, id, RightsClaimEventType.COUNTER_NOTICE_RECORDED, {
         previousStatus: existing.status,
-        currentStatus: RightsClaimStatus.COUNTER_NOTICE_FILED,
+        currentStatus: claim.status,
         userId,
       });
-    }
+      if (movesToCounterNotice) {
+        await this.recordEvent(transaction, id, RightsClaimEventType.STATUS_CHANGED, {
+          previousStatus: existing.status,
+          currentStatus: RightsClaimStatus.COUNTER_NOTICE_FILED,
+          userId,
+        });
+      }
+
+      return claim;
+    });
 
     return this.buildDetail(updated);
   }
@@ -611,23 +637,27 @@ export class RightsClaimsService {
       fail('REOPEN_REASON_REQUIRED', 'Причина переоткрытия обязательна.');
     }
 
-    const updated = await this.claimDelegate.update({
-      where: { id },
-      data: {
-        status: RightsClaimStatus.UNDER_REVIEW,
-        resolution: null,
-        resolutionNotesRu: null,
-        resolvedAt: null,
-        resolvedByUserId: null,
-        closedAt: null,
-      },
-    });
+    const updated = await this.getDatabase().$transaction(async (transaction) => {
+      const claim = await transaction.rightsClaim.update({
+        where: { id },
+        data: {
+          status: RightsClaimStatus.UNDER_REVIEW,
+          resolution: null,
+          resolutionNotesRu: null,
+          resolvedAt: null,
+          resolvedByUserId: null,
+          closedAt: null,
+        },
+      });
 
-    await this.recordEvent(this.getDatabase(), id, RightsClaimEventType.REOPENED, {
-      previousStatus: existing.status,
-      currentStatus: RightsClaimStatus.UNDER_REVIEW,
-      notesRu: dto.reasonRu,
-      userId,
+      await this.recordEvent(transaction, id, RightsClaimEventType.REOPENED, {
+        previousStatus: existing.status,
+        currentStatus: RightsClaimStatus.UNDER_REVIEW,
+        notesRu: dto.reasonRu,
+        userId,
+      });
+
+      return claim;
     });
 
     return this.buildDetail(updated);
@@ -1038,24 +1068,28 @@ export class RightsClaimsService {
       }
     }
 
-    const created = await this.componentDelegate.create({
-      data: {
-        rightsClaimId: id,
-        rightsComponentId: dto.rightsComponentId ?? null,
-        componentType: dto.componentType ?? null,
-        titleRu: dto.titleRu ?? null,
-        notesRu: dto.notesRu ?? null,
-      },
-    });
+    const created = await this.getDatabase().$transaction(async (transaction) => {
+      const component = await transaction.rightsClaimComponent.create({
+        data: {
+          rightsClaimId: id,
+          rightsComponentId: dto.rightsComponentId ?? null,
+          componentType: dto.componentType ?? null,
+          titleRu: dto.titleRu ?? null,
+          notesRu: dto.notesRu ?? null,
+        },
+      });
 
-    await this.recordEvent(this.getDatabase(), id, RightsClaimEventType.COMPONENT_LINKED, {
-      currentStatus: claim.status,
-      userId,
-      payload: {
-        claimComponentId: created.id,
-        rightsComponentId: created.rightsComponentId,
-        componentType: created.componentType,
-      },
+      await this.recordEvent(transaction, id, RightsClaimEventType.COMPONENT_LINKED, {
+        currentStatus: claim.status,
+        userId,
+        payload: {
+          claimComponentId: component.id,
+          rightsComponentId: component.rightsComponentId,
+          componentType: component.componentType,
+        },
+      });
+
+      return component;
     });
 
     return this.mapComponent(created);
@@ -1075,11 +1109,24 @@ export class RightsClaimsService {
       failNotFound('CLAIM_TARGET_NOT_FOUND', 'Связь с компонентом не найдена.');
     }
 
-    await this.componentDelegate.delete({ where: { id: claimComponentId } });
-    await this.recordEvent(this.getDatabase(), id, RightsClaimEventType.COMPONENT_UNLINKED, {
-      currentStatus: claim.status,
-      userId,
-      payload: { claimComponentId },
+    // WP-10.1 (R0-01): связь удаляется физически — решение WP-0.4 оставило это как есть,
+    // потребовав взамен неудаляемое событие в той же транзакции. В payload идёт снимок связи
+    // целиком: раньше писался только `claimComponentId`, поэтому какой компонент был затронут
+    // претензией, восстанавливалось лишь корреляцией с более ранним `COMPONENT_LINKED`.
+    await this.getDatabase().$transaction(async (transaction) => {
+      await transaction.rightsClaimComponent.delete({ where: { id: claimComponentId } });
+      await this.recordEvent(transaction, id, RightsClaimEventType.COMPONENT_UNLINKED, {
+        currentStatus: claim.status,
+        userId,
+        payload: {
+          claimComponentId,
+          rightsComponentId: link.rightsComponentId,
+          componentType: link.componentType,
+          titleRu: link.titleRu,
+          notesRu: link.notesRu,
+          linkedAt: link.createdAt.toISOString(),
+        },
+      });
     });
 
     return { success: true };
@@ -1117,27 +1164,31 @@ export class RightsClaimsService {
       }
     }
 
-    const created = await this.attachmentDelegate.create({
-      data: {
-        rightsClaimId: id,
-        attachmentType: dto.attachmentType,
-        title: dto.title,
-        fileName: dto.fileName ?? null,
-        mediaAssetId: dto.mediaAssetId ?? null,
-        storageKey: dto.storageKey ?? null,
-        url: dto.url ?? null,
-        sha256: dto.sha256 ?? null,
-        contentType: dto.contentType ?? null,
-        sizeBytes: dto.sizeBytes ?? null,
-        notesRu: dto.notesRu ?? null,
-        uploadedByUserId: userId,
-      },
-    });
+    const created = await this.getDatabase().$transaction(async (transaction) => {
+      const attachment = await transaction.rightsClaimAttachment.create({
+        data: {
+          rightsClaimId: id,
+          attachmentType: dto.attachmentType,
+          title: dto.title,
+          fileName: dto.fileName ?? null,
+          mediaAssetId: dto.mediaAssetId ?? null,
+          storageKey: dto.storageKey ?? null,
+          url: dto.url ?? null,
+          sha256: dto.sha256 ?? null,
+          contentType: dto.contentType ?? null,
+          sizeBytes: dto.sizeBytes ?? null,
+          notesRu: dto.notesRu ?? null,
+          uploadedByUserId: userId,
+        },
+      });
 
-    await this.recordEvent(this.getDatabase(), id, RightsClaimEventType.ATTACHMENT_ADDED, {
-      currentStatus: claim.status,
-      userId,
-      payload: { attachmentId: created.id, attachmentType: created.attachmentType },
+      await this.recordEvent(transaction, id, RightsClaimEventType.ATTACHMENT_ADDED, {
+        currentStatus: claim.status,
+        userId,
+        payload: { attachmentId: attachment.id, attachmentType: attachment.attachmentType },
+      });
+
+      return attachment;
     });
 
     return this.mapAttachment(created);
@@ -1158,14 +1209,16 @@ export class RightsClaimsService {
       failNotFound('CLAIM_TARGET_NOT_FOUND', 'Вложение не найдено.');
     }
 
-    await this.attachmentDelegate.update({
-      where: { id: attachmentId },
-      data: { isDeleted: true, removedAt: new Date(), removedByUserId: userId },
-    });
-    await this.recordEvent(this.getDatabase(), id, RightsClaimEventType.ATTACHMENT_REMOVED, {
-      currentStatus: claim.status,
-      userId,
-      payload: { attachmentId },
+    await this.getDatabase().$transaction(async (transaction) => {
+      await transaction.rightsClaimAttachment.update({
+        where: { id: attachmentId },
+        data: { isDeleted: true, removedAt: new Date(), removedByUserId: userId },
+      });
+      await this.recordEvent(transaction, id, RightsClaimEventType.ATTACHMENT_REMOVED, {
+        currentStatus: claim.status,
+        userId,
+        payload: { attachmentId },
+      });
     });
 
     return { success: true };

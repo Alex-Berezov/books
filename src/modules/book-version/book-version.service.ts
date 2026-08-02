@@ -38,7 +38,8 @@ interface BookWithRights {
 
 interface RightsIntakeWithLanguages {
   id: string;
-  targetLanguages: string[];
+  /** `RightsIntake.targetLanguages` is a JSON column: the shape has to be checked, not assumed. */
+  targetLanguages: unknown;
 }
 
 interface SiblingVersionWithRights {
@@ -147,11 +148,25 @@ export class BookVersionService {
       },
     })) as unknown as RightsIntakeWithLanguages | null;
 
+    // WP-10.9 (R2-03): the check used to read `rightsIntake?.targetLanguages && !includes(...)`,
+    // so a missing intake row or a JSON `null` in the column made the condition false and cleared
+    // every language. An integrity check must fail closed: no readable list of cleared languages
+    // means no version.
+    if (!rightsIntake) {
+      throw new BadRequestException(
+        'Cannot create version: the rights intake of this book was not found',
+      );
+    }
+
+    const targetLanguages = rightsIntake.targetLanguages;
+    if (!Array.isArray(targetLanguages) || targetLanguages.length === 0) {
+      throw new BadRequestException(
+        'Cannot create version: the rights intake of this book has no approved target languages',
+      );
+    }
+
     // Check if language is in approved target languages
-    if (
-      rightsIntake?.targetLanguages &&
-      !rightsIntake.targetLanguages.includes(effectiveLanguage)
-    ) {
+    if (!targetLanguages.includes(effectiveLanguage)) {
       throw new BadRequestException(
         `Language ${effectiveLanguage} is not in approved target languages for this book`,
       );
@@ -200,11 +215,16 @@ export class BookVersionService {
         const rightsPendingCountryCodes = siblingVersion?.rightsPendingCountryCodes;
         const rightsRequiredActions = siblingVersion?.rightsRequiredActions;
 
-        // Copy geo-block fields from sibling or compute from profile/context
+        // WP-10.9 (R1-03): the obligation to geo-block is a property of the clearance and is
+        // inherited; the confirmation that it was configured is a property of this version's own
+        // rules, and a version that has just been created has none. Copying it made the version
+        // claim a configuration it does not have and softened gate block 6.13 to a warning.
         const rightsGeoBlockRequired = siblingVersion?.rightsGeoBlockRequired ?? false;
-        const rightsGeoBlockConfigured = siblingVersion?.rightsGeoBlockConfigured ?? false;
-        const rightsGeoBlockConfiguredAt = siblingVersion?.rightsGeoBlockConfiguredAt ?? null;
-        const rightsGeoBlockNotesRu = siblingVersion?.rightsGeoBlockNotesRu ?? null;
+        const rightsGeoBlockConfigured = false;
+        const rightsGeoBlockConfiguredAt = null;
+        // The notes are written by `verifyRulesForVersion` together with the confirmation, so they
+        // belong to it: keeping them would leave "rules checked" text on an unverified version.
+        const rightsGeoBlockNotesRu = null;
 
         const newVersion = await tx.bookVersion.create({
           data: {
@@ -252,11 +272,15 @@ export class BookVersionService {
             rightsGeoBlockConfigured,
             rightsGeoBlockConfiguredAt,
             rightsGeoBlockNotesRu,
+            rightsGeoBlockVerifiedAt: null,
+            rightsGeoBlockVerifiedByUserId: null,
           } as Prisma.BookVersionUncheckedCreateInput & {
             rightsGeoBlockRequired: boolean;
             rightsGeoBlockConfigured: boolean;
             rightsGeoBlockConfiguredAt: Date | null;
             rightsGeoBlockNotesRu: string | null;
+            rightsGeoBlockVerifiedAt: Date | null;
+            rightsGeoBlockVerifiedByUserId: string | null;
           },
           include: { seo: true },
         });

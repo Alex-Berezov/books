@@ -115,6 +115,19 @@ describe('RightsIntakeManifestService', () => {
       await expect(service.generate('intake-1')).rejects.toThrow(BadRequestException);
     });
 
+    // WP-10.3 (R4-04): фильтр статусов фазы 2 был чёрным списком и не знал о статусе фазы 19,
+    // поэтому манифест выгружался посреди юридической проверки, а в `intake.workflowStatus`
+    // манифеста уезжало значение, которого ТЗ фазы 2 там не допускает.
+    it('throws BadRequestException for LAWYER_REVIEW_REQUIRED and stores nothing', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ workflowStatus: 'LAWYER_REVIEW_REQUIRED' }),
+      );
+
+      await expect(service.generate('intake-1')).rejects.toThrow(BadRequestException);
+      expect(files.trySaveText).not.toHaveBeenCalled();
+      expect(prisma.rightsIntake.update).not.toHaveBeenCalled();
+    });
+
     it('normalizes plannedComponents null to []', async () => {
       prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake({ plannedComponents: null }));
 

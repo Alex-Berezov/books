@@ -13,6 +13,7 @@ import {
   parseRiskLevel,
   type RiskAssessmentInput,
 } from '../rights-lawyer/rights-risk.util';
+import { APPROVABLE_INTAKE_STATUSES } from './rights-intake.constants';
 import { RightsProfileService } from './rights-profile.service';
 import { ApproveRightsReviewDto } from './dto/approve-rights-review.dto';
 import { RejectRightsReviewDto } from './dto/reject-rights-review.dto';
@@ -232,9 +233,10 @@ export class RightsApprovalService {
     }
 
     const intakeStatus = intake['workflowStatus'] as string;
-    if (intakeStatus !== 'HUMAN_REVIEW_REQUIRED' && intakeStatus !== 'REVIEW_IMPORTED') {
+    // WP-10.3 (R3-06): белый список фазы 5 — см. `APPROVABLE_INTAKE_STATUSES`.
+    if (!APPROVABLE_INTAKE_STATUSES.includes(intakeStatus)) {
       throw new BadRequestException(
-        `Cannot approve: intake status is '${intakeStatus}', expected 'HUMAN_REVIEW_REQUIRED' or 'REVIEW_IMPORTED'`,
+        `Cannot approve: intake status is '${intakeStatus}', expected one of ${APPROVABLE_INTAKE_STATUSES.join(', ')}`,
       );
     }
 

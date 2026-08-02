@@ -227,6 +227,25 @@ describe('RightsReviewImportService', () => {
     );
   });
 
+  // WP-10.3 (R4-04): фильтр статусов фазы 3 был чёрным списком и не знал о статусе фазы 19.
+  // Импорт молча вытаскивал интейк из юридической проверки в REVIEW_IMPORTED, после чего
+  // условные апдейты фазы 19 (`workflowStatus: 'LAWYER_REVIEW_REQUIRED'`) не находили строку.
+  it('import forbidden for LAWYER_REVIEW_REQUIRED and does not move the intake', async () => {
+    prisma.rightsIntake.findUnique.mockResolvedValue(
+      mockIntake({ workflowStatus: 'LAWYER_REVIEW_REQUIRED' }),
+    );
+    prisma.rightsReviewImport.updateMany.mockResolvedValue({ count: 0 });
+    prisma.$transaction.mockImplementation((fn: (tx: PrismaStub) => unknown) => fn(prisma));
+    prisma.rightsReviewImport.create.mockResolvedValue({ id: 'import-1' });
+    prisma.rightsIntake.update.mockResolvedValue({});
+
+    await expect(service.create('intake-1', createDto(), 'user-1')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(prisma.rightsIntake.update).not.toHaveBeenCalled();
+    expect(prisma.rightsReviewImport.create).not.toHaveBeenCalled();
+  });
+
   it('import allowed for HUMAN_REVIEW_REQUIRED (re-import)', async () => {
     prisma.rightsIntake.findUnique.mockResolvedValue(
       mockIntake({ workflowStatus: 'HUMAN_REVIEW_REQUIRED' }),

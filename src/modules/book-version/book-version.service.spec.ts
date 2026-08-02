@@ -430,6 +430,150 @@ describe('BookVersionService', () => {
     await expect(service.create('b1', dto)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  /**
+   * WP-10.6 (R2-02) + WP-10.9 (R2-03). Phase 6 made rights the only entrance for content: a book
+   * without an approved intake gets no versions, and a version gets no language the intake did not
+   * clear. Both guards existed and neither was covered — the sanctioned path had 27 tests, the
+   * forbidden ones none. The language guard was also written fail-open (`intake?.targetLanguages &&
+   * !includes(...)`): a missing intake row or a JSON `null` list turned it off silently.
+   */
+  describe('creation integrity: the forbidden paths stay closed', () => {
+    const dto: CreateBookVersionDto = {
+      language: Language.fr,
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+    };
+
+    const arrangeBook = (rightsIntakeId: string | null) => {
+      (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+        id: 'b1',
+        rightsIntakeId,
+        currentRightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+      });
+      (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
+    };
+
+    it('refuses a version for a book without an approved rights clearance', async () => {
+      arrangeBook(null);
+
+      await expect(service.create('b1', dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.bookVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a language the intake did not clear', async () => {
+      arrangeBook('intake-1');
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+        id: 'intake-1',
+        targetLanguages: ['en', 'es'],
+      });
+
+      await expect(service.create('b1', dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.bookVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses creation when the referenced intake row is gone (R2-03)', async () => {
+      arrangeBook('intake-1');
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.create('b1', dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.bookVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses creation when the intake carries a JSON null instead of a language list (R2-03)', async () => {
+      arrangeBook('intake-1');
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+        id: 'intake-1',
+        targetLanguages: null,
+      });
+
+      await expect(service.create('b1', dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.bookVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses creation when the intake cleared no language at all (R2-03)', async () => {
+      arrangeBook('intake-1');
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+        id: 'intake-1',
+        targetLanguages: [],
+      });
+
+      await expect(service.create('b1', dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.bookVersion.create).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * WP-10.9 (R1-03). Geo-block rules belong to a version, so a freshly created version has none.
+   * Copying `rightsGeoBlockConfigured` from a sibling made the version claim a configuration it
+   * does not have, and gate block 6.13 answered with a warning instead of a blocker.
+   */
+  it('does not inherit the geo-block confirmation from the sibling version', async () => {
+    (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+      id: 'b1',
+      rightsIntakeId: 'intake-1',
+      currentRightsProfileId: 'profile-1',
+      approvedRightsReviewId: 'review-1',
+    });
+    (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+      id: 'intake-1',
+      targetLanguages: ['en', 'es'],
+    });
+    (prisma.bookVersion.findFirst as jest.Mock)
+      .mockResolvedValueOnce(null) // duplicate-language check
+      .mockResolvedValueOnce({
+        id: 'sibling-v',
+        primaryCategoryId: null,
+        rightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+        rightsStatus: 'APPROVED',
+        rightsAllowedCountryCodes: [],
+        rightsBlockedCountryCodes: ['GB'],
+        rightsLicenseRequiredCountryCodes: [],
+        rightsPendingCountryCodes: [],
+        rightsRequiredActions: [],
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockConfiguredAt: new Date('2026-07-26T10:00:00Z'),
+        rightsGeoBlockNotesRu: 'Правила проверены редактором',
+      });
+    (prisma.bookCategory.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.bookTag.findMany as jest.Mock).mockResolvedValue([]);
+    const now = new Date();
+    (prisma.bookVersion.create as jest.Mock).mockResolvedValue({
+      id: 'new-v',
+      bookId: 'b1',
+      language: Language.es,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await service.create('b1', {
+      language: Language.es,
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+    } as CreateBookVersionDto);
+
+    const createArgs = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
+    // The obligation is inherited, the confirmation is not.
+    expect(createArgs.data.rightsGeoBlockRequired).toBe(true);
+    expect(createArgs.data.rightsGeoBlockConfigured).toBe(false);
+    expect(createArgs.data.rightsGeoBlockConfiguredAt).toBeNull();
+    expect(createArgs.data.rightsGeoBlockNotesRu).toBeNull();
+    expect(createArgs.data.rightsGeoBlockVerifiedAt).toBeNull();
+    expect(createArgs.data.rightsGeoBlockVerifiedByUserId).toBeNull();
+  });
+
   it('updates version and updates existing seo', async () => {
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValueOnce({
       id: 'v1',

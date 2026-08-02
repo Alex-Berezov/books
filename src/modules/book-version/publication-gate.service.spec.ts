@@ -968,6 +968,126 @@ describe('PublicationGateService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // WP-10.6 (R1-02): seven codes were emitted by the gate and asserted by no test at all. The
+  // code is correct — what was missing is the wiring check, so a regression here would have
+  // passed CI unnoticed. Three of them are Phase 8 in the gate: the content hash blockers.
+  // ---------------------------------------------------------------------------
+
+  describe('gate codes without a test of their own (R1-02)', () => {
+    const arrange = (
+      versionOverrides: Record<string, unknown> = {},
+      rows: { review?: Record<string, unknown>; profile?: Record<string, unknown> } = {},
+    ) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        ...versionOverrides,
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue({
+        ...baseReview,
+        ...(rows.review ?? {}),
+      });
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue({
+        ...baseProfile,
+        ...(rows.profile ?? {}),
+      });
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    it('blocks when the rights review was rejected by a human', async () => {
+      arrange({}, { review: { status: 'HUMAN_REJECTED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_REVIEW_REJECTED')).toBe(true);
+    });
+
+    it('blocks when the rights profile was rejected', async () => {
+      arrange({}, { profile: { status: 'REJECTED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_PROFILE_REJECTED')).toBe(true);
+    });
+
+    it('blocks when the rights profile was archived', async () => {
+      arrange({}, { profile: { status: 'ARCHIVED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_PROFILE_ARCHIVED')).toBe(true);
+    });
+
+    it('blocks when the version carries no confirmation that geo-block was verified', async () => {
+      arrange({
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockVerifiedAt: null,
+      });
+      mockGeoBlockRuleService.getActiveRulesForVersion.mockResolvedValue([
+        {
+          id: 'rule-1',
+          countryCode: 'GB',
+          scope: GeoBlockScope.LANGUAGE_EDITION,
+          verifiedAt: new Date(),
+        },
+      ] as never);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'GEO_BLOCK_VERIFICATION_MISSING')).toBe(
+        true,
+      );
+    });
+
+    it('blocks a version that has no content hash baseline at all', async () => {
+      arrange({ rightsContentHash: null });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'MISSING_RIGHTS_CONTENT_HASH')).toBe(
+        true,
+      );
+      expect(result.contentHashBaseline).toBeNull();
+      expect(result.contentHashMatches).toBeNull();
+    });
+
+    it('blocks while the recheck flag set by the stale triggers is still on', async () => {
+      arrange({ rightsRecheckRequired: true });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_RECHECK_REQUIRED')).toBe(true);
+      expect(result.rightsRecheckRequired).toBe(true);
+    });
+
+    it('blocks when the live content hash no longer matches the approved baseline', async () => {
+      arrange();
+      mockRightsContentHashService.computeVersionHash.mockResolvedValue({
+        hash: 'changed-hash-999',
+        algorithmVersion: '1.0',
+      } as never);
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED');
+
+      expect(result.canPublish).toBe(false);
+      expect(reason?.details).toEqual({
+        baselineHash: 'baseline-hash-123',
+        currentHash: 'changed-hash-999',
+        algorithmVersion: '1.0',
+      });
+      expect(result.contentHashMatches).toBe(false);
+      expect(result.contentHashCurrent).toBe('changed-hash-999');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // 6.18 Rights claims (Phase 16)
   // ---------------------------------------------------------------------------
 

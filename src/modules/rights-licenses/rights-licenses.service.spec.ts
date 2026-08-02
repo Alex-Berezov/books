@@ -311,6 +311,139 @@ describe('RightsLicensesService', () => {
     });
   });
 
+  /**
+   * WP-10.1 (R0-01): `RightsLicenseLink` — единственная запись о том, какую страну, компонент
+   * или версию покрывала лицензия. По решению WP-0.4 связь удаляется физически, поэтому
+   * отвязка обязана оставить событие, по которому связь восстанавливается, и записать его
+   * в той же транзакции, что и удаление.
+   *
+   * Двойник ниже имитирует транзакцию: запись через tx-клиент попадает в «БД» только после
+   * успешного завершения коллбэка, поэтому тест на откат проверяет атомарность, а не вызов.
+   */
+  describe('unlink — след отвязки лицензии (WP-10.1)', () => {
+    interface Write {
+      model: string;
+      data: Record<string, unknown>;
+    }
+
+    const linkRow = {
+      id: 'link-1',
+      rightsLicenseId: 'lic-1',
+      linkType: RightsLicenseLinkType.TERRITORY_DECISION,
+      rightsProfileId: null,
+      rightsComponentId: null,
+      componentTerritoryAssessmentId: null,
+      territoryDecisionId: 'td-9',
+      sourceEditionId: null,
+      rightsEvidenceId: null,
+      bookVersionId: null,
+      coversCountryCodes: ['DE', 'FR'],
+      notesRu: 'Покрывает Германию и Францию',
+      createdByUserId: 'user-0',
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+
+    const createDouble = (onEventCreate?: () => void) => {
+      const committed: Write[] = [];
+
+      const clientFor = (buffer: Write[]) => ({
+        rightsLicense: {
+          findUnique: jest.fn().mockResolvedValue(makeRecord()),
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn(),
+          update: jest.fn(),
+          count: jest.fn().mockResolvedValue(0),
+        },
+        rightsLicenseLink: {
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(linkRow),
+          create: jest.fn(),
+          delete: jest.fn((args: { where: { id: string } }) => {
+            buffer.push({ model: 'rightsLicenseLink.delete', data: args.where });
+            return Promise.resolve(linkRow);
+          }),
+        },
+        rightsLicenseEvent: {
+          findMany: jest.fn().mockResolvedValue([]),
+          create: jest.fn((args: { data: Record<string, unknown> }) => {
+            onEventCreate?.();
+            buffer.push({ model: 'rightsLicenseEvent.create', data: args.data });
+            return Promise.resolve(args.data);
+          }),
+        },
+        rightsProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'profile-1' }) },
+        bookVersion: { findUnique: jest.fn().mockResolvedValue(null) },
+        mediaAsset: { findUnique: jest.fn().mockResolvedValue(null) },
+        rightsComponent: { findMany: jest.fn().mockResolvedValue([]) },
+        territoryDecision: { findMany: jest.fn().mockResolvedValue([]) },
+      });
+
+      const base = clientFor(committed);
+
+      const client = {
+        ...base,
+        $transaction: async <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => {
+          const pending: Write[] = [];
+          const result = await callback(clientFor(pending));
+          committed.push(...pending);
+          return result;
+        },
+      };
+
+      return { committed, client };
+    };
+
+    const buildService = (client: unknown): RightsLicensesService =>
+      new RightsLicensesService(
+        client as PrismaService,
+        new RightsLicenseCoverageService(
+          client as PrismaService,
+          new RightsClearanceResolverService(client as PrismaService),
+        ),
+      );
+
+    it('пишет событие UNLINKED, по которому восстанавливается обе стороны связи', async () => {
+      const double = createDouble();
+
+      await buildService(double.client).unlink('lic-1', 'link-1', 'user-42');
+
+      const events = double.committed.filter(
+        (write) => write.model === 'rightsLicenseEvent.create',
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0].data).toEqual(
+        expect.objectContaining({
+          rightsLicenseId: 'lic-1',
+          eventType: 'UNLINKED',
+          createdByUserId: 'user-42',
+        }),
+      );
+      expect(events[0].data.payload).toEqual(
+        expect.objectContaining({
+          linkId: 'link-1',
+          linkType: RightsLicenseLinkType.TERRITORY_DECISION,
+          territoryDecisionId: 'td-9',
+          coversCountryCodes: ['DE', 'FR'],
+          linkedAt: NOW.toISOString(),
+        }),
+      );
+    });
+
+    it('откат транзакции не оставляет ни удалённой связи, ни события', async () => {
+      const double = createDouble(() => {
+        throw new Error('journal write failed');
+      });
+
+      await expect(
+        buildService(double.client).unlink('lic-1', 'link-1', 'user-42'),
+      ).rejects.toThrow('journal write failed');
+
+      expect(double.committed).toHaveLength(0);
+    });
+  });
+
   describe('findOne', () => {
     it('throws NotFoundException for an unknown license', async () => {
       prisma.rightsLicense.findUnique.mockResolvedValue(null);
