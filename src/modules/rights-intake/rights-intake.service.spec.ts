@@ -473,5 +473,41 @@ describe('RightsIntakeService', () => {
       });
       await expect(service.archive('i1')).rejects.toThrow(BadRequestException);
     });
+
+    // WP-L.3: смягчённая сторона — администратору статус не мешает. Строгая сторона остаётся
+    // выше: те же статусы без `force` по-прежнему отклоняются.
+    it.each(['REVIEW_IMPORTED', 'HUMAN_REVIEW_REQUIRED', 'APPROVED', 'REJECTED', 'BOOK_CREATED'])(
+      'archives %s intake when forced',
+      async (workflowStatus) => {
+        prisma.rightsIntake.findUnique.mockResolvedValue({ id: 'i1', workflowStatus });
+        prisma.rightsIntake.update.mockResolvedValue({
+          id: 'i1',
+          workflowStatus: 'ARCHIVED',
+          archivedAt: new Date(),
+        });
+
+        const result = await service.archive('i1', { force: true });
+        expect(result.workflowStatus).toBe('ARCHIVED');
+        expect(prisma.rightsIntake.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'i1' },
+            data: expect.objectContaining({
+              workflowStatus: 'ARCHIVED',
+              archivedAt: expect.any(Date),
+            }),
+          }),
+        );
+      },
+    );
+
+    // Единственное, что `force` не обходит: повторная архивация. Иначе `archivedAt` переписывался
+    // бы на новую дату и след «когда запись вывели из работы» терялся.
+    it('throws when forcing an already archived intake', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'ARCHIVED',
+      });
+      await expect(service.archive('i1', { force: true })).rejects.toThrow(BadRequestException);
+    });
   });
 });

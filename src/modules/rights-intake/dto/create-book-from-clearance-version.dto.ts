@@ -32,16 +32,24 @@ export class CreateBookFromClearanceVersionDto {
   @MaxLength(500)
   author!: string;
 
-  @ApiProperty({ description: 'Description of the book' })
+  /**
+   * WP-L.1: описание и обложка — контентная работа, а не часть клиренса. Требовать их здесь
+   * означало заставлять редактора сочинять текст в форме прав, чтобы потом переписать его в
+   * разделе «Книги». Канал остаётся способен их принять — будущий агент переноса из Gutenberg
+   * пришлёт их сразу, — но обязательными они больше не являются.
+   *
+   * Компенсация: пустое описание или обложка закрывают публикацию блокером гейта
+   * `VERSION_CONTENT_INCOMPLETE`. Версия заводится черновиком, наружу пустая оболочка не уйдёт.
+   */
+  @ApiPropertyOptional({ description: 'Description of the book' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  @MinLength(1)
-  description!: string;
+  description?: string | null;
 
-  @ApiProperty({ description: 'Cover image URL' })
+  @ApiPropertyOptional({ description: 'Cover image URL' })
+  @IsOptional()
   @IsUrl()
-  @IsNotEmpty()
-  coverImageUrl!: string;
+  coverImageUrl?: string | null;
 
   @ApiProperty({ enum: BookType, description: 'Type of the book' })
   @IsEnum(BookType)

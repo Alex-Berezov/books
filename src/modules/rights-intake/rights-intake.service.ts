@@ -367,12 +367,27 @@ export class RightsIntakeService {
     });
   }
 
-  async archive(id: string) {
+  /**
+   * WP-L.3: `force` снимает ограничение по статусу и доступен только администратору
+   * (`DELETE :id/force`). Ошибочно заведённую или тестовую проверку невозможно было убрать из
+   * списка, как только она уходила дальше `READY_FOR_AGENT`: разрешённых переходов из
+   * `REVIEW_IMPORTED`, `APPROVED` и `BOOK_CREATED` нет вовсе, и запись оставалась в работе навсегда.
+   *
+   * Физического удаления по-прежнему нет (ADR-009): это тот же перевод в `ARCHIVED` с `archivedAt`,
+   * юридический след цепочки `intake → import → review → approval → снимок на версии` остаётся
+   * целым. Публикация уже созданной книги не затрагивается: гейт читает у интейка только
+   * `targetCountryCodes` и никогда `workflowStatus`.
+   */
+  async archive(id: string, options: { force?: boolean } = {}) {
     const intake = await this.getById(id);
     if (intake.workflowStatus === 'ARCHIVED') {
       throw new BadRequestException('Rights intake is already archived');
     }
-    if (intake.workflowStatus !== 'DRAFT' && intake.workflowStatus !== 'READY_FOR_AGENT') {
+    if (
+      !options.force &&
+      intake.workflowStatus !== 'DRAFT' &&
+      intake.workflowStatus !== 'READY_FOR_AGENT'
+    ) {
       throw new BadRequestException(
         `Cannot archive intake with status '${intake.workflowStatus}'. Only DRAFT or READY_FOR_AGENT can be archived.`,
       );

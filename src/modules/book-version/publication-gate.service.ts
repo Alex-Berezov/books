@@ -4,6 +4,11 @@ import {
   PublicationGateResultDto,
   PublicationGateReasonDto,
 } from './dto/publication-gate-result.dto';
+import {
+  DEFAULT_PUBLICATION_GATE_STAGE,
+  isPreparationBlockingGateCode,
+  PublicationGateStage,
+} from './publication-gate.constants';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { UNASSESSED_LANGUAGE_STATUS } from '../rights-intake/rights-review-import.constants';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
@@ -18,6 +23,8 @@ interface VersionWithGeoBlock {
   id: string;
   bookId: string;
   language: string | null;
+  description: string | null;
+  coverImageUrl: string | null;
   rightsProfileId: string | null;
   approvedRightsReviewId: string | null;
   rightsStatus: string | null;
@@ -711,10 +718,43 @@ export class PublicationGateService {
       }
     }
 
+    // 6.22 Наполненность версии. WP-L.1 убрал описание и обложку из обязательных полей создания
+    // книги из клиренса: это контентная работа, и делается она в разделе «Книги», а не в форме
+    // прав. Компенсация — здесь: незаполненная оболочка наружу не уходит. Проверка не про права,
+    // но именно этот гейт стоит перед публикацией, и код добавлен аддитивно (ADR-008). Подготовку
+    // он не запрещает намеренно — наполнять версию и надо после создания.
+    const missingContentFields: string[] = [];
+    if (!version.description || version.description.trim() === '') {
+      missingContentFields.push('description');
+    }
+    if (!version.coverImageUrl || version.coverImageUrl.trim() === '') {
+      missingContentFields.push('coverImageUrl');
+    }
+    if (missingContentFields.length > 0) {
+      blockingReasons.push(
+        new PublicationGateReasonDto({
+          code: 'VERSION_CONTENT_INCOMPLETE',
+          severity: 'BLOCKER',
+          messageRu:
+            'Версия не наполнена: нет описания или обложки. Заполните их в разделе «Книги» — публикация пустой карточки запрещена.',
+          details: { missingFields: missingContentFields },
+        }),
+      );
+    }
+
+    // WP-H: тот же список блокеров отвечает на второй вопрос — «можно ли готовить материал».
+    // Публикационный вердикт считается по полному списку и не ослаблен; подготовку запрещает
+    // только белый список кодов, при которых с произведением нельзя работать вообще.
+    const preparationBlockingReasons = blockingReasons.filter((reason) =>
+      isPreparationBlockingGateCode(reason.code),
+    );
+
     return new PublicationGateResultDto({
       versionId: version.id,
       bookId: book.id,
       canPublish: blockingReasons.length === 0,
+      canPrepare: preparationBlockingReasons.length === 0,
+      preparationBlockingReasons,
       checkedAt: new Date().toISOString(),
       rightsProfileId: version.rightsProfileId,
       approvedRightsReviewId: version.approvedRightsReviewId,
@@ -818,14 +858,37 @@ export class PublicationGateService {
       .map((countryCode) => countryCode.toUpperCase());
   }
 
-  async assertVersionCanPublish(versionId: string): Promise<void> {
+  /**
+   * WP-H: стадия — параметр охраны, а не фильтр ответа. `checkVersionCanPublish` всегда отдаёт
+   * оба вердикта целиком, поэтому прочитать `canPublish: true` у запроса стадии подготовки
+   * невозможно; выбирать, какой вердикт enforce'ится, приходится здесь и явно.
+   */
+  async assertVersionCanPublish(
+    versionId: string,
+    stage: PublicationGateStage = DEFAULT_PUBLICATION_GATE_STAGE,
+  ): Promise<void> {
     const result = await this.checkVersionCanPublish(versionId);
+
+    if (stage === 'PREPARATION') {
+      if (!result.canPrepare) {
+        throw new BadRequestException({
+          message: 'Preparation blocked by rights gate',
+          code: 'RIGHTS_PREPARATION_BLOCKED',
+          canPublish: result.canPublish,
+          canPrepare: false,
+          blockingReasons: result.preparationBlockingReasons,
+          warnings: result.warnings,
+        });
+      }
+      return;
+    }
 
     if (!result.canPublish) {
       throw new BadRequestException({
         message: 'Publication blocked by rights gate',
         code: 'RIGHTS_PUBLICATION_BLOCKED',
         canPublish: false,
+        canPrepare: result.canPrepare,
         blockingReasons: result.blockingReasons,
         warnings: result.warnings,
       });

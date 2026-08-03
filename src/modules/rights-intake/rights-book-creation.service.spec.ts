@@ -9,7 +9,7 @@ import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto
 const createPrismaStub = () => {
   const stub: Record<string, unknown> = {
     book: { create: jest.fn(), findUnique: jest.fn() },
-    bookVersion: { create: jest.fn() },
+    bookVersion: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
     rightsIntake: { findUnique: jest.fn(), update: jest.fn() },
     rightsReview: { findUnique: jest.fn() },
     rightsProfile: { findFirst: jest.fn() },
@@ -237,102 +237,115 @@ describe('RightsBookCreationService', () => {
       );
     });
 
-    it('should throw BadRequestException if there are unresolved blocking actions', async () => {
-      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeIntake(),
-      );
-      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeReview(),
-      );
-      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
-        { id: 'action-1', isBlocking: true, status: 'PENDING' },
-      ]);
-
-      await expect(service.createBookFromApprovedClearance('intake-1', makeDto())).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-
-    it('should allow creation if blocking action is COMPLETED', async () => {
-      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeIntake(),
-      );
-      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeReview(),
-      );
-      const findManyMock = (prisma['rightsAction'] as Record<string, jest.Mock>).findMany;
-      findManyMock
-        .mockResolvedValueOnce([{ id: 'action-1', isBlocking: true, status: 'COMPLETED' }])
-        .mockResolvedValueOnce([
+    // WP-H: создание книги — подготовка, а не выпуск. Незакрытое блокирующее действие здесь
+    // больше не отказывает: сделать его часто нельзя, пока книги нет. Проверка осталась при
+    // утверждении интейка и в гейте публикации (блок 6.12) — см. тесты обеих сторон там.
+    describe.each([
+      ['PENDING', 'unresolved'],
+      ['COMPLETED', 'closed'],
+      ['WAIVED', 'waived'],
+    ])('with a %s blocking action (%s)', (status) => {
+      it('creates the book and carries the action into the rights snapshot', async () => {
+        (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeIntake(),
+        );
+        (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeReview(),
+        );
+        (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
           {
             id: 'action-1',
             isBlocking: true,
-            status: 'COMPLETED',
+            status,
             actionType: 'LICENSE_CHECK',
             descriptionRu: 'Test',
             affectedCountryCodes: [],
           },
         ]);
-      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
-      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
 
-      const txStub = {
-        book: {
-          create: jest.fn().mockResolvedValue({
-            id: 'book-1',
-            slug: 'test-book',
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }),
-        },
-        bookVersion: { create: jest.fn().mockResolvedValue({ id: 'version-1' }) },
-        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
-      };
-      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+        const bookVersionCreate = jest.fn().mockResolvedValue({ id: 'version-1' });
+        const txStub = {
+          book: {
+            create: jest.fn().mockResolvedValue({
+              id: 'book-1',
+              slug: 'test-book',
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            }),
+          },
+          bookVersion: { create: bookVersionCreate },
+          rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+        };
+        (prisma['$transaction'] as jest.Mock).mockImplementation((fn) =>
+          Promise.resolve(fn(txStub)),
+        );
 
-      const result = await service.createBookFromApprovedClearance('intake-1', makeDto());
-      expect(result).toBeDefined();
+        const result = await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+        expect(result).toBeDefined();
+        const createArgs = bookVersionCreate.mock.calls[0]?.[0] as {
+          data: Record<string, unknown>;
+        };
+        expect(createArgs.data.rightsRequiredActions).toEqual([
+          expect.objectContaining({ id: 'action-1', status, isBlocking: true }),
+        ]);
+      });
     });
 
-    it('should allow creation if blocking action is WAIVED', async () => {
-      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeIntake(),
-      );
-      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeReview(),
-      );
-      const findManyMock = (prisma['rightsAction'] as Record<string, jest.Mock>).findMany;
-      findManyMock
-        .mockResolvedValueOnce([{ id: 'action-1', isBlocking: true, status: 'WAIVED' }])
-        .mockResolvedValueOnce([
-          {
-            id: 'action-1',
-            isBlocking: true,
-            status: 'WAIVED',
-            actionType: 'LICENSE_CHECK',
-            descriptionRu: 'Test',
-            affectedCountryCodes: [],
-          },
-        ]);
-      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
-      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
-
-      const txStub = {
-        book: {
-          create: jest.fn().mockResolvedValue({
-            id: 'book-1',
-            slug: 'test-book',
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }),
-        },
-        bookVersion: { create: jest.fn().mockResolvedValue({ id: 'version-1' }) },
-        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+    // WP-H: каждый отказ несёт машинный код — фронт отличает «интейк не утверждён» от «слаг занят».
+    it('carries a machine-readable code in every refusal', async () => {
+      const readCode = async (arrange: () => void): Promise<unknown> => {
+        arrange();
+        try {
+          await service.createBookFromApprovedClearance('intake-1', makeDto());
+        } catch (e) {
+          const response = (e as BadRequestException).getResponse() as Record<string, unknown>;
+          return response.code;
+        }
+        return undefined;
       };
-      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
 
-      const result = await service.createBookFromApprovedClearance('intake-1', makeDto());
-      expect(result).toBeDefined();
+      const intakeFindUnique = (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique;
+      const reviewFindUnique = (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique;
+
+      await expect(readCode(() => intakeFindUnique.mockResolvedValue(null))).resolves.toBe(
+        'BOOK_CREATION_INTAKE_NOT_FOUND',
+      );
+      await expect(
+        readCode(() =>
+          intakeFindUnique.mockResolvedValue(
+            makeIntake({ workflowStatus: 'HUMAN_REVIEW_REQUIRED' }),
+          ),
+        ),
+      ).resolves.toBe('BOOK_CREATION_INTAKE_NOT_APPROVED');
+      await expect(
+        readCode(() => {
+          intakeFindUnique.mockResolvedValue(makeIntake());
+          reviewFindUnique.mockResolvedValue(
+            makeReview({
+              rightsProfile: {
+                id: 'profile-1',
+                rightsIntakeId: 'intake-1',
+                isCurrent: true,
+                status: 'APPROVED',
+                publicationGate: 'BLOCK',
+              },
+            }),
+          );
+        }),
+      ).resolves.toBe('BOOK_CREATION_PUBLICATION_GATE_BLOCK');
+      await expect(
+        readCode(() => {
+          intakeFindUnique.mockResolvedValue(makeIntake());
+          reviewFindUnique.mockResolvedValue(makeReview());
+          (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+          (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            id: 'book-1',
+          });
+        }),
+      ).resolves.toBe('BOOK_CREATION_SLUG_TAKEN');
     });
 
     it('should throw ConflictException if slug already exists', async () => {
@@ -568,8 +581,9 @@ describe('RightsBookCreationService', () => {
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
         makeReview(),
       );
-      const findManyMock = (prisma['rightsAction'] as Record<string, jest.Mock>).findMany;
-      findManyMock.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      // WP-H: действия читаются один раз — только для слепка прав; проверки на блокирующее
+      // действие в этом пути больше нет.
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
         {
           id: 'action-1',
           actionType: 'LICENSE_CHECK',
@@ -976,6 +990,242 @@ describe('RightsBookCreationService', () => {
       expect(txStub.bookVersionContributor.create).toHaveBeenCalled();
       // Порядок и есть проверяемое свойство: baseline снимается уже с участниками.
       expect(order).toEqual(['contributor', 'baseline']);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // WP-L.1: описание и обложка перестали быть обязательными в этом канале.
+  // ---------------------------------------------------------------------------
+  describe('optional content fields (WP-L.1)', () => {
+    const arrangeCreate = () => {
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview(),
+      );
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const bookVersionCreate = jest
+        .fn()
+        .mockResolvedValue({ id: 'version-1', language: 'en', type: 'text' });
+      const txStub = {
+        book: {
+          create: jest.fn().mockResolvedValue({
+            id: 'book-1',
+            slug: 'test-book',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        },
+        bookVersion: { create: bookVersionCreate },
+        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+      };
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      return bookVersionCreate;
+    };
+
+    it('writes empty strings when the request carries no description and no cover', async () => {
+      const bookVersionCreate = arrangeCreate();
+      const dto = makeDto();
+      delete dto.versions[0].description;
+      delete dto.versions[0].coverImageUrl;
+
+      await service.createBookFromApprovedClearance('intake-1', dto);
+
+      // Колонки `NOT NULL` без дефолта (инцидент R4-01): `undefined` уронил бы вставку.
+      const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data['description']).toBe('');
+      expect(data['coverImageUrl']).toBe('');
+      expect(data['status']).toBe('draft');
+    });
+
+    // Обратная сторона: переданный контент по-прежнему записывается как есть — будущий агент
+    // переноса из Gutenberg пришлёт описание и обложку сразу.
+    it('keeps the description and the cover when the request does carry them', async () => {
+      const bookVersionCreate = arrangeCreate();
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data['description']).toBe('Test Description');
+      expect(data['coverImageUrl']).toBe('https://example.com/cover.jpg');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // WP-L.2: привязка клиренса к уже существующей книге.
+  // ---------------------------------------------------------------------------
+  describe('attaching the clearance to an existing book (WP-L.2)', () => {
+    const existingBook = {
+      id: 'book-9',
+      slug: 'test-book',
+      currentRightsProfileId: null,
+      approvedRightsReviewId: null,
+    };
+
+    const arrangeAttach = (
+      bookOverrides: Record<string, unknown> = {},
+      versions: Array<Record<string, unknown>> = [
+        { id: 'version-9', language: 'en', type: 'text' },
+      ],
+    ) => {
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview(),
+      );
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+        ...existingBook,
+        ...bookOverrides,
+      });
+      (prisma['bookVersion'] as Record<string, jest.Mock>).findMany.mockResolvedValue(versions);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const txStub = {
+        book: {
+          create: jest.fn(),
+          update: jest.fn().mockResolvedValue({
+            ...existingBook,
+            ...bookOverrides,
+            currentRightsProfileId: 'profile-1',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        },
+        bookVersion: {
+          create: jest.fn(),
+          update: jest.fn().mockResolvedValue({ id: 'version-9', language: 'en', type: 'text' }),
+        },
+        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+        rightsProfileContributor: { findMany: jest.fn().mockResolvedValue([]) },
+        bookVersionContributor: { count: jest.fn().mockResolvedValue(0), create: jest.fn() },
+      };
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      return txStub;
+    };
+
+    const attachDto = () =>
+      ({ slug: 'test-book', attachToExistingBook: true }) as CreateBookFromClearanceDto;
+
+    it('binds the profile to the existing book instead of creating a duplicate', async () => {
+      const txStub = arrangeAttach();
+
+      const result = await service.createBookFromApprovedClearance('intake-1', attachDto());
+
+      expect(txStub.book.create).not.toHaveBeenCalled();
+      expect(txStub.book.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'book-9' },
+          data: expect.objectContaining({
+            currentRightsProfileId: 'profile-1',
+            approvedRightsReviewId: 'review-1',
+            rightsIntakeId: 'intake-1',
+          }),
+        }),
+      );
+      expect(result.rightsProfileId).toBe('profile-1');
+    });
+
+    it('writes the rights snapshot onto the existing versions without touching their content', async () => {
+      const txStub = arrangeAttach();
+
+      await service.createBookFromApprovedClearance('intake-1', attachDto());
+
+      expect(txStub.bookVersion.create).not.toHaveBeenCalled();
+      const call = txStub.bookVersion.update.mock.calls[0][0] as {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      };
+      expect(call.where).toEqual({ id: 'version-9' });
+      expect(call.data['rightsProfileId']).toBe('profile-1');
+      // Контент существующей версии привязка прав не трогает.
+      expect(call.data).not.toHaveProperty('title');
+      expect(call.data).not.toHaveProperty('description');
+      expect(call.data).not.toHaveProperty('coverImageUrl');
+      expect(call.data).not.toHaveProperty('status');
+    });
+
+    it('takes a content hash baseline for the attached version', async () => {
+      arrangeAttach();
+
+      await service.createBookFromApprovedClearance('intake-1', attachDto());
+
+      const calls = (mockRightsContentHashService.initializeVersionBaseline as jest.Mock).mock
+        .calls;
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe('version-9');
+      expect(calls[0][1]).toBe('INITIAL_VERSION_SNAPSHOT');
+    });
+
+    it('leaves the contributors of an existing version alone', async () => {
+      const txStub = arrangeAttach();
+      txStub.bookVersionContributor.count.mockResolvedValue(2);
+
+      await service.createBookFromApprovedClearance('intake-1', attachDto());
+
+      expect(txStub.bookVersionContributor.create).not.toHaveBeenCalled();
+    });
+
+    it('covers only the versions whose language the clearance assessed', async () => {
+      const txStub = arrangeAttach({}, [
+        { id: 'version-en', language: 'en', type: 'text' },
+        { id: 'version-de', language: 'de', type: 'text' },
+      ]);
+
+      await service.createBookFromApprovedClearance('intake-1', attachDto());
+
+      const touched = txStub.bookVersion.update.mock.calls.map(
+        (call) => (call[0] as { where: { id: string } }).where.id,
+      );
+      expect(touched).toEqual(['version-en']);
+    });
+
+    it('refuses when the book carries another live rights profile', async () => {
+      arrangeAttach({ currentRightsProfileId: 'profile-other' });
+
+      await expect(
+        service.createBookFromApprovedClearance('intake-1', attachDto()),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('refuses when the book has no version in a target language', async () => {
+      arrangeAttach({}, [{ id: 'version-de', language: 'de', type: 'text' }]);
+
+      await expect(
+        service.createBookFromApprovedClearance('intake-1', attachDto()),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses when the book does not exist', async () => {
+      arrangeAttach();
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.createBookFromApprovedClearance('intake-1', attachDto()),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses when versions are passed along with the attach flag', async () => {
+      arrangeAttach();
+      const dto = makeDto({ attachToExistingBook: true });
+
+      await expect(service.createBookFromApprovedClearance('intake-1', dto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    // Строгая сторона не тронута: без флага занятый слаг по-прежнему конфликт.
+    it('still refuses a taken slug when not attaching', async () => {
+      arrangeAttach();
+
+      await expect(service.createBookFromApprovedClearance('intake-1', makeDto())).rejects.toThrow(
+        ConflictException,
+      );
     });
   });
 });

@@ -60,6 +60,20 @@ export class PublicationGateResultDto {
   @ApiProperty({ type: [PublicationGateReasonDto] })
   warnings: PublicationGateReasonDto[];
 
+  // WP-H: стадия подготовки. Поля добавлены аддитивно, `canPublish` и `blockingReasons`
+  // по-прежнему отвечают только на вопрос о публикации и ни на один код не ослаблены.
+  @ApiProperty({
+    description:
+      'Можно ли готовить материал версии, пока публикация ещё закрыта. Публикацию не разрешает.',
+  })
+  canPrepare!: boolean;
+
+  @ApiProperty({
+    type: [PublicationGateReasonDto],
+    description: 'Подмножество blockingReasons, запрещающее даже подготовку материала.',
+  })
+  preparationBlockingReasons!: PublicationGateReasonDto[];
+
   @ApiProperty({ nullable: true })
   contentHashBaseline!: string | null;
 
@@ -161,6 +175,8 @@ export class PublicationGateResultDto {
     rightsStatus: string | null;
     blockingReasons: PublicationGateReasonDto[];
     warnings: PublicationGateReasonDto[];
+    canPrepare?: boolean;
+    preparationBlockingReasons?: PublicationGateReasonDto[];
     contentHashBaseline?: string | null;
     contentHashCurrent?: string | null;
     contentHashMatches?: boolean | null;
@@ -200,6 +216,9 @@ export class PublicationGateResultDto {
     this.rightsStatus = data.rightsStatus;
     this.blockingReasons = data.blockingReasons;
     this.warnings = data.warnings;
+    // Fail-closed: не переданная стадия подготовки означает «не разрешено», а не «разрешено».
+    this.canPrepare = data.canPrepare ?? false;
+    this.preparationBlockingReasons = data.preparationBlockingReasons ?? data.blockingReasons;
     this.contentHashBaseline = data.contentHashBaseline ?? null;
     this.contentHashCurrent = data.contentHashCurrent ?? null;
     this.contentHashMatches = data.contentHashMatches ?? null;

@@ -753,7 +753,9 @@ describe('BookVersionService', () => {
 
     const pub = await service.publish('v1');
     expect(pub.status).toBe('published');
-    expect(gateService.assertVersionCanPublish).toHaveBeenCalledWith('v1');
+    // WP-H: публикация обязана звать гейт полной стадией — послабления стадии подготовки
+    // до этого пути не доходят.
+    expect(gateService.assertVersionCanPublish).toHaveBeenCalledWith('v1', 'PUBLICATION');
 
     const unpub = await service.unpublish('v1');
     expect(unpub.status).toBe('draft');

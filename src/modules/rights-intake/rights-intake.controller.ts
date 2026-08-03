@@ -95,6 +95,16 @@ export class RightsIntakeController {
     return this.service.archive(id);
   }
 
+  @Delete(':id/force')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.Admin)
+  @ApiOperation({
+    summary: 'Archive rights intake from any status (admin only, still a soft delete)',
+  })
+  forceArchive(@Param('id') id: string) {
+    return this.service.archive(id, { force: true });
+  }
+
   @Post(':intakeId/reviews/:reviewId/approve')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Approve a rights review (human approval)' })

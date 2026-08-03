@@ -995,7 +995,9 @@ export class BookVersionService {
     const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('BookVersion not found');
 
-    await this.publicationGateService.assertVersionCanPublish(id);
+    // WP-H: публикация всегда охраняется полной стадией — послабления стадии подготовки
+    // сюда не доходят. Стадия передаётся явно, чтобы это было видно на месте вызова.
+    await this.publicationGateService.assertVersionCanPublish(id, 'PUBLICATION');
 
     // Phase 15: record which licenses justified this publication, so a later revocation
     // or expiry can be traced back to what was relied on at publish time.

@@ -141,6 +141,10 @@ describe('PublicationGateService', () => {
     id: 'v1',
     bookId: 'b1',
     language: 'en',
+    // WP-L.1: наполненная версия — базовое состояние фикстуры. Пустые описание и обложка
+    // проверяются отдельными тестами ниже.
+    description: 'Готовое описание версии',
+    coverImageUrl: 'https://cdn.example.com/cover.jpg',
     rightsProfileId: 'profile-1',
     approvedRightsReviewId: 'review-1',
     rightsStatus: 'APPROVED',
@@ -1697,6 +1701,230 @@ describe('PublicationGateService', () => {
       const result = await service.checkVersionCanPublish('v1');
 
       expect(result.canPublish).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // WP-L.1: компенсация к тому, что описание и обложка перестали быть обязательными при создании
+  // книги из клиренса. Требование не отменено — оно переехало туда, где им и место: наружу
+  // ненаполненная версия не уходит, но внутри админки её можно завести и спокойно наполнять.
+  // ---------------------------------------------------------------------------
+  describe('version content completeness (WP-L.1)', () => {
+    const arrangeEmptyContent = (overrides: Record<string, unknown> = {}) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        ...overrides,
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma as unknown as Record<string, { findMany: jest.Mock }>)[
+        'editionRights'
+      ].findMany.mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+    };
+
+    it.each([
+      ['description', { description: '' }],
+      ['coverImageUrl', { coverImageUrl: '' }],
+      ['whitespace-only description', { description: '   ' }],
+    ])('blocks publication of a version with an empty %s', async (_label, overrides) => {
+      arrangeEmptyContent(overrides);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'VERSION_CONTENT_INCOMPLETE')).toBe(
+        true,
+      );
+    });
+
+    it('lists every missing field in the details', async () => {
+      arrangeEmptyContent({ description: '', coverImageUrl: '' });
+
+      const result = await service.checkVersionCanPublish('v1');
+      const reason = result.blockingReasons.find((r) => r.code === 'VERSION_CONTENT_INCOMPLETE');
+
+      expect(reason?.details).toEqual({ missingFields: ['description', 'coverImageUrl'] });
+    });
+
+    // Обратная сторона: наполненная версия нового блокера не получает.
+    it('adds no blocker once the version carries a description and a cover', async () => {
+      arrangeEmptyContent();
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'VERSION_CONTENT_INCOMPLETE')).toBe(
+        false,
+      );
+    });
+
+    // Подготовку он не запрещает намеренно: наполнять версию и надо после создания.
+    it('still allows preparation while the version is empty', async () => {
+      arrangeEmptyContent({ description: '', coverImageUrl: '' });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPrepare).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // WP-H: стадия подготовки. Тот же расчёт отвечает на второй вопрос — «можно ли готовить
+  // материал». Тесты идут парами: смягчение работает / несмягчённый случай по-прежнему закрыт.
+  // ---------------------------------------------------------------------------
+
+  describe('preparation stage (WP-H)', () => {
+    const arrange = (
+      versionOverrides: Record<string, unknown> = {},
+      rows: { review?: Record<string, unknown>; profile?: Record<string, unknown> } = {},
+    ) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        ...versionOverrides,
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue({
+        ...baseReview,
+        ...(rows.review ?? {}),
+      });
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue({
+        ...baseProfile,
+        ...(rows.profile ?? {}),
+      });
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+    };
+
+    it('allows preparation while publication is blocked by an unfinished market', async () => {
+      arrange({ rightsPendingCountryCodes: ['DE'] });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'PENDING_TERRITORIES')).toBe(true);
+      expect(result.canPrepare).toBe(true);
+      expect(result.preparationBlockingReasons).toEqual([]);
+    });
+
+    it('allows preparation while an unresolved blocking action holds the publication', async () => {
+      arrange();
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([{ id: 'action-1' }]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(
+        result.blockingReasons.some((r) => r.code === 'UNRESOLVED_BLOCKING_RIGHTS_ACTION'),
+      ).toBe(true);
+      expect(result.canPrepare).toBe(true);
+    });
+
+    // Обратная сторона — четыре причины, при которых нельзя даже готовить материал.
+    it('forbids preparation when the clearance verdict is BLOCK', async () => {
+      arrange({}, { profile: { publicationGate: 'BLOCK' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPrepare).toBe(false);
+      expect(result.preparationBlockingReasons.map((r) => r.code)).toContain(
+        'PUBLICATION_GATE_BLOCK',
+      );
+    });
+
+    it('forbids preparation when a human rejected the review', async () => {
+      arrange({}, { review: { status: 'HUMAN_REJECTED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPrepare).toBe(false);
+      expect(result.preparationBlockingReasons.map((r) => r.code)).toContain(
+        'RIGHTS_REVIEW_REJECTED',
+      );
+    });
+
+    it('forbids preparation when the rights profile is rejected', async () => {
+      arrange({}, { profile: { status: 'REJECTED' } });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPrepare).toBe(false);
+      expect(result.preparationBlockingReasons.map((r) => r.code)).toContain(
+        'RIGHTS_PROFILE_REJECTED',
+      );
+    });
+
+    it('forbids preparation when a lawyer refused', async () => {
+      arrange();
+      mockRightsLawyerReviewService.evaluateVersionLawyerReview.mockResolvedValue(
+        noLawyerReview({
+          blockers: [
+            {
+              code: 'LAWYER_REVIEW_REJECTED',
+              messageRu: 'Юрист отказал.',
+              lawyerReviewId: 'lr-1',
+              details: null,
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPrepare).toBe(false);
+      expect(result.preparationBlockingReasons.map((r) => r.code)).toContain(
+        'LAWYER_REVIEW_REJECTED',
+      );
+    });
+
+    it('forbids preparation while a rightsholder claim is active', async () => {
+      arrange();
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          activeClaimsCount: 1,
+          blockers: [
+            {
+              code: 'ACTIVE_RIGHTS_CLAIM',
+              severity: 'BLOCKER' as const,
+              messageRu: 'Есть активная претензия.',
+              claimId: 'claim-1',
+              claimNumber: 'C-1',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPrepare).toBe(false);
+      expect(result.preparationBlockingReasons.map((r) => r.code)).toContain('ACTIVE_RIGHTS_CLAIM');
+    });
+
+    it('assertVersionCanPublish(PREPARATION) passes when only publication is blocked', async () => {
+      arrange({ rightsPendingCountryCodes: ['DE'] });
+
+      await expect(service.assertVersionCanPublish('v1', 'PREPARATION')).resolves.toBeUndefined();
+      // Публикация той же версии по-прежнему запрещена.
+      await expect(service.assertVersionCanPublish('v1', 'PUBLICATION')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('assertVersionCanPublish(PREPARATION) throws with its own code when preparation is closed', async () => {
+      arrange({}, { profile: { publicationGate: 'BLOCK' } });
+
+      try {
+        await service.assertVersionCanPublish('v1', 'PREPARATION');
+        throw new Error('expected the preparation stage to throw');
+      } catch (e) {
+        const response = (e as BadRequestException).getResponse() as Record<string, unknown>;
+        expect(response.code).toBe('RIGHTS_PREPARATION_BLOCKED');
+        expect(response.canPrepare).toBe(false);
+      }
+    });
+
+    it('defaults to the publication stage when no stage is given', async () => {
+      arrange({ rightsPendingCountryCodes: ['DE'] });
+
+      await expect(service.assertVersionCanPublish('v1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 });
