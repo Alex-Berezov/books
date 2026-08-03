@@ -9,7 +9,11 @@ import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto
 const createPrismaStub = () => {
   const stub: Record<string, unknown> = {
     book: { create: jest.fn(), findUnique: jest.fn() },
-    bookVersion: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    bookVersion: {
+      create: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     rightsIntake: { findUnique: jest.fn(), update: jest.fn() },
     rightsReview: { findUnique: jest.fn() },
     rightsProfile: { findFirst: jest.fn() },
@@ -1201,9 +1205,27 @@ describe('RightsBookCreationService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('refuses when the book does not exist', async () => {
+    // В приложении «слаг книги» — это `BookVersion.slug`; `Book.slug` остался legacy-фолбэком
+    // (`findBySlug`, `getOverview`). Редактор знает версионный слаг — он в публичном адресе, —
+    // и привязка обязана его понимать.
+    it('finds the book by a version slug when Book.slug does not match', async () => {
+      const txStub = arrangeAttach();
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['bookVersion'] as Record<string, jest.Mock>).findFirst.mockResolvedValue({
+        book: existingBook,
+      });
+
+      await service.createBookFromApprovedClearance('intake-1', attachDto());
+
+      expect(txStub.book.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'book-9' } }),
+      );
+    });
+
+    it('refuses when neither the book slug nor any version slug matches', async () => {
       arrangeAttach();
       (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['bookVersion'] as Record<string, jest.Mock>).findFirst.mockResolvedValue(null);
 
       await expect(
         service.createBookFromApprovedClearance('intake-1', attachDto()),

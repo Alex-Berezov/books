@@ -213,10 +213,23 @@ export class RightsBookCreationService {
 
     // 13. Resolve the target book: create a new one or attach to the existing one (WP-L.2).
     const attachToExisting = dto.attachToExistingBook === true;
-    const existingBook = await this.prisma.book.findUnique({ where: { slug: dto.slug } });
+    const bookByOwnSlug = await this.prisma.book.findUnique({ where: { slug: dto.slug } });
     const targetLanguages = intake['targetLanguages'] as string[];
 
-    if (!attachToExisting && existingBook) {
+    // WP-L.2: «слаг книги» в приложении — это `BookVersion.slug`; `Book.slug` остался legacy и в
+    // `findBySlug` / `getOverview` служит запасным вариантом. Редактор знает именно версионный
+    // слаг — он в публичном адресе, — поэтому привязка ищет книгу так же, как читающая сторона.
+    // Проверка занятости слага при **создании** осталась прежней (только `Book.slug`): расширять
+    // её — менять поведение, к смягчению не относящееся.
+    const existingBook =
+      bookByOwnSlug ??
+      (attachToExisting
+        ? await this.prisma.bookVersion
+            .findFirst({ where: { slug: dto.slug }, select: { book: true } })
+            .then((version) => version?.book ?? null)
+        : null);
+
+    if (!attachToExisting && bookByOwnSlug) {
       throw new ConflictException(
         failure(
           BOOK_CREATION_ERROR_CODES.SLUG_TAKEN,
@@ -236,9 +249,9 @@ export class RightsBookCreationService {
         throw new NotFoundException(
           failure(
             BOOK_CREATION_ERROR_CODES.BOOK_NOT_FOUND,
-            `Book with slug '${dto.slug}' not found`,
-            'Книга с таким слагом не найдена: привязывать клиренс не к чему.',
-            { slug: dto.slug },
+            `No book found by slug '${dto.slug}' (neither Book.slug nor BookVersion.slug)`,
+            'Книга с таким слагом не найдена: искали и по слагу книги, и по слагам её версий. Привязывать клиренс не к чему.',
+            { slug: dto.slug, searchedIn: ['Book.slug', 'BookVersion.slug'] },
           ),
         );
       }
