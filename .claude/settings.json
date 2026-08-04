@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ast-index update",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "additionalDirectories": ["../books-front", "../books-app-docs"],
     "allow": ["Bash", "Read", "Edit", "Write", "Glob", "Grep"],
