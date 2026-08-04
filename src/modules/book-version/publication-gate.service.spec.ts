@@ -1705,6 +1705,97 @@ describe('PublicationGateService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // WP-M: действующее заключение юриста снимает блокеры, о которых оно высказывается.
+  // ---------------------------------------------------------------------------
+  describe('lawyer override (WP-M)', () => {
+    const arrangeBlockedProfile = (lawyer: Partial<LawyerGateEvaluationDto> = {}) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue({
+        ...baseProfile,
+        publicationGate: 'BLOCK',
+      });
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma as unknown as Record<string, { findMany: jest.Mock }>)[
+        'editionRights'
+      ].findMany.mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+      mockRightsLawyerReviewService.evaluateVersionLawyerReview.mockResolvedValue(
+        noLawyerReview(lawyer),
+      );
+    };
+
+    it('clears the agent verdict when a lawyer approved', async () => {
+      arrangeBlockedProfile({ lawyerApproved: true });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'PUBLICATION_GATE_BLOCK')).toBe(false);
+      expect(result.canPublish).toBe(true);
+    });
+
+    // Снятая причина не исчезает: редактор видит, что именно перекрыто и на каком основании.
+    it('keeps the cleared reason visible as a warning with a marker', async () => {
+      arrangeBlockedProfile({ lawyerApproved: true, reviewIds: ['lr-1'] });
+
+      const result = await service.checkVersionCanPublish('v1');
+      const overridden = result.warnings.find((w) => w.code === 'PUBLICATION_GATE_BLOCK');
+      const marker = result.warnings.find((w) => w.code === 'LAWYER_OVERRIDE_APPLIED');
+
+      expect(overridden?.details).toMatchObject({ overriddenByLawyer: true });
+      expect(marker?.details).toMatchObject({
+        overriddenCodes: ['PUBLICATION_GATE_BLOCK'],
+        lawyerReviewIds: ['lr-1'],
+      });
+    });
+
+    // Строгая сторона: без заключения вердикт агента остаётся блокером.
+    it('leaves the verdict blocking when no lawyer approved', async () => {
+      arrangeBlockedProfile({ lawyerApproved: false });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'PUBLICATION_GATE_BLOCK')).toBe(true);
+      expect(result.canPublish).toBe(false);
+    });
+
+    // Строгая сторона: пока не закрыт собственный гейт юриста, «юрист одобрил» ещё не наступило.
+    it('does not override while the lawyer gate itself still blocks', async () => {
+      arrangeBlockedProfile({
+        lawyerApproved: true,
+        blockers: [
+          {
+            code: 'LAWYER_CONDITIONS_PENDING',
+            messageRu: 'Не выполнено блокирующее условие заключения.',
+            lawyerReviewId: 'lr-1',
+          } as unknown as LawyerGateEvaluationDto['blockers'][number],
+        ],
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'PUBLICATION_GATE_BLOCK')).toBe(true);
+      expect(result.canPublish).toBe(false);
+    });
+
+    // Строгая сторона: заключение не снимает то, о чём не высказывается. Изменившийся текст —
+    // не правовой вопрос: юрист смотрел другое содержимое (ADR-010).
+    it('never clears a content hash mismatch', async () => {
+      arrangeBlockedProfile({ lawyerApproved: true });
+      mockRightsContentHashService.computeVersionHash.mockResolvedValue({
+        hash: 'changed-hash-999',
+        algorithmVersion: '1.0',
+      } as never);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED')).toBe(
+        true,
+      );
+      expect(result.canPublish).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // WP-L.1: компенсация к тому, что описание и обложка перестали быть обязательными при создании
   // книги из клиренса. Требование не отменено — оно переехало туда, где им и место: наружу
   // ненаполненная версия не уходит, но внутри админки её можно завести и спокойно наполнять.

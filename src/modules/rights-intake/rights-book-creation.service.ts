@@ -9,6 +9,7 @@ import { classifyTerritoryDecisions } from '../rights-clearance/rights-clearance
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
 import { RightsContentHashService } from './rights-content-hash.service';
+import { hasEffectiveLawyerApproval } from './rights-lawyer-approval.util';
 import { BOOK_CREATION_ERROR_CODES, BookCreationErrorCode } from './rights-book-creation.constants';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { CreateBookFromClearanceVersionDto } from './dto/create-book-from-clearance-version.dto';
@@ -192,8 +193,11 @@ export class RightsBookCreationService {
       );
     }
 
-    // 11. Check publicationGate is not BLOCK
-    if (profile['publicationGate'] === 'BLOCK') {
+    // 11. Check publicationGate is not BLOCK.
+    // WP-M: действующее заключение юриста перекрывает вердикт агента и здесь тоже — иначе интейк
+    // был бы утверждён, а книгу по нему создать всё равно было бы нельзя. Условие то же, что в
+    // `rights-approval.service.ts`, и читается из того же снимка на профиле (ADR-003).
+    if (!hasEffectiveLawyerApproval(profile) && profile['publicationGate'] === 'BLOCK') {
       throw new BadRequestException(
         failure(
           BOOK_CREATION_ERROR_CODES.PUBLICATION_GATE_BLOCK,

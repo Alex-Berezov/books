@@ -13,6 +13,7 @@ import {
   parseRiskLevel,
   type RiskAssessmentInput,
 } from '../rights-lawyer/rights-risk.util';
+import { hasEffectiveLawyerApproval } from './rights-lawyer-approval.util';
 import { APPROVABLE_INTAKE_STATUSES } from './rights-intake.constants';
 import { RightsProfileService } from './rights-profile.service';
 import { ApproveRightsReviewDto } from './dto/approve-rights-review.dto';
@@ -96,13 +97,7 @@ export class RightsApprovalService {
     );
     if (!workflowEnabled || !blockOnHighRisk) return;
 
-    const now = Date.now();
-    const lawyerApprovedAt = profile['lawyerApprovedAt'] as Date | string | null | undefined;
-    const validUntilRaw = profile['lawyerOpinionValidUntil'] as Date | string | null | undefined;
-    const validUntil = validUntilRaw ? new Date(validUntilRaw).getTime() : null;
-    const stillBlocking = profile['lawyerReviewBlocking'] === true;
-
-    if (lawyerApprovedAt && !stillBlocking && (validUntil === null || validUntil > now)) {
+    if (hasEffectiveLawyerApproval(profile)) {
       return;
     }
 
@@ -251,26 +246,37 @@ export class RightsApprovalService {
       );
     }
 
-    if (profile['publicationGate'] === 'BLOCK') {
+    // WP-M: положительное заключение юриста перекрывает вердикт агента.
+    //
+    // `publicationGate` пишется один раз при материализации отчёта и не пересчитывается никогда,
+    // поэтому согласованная юристом спорная книга оставалась заблокированной навсегда: решение
+    // юриста ложится в другие поля профиля и с этой проверкой нигде не встречалось. Юрист —
+    // высшая инстанция по правовым вопросам (ADR-006), и там, где он высказался, его слово главнее
+    // осторожности агента. Без заключения обе проверки работают ровно как раньше.
+    const lawyerOverride = hasEffectiveLawyerApproval(profile);
+
+    if (!lawyerOverride && profile['publicationGate'] === 'BLOCK') {
       throw new BadRequestException('Cannot approve rights review with BLOCK publication gate');
     }
 
-    const blockingActions = await this.raModel.findMany({
-      where: {
-        rightsProfileId: profileId,
-        isBlocking: true,
-      },
-    });
+    if (!lawyerOverride) {
+      const blockingActions = await this.raModel.findMany({
+        where: {
+          rightsProfileId: profileId,
+          isBlocking: true,
+        },
+      });
 
-    const unresolvedBlocking = blockingActions.filter((a) => {
-      const status = a['status'] as string;
-      return status !== 'COMPLETED' && status !== 'WAIVED';
-    });
+      const unresolvedBlocking = blockingActions.filter((a) => {
+        const status = a['status'] as string;
+        return status !== 'COMPLETED' && status !== 'WAIVED';
+      });
 
-    if (unresolvedBlocking.length > 0) {
-      throw new BadRequestException(
-        'Cannot approve rights review with unresolved blocking rights actions',
-      );
+      if (unresolvedBlocking.length > 0) {
+        throw new BadRequestException(
+          'Cannot approve rights review with unresolved blocking rights actions',
+        );
+      }
     }
 
     // Phase 19: high-risk clearance cannot be approved without a lawyer.

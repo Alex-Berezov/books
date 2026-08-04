@@ -6,7 +6,9 @@ import {
 } from './dto/publication-gate-result.dto';
 import {
   DEFAULT_PUBLICATION_GATE_STAGE,
+  isLawyerOverridableGateCode,
   isPreparationBlockingGateCode,
+  LAWYER_OVERRIDE_APPLIED_CODE,
   PublicationGateStage,
 } from './publication-gate.constants';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
@@ -738,6 +740,49 @@ export class PublicationGateService {
           messageRu:
             'Версия не наполнена: нет описания или обложки. Заполните их в разделе «Книги» — публикация пустой карточки запрещена.',
           details: { missingFields: missingContentFields },
+        }),
+      );
+    }
+
+    // WP-M: действующее заключение юриста снимает блокеры, о которых оно высказывается.
+    //
+    // Условие двойное. Во-первых, заключение положительное и в силе — это считает сам юридический
+    // модуль (`lawyerApproved`), а не липкий снимок на профиле. Во-вторых, собственный гейт юриста
+    // чист: пока висит невыполненное блокирующее условие или просроченная проверка, «юрист
+    // одобрил» ещё не наступило, и снимать чужие блокеры не с чего.
+    const lawyerOverrideActive =
+      lawyerEvaluation.lawyerApproved && lawyerEvaluation.blockers.length === 0;
+
+    const overriddenReasons = lawyerOverrideActive
+      ? blockingReasons.filter((reason) => isLawyerOverridableGateCode(reason.code))
+      : [];
+
+    if (overriddenReasons.length > 0) {
+      // Снятые причины не исчезают, а переезжают в предупреждения: редактор обязан видеть, что
+      // именно перекрыто решением юриста, а аудит — на каком основании вышла публикация.
+      for (const reason of overriddenReasons) {
+        blockingReasons.splice(blockingReasons.indexOf(reason), 1);
+        warnings.push(
+          new PublicationGateReasonDto({
+            code: reason.code,
+            severity: 'WARNING',
+            messageRu: `${reason.messageRu} Снято положительным заключением юриста.`,
+            details: { ...(reason.details ?? {}), overriddenByLawyer: true },
+          }),
+        );
+      }
+
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: LAWYER_OVERRIDE_APPLIED_CODE,
+          severity: 'WARNING',
+          messageRu:
+            'Часть требований снята действующим заключением юриста — публикация разрешена под его ответственность.',
+          details: {
+            overriddenCodes: overriddenReasons.map((reason) => reason.code),
+            lawyerOpinionValidUntil: lawyerEvaluation.lawyerOpinionValidUntil,
+            lawyerReviewIds: lawyerEvaluation.reviewIds,
+          },
         }),
       );
     }

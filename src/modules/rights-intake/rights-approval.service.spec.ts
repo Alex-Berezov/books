@@ -221,6 +221,112 @@ describe('RightsApprovalService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    // WP-M, смягчённая сторона: действующее заключение юриста перекрывает вердикт агента.
+    // `publicationGate` пишется один раз при материализации и не пересчитывается никогда, поэтому
+    // без этого согласованная юристом спорная книга оставалась заблокированной навсегда.
+    it('approves a BLOCK gate when a valid lawyer opinion is in force', async () => {
+      const review = makeReview({
+        rightsProfile: {
+          id: 'profile-1',
+          rightsIntakeId: 'intake-1',
+          isCurrent: true,
+          publicationGate: 'BLOCK',
+          lawyerApprovedAt: new Date('2026-08-01T00:00:00.000Z'),
+          lawyerOpinionValidUntil: new Date('2027-01-01T00:00:00.000Z'),
+          lawyerReviewBlocking: false,
+        },
+      });
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const txStub = createTxStub();
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+    });
+
+    // Заключение снимает и незакрытые блокирующие действия — та же инстанция, тот же вопрос.
+    it('approves despite unresolved blocking actions when a lawyer approved', async () => {
+      const review = makeReview({
+        rightsProfile: {
+          id: 'profile-1',
+          rightsIntakeId: 'intake-1',
+          isCurrent: true,
+          publicationGate: 'ALLOW',
+          lawyerApprovedAt: new Date('2026-08-01T00:00:00.000Z'),
+          lawyerOpinionValidUntil: null,
+          lawyerReviewBlocking: false,
+        },
+      });
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        { id: 'action-1', isBlocking: true, status: 'PENDING' },
+      ]);
+
+      const txStub = createTxStub();
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+      rp.getById.mockResolvedValue({ id: 'profile-1', status: 'APPROVED' });
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).resolves.toBeDefined();
+    });
+
+    // Строгая сторона: просроченное заключение перестаёт что-либо снимать само собой.
+    it('still refuses a BLOCK gate when the lawyer opinion has expired', async () => {
+      const review = makeReview({
+        rightsProfile: {
+          id: 'profile-1',
+          rightsIntakeId: 'intake-1',
+          isCurrent: true,
+          publicationGate: 'BLOCK',
+          lawyerApprovedAt: new Date('2024-01-01T00:00:00.000Z'),
+          lawyerOpinionValidUntil: new Date('2024-06-01T00:00:00.000Z'),
+          lawyerReviewBlocking: false,
+        },
+      });
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    // Строгая сторона: «одобряю, если уберёте иллюстрации» до выполнения условия — не одобрение.
+    it('still refuses a BLOCK gate while a blocking lawyer condition is pending', async () => {
+      const review = makeReview({
+        rightsProfile: {
+          id: 'profile-1',
+          rightsIntakeId: 'intake-1',
+          isCurrent: true,
+          publicationGate: 'BLOCK',
+          lawyerApprovedAt: new Date('2026-08-01T00:00:00.000Z'),
+          lawyerOpinionValidUntil: null,
+          lawyerReviewBlocking: true,
+        },
+      });
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake(),
+      );
+
+      await expect(
+        service.approveReview('user-1', 'intake-1', 'review-1', { notesRu: 'test' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     it('should throw BadRequestException if there are unresolved blocking actions', async () => {
       const review = makeReview();
       (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(review);
