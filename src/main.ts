@@ -13,8 +13,14 @@ import * as Sentry from '@sentry/node';
 import { HttpAdapterHost } from '@nestjs/core';
 import { SentryExceptionFilter } from './shared/sentry/sentry.filter';
 import { RedirectExceptionFilter } from './common/filters/redirect-exception.filter';
+import { robotsHeaderMiddleware } from './common/middleware/robots-header.middleware';
+import { assertPublicSiteUrl, resolvePublicSiteUrl } from './modules/seo/utils/publicSiteUrl';
 
 async function bootstrap() {
+  // Fail fast: a PUBLIC_SITE_URL pointing at a service host would leak
+  // api./media. subdomains into canonical, hreflang, og:url and JSON-LD.
+  assertPublicSiteUrl();
+
   const app = await NestFactory.create(AppModule);
 
   // Respect reverse proxy headers when running behind a proxy (e.g., ingress)
@@ -29,6 +35,9 @@ async function bootstrap() {
 
   // Security (Helmet, CORS, body limits, static, direct upload raw)
   configureSecurity(app);
+
+  // Never let the API subdomain be indexed (see robots-header.middleware.ts)
+  app.use(robotsHeaderMiddleware);
 
   // Sentry init (optional, controlled by env SENTRY_DSN). Disabled in dev unless explicitly enabled.
   const redirectFilter = new RedirectExceptionFilter();
@@ -97,6 +106,7 @@ async function bootstrap() {
   await app.listen(PORT, HOST);
   const displayedUrl = `http://localhost:${PORT}`;
   console.log(`Application is running on: ${displayedUrl}`);
+  console.log(`[SEO] Public site origin: ${resolvePublicSiteUrl()}`);
 }
 
 void bootstrap();

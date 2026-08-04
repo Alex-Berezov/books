@@ -431,7 +431,8 @@ make e2e-serial   # yarn test:e2e:serial
 - HOST — адрес прослушивания (по умолчанию 0.0.0.0)
 - DEFAULT_LANGUAGE — язык по умолчанию для i18n-политики (по умолчанию `en`)
 - LOCAL_UPLOADS_DIR — каталог для локальных загрузок (по умолчанию `var/uploads`)
-- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес для генерации ссылок. Если не задан — по умолчанию `http://localhost:3000` в SEO/Sitemap, и `http://localhost:5000` для локального стораджа. Рекомендуется для dev ставить `http://localhost:5000`.
+- PUBLIC_SITE_URL — публичный адрес сайта. **Единственный** источник хоста для canonical, hreflang, og:url, JSON-LD, robots.txt и sitemap. По умолчанию `https://bibliaris.com`. Приложение не стартует, если значение указывает на служебный хост (`api.`/`media.`/`cdn.`/`static.`/`assets.`) или совпадает с `LOCAL_PUBLIC_BASE_URL`/`R2_PUBLIC_BASE_URL` — см. `src/modules/seo/utils/publicSiteUrl.ts` и ADR-017.
+- LOCAL_PUBLIC_BASE_URL — базовый адрес **для ссылок на файлы локального стораджа** (по умолчанию `http://localhost:5000`). В проде — `https://api.bibliaris.com`, потому что файлы отдаёт API. В SEO-метаданных использовать запрещено.
 - CORS_ORIGIN — разрешённый Origin для CORS (по умолчанию `*`).
 - BODY_LIMIT_JSON — лимит для JSON-тел (по умолчанию `1mb`).
 - BODY_LIMIT_URLENCODED — лимит для urlencoded-тел (по умолчанию `1mb`).
@@ -713,7 +714,7 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 
 Настройки:
 
-- LOCAL_PUBLIC_BASE_URL — базовый публичный адрес (по умолчанию http://localhost:3000)
+- PUBLIC_SITE_URL — публичный адрес сайта (по умолчанию `https://bibliaris.com`); из него строятся все URL в sitemap/robots
 - SITEMAP_CACHE_TTL_MS — TTL кэша генерации sitemap/robots (по умолчанию 60000 мс)
 
 Примечание: версии книг `/versions/:id` намеренно не включаются в sitemap; канонические публичные URL формируются для книг/страниц с языковым префиксом.

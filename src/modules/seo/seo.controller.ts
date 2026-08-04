@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Post,
   Put,
   UseGuards,
   UseInterceptors,
@@ -16,6 +17,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { SeoService } from './seo.service';
+import { TaxonomyIndexabilityService } from './indexability/taxonomy-indexability.service';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 // no import of ResolveSeoType here to avoid type resolution warnings in validation decorators
 import { ApiHeader } from '@nestjs/swagger';
@@ -25,7 +27,22 @@ import { Language } from '@prisma/client';
 @ApiTags('seo')
 @Controller()
 export class SeoController {
-  constructor(private readonly service: SeoService) {}
+  constructor(
+    private readonly service: SeoService,
+    private readonly taxonomyIndexability: TaxonomyIndexabilityService,
+  ) {}
+
+  @Post('admin/seo/taxonomy-indexability/recompute')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiOperation({
+    summary:
+      'Recompute bookCount / autoIndexable for every taxonomy translation (hysteresis: close <=2, open >=5)',
+  })
+  @ApiResponse({ status: 201, description: 'Counters recomputed' })
+  recomputeTaxonomyIndexability() {
+    return this.taxonomyIndexability.recomputeAll();
+  }
 
   @Get('versions/:bookVersionId/seo')
   @ApiOperation({ summary: 'Get SEO meta for a book version' })

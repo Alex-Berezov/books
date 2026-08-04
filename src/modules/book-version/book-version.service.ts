@@ -28,6 +28,7 @@ import {
   RightsRecheckTriggerSource,
 } from '../rights-recheck/rights-recheck-interface';
 import { addDays } from '../rights-recheck/rights-recheck.util';
+import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 
 interface BookWithRights {
   id: string;
@@ -78,6 +79,10 @@ export class BookVersionService {
     // WP-1.2а: the dashboard reports whether Phase 12 still has a country source at all.
     private geoIpCountryService: GeoIpCountryService,
     private regionAggregationService?: TerritoryRegionAggregationService,
+    // Optional so existing direct instantiations in unit tests keep working; a
+    // missing counter only means the taxonomy state is refreshed by the admin
+    // recompute endpoint instead of immediately.
+    private taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
 
   async list(
@@ -1008,7 +1013,7 @@ export class BookVersionService {
     // WP-D.4: жёсткий выход из окна наполнения черновика. Публикация фиксирует слепок контента
     // окончательно и в той же транзакции пишет событие закрытия окна (ADR-009), после которого
     // правка главы снова уводит клиренс в `STALE`.
-    return this.prisma.$transaction(async (tx) => {
+    const published = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.bookVersion.update({
         where: { id },
         data: {
@@ -1030,16 +1035,26 @@ export class BookVersionService {
 
       return updated;
     });
+
+    // Taxonomy pages open up once a term reaches enough published books.
+    await this.taxonomyIndexabilityService?.recomputeForBookVersion(id);
+
+    return published;
   }
 
   async unpublish(id: string) {
     const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('BookVersion not found');
-    return this.prisma.bookVersion.update({
+    const updated = await this.prisma.bookVersion.update({
       where: { id },
       data: { status: 'draft', publishedAt: null },
       include: { seo: true },
     });
+
+    // ...and close again when the count drops back to the hysteresis floor.
+    await this.taxonomyIndexabilityService?.recomputeForBookVersion(id);
+
+    return updated;
   }
 
   // Админский листинг без фильтра по статусу

@@ -11,9 +11,11 @@ import { RightsClaimsModule } from '../rights-claims/rights-claims.module';
 import { RightsClearanceModule } from '../rights-clearance/rights-clearance.module';
 import { RightsRecheckModule } from '../rights-recheck/rights-recheck.module';
 import { RightsLawyerModule } from '../rights-lawyer/rights-lawyer.module';
+import { TaxonomyIndexabilityModule } from '../seo/indexability/taxonomy-indexability.module';
 
 @Module({
   imports: [
+    TaxonomyIndexabilityModule,
     RightsIntakeModule,
     GeoBlockModule,
     RightsLicensesModule,

@@ -58,7 +58,7 @@ describe('SeoService (unit)', () => {
   beforeEach(() => {
     prisma = createPrismaStub();
     service = new SeoService(prisma as unknown as PrismaService);
-    process.env = { ...ORIGINAL_ENV, LOCAL_PUBLIC_BASE_URL: 'http://localhost:5000/static' };
+    process.env = { ...ORIGINAL_ENV, PUBLIC_SITE_URL: 'http://localhost:5000/static' };
   });
 
   afterEach(() => {

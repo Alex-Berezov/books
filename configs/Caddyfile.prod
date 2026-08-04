@@ -24,6 +24,13 @@ api.bibliaris.com {
         
         # CORS headers (NestJS also sets these, but provides an additional layer of protection)
         Access-Control-Allow-Credentials "true"
+
+        # The API subdomain must never be indexed. Deliberately NOT "Disallow: /"
+        # in robots.txt — the frontend fetches this host from the browser and
+        # blocking crawling would stop Googlebot from rendering the site.
+        # NestJS also sets this (robots-header.middleware.ts); kept here as a
+        # second layer for responses that bypass the app.
+        X-Robots-Tag "noindex"
     }
 }
 

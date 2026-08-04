@@ -205,15 +205,16 @@ run_cmd "cp $ENV_FILE ${ENV_FILE}.backup.$(date +%Y%m%d_%H%M%S)" "Creating .env.
 
 # Update variables
 if [ "$DRY_RUN" = false ]; then
-  # Update LOCAL_PUBLIC_BASE_URL
-  if grep -q "^LOCAL_PUBLIC_BASE_URL=" "$ENV_FILE"; then
-    sudo sed -i 's|^LOCAL_PUBLIC_BASE_URL=.*|LOCAL_PUBLIC_BASE_URL=https://bibliaris.com|' "$ENV_FILE"
-    echo -e "${GREEN}✓ LOCAL_PUBLIC_BASE_URL updated${NC}"
+  # PUBLIC_SITE_URL — public page origin, used ONLY for canonical/hreflang/og:url/JSON-LD/sitemap.
+  # Must never be the api. host: LOCAL_PUBLIC_BASE_URL stays on api. because it serves files.
+  if grep -q "^PUBLIC_SITE_URL=" "$ENV_FILE"; then
+    sudo sed -i 's|^PUBLIC_SITE_URL=.*|PUBLIC_SITE_URL=https://bibliaris.com|' "$ENV_FILE"
+    echo -e "${GREEN}✓ PUBLIC_SITE_URL updated${NC}"
   else
-    echo "LOCAL_PUBLIC_BASE_URL=https://bibliaris.com" | sudo tee -a "$ENV_FILE" > /dev/null
-    echo -e "${GREEN}✓ LOCAL_PUBLIC_BASE_URL added${NC}"
+    echo "PUBLIC_SITE_URL=https://bibliaris.com" | sudo tee -a "$ENV_FILE" > /dev/null
+    echo -e "${GREEN}✓ PUBLIC_SITE_URL added${NC}"
   fi
-  
+
   # Update CORS_ORIGIN
   if grep -q "^CORS_ORIGIN=" "$ENV_FILE"; then
     sudo sed -i 's|^CORS_ORIGIN=.*|CORS_ORIGIN=https://bibliaris.com,http://localhost:3000,http://localhost:3001|' "$ENV_FILE"
@@ -226,7 +227,7 @@ else
   echo -e "${YELLOW}⊘ .env.prod update skipped (dry-run)${NC}"
   echo ""
   echo "The following variables will be updated:"
-  echo "  LOCAL_PUBLIC_BASE_URL=https://bibliaris.com"
+  echo "  PUBLIC_SITE_URL=https://bibliaris.com"
   echo "  CORS_ORIGIN=https://bibliaris.com,http://localhost:3000,http://localhost:3001"
 fi
 echo ""

@@ -70,26 +70,43 @@ export class SitemapService {
     });
 
     // Categories (type=category) translations for this lang
+    // autoIndexable mirrors the robots meta tag: a noindex page must never be in the sitemap.
     const categoryTranslations = await this.prisma.categoryTranslation.findMany({
-      where: { language: lang, category: { type: 'category', indexable: true, isVisible: true } },
+      where: {
+        language: lang,
+        autoIndexable: true,
+        category: { type: 'category', indexable: true, isVisible: true },
+      },
       select: { slug: true, updatedAt: true },
     });
 
     // Genres (type=genre) translations for this lang
     const genreTranslations = await this.prisma.categoryTranslation.findMany({
-      where: { language: lang, category: { type: 'genre', indexable: true, isVisible: true } },
+      where: {
+        language: lang,
+        autoIndexable: true,
+        category: { type: 'genre', indexable: true, isVisible: true },
+      },
       select: { slug: true, updatedAt: true },
     });
 
     // Collections (type=collection) translations for this lang
     const collectionTranslations = await this.prisma.categoryTranslation.findMany({
-      where: { language: lang, category: { type: 'collection', indexable: true, isVisible: true } },
+      where: {
+        language: lang,
+        autoIndexable: true,
+        category: { type: 'collection', indexable: true, isVisible: true },
+      },
       select: { slug: true, updatedAt: true },
     });
 
     // Tags translations for this lang
     const tagTranslations = await this.prisma.tagTranslation.findMany({
-      where: { language: lang, tag: { indexable: true, isVisible: true } },
+      where: {
+        language: lang,
+        autoIndexable: true,
+        tag: { indexable: true, isVisible: true },
+      },
       select: { slug: true, updatedAt: true },
     });
 

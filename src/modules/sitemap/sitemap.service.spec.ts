@@ -24,7 +24,7 @@ describe('SitemapService (unit)', () => {
   beforeEach(() => {
     prisma = createPrismaStub();
     service = new SitemapService(prisma as unknown as PrismaService);
-    process.env = { ...ORIGINAL_ENV, LOCAL_PUBLIC_BASE_URL: 'http://localhost:5000/static' };
+    process.env = { ...ORIGINAL_ENV, PUBLIC_SITE_URL: 'http://localhost:5000/static' };
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2025-09-06T12:00:00Z'));
   });
@@ -140,9 +140,9 @@ describe('SitemapService (unit)', () => {
   });
 
   it('falls back to default public base when env not set', async () => {
-    // Recreate service with env without LOCAL_PUBLIC_BASE_URL
+    // Recreate service with env without PUBLIC_SITE_URL
     process.env = { ...ORIGINAL_ENV };
-    delete process.env.LOCAL_PUBLIC_BASE_URL;
+    delete process.env.PUBLIC_SITE_URL;
     const fresh = new SitemapService(prisma as unknown as PrismaService);
     prisma.page.findMany.mockResolvedValueOnce([
       { slug: 'home', updatedAt: new Date('2025-09-06T12:00:00Z') },

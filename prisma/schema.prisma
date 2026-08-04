@@ -671,6 +671,13 @@ model CategoryTranslation {
   ogImageAlt       String?
   faq              Json?
 
+  // Automatic indexability (see modules/seo/indexability/taxonomyIndexability.ts).
+  // bookCount is the cached number of published books in this language;
+  // autoIndexable is the hysteresis state derived from it. Both are recomputed
+  // by TaxonomyIndexabilityService, never on the fly.
+  bookCount        Int      @default(0)
+  autoIndexable    Boolean  @default(true)
+
   seoId            Int?     @unique
   seo              Seo?     @relation("SeoForCategoryTranslation", fields: [seoId], references: [id], onDelete: SetNull)
   category         Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
@@ -681,6 +688,7 @@ model CategoryTranslation {
   @@unique([categoryId, language])
   @@index([categoryId])
   @@index([language])
+  @@index([language, autoIndexable])
 }
 
 model TagTranslation {
@@ -706,6 +714,11 @@ model TagTranslation {
   relatedGenreSlugs Json?   // string[]
   relatedCategorySlugs Json?   // string[]
   relatedCollectionSlugs Json? // string[]
+
+  // Automatic indexability — see CategoryTranslation for the contract.
+  bookCount        Int      @default(0)
+  autoIndexable    Boolean  @default(true)
+
   seoId            Int?     @unique
   seo              Seo?     @relation("SeoForTagTranslation", fields: [seoId], references: [id], onDelete: SetNull)
   tag              Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
@@ -716,6 +729,7 @@ model TagTranslation {
   @@unique([tagId, language])
   @@index([tagId])
   @@index([language])
+  @@index([language, autoIndexable])
 }
 
 // =====================

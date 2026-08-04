@@ -765,7 +765,7 @@ export class SeoService {
         'published',
         canonicalUrl,
         seo?.robots,
-        chosen.category.indexable,
+        chosen.category.indexable !== false && chosen.autoIndexable !== false,
       );
 
       const ogTitle = seo?.ogTitle || metaTitle;
@@ -909,7 +909,7 @@ export class SeoService {
         'published',
         canonicalUrl,
         seo?.robots,
-        chosen.category.indexable,
+        chosen.category.indexable !== false && chosen.autoIndexable !== false,
       );
 
       const ogTitle = seo?.ogTitle || metaTitle;
@@ -1066,7 +1066,7 @@ export class SeoService {
         'published',
         canonicalUrl,
         seo?.robots,
-        chosen.category.indexable,
+        chosen.category.indexable !== false && chosen.autoIndexable !== false,
       );
 
       const ogTitle = seo?.ogTitle || metaTitle;
@@ -1203,7 +1203,10 @@ export class SeoService {
       const metaTitle = seo?.metaTitle || baseMeta.title;
       const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
       const canonicalUrl = getCanonicalUrl('tag', chosen.slug, effLang);
-      const effectiveIndexable = chosen.tag?.indexable !== false && chosen.indexable !== false;
+      const effectiveIndexable =
+        chosen.tag?.indexable !== false &&
+        chosen.indexable !== false &&
+        chosen.autoIndexable !== false;
       const robotsStatus = detectIndexability(
         'published',
         canonicalUrl,
