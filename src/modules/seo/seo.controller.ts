@@ -42,8 +42,23 @@ export class SeoController {
       'Recompute bookCount / autoIndexable for every taxonomy translation (hysteresis: close <=2, open >=5)',
   })
   @ApiResponse({ status: 201, description: 'Counters recomputed' })
-  recomputeTaxonomyIndexability() {
-    return this.taxonomyIndexability.recomputeAll();
+  @ApiQuery({
+    name: 'cold',
+    required: false,
+    enum: ['all', 'tags', 'categories'],
+    description:
+      'Reset autoIndexable to false before recomputing, so the 3-4 book hysteresis band resolves downwards instead of inheriting the schema default. Erases real state history — use deliberately, not routinely.',
+  })
+  recomputeTaxonomyIndexability(@Query('cold') cold?: string) {
+    const coldOption =
+      cold === 'all'
+        ? { categories: true, tags: true }
+        : cold === 'tags'
+          ? { tags: true }
+          : cold === 'categories'
+            ? { categories: true }
+            : undefined;
+    return this.taxonomyIndexability.recomputeAll(coldOption);
   }
 
   @Get('admin/seo/taxonomy-indexability/status')

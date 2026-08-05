@@ -108,9 +108,37 @@ export class TaxonomyIndexabilityService {
   /**
    * Recompute every taxonomy translation. Safe to call repeatedly — it only
    * writes rows whose count or state actually changed.
+   *
+   * @param cold which translation tables to reset to `autoIndexable = false`
+   *   *before* recomputing. The hysteresis keeps the previous state in the 3–4
+   *   book band, and on a table that has never been computed that "previous
+   *   state" is the schema default `true` — an opinion nobody formed. Resetting
+   *   first makes the band resolve downwards, so only terms that reach the upper
+   *   threshold (>=5) come out indexable. Per table, because the decision is not
+   *   the same for categories and tags: a tag is the weakest page type.
+   *
+   *   Not something to run routinely — it erases real state history and turns
+   *   the hysteresis into a plain >=5 threshold for that run.
    */
-  async recomputeAll(): Promise<RecomputeResult> {
+  async recomputeAll(cold?: { categories?: boolean; tags?: boolean }): Promise<RecomputeResult> {
     const result: RecomputeResult = { categoryTranslations: 0, tagTranslations: 0, changed: 0 };
+
+    if (cold?.categories) {
+      const reset = await this.prisma.categoryTranslation.updateMany({
+        where: { autoIndexable: true },
+        data: { autoIndexable: false },
+      });
+      this.logger.warn(
+        `Cold start: ${reset.count} category translations reset to autoIndexable=false`,
+      );
+    }
+    if (cold?.tags) {
+      const reset = await this.prisma.tagTranslation.updateMany({
+        where: { autoIndexable: true },
+        data: { autoIndexable: false },
+      });
+      this.logger.warn(`Cold start: ${reset.count} tag translations reset to autoIndexable=false`);
+    }
 
     for (const language of Object.values(Language)) {
       const categories = await this.syncCategories(language);
