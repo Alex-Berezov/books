@@ -235,6 +235,9 @@ export class ImportService {
         language,
         name: tr.name,
         slug: tr.slug,
+        // Imported terms arrive empty too — see CategoryService.createTranslation.
+        bookCount: 0,
+        autoIndexable: false,
         ...data,
       },
     });
@@ -323,6 +326,9 @@ export class ImportService {
         language,
         name: tr.name,
         slug: tr.slug,
+        // Imported terms arrive empty too — see CategoryService.createTranslation.
+        bookCount: 0,
+        autoIndexable: false,
         ...data,
       },
     });

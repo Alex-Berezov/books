@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma, Language, Tag, TagTranslation, BookVersion } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
@@ -9,7 +10,11 @@ import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 
 @Injectable()
 export class TagsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Optional()
+    private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
+  ) {}
 
   async list(page = 1, limit = 20, search?: string, lang?: Language) {
     const skip = (page - 1) * limit;
@@ -337,6 +342,10 @@ export class TagsService {
           name: dto.name,
           slug: dto.slug,
           description: dto.description ?? null,
+          // See CategoryService.createTranslation — a new term is not indexable
+          // until the recompute says otherwise.
+          bookCount: 0,
+          autoIndexable: false,
           ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
           ...(dto.relatedGenreSlugs !== undefined
             ? { relatedGenreSlugs: dto.relatedGenreSlugs }
@@ -461,6 +470,10 @@ export class TagsService {
       }
     });
 
+    // The link now exists for every language of the book, so every language's
+    // counter for this term is stale.
+    await this.taxonomyIndexabilityService?.recomputeForTerms([], [tagId]);
+
     return this.prisma.bookTag.findFirst({
       where: { bookVersionId: versionId, tagId },
     });
@@ -488,6 +501,10 @@ export class TagsService {
         }
       }
     });
+
+    // Must run after the delete and by term id: the version no longer points at
+    // this tag, so a version-scoped recompute would miss exactly it.
+    await this.taxonomyIndexabilityService?.recomputeForTerms([], [tagId]);
 
     return { success: true };
   }

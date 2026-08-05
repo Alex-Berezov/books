@@ -1,5 +1,6 @@
 import { CategoryService } from './category.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { BadRequestException } from '@nestjs/common';
 import { Language } from '@prisma/client';
 
@@ -61,13 +62,18 @@ const createPrismaStub = (): PrismaStub => ({
 describe('CategoryService', () => {
   let service: CategoryService;
   let prisma: PrismaStub;
+  let indexability: { recomputeForTerms: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
     prisma.$transaction = jest
       .fn()
       .mockImplementation((cb: (tx: PrismaStub) => unknown) => cb(prisma as unknown as PrismaStub));
-    service = new CategoryService(prisma as unknown as PrismaService);
+    indexability = { recomputeForTerms: jest.fn().mockResolvedValue(undefined) };
+    service = new CategoryService(
+      prisma as unknown as PrismaService,
+      indexability as unknown as TaxonomyIndexabilityService,
+    );
   });
 
   it('update rejects cycle in hierarchy', async () => {
@@ -306,5 +312,44 @@ describe('CategoryService', () => {
     prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
     const res = await service.detachCategoryFromVersion('v1', 'c1');
     expect(res).toEqual({ success: true });
+  });
+
+  it('detaching a category recomputes that term, not the version', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+
+    await service.detachCategoryFromVersion('v1', 'c1');
+
+    // After the delete the version no longer points at the term, so only an
+    // explicit term-scoped recompute can still reach it.
+    expect(indexability.recomputeForTerms).toHaveBeenCalledWith(['c1'], []);
+  });
+
+  it('attaching a category recomputes that term', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+    prisma.bookCategory.findFirst.mockResolvedValue(null);
+
+    await service.attachCategoryToVersion('v1', 'c1');
+
+    expect(indexability.recomputeForTerms).toHaveBeenCalledWith(['c1'], []);
+  });
+
+  it('creates a translation that is not indexable until it earns it', async () => {
+    prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    prisma.categoryTranslation.create.mockResolvedValue({ id: 'tr1' });
+
+    await service.createTranslation('c1', {
+      language: Language.en,
+      name: 'Poetry',
+      slug: 'poetry',
+    });
+
+    expect(prisma.categoryTranslation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ bookCount: 0, autoIndexable: false }),
+      }),
+    );
   });
 });

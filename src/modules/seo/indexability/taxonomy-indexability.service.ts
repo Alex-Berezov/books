@@ -42,10 +42,19 @@ export class TaxonomyIndexabilityService {
     return new Map(rows.map((row) => [row.tagId, row._count._all]));
   }
 
-  private async syncCategories(language: Language): Promise<{ total: number; changed: number }> {
+  /**
+   * @param categoryIds when given, only these terms are touched; otherwise every
+   *   translation in the language is recomputed.
+   */
+  private async syncCategories(
+    language: Language,
+    categoryIds?: string[],
+  ): Promise<{ total: number; changed: number }> {
+    if (categoryIds?.length === 0) return { total: 0, changed: 0 };
+
     const counts = await this.countBooksByCategory(language);
     const translations = await this.prisma.categoryTranslation.findMany({
-      where: { language },
+      where: { language, ...(categoryIds ? { categoryId: { in: categoryIds } } : {}) },
       select: { id: true, categoryId: true, bookCount: true, autoIndexable: true },
     });
 
@@ -66,10 +75,16 @@ export class TaxonomyIndexabilityService {
     return { total: translations.length, changed };
   }
 
-  private async syncTags(language: Language): Promise<{ total: number; changed: number }> {
+  /** @param tagIds — same contract as `syncCategories`. */
+  private async syncTags(
+    language: Language,
+    tagIds?: string[],
+  ): Promise<{ total: number; changed: number }> {
+    if (tagIds?.length === 0) return { total: 0, changed: 0 };
+
     const counts = await this.countBooksByTag(language);
     const translations = await this.prisma.tagTranslation.findMany({
-      where: { language },
+      where: { language, ...(tagIds ? { tagId: { in: tagIds } } : {}) },
       select: { id: true, tagId: true, bookCount: true, autoIndexable: true },
     });
 
@@ -133,51 +148,43 @@ export class TaxonomyIndexabilityService {
         this.prisma.bookTag.findMany({ where: { bookVersionId }, select: { tagId: true } }),
       ]);
 
-      const language = version.language;
-      const categoryIds = categoryLinks.map((link) => link.categoryId);
-      const tagIds = tagLinks.map((link) => link.tagId);
-
-      if (categoryIds.length > 0) {
-        const counts = await this.countBooksByCategory(language);
-        const translations = await this.prisma.categoryTranslation.findMany({
-          where: { language, categoryId: { in: categoryIds } },
-          select: { id: true, categoryId: true, bookCount: true, autoIndexable: true },
-        });
-        for (const translation of translations) {
-          const bookCount = counts.get(translation.categoryId) ?? 0;
-          const autoIndexable = resolveAutoIndexable(bookCount, translation.autoIndexable);
-          if (bookCount === translation.bookCount && autoIndexable === translation.autoIndexable) {
-            continue;
-          }
-          await this.prisma.categoryTranslation.update({
-            where: { id: translation.id },
-            data: { bookCount, autoIndexable },
-          });
-        }
-      }
-
-      if (tagIds.length > 0) {
-        const counts = await this.countBooksByTag(language);
-        const translations = await this.prisma.tagTranslation.findMany({
-          where: { language, tagId: { in: tagIds } },
-          select: { id: true, tagId: true, bookCount: true, autoIndexable: true },
-        });
-        for (const translation of translations) {
-          const bookCount = counts.get(translation.tagId) ?? 0;
-          const autoIndexable = resolveAutoIndexable(bookCount, translation.autoIndexable);
-          if (bookCount === translation.bookCount && autoIndexable === translation.autoIndexable) {
-            continue;
-          }
-          await this.prisma.tagTranslation.update({
-            where: { id: translation.id },
-            data: { bookCount, autoIndexable },
-          });
-        }
-      }
+      await this.syncCategories(
+        version.language,
+        categoryLinks.map((link) => link.categoryId),
+      );
+      await this.syncTags(
+        version.language,
+        tagLinks.map((link) => link.tagId),
+      );
     } catch (error) {
       this.logger.warn(
         `Failed to recompute taxonomy indexability for version ${bookVersionId}: ${String(error)}`,
       );
+    }
+  }
+
+  /**
+   * Recompute an explicit set of terms in **every** language.
+   *
+   * Attaching or detaching a taxonomy links it to all sibling versions of the
+   * book at once, so every language is affected — and on detach the term is no
+   * longer reachable from the version, which is why `recomputeForBookVersion`
+   * cannot be used for it: it would recompute everything except the term that
+   * actually changed.
+   *
+   * Errors are swallowed for the same reason as above — an SEO counter must
+   * never break an editorial action.
+   */
+  async recomputeForTerms(categoryIds: string[], tagIds: string[]): Promise<void> {
+    if (categoryIds.length === 0 && tagIds.length === 0) return;
+
+    try {
+      for (const language of Object.values(Language)) {
+        if (categoryIds.length > 0) await this.syncCategories(language, categoryIds);
+        if (tagIds.length > 0) await this.syncTags(language, tagIds);
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to recompute taxonomy indexability for terms: ${String(error)}`);
     }
   }
 }

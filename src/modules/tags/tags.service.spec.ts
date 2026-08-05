@@ -1,12 +1,13 @@
 import { TagsService } from './tags.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { Language } from '@prisma/client';
 
 interface PrismaStub {
   $transaction: jest.Mock;
   $queryRaw: jest.Mock;
   tag: { findUnique: jest.Mock; findFirst: jest.Mock; count: jest.Mock; findMany: jest.Mock };
-  tagTranslation: { findUnique: jest.Mock };
+  tagTranslation: { findUnique: jest.Mock; create: jest.Mock };
   bookVersion: { findMany: jest.Mock; findUnique: jest.Mock };
   bookTag: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock };
   bookRating: { groupBy: jest.Mock };
@@ -16,7 +17,7 @@ const createPrismaStub = (): PrismaStub => ({
   $transaction: jest.fn(),
   $queryRaw: jest.fn(),
   tag: { findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn(), findMany: jest.fn() },
-  tagTranslation: { findUnique: jest.fn() },
+  tagTranslation: { findUnique: jest.fn(), create: jest.fn() },
   bookVersion: { findMany: jest.fn(), findUnique: jest.fn() },
   bookTag: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
   bookRating: { groupBy: jest.fn() },
@@ -25,13 +26,18 @@ const createPrismaStub = (): PrismaStub => ({
 describe('TagsService', () => {
   let service: TagsService;
   let prisma: PrismaStub;
+  let indexability: { recomputeForTerms: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
     prisma.$transaction = jest
       .fn()
       .mockImplementation((cb: (tx: PrismaStub) => unknown) => cb(prisma as unknown as PrismaStub));
-    service = new TagsService(prisma as unknown as PrismaService);
+    indexability = { recomputeForTerms: jest.fn().mockResolvedValue(undefined) };
+    service = new TagsService(
+      prisma as unknown as PrismaService,
+      indexability as unknown as TaxonomyIndexabilityService,
+    );
   });
 
   it('versionsByTagSlug filters by effective language and falls back to base slug', async () => {
@@ -188,5 +194,42 @@ describe('TagsService', () => {
     prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
     const res = await service.detach('v1', 't1');
     expect(res).toEqual({ success: true });
+  });
+
+  it('detaching a tag recomputes that term, not the version', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+
+    await service.detach('v1', 't1');
+
+    expect(indexability.recomputeForTerms).toHaveBeenCalledWith([], ['t1']);
+  });
+
+  it('attaching a tag recomputes that term', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+    prisma.tag.findUnique.mockResolvedValue({ id: 't1' });
+    prisma.bookTag.findFirst.mockResolvedValue(null);
+
+    await service.attach('v1', 't1');
+
+    expect(indexability.recomputeForTerms).toHaveBeenCalledWith([], ['t1']);
+  });
+
+  it('creates a translation that is not indexable until it earns it', async () => {
+    prisma.tag.findUnique.mockResolvedValue({ id: 't1' });
+    prisma.tagTranslation.create = jest.fn().mockResolvedValue({ id: 'tr1' });
+
+    await service.createTranslation('t1', {
+      language: Language.en,
+      name: 'Adventure',
+      slug: 'adventure',
+    });
+
+    expect(prisma.tagTranslation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ bookCount: 0, autoIndexable: false }),
+      }),
+    );
   });
 });

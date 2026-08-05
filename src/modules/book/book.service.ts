@@ -327,11 +327,47 @@ export class BookService {
           })
         : [];
 
+    // Live per-language book counts for the terms shown on the page. The client
+    // decides whether a term may be linked with `isTaxonomyLinkable`, whose floor
+    // is this live count — without it every term on a book page would look empty
+    // and lose its link. Counted in the language actually being rendered.
+    const countedLanguage = preferredLang ?? Language.en;
+    const categoryIds = categoriesRelation.map((c) => c.categoryId);
+    const tagIds = tagsRelation.map((t) => t.tagId);
+
+    const categoryCountMap = new Map<string, number>();
+    if (categoryIds.length > 0) {
+      const rows = await this.prisma.bookCategory.groupBy({
+        by: ['categoryId'],
+        where: {
+          categoryId: { in: categoryIds },
+          bookVersion: { status: 'published', language: countedLanguage },
+        },
+        _count: { _all: true },
+      });
+      rows.forEach((row) => categoryCountMap.set(row.categoryId, row._count._all));
+    }
+
+    const tagCountMap = new Map<string, number>();
+    if (tagIds.length > 0) {
+      const rows = await this.prisma.bookTag.groupBy({
+        by: ['tagId'],
+        where: {
+          tagId: { in: tagIds },
+          bookVersion: { status: 'published', language: countedLanguage },
+        },
+        _count: { _all: true },
+      });
+      rows.forEach((row) => tagCountMap.set(row.tagId, row._count._all));
+    }
+
     const categories = categoriesRelation.map((c) => ({
       ...c.category,
+      booksCount: categoryCountMap.get(c.categoryId) ?? 0,
     }));
     const tags = tagsRelation.map((t) => ({
       ...t.tag,
+      booksCount: tagCountMap.get(t.tagId) ?? 0,
     }));
 
     const book = await this.prisma.book.findUnique({ where: { id: bookId } });

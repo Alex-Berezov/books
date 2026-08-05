@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
@@ -40,7 +41,11 @@ export type CategoryTreeNode = {
 
 @Injectable()
 export class CategoryService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Optional()
+    private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
+  ) {}
 
   async list(page = 1, limit = 20, type?: PrismaCategory['type'], lang?: Language) {
     const where: Prisma.CategoryWhereInput = {};
@@ -437,6 +442,12 @@ export class CategoryService {
           name: dto.name,
           slug: dto.slug,
           description: dto.description ?? null,
+          // A brand-new term has no books yet, so it must not be born indexable.
+          // Written explicitly rather than relying on the column default, which
+          // is `true` — that default is what put every empty taxonomy into the
+          // sitemap on 05.08.2026. The recompute opens the term once it earns it.
+          bookCount: 0,
+          autoIndexable: false,
           ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
           ...(dto.shortDescription !== undefined ? { shortDescription: dto.shortDescription } : {}),
           ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
@@ -565,6 +576,10 @@ export class CategoryService {
       }
     });
 
+    // The link now exists for every language of the book, so every language's
+    // counter for this term is stale.
+    await this.taxonomyIndexabilityService?.recomputeForTerms([categoryId], []);
+
     return this.prisma.bookCategory.findFirst({
       where: { bookVersionId: versionId, categoryId },
     });
@@ -592,6 +607,10 @@ export class CategoryService {
         }
       }
     });
+
+    // Must run after the delete and by term id: the version no longer points at
+    // this category, so a version-scoped recompute would miss exactly it.
+    await this.taxonomyIndexabilityService?.recomputeForTerms([categoryId], []);
 
     return { success: true };
   }
