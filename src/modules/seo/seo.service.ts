@@ -43,6 +43,63 @@ export class SeoService {
     this.ttlMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 60 * 1000; // 5 minutes by default
   }
 
+  /**
+   * Pick the taxonomy translation to serve for `effLang`.
+   *
+   * Candidates are matched by slug across every language, so `/ru/...` carrying
+   * an English slug matches only the English row. Serving that row was building
+   * the canonical from the **requested** slug — `/ru/genre/historical-fiction` —
+   * while the same response's hreflang block, built from the term id, pointed at
+   * `/ru/genre/istoricheskaya-proza`. One page contradicting itself, and the
+   * duplicate canonicalising to itself instead of to the real URL.
+   *
+   * So: resolve the term first, then load its translation into the requested
+   * language explicitly. A term with no translation into that language is a 404 —
+   * serving it under a foreign name is exactly the fallback this phase removes,
+   * and it matches how tags already behave.
+   */
+  private async pickTaxonomyTranslation<
+    T extends { language: Language; categoryId: string; slug: string },
+  >(candidates: T[], effLang: Language, type: 'category' | 'genre' | 'collection'): Promise<T> {
+    const exact = candidates.find((c) => c.language === effLang);
+    if (exact) return exact;
+
+    const translated = await this.prisma.categoryTranslation.findFirst({
+      where: {
+        categoryId: candidates[0].categoryId,
+        language: effLang,
+        category: { type },
+      },
+      include: { category: true },
+    });
+
+    if (!translated) {
+      throw new NotFoundException(`No ${type} translation for language ${effLang}`);
+    }
+
+    return translated as unknown as T;
+  }
+
+  /** Same contract as `pickTaxonomyTranslation`, for tags. */
+  private async pickTagTranslation<T extends { language: Language; tagId: string; slug: string }>(
+    candidates: T[],
+    effLang: Language,
+  ): Promise<T> {
+    const exact = candidates.find((c) => c.language === effLang);
+    if (exact) return exact;
+
+    const translated = await this.prisma.tagTranslation.findFirst({
+      where: { tagId: candidates[0].tagId, language: effLang },
+      include: { tag: true },
+    });
+
+    if (!translated) {
+      throw new NotFoundException(`No tag translation for language ${effLang}`);
+    }
+
+    return translated as unknown as T;
+  }
+
   private getCache(key: string): Seo | null | undefined {
     const hit = this.cache.get(key);
     if (hit && hit.expires > Date.now()) return hit.value;
@@ -747,7 +804,7 @@ export class SeoService {
         throw new NotFoundException('Category translation not found');
       }
 
-      const chosen = transCandidates.find((t) => t.language === effLang) ?? transCandidates[0];
+      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'category');
 
       const baseMeta = generateGenreMeta({
         name: chosen.name,
@@ -891,7 +948,7 @@ export class SeoService {
         throw new NotFoundException('Collection not found');
       }
 
-      const chosen = transCandidates.find((t) => t.language === effLang) ?? transCandidates[0];
+      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'genre');
 
       const baseMeta = generateGenreMeta({
         name: chosen.name,
@@ -1048,7 +1105,7 @@ export class SeoService {
         throw new NotFoundException('Genre translation not found');
       }
 
-      const chosen = transCandidates.find((t) => t.language === effLang) ?? transCandidates[0];
+      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'collection');
 
       const baseMeta = generateGenreMeta({
         name: chosen.name,
@@ -1189,7 +1246,7 @@ export class SeoService {
         throw new NotFoundException('Tag translation not found');
       }
 
-      const chosen = transCandidates.find((t) => t.language === effLang) ?? transCandidates[0];
+      const chosen = await this.pickTagTranslation(transCandidates, effLang);
 
       const baseMeta = generateGenreMeta({
         name: chosen.name,
