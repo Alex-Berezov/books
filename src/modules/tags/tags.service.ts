@@ -41,6 +41,8 @@ export class TagsService {
               relatedGenreSlugs: true,
               relatedCategorySlugs: true,
               relatedCollectionSlugs: true,
+              bookCount: true,
+              autoIndexable: true,
             },
           },
         },
@@ -68,17 +70,26 @@ export class TagsService {
         : [];
     const countMap = new Map(bookCounts.map((row) => [row.tagId, row.booksCount]));
 
-    const data = items.map((item) => ({
-      id: item.id,
-      name: item.name,
-      slug: item.slug,
-      key: item.key,
-      indexable: item.indexable ?? true,
-      isVisible: item.isVisible ?? true,
-      sortOrder: item.sortOrder ?? 0,
-      translations: item.translations,
-      booksCount: countMap.get(item.id) || 0,
-    }));
+    const data = items.map((item) => {
+      // Project the requested language's indexability signals onto the tag.
+      // No lang, or no translation for it → both stay undefined, never a value
+      // borrowed from an arbitrary other language.
+      const langTranslation = lang ? item.translations.find((t) => t.language === lang) : undefined;
+
+      return {
+        id: item.id,
+        name: item.name,
+        slug: item.slug,
+        key: item.key,
+        indexable: item.indexable ?? true,
+        isVisible: item.isVisible ?? true,
+        sortOrder: item.sortOrder ?? 0,
+        translations: item.translations,
+        booksCount: countMap.get(item.id) || 0,
+        langBookCount: langTranslation?.bookCount,
+        autoIndexable: langTranslation?.autoIndexable,
+      };
+    });
 
     return {
       data,

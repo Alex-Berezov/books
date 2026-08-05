@@ -15,6 +15,16 @@ export type CategoryTreeNode = {
   type: PrismaCategory['type'];
   parentId: string | null;
   booksCount: number;
+  /**
+   * CategoryTranslation.bookCount (cached, per-language) for the requested `lang`.
+   * Undefined when `lang` is not passed or the term has no translation for it.
+   */
+  langBookCount?: number;
+  /**
+   * CategoryTranslation.autoIndexable (hysteresis state) for the requested `lang`.
+   * Undefined when `lang` is not passed or the term has no translation for it.
+   */
+  autoIndexable?: boolean;
   indexable: boolean;
   isVisible: boolean;
   sortOrder: number;
@@ -22,6 +32,8 @@ export type CategoryTreeNode = {
     language: string;
     name: string;
     slug: string;
+    bookCount?: number;
+    autoIndexable?: boolean;
   }>;
   children: CategoryTreeNode[];
 };
@@ -49,6 +61,11 @@ export class CategoryService {
               language: true,
               name: true,
               slug: true,
+              // Consumed by the frontend sitemap route, which picks a translation
+              // by language and must decide indexability from the same signal as
+              // meta robots. See CategoryTranslationResponse.
+              bookCount: true,
+              autoIndexable: true,
             },
           },
         },
@@ -75,18 +92,26 @@ export class CategoryService {
     `;
     const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
 
-    const data = items.map((item: any) => ({
-      id: item.id,
-      name: item.name,
-      slug: item.slug,
-      key: item.key,
-      type: item.type,
-      booksCount: countMap.get(item.id) || 0,
-      indexable: item.indexable ?? true,
-      isVisible: item.isVisible ?? true,
-      sortOrder: item.sortOrder ?? 0,
-      translations: item.translations,
-    }));
+    const data = items.map((item) => {
+      // Same projection as getTree: the requested language's indexability signals,
+      // or undefined when there is no lang / no translation into it.
+      const langTranslation = lang ? item.translations.find((t) => t.language === lang) : undefined;
+
+      return {
+        id: item.id,
+        name: item.name,
+        slug: item.slug,
+        key: item.key,
+        type: item.type,
+        booksCount: countMap.get(item.id) || 0,
+        langBookCount: langTranslation?.bookCount,
+        autoIndexable: langTranslation?.autoIndexable,
+        indexable: item.indexable ?? true,
+        isVisible: item.isVisible ?? true,
+        sortOrder: item.sortOrder ?? 0,
+        translations: item.translations,
+      };
+    });
 
     return {
       data,
@@ -572,6 +597,19 @@ export class CategoryService {
   }
 
   // ===== Hierarchy helpers =====
+  /**
+   * Returns the full category tree — **all** terms, including hidden and
+   * non-indexable ones, because the admin UI needs them. Filtering for public
+   * rendering is the client's responsibility: see `isTaxonomyLinkable` in
+   * `books-front/lib/seo/taxonomy-linkable.ts`.
+   *
+   * When `lang` is passed, every node also carries `langBookCount` and
+   * `autoIndexable` projected from that language's translation, so the client
+   * can decide "may I link to this term" with the same signal that drives
+   * meta robots and the sitemap. Without `lang`, or for a node that has no
+   * translation into `lang`, both fields stay `undefined` — never a value
+   * borrowed from an arbitrary other language.
+   */
   async getTree(type?: PrismaCategory['type'], lang?: Language): Promise<CategoryTreeNode[]> {
     type CategoryNode = CategoryTreeNode;
 
@@ -601,6 +639,8 @@ export class CategoryService {
             language: true,
             name: true,
             slug: true,
+            bookCount: true,
+            autoIndexable: true,
           },
         },
       },
@@ -624,23 +664,31 @@ export class CategoryService {
     const countMap = new Map(bookCounts.map((row) => [row.categoryId, row.booksCount]));
 
     const byId = new Map<string, CategoryNode>(
-      allCategories.map((c: any) => [
-        c.id,
-        {
-          id: c.id,
-          name: c.name,
-          slug: c.slug,
-          key: c.key,
-          type: c.type,
-          parentId: c.parentId,
-          booksCount: countMap.get(c.id) || 0,
-          indexable: c.indexable ?? true,
-          isVisible: c.isVisible ?? true,
-          sortOrder: c.sortOrder ?? 0,
-          translations: c.translations,
-          children: [],
-        } as CategoryNode,
-      ]),
+      allCategories.map((c) => {
+        // Project the requested language's indexability signals onto the node.
+        // No lang, or no translation for it → both stay undefined.
+        const langTranslation = lang ? c.translations.find((t) => t.language === lang) : undefined;
+
+        return [
+          c.id,
+          {
+            id: c.id,
+            name: c.name,
+            slug: c.slug,
+            key: c.key,
+            type: c.type,
+            parentId: c.parentId,
+            booksCount: countMap.get(c.id) || 0,
+            langBookCount: langTranslation?.bookCount,
+            autoIndexable: langTranslation?.autoIndexable,
+            indexable: c.indexable ?? true,
+            isVisible: c.isVisible ?? true,
+            sortOrder: c.sortOrder ?? 0,
+            translations: c.translations,
+            children: [],
+          } as CategoryNode,
+        ];
+      }),
     );
     const roots: CategoryNode[] = [];
     for (const c of byId.values()) {

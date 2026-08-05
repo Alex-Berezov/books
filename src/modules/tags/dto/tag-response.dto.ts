@@ -67,6 +67,17 @@ export class TagTranslationResponse {
 
   @ApiPropertyOptional({ type: [String], example: ['short-reads', 'feel-good-books'] })
   relatedCollectionSlugs?: unknown;
+
+  @ApiPropertyOptional({
+    description: 'Cached number of published books in this language.',
+  })
+  bookCount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Automatic indexability derived from bookCount with hysteresis (close <=2, open >=5). Drives meta robots, the sitemap and internal linking alike.',
+  })
+  autoIndexable?: boolean;
 }
 
 export class TagResponse {
@@ -96,6 +107,18 @@ export class TagResponse {
 
   @ApiPropertyOptional()
   booksCount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Cached per-language book count (TagTranslation.bookCount) for the requested ?lang. Undefined when lang is not passed or the tag has no translation for it.',
+  })
+  langBookCount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Automatic indexability (hysteresis state) for the requested ?lang. Mirrors what meta robots and the sitemap decide. Undefined when lang is not passed or the tag has no translation for it.',
+  })
+  autoIndexable?: boolean;
 }
 
 export class PaginationMeta {

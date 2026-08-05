@@ -5,6 +5,7 @@ import { Language } from '@prisma/client';
 
 interface PrismaStub {
   $transaction: jest.Mock;
+  $queryRaw: jest.Mock;
   category: {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
@@ -36,6 +37,7 @@ interface PrismaStub {
 
 const createPrismaStub = (): PrismaStub => ({
   $transaction: jest.fn(),
+  $queryRaw: jest.fn(),
   category: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
@@ -170,6 +172,133 @@ describe('CategoryService', () => {
     expect(res.data).toHaveLength(1);
     expect(res.data[0].versions[0].language).toBe(Language.es);
     expect(res.category.translation).toBeNull();
+  });
+
+  it('list exposes per-translation indexability (source of truth for the sitemap)', async () => {
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+    prisma.category.count.mockResolvedValue(1);
+    prisma.category.findMany.mockResolvedValue([
+      {
+        id: 'c1',
+        name: 'Poetry',
+        slug: 'poetry',
+        key: 'poetry',
+        type: 'genre',
+        indexable: true,
+        isVisible: true,
+        sortOrder: 0,
+        translations: [
+          {
+            language: Language.ru,
+            name: 'Поэзия',
+            slug: 'poeziya',
+            bookCount: 1,
+            autoIndexable: false,
+          },
+        ],
+      },
+    ]);
+    prisma.$queryRaw.mockResolvedValue([{ categoryId: 'c1', booksCount: 1 }]);
+
+    const res = await service.list(1, 20, 'genre', Language.ru);
+
+    expect(res.data[0].translations[0]).toEqual(
+      expect.objectContaining({ bookCount: 1, autoIndexable: false }),
+    );
+    expect(res.data[0].autoIndexable).toBe(false);
+    expect(res.data[0].langBookCount).toBe(1);
+  });
+
+  describe('getTree projects per-language indexability', () => {
+    beforeEach(() => {
+      prisma.category.findMany.mockResolvedValue([
+        {
+          id: 'c1',
+          name: 'Historical Fiction',
+          slug: 'historical-fiction',
+          key: 'historical-fiction',
+          type: 'genre',
+          parentId: null,
+          indexable: true,
+          isVisible: true,
+          sortOrder: 0,
+          translations: [
+            {
+              language: Language.en,
+              name: 'Historical Fiction',
+              slug: 'historical-fiction',
+              bookCount: 7,
+              autoIndexable: true,
+            },
+            {
+              language: Language.ru,
+              name: 'Исторический роман',
+              slug: 'istoricheskiy-roman',
+              bookCount: 1,
+              autoIndexable: false,
+            },
+          ],
+        },
+        {
+          id: 'c2',
+          name: 'Poetry',
+          slug: 'poetry',
+          key: 'poetry',
+          type: 'genre',
+          parentId: null,
+          indexable: true,
+          isVisible: true,
+          sortOrder: 1,
+          translations: [
+            {
+              language: Language.en,
+              name: 'Poetry',
+              slug: 'poetry',
+              bookCount: 9,
+              autoIndexable: true,
+            },
+          ],
+        },
+      ]);
+      prisma.$queryRaw.mockResolvedValue([{ categoryId: 'c1', booksCount: 1 }]);
+    });
+
+    it('takes autoIndexable from the requested language, not from another one', async () => {
+      const roots = await service.getTree('genre', Language.ru);
+      const node = roots.find((n) => n.id === 'c1');
+
+      expect(node?.autoIndexable).toBe(false);
+      expect(node?.langBookCount).toBe(1);
+    });
+
+    it('leaves both fields undefined when lang is not passed', async () => {
+      const roots = await service.getTree('genre');
+
+      expect(roots[0].autoIndexable).toBeUndefined();
+      expect(roots[0].langBookCount).toBeUndefined();
+    });
+
+    it('leaves both fields undefined for a term without a translation into lang', async () => {
+      const roots = await service.getTree('genre', Language.ru);
+      const node = roots.find((n) => n.id === 'c2');
+
+      expect(node?.autoIndexable).toBeUndefined();
+      expect(node?.langBookCount).toBeUndefined();
+    });
+
+    it('keeps booksCount live and exposes per-translation indexability', async () => {
+      const roots = await service.getTree('genre', Language.ru);
+      const node = roots.find((n) => n.id === 'c1');
+
+      expect(node?.booksCount).toBe(1);
+      // The sitemap picks a translation by language and needs the same signal there.
+      expect(node?.translations).toEqual([
+        expect.objectContaining({ language: Language.en, bookCount: 7, autoIndexable: true }),
+        expect.objectContaining({ language: Language.ru, bookCount: 1, autoIndexable: false }),
+      ]);
+    });
   });
 
   it('detachCategoryFromVersion is idempotent when relation missing', async () => {
