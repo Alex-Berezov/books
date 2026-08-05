@@ -18,6 +18,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { SeoService } from './seo.service';
 import { TaxonomyIndexabilityService } from './indexability/taxonomy-indexability.service';
+import { TaxonomyIndexabilitySchedulerService } from './indexability/taxonomy-indexability-scheduler.service';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 // no import of ResolveSeoType here to avoid type resolution warnings in validation decorators
 import { ApiHeader } from '@nestjs/swagger';
@@ -30,6 +31,7 @@ export class SeoController {
   constructor(
     private readonly service: SeoService,
     private readonly taxonomyIndexability: TaxonomyIndexabilityService,
+    private readonly scheduler: TaxonomyIndexabilitySchedulerService,
   ) {}
 
   @Post('admin/seo/taxonomy-indexability/recompute')
@@ -42,6 +44,19 @@ export class SeoController {
   @ApiResponse({ status: 201, description: 'Counters recomputed' })
   recomputeTaxonomyIndexability() {
     return this.taxonomyIndexability.recomputeAll();
+  }
+
+  @Get('admin/seo/taxonomy-indexability/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiOperation({
+    summary: 'Last run of the daily taxonomy indexability sweep',
+    description:
+      'The sweep is the safety net that catches a counter no targeted hook updated. It runs in-process, so this is the only way to confirm from outside that it actually ran.',
+  })
+  @ApiResponse({ status: 200, description: 'Scheduler state and last run result' })
+  taxonomyIndexabilityStatus() {
+    return this.scheduler.getStatus();
   }
 
   @Get('versions/:bookVersionId/seo')

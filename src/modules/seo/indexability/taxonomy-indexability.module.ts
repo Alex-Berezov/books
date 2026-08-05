@@ -11,6 +11,6 @@ import { TaxonomyIndexabilityService } from './taxonomy-indexability.service';
 @Module({
   imports: [ConfigModule],
   providers: [TaxonomyIndexabilityService, TaxonomyIndexabilitySchedulerService, PrismaService],
-  exports: [TaxonomyIndexabilityService],
+  exports: [TaxonomyIndexabilityService, TaxonomyIndexabilitySchedulerService],
 })
 export class TaxonomyIndexabilityModule {}
