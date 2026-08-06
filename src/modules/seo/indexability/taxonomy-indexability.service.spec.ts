@@ -163,4 +163,77 @@ describe('TaxonomyIndexabilityService', () => {
       expect(call).toBeUndefined(); // already false and count unchanged → no write
     });
   });
+
+  /**
+   * `changed: 0` is what a healthy sweep reports on a settled database — and also
+   * what a sweep doing no work at all would report. These assert the numbers that
+   * tell the two apart. The same control, against a real database, is
+   * `test/taxonomy-indexability-recompute.e2e-spec.ts`.
+   */
+  describe('the report distinguishes "nothing to fix" from "nothing done"', () => {
+    it('counts what it scanned, not only what it wrote', async () => {
+      prisma.categoryTranslation.findMany.mockImplementation(
+        (args: { where: { language: Language } }) =>
+          args.where.language === Language.en
+            ? [{ id: 'tr-en', categoryId: 'c1', bookCount: 0, autoIndexable: false }]
+            : [],
+      );
+
+      const result = await service.recomputeAll();
+
+      expect(result.changed).toBe(0);
+      expect(result.categoryTranslations).toBe(1);
+    });
+
+    it('reports a planted false as an opening once the books are there', async () => {
+      prisma.bookCategory.groupBy.mockResolvedValue([{ categoryId: 'c1', _count: { _all: 8 } }]);
+      prisma.categoryTranslation.findMany.mockImplementation(
+        (args: { where: { language: Language } }) =>
+          args.where.language === Language.en
+            ? [{ id: 'tr-en', categoryId: 'c1', bookCount: 0, autoIndexable: false }]
+            : [],
+      );
+
+      const result = await service.recomputeAll();
+
+      expect(result.changed).toBe(1);
+      expect(result.opened).toBe(1);
+      expect(result.closed).toBe(0);
+      expect(prisma.categoryTranslation.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { bookCount: 8, autoIndexable: true } }),
+      );
+    });
+
+    it('reports a planted true as a closing once the books are gone', async () => {
+      prisma.bookCategory.groupBy.mockResolvedValue([{ categoryId: 'c1', _count: { _all: 1 } }]);
+      prisma.categoryTranslation.findMany.mockImplementation(
+        (args: { where: { language: Language } }) =>
+          args.where.language === Language.en
+            ? [{ id: 'tr-en', categoryId: 'c1', bookCount: 99, autoIndexable: true }]
+            : [],
+      );
+
+      const result = await service.recomputeAll();
+
+      expect(result.changed).toBe(1);
+      expect(result.opened).toBe(0);
+      expect(result.closed).toBe(1);
+    });
+
+    it('does not call a count correction an opening or a closing', async () => {
+      prisma.bookCategory.groupBy.mockResolvedValue([{ categoryId: 'c1', _count: { _all: 7 } }]);
+      prisma.categoryTranslation.findMany.mockImplementation(
+        (args: { where: { language: Language } }) =>
+          args.where.language === Language.en
+            ? [{ id: 'tr-en', categoryId: 'c1', bookCount: 6, autoIndexable: true }]
+            : [],
+      );
+
+      const result = await service.recomputeAll();
+
+      expect(result.changed).toBe(1);
+      expect(result.opened).toBe(0);
+      expect(result.closed).toBe(0);
+    });
+  });
 });

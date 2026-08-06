@@ -7,6 +7,17 @@ export interface RecomputeResult {
   categoryTranslations: number;
   tagTranslations: number;
   changed: number;
+  /** `autoIndexable` false → true. A term that entered the index tonight. */
+  opened: number;
+  /** `autoIndexable` true → false. A term that left it. */
+  closed: number;
+}
+
+interface SyncResult {
+  total: number;
+  changed: number;
+  opened: number;
+  closed: number;
 }
 
 /**
@@ -46,11 +57,8 @@ export class TaxonomyIndexabilityService {
    * @param categoryIds when given, only these terms are touched; otherwise every
    *   translation in the language is recomputed.
    */
-  private async syncCategories(
-    language: Language,
-    categoryIds?: string[],
-  ): Promise<{ total: number; changed: number }> {
-    if (categoryIds?.length === 0) return { total: 0, changed: 0 };
+  private async syncCategories(language: Language, categoryIds?: string[]): Promise<SyncResult> {
+    if (categoryIds?.length === 0) return { total: 0, changed: 0, opened: 0, closed: 0 };
 
     const counts = await this.countBooksByCategory(language);
     const translations = await this.prisma.categoryTranslation.findMany({
@@ -59,6 +67,8 @@ export class TaxonomyIndexabilityService {
     });
 
     let changed = 0;
+    let opened = 0;
+    let closed = 0;
     for (const translation of translations) {
       const bookCount = counts.get(translation.categoryId) ?? 0;
       const autoIndexable = resolveAutoIndexable(bookCount, translation.autoIndexable);
@@ -70,17 +80,18 @@ export class TaxonomyIndexabilityService {
         data: { bookCount, autoIndexable },
       });
       changed += 1;
+      if (autoIndexable !== translation.autoIndexable) {
+        if (autoIndexable) opened += 1;
+        else closed += 1;
+      }
     }
 
-    return { total: translations.length, changed };
+    return { total: translations.length, changed, opened, closed };
   }
 
   /** @param tagIds — same contract as `syncCategories`. */
-  private async syncTags(
-    language: Language,
-    tagIds?: string[],
-  ): Promise<{ total: number; changed: number }> {
-    if (tagIds?.length === 0) return { total: 0, changed: 0 };
+  private async syncTags(language: Language, tagIds?: string[]): Promise<SyncResult> {
+    if (tagIds?.length === 0) return { total: 0, changed: 0, opened: 0, closed: 0 };
 
     const counts = await this.countBooksByTag(language);
     const translations = await this.prisma.tagTranslation.findMany({
@@ -89,6 +100,8 @@ export class TaxonomyIndexabilityService {
     });
 
     let changed = 0;
+    let opened = 0;
+    let closed = 0;
     for (const translation of translations) {
       const bookCount = counts.get(translation.tagId) ?? 0;
       const autoIndexable = resolveAutoIndexable(bookCount, translation.autoIndexable);
@@ -100,9 +113,13 @@ export class TaxonomyIndexabilityService {
         data: { bookCount, autoIndexable },
       });
       changed += 1;
+      if (autoIndexable !== translation.autoIndexable) {
+        if (autoIndexable) opened += 1;
+        else closed += 1;
+      }
     }
 
-    return { total: translations.length, changed };
+    return { total: translations.length, changed, opened, closed };
   }
 
   /**
@@ -121,7 +138,13 @@ export class TaxonomyIndexabilityService {
    *   the hysteresis into a plain >=5 threshold for that run.
    */
   async recomputeAll(cold?: { categories?: boolean; tags?: boolean }): Promise<RecomputeResult> {
-    const result: RecomputeResult = { categoryTranslations: 0, tagTranslations: 0, changed: 0 };
+    const result: RecomputeResult = {
+      categoryTranslations: 0,
+      tagTranslations: 0,
+      changed: 0,
+      opened: 0,
+      closed: 0,
+    };
 
     if (cold?.categories) {
       const reset = await this.prisma.categoryTranslation.updateMany({
@@ -146,11 +169,14 @@ export class TaxonomyIndexabilityService {
       result.categoryTranslations += categories.total;
       result.tagTranslations += tags.total;
       result.changed += categories.changed + tags.changed;
+      result.opened += categories.opened + tags.opened;
+      result.closed += categories.closed + tags.closed;
     }
 
     this.logger.log(
       `Taxonomy indexability recomputed: ${result.categoryTranslations} category + ` +
-        `${result.tagTranslations} tag translations, ${result.changed} updated`,
+        `${result.tagTranslations} tag translations scanned, ${result.changed} updated ` +
+        `(${result.opened} opened, ${result.closed} closed)`,
     );
     return result;
   }

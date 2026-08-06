@@ -14,7 +14,20 @@ export interface TaxonomySweepStatus {
   lastStartedAt: string | null;
   lastFinishedAt: string | null;
   lastDurationMs: number | null;
+  /**
+   * How many translations the sweep actually looked at.
+   *
+   * Without this, `lastChanged: 0` is indistinguishable between "scanned 1600,
+   * nothing needed fixing" and "scanned nothing" — which is precisely the
+   * ambiguity that let this mechanism be considered working for months while it
+   * did not exist. A run that reports zero scanned is a broken run, not a clean
+   * one.
+   */
+  lastScanned: number | null;
   lastChanged: number | null;
+  /** Of those changed: how many entered the index, how many left it. */
+  lastOpened: number | null;
+  lastClosed: number | null;
   lastError: string | null;
   isRunning: boolean;
 }
@@ -66,7 +79,10 @@ export class TaxonomyIndexabilitySchedulerService implements OnModuleInit, OnMod
   private lastStartedAt: Date | null = null;
   private lastFinishedAt: Date | null = null;
   private lastDurationMs: number | null = null;
+  private lastScanned: number | null = null;
   private lastChanged: number | null = null;
+  private lastOpened: number | null = null;
+  private lastClosed: number | null = null;
   private lastError: string | null = null;
 
   constructor(
@@ -104,7 +120,10 @@ export class TaxonomyIndexabilitySchedulerService implements OnModuleInit, OnMod
       lastStartedAt: this.lastStartedAt?.toISOString() ?? null,
       lastFinishedAt: this.lastFinishedAt?.toISOString() ?? null,
       lastDurationMs: this.lastDurationMs,
+      lastScanned: this.lastScanned,
       lastChanged: this.lastChanged,
+      lastOpened: this.lastOpened,
+      lastClosed: this.lastClosed,
       lastError: this.lastError,
       isRunning: this.isRunning,
     };
@@ -155,16 +174,23 @@ export class TaxonomyIndexabilitySchedulerService implements OnModuleInit, OnMod
 
     try {
       const result = await this.indexability.recomputeAll();
+      this.lastScanned = result.categoryTranslations + result.tagTranslations;
       this.lastChanged = result.changed;
-      // Logged even at zero: "changed 0" is the evidence that the sweep ran and
-      // found nothing to fix, which is exactly what silence failed to prove before.
+      this.lastOpened = result.opened;
+      this.lastClosed = result.closed;
+      // Logged even at zero — but the number that carries the proof is `scanned`,
+      // not `changed`: "changed 0" alone is what a sweep that did nothing would
+      // also report.
       this.logger.log(
-        `Taxonomy indexability sweep: ${result.categoryTranslations} category + ` +
-          `${result.tagTranslations} tag translations scanned, ${result.changed} changed`,
+        `Taxonomy indexability sweep: ${this.lastScanned} translations scanned, ` +
+          `${result.changed} changed (${result.opened} opened, ${result.closed} closed)`,
       );
     } catch (error: unknown) {
       this.lastError = error instanceof Error ? error.message : 'unknown error';
+      this.lastScanned = null;
       this.lastChanged = null;
+      this.lastOpened = null;
+      this.lastClosed = null;
       this.logger.error(`Taxonomy indexability sweep failed: ${this.lastError}`);
     } finally {
       this.lastFinishedAt = new Date();

@@ -6,7 +6,7 @@ const makeConfig = (values: Record<string, string> = {}): ConfigService =>
   ({ get: (key: string) => values[key] }) as unknown as ConfigService;
 
 const makeIndexability = (
-  result = { categoryTranslations: 10, tagTranslations: 5, changed: 3 },
+  result = { categoryTranslations: 10, tagTranslations: 5, changed: 3, opened: 2, closed: 1 },
 ) => {
   const recomputeAll = jest.fn().mockResolvedValue(result);
   return {
@@ -76,6 +76,11 @@ describe('TaxonomyIndexabilitySchedulerService', () => {
     const status = service.getStatus();
     expect(recomputeAll).toHaveBeenCalledTimes(1);
     expect(status.lastChanged).toBe(3);
+    // The number that proves work happened: "changed 0" alone is also what a
+    // sweep that scanned nothing would report.
+    expect(status.lastScanned).toBe(15);
+    expect(status.lastOpened).toBe(2);
+    expect(status.lastClosed).toBe(1);
     expect(status.lastError).toBeNull();
     expect(status.lastFinishedAt).not.toBeNull();
     // And the schedule survives the run.
@@ -99,6 +104,10 @@ describe('TaxonomyIndexabilitySchedulerService', () => {
 
     const status = service.getStatus();
     expect(status.lastError).toBe('db down');
+    // A failed run must not leave last run's numbers standing — they would read
+    // as evidence that this run did the work.
+    expect(status.lastScanned).toBeNull();
+    expect(status.lastChanged).toBeNull();
     expect(status.nextRunAt).toBe('2026-08-06T03:00:00.000Z');
     service.onModuleDestroy();
   });
