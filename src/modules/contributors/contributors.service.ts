@@ -162,7 +162,7 @@ export class ContributorsService {
   }
 
   async remove(id: string): Promise<{ id: string }> {
-    return await this.personsService.remove(id);
+    return this.personsService.remove(id);
   }
 
   async linkSourceEdition(

@@ -100,19 +100,26 @@ export class BooksApiClient {
       ((response: AxiosResponse): AxiosResponse => response) as AxiosResponseInterceptor,
       (async (error: AxiosErrorWithConfig): Promise<AxiosResponse> => {
         if (error.response?.status === 401 && this.refreshToken) {
+          // Only the refresh belongs in the try: clearTokens() means "the refresh
+          // token is no good". The retried request used to sit inside it without an
+          // await, so its rejection went straight to the caller — which happened to
+          // preserve the intent by accident. Adding the await would have logged the
+          // user out on any failure of the retried call, so the try is narrowed
+          // instead and the retry moved out of it.
+          let tokens: AuthTokens;
           try {
-            const tokens = await this.refreshAccessToken();
-            this.setTokens(tokens);
-
-            // Retry original request
-            const originalRequest = error.config;
-            (originalRequest.headers as Record<string, string>)['Authorization'] =
-              `Bearer ${tokens.accessToken}`;
-            return this.axios.request(originalRequest);
+            tokens = await this.refreshAccessToken();
           } catch (refreshError) {
             this.clearTokens();
             throw refreshError;
           }
+          this.setTokens(tokens);
+
+          // Retry original request
+          const originalRequest = error.config;
+          (originalRequest.headers as Record<string, string>)['Authorization'] =
+            `Bearer ${tokens.accessToken}`;
+          return this.axios.request(originalRequest);
         }
         return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       }) as AxiosErrorInterceptor,

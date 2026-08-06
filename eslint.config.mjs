@@ -35,6 +35,10 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'warn',
       '@typescript-eslint/no-unsafe-argument': 'warn',
       '@typescript-eslint/no-unsafe-call': 'off',
+      // `return somePromise` inside `try` does not put the rejection anywhere the
+      // `catch` can see it — the caller receives the rejected promise instead, so
+      // the handler silently never runs. Cheaper than remembering to write await.
+      '@typescript-eslint/return-await': ['error', 'in-try-catch'],
     },
   },
   // Loosen rules for Prisma scripts where type-aware linting often misfires

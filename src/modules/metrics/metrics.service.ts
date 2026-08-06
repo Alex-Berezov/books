@@ -33,7 +33,7 @@ export class MetricsService {
   }
 
   async getMetrics(): Promise<string> {
-    return await this.registry.metrics();
+    return this.registry.metrics();
   }
 
   // For tests/debugging

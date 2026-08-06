@@ -19,6 +19,7 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { SeoService } from './seo.service';
 import { TaxonomyIndexabilityService } from './indexability/taxonomy-indexability.service';
 import { TaxonomyIndexabilitySchedulerService } from './indexability/taxonomy-indexability-scheduler.service';
+import { SystemPagesService } from './system-pages/system-pages.service';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 // no import of ResolveSeoType here to avoid type resolution warnings in validation decorators
 import { ApiHeader } from '@nestjs/swagger';
@@ -32,6 +33,7 @@ export class SeoController {
     private readonly service: SeoService,
     private readonly taxonomyIndexability: TaxonomyIndexabilityService,
     private readonly scheduler: TaxonomyIndexabilitySchedulerService,
+    private readonly systemPages: SystemPagesService,
   ) {}
 
   @Post('admin/seo/taxonomy-indexability/recompute')
@@ -72,6 +74,19 @@ export class SeoController {
   @ApiResponse({ status: 200, description: 'Scheduler state and last run result' })
   taxonomyIndexabilityStatus() {
     return this.scheduler.getStatus();
+  }
+
+  @Get('admin/seo/system-pages/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiOperation({
+    summary: 'Do the slugs the public site hard-codes still resolve?',
+    description:
+      'The homepage and the four taxonomy hubs are found by slug, and the slug is an editable field. When it drifts nothing errors: the pages fall back to dictionary strings and silently lose their meta, H1, SEO text and FAQ. This names the pages that no longer resolve, per language. Also logged at startup.',
+  })
+  @ApiResponse({ status: 200, description: 'State of every system page, plus the problems only' })
+  systemPagesStatus() {
+    return this.systemPages.check();
   }
 
   @Get('versions/:bookVersionId/seo')
