@@ -26,9 +26,13 @@ describe('Taxonomy indexability recompute — planted control input', () => {
   let closableCategoryId: string;
   const stamp = Date.now();
 
+  // One book per version: BookVersion is unique on (bookId, language), so a
+  // single book cannot hold eight English versions.
   const makePublishedVersions = async (count: number, categoryId: string) => {
-    const book = await prisma.book.create({ data: { slug: `ctrl-book-${categoryId}-${stamp}` } });
     for (let i = 0; i < count; i += 1) {
+      const book = await prisma.book.create({
+        data: { slug: `ctrl-book-${categoryId}-${i}-${stamp}` },
+      });
       const version = await prisma.bookVersion.create({
         data: {
           bookId: book.id,
