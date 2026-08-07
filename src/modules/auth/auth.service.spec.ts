@@ -163,9 +163,10 @@ describe('AuthService (unit)', () => {
     }
 
     // Landing 2. The point of the whole change: the identity must come from the
-    // verified provider answer, never from the body. Without this the token can
-    // be checked and the e-mail still taken from the request — the hole intact.
-    it('landing 2: identity comes from the verified token, body e-mail is ignored', async () => {
+    // verified provider answer. The body can no longer carry an e-mail at all
+    // (the DTO rejects it), so what is pinned here is that the *lookup* uses the
+    // provider's answer rather than anything else the request might imply.
+    it('landing 2: identity comes from the verified token', async () => {
       social.verify.mockResolvedValue({
         provider: 'google',
         providerUserId: 'g-1',
@@ -176,11 +177,7 @@ describe('AuthService (unit)', () => {
       prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
       prisma.user.update.mockResolvedValue({ ...user, email: 'real@example.com', lastLogin: now });
 
-      const res = await service.socialLogin({
-        provider: 'google',
-        token: 'id-token',
-        email: 'victim@bibliaris.com',
-      });
+      const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
 
       expect(social.verify).toHaveBeenCalledWith('google', 'id-token');
       expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { email: 'real@example.com' } });
@@ -197,11 +194,7 @@ describe('AuthService (unit)', () => {
       prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
       prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
 
-      await service.socialLogin({
-        provider: 'facebook',
-        token: 'fb-access-token',
-        email: 'victim@bibliaris.com',
-      });
+      await service.socialLogin({ provider: 'facebook', token: 'fb-access-token' });
 
       expect(social.verify).toHaveBeenCalledWith('facebook', 'fb-access-token');
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -219,23 +212,17 @@ describe('AuthService (unit)', () => {
       expect(jwt.signAsync).not.toHaveBeenCalled();
     });
 
-    // Landing 3. The legacy body-only shape proves nothing, so it must not
-    // carry the roles the account really has. computeRoles reads the database
-    // first, so an admin account would otherwise get an admin token here.
-    it('landing 3: the legacy path never issues elevated roles', async () => {
+    // Landing 3. The request that used to return an admin session: an admin
+    // e-mail, no proof. There is no longer a code path that answers it — the
+    // verifier is consulted first and has nothing to work with.
+    it('landing 3: an admin e-mail without a token yields no session', async () => {
       existingAdmin();
+      social.verify.mockRejectedValue(new UnauthorizedException('bad token'));
 
-      const res = await service.socialLogin({
-        email: 'admin@bibliaris.com',
-        provider: 'google',
-      });
-
-      expect(social.verify).not.toHaveBeenCalled();
-      expect(res.user.roles).toEqual([RoleName.user]);
-      expect(jwt.signAsync).toHaveBeenCalledWith(
-        expect.objectContaining({ roles: [RoleName.user] }),
-        expect.anything(),
-      );
+      await expect(
+        service.socialLogin({ provider: 'google', token: 'not-a-real-token' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(jwt.signAsync).not.toHaveBeenCalled();
     });
 
     it('a verified admin keeps the roles stored in the database', async () => {
@@ -250,19 +237,6 @@ describe('AuthService (unit)', () => {
 
       expect(res.user.roles).toEqual(
         expect.arrayContaining([RoleName.user, RoleName.admin, RoleName.content_manager]),
-      );
-    });
-
-    it('rejects a token without a provider — the mechanic is unknown', async () => {
-      await expect(service.socialLogin({ token: 'id-token' })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-      expect(social.verify).not.toHaveBeenCalled();
-    });
-
-    it('rejects a body carrying neither a token nor an e-mail', async () => {
-      await expect(service.socialLogin({ provider: 'google' })).rejects.toBeInstanceOf(
-        BadRequestException,
       );
     });
 

@@ -13,19 +13,18 @@ import type {
 } from '../src/modules/auth/providers/social-identity.service';
 
 /**
- * Control landings for CR auth-social, step 1.
+ * Control landings for CR auth-social, step 3.
  *
  * The provider itself is stubbed: Google's JWKS and Facebook's Graph API are
  * network services, and a landing that depends on them tests the network. What
  * each provider accepts is pinned in social-identity.service.spec.ts; what is
  * pinned here is that the route uses the *verified answer* and nothing else.
  *
- * Note on landing 1 as written in the CR ("no token → 401/403"): that is a
- * step 3 criterion. Step 1 must still accept the legacy body, because
- * books-front has not been redeployed yet. What step 1 guarantees instead is
- * that the unproven path carries no elevated role — landing 3 below.
+ * Landing 1 is now in its full CR form: no provider token, no session at all.
+ * During step 1 it could only be the weaker "no elevated role", because the
+ * frontend still sent the old shape.
  */
-describe('POST /auth/social (CR auth-social, step 1)', () => {
+describe('POST /auth/social (CR auth-social, step 3)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
 
@@ -120,10 +119,10 @@ describe('POST /auth/social (CR auth-social, step 1)', () => {
   // Landing 2g / 2f — the most telling one. It separates "we started verifying
   // the token" from "we started verifying the token but still read the e-mail
   // out of the body", which would leave the hole exactly where it was.
-  it('landing 2g: the session belongs to the token holder, not to the body e-mail', async () => {
+  it('landing 2g: the session belongs to the token holder', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/social')
-      .send({ provider: 'google', token: 'good-google-token', email: ADMIN_EMAIL })
+      .send({ provider: 'google', token: 'good-google-token' })
       .expect(200);
 
     expect(res.body.user.email).toBe('google-real@example.com');
@@ -133,23 +132,30 @@ describe('POST /auth/social (CR auth-social, step 1)', () => {
   it('landing 2f: the same holds for Facebook', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/social')
-      .send({ provider: 'facebook', token: 'good-facebook-token', email: ADMIN_EMAIL })
+      .send({ provider: 'facebook', token: 'good-facebook-token' })
       .expect(200);
 
     expect(res.body.user.email).toBe('facebook-real@example.com');
   });
 
-  // Landing 3: the legacy shape proves nothing, so it must not carry the roles
-  // the account really has. Roles come from the database, so without an
-  // explicit restriction this request would hand back an admin token.
-  it('landing 3: the unproven legacy path issues no elevated role', async () => {
+  // Landing 1/3 in full form: naming an account buys nothing at all any more.
+  // This is the exact request that used to return an admin session.
+  it('landing 1: an admin e-mail with no token gets no session', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/social')
       .send({ email: ADMIN_EMAIL, provider: 'google', name: 'Whoever' })
-      .expect(200);
+      .expect(400);
 
-    expect(res.body.user.email).toBe(ADMIN_EMAIL);
-    expect(res.body.user.roles).toEqual([RoleName.user]);
+    expect(res.body.accessToken).toBeUndefined();
+  });
+
+  // The old fields are rejected outright rather than ignored: a field that is
+  // still accepted is a field a later change can start trusting again.
+  it('landing 1: the retired body fields are refused, not silently dropped', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/social')
+      .send({ provider: 'google', token: 'good-google-token', email: ADMIN_EMAIL })
+      .expect(400);
   });
 
   it('a proven administrator keeps the roles stored in the database', async () => {

@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  UnauthorizedException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -28,8 +22,6 @@ type AuthSession = {
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
-
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
@@ -127,46 +119,22 @@ export class AuthService {
   }
 
   /**
-   * Two entry shapes during the cross-repo rollout, see {@link SocialLoginDto}.
+   * The provider states who the caller is. The request body never does.
    *
-   * Verified: the provider is asked who the caller is, and the answer — not the
-   * body — becomes the identity. Legacy: no proof at all, so the session is
-   * issued with the baseline role only.
+   * A body-only shape (`{ email }`) was accepted during step 1 of the rollout so
+   * that deploying the API ahead of the frontend would not break sign-in. It is
+   * gone: the frontend sends `{ provider, token }` and refuses to sign in at all
+   * without a provider token, so nothing legitimate reaches the old shape.
    */
-  async socialLogin(dto: SocialLoginDto, clientIp?: string): Promise<AuthSession> {
+  async socialLogin(dto: SocialLoginDto): Promise<AuthSession> {
     await this.ensureCoreRoles();
 
-    if (dto.token) {
-      if (!dto.provider) {
-        throw new BadRequestException('provider is required when a provider token is supplied');
-      }
-      const identity = await this.social.verify(dto.provider, dto.token);
-      return this.issueSocialSession(identity.email, {
-        name: identity.name,
-        avatarUrl: identity.avatarUrl,
-        languagePreference: dto.languagePreference,
-        elevatedRoles: true,
-      });
-    }
+    const identity = await this.social.verify(dto.provider, dto.token);
 
-    if (!dto.email) {
-      throw new BadRequestException('token is required');
-    }
-
-    // Legacy path — kept only until books-front sends the provider token.
-    // Logged on every call so step 3 can be scheduled from evidence rather
-    // than from hope that nobody uses it any more.
-    this.logger.warn(
-      `[deprecated] POST /auth/social called without a provider token ` +
-        `(provider=${dto.provider ?? 'unset'}, ip=${clientIp ?? 'unknown'}). ` +
-        'The request proves nothing; the session is issued with the baseline role only.',
-    );
-
-    return this.issueSocialSession(dto.email, {
-      name: dto.name,
-      avatarUrl: dto.avatarUrl,
+    return this.issueSocialSession(identity.email, {
+      name: identity.name,
+      avatarUrl: identity.avatarUrl,
       languagePreference: dto.languagePreference,
-      elevatedRoles: false,
     });
   }
 
@@ -176,7 +144,6 @@ export class AuthService {
       name?: string;
       avatarUrl?: string;
       languagePreference?: PrismaLanguage;
-      elevatedRoles: boolean;
     },
   ): Promise<AuthSession> {
     const email = rawEmail.trim().toLowerCase();
@@ -217,11 +184,7 @@ export class AuthService {
       }
     }
 
-    const stored = await this.computeRoles(user);
-    // An unproven caller gets the baseline role even if the account really is
-    // an administrator: the request did not show it is that account.
-    const roles = options.elevatedRoles ? stored : stored.filter((r) => r === RoleName.user);
-
+    const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
 

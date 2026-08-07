@@ -33,43 +33,26 @@ export class RefreshDto {
 }
 
 /**
- * Two shapes live here on purpose, and only during the cross-repo rollout.
+ * The only accepted shape: a provider and that provider's own token.
  *
- * The verified shape is `{ provider, token }`: the server asks the provider who
- * the caller is. The legacy shape is `{ email, name, avatarUrl, provider }`,
- * kept only until `books-front` starts sending the provider token — it proves
- * nothing and is stripped of every elevated role. It disappears in step 3.
- *
- * The branch is taken on `token`, never on `provider`: the old frontend already
- * sends `provider: 'google'` without any token.
+ * `email`, `name` and `avatarUrl` used to be accepted here and were what the
+ * identity was built from — which is how naming an account was enough to get a
+ * session for it (LEGACY-070). They are gone, not merely ignored: a field that
+ * is still accepted is a field a future change can start trusting again. All
+ * three now come out of the verified provider response.
  *
  * `token` is deliberately named for neither mechanic. Facebook has no OIDC
  * id_token — NextAuth leaves `account.id_token` undefined there and only
  * `account.access_token` exists.
  */
 export class SocialLoginDto {
-  @IsOptional()
   @IsIn(SOCIAL_PROVIDERS as unknown as string[])
-  provider?: SocialProvider;
+  provider!: SocialProvider;
 
   /** google: `id_token`; facebook: `access_token`. */
-  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  token?: string;
-
-  /** @deprecated Legacy step-1 compatibility. Ignored whenever `token` is present. */
-  @IsOptional()
-  @IsEmail()
-  email?: string;
-
-  @IsOptional()
-  @IsString()
-  name?: string;
-
-  @IsOptional()
-  @IsString()
-  avatarUrl?: string;
+  token!: string;
 
   @IsOptional()
   @IsIn(Object.values(PrismaLanguage))
