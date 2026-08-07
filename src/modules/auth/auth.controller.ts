@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Ip, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiOkResponse, ApiCreatedResponse } from '@nestjs/swagger';
 import { AuthRateLimitGuard } from '../../common/guards/auth-rate-limit.guard';
 import { AuthService } from './auth.service';
@@ -45,8 +45,8 @@ export class AuthController {
   @ApiOkResponse({ type: AuthResponse })
   @HttpCode(HttpStatus.OK)
   @Post('social')
-  socialLogin(@Body() dto: SocialLoginDto) {
-    return this.auth.socialLogin(dto);
+  socialLogin(@Body() dto: SocialLoginDto, @Ip() ip: string) {
+    return this.auth.socialLogin(dto, ip);
   }
 
   @ApiOperation({ summary: 'Refresh tokens' })

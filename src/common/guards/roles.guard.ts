@@ -40,24 +40,18 @@ export class RolesGuard implements CanActivate {
       return requiredRoles.some((role) => cached.roles.has(role));
     }
 
-    // 1) Roles from DB (fresh)
+    // Roles from DB (fresh) — the only source.
+    //
+    // `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` used to elevate here as a
+    // fallback, comparing an env list against the e-mail claim carried by the
+    // request. That made the token's e-mail, rather than the account, decide
+    // the role. Bootstrapping the first administrator is register()'s job and
+    // it writes to `UserRole`.
     const dbRoles: (UserRoleModel & { role: RoleModel })[] = await this.prisma.userRole.findMany({
       where: { userId: user.userId },
       include: { role: true },
     });
     const roleNamesFromDb = new Set<Role>(dbRoles.map((ur) => ur.role.name as Role));
-
-    // 2) Fallback: env-based elevated roles
-    const adminsList = (this.config.get<string>('ADMIN_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    const managersList = (this.config.get<string>('CONTENT_MANAGER_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    if (adminsList.includes(user.email.toLowerCase())) roleNamesFromDb.add(Role.Admin);
-    if (managersList.includes(user.email.toLowerCase())) roleNamesFromDb.add(Role.ContentManager);
 
     // 'user' role is implicit baseline
     roleNamesFromDb.add(Role.User);

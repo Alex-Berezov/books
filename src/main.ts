@@ -14,12 +14,17 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { SentryExceptionFilter } from './shared/sentry/sentry.filter';
 import { RedirectExceptionFilter } from './common/filters/redirect-exception.filter';
 import { robotsHeaderMiddleware } from './common/middleware/robots-header.middleware';
+import { assertJwtSecrets } from './common/config/jwt-secrets';
 import { assertPublicSiteUrl, resolvePublicSiteUrl } from './modules/seo/utils/publicSiteUrl';
 
 async function bootstrap() {
   // Fail fast: a PUBLIC_SITE_URL pointing at a service host would leak
   // api./media. subdomains into canonical, hreflang, og:url and JSON-LD.
   assertPublicSiteUrl();
+
+  // Fail fast: an unset JWT secret used to fall back to a string published in
+  // this repository, which would let anyone forge an admin token.
+  assertJwtSecrets();
 
   const app = await NestFactory.create(AppModule);
 

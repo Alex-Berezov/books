@@ -22,6 +22,8 @@ import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.in
  * - RATE_LIMIT_REGISTER_WINDOW_MS: Registration limit window, default 300000 (5 min)
  * - RATE_LIMIT_REFRESH_MAX: Max token refresh operations, default 10
  * - RATE_LIMIT_REFRESH_WINDOW_MS: Refresh limit window, default 60000 (1 min)
+ * - RATE_LIMIT_AUTH_DEFAULT_MAX: Max requests to any other auth route, default 10
+ * - RATE_LIMIT_AUTH_DEFAULT_WINDOW_MS: Window for those, default 60000 (1 min)
  */
 @Injectable()
 export class AuthRateLimitGuard implements CanActivate {
@@ -32,6 +34,8 @@ export class AuthRateLimitGuard implements CanActivate {
   private readonly registerWindowMs: number;
   private readonly refreshMax: number;
   private readonly refreshWindowMs: number;
+  private readonly defaultMax: number;
+  private readonly defaultWindowMs: number;
 
   constructor(
     private readonly config: ConfigService,
@@ -58,6 +62,13 @@ export class AuthRateLimitGuard implements CanActivate {
     this.refreshMax = Number.isFinite(refreshMax) && refreshMax > 0 ? refreshMax : 10;
     this.refreshWindowMs =
       Number.isFinite(refreshWindow) && refreshWindow > 0 ? refreshWindow : 60_000;
+
+    // Catch-all limits for every other route under /auth (today: /social, /logout).
+    const defaultMax = Number(this.config.get('RATE_LIMIT_AUTH_DEFAULT_MAX'));
+    const defaultWindow = Number(this.config.get('RATE_LIMIT_AUTH_DEFAULT_WINDOW_MS'));
+    this.defaultMax = Number.isFinite(defaultMax) && defaultMax > 0 ? defaultMax : 10;
+    this.defaultWindowMs =
+      Number.isFinite(defaultWindow) && defaultWindow > 0 ? defaultWindow : 60_000;
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -71,7 +82,7 @@ export class AuthRateLimitGuard implements CanActivate {
     const email = req.body?.email || '';
 
     // Determine operation type and apply matching limits
-    let operation: 'login' | 'register' | 'refresh' | null = null;
+    let operation: 'login' | 'register' | 'refresh' | 'auth';
     let maxPoints: number;
     let windowMs: number;
     let key: string;
@@ -95,8 +106,17 @@ export class AuthRateLimitGuard implements CanActivate {
       // Key: IP for refresh token operations
       key = `auth:refresh:${req.ip}`;
     } else {
-      // Unknown endpoint – allow request
-      return true;
+      // Every other route under /auth — today /social and /logout, tomorrow
+      // whatever gets added. Returning `true` here meant a new auth route was
+      // unlimited until someone remembered to add a branch: the default was
+      // "allow", the same shape as "no robots directive → index". The default
+      // is now "count it".
+      operation = 'auth';
+      maxPoints = this.defaultMax;
+      windowMs = this.defaultWindowMs;
+      // Keyed by IP alone. Putting the path in the key would hand out a fresh
+      // budget for every made-up path under /auth.
+      key = `auth:other:${req.ip}`;
     }
 
     const ok = await this.rateLimiter.consume(key, 1, windowMs, maxPoints);

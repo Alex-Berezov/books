@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { requireJwtAccessSecret } from '../config/jwt-secrets';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
 
 @Injectable()
@@ -38,7 +39,7 @@ export class GlobalRateLimitGuard implements CanActivate {
     if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
       try {
-        const secret = this.config.get<string>('JWT_ACCESS_SECRET') || 'dev_access_secret';
+        const secret = requireJwtAccessSecret((key) => this.config.get<string>(key));
         const payload = this.jwtService.verify<{ roles?: string[] }>(token, { secret });
         if (
           payload.roles &&
@@ -52,11 +53,15 @@ export class GlobalRateLimitGuard implements CanActivate {
       }
     }
 
-    // Skip health/metrics and swagger endpoints
+    // Skip health and swagger endpoints.
+    //
+    // `/metrics` used to be skipped too, which meant an anonymous client could
+    // poll it at any rate. Every request there also creates label series in the
+    // prom-client registry, so an unlimited route is a memory-growth vector and
+    // not merely a noisy one. Health stays skipped on purpose: the deploy wait
+    // and the container probe poll it, and starving those breaks deployments.
     if (
-      path.startsWith('/metrics') ||
       path.startsWith('/health') ||
-      path.startsWith('/api/metrics') ||
       path.startsWith('/api/health') ||
       path.startsWith('/api/docs') ||
       path.startsWith('/api/docs-json')

@@ -97,7 +97,12 @@ describe('RolesGuard', () => {
     expect(prisma.userRole.findMany).toHaveBeenCalledTimes(2);
   });
 
-  it('grants via env-based ADMIN_EMAILS fallback', async () => {
+  // CR auth-social: ADMIN_EMAILS is no longer a runtime source of a role.
+  // It used to be compared against the e-mail claim carried by the request, so
+  // whoever controlled that claim controlled the role. Roles live in the
+  // database; the env list only bootstraps the first administrator through
+  // register(), which writes to `UserRole`.
+  it('never grants admin from the ADMIN_EMAILS list', async () => {
     const { guard, prisma } = makeGuard({
       requiredRoles: [Role.Admin],
       dbRoles: [],
@@ -105,17 +110,27 @@ describe('RolesGuard', () => {
     });
     const ctx = makeContext({ email: 'Admin@Example.com', userId: 'u3' });
     const res = await guard.canActivate(ctx);
-    expect(res).toBe(true);
+    expect(res).toBe(false);
     expect(prisma.userRole.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it('grants via env-based CONTENT_MANAGER_EMAILS fallback', async () => {
+  it('never grants content_manager from the CONTENT_MANAGER_EMAILS list', async () => {
     const { guard } = makeGuard({
       requiredRoles: [Role.ContentManager],
       dbRoles: [],
       managerEmails: 'mgr@example.com',
     });
     const res = await guard.canActivate(makeContext({ email: 'MGR@example.com', userId: 'u4' }));
+    expect(res).toBe(false);
+  });
+
+  it('still grants admin when the role is in the database', async () => {
+    const { guard } = makeGuard({
+      requiredRoles: [Role.Admin],
+      dbRoles: [{ role: { name: Role.Admin } }],
+      adminEmails: '',
+    });
+    const res = await guard.canActivate(makeContext({ email: 'admin@example.com', userId: 'u3b' }));
     expect(res).toBe(true);
   });
 

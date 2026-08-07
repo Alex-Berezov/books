@@ -361,9 +361,13 @@ jobs:
 
           # Check main endpoints. Retried: a single attempt right after a container swap tests the
           # timing of the deployment, not the health of the application.
+          # `/api/metrics` used to be checked here. It is blocked at Caddy (403)
+          # since 07.08.2026, so this loop would fail every deploy from now on —
+          # and on a workflow_dispatch run that failure triggers the automatic
+          # rollback below, undoing a perfectly good deployment. The endpoint is
+          # not a health signal anyway: readiness is. See LEGACY-072.
           endpoints=(
             "/api/health/readiness"
-            "/api/metrics"
           )
 
           for endpoint in "${endpoints[@]}"; do

@@ -1,6 +1,7 @@
 /* eslint-disable */
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { SocialIdentityService } from './providers/social-identity.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -17,6 +18,7 @@ describe('AuthService (unit)', () => {
   let prisma: any;
   let jwt: any;
   let config: any;
+  let social: any;
 
   const now = new Date('2025-01-01T00:00:00Z');
   const user: User = {
@@ -59,7 +61,13 @@ describe('AuthService (unit)', () => {
         return map[k];
       }),
     } as Partial<ConfigService> as any;
-    service = new AuthService(prisma as PrismaService, jwt as JwtService, config as ConfigService);
+    social = { verify: jest.fn() } as Partial<SocialIdentityService> as any;
+    service = new AuthService(
+      prisma as PrismaService,
+      jwt as JwtService,
+      config as ConfigService,
+      social as SocialIdentityService,
+    );
   });
 
   afterEach(() => {
@@ -139,5 +147,151 @@ describe('AuthService (unit)', () => {
 
   it('logout: returns success=true', () => {
     expect(service.logout()).toEqual({ success: true });
+  });
+
+  describe('socialLogin (CR auth-social)', () => {
+    const adminUser: User = { ...user, id: 'u-admin', email: 'admin@bibliaris.com' } as any;
+
+    function existingAdmin() {
+      prisma.user.findUnique.mockResolvedValue(adminUser);
+      prisma.userRole.findMany.mockResolvedValue([
+        { role: { name: RoleName.user } },
+        { role: { name: RoleName.admin } },
+        { role: { name: RoleName.content_manager } },
+      ]);
+      prisma.user.update.mockResolvedValue({ ...adminUser, lastLogin: now });
+    }
+
+    // Landing 2. The point of the whole change: the identity must come from the
+    // verified provider answer, never from the body. Without this the token can
+    // be checked and the e-mail still taken from the request — the hole intact.
+    it('landing 2: identity comes from the verified token, body e-mail is ignored', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-1',
+        email: 'real@example.com',
+        name: 'Real',
+      });
+      prisma.user.findUnique.mockResolvedValue({ ...user, email: 'real@example.com' });
+      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+      prisma.user.update.mockResolvedValue({ ...user, email: 'real@example.com', lastLogin: now });
+
+      const res = await service.socialLogin({
+        provider: 'google',
+        token: 'id-token',
+        email: 'victim@bibliaris.com',
+      });
+
+      expect(social.verify).toHaveBeenCalledWith('google', 'id-token');
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { email: 'real@example.com' } });
+      expect(res.user.email).toBe('real@example.com');
+    });
+
+    it('landing 2f: the same holds for facebook', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'facebook',
+        providerUserId: 'fb-1',
+        email: 'fbreal@example.com',
+      });
+      prisma.user.findUnique.mockResolvedValue({ ...user, email: 'fbreal@example.com' });
+      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+      prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
+
+      await service.socialLogin({
+        provider: 'facebook',
+        token: 'fb-access-token',
+        email: 'victim@bibliaris.com',
+      });
+
+      expect(social.verify).toHaveBeenCalledWith('facebook', 'fb-access-token');
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: 'fbreal@example.com' },
+      });
+    });
+
+    // Landing 1. A rejected token must not produce a session of any kind.
+    it('landing 1: a rejected token yields no session', async () => {
+      social.verify.mockRejectedValue(new UnauthorizedException('bad token'));
+
+      await expect(
+        service.socialLogin({ provider: 'google', token: 'garbage' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(jwt.signAsync).not.toHaveBeenCalled();
+    });
+
+    // Landing 3. The legacy body-only shape proves nothing, so it must not
+    // carry the roles the account really has. computeRoles reads the database
+    // first, so an admin account would otherwise get an admin token here.
+    it('landing 3: the legacy path never issues elevated roles', async () => {
+      existingAdmin();
+
+      const res = await service.socialLogin({
+        email: 'admin@bibliaris.com',
+        provider: 'google',
+      });
+
+      expect(social.verify).not.toHaveBeenCalled();
+      expect(res.user.roles).toEqual([RoleName.user]);
+      expect(jwt.signAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ roles: [RoleName.user] }),
+        expect.anything(),
+      );
+    });
+
+    it('a verified admin keeps the roles stored in the database', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-admin',
+        email: 'admin@bibliaris.com',
+      });
+      existingAdmin();
+
+      const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(res.user.roles).toEqual(
+        expect.arrayContaining([RoleName.user, RoleName.admin, RoleName.content_manager]),
+      );
+    });
+
+    it('rejects a token without a provider — the mechanic is unknown', async () => {
+      await expect(service.socialLogin({ token: 'id-token' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(social.verify).not.toHaveBeenCalled();
+    });
+
+    it('rejects a body carrying neither a token nor an e-mail', async () => {
+      await expect(service.socialLogin({ provider: 'google' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('does not grant roles from ADMIN_EMAILS when creating an account', async () => {
+      config.get = jest.fn((k: string) => {
+        const map: Record<string, string> = {
+          JWT_ACCESS_SECRET: 'a',
+          JWT_REFRESH_SECRET: 'r',
+          ADMIN_EMAILS: 'newcomer@example.com',
+        };
+        return map[k];
+      });
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-new',
+        email: 'newcomer@example.com',
+      });
+      const created = { ...user, id: 'u-new', email: 'newcomer@example.com' };
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue(created);
+      prisma.role.findUnique.mockResolvedValue({ id: 'r-user', name: RoleName.user });
+      prisma.userRole.upsert.mockResolvedValue({});
+      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+      prisma.user.update.mockResolvedValue({ ...created, lastLogin: now });
+
+      const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(res.user.roles).toEqual([RoleName.user]);
+      expect(prisma.userRole.upsert).toHaveBeenCalledTimes(1);
+    });
   });
 });
