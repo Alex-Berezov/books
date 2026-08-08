@@ -153,6 +153,34 @@ function headerValue(req: ClientIpRequest, name: string): string | undefined {
  * Отсутствие доверия **никогда** не приводит к отказу: лимитер деградирует до
  * более грубого счёта, а не начинает отбивать трафик.
  */
+export interface ClientIpDescription {
+  /** Адрес, по которому считать лимит. */
+  ip: string;
+  /**
+   * Запрос сделал наш собственный фронт и **не сообщил** посетителя.
+   *
+   * Так выглядит рендер страницы: SSR ходит в API за всех сразу, и считать эти
+   * запросы одной корзиной — значит делить квоту на весь сайт. Это и есть
+   * LEGACY-064 в исходной формулировке. Ограничение для посетителей должно жить
+   * на входе перед фронтом, где виден настоящий клиент.
+   */
+  internalWithoutVisitor: boolean;
+}
+
+export function describeClientIp(
+  req: ClientIpRequest,
+  cidrs: string[],
+  internalCidrs: string[] = [],
+): ClientIpDescription {
+  const ip = resolveClientIp(req, cidrs, internalCidrs);
+  const internalWithoutVisitor =
+    internalCidrs.length > 0 &&
+    isTrustedProxy(ip, internalCidrs) &&
+    !headerValue(req, VISITOR_IP_HEADER);
+
+  return { ip, internalWithoutVisitor };
+}
+
 export function resolveClientIp(
   req: ClientIpRequest,
   cidrs: string[],

@@ -1,5 +1,6 @@
 import {
   DEFAULT_TRUSTED_PROXY_CIDRS,
+  describeClientIp,
   isTrustedProxy,
   parseTrustedProxyCidrs,
   resetClientIpWarning,
@@ -144,6 +145,41 @@ describe('resolveClientIp — запросы от собственного фр�
       [],
     );
     expect(ip).toBe(FRONT);
+  });
+});
+
+describe('describeClientIp — отличить рендер страницы от посетителя', () => {
+  const FRONT = '192.0.2.10';
+  const INTERNAL = [`${FRONT}/32`];
+
+  it('marks a page render by our own SSR', () => {
+    const d = describeClientIp(
+      { ip: CF_PEER, headers: { 'cf-connecting-ip': FRONT } },
+      DEFAULT_TRUSTED_PROXY_CIDRS,
+      INTERNAL,
+    );
+    expect(d.internalWithoutVisitor).toBe(true);
+  });
+
+  it('does not mark a request that carries the visitor', () => {
+    // Вход в аккаунт: посетитель известен, значит считать надо по нему, а не
+    // пропускать мимо лимитера.
+    const d = describeClientIp(
+      { ip: CF_PEER, headers: { 'cf-connecting-ip': FRONT, 'x-visitor-ip': '198.51.100.5' } },
+      DEFAULT_TRUSTED_PROXY_CIDRS,
+      INTERNAL,
+    );
+    expect(d.internalWithoutVisitor).toBe(false);
+    expect(d.ip).toBe('198.51.100.5');
+  });
+
+  it('never marks a stranger, whatever headers they send', () => {
+    const d = describeClientIp(
+      { ip: CF_PEER, headers: { 'cf-connecting-ip': '203.0.113.99' } },
+      DEFAULT_TRUSTED_PROXY_CIDRS,
+      INTERNAL,
+    );
+    expect(d.internalWithoutVisitor).toBe(false);
   });
 });
 

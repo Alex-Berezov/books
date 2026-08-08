@@ -9,7 +9,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { requireJwtAccessSecret } from '../config/jwt-secrets';
-import { parseInternalProxyCidrs, parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
+import {
+  describeClientIp,
+  parseInternalProxyCidrs,
+  parseTrustedProxyCidrs,
+} from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
 
 @Injectable()
@@ -81,7 +85,17 @@ export class GlobalRateLimitGuard implements CanActivate {
       return true;
     }
 
-    const key = `global:${resolveClientIp(req, this.trustedCidrs, this.internalCidrs)}`;
+    const client = describeClientIp(req, this.trustedCidrs, this.internalCidrs);
+
+    // Рендер страницы: наш собственный SSR, за которым стоят все посетители сразу.
+    // Считать это одной корзиной — значит выдать всему сайту 100 запросов в минуту
+    // и ронять его собственными руками (LEGACY-064). Ограничение для посетителей
+    // живёт на входе перед фронтом, где виден настоящий клиент; здесь оно только
+    // мешало бы. Запросы фронта, которые **сообщают** посетителя (вход в аккаунт),
+    // сюда не попадают и считаются как обычно.
+    if (client.internalWithoutVisitor) return true;
+
+    const key = `global:${client.ip}`;
     const ok = await this.rateLimiter.consume(key, 1, this.windowMs, this.maxPoints);
     if (ok) return true;
 
