@@ -7,7 +7,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
+import { parseInternalProxyCidrs, parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
 
 /**
@@ -38,6 +38,7 @@ export class AuthRateLimitGuard implements CanActivate {
   private readonly defaultMax: number;
   private readonly defaultWindowMs: number;
   private readonly trustedCidrs: string[];
+  private readonly internalCidrs: string[];
 
   constructor(
     private readonly config: ConfigService,
@@ -72,6 +73,7 @@ export class AuthRateLimitGuard implements CanActivate {
     this.defaultWindowMs =
       Number.isFinite(defaultWindow) && defaultWindow > 0 ? defaultWindow : 60_000;
     this.trustedCidrs = parseTrustedProxyCidrs(this.config.get<string>('TRUSTED_PROXY_CIDRS'));
+    this.internalCidrs = parseInternalProxyCidrs(this.config.get<string>('INTERNAL_PROXY_CIDRS'));
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -90,7 +92,7 @@ export class AuthRateLimitGuard implements CanActivate {
     // Тот же адрес, что и у глобального лимитера: за Cloudflare `req.ip` — это узел
     // CF, и без этой замены пять попыток входа делили бы все посетители одного PoP.
     // Чужие неудачные входы блокировали бы вход человеку, который ничего не делал.
-    const clientIp = resolveClientIp(req, this.trustedCidrs);
+    const clientIp = resolveClientIp(req, this.trustedCidrs, this.internalCidrs);
 
     // Determine operation type and apply matching limits
     let operation: 'login' | 'register' | 'refresh' | 'auth';

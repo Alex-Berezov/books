@@ -83,6 +83,70 @@ describe('resolveClientIp', () => {
   });
 });
 
+/**
+ * Третья ступень. Весь сайт ходит в API из одного контейнера — страницы рендерит
+ * он, и вход в аккаунт выполняет он же. Без пересылки настоящего адреса лимитер
+ * считает сайт одним клиентом: измерено на проде 08.08.2026 — шестая попытка
+ * входа подряд из контейнера фронта уже 429, то есть пять попыток на весь сайт.
+ */
+describe('resolveClientIp — запросы от собственного фронта', () => {
+  const FRONT = '192.0.2.10';
+  const INTERNAL = [`${FRONT}/32`];
+
+  beforeEach(() => {
+    resetClientIpWarning();
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('takes the visitor address the frontend forwarded', () => {
+    const ip = resolveClientIp(
+      {
+        ip: CF_PEER,
+        headers: { 'cf-connecting-ip': FRONT, 'x-visitor-ip': '198.51.100.5' },
+      },
+      DEFAULT_TRUSTED_PROXY_CIDRS,
+      INTERNAL,
+    );
+    expect(ip).toBe('198.51.100.5');
+  });
+
+  // 🔴 Иначе обход тривиален: заголовок ставит кто угодно и получает свежую корзину.
+  it('ignores X-Visitor-IP from anyone but the frontend', () => {
+    const ip = resolveClientIp(
+      {
+        ip: CF_PEER,
+        headers: { 'cf-connecting-ip': '203.0.113.99', 'x-visitor-ip': '198.51.100.5' },
+      },
+      DEFAULT_TRUSTED_PROXY_CIDRS,
+      INTERNAL,
+    );
+    expect(ip).toBe('203.0.113.99');
+  });
+
+  it('falls back to the frontend address when the header is absent', () => {
+    // Так выглядит промежуток между выкатами бэкенда и фронта: грубее, но не отказ.
+    const ip = resolveClientIp(
+      { ip: CF_PEER, headers: { 'cf-connecting-ip': FRONT } },
+      DEFAULT_TRUSTED_PROXY_CIDRS,
+      INTERNAL,
+    );
+    expect(ip).toBe(FRONT);
+  });
+
+  it('is switched off entirely when no internal ranges are configured', () => {
+    // Пустой список по умолчанию: ошибка в этой настройке означала бы приём
+    // X-Visitor-IP от постороннего, то есть выданный всем обход лимита.
+    const ip = resolveClientIp(
+      { ip: CF_PEER, headers: { 'cf-connecting-ip': FRONT, 'x-visitor-ip': '198.51.100.5' } },
+      DEFAULT_TRUSTED_PROXY_CIDRS,
+      [],
+    );
+    expect(ip).toBe(FRONT);
+  });
+});
+
 describe('trusted proxy ranges', () => {
   it('recognises Cloudflare ranges and rejects the rest', () => {
     expect(isTrustedProxy(CF_PEER, DEFAULT_TRUSTED_PROXY_CIDRS)).toBe(true);

@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { requireJwtAccessSecret } from '../config/jwt-secrets';
-import { parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
+import { parseInternalProxyCidrs, parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
 
 @Injectable()
@@ -17,6 +17,7 @@ export class GlobalRateLimitGuard implements CanActivate {
   private readonly windowMs: number;
   private readonly maxPoints: number;
   private readonly trustedCidrs: string[];
+  private readonly internalCidrs: string[];
 
   constructor(
     private readonly config: ConfigService,
@@ -30,6 +31,7 @@ export class GlobalRateLimitGuard implements CanActivate {
     this.windowMs = Number.isFinite(windowParsed) && windowParsed > 0 ? windowParsed : 60_000;
     this.maxPoints = Number.isFinite(maxParsed) && maxParsed > 0 ? maxParsed : 100;
     this.trustedCidrs = parseTrustedProxyCidrs(this.config.get<string>('TRUSTED_PROXY_CIDRS'));
+    this.internalCidrs = parseInternalProxyCidrs(this.config.get<string>('INTERNAL_PROXY_CIDRS'));
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -79,7 +81,7 @@ export class GlobalRateLimitGuard implements CanActivate {
       return true;
     }
 
-    const key = `global:${resolveClientIp(req, this.trustedCidrs)}`;
+    const key = `global:${resolveClientIp(req, this.trustedCidrs, this.internalCidrs)}`;
     const ok = await this.rateLimiter.consume(key, 1, this.windowMs, this.maxPoints);
     if (ok) return true;
 

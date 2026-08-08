@@ -49,6 +49,19 @@ export const DEFAULT_TRUSTED_PROXY_CIDRS = [
   '2c0f:f248::/32',
 ];
 
+/**
+ * Заголовок, которым **наш собственный фронт** сообщает адрес посетителя.
+ *
+ * Нужен отдельный от `CF-Connecting-IP`, потому что SSR-запрос идёт через тот же
+ * Cloudflare, и CF ставит там свой `CF-Connecting-IP` — адрес нашего же сервера.
+ * Без этого заголовка все посетители сайта сливаются в одну корзину: страницы
+ * рендерит один контейнер, и вход в аккаунт тоже выполняет он (NextAuth зовёт
+ * `/auth/login` на сервере). Измерено 08.08.2026: шесть попыток входа подряд из
+ * контейнера фронта — и шестая уже 429, то есть на весь сайт приходилось пять
+ * попыток входа в минуту.
+ */
+export const VISITOR_IP_HEADER = 'x-visitor-ip';
+
 export interface ClientIpRequest {
   ip?: string;
   headers?: Record<string, string | string[] | undefined>;
@@ -89,6 +102,21 @@ export function parseTrustedProxyCidrs(raw: string | undefined): string[] {
   return parsed.length > 0 ? parsed : DEFAULT_TRUSTED_PROXY_CIDRS;
 }
 
+/**
+ * Адреса **нашего собственного фронта**, как их видит API после разбора
+ * `CF-Connecting-IP`. Задаётся `INTERNAL_PROXY_CIDRS`; по умолчанию список пуст —
+ * тогда третья ступень выключена и поведение прежнее. Пустой дефолт намеренный:
+ * ошибиться здесь значит начать принимать `X-Visitor-IP` от постороннего, то есть
+ * отдать обход лимита любому желающему.
+ */
+export function parseInternalProxyCidrs(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export function isTrustedProxy(ip: string | undefined, cidrs: string[]): boolean {
   if (!ip) return false;
   const list = listFor(cidrs);
@@ -103,17 +131,35 @@ export function resetClientIpWarning(): void {
   untrustedHeaderWarned = false;
 }
 
+function headerValue(req: ClientIpRequest, name: string): string | undefined {
+  const raw = req.headers?.[name];
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
 /**
  * Адрес, по которому считать лимит.
  *
- * Возвращает `CF-Connecting-IP`, если запрос пришёл из доверенного диапазона;
- * иначе — `req.ip`. Отсутствие доверия никогда не приводит к отказу: лимитер
- * должен деградировать до более грубого счёта, а не начинать отбивать трафик.
+ * Три ступени, каждая уже предыдущей:
+ *
+ * 1. `req.ip` — сосед по соединению (за `trust proxy` это то, что подставил Caddy);
+ * 2. если сосед из диапазона Cloudflare — `CF-Connecting-IP`;
+ * 3. если полученный так адрес принадлежит **нашему собственному фронту**
+ *    (`internalCidrs`) — `X-Visitor-IP`, который тот проставляет из заголовков
+ *    входящего запроса посетителя.
+ *
+ * Третья ступень существует потому, что SSR ходит в API за всех сразу: без неё
+ * весь сайт делит одну корзину, а вход в аккаунт — пять попыток в минуту на всех.
+ *
+ * Отсутствие доверия **никогда** не приводит к отказу: лимитер деградирует до
+ * более грубого счёта, а не начинает отбивать трафик.
  */
-export function resolveClientIp(req: ClientIpRequest, cidrs: string[]): string {
+export function resolveClientIp(
+  req: ClientIpRequest,
+  cidrs: string[],
+  internalCidrs: string[] = [],
+): string {
   const peer = req.ip ?? 'unknown';
-  const rawHeader = req.headers?.['cf-connecting-ip'];
-  const candidate = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  const candidate = headerValue(req, 'cf-connecting-ip');
 
   if (!candidate) return peer;
 
@@ -135,5 +181,15 @@ export function resolveClientIp(req: ClientIpRequest, cidrs: string[]): string {
 
   const trimmed = candidate.trim();
   if (!isIPv4(trimmed) && !isIPv6(trimmed)) return peer;
+
+  // Запрос пришёл от нашего же фронта — значит за ним стоит настоящий посетитель,
+  // и адрес фронта в качестве ключа объединил бы весь сайт в одну корзину.
+  if (internalCidrs.length > 0 && isTrustedProxy(trimmed, internalCidrs)) {
+    const visitor = headerValue(req, VISITOR_IP_HEADER)?.trim();
+    if (visitor && (isIPv4(visitor) || isIPv6(visitor))) return visitor;
+    // Заголовка нет — фронт ещё не выкачен или запрос не от посетителя (плановая
+    // задача, прогрев). Возвращаем адрес фронта: грубее, но не отказ.
+  }
+
   return trimmed;
 }
