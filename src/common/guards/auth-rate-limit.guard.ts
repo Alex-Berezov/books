@@ -7,6 +7,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
 
 /**
@@ -36,6 +37,7 @@ export class AuthRateLimitGuard implements CanActivate {
   private readonly refreshWindowMs: number;
   private readonly defaultMax: number;
   private readonly defaultWindowMs: number;
+  private readonly trustedCidrs: string[];
 
   constructor(
     private readonly config: ConfigService,
@@ -69,17 +71,26 @@ export class AuthRateLimitGuard implements CanActivate {
     this.defaultMax = Number.isFinite(defaultMax) && defaultMax > 0 ? defaultMax : 10;
     this.defaultWindowMs =
       Number.isFinite(defaultWindow) && defaultWindow > 0 ? defaultWindow : 60_000;
+    this.trustedCidrs = parseTrustedProxyCidrs(this.config.get<string>('TRUSTED_PROXY_CIDRS'));
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (!this.enabled) return true;
 
-    const req = context
-      .switchToHttp()
-      .getRequest<{ ip: string; path?: string; originalUrl?: string; body?: { email?: string } }>();
+    const req = context.switchToHttp().getRequest<{
+      ip: string;
+      path?: string;
+      originalUrl?: string;
+      body?: { email?: string };
+      headers?: Record<string, string | string[] | undefined>;
+    }>();
 
     const path = req.path || req.originalUrl || '';
     const email = req.body?.email || '';
+    // Тот же адрес, что и у глобального лимитера: за Cloudflare `req.ip` — это узел
+    // CF, и без этой замены пять попыток входа делили бы все посетители одного PoP.
+    // Чужие неудачные входы блокировали бы вход человеку, который ничего не делал.
+    const clientIp = resolveClientIp(req, this.trustedCidrs);
 
     // Determine operation type and apply matching limits
     let operation: 'login' | 'register' | 'refresh' | 'auth';
@@ -92,19 +103,19 @@ export class AuthRateLimitGuard implements CanActivate {
       maxPoints = this.loginMax;
       windowMs = this.loginWindowMs;
       // Key: IP + email (if present) for finer brute-force detection
-      key = email ? `auth:login:${req.ip}:${email}` : `auth:login:${req.ip}`;
+      key = email ? `auth:login:${clientIp}:${email}` : `auth:login:${clientIp}`;
     } else if (path.includes('/register')) {
       operation = 'register';
       maxPoints = this.registerMax;
       windowMs = this.registerWindowMs;
       // Key: IP to prevent registration spam
-      key = `auth:register:${req.ip}`;
+      key = `auth:register:${clientIp}`;
     } else if (path.includes('/refresh')) {
       operation = 'refresh';
       maxPoints = this.refreshMax;
       windowMs = this.refreshWindowMs;
       // Key: IP for refresh token operations
-      key = `auth:refresh:${req.ip}`;
+      key = `auth:refresh:${clientIp}`;
     } else {
       // Every other route under /auth — today /social and /logout, tomorrow
       // whatever gets added. Returning `true` here meant a new auth route was
@@ -116,7 +127,7 @@ export class AuthRateLimitGuard implements CanActivate {
       windowMs = this.defaultWindowMs;
       // Keyed by IP alone. Putting the path in the key would hand out a fresh
       // budget for every made-up path under /auth.
-      key = `auth:other:${req.ip}`;
+      key = `auth:other:${clientIp}`;
     }
 
     const ok = await this.rateLimiter.consume(key, 1, windowMs, maxPoints);

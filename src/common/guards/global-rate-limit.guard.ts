@@ -1,13 +1,22 @@
-import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { requireJwtAccessSecret } from '../config/jwt-secrets';
+import { parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
 
 @Injectable()
 export class GlobalRateLimitGuard implements CanActivate {
   private readonly windowMs: number;
   private readonly maxPoints: number;
+  private readonly trustedCidrs: string[];
 
   constructor(
     private readonly config: ConfigService,
@@ -20,6 +29,7 @@ export class GlobalRateLimitGuard implements CanActivate {
     const maxParsed = rawMax ? Number(rawMax) : NaN;
     this.windowMs = Number.isFinite(windowParsed) && windowParsed > 0 ? windowParsed : 60_000;
     this.maxPoints = Number.isFinite(maxParsed) && maxParsed > 0 ? maxParsed : 100;
+    this.trustedCidrs = parseTrustedProxyCidrs(this.config.get<string>('TRUSTED_PROXY_CIDRS'));
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -69,8 +79,27 @@ export class GlobalRateLimitGuard implements CanActivate {
       return true;
     }
 
-    const key = `global:${req.ip}`;
+    const key = `global:${resolveClientIp(req, this.trustedCidrs)}`;
     const ok = await this.rateLimiter.consume(key, 1, this.windowMs, this.maxPoints);
-    return ok;
+    if (ok) return true;
+
+    // Раньше гвард возвращал `false`, и Nest превращал это в 403. Разница не
+    // косметическая: 403 читается клиентом и роботом как «тебе сюда нельзя»
+    // (Googlebot по такому ответу снижает частоту обхода надолго), а 429 —
+    // как «повтори позже». `Retry-After` даёт срок, вместо того чтобы заставлять
+    // угадывать (LEGACY-064).
+    const retryAfterSeconds = Math.ceil(this.windowMs / 1000);
+    const res = context.switchToHttp().getResponse<{ header?: (k: string, v: string) => void }>();
+    res.header?.('Retry-After', String(retryAfterSeconds));
+
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message: 'Too many requests. Please try again later.',
+        error: 'Too Many Requests',
+        retryAfter: retryAfterSeconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
   }
 }
