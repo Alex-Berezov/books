@@ -12,6 +12,17 @@ export interface SocialIdentity {
   provider: SocialProvider;
   providerUserId: string;
   email: string;
+  /**
+   * Провайдер доказал владение именно этим адресом.
+   *
+   * 🔴 Не косметика: от этого флага зависит, можно ли привязать личность к **уже
+   * существующему** аккаунту с тем же адресом. Google даёт `email_verified` в
+   * подписанном токене; Facebook эквивалента не имеет — `debug_token` доказывает
+   * владение аккаунтом Facebook, а email приходит вторым вызовом и ничем не
+   * подтверждён. Поле обязательное, чтобы новый провайдер не получил доступ к
+   * чужим аккаунтам по умолчанию просто потому, что автор о нём не подумал.
+   */
+  emailVerified: boolean;
   name?: string;
   avatarUrl?: string;
 }
@@ -94,6 +105,8 @@ export class SocialIdentityService {
       provider: 'google',
       providerUserId: payload.sub,
       email,
+      // Проверено выше: без `email_verified === true` сюда не дойти.
+      emailVerified: true,
       name: payload.name ?? undefined,
       avatarUrl: payload.picture ?? undefined,
     };
@@ -148,6 +161,10 @@ export class SocialIdentityService {
       provider: 'facebook',
       providerUserId: data.user_id,
       email,
+      // У Graph нет эквивалента `email_verified`: `debug_token` доказывает владение
+      // аккаунтом Facebook, а адрес — просто поле профиля. Поэтому такой вход не
+      // может присвоить уже существующий аккаунт с тем же адресом.
+      emailVerified: false,
       name: me.name ?? undefined,
       avatarUrl: me.picture?.data?.url ?? undefined,
     };

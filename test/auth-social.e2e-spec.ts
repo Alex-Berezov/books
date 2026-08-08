@@ -39,23 +39,41 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
   };
 
   const ADMIN_EMAIL = 'social-admin@example.com';
+  const PASSWORD_ACCOUNT_EMAIL = 'password-owner@example.com';
 
   beforeAll(async () => {
     verified.set('google:good-google-token', {
       provider: 'google',
       providerUserId: 'g-1',
       email: 'google-real@example.com',
+      emailVerified: true,
       name: 'Google Real',
     });
     verified.set('facebook:good-facebook-token', {
       provider: 'facebook',
       providerUserId: 'fb-1',
       email: 'facebook-real@example.com',
+      emailVerified: false,
     });
     verified.set('google:admin-google-token', {
       provider: 'google',
       providerUserId: 'g-admin',
       email: ADMIN_EMAIL,
+      emailVerified: true,
+    });
+    // Та же личность Google (`sub` = g-1), но адрес у провайдера сменился.
+    verified.set('google:renamed-google-token', {
+      provider: 'google',
+      providerUserId: 'g-1',
+      email: 'google-renamed@example.com',
+      emailVerified: true,
+    });
+    // Facebook, чей адрес совпадает с адресом уже существующего парольного аккаунта.
+    verified.set('facebook:squatting-facebook-token', {
+      provider: 'facebook',
+      providerUserId: 'fb-squatter',
+      email: PASSWORD_ACCOUNT_EMAIL,
+      emailVerified: false,
     });
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -165,6 +183,54 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
       .expect(200);
 
     expect(res.body.user.roles).toEqual(expect.arrayContaining([RoleName.admin, RoleName.user]));
+  });
+
+  // Посадки миграции идентичности (NEXT-SESSION §5). Обе обязаны краснеть на
+  // прежнем коде, где пользователь искался по адресу почты.
+  it('keys the account on (provider, providerUserId), not on the e-mail', async () => {
+    const first = await request(app.getHttpServer())
+      .post('/auth/social')
+      .send({ provider: 'google', token: 'good-google-token' })
+      .expect(200);
+
+    // Тот же `sub`, новый адрес у провайдера: человек сменил почту в Google.
+    const second = await request(app.getHttpServer())
+      .post('/auth/social')
+      .send({ provider: 'google', token: 'renamed-google-token' })
+      .expect(200);
+
+    // Тот же аккаунт, а не заведённый заново по новому адресу.
+    expect(second.body.user.id).toBe(first.body.user.id);
+    // И адрес аккаунта не переписан со стороны провайдера.
+    expect(second.body.user.email).toBe('google-real@example.com');
+
+    const created = await prisma.user.findUnique({
+      where: { email: 'google-renamed@example.com' },
+    });
+    expect(created).toBeNull();
+  });
+
+  it('refuses to attach a weakly-proven provider to an existing account', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email: PASSWORD_ACCOUNT_EMAIL, password: 'password123' })
+      .expect(201);
+
+    // Facebook доказал владение аккаунтом Facebook, но не адресом: эквивалента
+    // `email_verified` у Graph нет. Совпадение адреса — не доказательство.
+    const res = await request(app.getHttpServer())
+      .post('/auth/social')
+      .send({ provider: 'facebook', token: 'squatting-facebook-token' })
+      .expect(401);
+
+    expect(res.body.accessToken).toBeUndefined();
+
+    const identity = await prisma.userIdentity.findUnique({
+      where: {
+        provider_providerUserId: { provider: 'facebook', providerUserId: 'fb-squatter' },
+      },
+    });
+    expect(identity).toBeNull();
   });
 
   it('rejects a token without a provider', async () => {

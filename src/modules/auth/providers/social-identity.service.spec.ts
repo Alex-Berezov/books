@@ -123,6 +123,9 @@ describe('SocialIdentityService', () => {
         provider: 'google',
         providerUserId: 'g-5',
         email: 'user@example.com',
+        // Google подтверждает владение адресом — только с этим флагом вход
+        // вправе привязаться к уже существующему аккаунту того же адреса.
+        emailVerified: true,
         name: 'Real Name',
         avatarUrl: 'https://example.com/a.png',
       });
@@ -218,6 +221,9 @@ describe('SocialIdentityService', () => {
         provider: 'facebook',
         providerUserId: 'fb-user-1',
         email: 'fb@example.com',
+        // У Graph нет эквивалента `email_verified`, поэтому владение адресом не
+        // доказано и присвоить существующий аккаунт таким входом нельзя.
+        emailVerified: false,
         name: 'Real Name',
         avatarUrl: 'https://cdn.example.com/p.png',
       });

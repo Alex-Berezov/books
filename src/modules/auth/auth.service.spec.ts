@@ -42,6 +42,9 @@ describe('AuthService (unit)', () => {
         update: jest.fn(),
       },
       userRole: { upsert: jest.fn(), findMany: jest.fn() },
+      // Привязка личности провайдера. По умолчанию её нет — так выглядит первый
+      // вход после миграции, когда `providerUserId` прошлых входов нигде не сохранён.
+      userIdentity: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn() },
       $transaction: jest.fn(async (arr: any[]) => arr),
     };
     jwt = {
@@ -171,6 +174,7 @@ describe('AuthService (unit)', () => {
         provider: 'google',
         providerUserId: 'g-1',
         email: 'real@example.com',
+        emailVerified: true,
         name: 'Real',
       });
       prisma.user.findUnique.mockResolvedValue({ ...user, email: 'real@example.com' });
@@ -184,13 +188,17 @@ describe('AuthService (unit)', () => {
       expect(res.user.email).toBe('real@example.com');
     });
 
-    it('landing 2f: the same holds for facebook', async () => {
+    it('landing 2f: the same holds for facebook — a new account is created for a new identity', async () => {
       social.verify.mockResolvedValue({
         provider: 'facebook',
         providerUserId: 'fb-1',
         email: 'fbreal@example.com',
+        emailVerified: false,
       });
-      prisma.user.findUnique.mockResolvedValue({ ...user, email: 'fbreal@example.com' });
+      // Ни привязки, ни аккаунта с таким адресом: присваивать нечего.
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ ...user, email: 'fbreal@example.com' });
+      prisma.role.findUnique.mockResolvedValue({ id: 1, name: RoleName.user });
       prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
       prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
 
@@ -199,6 +207,69 @@ describe('AuthService (unit)', () => {
       expect(social.verify).toHaveBeenCalledWith('facebook', 'fb-access-token');
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { email: 'fbreal@example.com' },
+      });
+      expect(prisma.userIdentity.upsert).toHaveBeenCalled();
+    });
+
+    // Посадка миграции идентичности (NEXT-SESSION §5). Обязана краснеть на коде,
+    // где пользователь искался по адресу почты: там этот вход выдавал сессию
+    // владельцу парольного аккаунта, минуя пароль.
+    it('refuses to attach a weakly-proven provider to an existing account', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'facebook',
+        providerUserId: 'fb-squatter',
+        email: 'password-owner@example.com',
+        emailVerified: false,
+      });
+      prisma.user.findUnique.mockResolvedValue({ ...user, email: 'password-owner@example.com' });
+
+      await expect(
+        service.socialLogin({ provider: 'facebook', token: 'fb-access-token' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
+    });
+
+    // Обратная сторона той же границы: подтверждённый адрес привязку разрешает,
+    // иначе прошлые входы через Google завели бы себе вторые аккаунты.
+    it('links a verified provider to the existing account of the same address', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-new',
+        email: 'user@example.com',
+        emailVerified: true,
+      });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+      prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
+
+      const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(res.user.id).toBe(user.id);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.userIdentity.upsert).toHaveBeenCalled();
+    });
+
+    // Личность, а не адрес: при найденной привязке адрес провайдера вообще не
+    // участвует в поиске пользователя.
+    it('uses the stored link and never looks the user up by e-mail', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-1',
+        email: 'renamed@example.com',
+        emailVerified: true,
+      });
+      prisma.userIdentity.findUnique.mockResolvedValue({ userId: user.id });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+      prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
+
+      const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(res.user.email).toBe(user.email);
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: user.id } });
+      expect(prisma.user.findUnique).not.toHaveBeenCalledWith({
+        where: { email: 'renamed@example.com' },
       });
     });
 
@@ -230,6 +301,7 @@ describe('AuthService (unit)', () => {
         provider: 'google',
         providerUserId: 'g-admin',
         email: 'admin@bibliaris.com',
+        emailVerified: true,
       });
       existingAdmin();
 
@@ -253,6 +325,7 @@ describe('AuthService (unit)', () => {
         provider: 'google',
         providerUserId: 'g-new',
         email: 'newcomer@example.com',
+        emailVerified: true,
       });
       const created = { ...user, id: 'u-new', email: 'newcomer@example.com' };
       prisma.user.findUnique.mockResolvedValue(null);

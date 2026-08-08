@@ -242,6 +242,7 @@ model User {
   viewStats          ViewStat[]
   readingProgress    ReadingProgress[]
   roles              UserRole[]
+  identities         UserIdentity[]
   ratings            BookRating[]
   mediaAssets        MediaAsset[]
   rightsIntakes      RightsIntake[]
@@ -1965,6 +1966,26 @@ model UserRole {
   role   Role @relation(fields: [roleId], references: [id])
 
   @@id([userId, roleId])
+}
+
+/// Личность у внешнего провайдера. Ключ входа через провайдера — пара
+/// (provider, providerUserId), а не email: email у провайдера меняется, может
+/// отсутствовать вовсе (Facebook) и, главное, совпадение адреса не является
+/// доказательством владения аккаунтом. См. LEGACY-070 и NEXT-SESSION §5.
+model UserIdentity {
+  id             String   @id @default(uuid())
+  userId         String
+  provider       String
+  providerUserId String
+  /// Адрес, каким его назвал провайдер в момент привязки. Хранится для аудита:
+  /// расхождение с User.email означает, что адрес сменился на стороне провайдера.
+  email          String?
+  createdAt      DateTime @default(now())
+  lastLoginAt    DateTime?
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
 }
 
 enum RoleName {
