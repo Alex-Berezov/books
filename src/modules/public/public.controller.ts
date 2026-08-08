@@ -12,6 +12,8 @@ import { LanguageResolverGuard } from '../../common/guards/language-resolver.gua
 import { RelatedBooksQueryDto } from '../book/dto/related-books.dto';
 import { BookCardsQueryDto } from '../book/dto/book-cards-query.dto';
 import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
+import { SlugRedirectQueryDto } from '../slug-redirect/dto/slug-redirect-query.dto';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import {
   PUBLIC_CATEGORIES_DEFAULT_LIMIT,
   PUBLIC_CATEGORIES_MAX_LIMIT,
@@ -31,7 +33,27 @@ export class PublicController {
     private readonly tags: TagsService,
     private readonly authors: AuthorService,
     private readonly geoIpCountryService: GeoIpCountryService,
+    private readonly slugRedirects: SlugRedirectService,
   ) {}
+
+  /**
+   * Куда вёл адрес, которого больше нет (LEGACY-062).
+   *
+   * Спрашивается фронтом **только при 404**: живая сущность всегда важнее записи в
+   * истории, иначе слаг, занятый заново, увёл бы посетителя со страницы, которая
+   * существует. Ответ `{ newSlug: null }`, а не 404, — чтобы отсутствие редиректа не
+   * пришлось отличать от отказа сети.
+   */
+  @Get('slug-redirect')
+  @ApiOperation({ summary: 'Resolve a retired slug to its current one' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  async slugRedirect(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query() query: SlugRedirectQueryDto,
+  ): Promise<{ newSlug: string | null }> {
+    const newSlug = await this.slugRedirects.resolve(query.entityType, pathLang, query.slug);
+    return { newSlug };
+  }
 
   // Localized book overview
   @Get('books/:slug/overview')

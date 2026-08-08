@@ -1,6 +1,7 @@
 import { Language } from '@prisma/client';
 import { CategoryService } from '../../category/category.service';
 import { TagsService } from '../../tags/tags.service';
+import { SlugRedirectService } from '../../slug-redirect/slug-redirect.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 /**
@@ -57,6 +58,13 @@ const tagRow = {
   ],
 };
 
+/** Записью редиректов этот контракт не занимается — нужен лишь корректный конструктор. */
+const slugRedirectStub = () =>
+  ({
+    record: jest.fn().mockResolvedValue(undefined),
+    resolve: jest.fn().mockResolvedValue(null),
+  }) as unknown as SlugRedirectService;
+
 const prismaStub = () => {
   const stub = {
     $transaction: jest.fn((ops: Array<Promise<unknown>>) => Promise.all(ops)),
@@ -78,8 +86,8 @@ describe('indexability contract: autoIndexable reaches the client', () => {
   let tags: TagsService;
 
   beforeEach(() => {
-    categories = new CategoryService(prismaStub());
-    tags = new TagsService(prismaStub());
+    categories = new CategoryService(prismaStub(), slugRedirectStub());
+    tags = new TagsService(prismaStub(), slugRedirectStub());
   });
 
   it.each(TRANSLATION_KEYS)(
@@ -135,7 +143,7 @@ describe('indexability contract: autoIndexable reaches the client', () => {
    */
   it('asks the database for the fields it promises to return', async () => {
     const prisma = prismaStub();
-    const service = new CategoryService(prisma);
+    const service = new CategoryService(prisma, slugRedirectStub());
     await service.getTree('genre', Language.en);
 
     const call = (prisma.category.findMany as unknown as jest.Mock).mock.calls[0][0] as {

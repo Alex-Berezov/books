@@ -23,13 +23,14 @@
 
 - Read and modify schema, DTOs, services, controllers
 - Write migration SQL files in `prisma/migrations/` — the **user** applies them on the VPS
+- Run `yarn prisma:generate` after changing `schema.prisma`. Это **кодогенерация типов из файла схемы**, к базе она не обращается вовсе — в отличие от `migrate`/`seed`/`studio`, вместе с которыми запрет стоял до 08.08.2026. Без неё после правки схемы падают typecheck и lint (`prisma.<новаяМодель>` — «error typed value»), и работа встаёт на ровном месте
 - Run e2e against the local test DB: `yarn test:e2e` (see below)
 - Start/stop the local test services: `docker compose up -d postgres redis`, `docker compose ps`, `docker compose stop postgres redis`
 
 **What you STILL CANNOT do:**
 
 - Run the backend server locally
-- Run `yarn prisma:migrate`, `yarn prisma:seed`, `npx prisma generate` or `psql` **directly** — still denied in `.claude/settings.json`. Migrations reach a database only through the e2e harness (throwaway DB) or through the user on the VPS
+- Run `yarn prisma:migrate`, `yarn prisma:seed`, `yarn prisma:studio` or `psql` **directly** — still denied in `.claude/settings.json`. Migrations reach a database only through the e2e harness (throwaway DB) or through the user on the VPS. ⚠️ `npx prisma …` и голый `prisma …` тоже закрыты — включая `generate`; для генерации типов есть разрешённый `yarn prisma:generate`
 - Touch anything pointing at production: `docker-compose.prod.yml`, `--profile prod`, `docker compose down` (it would drop the local volume)
 - Deploy. All backend changes are reviewed by the user before deployment
 

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
@@ -43,6 +44,7 @@ export type CategoryTreeNode = {
 export class CategoryService {
   constructor(
     private prisma: PrismaService,
+    private readonly slugRedirects: SlugRedirectService,
     @Optional()
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
@@ -507,24 +509,37 @@ export class CategoryService {
       }
     }
 
-    return this.prisma.categoryTranslation.update({
-      where: { categoryId_language: { categoryId, language } },
-      data: {
-        name: dto.name,
-        slug: dto.slug,
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
-        ...(dto.shortDescription !== undefined ? { shortDescription: dto.shortDescription } : {}),
-        ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
-        ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
-        ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
-        ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
-        ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
-        ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
-        ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
-        ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
-      },
-      include: { seo: true },
+    // Смена слага и запись редиректа — одна транзакция (LEGACY-062). Порознь
+    // существовал бы момент, когда слаг уже новый, а старый адрес ведёт в 404.
+    const slugChanged = !!dto.slug && dto.slug !== tr.slug;
+
+    return this.prisma.$transaction(async (tx) => {
+      if (slugChanged && dto.slug) {
+        await this.slugRedirects.record(
+          { entityType: 'category', language, oldSlug: tr.slug, newSlug: dto.slug },
+          tx,
+        );
+      }
+
+      return tx.categoryTranslation.update({
+        where: { categoryId_language: { categoryId, language } },
+        data: {
+          name: dto.name,
+          slug: dto.slug,
+          ...(dto.description !== undefined ? { description: dto.description } : {}),
+          ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
+          ...(dto.shortDescription !== undefined ? { shortDescription: dto.shortDescription } : {}),
+          ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
+          ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
+          ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
+          ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
+          ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
+          ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
+          ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
+          ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
+        },
+        include: { seo: true },
+      });
     });
   }
 

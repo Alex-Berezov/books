@@ -1,6 +1,7 @@
 import { TagsService } from './tags.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { Language } from '@prisma/client';
 
 interface PrismaStub {
@@ -36,6 +37,10 @@ describe('TagsService', () => {
     indexability = { recomputeForTerms: jest.fn().mockResolvedValue(undefined) };
     service = new TagsService(
       prisma as unknown as PrismaService,
+      {
+        record: jest.fn().mockResolvedValue(undefined),
+        resolve: jest.fn().mockResolvedValue(null),
+      } as unknown as SlugRedirectService,
       indexability as unknown as TaxonomyIndexabilityService,
     );
   });

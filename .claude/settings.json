@@ -20,7 +20,6 @@
       "Bash(yarn prisma:migrate:*)",
       "Bash(yarn prisma:seed:*)",
       "Bash(yarn prisma:studio:*)",
-      "Bash(yarn prisma:generate:*)",
       "Bash(yarn db:*)",
       "Bash(yarn cleanup:*)",
       "Bash(npx prisma:*)",

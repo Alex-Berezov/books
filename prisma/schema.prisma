@@ -653,6 +653,30 @@ enum PageType {
 // Taxonomy Translations
 // =====================
 
+/// История слагов публичных сущностей (LEGACY-062).
+///
+/// Слаг таксономии — индексируемый публичный URL. До появления этой таблицы
+/// `update()` перезаписывал его на месте: прошлое значение исчезало без следа, а
+/// старый адрес немедленно начинал отдавать 404 — без 301, без переноса сигналов,
+/// без возможности узнать, каким URL был раньше.
+///
+/// `@@unique([entityType, language, oldSlug])` — один старый адрес ведёт ровно в
+/// одно место. Цепочки (A→B→C) при записи схлопываются до A→C, иначе браузер шёл бы
+/// по цепочке редиректов, а Google учитывал бы только несколько первых звеньев.
+model SlugRedirect {
+  id         String   @id @default(uuid())
+  /// 'category' | 'tag'. Строка, а не enum: сюда лягут страницы, книги и авторы,
+  /// и добавление типа не должно требовать миграции enum.
+  entityType String
+  language   Language
+  oldSlug    String
+  newSlug    String
+  createdAt  DateTime @default(now())
+
+  @@unique([entityType, language, oldSlug])
+  @@index([entityType, language, newSlug])
+}
+
 model CategoryTranslation {
   id               String   @id @default(uuid())
   categoryId       String

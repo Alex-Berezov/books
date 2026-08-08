@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from '@n
 import { Prisma, Language, Tag, TagTranslation, BookVersion } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
@@ -12,6 +13,7 @@ import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 export class TagsService {
   constructor(
     private prisma: PrismaService,
+    private readonly slugRedirects: SlugRedirectService,
     @Optional()
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
@@ -402,25 +404,38 @@ export class TagsService {
       }
     }
 
-    return this.prisma.tagTranslation.update({
-      where: { tagId_language: { tagId, language } },
-      data: {
-        name: dto.name,
-        slug: dto.slug,
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
-        ...(dto.relatedGenreSlugs !== undefined
-          ? { relatedGenreSlugs: dto.relatedGenreSlugs }
-          : {}),
-        ...(dto.relatedCategorySlugs !== undefined
-          ? { relatedCategorySlugs: dto.relatedCategorySlugs }
-          : {}),
-        ...(dto.relatedCollectionSlugs !== undefined
-          ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
-          : {}),
-        ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
-      },
-      include: { seo: true },
+    // Та же транзакция, что и смена слага (LEGACY-062): порознь существовал бы
+    // момент, когда слаг уже новый, а старый адрес ведёт в 404.
+    const slugChanged = !!dto.slug && dto.slug !== tr.slug;
+
+    return this.prisma.$transaction(async (tx) => {
+      if (slugChanged && dto.slug) {
+        await this.slugRedirects.record(
+          { entityType: 'tag', language, oldSlug: tr.slug, newSlug: dto.slug },
+          tx,
+        );
+      }
+
+      return tx.tagTranslation.update({
+        where: { tagId_language: { tagId, language } },
+        data: {
+          name: dto.name,
+          slug: dto.slug,
+          ...(dto.description !== undefined ? { description: dto.description } : {}),
+          ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
+          ...(dto.relatedGenreSlugs !== undefined
+            ? { relatedGenreSlugs: dto.relatedGenreSlugs }
+            : {}),
+          ...(dto.relatedCategorySlugs !== undefined
+            ? { relatedCategorySlugs: dto.relatedCategorySlugs }
+            : {}),
+          ...(dto.relatedCollectionSlugs !== undefined
+            ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
+            : {}),
+          ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
+        },
+        include: { seo: true },
+      });
     });
   }
 

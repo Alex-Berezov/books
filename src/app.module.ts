@@ -38,6 +38,7 @@ import { MetricsModule } from './modules/metrics/metrics.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { MediaJobsModule } from './modules/media-jobs/media-jobs.module';
 import { PrismaModule } from './shared/prisma/prisma.module';
+import { SlugRedirectModule } from './modules/slug-redirect/slug-redirect.module';
 import { SecurityModule } from './shared/security/security.module';
 import { GeoBlockModule } from './modules/geo-block/geo-block.module';
 import { ContributorsModule } from './modules/contributors/contributors.module';
@@ -59,6 +60,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     }),
     // Global shared providers
     PrismaModule,
+    SlugRedirectModule,
     SecurityModule,
     // Static files for local uploads
     ServeStaticModule.forRoot({ rootPath: staticRoot, serveRoot: '/' }),

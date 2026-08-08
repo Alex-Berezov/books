@@ -9,8 +9,17 @@ describe('PublicController (unit)', () => {
   const tags = { versionsByTagLangSlug: jest.fn() } as any;
   const authors = { getPublicBySlug: jest.fn() } as any;
   const geoIpCountry = { resolveCountry: jest.fn().mockReturnValue(null) } as any;
+  const slugRedirects = { resolve: jest.fn().mockResolvedValue(null) } as any;
 
-  const controller = new PublicController(books, pages, categories, tags, authors, geoIpCountry);
+  const controller = new PublicController(
+    books,
+    pages,
+    categories,
+    tags,
+    authors,
+    geoIpCountry,
+    slugRedirects,
+  );
 
   beforeEach(() => {
     jest.clearAllMocks();
