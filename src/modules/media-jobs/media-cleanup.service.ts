@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
+import { loadUrlReferenceChecker } from '../media/media-references';
 
 export interface CleanupResult {
   markedSoftDeleted: number;
@@ -47,15 +48,37 @@ export class MediaCleanupService {
     const hardCutoff = new Date(now.getTime() - hardDays * 86400 * 1000);
 
     // Stage 1: find orphans (no audioChapters referencing, no previewVersions referencing)
-    const softCandidates = await this.prisma.mediaAsset.findMany({
+    //
+    // 🔴 Внешних ключей недостаточно (LEGACY-058). Обложка книги связана строкой
+    // `BookVersion.coverImageUrl`, а не FK, поэтому по этому условию **любая обложка**
+    // выглядела сиротой: замер на проде 05.08.2026 дал 56 кандидатов из 56 записей,
+    // включая все восемь обложек опубликованных книг. Stage 2 удалил бы их файлы через
+    // 30 дней — когда связь с причиной уже не очевидна.
+    //
+    // Правило про ссылки-строки живёт в `media/media-references.ts` — одно и то же для
+    // уборки и для `DELETE /media/:id`. Раздельные копии разошлись бы, и уборка снова
+    // начала бы удалять то, что удалять запрещено вручную.
+    const fkCandidates = await this.prisma.mediaAsset.findMany({
       where: {
         isDeleted: false,
         createdAt: { lt: softCutoff },
         audioChapters: { none: {} },
         previewVersions: { none: {} },
       },
-      select: { id: true },
+      select: { id: true, key: true },
     });
+
+    const isReferencedByUrl = await loadUrlReferenceChecker(this.prisma);
+    const softCandidates = fkCandidates.filter((asset) => !isReferencedByUrl(asset.key));
+
+    const skippedByUrlReference = fkCandidates.length - softCandidates.length;
+    if (skippedByUrlReference > 0) {
+      // Не «шум», а полезный сигнал: это ровно те объекты, которые прежний критерий
+      // пометил бы на удаление.
+      this.logger.log(
+        `Skipped ${skippedByUrlReference} asset(s) referenced by URL only (covers, audio, avatars).`,
+      );
+    }
 
     let markedSoftDeleted = 0;
     if (!dryRun && softCandidates.length > 0) {

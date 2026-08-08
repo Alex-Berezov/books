@@ -12,9 +12,7 @@ import { ConfirmMediaDto, MediaListQueryDto } from './dto/create-media.dto';
 import { Inject } from '@nestjs/common';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
 import { MediaProbeService } from '../media-jobs/media-probe.service';
-
-/** Сколько ссылок показать в ответе: оператору нужен пример, а не полный список. */
-const REFERENCE_SAMPLE_LIMIT = 3;
+import { findMediaReferenceDescriptors } from './media-references';
 
 @Injectable()
 export class MediaService {
@@ -109,65 +107,6 @@ export class MediaService {
     return { items, total, page, limit };
   }
 
-  /**
-   * Кто ссылается на объект (LEGACY-060).
-   *
-   * Обложка и аудио связаны с ассетом **строкой URL**, а не внешним ключом,
-   * поэтому база удаление не остановит: `isDeleted: true` проходит, файл исчезает,
-   * а `coverImageUrl` продолжает указывать на несуществующий объект. Замечает это
-   * читатель, а не оператор.
-   *
-   * Пока нет `BookVersion.coverMediaId` (миграция закрыла бы и LEGACY-058), ссылки
-   * приходится искать по вхождению `key` в URL. Совпадение по подстроке, а не по
-   * равенству: публичный адрес собирается из базы хранилища, и она может смениться,
-   * а `key` — нет.
-   *
-   * `AudioChapter` проверяется дважды — и по `mediaId`, и по строке `audioUrl`.
-   * Внешний ключ там есть, но он не мешает мягкому удалению, а часть записей могла
-   * быть создана до его появления.
-   */
-  private async findBlockingReferences(asset: { id: string; key: string }): Promise<string[]> {
-    const [covers, audioByMedia, audioByUrl, avatars, photos] = await Promise.all([
-      this.prisma.bookVersion.findMany({
-        where: { coverImageUrl: { contains: asset.key } },
-        select: { id: true, title: true },
-        take: REFERENCE_SAMPLE_LIMIT,
-      }),
-      this.prisma.audioChapter.findMany({
-        where: { mediaId: asset.id },
-        select: { id: true, title: true },
-        take: REFERENCE_SAMPLE_LIMIT,
-      }),
-      this.prisma.audioChapter.findMany({
-        where: { audioUrl: { contains: asset.key } },
-        select: { id: true, title: true },
-        take: REFERENCE_SAMPLE_LIMIT,
-      }),
-      this.prisma.user.findMany({
-        where: { avatarUrl: { contains: asset.key } },
-        select: { id: true },
-        take: REFERENCE_SAMPLE_LIMIT,
-      }),
-      this.prisma.authorTranslation.findMany({
-        where: { photoUrl: { contains: asset.key } },
-        select: { id: true },
-        take: REFERENCE_SAMPLE_LIMIT,
-      }),
-    ]);
-
-    const references: string[] = [];
-    for (const version of covers)
-      references.push(`book version "${version.title}" (${version.id})`);
-    for (const chapter of [...audioByMedia, ...audioByUrl]) {
-      const descriptor = `audio chapter "${chapter.title}" (${chapter.id})`;
-      if (!references.includes(descriptor)) references.push(descriptor);
-    }
-    for (const user of avatars) references.push(`user avatar (${user.id})`);
-    for (const translation of photos) references.push(`author photo (${translation.id})`);
-
-    return references;
-  }
-
   async remove(id: string) {
     const asset = await this.prisma.mediaAsset.findUnique({ where: { id } });
     if (!asset) throw new NotFoundException('Media not found');
@@ -177,7 +116,7 @@ export class MediaService {
     // 🔴 Отказ вместо удаления. Восстановить объект нельзя: хранилище не версионирует,
     // и единственный путь назад — заново загрузить исходный файл, которого у оператора
     // может не быть. Поэтому сомнение разрешается в пользу отказа.
-    const references = await this.findBlockingReferences({ id, key });
+    const references = await findMediaReferenceDescriptors(this.prisma, { id, key });
     if (references.length > 0) {
       throw new ConflictException({
         statusCode: 409,

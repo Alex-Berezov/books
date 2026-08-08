@@ -12,6 +12,8 @@
     ]
   },
   "maxWorkers": 1,
+  "_comment_testTimeout": "Дефолтные 5 секунд Jest относятся и к beforeAll, а там поднимается всё приложение. На CI это укладывается, на медленной машине — нет, и падение выглядит как сломанный тест, а не как медленный старт (08.08.2026: media-jobs падал целиком на семи тестах из семи). 30 секунд хватает старту и по-прежнему ловит настоящее зависание.",
+  "testTimeout": 30000,
   "workerIdleMemoryLimit": "512MB",
   "setupFilesAfterEnv": ["<rootDir>/setup-after-env-e2e.ts"],
   "globalSetup": "<rootDir>/setup-e2e.ts",

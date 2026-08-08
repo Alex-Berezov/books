@@ -176,4 +176,55 @@ describe('Media jobs e2e', () => {
     await prisma.book.delete({ where: { id: book.id } });
     await prisma.mediaAsset.delete({ where: { id: media.id } });
   });
+
+  /**
+   * LEGACY-058. Прежний критерий смотрел только на внешние ключи, а обложка связана
+   * строкой `BookVersion.coverImageUrl` — поэтому **любая обложка** проходила как
+   * сирота. Замер на проде 05.08.2026: 56 кандидатов из 56 записей, включая все
+   * восемь обложек опубликованных книг. Stage 2 удалил бы их файлы через 30 дней.
+   *
+   * Проверка идёт на настоящей базе намеренно: дефект был в форме запроса, а не в
+   * логике вокруг него, и на моках он бы не проявился.
+   */
+  it('does not treat a cover referenced only by URL as an orphan (LEGACY-058)', async () => {
+    const key = `covers/legacy-058/${Date.now()}.jpg`;
+    const media = await prisma.mediaAsset.create({
+      data: {
+        key,
+        url: `http://localhost:5000/${key}`,
+        contentType: 'image/jpeg',
+        size: 1,
+        // Старше softDays — то есть кандидат по возрасту.
+        createdAt: new Date(Date.now() - 10 * 86400 * 1000),
+      },
+    });
+
+    const book = await prisma.book.create({ data: { slug: `book-cover-058-${Date.now()}` } });
+    const version = await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: 'en',
+        title: 'Cover Owner',
+        author: 'A',
+        description: 'D',
+        // Ни одного внешнего ключа на медиа: связь только через строку адреса.
+        coverImageUrl: `http://localhost:5000/${key}`,
+        type: 'text',
+        isFree: true,
+        status: 'published',
+      },
+    });
+
+    const res = await cleanup.cleanup({ softDays: 7, hardDays: 30, dryRun: true });
+    expect(res.softDeletedCandidates ?? []).not.toContain(media.id);
+
+    // Контроль: без ссылки тот же ассет кандидатом быть обязан — иначе посадка
+    // проходила бы и на критерии, который не выбирает вообще ничего.
+    await prisma.bookVersion.delete({ where: { id: version.id } });
+    const after = await cleanup.cleanup({ softDays: 7, hardDays: 30, dryRun: true });
+    expect(after.softDeletedCandidates ?? []).toContain(media.id);
+
+    await prisma.book.delete({ where: { id: book.id } });
+    await prisma.mediaAsset.delete({ where: { id: media.id } });
+  });
 });
