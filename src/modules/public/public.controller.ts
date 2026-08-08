@@ -12,6 +12,11 @@ import { LanguageResolverGuard } from '../../common/guards/language-resolver.gua
 import { RelatedBooksQueryDto } from '../book/dto/related-books.dto';
 import { BookCardsQueryDto } from '../book/dto/book-cards-query.dto';
 import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
+import {
+  PUBLIC_CATEGORIES_DEFAULT_LIMIT,
+  PUBLIC_CATEGORIES_MAX_LIMIT,
+  PublicCategoriesQueryDto,
+} from './dto/public-categories-query.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -167,12 +172,24 @@ export class PublicController {
   @Get('categories')
   @ApiOperation({ summary: 'Public category/genre listing for catalog sidebar' })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  @ApiQuery({ name: 'type', required: false, description: 'Filter by type: category, genre' })
   categoriesList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
-    @Query('type') type?: string,
+    @Query() query: PublicCategoriesQueryDto,
   ) {
-    return this.categories.list(1, 50, type as 'category' | 'genre' | 'collection', pathLang);
+    // Потолок зажимается **здесь**, а не в сервисе: сервис общий с админским
+    // маршрутом, на котором sitemap ходит с `limit=1000`, и потолок там означал бы
+    // молчаливое усечение карты сайта (LEGACY-056).
+    //
+    // В сервис уходит уже зажатое значение — тогда `meta.limit` собирается из
+    // применённого, а не из запрошенного. Разница не косметическая: потребитель
+    // делит `total` на `meta.limit`, и при молчаливом урезании получает неверное
+    // число страниц, не узнав об этом.
+    const limit = Math.min(
+      query.limit ?? PUBLIC_CATEGORIES_DEFAULT_LIMIT,
+      PUBLIC_CATEGORIES_MAX_LIMIT,
+    );
+
+    return this.categories.list(query.page ?? 1, limit, query.type, pathLang);
   }
 
   // Localized tags by translation slug
