@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { MediaService } from './media.service';
 import { MediaListQueryDto } from './dto/create-media.dto';
 
@@ -11,6 +11,12 @@ describe('MediaService (unit)', () => {
       findMany: jest.fn(),
       count: jest.fn(),
     },
+    // Ссылки на ассет живут строками URL в четырёх местах (LEGACY-060).
+    // По умолчанию — ни одной; конкретный тест подставляет свою.
+    bookVersion: { findMany: jest.fn().mockResolvedValue([]) },
+    audioChapter: { findMany: jest.fn().mockResolvedValue([]) },
+    user: { findMany: jest.fn().mockResolvedValue([]) },
+    authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const storage = {
     getPublicUrl: jest.fn<string, any>(),
@@ -19,8 +25,16 @@ describe('MediaService (unit)', () => {
 
   let service: MediaService;
 
+  const noReferences = () => {
+    prisma.bookVersion.findMany.mockResolvedValue([]);
+    prisma.audioChapter.findMany.mockResolvedValue([]);
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.authorTranslation.findMany.mockResolvedValue([]);
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
+    noReferences();
     service = new MediaService(
       prisma as unknown as import('../../prisma/prisma.service').PrismaService,
       storage as unknown as import('../../shared/storage/storage.interface').StorageService,
@@ -131,7 +145,7 @@ describe('MediaService (unit)', () => {
   });
 
   describe('remove', () => {
-    it('soft-deletes and tries to remove storage object (best-effort)', async () => {
+    it('soft-deletes and removes the storage object when nothing references it', async () => {
       prisma.mediaAsset.findUnique.mockResolvedValue({ id: 'm1', key: 'covers/x.jpg' });
       prisma.mediaAsset.update.mockResolvedValue({});
       storage.delete.mockResolvedValue();
@@ -142,16 +156,51 @@ describe('MediaService (unit)', () => {
         data: { isDeleted: true },
       });
       expect(storage.delete).toHaveBeenCalledWith('covers/x.jpg');
-      expect(res).toEqual({ success: true });
+      expect(res).toEqual({ success: true, storageDeleted: true });
     });
 
-    it('ignores storage errors and still returns success', async () => {
+    // 🔴 Главная посадка LEGACY-060. Один запрос сносил обложку опубликованной книги,
+    // ответ был `{ success: true }`, а `coverImageUrl` продолжал указывать в пустоту.
+    // Восстановление возможно только повторной загрузкой файла — значит отказ.
+    it('refuses to delete a cover that a book version still uses', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({ id: 'm1', key: 'covers/x.jpg' });
+      prisma.bookVersion.findMany.mockResolvedValue([{ id: 'v1', title: 'War and Peace' }]);
+
+      await expect(service.remove('m1')).rejects.toBeInstanceOf(ConflictException);
+
+      // Ни записи не тронули, ни файла: отказ обязан быть полным.
+      expect(prisma.mediaAsset.update).not.toHaveBeenCalled();
+      expect(storage.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete audio a chapter still uses, found by the foreign key', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({ id: 'm1', key: 'audio/ch1.mp3' });
+      prisma.audioChapter.findMany.mockImplementation((args: { where?: { mediaId?: string } }) =>
+        Promise.resolve(args?.where?.mediaId === 'm1' ? [{ id: 'a1', title: 'Chapter 1' }] : []),
+      );
+
+      await expect(service.remove('m1')).rejects.toBeInstanceOf(ConflictException);
+      expect(storage.delete).not.toHaveBeenCalled();
+    });
+
+    it('names what blocks the deletion — an operator has to know what to fix', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({ id: 'm1', key: 'covers/x.jpg' });
+      prisma.bookVersion.findMany.mockResolvedValue([{ id: 'v1', title: 'War and Peace' }]);
+
+      await expect(service.remove('m1')).rejects.toMatchObject({
+        response: { references: ['book version "War and Peace" (v1)'] },
+      });
+    });
+
+    it('reports a storage failure instead of swallowing it', async () => {
       prisma.mediaAsset.findUnique.mockResolvedValue({ id: 'm1', key: 'covers/x.jpg' });
       prisma.mediaAsset.update.mockResolvedValue({});
       storage.delete.mockRejectedValue(new Error('fs fail'));
 
       const res = await service.remove('m1');
-      expect(res).toEqual({ success: true });
+      // Повтор остаётся возможным, но объект пережил удаление записи — это сирота,
+      // и вызывающий узнаёт об этом из ответа, а не из тишины.
+      expect(res).toEqual({ success: true, storageDeleted: false });
     });
 
     it('throws NotFound if media not found', async () => {
