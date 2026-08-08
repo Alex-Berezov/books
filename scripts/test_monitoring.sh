@@ -212,28 +212,27 @@ check_node_exporter() {
 check_app_integration() {
     log "Checking integration with Books App..."
     
-    # Check availability of application metrics directly
-    if curl -s "http://localhost:5000/api/metrics" > /dev/null 2>&1; then
-    test_result "Books App /api/metrics" "PASS"
-        
-    # Check specific application metrics
-        if metrics=$(curl -s "http://localhost:5000/api/metrics" 2>/dev/null); then
-            if echo "$metrics" | grep -q "http_request_duration_seconds"; then
-                test_result "Books App HTTP metrics" "PASS"
-            else
-                test_result "Books App HTTP metrics" "FAIL" "HTTP metrics not found"
-            fi
-            
-            if echo "$metrics" | grep -q "process_cpu_user_seconds_total"; then
-                test_result "Books App process metrics" "PASS"
-            else
-                test_result "Books App process metrics" "FAIL" "Process metrics not found"
-            fi
-        fi
-    else
-    test_result "Books App /api/metrics" "FAIL" "Endpoint unreachable"
-    warn "Ensure Books App is running on port 5000"
-    fi
+    # LEGACY-072: `/api/metrics` закрыт гвардом `admin` с 08.08.2026, а job
+    # `books-app` в configs/prometheus.yml отключён — содержимое реестра снаружи
+    # больше не читается, и проверять его нечем. Прежние проверки шли через
+    # `curl -s ... > /dev/null`, который на 401 возвращает 0: они объявляли PASS
+    # доступности, а затем краснели на grep по телу ошибки.
+    metrics_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:5000/api/metrics" 2>/dev/null || echo "000")
+    case "$metrics_code" in
+        401)
+            test_result "Books App /api/metrics requires auth" "PASS"
+            ;;
+        200)
+            test_result "Books App /api/metrics requires auth" "FAIL" "Served anonymously — admin guard is not in effect"
+            ;;
+        000)
+            test_result "Books App /api/metrics requires auth" "FAIL" "Endpoint unreachable"
+            warn "Ensure Books App is running on port 5000"
+            ;;
+        *)
+            test_result "Books App /api/metrics requires auth" "FAIL" "Unexpected response HTTP $metrics_code"
+            ;;
+    esac
     
     # Check health endpoints
     if curl -s "http://localhost:5000/api/health/liveness" > /dev/null 2>&1; then
@@ -316,7 +315,7 @@ generate_report() {
     if [[ $FAILED_TESTS -gt 0 ]]; then
     echo -e "${YELLOW}Problem resolution recommendations:${NC}"
     echo "1. Check container logs: docker-compose -f docker-compose.monitoring.yml logs"
-    echo "2. Ensure main app running: curl http://localhost:5000/api/metrics"
+    echo "2. Ensure main app running: curl http://localhost:5000/api/health/liveness"
     echo "3. Review configuration files for errors"
     echo "4. Restart monitoring stack: ./scripts/setup_monitoring.sh"
         echo

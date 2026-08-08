@@ -15,16 +15,28 @@ alerting:
             - alertmanager:9093
 
 scrape_configs:
-  # Scrape NestJS application metrics
-  - job_name: 'books-app'
-    static_configs:
-      - targets: ['172.17.0.1:5000'] # Docker bridge network
-    metrics_path: '/api/metrics'
-    scrape_interval: 30s
-    scrape_timeout: 10s
-    honor_labels: false
-    params:
-      format: ['prometheus']
+  # Scrape NestJS application metrics — ОТКЛЮЧЕНО с 08.08.2026 (LEGACY-072).
+  #
+  # `/api/metrics` закрыт `JwtAuthGuard + RolesGuard(admin)`: анонимно он отдавал
+  # состав маршрутов, объёмы трафика и коды ответов. Prometheus предъявить админский
+  # JWT не может — он живёт 12 часов, а `credentials_file` пришлось бы обновлять
+  # снаружи. Включённый job здесь означал бы вечно красную цель и `up == 0`,
+  # то есть ложную тревогу «приложение лежит».
+  #
+  # Чтобы вернуть метрики, нужен отдельный механизм аутентификации скрейпера
+  # (долгоживущий токен только на чтение метрик или доступ по внутренней сети без
+  # публикации маршрута) — это отдельная задача, не побочный эффект закрытия дыры.
+  # Готовность приложения продолжает сниматься job'ом `books-app-health` ниже.
+  #
+  # - job_name: 'books-app'
+  #   static_configs:
+  #     - targets: ['172.17.0.1:5000'] # Docker bridge network
+  #   metrics_path: '/api/metrics'
+  #   scrape_interval: 30s
+  #   scrape_timeout: 10s
+  #   honor_labels: false
+  #   params:
+  #     format: ['prometheus']
 
   # Scrape Prometheus itself
   - job_name: 'prometheus'

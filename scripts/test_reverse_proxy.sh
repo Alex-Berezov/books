@@ -58,8 +58,11 @@ check_redirect "http://$DOMAIN" "https://$DOMAIN" "HTTP → HTTPS redirect"
 check_endpoint "https://$DOMAIN/api/health/liveness" 200 "Health Liveness"
 check_endpoint "https://$DOMAIN/api/health/readiness" 200 "Health Readiness"
 
-# Metrics must be blocked
-check_endpoint "https://$DOMAIN/api/metrics" 403 "Metrics (must be blocked)"
+# Metrics must not be served anonymously.
+# 403 — пока стоит блок Caddy (смягчение LEGACY-070); 401 — после его снятия,
+# отвечает уже приложение (LEGACY-072). Скрипт принимает оба, но не 200.
+check_endpoint "https://$DOMAIN/api/metrics" 401 "Metrics (must require auth)" ||
+    check_endpoint "https://$DOMAIN/api/metrics" 403 "Metrics (still blocked at Caddy)"
 
 # Swagger must be disabled in prod
 check_endpoint "https://$DOMAIN/api/docs" 404 "Swagger Docs (must be unavailable)"

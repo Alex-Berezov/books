@@ -9,8 +9,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-books}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    # Опубликованный порт Docker обходит firewalld — дефолт обязан быть 127.0.0.1
+    # (LEGACY-071). Прежний '${POSTGRES_PORT:-5432}:5432' биндил на все интерфейсы
+    # в любой среде, поднятой из репозитория без .env.
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,11 +26,29 @@ services:
     image: redis:7-alpine
     container_name: books_redis
     restart: unless-stopped
+    # LEGACY-071: порт 6379 пять недель смотрел в интернет без пароля, зафиксирована
+    # попытка RCE через `CONFIG SET dir`. Дефолт биндится на loopback, пароль обязателен.
     ports:
-      - '${REDIS_PORT:-6379}:6379'
-    command: ['redis-server', '--appendonly', 'no']
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+    # `:?` намеренно: без REDIS_PASSWORD контейнер не поднимется. Тихий запуск без
+    # пароля — ровно тот сценарий, который и привёл к инциденту. Секрет живёт в
+    # env-файле (`.env` локально, `.env.prod` на VPS), не в compose.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'no',
+        '--requirepass',
+        '${REDIS_PASSWORD:?REDIS_PASSWORD is required}',
+      ]
+    # CMD-SHELL, а не CMD: в exec-форме $REDIS_PASSWORD не разворачивается.
+    # REDISCLI_AUTH, а не `-a`: `-a` кладёт пароль в argv (виден в `ps`) и пишет
+    # предупреждение в stderr. `| grep -q PONG`, а не голый ping: redis-cli умеет
+    # напечатать ошибку и выйти с нулевым кодом — такая проба не способна покраснеть.
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
       interval: 5s
       timeout: 3s
       retries: 20

@@ -37,6 +37,7 @@
 
 ```bash
 docker compose up -d postgres redis   # once per session; user starts it if not running
+# Требует REDIS_PASSWORD в `.env` — без переменной redis не поднимется (LEGACY-071)
 yarn test:e2e                          # ~6–8 min, 46 suites (sentry self-skips)
 ```
 

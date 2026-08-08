@@ -601,12 +601,18 @@ verify_deployment() {
     log_error "✗ Database not reachable"
     fi
     
-    # 4. Metrics endpoint check
-    if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/metrics',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
-    log_success "✓ Metrics accessible"
+    # 4. Metrics endpoint check.
+    #
+    # LEGACY-072: проверка перевёрнута. Раньше здесь ждали 200 — то есть успехом
+    # деплоя считалось, что реестр prom-client отдаётся без токена. С 08.08.2026 на
+    # `/api/metrics` висит `JwtAuthGuard + RolesGuard(admin)`, и правильный ответ
+    # без заголовка Authorization — 401. Проба, ждущая 200, после закрытия дыры
+    # роняла бы каждый выкат; проба на 401 краснеет, если гвард снимут.
+    if [[ -n "$app_container" ]] && docker exec "$app_container" node -e "require('http').get('http://localhost:5000/api/metrics',r=>process.exit(r.statusCode===401?0:1)).on('error',()=>process.exit(1))" &> /dev/null; then
+    log_success "✓ Metrics require authentication"
         checks_passed=$((checks_passed + 1))
     else
-    log_error "✗ Metrics not accessible"
+    log_error "✗ Metrics did not answer 401 — the admin guard is missing or the route changed"
     fi
     
     # 5. API version / container health via Docker healthcheck status

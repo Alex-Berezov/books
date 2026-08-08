@@ -257,22 +257,22 @@ check_security_config() {
     add_result "swagger" "WARNING" "Swagger accessible (HTTP $swagger_status) - not recommended for production"
     fi
     
-    # Metrics endpoint (should be local-only in production)
+    # Metrics endpoint. LEGACY-072: с 08.08.2026 маршрут закрыт гвардом
+    # `admin`, поэтому анонимный ответ — 401 в любой среде, включая localhost.
+    # Прежняя ветка ждала на localhost 200 и объявляла PASS ровно тому состоянию,
+    # которое теперь считается дефектом. 403 остаётся допустимым, пока снаружи
+    # стоит блок Caddy; 200 — всегда провал: значит гвард не применился.
     local metrics=$(http_request "$BASE_URL/api/metrics")
     local metrics_status=$(echo "$metrics" | cut -d'|' -f2)
-    
-    if [[ "$BASE_URL" =~ ^https?://localhost ]] || [[ "$BASE_URL" =~ ^http://127\.0\.0\.1 ]]; then
-        if [[ "$metrics_status" == "200" ]]; then
-            add_result "metrics" "PASS" "Metrics accessible locally"
-        else
-            add_result "metrics" "FAIL" "Metrics not accessible (HTTP $metrics_status)"
-        fi
+
+    if [[ "$metrics_status" == "401" ]]; then
+        add_result "metrics" "PASS" "Metrics require authentication"
+    elif [[ "$metrics_status" == "403" ]] || [[ "$metrics_status" == "404" ]]; then
+        add_result "metrics" "PASS" "Metrics blocked before the application (HTTP $metrics_status)"
+    elif [[ "$metrics_status" == "200" ]]; then
+        add_result "metrics" "FAIL" "Metrics served anonymously — the admin guard is not in effect"
     else
-        if [[ "$metrics_status" == "403" ]] || [[ "$metrics_status" == "404" ]]; then
-            add_result "metrics" "PASS" "Metrics protected from external access"
-        else
-            add_result "metrics" "WARNING" "Metrics may be externally accessible (HTTP $metrics_status)"
-        fi
+        add_result "metrics" "WARNING" "Unexpected metrics response (HTTP $metrics_status)"
     fi
 }
 

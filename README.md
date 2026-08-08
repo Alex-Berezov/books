@@ -28,7 +28,7 @@
 - **API Base URL**: https://api.bibliaris.com/api
 - **API Health**: https://api.bibliaris.com/api/health/liveness
 - **API Docs (Swagger)**: https://api.bibliaris.com/docs
-- **Metrics**: https://api.bibliaris.com/api/metrics
+- **Metrics**: https://api.bibliaris.com/api/metrics — только с токеном роли `admin` (LEGACY-072)
 
 ### Локальная разработка:
 
@@ -174,7 +174,8 @@ yarn prisma:generate
 4. При необходимости — наполните dev-данными: `yarn prisma:seed`
 5. Запустите приложение в dev-режиме: `yarn start:dev` (или VS Code задача «dev»)
 6. Swagger будет доступен на: http://localhost:5000/docs
-7. Метрики Prometheus: http://localhost:5000/api/metrics
+7. Метрики Prometheus: http://localhost:5000/api/metrics — маршрут закрыт ролью `admin`,
+   анонимный запрос отдаёт 401 (LEGACY-072)
 
 ### Запуск через Docker Compose (dev)
 
@@ -182,26 +183,30 @@ yarn prisma:generate
 
 1. Скопируйте `.env.example` → `.env` и при необходимости отредактируйте `DATABASE_URL` (по умолчанию указывает на `postgres://postgres:postgres@localhost:5432/books?schema=public`).
 
-2. Поднимите сервисы БД и Redis:
+2. Задайте `REDIS_PASSWORD` в `.env` — **без него контейнер Redis не поднимется** (LEGACY-071).
+   Это намеренно: тихий запуск Redis без пароля уже привёл к инциденту. Порты Postgres и
+   Redis по умолчанию биндятся на `127.0.0.1` — опубликованный порт Docker обходит firewalld.
+
+3. Поднимите сервисы БД и Redis:
 
 ```bash
 docker compose up -d
 ```
 
-3. Примените миграции и сгенерируйте Prisma Client:
+4. Примените миграции и сгенерируйте Prisma Client:
 
 ```bash
 yarn prisma:migrate
 yarn prisma:generate
 ```
 
-4. (Опционально) запустите сиды:
+5. (Опционально) запустите сиды:
 
 ```bash
 yarn prisma:seed
 ```
 
-5. Запустите приложение:
+6. Запустите приложение:
 
 ````bash
 yarn start:dev
@@ -209,7 +214,7 @@ yarn start:dev
 6. Проверьте метрики Prometheus:
 
 ```bash
-curl -s http://localhost:5000/metrics | head -n 20
+curl -s -H "Authorization: Bearer <admin accessToken>" http://localhost:5000/api/metrics | head -n 20
 ````
 
 ````

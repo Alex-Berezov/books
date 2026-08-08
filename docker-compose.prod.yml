@@ -26,10 +26,14 @@ services:
       - '127.0.0.1:${PORT:-5000}:5000'
     depends_on:
       - postgres
+    # LEGACY-072: пробой был `/api/metrics` — исторический выбор, из-за которого
+    # маршрут метрик нельзя было закрыть гвардом (401 → контейнер никогда не healthy
+    # → деплой откатывается). `/api/health/liveness` существует ровно для этого,
+    # анонимен по построению и исключён из лимитера (global-rate-limit.guard.ts).
     healthcheck:
       test:
         - CMD-SHELL
-        - node -e "require('http').get('http://localhost:5000/api/metrics',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+        - node -e "require('http').get('http://localhost:5000/api/health/liveness',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
       interval: 10s
       timeout: 3s
       retries: 10
