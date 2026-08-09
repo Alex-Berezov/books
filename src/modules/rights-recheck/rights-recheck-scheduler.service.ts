@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.registry';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
 import {
@@ -120,7 +121,10 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
     private readonly recheckService: RightsRecheckService,
     private readonly notifications: RightsNotificationsService,
     private readonly config: ConfigService,
+    private readonly backgroundJobs: BackgroundJobsRegistry,
   ) {}
+
+  private static readonly PURPOSE = 'Re-checks rights clearances and opens overdue recheck tasks';
 
   private getDatabase(): RecheckDatabaseClient {
     return this.prisma as unknown as RecheckDatabaseClient;
@@ -129,6 +133,12 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
   onModuleInit(): void {
     if ((this.config.get('RIGHTS_RECHECK_SCHEDULER_ENABLED') ?? '1') === '0') {
       this.logger.log('Rights recheck scheduler disabled by RIGHTS_RECHECK_SCHEDULER_ENABLED=0');
+      this.backgroundJobs.register({
+        name: 'rights-recheck-scan',
+        state: 'DISABLED',
+        reason: 'RIGHTS_RECHECK_SCHEDULER_ENABLED=0',
+        purpose: RightsRecheckSchedulerService.PURPOSE,
+      });
       return;
     }
 
@@ -148,6 +158,13 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
       this.timer.unref?.();
     }, initialDelayMs);
     this.initialTimer.unref?.();
+
+    this.backgroundJobs.register({
+      name: 'rights-recheck-scan',
+      state: 'ACTIVE',
+      schedule: `every ${Math.round(intervalMs / 60000)}min, first run after ${Math.round(initialDelayMs / 1000)}s`,
+      purpose: RightsRecheckSchedulerService.PURPOSE,
+    });
   }
 
   onModuleDestroy(): void {

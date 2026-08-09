@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { BackgroundJobsRegistry } from '../../background-jobs/background-jobs.registry';
 import { TaxonomyIndexabilityService } from './taxonomy-indexability.service';
 
 /** UTC hour the daily sweep is pinned to. Wall-clock, not process uptime. */
@@ -88,13 +89,28 @@ export class TaxonomyIndexabilitySchedulerService implements OnModuleInit, OnMod
   constructor(
     private readonly indexability: TaxonomyIndexabilityService,
     private readonly config: ConfigService,
+    private readonly backgroundJobs: BackgroundJobsRegistry,
   ) {}
+
+  /**
+   * 🔴 Этот механизм — первый из трёх, что не выполнялся ни разу с момента
+   * добавления и не подал ни одного признака. Вскрылось только когда его поле
+   * начали читать снаружи и sitemap раздулся с 50 URL до 2205.
+   */
+  private static readonly PURPOSE =
+    'Daily safety-net recount of taxonomy indexability (bookCount, autoIndexable)';
 
   onModuleInit(): void {
     if ((this.config.get('TAXONOMY_INDEXABILITY_SCHEDULER_ENABLED') ?? '1') === '0') {
       this.logger.log(
         'Taxonomy indexability sweep disabled by TAXONOMY_INDEXABILITY_SCHEDULER_ENABLED=0',
       );
+      this.backgroundJobs.register({
+        name: 'taxonomy-indexability-sweep',
+        state: 'DISABLED',
+        reason: 'TAXONOMY_INDEXABILITY_SCHEDULER_ENABLED=0',
+        purpose: TaxonomyIndexabilitySchedulerService.PURPOSE,
+      });
       return;
     }
 
@@ -104,6 +120,13 @@ export class TaxonomyIndexabilitySchedulerService implements OnModuleInit, OnMod
       SWEEP_HOUR_UTC_DEFAULT,
     );
     this.scheduleNext();
+
+    this.backgroundJobs.register({
+      name: 'taxonomy-indexability-sweep',
+      state: 'ACTIVE',
+      schedule: `daily at ${String(this.scheduledHourUtc).padStart(2, '0')}:00 UTC`,
+      purpose: TaxonomyIndexabilitySchedulerService.PURPOSE,
+    });
   }
 
   onModuleDestroy(): void {

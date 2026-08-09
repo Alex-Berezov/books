@@ -35,6 +35,7 @@ import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
 import { GlobalRateLimitGuard } from './common/guards/global-rate-limit.guard';
 import { HealthModule } from './modules/health/health.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
+import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { MediaJobsModule } from './modules/media-jobs/media-jobs.module';
 import { PrismaModule } from './shared/prisma/prisma.module';
@@ -89,6 +90,9 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     SitemapModule,
     HealthModule,
     MetricsModule,
+    // Глобальный и объявлен до потребителей: механизмы регистрируются в реестре
+    // из своих же фабрик провайдеров.
+    BackgroundJobsModule,
     QueueModule,
     MediaJobsModule,
     AuthorModule,

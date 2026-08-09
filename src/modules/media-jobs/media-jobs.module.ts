@@ -2,8 +2,10 @@ import { Module, Provider, OnModuleDestroy, Inject, Optional } from '@nestjs/com
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Queue, QueueOptions, Worker, WorkerOptions } from 'bullmq';
 import IORedis from 'ioredis';
+import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.registry';
 import { QueueModule, REDIS_CONNECTION } from '../queue/queue.module';
 import { StorageModule } from '../../shared/storage/storage.module';
+import { BackgroundJobsRegistryModule } from '../background-jobs/background-jobs-registry.module';
 import {
   MEDIA_PROBE_QUEUE,
   MEDIA_PROBE_WORKER,
@@ -18,12 +20,37 @@ const CLEANUP_QUEUE_NAME_DEFAULT = 'media-cleanup';
 const MEDIA_CLEANUP_QUEUE = Symbol('MEDIA_CLEANUP_QUEUE');
 const MEDIA_CLEANUP_WORKER = Symbol('MEDIA_CLEANUP_WORKER');
 
+const PROBE_PURPOSE = 'Reads audio metadata (duration, bitrate) from an uploaded file';
+
 const probeQueueProvider: Provider = {
   provide: MEDIA_PROBE_QUEUE,
-  inject: [REDIS_CONNECTION, ConfigService],
-  useFactory: (connection: IORedis | undefined, config: ConfigService): Queue | undefined => {
-    if (!connection) return undefined;
+  inject: [REDIS_CONNECTION, ConfigService, BackgroundJobsRegistry],
+  useFactory: (
+    connection: IORedis | undefined,
+    config: ConfigService,
+    registry: BackgroundJobsRegistry,
+  ): Queue | undefined => {
+    // 🔴 DEGRADED, а не DISABLED: без очереди `enqueueProbe` не умирает, а
+    // выполняет `runProbe` **синхронно, внутри HTTP-запроса на загрузку** — без
+    // ретраев, которые были в очереди (`attempts: 3` + backoff). Это не отказ,
+    // но и не то, что задумано; слить его с ACTIVE значило бы снова сделать
+    // отклонение невидимым.
+    if (!connection) {
+      registry.register({
+        name: 'media-probe',
+        state: 'DEGRADED',
+        reason: 'no REDIS_URL / REDIS_HOST — runs inline in the upload request, without retries',
+        purpose: PROBE_PURPOSE,
+      });
+      return undefined;
+    }
     const name = config.get<string>('BULLMQ_MEDIA_PROBE_QUEUE') || PROBE_QUEUE_NAME_DEFAULT;
+    registry.register({
+      name: 'media-probe',
+      state: 'ACTIVE',
+      schedule: 'on upload',
+      purpose: PROBE_PURPOSE,
+    });
     const opts: QueueOptions = { connection: connection as unknown as QueueOptions['connection'] };
     return new Queue(name, opts);
   },
@@ -56,16 +83,35 @@ const probeWorkerProvider: Provider = {
 };
 
 /** Repeatable cleanup job wiring. Adds a daily repeatable job; worker runs inline. */
+const CLEANUP_PURPOSE = 'Deletes media assets nothing references any more (orphans)';
+
 const cleanupQueueProvider: Provider = {
   provide: MEDIA_CLEANUP_QUEUE,
-  inject: [REDIS_CONNECTION, ConfigService],
+  inject: [REDIS_CONNECTION, ConfigService, BackgroundJobsRegistry],
   useFactory: async (
     connection: IORedis | undefined,
     config: ConfigService,
+    registry: BackgroundJobsRegistry,
   ): Promise<Queue | undefined> => {
-    if (!connection) return undefined;
+    if (!connection) {
+      registry.register({
+        name: 'media-cleanup',
+        state: 'DISABLED',
+        reason: 'no REDIS_URL / REDIS_HOST',
+        purpose: CLEANUP_PURPOSE,
+      });
+      return undefined;
+    }
     const enabled = !/^(0|false)$/i.test(config.get<string>('MEDIA_CLEANUP_ENABLED') ?? 'true');
-    if (!enabled) return undefined;
+    if (!enabled) {
+      registry.register({
+        name: 'media-cleanup',
+        state: 'DISABLED',
+        reason: 'MEDIA_CLEANUP_ENABLED is off',
+        purpose: CLEANUP_PURPOSE,
+      });
+      return undefined;
+    }
     const name = config.get<string>('BULLMQ_MEDIA_CLEANUP_QUEUE') || CLEANUP_QUEUE_NAME_DEFAULT;
     const queue = new Queue(name, {
       connection: connection as unknown as QueueOptions['connection'],
@@ -85,6 +131,12 @@ const cleanupQueueProvider: Provider = {
     } catch {
       /* best-effort scheduling */
     }
+    registry.register({
+      name: 'media-cleanup',
+      state: 'ACTIVE',
+      schedule: `cron ${pattern} UTC`,
+      purpose: CLEANUP_PURPOSE,
+    });
     return queue;
   },
 };
@@ -115,7 +167,7 @@ const cleanupWorkerProvider: Provider = {
 };
 
 @Module({
-  imports: [ConfigModule, QueueModule, StorageModule],
+  imports: [BackgroundJobsRegistryModule, ConfigModule, QueueModule, StorageModule],
   providers: [
     MediaProbeService,
     MediaCleanupService,

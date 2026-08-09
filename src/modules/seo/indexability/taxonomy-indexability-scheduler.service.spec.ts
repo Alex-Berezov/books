@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { TaxonomyIndexabilityService } from './taxonomy-indexability.service';
+import { BackgroundJobsRegistry } from '../../background-jobs/background-jobs.registry';
 import { TaxonomyIndexabilitySchedulerService } from './taxonomy-indexability-scheduler.service';
 
 const makeConfig = (values: Record<string, string> = {}): ConfigService =>
@@ -15,6 +16,12 @@ const makeIndexability = (
   };
 };
 
+/**
+ * Настоящий реестр, а не заглушка: он дешёвый, и через него видно, что механизм
+ * действительно объявляет своё состояние — а это половина смысла правки.
+ */
+const makeRegistry = () => new BackgroundJobsRegistry();
+
 describe('TaxonomyIndexabilitySchedulerService', () => {
   afterEach(() => {
     jest.useRealTimers();
@@ -24,6 +31,7 @@ describe('TaxonomyIndexabilitySchedulerService', () => {
     const service = new TaxonomyIndexabilitySchedulerService(
       makeIndexability().service,
       makeConfig({ TAXONOMY_INDEXABILITY_SCHEDULER_ENABLED: '0' }),
+      makeRegistry(),
     );
 
     service.onModuleInit();
@@ -40,6 +48,7 @@ describe('TaxonomyIndexabilitySchedulerService', () => {
     const service = new TaxonomyIndexabilitySchedulerService(
       makeIndexability().service,
       makeConfig({ TAXONOMY_INDEXABILITY_SWEEP_HOUR_UTC: '3' }),
+      makeRegistry(),
     );
     service.onModuleInit();
 
@@ -54,6 +63,7 @@ describe('TaxonomyIndexabilitySchedulerService', () => {
     const service = new TaxonomyIndexabilitySchedulerService(
       makeIndexability().service,
       makeConfig({ TAXONOMY_INDEXABILITY_SWEEP_HOUR_UTC: '3' }),
+      makeRegistry(),
     );
     service.onModuleInit();
 
@@ -68,6 +78,7 @@ describe('TaxonomyIndexabilitySchedulerService', () => {
     const service = new TaxonomyIndexabilitySchedulerService(
       indexability,
       makeConfig({ TAXONOMY_INDEXABILITY_SWEEP_HOUR_UTC: '3' }),
+      makeRegistry(),
     );
     service.onModuleInit();
 
@@ -97,6 +108,7 @@ describe('TaxonomyIndexabilitySchedulerService', () => {
     const service = new TaxonomyIndexabilitySchedulerService(
       indexability,
       makeConfig({ TAXONOMY_INDEXABILITY_SWEEP_HOUR_UTC: '3' }),
+      makeRegistry(),
     );
     service.onModuleInit();
 

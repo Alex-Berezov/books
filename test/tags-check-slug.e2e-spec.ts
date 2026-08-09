@@ -1,11 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import request from 'supertest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { httpServerOf } from './http-server';
 
 /**
  * LEGACY-061. Своей проверки слага у тегов не было вовсе, и форма в админке
@@ -36,17 +34,17 @@ describe('Tags: Check Slug (e2e)', () => {
     prisma = app.get(PrismaService);
     await app.init();
 
-    const regRes = await request(app.getHttpServer())
+    const regRes = await request(httpServerOf(app))
       .post('/auth/register')
       .send({ email: adminEmail, password: adminPassword });
 
     if (regRes.status === 201) {
-      adminToken = regRes.body.accessToken;
+      adminToken = (regRes.body as { accessToken: string }).accessToken;
     } else if (regRes.status === 409) {
-      const loginRes = await request(app.getHttpServer())
+      const loginRes = await request(httpServerOf(app))
         .post('/auth/login')
         .send({ email: adminEmail, password: adminPassword });
-      adminToken = loginRes.body.accessToken;
+      adminToken = (loginRes.body as { accessToken: string }).accessToken;
     } else {
       throw new Error(`Unexpected admin register status: ${regRes.status}`);
     }
@@ -63,7 +61,7 @@ describe('Tags: Check Slug (e2e)', () => {
   });
 
   it('reports a free slug as available', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(httpServerOf(app))
       .get('/tags/check-slug')
       .query({ slug: `tag-slug-${stamp}-free` })
       .set('Authorization', `Bearer ${adminToken}`)
@@ -73,15 +71,20 @@ describe('Tags: Check Slug (e2e)', () => {
   });
 
   it('reports a taken slug and suggests an alternative', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(httpServerOf(app))
       .get('/tags/check-slug')
       .query({ slug: takenSlug })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 
-    expect(res.body.exists).toBe(true);
-    expect(res.body.suggestedSlug).toBe(`${takenSlug}-2`);
-    expect(res.body.existingTag.slug).toBe(takenSlug);
+    const body = res.body as {
+      exists: boolean;
+      suggestedSlug: string;
+      existingTag: { slug: string };
+    };
+    expect(body.exists).toBe(true);
+    expect(body.suggestedSlug).toBe(`${takenSlug}-2`);
+    expect(body.existingTag.slug).toBe(takenSlug);
   });
 
   // 🔴 Смысл LEGACY-061: без исключения самой записи форма сообщает «занят» на
@@ -89,7 +92,7 @@ describe('Tags: Check Slug (e2e)', () => {
   it('returns exists: false when the record excludes itself', async () => {
     const tag = await prisma.tag.findFirst({ where: { slug: takenSlug } });
 
-    const res = await request(app.getHttpServer())
+    const res = await request(httpServerOf(app))
       .get('/tags/check-slug')
       .query({ slug: takenSlug, excludeId: tag?.id })
       .set('Authorization', `Bearer ${adminToken}`)
@@ -106,7 +109,7 @@ describe('Tags: Check Slug (e2e)', () => {
       data: { type: 'genre', name: `Shared ${stamp}`, slug: sharedSlug, key: sharedSlug },
     });
 
-    const res = await request(app.getHttpServer())
+    const res = await request(httpServerOf(app))
       .get('/tags/check-slug')
       .query({ slug: sharedSlug })
       .set('Authorization', `Bearer ${adminToken}`)
@@ -116,7 +119,7 @@ describe('Tags: Check Slug (e2e)', () => {
   });
 
   it('rejects a malformed slug', async () => {
-    await request(app.getHttpServer())
+    await request(httpServerOf(app))
       .get('/tags/check-slug')
       .query({ slug: 'Invalid Slug!' })
       .set('Authorization', `Bearer ${adminToken}`)
@@ -124,7 +127,7 @@ describe('Tags: Check Slug (e2e)', () => {
   });
 
   it('requires authentication', async () => {
-    await request(app.getHttpServer())
+    await request(httpServerOf(app))
       .get('/tags/check-slug')
       .query({ slug: 'anything' })
       .expect(401);

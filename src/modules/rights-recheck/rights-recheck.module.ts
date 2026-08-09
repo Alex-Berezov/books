@@ -9,6 +9,7 @@ import { RightsRecheckController } from './rights-recheck.controller';
 import { RightsRecheckSchedulerService } from './rights-recheck-scheduler.service';
 import { RightsRecheckService } from './rights-recheck.service';
 import { RightsReviewChainService } from './rights-review-chain.service';
+import { BackgroundJobsRegistryModule } from '../background-jobs/background-jobs-registry.module';
 
 /**
  * Dependency direction is one-way on purpose:
@@ -22,7 +23,7 @@ import { RightsReviewChainService } from './rights-review-chain.service';
  * `RightsAgentModule` is imported for `RightsNotificationsService`.
  */
 @Module({
-  imports: [RightsIntakeModule, RightsAgentModule],
+  imports: [BackgroundJobsRegistryModule, RightsIntakeModule, RightsAgentModule],
   controllers: [RightsRecheckController, RightsLegalChangeController],
   providers: [
     RightsRecheckService,

@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
+import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.registry';
 import { RightsRecheckSchedulerService } from './rights-recheck-scheduler.service';
 import { RightsRecheckService } from './rights-recheck.service';
 import {
@@ -185,6 +186,7 @@ describe('RightsRecheckSchedulerService', () => {
       recheckService,
       notifications as unknown as RightsNotificationsService,
       config,
+      new BackgroundJobsRegistry(),
     );
   };
 

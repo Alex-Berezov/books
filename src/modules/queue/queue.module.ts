@@ -1,5 +1,6 @@
 import { Module, Provider, OnModuleDestroy, Inject, Optional } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { BackgroundJobsRegistryModule } from '../background-jobs/background-jobs-registry.module';
 import {
   Queue,
   Worker,
@@ -9,6 +10,7 @@ import {
   QueueEventsOptions,
 } from 'bullmq';
 import IORedis, { RedisOptions } from 'ioredis';
+import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.registry';
 import { QueueService } from './queue.service';
 import { QueueController } from './queue.controller';
 // RolesGuard/PrismaService are provided globally via SecurityModule/PrismaModule
@@ -53,10 +55,30 @@ const redisProvider: Provider = {
 
 const demoQueueProvider: Provider = {
   provide: DEMO_QUEUE,
-  inject: [REDIS_CONNECTION, ConfigService],
-  useFactory: (connection: IORedis | undefined, config: ConfigService): Queue | undefined => {
-    if (!connection) return undefined;
+  inject: [REDIS_CONNECTION, ConfigService, BackgroundJobsRegistry],
+  useFactory: (
+    connection: IORedis | undefined,
+    config: ConfigService,
+    registry: BackgroundJobsRegistry,
+  ): Queue | undefined => {
+    // Регистрация стоит внутри той же ветки, что и создание очереди, — иначе
+    // отчёт и реальность разъедутся, а расходящийся отчёт хуже отсутствующего.
+    if (!connection) {
+      registry.register({
+        name: 'demo-queue',
+        state: 'DISABLED',
+        reason: 'no REDIS_URL / REDIS_HOST',
+        purpose: 'Demonstration queue; carries no product traffic',
+      });
+      return undefined;
+    }
     const name = config.get<string>('BULLMQ_DEMO_QUEUE') || 'demo';
+    registry.register({
+      name: 'demo-queue',
+      state: 'ACTIVE',
+      schedule: 'on demand',
+      purpose: 'Demonstration queue; carries no product traffic',
+    });
 
     const conn = connection as unknown as QueueOptions['connection'];
     const opts: QueueOptions = { connection: conn };
@@ -104,7 +126,7 @@ const demoWorkerProvider: Provider = {
 };
 
 @Module({
-  imports: [ConfigModule],
+  imports: [BackgroundJobsRegistryModule, ConfigModule],
   providers: [
     redisProvider,
     demoQueueProvider,

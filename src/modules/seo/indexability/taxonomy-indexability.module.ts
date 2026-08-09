@@ -3,13 +3,14 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { TaxonomyIndexabilitySchedulerService } from './taxonomy-indexability-scheduler.service';
 import { TaxonomyIndexabilityService } from './taxonomy-indexability.service';
+import { BackgroundJobsRegistryModule } from '../../background-jobs/background-jobs-registry.module';
 
 /**
  * Standalone module so SeoModule, BookVersionModule, CategoryModule and
  * TagsModule can depend on the recompute service without importing each other.
  */
 @Module({
-  imports: [ConfigModule],
+  imports: [BackgroundJobsRegistryModule, ConfigModule],
   providers: [TaxonomyIndexabilityService, TaxonomyIndexabilitySchedulerService, PrismaService],
   exports: [TaxonomyIndexabilityService, TaxonomyIndexabilitySchedulerService],
 })

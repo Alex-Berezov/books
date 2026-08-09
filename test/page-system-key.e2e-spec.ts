@@ -1,11 +1,10 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import request from 'supertest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { httpServerOf } from './http-server';
 
 /**
  * A2, `tasks/system-pages-slug/TASK.md`. Пять страниц сайт ищет сам, и адресом
@@ -43,17 +42,17 @@ describe('Pages: system key (e2e)', () => {
     prisma = app.get(PrismaService);
     await app.init();
 
-    const regRes = await request(app.getHttpServer())
+    const regRes = await request(httpServerOf(app))
       .post('/auth/register')
       .send({ email: adminEmail, password: adminPassword });
 
     if (regRes.status === 201) {
-      adminToken = regRes.body.accessToken;
+      adminToken = (regRes.body as { accessToken: string }).accessToken;
     } else if (regRes.status === 409) {
-      const loginRes = await request(app.getHttpServer())
+      const loginRes = await request(httpServerOf(app))
         .post('/auth/login')
         .send({ email: adminEmail, password: adminPassword });
-      adminToken = loginRes.body.accessToken;
+      adminToken = (loginRes.body as { accessToken: string }).accessToken;
     } else {
       throw new Error(`Unexpected admin register status: ${regRes.status}`);
     }
@@ -105,12 +104,11 @@ describe('Pages: system key (e2e)', () => {
   it('resolves a system page by its key', async () => {
     const page = await givePageTheKey(`${slugPrefix}-plain`);
 
-    const res = await request(app.getHttpServer())
-      .get('/ru/pages/by-key/taxonomy-tags')
-      .expect(200);
+    const res = await request(httpServerOf(app)).get('/ru/pages/by-key/taxonomy-tags').expect(200);
 
-    expect(res.body.id).toBe(page.id);
-    expect(res.body.h1).toBe(`H1 ${stamp}`);
+    const body = res.body as { id: string; h1: string };
+    expect(body.id).toBe(page.id);
+    expect(body.h1).toBe(`H1 ${stamp}`);
   });
 
   // 🔴 Ровно тот инцидент: заголовок переименовали, слаг перегенерировался.
@@ -123,16 +121,15 @@ describe('Pages: system key (e2e)', () => {
       data: { slug: `${slugPrefix}-after-rename` },
     });
 
-    const res = await request(app.getHttpServer())
-      .get('/ru/pages/by-key/taxonomy-tags')
-      .expect(200);
+    const res = await request(httpServerOf(app)).get('/ru/pages/by-key/taxonomy-tags').expect(200);
 
-    expect(res.body.id).toBe(page.id);
-    expect(res.body.h1).toBe(`H1 ${stamp}`);
+    const body = res.body as { id: string; h1: string };
+    expect(body.id).toBe(page.id);
+    expect(body.h1).toBe(`H1 ${stamp}`);
 
     // Старый адрес по слагу при этом отвечать перестал — именно это и делало
     // поломку невидимой, пока сайт ходил по слагу.
-    await request(app.getHttpServer()).get(`/ru/pages/${slugPrefix}-before-rename`).expect(404);
+    await request(httpServerOf(app)).get(`/ru/pages/${slugPrefix}-before-rename`).expect(404);
   });
 
   // 🔴 Хаб, отвечающий на чужом языке, хуже хаба на словарных строках: он
@@ -140,14 +137,14 @@ describe('Pages: system key (e2e)', () => {
   it('does not fall back to another language', async () => {
     await givePageTheKey(`${slugPrefix}-ru-only`);
 
-    await request(app.getHttpServer()).get('/fr/pages/by-key/taxonomy-tags').expect(404);
+    await request(httpServerOf(app)).get('/fr/pages/by-key/taxonomy-tags').expect(404);
   });
 
   it('does not serve a draft system page', async () => {
     const page = await givePageTheKey(`${slugPrefix}-draft`);
     await prisma.page.update({ where: { id: page.id }, data: { status: 'draft' } });
 
-    await request(app.getHttpServer()).get('/ru/pages/by-key/taxonomy-tags').expect(404);
+    await request(httpServerOf(app)).get('/ru/pages/by-key/taxonomy-tags').expect(404);
   });
 
   /**
@@ -172,7 +169,7 @@ describe('Pages: system key (e2e)', () => {
       },
     });
 
-    await request(app.getHttpServer()).get('/ru/pages/by-key/internal-something').expect(404);
+    await request(httpServerOf(app)).get('/ru/pages/by-key/internal-something').expect(404);
 
     // Страница существует и опубликована — 404 выше пришёл от проверки ключа,
     // а не от того, что искать было нечего.
@@ -183,7 +180,7 @@ describe('Pages: system key (e2e)', () => {
   // 🔴 `systemKey` — не редактируемое поле. Просочись оно в DTO страницы,
   // редактор увёл бы хаб на чужую страницу, и весь смысл A2 пропал бы.
   it('refuses to accept systemKey from an editor', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await request(httpServerOf(app))
       .post('/admin/ru/pages')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
