@@ -125,6 +125,16 @@ export class TagsService {
   async update(id: string, dto: UpdateTagDto) {
     const exists = await this.prisma.tag.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Tag not found');
+
+    // См. `CategoryService.update`: `key` — единственный неизменяемый ключ
+    // термина, по нему связывает JSON-импорт, и уехавший ключ даёт не ошибку, а
+    // дубликат. Совпадающее значение пропускается: админка шлёт его в каждом PATCH.
+    if (dto.key !== undefined && dto.key !== exists.key) {
+      throw new BadRequestException(
+        `Tag key is immutable: it is the only stable identifier of the term. ` +
+          `Attempted to change "${exists.key}" to "${dto.key}".`,
+      );
+    }
     // См. категории: базовый слаг — фолбэк резолва, его смена ломает все языки.
     const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
 
@@ -138,11 +148,8 @@ export class TagsService {
         data: {
           name: dto.name,
           slug: dto.slug,
-          ...(dto.key !== undefined
-            ? { key: dto.key }
-            : dto.slug !== undefined
-              ? { key: dto.slug }
-              : {}),
+          // `key` намеренно отсутствует — он неизменяем; прежняя ветка
+          // `dto.slug -> key` молча делала слаг ключом при PATCH без `key`.
           ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
           ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
           ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),

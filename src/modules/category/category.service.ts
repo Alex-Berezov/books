@@ -165,6 +165,26 @@ export class CategoryService {
   async update(id: string, dto: UpdateCategoryDto) {
     const exists = await this.prisma.category.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Category not found');
+
+    // 🔴 `key` — единственный неизменяемый ключ таксономии: по нему связывает
+    // JSON-импорт (`import.service.ts` ищет термин через `findUnique({ key })`),
+    // и уехавший ключ там не ошибка, а **дубликат**: импорт не находит термин,
+    // заводит новый, а прежний остаётся жить со своими переводами и связями.
+    // Отчёт при этом покажет `imported`, а не ошибку.
+    //
+    // Правило 3 `agent-rules.md` требует для такой роли неизменяемое поле, а не
+    // дисциплину «не трогайте это». Поэтому смена отвергается здесь, а не
+    // запрещается в форме: форма — лишь один из клиентов.
+    //
+    // ⚠️ Совпадающий `key` пропускается молча и намеренно: админка отправляет его
+    // в каждом PATCH, и 400 на неизменённое значение сломал бы редактирование,
+    // ничего не защитив.
+    if (dto.key !== undefined && dto.key !== exists.key) {
+      throw new BadRequestException(
+        `Category key is immutable: it is the only stable identifier of the term. ` +
+          `Attempted to change "${exists.key}" to "${dto.key}".`,
+      );
+    }
     if (dto.slug) {
       const dup = await this.prisma.category.findFirst({ where: { slug: dto.slug, NOT: { id } } });
       if (dup) throw new BadRequestException('Category with same slug already exists');
@@ -205,11 +225,9 @@ export class CategoryService {
           type: dto.type,
           name: dto.name,
           slug: dto.slug,
-          ...(dto.key !== undefined
-            ? { key: dto.key }
-            : dto.slug !== undefined
-              ? { key: dto.slug }
-              : {}),
+          // `key` намеренно отсутствует: он неизменяем, а прежняя ветка
+          // `dto.slug -> key` молча делала слаг ключом при PATCH без `key`,
+          // то есть переименование ради URL уводило за собой опорный ключ.
           ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
           ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
           ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
