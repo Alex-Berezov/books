@@ -1275,7 +1275,7 @@ export class BookService {
 
     return this.prisma.$transaction(async (tx) => {
       if (baseSlugChanged && data.slug) {
-        await this.slugRedirects.recordBaseSlugChange('book', book.slug, data.slug);
+        await this.slugRedirects.recordBaseSlugChange('book', book.slug, data.slug, tx);
       }
 
       return tx.book.update({ where: { id }, data });
