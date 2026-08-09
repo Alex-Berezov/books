@@ -25,11 +25,42 @@ import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { Language } from '@prisma/client';
 import { PaginatedTagsResponse } from './dto/tag-response.dto';
+import { CheckTagSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckTagSlugResponseDto } from './dto/check-slug-response.dto';
 
 @ApiTags('tags')
 @Controller()
 export class TagsController {
   constructor(private readonly service: TagsService) {}
+
+  /**
+   * LEGACY-061: своей проверки у тегов не было, и форма проверяла слаг **по книгам**.
+   * Форма ответа повторяет категории — фронт использует общий хук.
+   */
+  @Get('tags/check-slug')
+  @ApiOperation({
+    summary: 'Check slug uniqueness for a tag',
+    description:
+      'Quick availability check for a slug. Returns info about an existing tag and suggests a unique option if the slug is taken.',
+  })
+  @ApiResponse({ status: 200, description: 'Slug check result', type: CheckTagSlugResponseDto })
+  @ApiResponse({ status: 400, description: 'Invalid slug format' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async checkSlug(@Query() query: CheckTagSlugQueryDto): Promise<CheckTagSlugResponseDto> {
+    const existingTag = await this.service.checkSlugExists(query.slug, query.excludeId);
+    if (!existingTag) return { exists: false };
+
+    return {
+      exists: true,
+      suggestedSlug: await this.service.generateUniqueSuggestedSlug(query.slug),
+      existingTag: {
+        id: existingTag.id,
+        name: existingTag.name,
+        slug: existingTag.slug,
+      },
+    };
+  }
 
   @Get('tags')
   @ApiOperation({ summary: 'List tags' })

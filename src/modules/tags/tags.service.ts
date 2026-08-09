@@ -125,20 +125,29 @@ export class TagsService {
   async update(id: string, dto: UpdateTagDto) {
     const exists = await this.prisma.tag.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Tag not found');
-    return this.prisma.tag.update({
-      where: { id },
-      data: {
-        name: dto.name,
-        slug: dto.slug,
-        ...(dto.key !== undefined
-          ? { key: dto.key }
-          : dto.slug !== undefined
-            ? { key: dto.slug }
-            : {}),
-        ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
-        ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
-        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
-      },
+    // См. категории: базовый слаг — фолбэк резолва, его смена ломает все языки.
+    const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
+
+    return this.prisma.$transaction(async (tx) => {
+      if (baseSlugChanged && dto.slug) {
+        await this.slugRedirects.recordBaseSlugChange('tag', exists.slug, dto.slug, tx);
+      }
+
+      return tx.tag.update({
+        where: { id },
+        data: {
+          name: dto.name,
+          slug: dto.slug,
+          ...(dto.key !== undefined
+            ? { key: dto.key }
+            : dto.slug !== undefined
+              ? { key: dto.slug }
+              : {}),
+          ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+          ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        },
+      });
     });
   }
 
@@ -522,5 +531,34 @@ export class TagsService {
     await this.taxonomyIndexabilityService?.recomputeForTerms([], [tagId]);
 
     return { success: true };
+  }
+
+  /**
+   * Есть ли уже тег с таким слагом. `excludeId` — редактируемая запись: без него
+   * форма сравнивала бы слаг сама с собой и сообщала «занят» (LEGACY-061).
+   */
+  async checkSlugExists(slug: string, excludeId?: string) {
+    const where: Prisma.TagWhereInput = { slug };
+    if (excludeId) {
+      where.id = { not: excludeId };
+    }
+    return this.prisma.tag.findFirst({
+      where,
+      select: { id: true, name: true, slug: true },
+    });
+  }
+
+  async generateUniqueSuggestedSlug(baseSlug: string): Promise<string> {
+    let counter = 1;
+    let candidate = baseSlug;
+
+    let exists = await this.prisma.tag.findFirst({ where: { slug: candidate } });
+    while (exists) {
+      counter++;
+      candidate = `${baseSlug}-${counter}`;
+      exists = await this.prisma.tag.findFirst({ where: { slug: candidate } });
+    }
+
+    return candidate;
   }
 }

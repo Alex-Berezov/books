@@ -138,6 +138,41 @@ describe('Slug redirects (LEGACY-062) e2e', () => {
     expect(await redirects.resolve('tag', 'ru', `sr-${stamp}-x`)).toBeNull();
   });
 
+  /**
+   * Базовый слаг — отдельный путь, и его легко было пропустить: редиректы сначала
+   * писались только для переводов. Между тем именно базовый слаг правит
+   * `CategoryModal`, а публичный URL резолвится по слагу перевода **с фолбэком на
+   * базовый** — то есть его смена ломает адрес во всех языках сразу.
+   */
+  it('records a redirect for every language when the base slug changes', async () => {
+    const created = await request(http())
+      .post('/categories')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        type: 'collection',
+        name: `SR base ${stamp}`,
+        slug: `sr-${stamp}-base-old`,
+        key: `sr-${stamp}-base`,
+      })
+      .expect(201);
+    const categoryId = (created.body as { id: string }).id;
+
+    await request(http())
+      .patch(`/categories/${categoryId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      // `key` передаётся явно: без него сервис выводит его из слага (LEGACY-068).
+      .send({ slug: `sr-${stamp}-base-new`, key: `sr-${stamp}-base` })
+      .expect(200);
+
+    for (const language of ['en', 'ru', 'es', 'fr', 'pt'] as const) {
+      expect(await redirects.resolve('category', language, `sr-${stamp}-base-old`)).toBe(
+        `sr-${stamp}-base-new`,
+      );
+    }
+
+    await prisma.category.delete({ where: { id: categoryId } });
+  });
+
   it('keeps languages apart', async () => {
     await redirects.record({
       entityType: 'tag',

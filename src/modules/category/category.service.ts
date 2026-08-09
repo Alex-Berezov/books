@@ -190,26 +190,36 @@ export class CategoryService {
       }
     }
 
-    return this.prisma.category.update({
-      where: { id },
-      data: {
-        type: dto.type,
-        name: dto.name,
-        slug: dto.slug,
-        ...(dto.key !== undefined
-          ? { key: dto.key }
-          : dto.slug !== undefined
-            ? { key: dto.slug }
-            : {}),
-        ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
-        ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
-        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
-        ...(typeof dto.parentId === 'undefined'
-          ? {}
-          : dto.parentId
-            ? { parent: { connect: { id: dto.parentId } } }
-            : { parent: { disconnect: true } }),
-      },
+    // Базовый слаг участвует в резолве публичного URL как фолбэк, поэтому его смена
+    // ломает адрес во всех языках сразу (LEGACY-062). Запись — в той же транзакции.
+    const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
+
+    return this.prisma.$transaction(async (tx) => {
+      if (baseSlugChanged && dto.slug) {
+        await this.slugRedirects.recordBaseSlugChange('category', exists.slug, dto.slug, tx);
+      }
+
+      return tx.category.update({
+        where: { id },
+        data: {
+          type: dto.type,
+          name: dto.name,
+          slug: dto.slug,
+          ...(dto.key !== undefined
+            ? { key: dto.key }
+            : dto.slug !== undefined
+              ? { key: dto.slug }
+              : {}),
+          ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+          ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+          ...(typeof dto.parentId === 'undefined'
+            ? {}
+            : dto.parentId
+              ? { parent: { connect: { id: dto.parentId } } }
+              : { parent: { disconnect: true } }),
+        },
+      });
     });
   }
 
