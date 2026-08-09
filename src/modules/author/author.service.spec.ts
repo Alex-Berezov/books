@@ -1,5 +1,6 @@
 import { AuthorService } from './author.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language } from '@prisma/client';
 
@@ -73,13 +74,24 @@ const createPrismaStub = (): PrismaStub => {
   return stub;
 };
 
+const createSlugRedirectStub = () => ({
+  record: jest.fn().mockResolvedValue(undefined),
+  recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+  resolve: jest.fn().mockResolvedValue(null),
+});
+
 describe('AuthorService', () => {
   let service: AuthorService;
   let prisma: PrismaStub;
+  let slugRedirects: ReturnType<typeof createSlugRedirectStub>;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new AuthorService(prisma as unknown as PrismaService);
+    slugRedirects = createSlugRedirectStub();
+    service = new AuthorService(
+      prisma as unknown as PrismaService,
+      slugRedirects as unknown as SlugRedirectService,
+    );
   });
 
   describe('create', () => {

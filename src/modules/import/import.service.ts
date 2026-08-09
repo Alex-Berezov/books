@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ImportCategoryDto } from './dto/import-category.dto';
 import { ImportTagDto } from './dto/import-tag.dto';
 import { SLUG_REGEX } from '../../shared/validators/slug';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 
@@ -41,7 +42,10 @@ function getErrorMessage(err: unknown): string {
 
 @Injectable()
 export class ImportService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private slugRedirects: SlugRedirectService,
+  ) {}
 
   async importCategories(items: ImportCategoryDto[]): Promise<ImportResult> {
     const result: ImportResult = { imported: 0, updated: 0, errors: [] };
@@ -181,7 +185,15 @@ export class ImportService {
         data: {
           type: dto.type,
           name: this.getFirstName(dto.translations),
-          slug: this.getFirstSlug(dto.translations),
+          // 🔴 `slug` намеренно НЕ переписывается при повторном импорте.
+          //
+          // Базовый слаг берётся из `getFirstSlug` — то есть из ПЕРВОГО перевода по
+          // порядку ключей JSON. Значит тот же набор данных с переставленными языками
+          // переименовывал категорию сам по себе, а с историей слагов (LEGACY-062)
+          // это порождало бы ещё и 308 на переименования, которых никто не делал.
+          // Публичный адрес не может зависеть от форматирования файла импорта.
+          // При создании (ветка ниже) слаг по-прежнему выводится оттуда же — там
+          // выбирать не из чего, и прежнего адреса не существует.
           indexable: dto.indexable ?? existing.indexable,
           isVisible: dto.isVisible ?? existing.isVisible,
           sortOrder: dto.sortOrder ?? existing.sortOrder,
@@ -196,13 +208,24 @@ export class ImportService {
         const language = langCode as Language;
         const existingTr = existing.translations.find((t) => t.language === language);
         if (existingTr) {
-          await this.prisma.categoryTranslation.update({
-            where: { categoryId_language: { categoryId: existing.id, language } },
-            data: {
-              name: tr.name,
-              slug: tr.slug,
-              ...this.buildCategoryTranslationData(tr),
-            },
+          // Импорт — такой же путь смены слага, как форма в админке, и до 09.08.2026
+          // он шёл в обход истории: класс считался закрытым для категорий и тегов,
+          // хотя закрыт был только через сервисы (LEGACY-062).
+          await this.prisma.$transaction(async (tx) => {
+            if (tr.slug && existingTr.slug !== tr.slug) {
+              await this.slugRedirects.record(
+                { entityType: 'category', language, oldSlug: existingTr.slug, newSlug: tr.slug },
+                tx,
+              );
+            }
+            await tx.categoryTranslation.update({
+              where: { categoryId_language: { categoryId: existing.id, language } },
+              data: {
+                name: tr.name,
+                slug: tr.slug,
+                ...this.buildCategoryTranslationData(tr),
+              },
+            });
           });
         } else {
           await this.createCategoryTranslation(existing.id, language, tr);
@@ -273,28 +296,43 @@ export class ImportService {
     });
 
     if (existing) {
-      await this.prisma.tag.update({
-        where: { key: dto.key },
-        data: {
-          name: dto.name,
-          slug: dto.slug,
-          indexable: dto.indexable ?? existing.indexable,
-          isVisible: dto.isVisible ?? existing.isVisible,
-          sortOrder: dto.sortOrder ?? existing.sortOrder,
-        },
+      // Базовый слаг тега приходит явным полем `dto.slug`, а не выводится из порядка
+      // переводов, — поэтому здесь его смена настоящая, и её можно записывать.
+      await this.prisma.$transaction(async (tx) => {
+        if (dto.slug && existing.slug !== dto.slug) {
+          await this.slugRedirects.recordBaseSlugChange('tag', existing.slug, dto.slug, tx);
+        }
+        await tx.tag.update({
+          where: { key: dto.key },
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            indexable: dto.indexable ?? existing.indexable,
+            isVisible: dto.isVisible ?? existing.isVisible,
+            sortOrder: dto.sortOrder ?? existing.sortOrder,
+          },
+        });
       });
 
       for (const [langCode, tr] of Object.entries(dto.translations)) {
         const language = langCode as Language;
         const existingTr = existing.translations.find((t) => t.language === language);
         if (existingTr) {
-          await this.prisma.tagTranslation.update({
-            where: { tagId_language: { tagId: existing.id, language } },
-            data: {
-              name: tr.name,
-              slug: tr.slug,
-              ...this.buildTagTranslationData(tr),
-            },
+          await this.prisma.$transaction(async (tx) => {
+            if (tr.slug && existingTr.slug !== tr.slug) {
+              await this.slugRedirects.record(
+                { entityType: 'tag', language, oldSlug: existingTr.slug, newSlug: tr.slug },
+                tx,
+              );
+            }
+            await tx.tagTranslation.update({
+              where: { tagId_language: { tagId: existing.id, language } },
+              data: {
+                name: tr.name,
+                slug: tr.slug,
+                ...this.buildTagTranslationData(tr),
+              },
+            });
           });
         } else {
           await this.createTagTranslation(existing.id, language, tr);

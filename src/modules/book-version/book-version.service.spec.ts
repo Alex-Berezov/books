@@ -8,6 +8,7 @@ import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language, BookType, Prisma, BookVersion, Seo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -291,6 +292,11 @@ describe('BookVersionService', () => {
       rightsRecheckService as unknown as RightsRecheckService,
       rightsLawyerReviewService as unknown as RightsLawyerReviewService,
       geoIpCountryService as unknown as GeoIpCountryService,
+      {
+        record: jest.fn().mockResolvedValue(undefined),
+        recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+        resolve: jest.fn().mockResolvedValue(null),
+      } as unknown as SlugRedirectService,
       new TerritoryRegionAggregationService(),
     );
   });

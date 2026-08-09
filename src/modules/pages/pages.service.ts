@@ -5,10 +5,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 @Injectable()
 export class PagesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private slugRedirects: SlugRedirectService,
+  ) {}
 
   async getPublicBySlug(slug: string, language?: Language) {
     const where = language
@@ -290,10 +294,35 @@ export class PagesService {
       if (dto.language !== undefined) updateInput.language = dto.language;
       if (finalSeoId !== undefined) updateInput.seoId = finalSeoId;
       if (dto.status !== undefined) updateInput.status = dto.status;
-      return await this.prisma.page.update({
-        where: { id },
-        data: updateInput,
-        include: { seo: true },
+
+      // Слаг страницы — её публичный адрес. С тех пор как системные страницы ищутся
+      // по неизменяемому `systemKey` (09.08.2026), слаг стал обычным редактируемым
+      // полем — то есть его смена больше ничего не ломает функционально и ровно
+      // поэтому обязана оставлять 308 (LEGACY-062).
+      //
+      // Язык берётся СТАРЫЙ (`exists.language`), а не `dto.language`: резолв идёт по
+      // паре (entityType, language, oldSlug), а старый адрес жил именно под старым
+      // языком. Запись под новым выглядит интуитивнее и не сработала бы нигде.
+      const slugChanged = !!dto.slug && dto.slug !== exists.slug;
+
+      return await this.prisma.$transaction(async (tx) => {
+        if (slugChanged && dto.slug) {
+          await this.slugRedirects.record(
+            {
+              entityType: 'page',
+              language: exists.language,
+              oldSlug: exists.slug,
+              newSlug: dto.slug,
+            },
+            tx,
+          );
+        }
+
+        return tx.page.update({
+          where: { id },
+          data: updateInput,
+          include: { seo: true },
+        });
       });
     } catch (e) {
       const err = e as Prisma.PrismaClientKnownRequestError & { meta?: { constraint?: string } };

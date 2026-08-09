@@ -2,8 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Language, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
-/** Типы сущностей, у которых слаг — публичный URL. Строки, а не enum: см. схему. */
-export const SLUG_REDIRECT_ENTITY_TYPES = ['category', 'tag'] as const;
+/**
+ * Типы сущностей, у которых слаг — публичный URL. Строки, а не enum: см. схему.
+ *
+ * Единственное место, где список задан: `SlugRedirectQueryDto` выводит из него и
+ * `@IsIn`, и Swagger-enum, а контроллер собственной валидации не имеет. Значит
+ * добавление типа здесь сразу открывает его и на публичном резолве.
+ */
+export const SLUG_REDIRECT_ENTITY_TYPES = ['category', 'tag', 'book', 'author', 'page'] as const;
 export type SlugRedirectEntityType = (typeof SLUG_REDIRECT_ENTITY_TYPES)[number];
 
 /** Клиент внутри транзакции или обычный — запись обязана идти вместе со сменой слага. */

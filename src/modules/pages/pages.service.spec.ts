@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PagesService } from './pages.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { Language, PublicationStatus } from '@prisma/client';
 
 type PrismaStub = {
@@ -13,27 +14,53 @@ type PrismaStub = {
     delete: jest.Mock;
   };
   seo: { findUnique: jest.Mock };
+  $transaction: jest.Mock;
 };
 
-const createPrismaStub = (): PrismaStub => ({
-  page: {
-    findFirst: jest.fn(),
-    findMany: jest.fn(),
-    findUnique: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-  },
-  seo: { findUnique: jest.fn() },
+const createPrismaStub = (): PrismaStub => {
+  const stub: PrismaStub = {
+    page: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    seo: { findUnique: jest.fn() },
+    $transaction: jest.fn(),
+  };
+
+  // Транзакция отдаёт тот же стаб как `tx`: запись истории слагов обязана идти
+  // внутри неё, и подмена клиента здесь скрыла бы нарушение этого порядка.
+  stub.$transaction.mockImplementation(async (callback: unknown) => {
+    if (typeof callback === 'function') {
+      return (callback as (tx: PrismaStub) => Promise<unknown>)(stub);
+    }
+    return callback;
+  });
+
+  return stub;
+};
+
+const createSlugRedirectStub = () => ({
+  record: jest.fn().mockResolvedValue(undefined),
+  recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+  resolve: jest.fn().mockResolvedValue(null),
 });
 
 describe('PagesService (unit)', () => {
   let service: PagesService;
   let prisma: PrismaStub;
+  let slugRedirects: ReturnType<typeof createSlugRedirectStub>;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new PagesService(prisma as unknown as PrismaService);
+    slugRedirects = createSlugRedirectStub();
+    service = new PagesService(
+      prisma as unknown as PrismaService,
+      slugRedirects as unknown as SlugRedirectService,
+    );
   });
 
   describe('getPublicBySlug', () => {

@@ -29,6 +29,7 @@ import {
 } from '../rights-recheck/rights-recheck-interface';
 import { addDays } from '../rights-recheck/rights-recheck.util';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 interface BookWithRights {
   id: string;
@@ -78,6 +79,10 @@ export class BookVersionService {
     private rightsLawyerReviewService: RightsLawyerReviewService,
     // WP-1.2а: the dashboard reports whether Phase 12 still has a country source at all.
     private geoIpCountryService: GeoIpCountryService,
+    // Обязателен намеренно, хотя и приходится ставить перед необязательными:
+    // необязательная зависимость здесь означала бы «история слагов иногда не
+    // пишется», а отсутствие записи неотличимо от её ненадобности (LEGACY-062).
+    private slugRedirects: SlugRedirectService,
     private regionAggregationService?: TerritoryRegionAggregationService,
     // Optional so existing direct instantiations in unit tests keep working; a
     // missing counter only means the taxonomy state is refreshed by the admin
@@ -962,8 +967,26 @@ export class BookVersionService {
         // строка на странице показывает одного, счётчик считает другому.
         const current = await tx.bookVersion.findUnique({
           where: { id },
-          select: { language: true, author: true },
+          select: { language: true, author: true, slug: true },
         });
+
+        // Слаг версии — публичный адрес книги в этом языке. Его смена без записи в
+        // историю превращает проиндексированный URL в 404 и теряет накопленные
+        // сигналы молча — заметно это становится через недели (LEGACY-062).
+        // Запись обязана идти в той же транзакции, что и сама смена: порознь
+        // существовал бы момент, когда слаг уже новый, а старый адрес ведёт в никуда.
+        if (updateData.slug && current?.slug && updateData.slug !== current.slug) {
+          await this.slugRedirects.record(
+            {
+              entityType: 'book',
+              language: current.language,
+              oldSlug: current.slug,
+              newSlug: updateData.slug,
+            },
+            tx,
+          );
+        }
+
         const resolvedAuthorId =
           updateData.author !== undefined || updateData.authorId !== undefined
             ? await this.resolveAuthorId(

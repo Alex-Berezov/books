@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BookType, Language } from '@prisma/client';
 import { NotFoundException } from '@nestjs/common';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 interface PrismaStub {
   book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
@@ -46,6 +47,14 @@ const createGeoBlockRuleServiceStub = (): GeoBlockRuleService =>
     assertAccess: jest.fn(),
   }) as unknown as GeoBlockRuleService;
 
+/** Чтение обзора историю слагов не пишет — нужен лишь корректный конструктор. */
+const createSlugRedirectStub = (): SlugRedirectService =>
+  ({
+    record: jest.fn().mockResolvedValue(undefined),
+    recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+    resolve: jest.fn().mockResolvedValue(null),
+  }) as unknown as SlugRedirectService;
+
 describe('BookService.getOverview', () => {
   let service: BookService;
   let prisma: PrismaStub;
@@ -56,6 +65,7 @@ describe('BookService.getOverview', () => {
       prisma as unknown as PrismaService,
       createGeoBlockRuleServiceStub(),
       new RelatedTaxonomyService(prisma as unknown as PrismaService),
+      createSlugRedirectStub(),
     );
   });
 
@@ -298,6 +308,7 @@ describe('BookService.getOverview', () => {
         prisma as unknown as PrismaService,
         createGeoBlockRuleServiceStub(),
         new RelatedTaxonomyService(prisma as unknown as PrismaService),
+        createSlugRedirectStub(),
       );
     });
 

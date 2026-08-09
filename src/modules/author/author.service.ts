@@ -7,10 +7,14 @@ import {
   AuthorQuoteDto as AuthorQuote,
   AuthorFaqDto as AuthorFaq,
 } from './dto/author-translation.dto';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 @Injectable()
 export class AuthorService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly slugRedirects: SlugRedirectService,
+  ) {}
 
   /**
    * Сколько **опубликованных книг** у каждого из авторов — батчем.
@@ -228,7 +232,11 @@ export class AuthorService {
           // Find old translation's seoIds to delete them to avoid orphans
           const oldTranslations = await tx.authorTranslation.findMany({
             where: { authorId: id },
-            select: { seoId: true, photoUrl: true },
+            // `language` и `slug` читаются ради истории слагов (LEGACY-062): переводы
+            // здесь удаляются и создаются заново, поэтому старый адрес исчезает в том
+            // же deleteMany, где появляется новый. Не прочитать его сейчас — значит
+            // потерять безвозвратно: сравнивать после удаления будет уже не с чем.
+            select: { seoId: true, photoUrl: true, language: true, slug: true },
           });
           const seoIdsToDelete = oldTranslations
             .map((t) => t.seoId)
@@ -237,6 +245,31 @@ export class AuthorService {
           // If syncedPhotoUrl is not provided in current translations, fallback to previous photoUrl
           const existingPhoto = oldTranslations.find((t) => t.photoUrl)?.photoUrl || null;
           const finalPhoto = syncedPhotoUrl !== undefined ? syncedPhotoUrl : existingPhoto;
+
+          // Слаг автора — публичный адрес `/{lang}/author/{slug}`, и он существует
+          // только на уровне перевода: базового слага у Author нет. Значит история
+          // пишется по каждому языку отдельно, до удаления переводов и в той же
+          // транзакции (LEGACY-062).
+          //
+          // ⚠️ Язык, ВЫПАВШИЙ из dto.translations, эта запись не спасает: его перевод
+          // удаляется, преемника нет, и record() тут неприменим в принципе. Адрес
+          // умирает так же необратимо, как при переименовании, — класс остаётся
+          // открытым и записан отдельно.
+          const oldSlugByLanguage = new Map(oldTranslations.map((t) => [t.language, t.slug]));
+          for (const t of dto.translations) {
+            const oldSlug = oldSlugByLanguage.get(t.language);
+            if (oldSlug && t.slug && oldSlug !== t.slug) {
+              await this.slugRedirects.record(
+                {
+                  entityType: 'author',
+                  language: t.language,
+                  oldSlug,
+                  newSlug: t.slug,
+                },
+                tx,
+              );
+            }
+          }
 
           // Delete existing translations (which sets their relations to null)
           await tx.authorTranslation.deleteMany({ where: { authorId: id } });

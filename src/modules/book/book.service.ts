@@ -10,6 +10,7 @@ import { RedirectException } from '../../common/exceptions/redirect.exception';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 /**
  * `related*Slugs` лежат в JSON-колонке, то есть их содержимое схемой не
@@ -25,6 +26,7 @@ export class BookService {
     private prisma: PrismaService,
     private geoBlockRuleService: GeoBlockRuleService,
     private relatedTaxonomy: RelatedTaxonomyService,
+    private slugRedirects: SlugRedirectService,
   ) {}
 
   async rateBook(userId: string, bookId: string, score: number) {
@@ -1265,7 +1267,19 @@ export class BookService {
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
 
-    return this.prisma.book.update({ where: { id }, data });
+    // Базовый слаг книги участвует в резолве публичного URL как фолбэк, когда у
+    // версии слага нет, поэтому его смена ломает адрес во всех языках сразу
+    // (LEGACY-062). Транзакция здесь появилась именно ради этого: без неё
+    // существовал бы момент, когда слаг уже новый, а редиректа со старого ещё нет.
+    const baseSlugChanged = !!data.slug && data.slug !== book.slug;
+
+    return this.prisma.$transaction(async (tx) => {
+      if (baseSlugChanged && data.slug) {
+        await this.slugRedirects.recordBaseSlugChange('book', book.slug, data.slug);
+      }
+
+      return tx.book.update({ where: { id }, data });
+    });
   }
 
   async remove(id: string) {
