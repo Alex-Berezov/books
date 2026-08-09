@@ -306,11 +306,16 @@ export class PublicController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   authorsList(
-    @Param('lang') _pathLang: PrismaLanguage,
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.authors.list(page ? Number(page) : 1, limit ? Number(limit) : 50);
+    // 🔴 Язык пути не передавался в сервис вовсе (`_pathLang`), поэтому список на
+    // любом языке отдавал английские слаг и имя, а счётчик книг не фильтровался
+    // по языку. Фронт это обходил, доставая нужный перевод из вложенного
+    // `translations`, — обход работал, но означал, что верхнеуровневые поля
+    // ответа врут на четырёх языках из пяти.
+    return this.authors.list(page ? Number(page) : 1, limit ? Number(limit) : 50, pathLang);
   }
 
   // Localized author details by slug

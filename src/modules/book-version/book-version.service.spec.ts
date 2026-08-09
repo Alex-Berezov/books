@@ -85,6 +85,11 @@ interface PrismaStub {
   person: {
     findUnique: jest.Mock;
   };
+  // Версия связывается с автором ключом, а не только строкой: сервис выводит
+  // `authorId` из имени автора внутри той же транзакции.
+  authorTranslation: {
+    findFirst: jest.Mock;
+  };
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
 
@@ -149,6 +154,11 @@ const createPrismaStub = (): PrismaStub => {
     },
     person: {
       findUnique: jest.fn(),
+    },
+    authorTranslation: {
+      // По умолчанию совпадения нет — тогда ключ остаётся пустым, и поведение
+      // прежних тестов не меняется.
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
   } as unknown as PrismaStub;
@@ -285,6 +295,37 @@ describe('BookVersionService', () => {
     );
   });
 
+  /** Минимальный набор моков, при котором `create` доходит до записи версии. */
+  const arrangeSimpleCreate = () => {
+    (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+      id: 'b1',
+      rightsIntakeId: 'intake-1',
+      currentRightsProfileId: null,
+      approvedRightsReviewId: null,
+    });
+    (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+      id: 'intake-1',
+      targetLanguages: ['en', 'es'],
+    });
+    (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.bookVersion.create as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      bookId: 'b1',
+      language: Language.en,
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+      referralUrl: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      seoId: null,
+      seo: null,
+    });
+  };
+
   it('creates version with seo', async () => {
     (prisma.book.findUnique as jest.Mock).mockResolvedValue({
       id: 'b1',
@@ -333,6 +374,80 @@ describe('BookVersionService', () => {
     const res = await service.create('b1', dto);
     expect(res.seo?.metaTitle).toBe('MT');
     expect(prisma.bookVersion.create).toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 `BookVersion.authorId` существовал в схеме, принимался в DTO и читался
+   * кодом — но его не проставлял никто: на проде он был NULL у **всех 45**
+   * версий. Из-за этого список авторов показывал «0 книг» всем десяти, включая
+   * тех, чьи книги лежат в каталоге.
+   *
+   * Ключ выводится в сервисе, а не в форме админки, намеренно: форма — лишь один
+   * из писателей, есть ещё импорт и приёмка прав.
+   */
+  it('links a new version to the author by key, resolved from the name', async () => {
+    arrangeSimpleCreate();
+    prisma.authorTranslation.findFirst.mockResolvedValue({ authorId: 'author-1' });
+
+    await service.create('b1', {
+      language: Language.en,
+      title: 'T',
+      author: 'Sun Tzu',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+    });
+
+    const data = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0].data as {
+      authorId?: string | null;
+    };
+    expect(data.authorId).toBe('author-1');
+  });
+
+  // Автора может не быть в справочнике вовсе — это не сбой. Пустой ключ честнее
+  // выдуманного, а поштучный резолвинг книг по имени всё равно работает.
+  it('leaves the key empty when the name matches no author', async () => {
+    arrangeSimpleCreate();
+    prisma.authorTranslation.findFirst.mockResolvedValue(null);
+
+    await service.create('b1', {
+      language: Language.en,
+      title: 'T',
+      author: 'Nobody In The Catalogue',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+    });
+
+    const data = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0].data as {
+      authorId?: string | null;
+    };
+    expect(data.authorId).toBeNull();
+  });
+
+  // У человека может быть причина связать версию с автором, чьё имя записано
+  // иначе, — явный ключ вывод не переспоривает.
+  it('keeps an explicitly supplied authorId', async () => {
+    arrangeSimpleCreate();
+    prisma.authorTranslation.findFirst.mockResolvedValue({ authorId: 'guessed' });
+
+    await service.create('b1', {
+      language: Language.en,
+      title: 'T',
+      author: 'Sun Tzu',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+      authorId: 'chosen-by-hand',
+    });
+
+    const data = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0].data as {
+      authorId?: string | null;
+    };
+    expect(data.authorId).toBe('chosen-by-hand');
   });
 
   // Phase 18: adding a language version to a cleared book opens a recheck task.

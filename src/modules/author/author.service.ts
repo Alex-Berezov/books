@@ -12,12 +12,64 @@ import {
 export class AuthorService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(page = 1, limit = 20) {
+  /**
+   * Сколько **опубликованных книг** у каждого из авторов — батчем.
+   *
+   * 🔴 Считать по внешнему ключу `BookVersion.authorId`, как было до 09.08.2026,
+   * нельзя: в проде он NULL у всех опубликованных версий, и `_count.bookVersions`
+   * давал ноль **всем десяти** авторам, включая тех, чьи книги лежат в каталоге.
+   * Фактическая связь держится на строковом поле `BookVersion.author`.
+   *
+   * Поэтому здесь тот же fallback, что уже работает поштучно в
+   * `getPublicBySlug`: `authorId` **или** совпадение имени. Имя при этом
+   * сравнивается со своим языком (`bv.language = t.language`) — в ru-версии книги
+   * автор записан как «Сунь-цзы», и сверять его с английским «Sun Tzu» было бы
+   * бессмысленно.
+   *
+   * Считаются различные **книги**, а не версии: одна книга в трёх языках — одна
+   * книга, иначе счётчик мерил бы полноту перевода, а не наполненность автора.
+   */
+  private async countPublishedBooksByAuthor(
+    authorIds: string[],
+    lang?: Language,
+  ): Promise<Map<string, number>> {
+    if (authorIds.length === 0) return new Map();
+
+    const conditions: Prisma.Sql[] = [Prisma.sql`t."authorId" IN (${Prisma.join(authorIds)})`];
+    if (lang) {
+      conditions.push(Prisma.sql`t.language = ${lang}::"Language"`);
+    }
+
+    const rows = await this.prisma.$queryRaw<Array<{ authorId: string; booksCount: number }>>`
+      SELECT t."authorId", COUNT(DISTINCT bv."bookId")::int AS "booksCount"
+      FROM "AuthorTranslation" t
+      JOIN "BookVersion" bv
+        ON bv.language = t.language
+       AND bv.status = 'published'
+       AND (bv."authorId" = t."authorId" OR bv.author = t.name)
+      WHERE ${Prisma.join(conditions, ' AND ')}
+      GROUP BY t."authorId"
+    `;
+
+    return new Map(rows.map((r) => [r.authorId, r.booksCount]));
+  }
+
+  /**
+   * @param lang Язык публичного списка. Когда задан, автор без перевода на него
+   * из выдачи исключается: страницы на этом языке у него нет вовсе, и ссылка
+   * вела бы в 404 (soft-404 закрыт 05.08.2026). Админский список ходит без
+   * языка и видит всех.
+   */
+  async list(page = 1, limit = 20, lang?: Language) {
     const skip = (page - 1) * limit;
+    const where: Prisma.AuthorWhereInput | undefined = lang
+      ? { translations: { some: { language: lang } } }
+      : undefined;
 
     const [total, items] = await this.prisma.$transaction([
-      this.prisma.author.count(),
+      this.prisma.author.count({ where }),
       this.prisma.author.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
@@ -25,28 +77,35 @@ export class AuthorService {
           translations: {
             include: { seo: true },
           },
-          _count: {
-            select: { bookVersions: true },
-          },
         },
       }),
     ]);
 
+    const booksCounts = await this.countPublishedBooksByAuthor(
+      items.map((item) => item.id),
+      lang,
+    );
+
     return {
       data: items.map((item) => {
-        // Fallback or main info from english translation or first translation
-        const mainTrans =
-          item.translations.find((t) => t.language === 'en') || item.translations[0];
+        // С языком — перевод на него (он гарантированно есть, список по нему и
+        // отфильтрован). Без языка это админская выдача, там прежний порядок:
+        // английский, иначе первый попавшийся.
+        const mainTrans = lang
+          ? item.translations.find((t) => t.language === lang)
+          : item.translations.find((t) => t.language === 'en') || item.translations[0];
+
         return {
           id: item.id,
           slug: mainTrans?.slug || '',
+          name: mainTrans?.name || '',
           birthDate: item.birthDate,
           deathDate: item.deathDate,
           wikidataUrl: mainTrans?.wikidataUrl || null,
           wikipediaUrl: mainTrans?.wikipediaUrl || null,
           photoUrl: mainTrans?.photoUrl || null,
           translations: item.translations,
-          booksCount: item._count.bookVersions,
+          booksCount: booksCounts.get(item.id) ?? 0,
         };
       }),
       meta: {
