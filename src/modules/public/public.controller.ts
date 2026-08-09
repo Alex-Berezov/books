@@ -1,4 +1,13 @@
-import { Controller, Get, Param, Query, Headers, UseGuards, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Query,
+  Headers,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
 import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { BookService } from '../book/book.service';
@@ -14,6 +23,10 @@ import { BookCardsQueryDto } from '../book/dto/book-cards-query.dto';
 import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 import { SlugRedirectQueryDto } from '../slug-redirect/dto/slug-redirect-query.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import {
+  SYSTEM_PAGE_KEY_VALUES,
+  isSystemPageKey,
+} from '../seo/system-pages/system-pages.constants';
 import {
   PUBLIC_CATEGORIES_DEFAULT_LIMIT,
   PUBLIC_CATEGORIES_MAX_LIMIT,
@@ -152,6 +165,30 @@ export class PublicController {
       userId,
       this.geoIpCountryService.resolveCountry(headers ?? {}),
     );
+  }
+
+  /**
+   * The five pages the site looks up for itself, addressed by a key an editor
+   * cannot change (A2, `tasks/system-pages-slug/TASK.md`).
+   *
+   * ⚠️ Must stay **above** `pages/:slug`: the two patterns differ in segment
+   * count today, so Nest separates them, but a future one-segment alias would
+   * make `by-key` look like a slug and this route would go dark.
+   */
+  @Get('pages/by-key/:systemKey')
+  @ApiOperation({ summary: 'Public CMS page by immutable system key' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiParam({ name: 'systemKey', enum: SYSTEM_PAGE_KEY_VALUES })
+  getPageByKey(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Param('systemKey') systemKey: string,
+  ) {
+    // Закрытый список, а не свободный параметр: иначе маршрут превращается в
+    // способ перебирать страницы по колонке, которой нет ни в одном DTO.
+    if (!isSystemPageKey(systemKey)) {
+      throw new NotFoundException('Unknown system page key');
+    }
+    return this.pages.getPublicBySystemKey(systemKey, pathLang);
   }
 
   // Localized page by slug

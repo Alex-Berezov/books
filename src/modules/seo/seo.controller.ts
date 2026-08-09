@@ -80,9 +80,9 @@ export class SeoController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({
-    summary: 'Do the slugs the public site hard-codes still resolve?',
+    summary: 'Do the keys the public site resolves by still land on a published page?',
     description:
-      'The homepage and the four taxonomy hubs are found by slug, and the slug is an editable field. When it drifts nothing errors: the pages fall back to dictionary strings and silently lose their meta, H1, SEO text and FAQ. This names the pages that no longer resolve, per language. Also logged at startup.',
+      'The homepage and the four taxonomy hubs are found by an immutable systemKey. When one no longer resolves — unpublished, deleted, or a language added after the backfill — nothing errors: the page falls back to dictionary strings and silently loses its meta, H1, SEO text and FAQ. This names the pages that no longer resolve, per language, with their current public slug. Also logged at startup.',
   })
   @ApiResponse({ status: 200, description: 'State of every system page, plus the problems only' })
   systemPagesStatus() {

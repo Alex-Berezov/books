@@ -23,6 +23,28 @@ export class PagesService {
   }
 
   /**
+   * Resolves a page the site looks up for itself — the homepage and the four
+   * taxonomy hubs — by its immutable key instead of its slug.
+   *
+   * The slug used to be the address, and it is generated from the title in the
+   * admin form: renaming the title rewrote it and severed the link without an
+   * error anywhere. `systemKey` is not editable, so the same rename now only
+   * moves the page's public URL.
+   *
+   * No cross-language fallback here, deliberately, and for the same reason as
+   * `getPublicBySlug`: a hub answering in the wrong language is worse than a
+   * hub answering from its own fallback text, because it is indexable.
+   */
+  async getPublicBySystemKey(systemKey: string, language: Language) {
+    const page = await this.prisma.page.findFirst({
+      where: { systemKey, language, status: 'published' },
+      include: { seo: true },
+    });
+    if (!page) throw new NotFoundException('Page not found');
+    return page;
+  }
+
+  /**
    * Public resolver with language policy: prefers query lang, then Accept-Language, then default.
    * If a language is resolved but no page exists in that language, falls back to any published page with the slug.
    */

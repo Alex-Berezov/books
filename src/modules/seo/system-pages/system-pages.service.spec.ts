@@ -1,14 +1,19 @@
 import { Logger } from '@nestjs/common';
 import { Language } from '@prisma/client';
 import { SystemPagesService } from './system-pages.service';
-import { SYSTEM_PAGE_LANGUAGES, SYSTEM_PAGE_SLUGS } from './system-pages.constants';
+import { SYSTEM_PAGE_KEYS, SYSTEM_PAGE_LANGUAGES } from './system-pages.constants';
 import { PrismaService } from '../../../prisma/prisma.service';
 
-type Row = { slug: string; language: Language; status: string };
+type Row = { systemKey: string | null; slug: string; language: Language; status: string };
 
 const everythingPublished = (): Row[] =>
-  SYSTEM_PAGE_SLUGS.flatMap(({ slug }) =>
-    SYSTEM_PAGE_LANGUAGES.map((language) => ({ slug, language, status: 'published' })),
+  SYSTEM_PAGE_KEYS.flatMap(({ key }) =>
+    SYSTEM_PAGE_LANGUAGES.map((language) => ({
+      systemKey: key,
+      slug: `${key}-index`,
+      language,
+      status: 'published',
+    })),
   );
 
 const prismaWith = (rows: Row[] | Error) =>
@@ -21,54 +26,67 @@ const prismaWith = (rows: Row[] | Error) =>
   }) as unknown as PrismaService;
 
 describe('SystemPagesService', () => {
-  it('is quiet when every system slug is published in every language', async () => {
+  it('is quiet when every system key is published in every language', async () => {
     const status = await new SystemPagesService(prismaWith(everythingPublished())).check();
 
     expect(status.ok).toBe(true);
     expect(status.problems).toHaveLength(0);
-    expect(status.pages).toHaveLength(SYSTEM_PAGE_SLUGS.length);
+    expect(status.pages).toHaveLength(SYSTEM_PAGE_KEYS.length);
   });
 
   /**
-   * The exact production incident: the title "Homepage" regenerated the slug, so
-   * `homepage-index` stopped existing and `homepage` appeared next to it. The
-   * homepage kept answering 200 the whole time.
+   * 🔴 The production incident, replayed against the new contract: the title
+   * "Homepage" regenerated the slug, `homepage-index` stopped existing and
+   * `homepage` appeared in its place. That used to sever the lookup and cost the
+   * homepage its editorial content.
+   *
+   * Since A2 the site resolves by `systemKey`, so the very same rename must now
+   * be a non-event. This test fails if anything routes back through the slug.
    */
-  it('reports a slug that was renamed out from under the lookup', async () => {
-    const rows = everythingPublished()
-      .filter((r) => r.slug !== 'homepage-index')
-      .concat(
-        SYSTEM_PAGE_LANGUAGES.map((language) => ({
-          slug: 'homepage',
-          language,
-          status: 'published',
-        })),
-      );
+  it('stays quiet when the slug is renamed, because the key did not move', async () => {
+    const rows = everythingPublished().map((r) =>
+      r.systemKey === 'homepage' ? { ...r, slug: 'homepage' } : r,
+    );
 
     const status = await new SystemPagesService(prismaWith(rows)).check();
 
-    expect(status.ok).toBe(false);
-    expect(status.problems).toHaveLength(1);
-    expect(status.problems[0].slug).toBe('homepage-index');
-    expect(status.problems[0].missingIn).toEqual(SYSTEM_PAGE_LANGUAGES);
+    expect(status.ok).toBe(true);
+    expect(status.problems).toHaveLength(0);
   });
 
-  it('reports a hub that is missing in one language only', async () => {
-    const rows = everythingPublished().filter(
-      (r) => !(r.slug === 'taxonomy-tags-index' && r.language === Language.fr),
+  /**
+   * The failure the key cannot prevent: a page created without a key at all —
+   * a fresh language added after the backfill, or a row the backfill missed
+   * because its slug had already drifted.
+   */
+  it('reports a page that carries no system key', async () => {
+    const rows = everythingPublished().map((r) =>
+      r.systemKey === 'homepage' && r.language === Language.ru ? { ...r, systemKey: null } : r,
     );
 
     const status = await new SystemPagesService(prismaWith(rows)).check();
 
     expect(status.ok).toBe(false);
-    expect(status.problems.map((p) => p.slug)).toEqual(['taxonomy-tags-index']);
+    expect(status.problems.map((p) => p.systemKey)).toEqual(['homepage']);
+    expect(status.problems[0].missingIn).toEqual([Language.ru]);
+  });
+
+  it('reports a hub that is missing in one language only', async () => {
+    const rows = everythingPublished().filter(
+      (r) => !(r.systemKey === 'taxonomy-tags' && r.language === Language.fr),
+    );
+
+    const status = await new SystemPagesService(prismaWith(rows)).check();
+
+    expect(status.ok).toBe(false);
+    expect(status.problems.map((p) => p.systemKey)).toEqual(['taxonomy-tags']);
     expect(status.problems[0].missingIn).toEqual([Language.fr]);
   });
 
   /** A draft page is not served publicly, so it is a problem, not a pass. */
   it('counts an unpublished page as unresolved and says it is a draft', async () => {
     const rows = everythingPublished().map((r) =>
-      r.slug === 'taxonomy-genres-index' && r.language === Language.ru
+      r.systemKey === 'taxonomy-genres' && r.language === Language.ru
         ? { ...r, status: 'draft' }
         : r,
     );
@@ -78,6 +96,14 @@ describe('SystemPagesService', () => {
     expect(status.ok).toBe(false);
     expect(status.problems[0].draftIn).toEqual([Language.ru]);
     expect(status.problems[0].missingIn).toHaveLength(0);
+  });
+
+  /** The report names the public URL too — the key alone does not locate the page for a human. */
+  it('reports the current slug of each language alongside the key', async () => {
+    const status = await new SystemPagesService(prismaWith(everythingPublished())).check();
+
+    const homepage = status.pages.find((p) => p.systemKey === 'homepage');
+    expect(homepage?.slugs[Language.en]).toBe('homepage-index');
   });
 
   /**
@@ -92,14 +118,14 @@ describe('SystemPagesService', () => {
   });
 
   it('logs every unresolved page at startup instead of failing silently', async () => {
-    const rows = everythingPublished().filter((r) => r.slug !== 'taxonomy-collections-index');
+    const rows = everythingPublished().filter((r) => r.systemKey !== 'taxonomy-collections');
     const service = new SystemPagesService(prismaWith(rows));
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     await service.onApplicationBootstrap();
 
     expect(error).toHaveBeenCalledTimes(1);
-    expect(error.mock.calls[0][0]).toContain('taxonomy-collections-index');
+    expect(error.mock.calls[0][0]).toContain('taxonomy-collections');
     error.mockRestore();
   });
 

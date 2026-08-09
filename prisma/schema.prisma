@@ -487,6 +487,16 @@ model Page {
   language         Language
   translationGroupId String? @map("translation_group_id") @db.Uuid
 
+  /// Неизменяемая опора для страниц, которые ищет сам сайт: `homepage` и четыре
+  /// хаба таксономий. До 09.08.2026 их находили по слагу — редактируемому полю,
+  /// которое генерируется из заголовка. Правка заголовка рвала связь, и это не
+  /// давало ошибки: главная переходила на словарные строки, а хабы молча теряли
+  /// metaTitle, metaDescription, h1, SEO-текст и FAQ.
+  ///
+  /// NULL — у обычных страниц; редактору поле недоступно вовсе (в DTO его нет,
+  /// а `forbidNonWhitelisted` отвечает на попытку прислать его 400).
+  systemKey        String?    @map("system_key")
+
   // SEO content fields
   h1               String?
   shortDescription String?   @db.Text
@@ -502,6 +512,13 @@ model Page {
   seoId            Int?       @unique
 
   @@unique([language, slug])
+  /// ⚠️ Уникальность **составная**, а не глобальная, как записано в
+  /// `tasks/system-pages-slug/TASK.md` §A2. Системная страница существует один
+  /// раз **в каждом языке** — пять строк на ключ. Глобальный `@unique` пустил бы
+  /// в базу только одну из них и сломал бы бэкфилл на второй же строке.
+  /// NULL в Postgres не равен NULL, поэтому обычные страницы ограничение не
+  /// задевает: их сколько угодно на язык.
+  @@unique([language, systemKey])
   @@index([language])
   @@index([translationGroupId])
 }

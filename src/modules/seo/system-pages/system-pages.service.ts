@@ -1,14 +1,24 @@
 import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { Language } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { SYSTEM_PAGE_LANGUAGES, SYSTEM_PAGE_SLUGS } from './system-pages.constants';
+import {
+  SYSTEM_PAGE_KEYS,
+  SYSTEM_PAGE_LANGUAGES,
+  type SystemPageKey,
+} from './system-pages.constants';
 
 export interface SystemPageState {
-  slug: string;
+  systemKey: SystemPageKey;
   purpose: string;
   publishedIn: Language[];
   draftIn: Language[];
   missingIn: Language[];
+  /**
+   * What the page is called publicly right now, per language. Purely for the
+   * human reading the report — the key is what the site resolves by, and a slug
+   * that differs between languages is normal, not a fault.
+   */
+  slugs: Partial<Record<Language, string>>;
 }
 
 export interface SystemPagesStatus {
@@ -24,13 +34,17 @@ export interface SystemPagesStatus {
 }
 
 /**
- * Verifies that every slug the public site hard-codes actually resolves.
+ * Verifies that every key the public site resolves by actually lands on a
+ * published page in every language.
  *
- * Runs once at startup and on demand via
- * `GET /admin/seo/system-pages/status`. It is a detector, not a fix: the slug
- * remains an editable field carrying a functional contract until §A2 replaces
- * it with an immutable key. What it buys is that the failure stops being
- * indistinguishable from normal operation.
+ * Runs once at startup and on demand via `GET /admin/seo/system-pages/status`.
+ *
+ * It was written as a detector for a slug that carried a functional contract;
+ * since 09.08.2026 the contract lives in `Page.systemKey`, which an editor
+ * cannot touch, so the failure mode it was built for is closed. It still earns
+ * its place: a system page can be unpublished, deleted, or created in a new
+ * language and never backfilled, and each of those is invisible from the
+ * outside — the hub keeps answering 200 with fallback text.
  */
 @Injectable()
 export class SystemPagesService implements OnApplicationBootstrap {
@@ -50,14 +64,14 @@ export class SystemPagesService implements OnApplicationBootstrap {
 
     if (status.ok) {
       this.logger.log(
-        `System pages OK — ${SYSTEM_PAGE_SLUGS.length} slugs published in ${SYSTEM_PAGE_LANGUAGES.length} languages`,
+        `System pages OK — ${SYSTEM_PAGE_KEYS.length} keys published in ${SYSTEM_PAGE_LANGUAGES.length} languages`,
       );
       return;
     }
 
     for (const page of status.problems) {
       this.logger.error(
-        `SYSTEM PAGE UNRESOLVED: "${page.slug}" (${page.purpose}) — ` +
+        `SYSTEM PAGE UNRESOLVED: "${page.systemKey}" (${page.purpose}) — ` +
           `missing in [${page.missingIn.join(', ') || '-'}]` +
           (page.draftIn.length ? `, still draft in [${page.draftIn.join(', ')}]` : '') +
           '. The page is served from fallback text and its SEO content is gone.',
@@ -67,13 +81,13 @@ export class SystemPagesService implements OnApplicationBootstrap {
 
   async check(): Promise<SystemPagesStatus> {
     const checkedAt = new Date().toISOString();
-    const slugs = SYSTEM_PAGE_SLUGS.map((p) => p.slug);
+    const keys = SYSTEM_PAGE_KEYS.map((p) => p.key);
 
-    let rows: Array<{ slug: string; language: Language; status: string }>;
+    let rows: Array<{ systemKey: string | null; slug: string; language: Language; status: string }>;
     try {
       rows = await this.prisma.page.findMany({
-        where: { slug: { in: slugs } },
-        select: { slug: true, language: true, status: true },
+        where: { systemKey: { in: keys } },
+        select: { systemKey: true, slug: true, language: true, status: true },
       });
     } catch (error) {
       return {
@@ -86,14 +100,17 @@ export class SystemPagesService implements OnApplicationBootstrap {
       };
     }
 
-    const pages: SystemPageState[] = SYSTEM_PAGE_SLUGS.map(({ slug, purpose }) => {
-      const forSlug = rows.filter((r) => r.slug === slug);
-      const publishedIn = forSlug.filter((r) => r.status === 'published').map((r) => r.language);
-      const draftIn = forSlug.filter((r) => r.status !== 'published').map((r) => r.language);
+    const pages: SystemPageState[] = SYSTEM_PAGE_KEYS.map(({ key, purpose }) => {
+      const forKey = rows.filter((r) => r.systemKey === key);
+      const publishedIn = forKey.filter((r) => r.status === 'published').map((r) => r.language);
+      const draftIn = forKey.filter((r) => r.status !== 'published').map((r) => r.language);
       const missingIn = SYSTEM_PAGE_LANGUAGES.filter(
         (lang) => !publishedIn.includes(lang) && !draftIn.includes(lang),
       );
-      return { slug, purpose, publishedIn, draftIn, missingIn };
+      const slugs: Partial<Record<Language, string>> = {};
+      for (const row of forKey) slugs[row.language] = row.slug;
+
+      return { systemKey: key, purpose, publishedIn, draftIn, missingIn, slugs };
     });
 
     const problems = pages.filter((p) => p.missingIn.length > 0 || p.draftIn.length > 0);
