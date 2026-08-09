@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PublicController } from './public.controller';
 import { BookService } from '../book/book.service';
+import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { PagesService } from '../pages/pages.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LanguageResolverGuard } from '../../common/guards/language-resolver.guard';
@@ -15,6 +16,7 @@ import { GeoBlockModule } from '../geo-block/geo-block.module';
   controllers: [PublicController],
   providers: [
     BookService,
+    RelatedTaxonomyService,
     PagesService,
     CategoryService,
     TagsService,

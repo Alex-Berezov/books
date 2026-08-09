@@ -8,13 +8,23 @@ import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { cleanDescription } from '../seo/utils/cleanDescription';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
+
+/**
+ * `related*Slugs` лежат в JSON-колонке, то есть их содержимое схемой не
+ * гарантировано. Приводим к массиву строк здесь, а не на месте использования:
+ * мусор в колонке не должен уронить страницу тега.
+ */
+const toSlugArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 
 @Injectable()
 export class BookService {
   constructor(
     private prisma: PrismaService,
     private geoBlockRuleService: GeoBlockRuleService,
+    private relatedTaxonomy: RelatedTaxonomyService,
   ) {}
 
   async rateBook(userId: string, bookId: string, score: number) {
@@ -998,6 +1008,22 @@ export class BookService {
         },
       });
       if (tag) {
+        // 🔴 Слаги из `related*Slugs` разрешаются здесь, а не рендерятся как есть.
+        // Раньше страница тега выводила их напрямую: существование термина не
+        // проверялось, видимость и индексируемость тоже, а текстом ссылки шёл
+        // сырой слаг. Замер на проде 09.08.2026 по `en`: из 1039 таких ссылок
+        // 114 вели на несуществующий термин и 622 — на закрытый `noindex`.
+        //
+        // Отдаются **факты**, без вердикта: решение «ставить ли ссылку»
+        // принимает фронтовый `isTaxonomyLinkable`, и он обязан остаться в
+        // одном экземпляре.
+        const relatedTerms = await this.relatedTaxonomy.resolve(lang, {
+          tags: toSlugArray(matchedTranslation?.relatedTagSlugs),
+          genres: toSlugArray(matchedTranslation?.relatedGenreSlugs),
+          categories: toSlugArray(matchedTranslation?.relatedCategorySlugs),
+          collections: toSlugArray(matchedTranslation?.relatedCollectionSlugs),
+        });
+
         tagResult = {
           id: tag.id,
           key: tag.key,
@@ -1010,6 +1036,7 @@ export class BookService {
           language: lang,
           translation: matchedTranslation,
           translations: matchedTranslation ? [matchedTranslation] : [],
+          relatedTerms,
         };
       }
     }

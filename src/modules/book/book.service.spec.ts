@@ -1,3 +1,4 @@
+import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { BookService } from './book.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BookType, Language } from '@prisma/client';
@@ -51,7 +52,11 @@ describe('BookService.getOverview', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new BookService(prisma as unknown as PrismaService, createGeoBlockRuleServiceStub());
+    service = new BookService(
+      prisma as unknown as PrismaService,
+      createGeoBlockRuleServiceStub(),
+      new RelatedTaxonomyService(prisma as unknown as PrismaService),
+    );
   });
 
   it('returns aggregated overview with languages, flags and SEO (happy path)', async () => {
@@ -292,6 +297,7 @@ describe('BookService.getOverview', () => {
       service = new BookService(
         prisma as unknown as PrismaService,
         createGeoBlockRuleServiceStub(),
+        new RelatedTaxonomyService(prisma as unknown as PrismaService),
       );
     });
 
