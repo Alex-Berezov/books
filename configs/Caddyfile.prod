@@ -1,55 +1,84 @@
 # Caddy configuration for production
 # File: /etc/caddy/Caddyfile
+#
+# ⚠️ Копия живого конфига. До 09.08.2026 она разошлась с реальностью: здесь фронт
+# ещё значился «future» и `bibliaris.com` редиректил на `/docs`, тогда как на
+# сервере он уже год проксировался на Next.js. Сверять при каждой правке —
+# источник правды на сервере, а не здесь.
 
 # ============================================
 # API Backend
 # ============================================
 api.bibliaris.com {
-    # Proxy to internal application port
-    reverse_proxy localhost:5000
+	# Proxy to internal application port
+	handle {
+		reverse_proxy localhost:5000
+	}
 
-    # Basic security headers
-    header {
-        # Remove server information
-        -Server
+	# Basic security headers
+	header {
+		# Remove server information
+		-Server
 
-        # Security headers
-        X-Content-Type-Options nosniff
-        X-Frame-Options SAMEORIGIN
-        X-XSS-Protection "1; mode=block"
-        Referrer-Policy strict-origin-when-cross-origin
-        
-        # HSTS (enforce HTTPS)
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        
-        # CORS headers (NestJS also sets these, but provides an additional layer of protection)
-        Access-Control-Allow-Credentials "true"
+		# Security headers
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		X-XSS-Protection "1; mode=block"
+		Referrer-Policy strict-origin-when-cross-origin
 
-        # The API subdomain must never be indexed. Deliberately NOT "Disallow: /"
-        # in robots.txt — the frontend fetches this host from the browser and
-        # blocking crawling would stop Googlebot from rendering the site.
-        # NestJS also sets this (robots-header.middleware.ts); kept here as a
-        # second layer for responses that bypass the app.
-        X-Robots-Tag "noindex"
-    }
+		# HSTS (enforce HTTPS)
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+		# CORS headers (NestJS also sets these, but provides an additional layer of protection)
+		Access-Control-Allow-Credentials "true"
+
+		# The API subdomain must never be indexed. Deliberately NOT "Disallow: /"
+		# in robots.txt — the frontend fetches this host from the browser and
+		# blocking crawling would stop Googlebot from rendering the site.
+		# NestJS also sets this (robots-header.middleware.ts); kept here as a
+		# second layer for responses that bypass the app.
+		X-Robots-Tag "noindex"
+	}
 }
 
 # ============================================
-# Frontend (future)
+# Frontend (Next.js SSR)
 # ============================================
 bibliaris.com {
-    # Temporary: redirect to API docs
-    # After frontend deployment, replace with file_server
-    redir https://api.bibliaris.com/docs permanent
+	encode zstd gzip
+
+	# 🔴 Апстрим вынесен в отдельный файл, потому что это переключатель выката, а
+	# не константа. `scripts/deploy-bluegreen.sh` в `books-front` переписывает его
+	# на порт той версии, которая уже подтвердила готовность, и делает
+	# `caddy reload` — тот дослуживает открытые соединения на прошлом конфиге.
+	#
+	# Содержимое — одна строка: `reverse_proxy 127.0.0.1:3001` (blue) либо
+	# `:3002` (green). Файл же и есть единственный источник правды о том, какая
+	# версия наверху: скрипт читает текущий цвет из него, а не из отдельного
+	# файла состояния, который рассинхронизировался бы при первой ручной правке.
+	import /etc/caddy/frontend-upstream.caddy
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	log {
+		output file /var/log/caddy/bibliaris.log
+		format json
+	}
 }
 
 # ============================================
-# WWW redirects
+# WWW redirects (disabled until DNS records exist)
+# Add A/CNAME records for www.bibliaris.com and www.api.bibliaris.com
+# then uncomment the blocks below and reload Caddy.
 # ============================================
-www.bibliaris.com {
-    redir https://bibliaris.com{uri} permanent
-}
-
-www.api.bibliaris.com {
-    redir https://api.bibliaris.com{uri} permanent
-}
+# www.bibliaris.com {
+#     redir https://bibliaris.com{uri} permanent
+# }
+#
+# www.api.bibliaris.com {
+#     redir https://api.bibliaris.com{uri} permanent
+# }
