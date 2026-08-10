@@ -60,6 +60,12 @@ jobs:
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_pass
           POSTGRES_DB: books_test
+        # ⚠️ `max_connections` здесь не поднять: `services` в GitHub Actions не
+        # принимает команду контейнера. Поэтому расход подключений ограничен со
+        # стороны клиента — `connection_limit=5` на воркер в
+        # `test/setup-after-env-e2e.ts`. Без него параллельный прогон падает с
+        # «sorry, too many clients already», причём падает не тест, а случайный
+        # запрос внутри него, и выглядит это как сломанный код.
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -105,6 +111,15 @@ jobs:
           yarn drift-check:self-test
           yarn drift-check
 
+      - name: ♻️ Cache Jest transform
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jest_rs
+          key: jest-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            jest-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-
+            jest-${{ runner.os }}-
+
       - name: 🧪 Unit Tests
         run: yarn test
         env:
@@ -118,24 +133,41 @@ jobs:
           NODE_ENV: test
           DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/books_test?schema=public
 
+      # `--no-cache` убран (был добавлен 23.07.2026 вместе с подъёмом лимита
+      # памяти — причина в коммите не записана, а транспиляция 68 наборов заново
+      # стоит минуты). Кэш ts-jest живёт между прогонами через actions/cache ниже;
+      # лимит памяти остаётся, так что прежняя защита от OOM не тронута.
+      # 🔴 `test:e2e:serial` содержит `--runInBand`, который **переопределяет**
+      # `maxWorkers` из конфига: с ним параллельность из `jest-e2e.json` не
+      # включилась бы вовсе, и правка выглядела бы сделанной, ничего не ускорив.
+      # Отдельный скрипт `test:e2e:parallel` без этого флага; `:serial` оставлен
+      # для отладки, где важен предсказуемый порядок.
       - name: 🧪 E2E Tests
-        run: yarn test:e2e:serial --no-cache
+        # ⚠️ Число воркеров задано явно, а не через `50%` из конфига: у раннера
+        # мало ядер, и доля легко даёт одного воркера — параллельность
+        # «включена», а прогон идёт как прежде. `E2E_WORKERS` читает globalSetup,
+        # чтобы создать ровно столько баз, сколько будет воркеров.
+        run: yarn test:e2e:parallel --maxWorkers=2
         env:
           NODE_ENV: test
           DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/books_test?schema=public
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          E2E_WORKERS: 2
           NODE_OPTIONS: --max-old-space-size=6144
 
   # =====================================================
   # DOCKER IMAGE BUILD
   # =====================================================
 
+  # ⚠️ Сборка образа идёт ПАРАЛЛЕЛЬНО тестам, а не после них (10.08.2026).
+  # Раньше `needs: [test]` держал её за 11 минутами проверок, хотя образ от их
+  # исхода не зависит: выкат всё равно ждёт обоих (`deploy: needs [test, build]`),
+  # и при красных тестах собранный образ просто не выкатывается. Экономия — вся
+  # длительность сборки, около трёх минут из критического пути.
   build:
     name: 🏗️ Build Docker Image
     runs-on: ubuntu-22.04
-    needs: [test]
-    if: ${{ always() && (needs.test.result == 'success' || github.event.inputs.skip_tests) }}
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -224,8 +256,9 @@ jobs:
   deploy:
     name: 🚀 Deploy to Production
     runs-on: ubuntu-22.04
-    needs: [build]
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    # Ждёт обоих: тесты больше не блокируют сборку, но по-прежнему блокируют выкат.
+    needs: [test, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests) }}
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://${{ vars.PRODUCTION_DOMAIN }}
