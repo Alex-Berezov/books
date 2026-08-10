@@ -27,10 +27,12 @@ import { UpdateCommentDto } from './dto/update-comment.dto';
 import { ListCommentsQueryDto } from './dto/list-comments.dto';
 import { CommentListDto } from './dto/comment-list.dto';
 import { CommentDto } from './dto/comment.dto';
+import { AdminCommentsQueryDto, AdminCommentsResponseDto } from './dto/admin-comments.dto';
+import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
-// RolesGuard not required; owner-or-moderator checks are inside service
 
 interface RequestUser {
   userId: string;
@@ -53,6 +55,30 @@ export class CommentsController {
   list(@Query() q: ListCommentsQueryDto) {
     const { target, targetId, sortBy = 'date', page = 1, limit = 10 } = q;
     return this.service.list({ target, targetId, sortBy, page, limit });
+  }
+
+  /**
+   * Список всех комментариев сайта для модерации (`LEGACY-092`).
+   *
+   * ⚠️ Отдельный маршрут, а не параметры к публичному `GET /comments`: тот
+   * отвечает на вопрос «что показать под этой книгой» и обязан требовать
+   * `target`/`targetId`. Смешение двух вопросов в одном маршруте — ровно то,
+   * что пришлось расплетать в `LEGACY-093`.
+   */
+  @Get('admin/comments')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiOperation({ summary: 'List all comments for moderation (admin)' })
+  @ApiOkResponse({ type: AdminCommentsResponseDto })
+  adminList(@Query() query: AdminCommentsQueryDto): Promise<AdminCommentsResponseDto> {
+    return this.service.adminList({
+      page: query.page ?? 1,
+      limit: query.limit ?? 20,
+      search: query.search,
+      status: query.status,
+      bookId: query.bookId,
+    });
   }
 
   @Post('comments')

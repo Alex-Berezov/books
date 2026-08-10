@@ -240,6 +240,88 @@ export class CommentsService {
     };
   }
 
+  /**
+   * Плоский список всех комментариев для модерации (`LEGACY-092`).
+   *
+   * 🔴 До 10.08.2026 такого маршрута не существовало вовсе, а админский раздел
+   * фронта был написан так, будто он есть: звал `GET /comments?page=…` (400,
+   * потому что публичный листинг требует `target` и `targetId`) и два адреса,
+   * которых нет. Модерация отзывов не работала в принципе.
+   *
+   * ⚠️ Публичный `list()` для этого не годится и не должен: он отвечает на
+   * вопрос «что показать под этой книгой», а модерации нужен вопрос «что вообще
+   * написали на сайте». Разные вопросы — разные запросы; попытка обслужить оба
+   * одним привела бы к тому же, что `LEGACY-093`.
+   */
+  async adminList(params: {
+    page: number;
+    limit: number;
+    search?: string;
+    status?: 'visible' | 'hidden' | 'all';
+    bookId?: string;
+  }) {
+    const { page, limit, search, status = 'all', bookId } = params;
+
+    const where: Prisma.CommentWhereInput = {
+      isDeleted: false,
+      ...(status === 'visible' ? { isHidden: false } : {}),
+      ...(status === 'hidden' ? { isHidden: true } : {}),
+      ...(bookId ? { bookVersion: { bookId } } : {}),
+      ...(search
+        ? {
+            OR: [
+              { text: { contains: search, mode: 'insensitive' as const } },
+              { user: { name: { contains: search, mode: 'insensitive' as const } } },
+              { user: { nickname: { contains: search, mode: 'insensitive' as const } } },
+              { user: { email: { contains: search, mode: 'insensitive' as const } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.comment.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          text: true,
+          isHidden: true,
+          createdAt: true,
+          parentId: true,
+          bookVersionId: true,
+          user: { select: { id: true, name: true, nickname: true, email: true, avatarUrl: true } },
+          bookVersion: { select: { title: true, bookId: true } },
+          _count: { select: { children: true } },
+        },
+      }),
+      this.prisma.comment.count({ where }),
+    ]);
+
+    return {
+      data: items.map((item) => ({
+        id: item.id,
+        text: item.text,
+        isHidden: item.isHidden,
+        createdAt: item.createdAt,
+        author: item.user,
+        bookTitle: item.bookVersion?.title ?? null,
+        bookId: item.bookVersion?.bookId ?? null,
+        bookVersionId: item.bookVersionId,
+        parentId: item.parentId,
+        repliesCount: item._count.children,
+      })),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
   // Та же проверка нужна `book-summary`, поэтому логика переехала в
   // `ModeratorRolesService` (10.08.2026). Здесь остался тонкий адаптер под
   // порядок аргументов, принятый в этом сервисе.
