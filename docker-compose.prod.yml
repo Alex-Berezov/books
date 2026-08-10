@@ -7,6 +7,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env.prod
+      # 🔴 Отдельный файл — не прихоть. `.env.prod` **целиком пересоздаётся** из
+      # секрета `ENV_PROD` при каждом выкате (deploy.yml), поэтому всё, что
+      # дописано в него на сервере руками, исчезает со следующим деплоем: именно
+      # так пропал `METRICS_TOKEN` 10.08.2026, и цель Prometheus снова стала
+      # красной. Файл ниже деплой не трогает.
+      #
+      # ⚠️ `required: false` — чтобы сборка на машине без мониторинга не падала
+      # из-за отсутствующего файла.
+      - path: .env.monitoring-secrets
+        required: false
     environment:
       NODE_ENV: production
       PORT: ${PORT:-5000}

@@ -130,7 +130,10 @@ check_prometheus_metrics() {
     fi
     
     # Check app 'up' metric
-    if metrics=$(curl -s "$prometheus_url/api/v1/query?query=up{job=\"books-app\"}" 2>/dev/null); then
+    # ⚠️ `--data-urlencode`, а не запрос прямо в URL: PromQL содержит фигурные
+    # скобки и кавычки, и незакодированный `up{job="books-app"}` Prometheus
+    # разбирает не так, как задумано — проверка краснела при живой цели.
+    if metrics=$(curl -s --data-urlencode 'query=up{job="books-app"}'         "$prometheus_url/api/v1/query" 2>/dev/null); then
         if echo "$metrics" | jq -e '.data.result[0].value[1]' > /dev/null 2>&1; then
             local up_value=$(echo "$metrics" | jq -r '.data.result[0].value[1]')
             if [[ "$up_value" == "1" ]]; then
