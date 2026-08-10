@@ -1,22 +1,20 @@
 import { Test } from '@nestjs/testing';
 import { MetricsController } from './metrics.controller';
 import { MetricsService } from './metrics.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { MetricsAccessGuard } from './metrics-access.guard';
 
 describe('MetricsController', () => {
   it('returns metrics with correct content type', async () => {
-    // Гварды маршрута (LEGACY-072) здесь подменяются: они тянут Reflector, JwtService
-    // и Prisma, которых в этом изолированном модуле нет. Сам доступ проверяется не
-    // тут, а в `test/metrics-access.e2e-spec.ts` — на поднятом приложении, где
-    // анонимный запрос обязан получить 401.
+    // Гвард маршрута здесь подменяется: он тянет ConfigService и роли из Prisma,
+    // которых в этом изолированном модуле нет. Сам доступ проверяется не тут, а в
+    // `test/metrics-access.e2e-spec.ts` — на поднятом приложении, где анонимный
+    // запрос обязан получить 401, чужой токен — 401, а незаданный `METRICS_TOKEN`
+    // не должен открывать маршрут вовсе (LEGACY-072, LEGACY-095).
     const moduleRef = await Test.createTestingModule({
       controllers: [MetricsController],
       providers: [MetricsService],
     })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({ canActivate: () => true })
-      .overrideGuard(RolesGuard)
+      .overrideGuard(MetricsAccessGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

@@ -236,7 +236,6 @@ jobs:
         with:
           sparse-checkout: |
             scripts/deploy_production.sh
-            scripts/health_check.sh
             docker-compose.prod.yml
             .env.prod.template
           sparse-checkout-cone-mode: false

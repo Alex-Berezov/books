@@ -12,6 +12,29 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Учётные данные мониторинга. Источников два, и порядок между ними важен:
+# `.env.monitoring` — необязательный файл настроек стека, `.env` — тот самый,
+# из которого их читает `docker compose`. Побеждает `.env`: именно его значения
+# сейчас действуют на сервере, тогда как в `.env.monitoring` могут лежать
+# дефолты вроде `admin123`, оставшиеся от установки.
+#
+# 🔴 Пока подгрузка стояла в начале файла, её результат затирался загрузкой
+# `.env.monitoring` в `main()` — проверка Grafana ходила с дефолтным паролем и
+# краснела на сервере, где пароль сменили, то есть на любом настроенном.
+load_monitoring_env() {
+    [[ -f .env ]] || return 0
+    local value
+    # ⚠️ Нужен `if`, а не `[[ … ]] && export`: при `set -e` пустое значение
+    # делает `&&`-список неуспешным и обрывает цикл на первой же незаданной
+    # переменной — то есть до той, ради которой всё и затевалось.
+    for var in GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD PROMETHEUS_PORT GRAFANA_PORT ALERTMANAGER_PORT NODE_EXPORTER_PORT; do
+        value=$(grep -E "^${var}=" .env 2>/dev/null | tail -n 1 | cut -d= -f2- || true)
+        if [[ -n "$value" ]]; then
+            export "$var=$value"
+        fi
+    done
+}
+
 # Counters
 TOTAL_TESTS=0
 PASSED_TESTS=0
@@ -35,17 +58,20 @@ test_result() {
     local result="$2"
     local details="$3"
     
-    ((TOTAL_TESTS++))
-    
+    # `$(( ))` в присваивании, а не `(( ))` отдельной командой: постфиксный
+    # инкремент возвращает старое значение, и при `set -e` нулевой результат
+    # убивает скрипт на первом же тесте (см. health_check.sh).
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+
     if [[ "$result" == "PASS" ]]; then
         echo -e "${GREEN}✓ $test_name${NC}"
-        ((PASSED_TESTS++))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
     else
         echo -e "${RED}✗ $test_name${NC}"
         if [[ -n "$details" ]]; then
             echo -e "  ${RED}Details: $details${NC}"
         fi
-        ((FAILED_TESTS++))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
     fi
 }
 
@@ -82,17 +108,23 @@ check_prometheus_metrics() {
     
     # Verify targets
     if targets=$(curl -s "$prometheus_url/api/v1/targets" 2>/dev/null); then
-        if echo "$targets" | jq -e '.data.activeTargets[] | select(.job=="books-app")' > /dev/null 2>&1; then
-            test_result "Prometheus target 'books-app'" "PASS"
-        else
-            test_result "Prometheus target 'books-app'" "FAIL" "Target not found or inactive"
-        fi
-        
-        if echo "$targets" | jq -e '.data.activeTargets[] | select(.job=="node-exporter")' > /dev/null 2>&1; then
-            test_result "Prometheus target 'node-exporter'" "PASS"
-        else
-            test_result "Prometheus target 'node-exporter'" "FAIL" "Target not found or inactive"
-        fi
+        # 🔴 Здесь стояло `select(.job==...)`. В ответе `/api/v1/targets` имя job
+        # лежит в `labels.job`, а поля `job` на верхнем уровне нет вовсе — обе
+        # проверки были красными **по построению**, при любом состоянии
+        # Prometheus. Заметить было нельзя: стек ни разу не разворачивали
+        # (`LEGACY-095`).
+        #
+        # ⚠️ Проверяется ещё и `health`: цель может присутствовать в списке и при
+        # этом не отвечать. «Есть в конфиге» — не то же самое, что «снимается».
+        for job in books-app node-exporter; do
+            local health
+            health=$(echo "$targets" | jq -r --arg j "$job"                 '[.data.activeTargets[] | select(.labels.job==$j) | .health] | first // "missing"')
+            if [[ "$health" == "up" ]]; then
+                test_result "Prometheus target '$job'" "PASS"
+            else
+                test_result "Prometheus target '$job'" "FAIL" "Target health: $health"
+            fi
+        done
     else
     test_result "Prometheus API targets" "FAIL" "Failed to fetch targets list"
     fi
@@ -234,17 +266,35 @@ check_app_integration() {
             ;;
     esac
     
-    # Check health endpoints
-    if curl -s "http://localhost:5000/api/health/liveness" > /dev/null 2>&1; then
-    test_result "Books App health liveness" "PASS"
+    # 🔴 Здесь стоял `curl -s ... > /dev/null`, который возвращает 0 при ЛЮБОМ
+    # полученном ответе — 401, 500, страница ошибки прокси. Проба печатала PASS
+    # ровно в тех случаях, ради которых её и заводили. Тот же дефект уже был
+    # разобран выше по `/api/metrics` (LEGACY-072), но соседние две проверки
+    # тогда не тронули: класс считался закрытым и был закрыт на треть.
+    local liveness_code
+    liveness_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+        "http://localhost:5000/api/health/liveness" 2>/dev/null || echo "000")
+    if [[ "$liveness_code" == "200" ]]; then
+        test_result "Books App health liveness" "PASS"
     else
-    test_result "Books App health liveness" "FAIL" "Liveness endpoint unreachable"
+        test_result "Books App health liveness" "FAIL" "HTTP $liveness_code (expected 200)"
     fi
-    
-    if curl -s "http://localhost:5000/api/health/readiness" > /dev/null 2>&1; then
-    test_result "Books App health readiness" "PASS"
+
+    # ⚠️ Для readiness кода 200 мало: маршрут отвечает JSON со `status`, и
+    # «ответил» не значит «готов». Деплойный шаг в .github/workflows/deploy.yml
+    # ждёт именно `status: up` — проба обязана спрашивать то же самое, иначе
+    # она зеленеет там, где выкат бы откатился.
+    local readiness_body readiness_code readiness_status
+    readiness_body=$(curl -s -w "\n%{http_code}" --max-time 10 \
+        "http://localhost:5000/api/health/readiness" 2>/dev/null || echo -e "\n000")
+    readiness_code=$(echo "$readiness_body" | tail -n 1)
+    readiness_status=$(echo "$readiness_body" | head -n -1 | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+
+    if [[ "$readiness_code" == "200" && "$readiness_status" == "up" ]]; then
+        test_result "Books App health readiness" "PASS"
     else
-    test_result "Books App health readiness" "FAIL" "Readiness endpoint unreachable"
+        test_result "Books App health readiness" "FAIL" \
+            "HTTP $readiness_code, status=$readiness_status (expected 200 / up)"
     fi
 }
 
@@ -279,9 +329,17 @@ check_performance() {
         local name=${service%%:*}
         local endpoint="http://localhost:${service#*:}"
         
-        local response_time=$(curl -s -w "%{time_total}" -o /dev/null "$endpoint" 2>/dev/null || echo "999")
-        
-        if (( $(echo "$response_time < 2" | bc -l 2>/dev/null || echo "0") )); then
+        # ⚠️ Код ответа проверяется раньше времени: быстрый 500 иначе объявляется
+        # успехом, а «сервис отвечает мгновенно» — худший вид зелёной пробы.
+        local measured http_code response_time
+        measured=$(curl -s -o /dev/null -w "%{http_code} %{time_total}" --max-time 10 \
+            "$endpoint" 2>/dev/null || echo "000 999")
+        http_code=${measured%% *}
+        response_time=${measured##* }
+
+        if [[ "$http_code" != "200" ]]; then
+            test_result "$name response time" "FAIL" "HTTP $http_code (service is not healthy)"
+        elif awk "BEGIN{exit !($response_time < 2)}" 2>/dev/null; then
             test_result "$name response time" "PASS" "${response_time}s"
         else
             test_result "$name response time" "FAIL" "${response_time}s (too slow)"
@@ -340,6 +398,7 @@ main() {
     if [[ -f ".env.monitoring" ]]; then
         export $(cat .env.monitoring | grep -v '^#' | xargs)
     fi
+    load_monitoring_env
     
     # Dependency checks
     if ! command -v curl &> /dev/null; then

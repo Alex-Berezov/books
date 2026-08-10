@@ -7,6 +7,7 @@ global:
 
 rule_files:
   - 'alert_rules.yml'
+  - 'recording_rules.yml'
 
 alerting:
   alertmanagers:
@@ -15,28 +16,23 @@ alerting:
             - alertmanager:9093
 
 scrape_configs:
-  # Scrape NestJS application metrics — ОТКЛЮЧЕНО с 08.08.2026 (LEGACY-072).
+  # Метрики приложения. Job был отключён 08.08.2026 вместе с закрытием
+  # `/api/metrics` гвардом `admin` (LEGACY-072) — и приложение осталось без
+  # метрик вовсе. Возвращён 10.08.2026 (LEGACY-095) через долгоживущий
+  # `METRICS_TOKEN`: Prometheus умеет статический bearer, не годился именно JWT
+  # с его 12 часами жизни.
   #
-  # `/api/metrics` закрыт `JwtAuthGuard + RolesGuard(admin)`: анонимно он отдавал
-  # состав маршрутов, объёмы трафика и коды ответов. Prometheus предъявить админский
-  # JWT не может — он живёт 12 часов, а `credentials_file` пришлось бы обновлять
-  # снаружи. Включённый job здесь означал бы вечно красную цель и `up == 0`,
-  # то есть ложную тревогу «приложение лежит».
-  #
-  # Чтобы вернуть метрики, нужен отдельный механизм аутентификации скрейпера
-  # (долгоживущий токен только на чтение метрик или доступ по внутренней сети без
-  # публикации маршрута) — это отдельная задача, не побочный эффект закрытия дыры.
-  # Готовность приложения продолжает сниматься job'ом `books-app-health` ниже.
-  #
-  # - job_name: 'books-app'
-  #   static_configs:
-  #     - targets: ['172.17.0.1:5000'] # Docker bridge network
-  #   metrics_path: '/api/metrics'
-  #   scrape_interval: 30s
-  #   scrape_timeout: 10s
-  #   honor_labels: false
-  #   params:
-  #     format: ['prometheus']
+  # ⚠️ Цель — внутреннее имя контейнера в сети приложения, а не публичный адрес:
+  # маршрут метрик наружу не выставлен и выставляться не должен.
+  - job_name: 'books-app'
+    static_configs:
+      - targets: ['app:5000']
+    metrics_path: '/api/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
 
   # Scrape Prometheus itself
   - job_name: 'prometheus'
@@ -50,64 +46,8 @@ scrape_configs:
       - targets: ['node-exporter:9100']
     scrape_interval: 15s
 
-  # Health checks для основного приложения
-  - job_name: 'books-app-health'
-    static_configs:
-      - targets: ['172.17.0.1:5000']
-    metrics_path: '/api/health/readiness'
-    scrape_interval: 30s
-    scrape_timeout: 5s
-
-# Recording rules для часто используемых запросов
-recording_rules:
-  - name: books_app_rules
-    rules:
-      # HTTP request rate per minute
-      - record: books_app:http_requests:rate1m
-        expr: rate(http_request_duration_seconds_count[1m])
-
-      # HTTP error rate (4xx, 5xx)
-      - record: books_app:http_errors:rate1m
-        expr: rate(http_request_duration_seconds_count{status_code=~"4..|5.."}[1m])
-
-      # HTTP error ratio (errors / total requests)
-      - record: books_app:http_error_ratio:rate5m
-        expr: |
-          (
-            rate(http_request_duration_seconds_count{status_code=~"4..|5.."}[5m])
-            /
-            rate(http_request_duration_seconds_count[5m])
-          ) * 100
-
-      # P95 response time
-      - record: books_app:http_request_duration:p95
-        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
-
-      # P99 response time
-      - record: books_app:http_request_duration:p99
-        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
-
-  - name: system_rules
-    rules:
-      # CPU usage percentage
-      - record: node:cpu_usage:rate5m
-        expr: |
-          100 - (
-            avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance) * 100
-          )
-
-      # Memory usage percentage
-      - record: node:memory_usage:percentage
-        expr: |
-          (
-            (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) 
-            / node_memory_MemTotal_bytes
-          ) * 100
-
-      # Disk usage percentage
-      - record: node:disk_usage:percentage
-        expr: |
-          (
-            (node_filesystem_size_bytes{fstype!="tmpfs"} - node_filesystem_free_bytes{fstype!="tmpfs"})
-            / node_filesystem_size_bytes{fstype!="tmpfs"}
-          ) * 100
+  # 🔴 Здесь стоял job `books-app-health`, скребущий `/api/health/readiness`.
+  # Маршрут отдаёт **JSON**, а Prometheus ждёт текстовый exposition-формат:
+  # цель была бы вечно красной, а `up == 0` читался бы как «приложение лежит».
+  # Живость приложения теперь видна по job `books-app` выше: он снимает
+  # настоящие метрики, и его `up` означает то, что должен означать.

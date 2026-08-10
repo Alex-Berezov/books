@@ -1,23 +1,31 @@
-version: '3.8'
+# Стек мониторинга (LEGACY-095: до 10.08.2026 не был развёрнут вовсе).
+#
+# ⚠️ Все порты публикуются **только на 127.0.0.1**. Prometheus, Grafana и
+# Alertmanager не имеют собственной защиты, пригодной для открытого интернета,
+# а этот сервер уже получал попытку RCE через опубликованный наружу Redis без
+# пароля (`LEGACY-071`). Доступ к интерфейсам — через SSH-туннель:
+#   ssh -L 9090:127.0.0.1:9090 -L 3000:127.0.0.1:3000 deploy@ssh.bibliaris.com
 
 services:
   prometheus:
     image: prom/prometheus:v2.45.1
     container_name: books-prometheus
     ports:
-      - '${PROMETHEUS_PORT:-9090}:9090'
+      - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
     volumes:
       - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - ./configs/recording_rules.yml:/etc/prometheus/recording_rules.yml:ro
+      - ./configs/metrics_token:/etc/prometheus/metrics_token:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=14d'
-      - '--storage.tsdb.retention.size=1GB'
+      - '--storage.tsdb.retention.size=2GB'
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
     restart: unless-stopped
     networks:
       - monitoring
@@ -29,7 +37,7 @@ services:
     image: grafana/grafana:10.1.5
     container_name: books-grafana
     ports:
-      - '${GRAFANA_PORT:-3000}:3000'
+      - '127.0.0.1:${GRAFANA_PORT:-3000}:3000'
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
@@ -51,7 +59,7 @@ services:
     image: prom/node-exporter:v1.6.1
     container_name: books-node-exporter
     ports:
-      - '${NODE_EXPORTER_PORT:-9100}:9100'
+      - '127.0.0.1:${NODE_EXPORTER_PORT:-9100}:9100'
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -69,7 +77,7 @@ services:
     image: prom/alertmanager:v0.26.0
     container_name: books-alertmanager
     ports:
-      - '${ALERTMANAGER_PORT:-9093}:9093'
+      - '127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093'
     volumes:
       - ./configs/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
@@ -94,5 +102,8 @@ volumes:
 networks:
   monitoring:
     driver: bridge
+  # Сеть приложения: Prometheus скребёт его по внутреннему имени `app:5000`,
+  # маршрут метрик наружу не публикуется.
   books-network:
     external: true
+    name: ${APP_NETWORK:-src_default}

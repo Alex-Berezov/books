@@ -22,7 +22,17 @@ export class ModeratorRolesService {
   ) {}
 
   async isModerator(actor?: { userId: string; email: string }): Promise<boolean> {
-    if (!actor) return false;
+    const roles = await this.rolesOf(actor);
+    return roles.has('admin') || roles.has('content_manager');
+  }
+
+  /** Строго `admin`: для метрик и прочего, где content_manager недостаточно. */
+  async isAdmin(actor?: { userId: string; email: string }): Promise<boolean> {
+    return (await this.rolesOf(actor)).has('admin');
+  }
+
+  private async rolesOf(actor?: { userId: string; email: string }): Promise<Set<string>> {
+    if (!actor) return new Set();
 
     const dbRoles = await this.prisma.userRole.findMany({
       where: { userId: actor.userId },
@@ -40,6 +50,6 @@ export class ModeratorRolesService {
     if (fromEnv('ADMIN_EMAILS').includes(email)) roleSet.add('admin');
     if (fromEnv('CONTENT_MANAGER_EMAILS').includes(email)) roleSet.add('content_manager');
 
-    return roleSet.has('admin') || roleSet.has('content_manager');
+    return roleSet;
   }
 }

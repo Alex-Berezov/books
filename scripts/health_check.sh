@@ -41,6 +41,11 @@ PASSED_CHECKS=0
 FAILED_CHECKS=0
 WARNING_CHECKS=0
 
+# Результат последнего http_request
+HTTP_BODY=""
+HTTP_STATUS=""
+HTTP_TIME=""
+
 # Show help
 show_help() {
     cat << EOF
@@ -69,6 +74,14 @@ EXAMPLES:
     
     # Detailed check saving JSON
     ./scripts/health_check.sh --detailed --format json --save health_report.json
+
+EXIT CODES:
+    0   all checks passed
+    2   warnings present (nothing failed, but something could not be verified)
+    1   at least one check failed
+
+    Прежде код 2 не существовал и предупреждения давали 0 — отчёт с десятком
+    WARNING был неотличим от чистого прогона.
 
 CHECKS:
     ✓ API Health Endpoints
@@ -149,6 +162,16 @@ log_info() {
 }
 
 # HTTP request with timeout
+#
+# 🔴 Функция возвращала строку `"$body|$status|$time"`, а вызывающие разбирали
+# её через `cut -d'|'`. Тело ответа — произвольный JSON, и первая же вертикальная
+# черта внутри SEO-текста книги сдвигала все поля: проверка каталога получала
+# «статус», начинающийся с куска описания, и объявляла отказ на живом маршруте.
+# Разделитель, который может встретиться в данных, — не разделитель.
+#
+# Результат отдаётся глобальными переменными: подстановка команды всё равно
+# съедает завершающие переводы строк, а уместить многострочное тело в одну
+# строку без потерь нечем.
 http_request() {
     local url=$1
     local expected_status=${2:-200}
@@ -159,11 +182,9 @@ http_request() {
         -H "Accept: application/json" \
         "$url" 2>/dev/null || echo -e "\nERROR\n0")
     
-    local body=$(echo "$response" | head -n -2)
-    local status=$(echo "$response" | tail -n 2 | head -n 1)
-    local time=$(echo "$response" | tail -n 1)
-    
-    echo "$body|$status|$time"
+    HTTP_BODY=$(echo "$response" | head -n -2)
+    HTTP_STATUS=$(echo "$response" | tail -n 2 | head -n 1)
+    HTTP_TIME=$(echo "$response" | tail -n 1)
 }
 
 # Add a check result
@@ -174,12 +195,21 @@ add_result() {
     local details=${4:-""}
     
     RESULTS["$check_name"]="$status|$message|$details"
-    ((TOTAL_CHECKS++))
-    
+
+    # 🔴 Здесь стояло `((TOTAL_CHECKS++))`. Постфиксный инкремент возвращает
+    # **старое** значение, то есть 0 на первом вызове, а при `set -e` нулевой
+    # результат арифметики — это неуспех команды: скрипт молча умирал на самой
+    # первой проверке. Всё, что написано ниже по файлу, никогда не выполнялось.
+    #
+    # ⚠️ Тот же баг уже дважды чинили рядом — в `deploy_production.sh` и в
+    # деплойном workflow, и оба раза оставили комментарий. Сюда не заглянули,
+    # потому что скрипт никто не запускал: он и не мог отработать.
+    TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+
     case $status in
-        PASS) ((PASSED_CHECKS++)) ;;
-        FAIL) ((FAILED_CHECKS++)) ;;
-        WARNING) ((WARNING_CHECKS++)) ;;
+        PASS) PASSED_CHECKS=$((PASSED_CHECKS + 1)) ;;
+        FAIL) FAILED_CHECKS=$((FAILED_CHECKS + 1)) ;;
+        WARNING) WARNING_CHECKS=$((WARNING_CHECKS + 1)) ;;
     esac
     
     case $status in
@@ -198,10 +228,10 @@ check_api_health() {
     log "Checking API Health endpoints..."
     
     # Liveness probe
-    local liveness=$(http_request "$BASE_URL/api/health/liveness")
-    local liveness_body=$(echo "$liveness" | cut -d'|' -f1)
-    local liveness_status=$(echo "$liveness" | cut -d'|' -f2)
-    local liveness_time=$(echo "$liveness" | cut -d'|' -f3)
+    http_request "$BASE_URL/api/health/liveness"
+    local liveness_body="$HTTP_BODY"
+    local liveness_status="$HTTP_STATUS"
+    local liveness_time="$HTTP_TIME"
     
     if [[ "$liveness_status" == "200" ]]; then
         local version=$(echo "$liveness_body" | jq -r '.version // "unknown"' 2>/dev/null || echo "unknown")
@@ -212,14 +242,20 @@ check_api_health() {
     fi
     
     # Readiness probe
-    local readiness=$(http_request "$BASE_URL/api/health/readiness")
-    local readiness_status=$(echo "$readiness" | cut -d'|' -f2)
-    local readiness_time=$(echo "$readiness" | cut -d'|' -f3)
+    http_request "$BASE_URL/api/health/readiness"
+    local readiness_status="$HTTP_STATUS"
+    local readiness_time="$HTTP_TIME"
     
-    if [[ "$readiness_status" == "200" ]]; then
+    # ⚠️ Кода 200 мало: маршрут отвечает JSON со `status`, и «ответил» не значит
+    # «готов». Деплойный шаг в .github/workflows/deploy.yml ждёт `status: up` —
+    # проба обязана спрашивать то же самое.
+    local readiness_body="$HTTP_BODY"
+    local readiness_state=$(echo "$readiness_body" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+
+    if [[ "$readiness_status" == "200" && "$readiness_state" == "up" ]]; then
     add_result "readiness" "PASS" "Service ready (${readiness_time}s)"
     else
-    add_result "readiness" "FAIL" "Service not ready (HTTP $readiness_status)"
+    add_result "readiness" "FAIL" "Service not ready (HTTP $readiness_status, status=$readiness_state)"
     fi
 }
 
@@ -227,16 +263,21 @@ check_api_health() {
 check_database() {
     log "Checking database connection..."
     
-    local readiness=$(http_request "$BASE_URL/api/health/readiness")
-    local readiness_body=$(echo "$readiness" | cut -d'|' -f1)
-    local readiness_status=$(echo "$readiness" | cut -d'|' -f2)
+    http_request "$BASE_URL/api/health/readiness"
+    local readiness_body="$HTTP_BODY"
+    local readiness_status="$HTTP_STATUS"
     
     if [[ "$readiness_status" == "200" ]]; then
-        local db_status=$(echo "$readiness_body" | jq -r '.database // "unknown"' 2>/dev/null || echo "unknown")
-        if [[ "$db_status" == "connected" ]] || [[ "$db_status" == "healthy" ]]; then
+        # 🔴 Читалось поле `.database`, которого в ответе нет и, судя по всему,
+        # никогда не было: readiness отдаёт `{"status":"up","details":{"prisma":…}}`.
+        # Проверка базы поэтому **всегда** заканчивалась «indeterminate» —
+        # то есть ни разу не подтвердила то, ради чего написана. Заметить это
+        # было нечем: WARNING не влиял на код выхода.
+        local db_status=$(echo "$readiness_body" | jq -r '.details.prisma // "unknown"' 2>/dev/null || echo "unknown")
+        if [[ "$db_status" == "up" ]]; then
             add_result "database" "PASS" "Database connected"
         else
-            add_result "database" "WARNING" "Database status indeterminate: $db_status"
+            add_result "database" "FAIL" "Database not reporting up: $db_status"
         fi
     else
     add_result "database" "FAIL" "Failed to check database status"
@@ -248,8 +289,8 @@ check_security_config() {
     log "Checking security configuration..."
     
     # Verify Swagger is disabled in production
-    local swagger=$(http_request "$BASE_URL/api/docs" "404")
-    local swagger_status=$(echo "$swagger" | cut -d'|' -f2)
+    http_request "$BASE_URL/api/docs"
+    local swagger_status="$HTTP_STATUS"
     
     if [[ "$swagger_status" == "404" ]]; then
     add_result "swagger" "PASS" "Swagger disabled in production"
@@ -262,8 +303,8 @@ check_security_config() {
     # Прежняя ветка ждала на localhost 200 и объявляла PASS ровно тому состоянию,
     # которое теперь считается дефектом. 403 остаётся допустимым, пока снаружи
     # стоит блок Caddy; 200 — всегда провал: значит гвард не применился.
-    local metrics=$(http_request "$BASE_URL/api/metrics")
-    local metrics_status=$(echo "$metrics" | cut -d'|' -f2)
+    http_request "$BASE_URL/api/metrics"
+    local metrics_status="$HTTP_STATUS"
 
     if [[ "$metrics_status" == "401" ]]; then
         add_result "metrics" "PASS" "Metrics require authentication"
@@ -291,7 +332,7 @@ check_security_headers() {
     local found_headers=0
     for header in "${required_headers[@]}"; do
         if echo "$headers" | grep -qi "$header:"; then
-            ((found_headers++))
+            found_headers=$((found_headers + 1))
         fi
     done
     
@@ -308,12 +349,12 @@ check_security_headers() {
 check_performance() {
     log "Checking performance..."
     
-    local liveness=$(http_request "$BASE_URL/api/health/liveness")
-    local response_time=$(echo "$liveness" | cut -d'|' -f3)
+    http_request "$BASE_URL/api/health/liveness"
+    local response_time="$HTTP_TIME"
     
-    if (( $(echo "$response_time < 1.0" | bc -l) )); then
+    if awk "BEGIN{exit !($response_time < 1.0)}"; then
     add_result "response_time" "PASS" "Response time: ${response_time}s (excellent)"
-    elif (( $(echo "$response_time < 2.0" | bc -l) )); then
+    elif awk "BEGIN{exit !($response_time < 2.0)}"; then
     add_result "response_time" "WARNING" "Response time: ${response_time}s (acceptable)"
     else
     add_result "response_time" "FAIL" "Response time: ${response_time}s (slow)"
@@ -385,13 +426,16 @@ check_api_functionality() {
     # маршруте эта проверка не упала бы — она отдаёт WARNING и выходит с нулём,
     # то есть молча перестала бы что-либо проверять. Ровно та форма ошибки, что
     # дважды сработала в LEGACY-072.
-    local books=$(http_request "$BASE_URL/api/en/books?limit=1")
-    local books_status=$(echo "$books" | cut -d'|' -f2)
+    http_request "$BASE_URL/api/en/books?limit=1"
+    local books_status="$HTTP_STATUS"
 
     if [[ "$books_status" == "200" ]]; then
     add_result "api_books" "PASS" "Books API accessible"
     else
-    add_result "api_books" "WARNING" "Books API not accessible (HTTP $books_status)"
+    # FAIL, а не WARNING: недоступный публичный каталог — это поломка витрины,
+    # а не повод для сноски. В WARNING эта строка сидела ровно потому, что
+    # WARNING ничего не стоил — прогон всё равно завершался нулём.
+    add_result "api_books" "FAIL" "Books API not accessible (HTTP $books_status)"
     fi
     
     # CORS headers check
@@ -412,7 +456,7 @@ generate_json_report() {
     json_results+='"passed":'$PASSED_CHECKS','
     json_results+='"failed":'$FAILED_CHECKS','
     json_results+='"warnings":'$WARNING_CHECKS','
-    json_results+='"success_rate":'$(echo "scale=2; $PASSED_CHECKS * 100 / $TOTAL_CHECKS" | bc)'%,'
+    json_results+='"success_rate":'$(awk "BEGIN{printf \"%.2f\", $PASSED_CHECKS * 100 / $TOTAL_CHECKS}")'%,'
     json_results+='"checks":{'
     
     local first=true
@@ -451,7 +495,7 @@ generate_text_report() {
     echo "  Passed: $PASSED_CHECKS"
     echo "  Warnings: $WARNING_CHECKS" 
     echo "  Failures: $FAILED_CHECKS"
-    echo "  Success rate: $(echo "scale=1; $PASSED_CHECKS * 100 / $TOTAL_CHECKS" | bc)%"
+    echo "  Success rate: $(awk "BEGIN{printf \"%.1f\", $PASSED_CHECKS * 100 / $TOTAL_CHECKS}")%"
     echo ""
     
     if [[ $FAILED_CHECKS -eq 0 && $WARNING_CHECKS -eq 0 ]]; then
@@ -522,10 +566,22 @@ main() {
     fi
     
     # Exit code
-    if [[ $FAILED_CHECKS -eq 0 ]]; then
-        exit 0
-    else
+    #
+    # 🔴 Раньше здесь было только «0 или 1 по FAILED_CHECKS», и любое число
+    # WARNING давало нулевой выход. То есть отчёт с десятком предупреждений
+    # выглядел для вызывающего ровно как чистый прогон. А в WARNING попадает
+    # именно то, ради чего проверку и запускают: недоступный публичный каталог,
+    # непроверяемый Docker, отсутствующие заголовки CORS.
+    #
+    # Три состояния вместо двух: 0 — чисто, 2 — есть предупреждения, 1 — отказ.
+    # Код 2 выбран так, чтобы существующие `if ./health_check.sh` продолжали
+    # считать предупреждения неуспехом, а не чтобы тихо совпасть с нулём.
+    if [[ $FAILED_CHECKS -gt 0 ]]; then
         exit 1
+    elif [[ $WARNING_CHECKS -gt 0 ]]; then
+        exit 2
+    else
+        exit 0
     fi
 }
 
@@ -533,7 +589,12 @@ main() {
 trap 'echo "❌ Error at line $LINENO"' ERR
 
 # Dependency check
-for cmd in curl jq bc; do
+#
+# 🔴 `bc` из списка убран, а вычисления переведены на `awk`: на продовом VPS
+# пакета `bc` нет, и скрипт падал на этой самой проверке — то есть проба,
+# заявленная в документации как способ проверить прод, не могла там
+# выполниться вовсе. `awk` есть в любом POSIX-окружении.
+for cmd in curl jq; do
     if ! command -v $cmd &> /dev/null; then
     echo "❌ Required command missing: $cmd"
         exit 1

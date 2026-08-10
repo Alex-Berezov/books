@@ -3,10 +3,15 @@ import { MetricsService } from './metrics.service';
 import { MetricsInterceptor } from './metrics.interceptor';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { MetricsController } from './metrics.controller';
+import { MetricsAccessGuard } from './metrics-access.guard';
 
 @Module({
   controllers: [MetricsController],
-  providers: [MetricsService, { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor }],
+  providers: [
+    MetricsService,
+    MetricsAccessGuard,
+    { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
+  ],
   exports: [MetricsService],
 })
 export class MetricsModule {}
