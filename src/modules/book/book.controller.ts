@@ -109,10 +109,26 @@ export class BookController {
     );
   }
 
+  /**
+   * Подсказки тем для админской формы — не публичные данные (LEGACY-065).
+   *
+   * `getAllThemes()` читает `themes` у **всех** версий без фильтра по статусу, то есть
+   * анонимный запрос возвращал в том числе темы неопубликованных черновиков. Фильтр
+   * здесь был бы неверным лечением: админской форме подсказки из черновиков как раз
+   * нужны — лечится доступом, а не выдачей.
+   *
+   * Закрыто первым из всего списка открытых GET-маршрутов потому, что переносить
+   * нечего: единственный потребитель (`books-front/api/endpoints/admin/books.ts`
+   * → `getThemes`) уже ходит через `httpGetAuth` с токеном, а e2e-спек на анонимный
+   * доступ к маршруту нет.
+   */
   @Get('themes')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({
     summary: 'Get list of all unique themes',
-    description: 'Returns a list of all unique themes used in book versions.',
+    description: 'Returns a list of all unique themes used in book versions. Admin only.',
   })
   @ApiResponse({ status: 200, description: 'List of themes returned' })
   async getThemes() {
