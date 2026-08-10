@@ -5,11 +5,19 @@ import {
   Param,
   Query,
   Headers,
+  Req,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
-import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiHeader,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { BookService } from '../book/book.service';
 import { PagesService } from '../pages/pages.service';
 import { CategoryService } from '../category/category.service';
@@ -18,6 +26,8 @@ import { AuthorService } from '../author/author.service';
 import { Language as PrismaLanguage } from '@prisma/client';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { LanguageResolverGuard } from '../../common/guards/language-resolver.guard';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
+import { NoPublicCache } from '../../common/decorators/no-public-cache.decorator';
 import { RelatedBooksQueryDto } from '../book/dto/related-books.dto';
 import { BookCardsQueryDto } from '../book/dto/book-cards-query.dto';
 import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
@@ -147,22 +157,40 @@ export class PublicController {
     return this.books.findCards(pathLang, query.page, query.limit, query.sort, query.type, query.q);
   }
 
-  // Localized reader bootstrap endpoint
+  /**
+   * Читалка открыта анониму, но прогресс чтения принадлежит владельцу токена.
+   *
+   * 🔴 До 10.08.2026 читатель приходил параметром `?userId=`, то есть любой
+   * желающий подставлял чужой идентификатор и получал, какую книгу человек
+   * читает и на каком месте остановился (`LEGACY-088`). Идентификаторы брались
+   * из соседней утечки: `GET /comments` отдавал `user.id` каждого комментатора.
+   *
+   * ⚠️ `@NoPublicCache()` — не украшение: без query-параметра URL стал общим
+   * для всех, и `public, s-maxage=300` начал бы раздавать прогресс первого
+   * читателя всем остальным. Снятие кэша и перенос в токен — одна правка,
+   * порознь они делают хуже.
+   */
   @Get('books/:slug/reader-bootstrap')
-  @ApiOperation({ summary: 'Get reader bootstrap info in a single query' })
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
+  @NoPublicCache()
+  @ApiOperation({
+    summary: 'Get reader bootstrap info in a single query',
+    description:
+      'Reading progress is returned only for the bearer of the token. Anonymous callers get the book without the personal part.',
+  })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'userId', required: false })
   getReaderBootstrap(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Param('slug') slug: string,
-    @Query('userId') userId?: string,
+    @Req() req?: { user?: { userId?: string } },
     @Headers() headers?: GeoRequestHeaders,
   ) {
     return this.books.getReaderBootstrap(
       slug,
       pathLang,
-      userId,
+      req?.user?.userId,
       this.geoIpCountryService.resolveCountry(headers ?? {}),
     );
   }

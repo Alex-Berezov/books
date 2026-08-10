@@ -28,6 +28,7 @@ import { ListCommentsQueryDto } from './dto/list-comments.dto';
 import { CommentListDto } from './dto/comment-list.dto';
 import { CommentDto } from './dto/comment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 // RolesGuard not required; owner-or-moderator checks are inside service
 
@@ -64,12 +65,18 @@ export class CommentsController {
     return this.service.create(req.user.userId, dto);
   }
 
+  /**
+   * Токен здесь необязателен, но меняет ответ: скрытый комментарий видит только
+   * модератор (`LEGACY-089`).
+   */
   @Get('comments/:id')
-  @ApiOperation({ summary: 'Get comment' })
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({ summary: 'Get comment (hidden ones are visible to moderators only)' })
   @ApiParam({ name: 'id' })
   @ApiOkResponse({ type: CommentDto })
-  get(@Param('id') id: string) {
-    return this.service.get(id);
+  get(@Param('id') id: string, @Req() req?: { user?: RequestUser }) {
+    return this.service.get(id, req?.user);
   }
 
   @Patch('comments/:id')

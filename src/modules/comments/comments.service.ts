@@ -10,6 +10,25 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 
+/**
+ * Поля автора, которые можно показать читателю отзывов.
+ *
+ * 🔴 До 10.08.2026 сюда входил `email`, и `GET /comments` отдавал почту всех
+ * комментаторов анониму — блок отзывов виден без входа и токена не шлёт вовсе
+ * (`LEGACY-089`). Рядом уезжал `id`, по которому открывалась вторая утечка:
+ * `reader-bootstrap?userId=` возвращал чужой прогресс чтения (`LEGACY-088`).
+ *
+ * ⚠️ Селект держится одной константой намеренно. Он повторялся в шести местах,
+ * и добавить поле в пять из них, забыв шестое, было ровно так же легко, как
+ * не заметить `email` во всех шести сразу.
+ */
+const PUBLIC_COMMENT_USER_SELECT = {
+  id: true,
+  name: true,
+  nickname: true,
+  avatarUrl: true,
+} as const;
+
 @Injectable()
 export class CommentsService {
   constructor(
@@ -45,16 +64,18 @@ export class CommentsService {
         skip: (page - 1) * limit,
         take: limit,
         include: {
+          // 🔴 До 10.08.2026 ответы фильтровались только по `isDeleted`: скрытый
+          // модератором ответ оставался виден в публичном листинге, хотя
+          // корневые комментарии он отсекал правильно. Сокрытие работало ровно
+          // до первого ответа в ветке.
           children: {
-            where: { isDeleted: false },
+            where: { isDeleted: false, ...(includeHidden ? {} : { isHidden: false }) },
             include: {
-              user: {
-                select: { id: true, email: true, name: true, nickname: true, avatarUrl: true },
-              },
+              user: { select: PUBLIC_COMMENT_USER_SELECT },
             },
           },
           rating: true,
-          user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+          user: { select: PUBLIC_COMMENT_USER_SELECT },
         },
       }),
       this.prisma.comment.count({ where: whereBase }),
@@ -131,7 +152,7 @@ export class CommentsService {
         },
         include: {
           rating: true,
-          user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+          user: { select: PUBLIC_COMMENT_USER_SELECT },
           children: true,
         },
       });
@@ -143,18 +164,33 @@ export class CommentsService {
     };
   }
 
-  async get(id: string) {
+  /**
+   * 🔴 Маршрут `GET /comments/:id` не проверял `isHidden`: скрытый модератором
+   * комментарий читался по прямой ссылке, хотя из листинга исчезал
+   * (`LEGACY-089`). Сокрытие держалось на том, что адрес трудно угадать, —
+   * а он приходит в ответе на создание и лежит в истории браузера.
+   *
+   * Модератор скрытое видит: иначе модерировать пришлось бы вслепую, не имея
+   * возможности перечитать то, что скрыл.
+   */
+  async get(id: string, actor?: { userId: string; email: string }) {
+    const canModerate = actor ? await this.isModerator(actor.email, actor.userId) : false;
+
     const comment = await this.prisma.comment.findUnique({
       where: { id },
       include: {
         rating: true,
-        user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+        user: { select: PUBLIC_COMMENT_USER_SELECT },
         children: {
-          where: { isDeleted: false },
+          where: { isDeleted: false, ...(canModerate ? {} : { isHidden: false }) },
         },
       },
     });
     if (!comment || comment.isDeleted) {
+      throw new NotFoundException('Comment not found');
+    }
+    if (comment.isHidden && !canModerate) {
+      // 404, а не 403: существование скрытого комментария — тоже сведение.
       throw new NotFoundException('Comment not found');
     }
     return {
@@ -193,7 +229,7 @@ export class CommentsService {
       data,
       include: {
         rating: true,
-        user: { select: { id: true, email: true, name: true, nickname: true, avatarUrl: true } },
+        user: { select: PUBLIC_COMMENT_USER_SELECT },
         children: true,
       },
     });
