@@ -1,5 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { Prisma, Language, Tag, TagTranslation, BookVersion } from '@prisma/client';
+import { Prisma, Language, Tag, TagTranslation } from '@prisma/client';
+import {
+  PUBLIC_BOOK_VERSION_SELECT,
+  type PublicBookVersion,
+} from '../../common/selects/public-book.select';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
@@ -178,7 +182,10 @@ export class TagsService {
   ): Promise<{
     tag: Tag & { translation: TagTranslation | null; description: string | null };
     seo: Record<string, unknown> | null;
-    versions: BookVersion[];
+    versions: (PublicBookVersion & {
+      rating: number | null;
+      seo: { metaTitle: string | null; metaDescription: string | null } | null;
+    })[];
     availableLanguages: Language[];
   }> {
     const headerLang = acceptLanguageHeader || null;
@@ -207,10 +214,18 @@ export class TagsService {
       baseTag = found;
     }
     // public only: published versions with this tag
+    //
+    // ⚠️ Фильтр статуса здесь был и раньше — черновики не утекали. Утекало
+    // другое: `findMany` без выборки полей отдаёт модель целиком, то есть 29
+    // правовых полей вместе с ней (`LEGACY-090`). Два разных дефекта одного
+    // класса: один про то, **какие строки** отдавать, другой — **какие поля**.
     const versions = await this.prisma.bookVersion.findMany({
       where: { status: 'published', tags: { some: { tagId } } },
       orderBy: { createdAt: 'desc' },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      select: {
+        ...PUBLIC_BOOK_VERSION_SELECT,
+        seo: { select: { metaTitle: true, metaDescription: true } },
+      },
     });
     const availableLanguages: Language[] = Array.from(new Set(versions.map((v) => v.language)));
     const effective = resolveRequestedLanguage({
@@ -258,7 +273,10 @@ export class TagsService {
   ): Promise<{
     tag: Tag & { translation: TagTranslation | null; description: string | null };
     seo: Record<string, unknown> | null;
-    data: BookVersion[];
+    data: (PublicBookVersion & {
+      rating: number | null;
+      seo: { metaTitle: string | null; metaDescription: string | null } | null;
+    })[];
     meta: { page: number; limit: number; total: number; totalPages: number };
     availableLanguages: Language[];
   }> {
@@ -291,7 +309,10 @@ export class TagsService {
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
-        include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+        select: {
+          ...PUBLIC_BOOK_VERSION_SELECT,
+          seo: { select: { metaTitle: true, metaDescription: true } },
+        },
       }),
       this.prisma.bookVersion.count({ where }),
     ]);

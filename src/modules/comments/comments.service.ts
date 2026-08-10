@@ -4,8 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
+import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
@@ -33,7 +33,7 @@ const PUBLIC_COMMENT_USER_SELECT = {
 export class CommentsService {
   constructor(
     private prisma: PrismaService,
-    private config: ConfigService,
+    private readonly moderatorRoles: ModeratorRolesService,
   ) {}
 
   async list(params: {
@@ -240,23 +240,11 @@ export class CommentsService {
     };
   }
 
-  private async isModerator(email: string, userId: string): Promise<boolean> {
-    const dbRoles = await this.prisma.userRole.findMany({
-      where: { userId },
-      include: { role: true },
-    });
-    const roleSet = new Set(dbRoles.map((r) => r.role.name));
-    const admins = (this.config.get<string>('ADMIN_EMAILS') || '')
-      .split(',')
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean);
-    const managers = (this.config.get<string>('CONTENT_MANAGER_EMAILS') || '')
-      .split(',')
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean);
-    if (admins.includes(email.toLowerCase())) roleSet.add('admin');
-    if (managers.includes(email.toLowerCase())) roleSet.add('content_manager');
-    return roleSet.has('admin') || roleSet.has('content_manager');
+  // Та же проверка нужна `book-summary`, поэтому логика переехала в
+  // `ModeratorRolesService` (10.08.2026). Здесь остался тонкий адаптер под
+  // порядок аргументов, принятый в этом сервисе.
+  private isModerator(email: string, userId: string): Promise<boolean> {
+    return this.moderatorRoles.isModerator({ userId, email });
   }
 
   async moderate(id: string, isHidden: boolean, actor: { userId: string; email: string }) {

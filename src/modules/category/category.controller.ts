@@ -176,14 +176,18 @@ export class CategoryController {
     return this.service.getBySlugWithBooks(slug, queryLang, acceptLanguage);
   }
 
-  // Public route with a language prefix
-  @Get(':lang/categories/:slug/books')
-  @ApiOperation({ summary: 'Public list of book versions by category (with language prefix)' })
-  @ApiParam({ name: 'lang', enum: Object.values(Language) })
-  @ApiParam({ name: 'slug' })
-  publicByLangSlug(@Param('lang') lang: Language, @Param('slug') slug: string) {
-    return this.service.getByLangSlugWithBooks(lang, slug);
-  }
+  /**
+   * ⚠️ Маршрут `:lang/categories/:slug/books` объявлялся **здесь и одновременно**
+   * в `PublicController` (`LEGACY-091`). Исход решал порядок модулей в
+   * `app.module.ts`, и побеждала эта, менее защищённая копия. Проверено на
+   * проде 10.08.2026: `/xx/categories/non-fiction/books` отвечал **500** вместо
+   * 400 (здесь нет `LangParamPipe`), а `Cache-Control` не приходил вовсе
+   * (здесь нет `PublicCacheInterceptor`).
+   *
+   * Дубль убран, объявление осталось одно — в `PublicController`. Опасность
+   * была не в самом дублировании, а в том, что любой гвард или фильтр, надетый
+   * на «мёртвую» копию, не давал бы никакого эффекта и выглядел бы как защита.
+   */
 
   // === Translations (Admin) ===
   @Get('categories/:id/translations')

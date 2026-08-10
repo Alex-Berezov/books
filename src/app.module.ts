@@ -4,6 +4,7 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
 import { ConfigModule } from '@nestjs/config';
 import { BookModule } from './modules/book/book.module';
+import { ModeratorRolesModule } from './common/roles/moderator-roles.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
@@ -61,6 +62,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     }),
     // Global shared providers
     PrismaModule,
+    ModeratorRolesModule,
     SlugRedirectModule,
     SecurityModule,
     // Static files for local uploads

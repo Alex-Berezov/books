@@ -1,4 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  PUBLIC_BOOK_SELECT,
+  PUBLIC_BOOK_VERSION_SELECT,
+} from '../../common/selects/public-book.select';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
@@ -278,6 +282,11 @@ export class CategoryService {
     }
 
     // Public endpoint: only published versions
+    //
+    // ⚠️ Комментарий выше стоял здесь и до 10.08.2026 — но описывал намерение,
+    // а не код: `status` проверялся только в `where`, отбирая книгу, тогда как
+    // `include` тянул все её версии целиком (`LEGACY-090`). Комментарий,
+    // утверждающий то, чего рядом не делается, вреднее его отсутствия.
     const books = await this.prisma.book.findMany({
       where: {
         versions: {
@@ -287,11 +296,14 @@ export class CategoryService {
           },
         },
       },
-      include: {
+      select: {
+        ...PUBLIC_BOOK_SELECT,
         versions: {
-          include: {
+          where: { status: 'published' },
+          select: {
+            ...PUBLIC_BOOK_VERSION_SELECT,
             tags: {
-              include: {
+              select: {
                 tag: {
                   include: {
                     translations: true,
@@ -384,11 +396,19 @@ export class CategoryService {
           },
         },
       },
-      include: {
+      select: {
+        ...PUBLIC_BOOK_SELECT,
+        // 🔴 `status: 'published'` выше отбирает **книгу**, а не её версии. Пока
+        // здесь стоял голый `include`, к опубликованной книге прицеплялись все
+        // её версии подряд — черновой перевод уезжал наружу и выглядел частью
+        // живой книги (`LEGACY-090`). Фильтр нужен на каждом уровне, а не
+        // только в `where` верхнего.
         versions: {
-          include: {
+          where: { status: 'published' },
+          select: {
+            ...PUBLIC_BOOK_VERSION_SELECT,
             tags: {
-              include: {
+              select: {
                 tag: {
                   include: {
                     translations: true,

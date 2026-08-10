@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 
@@ -67,10 +68,15 @@ describe('CommentsService', () => {
   beforeEach(() => {
     prisma = createPrismaStub();
     config = new ConfigStub();
-    service = new CommentsService(
+    // Сервис ролей здесь **настоящий**, а не стаб: он читает те же два
+    // источника (`userRole` в БД и `ADMIN_EMAILS` в окружении), что уже
+    // застаблены ниже. Стаб на его месте превратил бы проверки «модератор по
+    // роли» и «модератор по списку почт» в проверки самого стаба.
+    const moderatorRoles = new ModeratorRolesService(
       prisma as unknown as PrismaService,
       config as unknown as ConfigService,
     );
+    service = new CommentsService(prisma as unknown as PrismaService, moderatorRoles);
   });
 
   describe('create()', () => {

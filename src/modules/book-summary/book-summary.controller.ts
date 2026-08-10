@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Put, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { BookSummaryService } from './book-summary.service';
@@ -12,10 +13,17 @@ export class BookSummaryController {
   constructor(private readonly service: BookSummaryService) {}
 
   @Get('versions/:bookVersionId/summary')
-  @ApiOperation({ summary: 'Get book summary for a version' })
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get book summary for a version (drafts are visible to editors only)',
+  })
   @ApiParam({ name: 'bookVersionId' })
-  get(@Param('bookVersionId') bookVersionId: string) {
-    return this.service.getByVersion(bookVersionId);
+  get(
+    @Param('bookVersionId') bookVersionId: string,
+    @Req() req?: { user?: { userId: string; email: string } },
+  ) {
+    return this.service.getByVersion(bookVersionId, req?.user);
   }
 
   @Put('versions/:bookVersionId/summary')

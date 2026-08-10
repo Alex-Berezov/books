@@ -1,4 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  PUBLIC_BOOK_SELECT,
+  PUBLIC_BOOK_VERSION_SELECT,
+} from '../../common/selects/public-book.select';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
@@ -61,9 +65,24 @@ export class BookService {
 
     const [books, total] = await Promise.all([
       this.prisma.book.findMany({
-        include: {
+        select: {
+          ...PUBLIC_BOOK_SELECT,
+          /**
+           * 🔴 Здесь снят только правовой контур, но **не** фильтр статуса — и
+           * это осознанно. На `GET /books` сидят два потребителя разом:
+           * публичный каталог и админская таблица книг, которая ходит сюда же
+           * анонимно (`requireAuth: false`) и показывает колонку «status» с
+           * фильтром по черновикам. Отсечь неопубликованные значило бы отдать
+           * админке пустой список.
+           *
+           * ⚠️ То есть маршрут по-прежнему сообщает анониму, что черновики
+           * существуют, — но уже не показывает 29 правовых полей. Настоящее
+           * лечение — развести два потребителя по разным маршрутам
+           * (`LEGACY-093`), и до тех пор эта строка остаётся половиной ответа.
+           */
           versions: {
-            include: {
+            select: {
+              ...PUBLIC_BOOK_VERSION_SELECT,
               _count: {
                 select: {
                   chapters: true,
@@ -72,7 +91,7 @@ export class BookService {
                 },
               },
               tags: {
-                include: {
+                select: {
                   tag: {
                     include: {
                       translations: true,
@@ -126,14 +145,18 @@ export class BookService {
   async findOne(id: string) {
     const book = await this.prisma.book.findUnique({
       where: { id },
-      include: {
+      select: {
+        ...PUBLIC_BOOK_SELECT,
+        // Как и `findAll`: правовой контур убран, статус не фильтруется —
+        // маршрут обслуживает админский переключатель версий (`LEGACY-090`).
         versions: {
-          include: {
+          select: {
+            ...PUBLIC_BOOK_VERSION_SELECT,
             categories: {
-              include: { category: true },
+              select: { category: true },
             },
             tags: {
-              include: { tag: true },
+              select: { tag: true },
             },
           },
         },
@@ -167,14 +190,16 @@ export class BookService {
 
     const book = await this.prisma.book.findFirst({
       where: bookId ? { id: bookId } : { slug },
-      include: {
+      select: {
+        ...PUBLIC_BOOK_SELECT,
         versions: {
-          include: {
+          select: {
+            ...PUBLIC_BOOK_VERSION_SELECT,
             categories: {
-              include: { category: true },
+              select: { category: true },
             },
             tags: {
-              include: { tag: true },
+              select: { tag: true },
             },
           },
         },
