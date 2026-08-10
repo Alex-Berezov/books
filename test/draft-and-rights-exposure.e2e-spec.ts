@@ -32,6 +32,7 @@ describe('Draft and rights exposure (e2e)', () => {
   let readerToken: string;
 
   let bookSlug: string;
+  let bookId: string;
   let publishedVersionId: string;
   let draftVersionId: string;
   let categorySlug: string;
@@ -79,6 +80,7 @@ describe('Draft and rights exposure (e2e)', () => {
     const stamp = Date.now();
     bookSlug = `exposure-${stamp}`;
     const bookWithRights = await createBookWithRights(prisma, bookSlug);
+    bookId = bookWithRights.book.id;
 
     const makeVersion = async (language: Language, title: string): Promise<string> => {
       const res = await request(http())
@@ -186,6 +188,29 @@ describe('Draft and rights exposure (e2e)', () => {
       const res = await request(http()).get(`/en/tags/${tagSlug}/books`).expect(200);
 
       expect(rightsKeys(res.body)).toEqual([]);
+    });
+
+    /**
+     * 🔴 Эти два маршрута не попали в обход 10.08.2026: тот шёл по `include:
+     * versions` внутри сервисов книг и таксономий, а версии отдаёт ещё и
+     * собственный модуль. Свежая проверка живого API (`LEGACY-065`) показала на
+     * обоих те же 29 правовых полей.
+     *
+     * ⚠️ Урок не про эти строки, а про метод: обход по коду видит только те
+     * места, которые ищущий догадался перечислить. Спрашивать надо у API.
+     */
+    it('список версий книги не отдаёт правовых полей', async () => {
+      const res = await request(http()).get(`/books/${bookId}/versions`).expect(200);
+
+      expect(rightsKeys(res.body)).toEqual([]);
+      expect(JSON.stringify(res.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
+    });
+
+    it('версия по id не отдаёт правовых полей', async () => {
+      const res = await request(http()).get(`/versions/${publishedVersionId}`).expect(200);
+
+      expect(rightsKeys(res.body)).toEqual([]);
+      expect((res.body as { title: string }).title).toBe('Published Title');
     });
 
     it('книга по слагу не отдаёт ни одного правового поля', async () => {

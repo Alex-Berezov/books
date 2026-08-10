@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { PUBLIC_BOOK_VERSION_SELECT } from '../../common/selects/public-book.select';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
@@ -144,7 +145,10 @@ export class BookVersionService {
       const all = await this.prisma.bookVersion.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        include: { seo: true },
+        select: {
+          ...PUBLIC_BOOK_VERSION_SELECT,
+          seo: { select: { metaTitle: true, metaDescription: true } },
+        },
       });
       const available = Array.from(new Set(all.map((v) => v.language)));
       const { resolveRequestedLanguage } = await import('../../shared/language/language.util');
@@ -157,7 +161,10 @@ export class BookVersionService {
     return this.prisma.bookVersion.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      include: { seo: { select: { metaTitle: true, metaDescription: true } } },
+      select: {
+        ...PUBLIC_BOOK_VERSION_SELECT,
+        seo: { select: { metaTitle: true, metaDescription: true } },
+      },
     });
   }
 
@@ -410,13 +417,14 @@ export class BookVersionService {
   async getPublic(id: string, countryCode: string | null = null) {
     const version = await this.prisma.bookVersion.findFirst({
       where: { id, status: 'published' },
-      include: {
+      select: {
+        ...PUBLIC_BOOK_VERSION_SELECT,
         seo: true,
         categories: {
-          include: { category: true },
+          select: { category: true },
         },
         tags: {
-          include: { tag: true },
+          select: { tag: true },
         },
       },
     });
