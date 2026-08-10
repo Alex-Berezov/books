@@ -59,28 +59,35 @@ export class BookService {
     return agg._avg.score ?? null;
   }
 
-  async findAll(paginationDto?: PaginationDto) {
+  /**
+   * Список книг для витрины и для админской таблицы.
+   *
+   * 🔴 `publishedOnly` — не удобство, а граница между двумя потребителями
+   * (`LEGACY-093`). До 10.08.2026 маршрут был один на обоих: админской таблице
+   * нужны черновики, поэтому фильтра не было ни у кого, и публичная выдача
+   * сообщала анониму, какие переводы готовятся. Теперь публичный
+   * `GET /:lang/books` просит `publishedOnly`, а админский `GET /books` закрыт
+   * гвардом и получает всё.
+   *
+   * ⚠️ Фильтр стоит **и** в отборе книг, и во вложенных версиях. Только в
+   * `where` — это ровно тот дефект `LEGACY-090`: книга отбирается по наличию
+   * опубликованной версии, а прицепляются к ней все подряд.
+   */
+  async findAll(paginationDto?: PaginationDto, options?: { publishedOnly?: boolean }) {
     const { page = 1, limit = 10 } = paginationDto || {};
     const skip = (page - 1) * limit;
+    const publishedOnly = options?.publishedOnly === true;
+    const bookWhere: Prisma.BookWhereInput = publishedOnly
+      ? { versions: { some: { status: 'published' } } }
+      : {};
 
     const [books, total] = await Promise.all([
       this.prisma.book.findMany({
+        where: bookWhere,
         select: {
           ...PUBLIC_BOOK_SELECT,
-          /**
-           * 🔴 Здесь снят только правовой контур, но **не** фильтр статуса — и
-           * это осознанно. На `GET /books` сидят два потребителя разом:
-           * публичный каталог и админская таблица книг, которая ходит сюда же
-           * анонимно (`requireAuth: false`) и показывает колонку «status» с
-           * фильтром по черновикам. Отсечь неопубликованные значило бы отдать
-           * админке пустой список.
-           *
-           * ⚠️ То есть маршрут по-прежнему сообщает анониму, что черновики
-           * существуют, — но уже не показывает 29 правовых полей. Настоящее
-           * лечение — развести два потребителя по разным маршрутам
-           * (`LEGACY-093`), и до тех пор эта строка остаётся половиной ответа.
-           */
           versions: {
+            ...(publishedOnly ? { where: { status: 'published' as const } } : {}),
             select: {
               ...PUBLIC_BOOK_VERSION_SELECT,
               _count: {
@@ -105,7 +112,11 @@ export class BookService {
         skip,
         take: limit,
       }),
-      this.prisma.book.count(),
+      // ⚠️ Тот же `where`, что и у выборки. Расхождение здесь не даёт ошибки:
+      // `meta.total` просто показывает больше, чем маршрут отдаёт, — а по этому
+      // числу карта сайта решает, сколько файлов запрашивать, и лишние страницы
+      // молча отвечали бы 404 при живом индексе, который их перечисляет.
+      this.prisma.book.count({ where: bookWhere }),
     ]);
 
     const data = await Promise.all(

@@ -249,6 +249,54 @@ describe('Draft and rights exposure (e2e)', () => {
     });
   });
 
+  describe('LEGACY-093 — публичный каталог и админский список разведены', () => {
+    it('административный список закрыт гвардом', async () => {
+      await request(http()).get('/books?limit=5').expect(401);
+    });
+
+    it('редактор видит в нём черновики', async () => {
+      const res = await request(http())
+        .get('/books?limit=100')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(JSON.stringify(res.body)).toContain('DRAFT TITLE NOT FOR PUBLIC');
+    });
+
+    it('обычному пользователю административный список не открывается', async () => {
+      await request(http())
+        .get('/books?limit=5')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(403);
+    });
+
+    /**
+     * 🔴 Публичная витрина больше не сообщает, какие переводы готовятся.
+     * До 10.08.2026 фильтр «только published» существовал **тремя копиями на
+     * клиенте** — в каталоге, в карте сайта и в мапперах карточек, — потому что
+     * сервер его не соблюдал и каждый потребитель договаривался сам.
+     */
+    it('публичный список отдаёт книги без черновиков', async () => {
+      const res = await request(http()).get('/en/books?limit=100').expect(200);
+
+      expect(JSON.stringify(res.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
+      expect((res.body as { data: unknown[] }).data.length).toBeGreaterThan(0);
+    });
+
+    /**
+     * ⚠️ `meta.total` считается тем же `where`, что и выборка. Расхождение не
+     * дало бы ошибки — по этому числу карта сайта решает, сколько файлов
+     * запрашивать, и лишние страницы молча отвечали бы 404 при живом индексе,
+     * который их перечисляет.
+     */
+    it('total публичного списка согласован с выдачей', async () => {
+      const page = await request(http()).get('/en/books?limit=1000').expect(200);
+      const body = page.body as { data: unknown[]; meta: { total: number } };
+
+      expect(body.meta.total).toBe(body.data.length);
+    });
+  });
+
   describe('LEGACY-091 — маршрут объявлен один раз', () => {
     /**
      * 🔴 Пока путь объявляли два контроллера, побеждал порядок модулей — и

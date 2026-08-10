@@ -378,10 +378,16 @@ check_docker_status() {
 check_api_functionality() {
     log "Checking API functionality..."
     
-    # Public endpoint check (if exists)
-    local books=$(http_request "$BASE_URL/api/books?limit=1")
+    # Public endpoint check.
+    #
+    # Проба смотрит на ПУБЛИЧНЫЙ /:lang/books, а не на /api/books: последний с
+    # 10.08.2026 закрыт гвардом как административный (LEGACY-093). На закрытом
+    # маршруте эта проверка не упала бы — она отдаёт WARNING и выходит с нулём,
+    # то есть молча перестала бы что-либо проверять. Ровно та форма ошибки, что
+    # дважды сработала в LEGACY-072.
+    local books=$(http_request "$BASE_URL/api/en/books?limit=1")
     local books_status=$(echo "$books" | cut -d'|' -f2)
-    
+
     if [[ "$books_status" == "200" ]]; then
     add_result "api_books" "PASS" "Books API accessible"
     else

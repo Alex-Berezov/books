@@ -173,8 +173,24 @@ export class BookController {
     }
   }
 
+  /**
+   * Административный список книг: показывает **все** статусы, включая черновики
+   * (`LEGACY-093`).
+   *
+   * 🔴 Гвард появился только 10.08.2026, и до того маршрут был открыт. Его
+   * нельзя было закрыть раньше, потому что на нём сидели ещё двое:
+   * публичный каталог (`CatalogTemplate`) и проба `scripts/health_check.sh`.
+   * Оба переведены на публичный `GET /:lang/books` — гвард поставлен **после**
+   * этого, а не одновременно.
+   *
+   * ⚠️ Публичной витрине сюда ходить незачем: `GET /:lang/books` отдаёт то же
+   * самое, но только опубликованное.
+   */
   @Get()
-  @ApiOperation({ summary: 'Get all books with pagination' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  @ApiOperation({ summary: 'Get all books with pagination (admin: includes drafts)' })
   @ApiResponse({ status: 200, description: 'Books list successfully retrieved' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findAll(@Query() paginationDto: PaginationDto) {

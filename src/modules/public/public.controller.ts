@@ -115,12 +115,18 @@ export class PublicController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    // Forward to bookService.findAll (passing the resolved language/pagination params if service supports lang filtering, or just passing page/limit)
-    // Note: paginationDto has { page, limit }. Let's build a PaginationDto parameter format.
-    return this.books.findAll({
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-    });
+    // Публичная витрина видит только опубликованное (`LEGACY-093`). Раньше
+    // фильтра не было ни здесь, ни в сервисе, и правило «только published»
+    // существовало **тремя копиями на клиенте**: в каталоге, в карте сайта и в
+    // мапперах карточек. Сервер его не соблюдал — каждый потребитель
+    // договаривался сам.
+    return this.books.findAll(
+      {
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      },
+      { publishedOnly: true },
+    );
   }
 
   // Related books (compact BookCard) for a book page: same-author + similar-by-category
