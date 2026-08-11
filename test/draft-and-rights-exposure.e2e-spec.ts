@@ -34,6 +34,7 @@ describe('Draft and rights exposure (e2e)', () => {
   let bookSlug: string;
   let bookId: string;
   let publishedVersionId: string;
+  let publishedVersionSlug: string;
   let draftVersionId: string;
   let categorySlug: string;
   let tagSlug: string;
@@ -147,6 +148,11 @@ describe('Draft and rights exposure (e2e)', () => {
       .patch(`/versions/${publishedVersionId}/publish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
+
+    // `overview` адресуется слагом версии: слаг книги-контейнера уводит маршрут
+    // в 301 на канонический адрес перевода, и проверка мерила бы редирект.
+    const published = await request(http()).get(`/versions/${publishedVersionId}`).expect(200);
+    publishedVersionSlug = (published.body as { slug: string | null }).slug ?? bookSlug;
   });
 
   afterAll(async () => {
@@ -219,6 +225,82 @@ describe('Draft and rights exposure (e2e)', () => {
       expect(rightsKeys(res.body)).toEqual([]);
     });
 
+    /**
+     * 🔴 Маршрут, которого здесь не было до 11.08.2026 — и именно он остался
+     * дырявым, когда все перечисленные выше уже были закрыты. Замер живого API:
+     * **6.1 МБ, 66 полей на версию, 29 правовых**, включая
+     * `rightsContentHashInput` на 1.18 МБ (`LEGACY-090`, `LEGACY-046`).
+     *
+     * ⚠️ Это самая посещаемая публичная страница: фронт зовёт `overview` на
+     * каждой отрисовке карточки книги. Причина пропуска — обход шёл по
+     * `include: versions` в сервисах книг и таксономий, а `getOverview` в тот
+     * перечень не попал.
+     */
+    it('страница книги не отдаёт ни одного правового поля', async () => {
+      const res = await request(http()).get(`/books/${publishedVersionSlug}/overview`).expect(200);
+
+      expect(rightsKeys(res.body)).toEqual([]);
+    });
+
+    it('языковая форма того же маршрута тоже чиста', async () => {
+      const res = await request(http())
+        .get(`/en/books/${publishedVersionSlug}/overview`)
+        .expect(200);
+
+      expect(rightsKeys(res.body)).toEqual([]);
+    });
+
+    // Служебные ключи выбираются ради работы метода и обязаны сниматься на
+    // выходе: иначе белый список превращается в «почти белый».
+    it('страница книги не отдаёт внутренних ключей версии', async () => {
+      const res = await request(http()).get(`/books/${publishedVersionSlug}/overview`).expect(200);
+
+      const version = (res.body as { versions: Record<string, unknown>[] }).versions[0];
+      expect(version).not.toHaveProperty('seoId');
+      expect(version).not.toHaveProperty('primaryCategoryId');
+    });
+
+    /**
+     * Зеркало предыдущей проверки. Без него правка «убрать лишнее» однажды
+     * уберёт и нужное: страница книги рендерит редакционную обвязку, которой
+     * нет в карточках, и её отсутствие проявилось бы пустыми блоками, а не
+     * упавшим тестом.
+     */
+    it('страница книги сохраняет поля, ради которых она и существует', async () => {
+      const res = await request(http()).get(`/books/${publishedVersionSlug}/overview`).expect(200);
+
+      const version = (res.body as { versions: Record<string, unknown>[] }).versions[0];
+      for (const field of [
+        'id',
+        'title',
+        'author',
+        'slug',
+        'language',
+        'status',
+        'type',
+        'coverImageUrl',
+        'coverUrl',
+        'coverAlt',
+        'description',
+        'shortDescription',
+        'originalTitle',
+        'originalLanguage',
+        'copyrightStatus',
+        'authorPageUrl',
+        'alternativeTitles',
+        'themes',
+        'characters',
+        'quotes',
+        'faq',
+        'symbols',
+        'firstPublishedYear',
+        'editionPublishedYear',
+        '_count',
+      ]) {
+        expect(version).toHaveProperty(field);
+      }
+    });
+
     // Выдача обязана остаться пригодной: лечится объём ответа, а не маршрут.
     it('оставляет поля, на которых держатся карточки', async () => {
       const res = await request(http()).get(`/en/categories/${categorySlug}/books`).expect(200);
@@ -260,6 +342,55 @@ describe('Draft and rights exposure (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       expect((editor.body as { summary: string }).summary).toBe('Editorial draft summary');
+    });
+
+    /**
+     * 🔴 `GET /books/:id` и `GET /books/slug/:slug` фильтра статуса не имели
+     * вовсе, и это было записано в коде как осознанное решение: маршрут
+     * обслуживает админский переключатель версий. Верно наполовину — маршрут
+     * действительно админский, но **анонимный** (`LEGACY-090`).
+     *
+     * ⚠️ Лечится ответ, а не доступ: фильтр «только published» сделал бы
+     * переключатель версий у редактора вечно пустым.
+     */
+    it('книга по id не показывает черновик анониму, но показывает редактору', async () => {
+      const anon = await request(http()).get(`/books/${bookId}`).expect(200);
+      expect(JSON.stringify(anon.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
+
+      // Вошедший ≠ редактор.
+      const reader = await request(http())
+        .get(`/books/${bookId}`)
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(200);
+      expect(JSON.stringify(reader.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
+
+      const editor = await request(http())
+        .get(`/books/${bookId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(JSON.stringify(editor.body)).toContain('DRAFT TITLE NOT FOR PUBLIC');
+    });
+
+    it('книга по слагу — то же самое', async () => {
+      const anon = await request(http()).get(`/books/slug/${bookSlug}`).expect(200);
+      expect(JSON.stringify(anon.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
+
+      const editor = await request(http())
+        .get(`/books/slug/${bookSlug}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(JSON.stringify(editor.body)).toContain('DRAFT TITLE NOT FOR PUBLIC');
+    });
+
+    /**
+     * Ответ теперь зависит от `Authorization`, поэтому общему кэшу его отдавать
+     * нельзя: иначе черновик, однажды загруженный редактором, раздастся
+     * анонимам по тому же URL (`LEGACY-088`, `LEGACY-101`).
+     */
+    it('ответ этих маршрутов не кэшируется как публичный', async () => {
+      const res = await request(http()).get(`/books/${bookId}`).expect(200);
+
+      expect(res.headers['cache-control']).toBe('private, no-store');
     });
 
     it('саммари опубликованной версии остаётся публичным', async () => {

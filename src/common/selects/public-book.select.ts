@@ -53,6 +53,44 @@ export type PublicBookVersion = Prisma.BookVersionGetPayload<{
 }>;
 
 /**
+ * Поля версии для страницы книги — `GET /books/:slug/overview` и её языковой
+ * близнец `GET /:lang/books/:slug/overview`.
+ *
+ * 🔴 Эта константа появилась 11.08.2026, когда сверка выката нашла, что
+ * `PUBLIC_BOOK_VERSION_SELECT` наложен не везде: `getOverview` продолжал грузить
+ * версии голым `include` и отдавать модель целиком. Замер анонимного запроса —
+ * **6.1 МБ, 66 полей на версию, 29 из них `rights*`**, включая
+ * `rightsContentHashInput` на 1.18 МБ (`LEGACY-090`, `LEGACY-046`). Это самый
+ * посещаемый публичный маршрут: фронт зовёт его на каждой отрисовке страницы
+ * книги.
+ *
+ * ⚠️ Почему это отдельный список, а не общий `PUBLIC_BOOK_VERSION_SELECT`:
+ * страница книги рендерит редакционную обвязку, которой нет в карточках, —
+ * `themes`, `characters`, `quotes`, `faq`, `symbols`, `originalTitle`,
+ * `alternativeTitles`. Наложить сюда карточный список означало бы вычистить со
+ * страницы половину содержимого. Обратный ход — добавить эти поля в общий
+ * список — раздул бы каждую карточку в каждом списке.
+ *
+ * ⚠️ Список остаётся **белым** по той же причине, что и карточный: чёрный
+ * пропустил бы следующее добавленное в схему поле молча.
+ */
+export const PUBLIC_BOOK_VERSION_OVERVIEW_SELECT = {
+  ...PUBLIC_BOOK_VERSION_SELECT,
+  firstPublishedYear: true,
+  editionPublishedYear: true,
+  originalLanguage: true,
+  originalTitle: true,
+  copyrightStatus: true,
+  authorPageUrl: true,
+  alternativeTitles: true,
+  characters: true,
+  quotes: true,
+  faq: true,
+  themes: true,
+  symbols: true,
+} satisfies Prisma.BookVersionSelect;
+
+/**
  * Поля книги-контейнера, которые можно показать анониму.
  *
  * 🔴 Добавлено после того, как e2e поймал недоделку: версии я закрыл, а сам

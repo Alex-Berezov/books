@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   PUBLIC_BOOK_SELECT,
+  PUBLIC_BOOK_VERSION_OVERVIEW_SELECT,
   PUBLIC_BOOK_VERSION_SELECT,
 } from '../../common/selects/public-book.select';
+import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
@@ -31,6 +33,7 @@ export class BookService {
     private geoBlockRuleService: GeoBlockRuleService,
     private relatedTaxonomy: RelatedTaxonomyService,
     private slugRedirects: SlugRedirectService,
+    private readonly moderatorRoles: ModeratorRolesService,
   ) {}
 
   async rateBook(userId: string, bookId: string, score: number) {
@@ -153,14 +156,27 @@ export class BookService {
     };
   }
 
-  async findOne(id: string) {
+  /**
+   * Черновики здесь видит только модератор (`LEGACY-090`).
+   *
+   * ⚠️ Просто зафильтровать по `published` было **нельзя**: на этот же адрес
+   * ходит админский переключатель версий, которому черновики и нужны. Поэтому
+   * здесь, как в саммари и комментариях, разделяется не доступ, а ответ — иначе
+   * закрытие маршрута сломало бы редактору работу с непубликованным переводом.
+   *
+   * 🔴 Прежний комментарий на этом месте объяснял, почему статус не
+   * фильтруется, и был верен ровно наполовину: маршрут действительно
+   * админский — но **анонимный**, и отдавал черновики кому угодно.
+   */
+  async findOne(id: string, actor?: { userId: string; email: string }) {
+    const includeDrafts = await this.moderatorRoles.isModerator(actor);
+
     const book = await this.prisma.book.findUnique({
       where: { id },
       select: {
         ...PUBLIC_BOOK_SELECT,
-        // Как и `findAll`: правовой контур убран, статус не фильтруется —
-        // маршрут обслуживает админский переключатель версий (`LEGACY-090`).
         versions: {
+          where: includeDrafts ? undefined : { status: 'published' },
           select: {
             ...PUBLIC_BOOK_VERSION_SELECT,
             categories: {
@@ -174,7 +190,9 @@ export class BookService {
       },
     });
 
-    if (!book) {
+    if (!book || (!includeDrafts && book.versions.length === 0)) {
+      // Книга, у которой посетителю нечего показать, для него не существует:
+      // иначе сам факт её заведения и её слаг остаются наблюдаемыми.
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
 
@@ -191,9 +209,12 @@ export class BookService {
     };
   }
 
-  async findBySlug(slug: string) {
+  /** Черновики видит только модератор — как в `findOne` (`LEGACY-090`). */
+  async findBySlug(slug: string, actor?: { userId: string; email: string }) {
+    const includeDrafts = await this.moderatorRoles.isModerator(actor);
+
     const version = await this.prisma.bookVersion.findFirst({
-      where: { slug },
+      where: includeDrafts ? { slug } : { slug, status: 'published' },
       select: { bookId: true },
     });
 
@@ -204,6 +225,7 @@ export class BookService {
       select: {
         ...PUBLIC_BOOK_SELECT,
         versions: {
+          where: includeDrafts ? undefined : { status: 'published' },
           select: {
             ...PUBLIC_BOOK_VERSION_SELECT,
             categories: {
@@ -217,7 +239,7 @@ export class BookService {
       },
     });
 
-    if (!book) {
+    if (!book || (!includeDrafts && book.versions.length === 0)) {
       throw new NotFoundException(`Book with slug ${slug} not found`);
     }
 
@@ -263,10 +285,14 @@ export class BookService {
       throw new NotFoundException(`Book with slug "${slug}" not found`);
     }
 
-    // Load all published versions for this book
+    // Load all published versions for this book.
+    //
+    // 🔴 Раньше здесь стоял голый `include`, то есть наружу уезжала вся модель
+    // версии — 66 полей, 29 из них правовые (`LEGACY-090`).
     const versions = await this.prisma.bookVersion.findMany({
       where: { bookId, status: 'published' },
-      include: {
+      select: {
+        ...PUBLIC_BOOK_VERSION_OVERVIEW_SELECT,
         _count: {
           select: {
             chapters: true,
@@ -276,6 +302,18 @@ export class BookService {
         },
       },
     });
+
+    // ⚠️ `seoId` и `primaryCategoryId` нужны методу, но публике не нужны, и
+    // читаются они **отдельным** запросом намеренно. Выбрать их вместе с
+    // версиями и вычесть перед ответом было бы на один запрос дешевле — и на
+    // одну забытую строку опаснее: тогда «что выбрано, то и отдано» перестало
+    // бы быть правдой, а именно на этом допущении дефект и держался.
+    const internals = await this.prisma.bookVersion.findMany({
+      where: { bookId, status: 'published' },
+      select: { id: true, seoId: true, primaryCategoryId: true },
+    });
+    const seoIdOf = new Map(internals.map((v) => [v.id, v.seoId]));
+    const primaryCategoryIdOf = new Map(internals.map((v) => [v.id, v.primaryCategoryId]));
 
     const availableLanguages = Array.from(new Set(versions.map((v) => v.language)));
 
@@ -329,10 +367,10 @@ export class BookService {
 
     const loadSeo = async (versionId: string | null | undefined) => {
       if (!versionId) return null;
-      const v = versions.find((vv) => vv.id === versionId);
-      if (!v?.seoId) return null;
+      const seoId = seoIdOf.get(versionId);
+      if (!seoId) return null;
       return this.prisma.seo.findUnique({
-        where: { id: v.seoId },
+        where: { id: seoId },
         select: { metaTitle: true, metaDescription: true },
       });
     };
@@ -347,17 +385,10 @@ export class BookService {
       summary: (await loadSeo(textVersion?.id)) ?? (await loadSeo(audioVersion?.id)) ?? null,
     } as const;
 
-    const activeVersion = (textVersion || audioVersion || referralVersion) as {
-      id: string;
-      title: string;
-      author: string;
-      description: string;
-      coverImageUrl: string;
-      primaryCategoryId: string | null;
-      firstPublishedYear: number | null;
-      editionPublishedYear: number | null;
-      publishedAt: Date | null;
-    } | null;
+    // Каст здесь больше не нужен: с белым списком тип версии выводится сам
+    // (`LEGACY-090`). Раньше он перечислял поля вручную и потому молчал бы о
+    // том, что рядом в ответ уезжает ещё полсотни.
+    const activeVersion = textVersion || audioVersion || referralVersion;
 
     // Fetch categories and tags for the active version
     const categoriesRelation =
@@ -421,7 +452,7 @@ export class BookService {
     const book = await this.prisma.book.findUnique({ where: { id: bookId } });
 
     let primaryCategory: (Category & { translations: CategoryTranslation[] }) | null = null;
-    const primaryCategoryId = activeVersion?.primaryCategoryId;
+    const primaryCategoryId = activeVersion ? primaryCategoryIdOf.get(activeVersion.id) : null;
     if (primaryCategoryId) {
       primaryCategory = await this.prisma.category.findUnique({
         where: { id: primaryCategoryId },
@@ -462,6 +493,8 @@ export class BookService {
       tags,
       primaryCategoryId: primaryCategoryId ?? null,
       primaryCategory,
+      // Что выбрано, то и отдано: `versions` собран по белому списку и вычитать
+      // из него ничего не нужно (`LEGACY-090`).
       versions: versions.map((v) => ({
         ...v,
         coverUrl: v.coverImageUrl, // compatibility alias

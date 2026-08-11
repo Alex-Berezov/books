@@ -10,6 +10,7 @@ import {
   HttpStatus,
   Query,
   UseGuards,
+  UseInterceptors,
   Headers,
   Req,
   HttpCode,
@@ -29,6 +30,9 @@ import { RateBookDto } from './dto/rate-book.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { SLUG_PATTERN } from '../../shared/validators/slug';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
+import { NoPublicCache } from '../../common/decorators/no-public-cache.decorator';
+import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CheckBookSlugQueryDto } from './dto/check-slug-query.dto';
@@ -205,8 +209,17 @@ export class BookController {
     }
   }
 
+  /**
+   * Токен необязателен, но меняет ответ: черновые версии видит только модератор
+   * (`LEGACY-090`). `@NoPublicCache` обязателен по той же причине — ответ
+   * зависит от того, кто спрашивает, и общему кэшу его раздавать нельзя.
+   */
   @Get('slug/:slug')
-  @ApiOperation({ summary: 'Get book by slug' })
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
+  @UseInterceptors(PublicCacheInterceptor)
+  @NoPublicCache()
+  @ApiOperation({ summary: 'Get book by slug (drafts are visible to moderators only)' })
   @ApiParam({
     name: 'slug',
     description: 'Unique book slug',
@@ -216,9 +229,9 @@ export class BookController {
   @ApiResponse({ status: 200, description: 'Book found' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
-  async findBySlug(@Param('slug') slug: string) {
+  async findBySlug(@Param('slug') slug: string, @Req() req?: { user?: RequestUser }) {
     try {
-      return await this.bookService.findBySlug(slug);
+      return await this.bookService.findBySlug(slug, req?.user);
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new HttpException(
@@ -228,15 +241,20 @@ export class BookController {
     }
   }
 
+  /** Как и `slug/:slug`: черновики — только держателю токена модератора. */
   @Get(':id')
-  @ApiOperation({ summary: 'Get book by ID' })
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
+  @UseInterceptors(PublicCacheInterceptor)
+  @NoPublicCache()
+  @ApiOperation({ summary: 'Get book by ID (drafts are visible to moderators only)' })
   @ApiParam({ name: 'id', description: 'Unique book ID' })
   @ApiResponse({ status: 200, description: 'Book found' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
-  async findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string, @Req() req?: { user?: RequestUser }) {
     try {
-      return await this.bookService.findOne(id);
+      return await this.bookService.findOne(id, req?.user);
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
       throw new HttpException(

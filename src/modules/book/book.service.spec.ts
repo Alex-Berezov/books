@@ -5,6 +5,7 @@ import { BookType, Language } from '@prisma/client';
 import { NotFoundException } from '@nestjs/common';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 
 interface PrismaStub {
   book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
@@ -55,6 +56,17 @@ const createSlugRedirectStub = (): SlugRedirectService =>
     resolve: jest.fn().mockResolvedValue(null),
   }) as unknown as SlugRedirectService;
 
+/**
+ * Обзор и карточки читает аноним, поэтому во всех спеках ниже модератора нет:
+ * стаб отвечает «нет» — ровно то состояние, в котором черновики не видны
+ * (`LEGACY-090`).
+ */
+const createModeratorRolesStub = (): ModeratorRolesService =>
+  ({
+    isModerator: jest.fn().mockResolvedValue(false),
+    isAdmin: jest.fn().mockResolvedValue(false),
+  }) as unknown as ModeratorRolesService;
+
 describe('BookService.getOverview', () => {
   let service: BookService;
   let prisma: PrismaStub;
@@ -66,6 +78,7 @@ describe('BookService.getOverview', () => {
       createGeoBlockRuleServiceStub(),
       new RelatedTaxonomyService(prisma as unknown as PrismaService),
       createSlugRedirectStub(),
+      createModeratorRolesStub(),
     );
   });
 
@@ -309,6 +322,7 @@ describe('BookService.getOverview', () => {
         createGeoBlockRuleServiceStub(),
         new RelatedTaxonomyService(prisma as unknown as PrismaService),
         createSlugRedirectStub(),
+        createModeratorRolesStub(),
       );
     });
 
