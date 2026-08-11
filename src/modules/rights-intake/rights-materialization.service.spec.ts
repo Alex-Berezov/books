@@ -1759,6 +1759,77 @@ describe('RightsMaterializationService', () => {
       (prisma['territoryDecision'] as Record<string, jest.Mock>).update = jest.fn();
     };
 
+    /**
+     * 🔴 Регрессия, найденная код-ревью пачки, а не самой записью `LEGACY-044`.
+     *
+     * Первая версия правки бросала `ReportShapeError` из
+     * `mapExistingTerritoryDecisions` **всегда**. Но этот метод зовётся и отсюда,
+     * из пересчёта, а пересчёт идёт из `RightsActionService` внутри чужой
+     * транзакции, где ошибку никто не переводит в 422. Модератор, закрывающий
+     * действие на удаление компонента у профиля со старыми битыми данными,
+     * получал голую 500, и вместе с ней откатывались смена статуса и её событие
+     * аудита — действие становилось незакрываемым навсегда.
+     *
+     * Тест краснеет от возврата режима `reject` на этом пути.
+     */
+    describe('битые коды страны в уже сохранённых данных (регрессия LEGACY-044)', () => {
+      it('не роняет пересчёт из-за негодного countryCode в сохранённом отчёте', async () => {
+        setupRecompute({
+          actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'COMPLETED' }],
+        });
+        (prisma['rightsReviewImport'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeImportRecord({
+            reportJson: {
+              ...makeValidReportJson(),
+              // Такие профили уже существуют: до правки `null` молча становился ''.
+              territoryDecisions: [
+                {
+                  ...(
+                    makeValidReportJson()['territoryDecisions'] as Array<Record<string, unknown>>
+                  )[0],
+                  countryCode: null,
+                },
+              ],
+            },
+          }),
+        );
+
+        const result = await service.recomputeTerritoryDecisionsFromComponents(
+          prisma as unknown as Record<string, unknown>,
+          'profile-1',
+        );
+
+        // Пересчёт доходит до конца: действие модератора закрывается.
+        expect(result).toEqual({ changedCountryCodes: ['GB'] });
+      });
+
+      it('не роняет пересчёт из-за пустого countryCode в строке БД', async () => {
+        setupRecompute({
+          actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'COMPLETED' }],
+        });
+        (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany = jest
+          .fn()
+          .mockResolvedValue([
+            {
+              ...blockingIllustration,
+              territoryAssessments: [
+                // Строка БД, а не отчёт: переимпорт её не починит, поэтому и
+                // сообщать оператору «исправьте отчёт» здесь нельзя.
+                { ...blockingIllustration.territoryAssessments[0], countryCode: '' },
+                blockingIllustration.territoryAssessments[0],
+              ],
+            },
+          ]);
+
+        const result = await service.recomputeTerritoryDecisionsFromComponents(
+          prisma as unknown as Record<string, unknown>,
+          'profile-1',
+        );
+
+        expect(result).toEqual({ changedCountryCodes: ['GB'] });
+      });
+    });
+
     it('opens the country once the removal action is closed', async () => {
       setupRecompute({
         actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'COMPLETED' }],
@@ -1888,6 +1959,66 @@ describe('RightsMaterializationService', () => {
       expect(typeof created['reasonRu']).toBe('string');
       expect((created['reasonRu'] as string).trim()).not.toBe('');
       expect(created['confidence']).toBe('HIGH');
+    });
+
+    /**
+     * `LEGACY-044`. Дефолт допустим там, где значение по существу необязательно
+     * (`reasonRu` — G.2 выше). Код страны — идентичность строки: пустая строка
+     * вместо него создавала решение, которое не попадает ни в целевые страны, ни
+     * в справочник регионов, но существует в профиле и считается в счётчиках.
+     *
+     * Ответ — 422 `REPORT_NOT_MATERIALIZABLE`, а не 500: такой отчёт не
+     * разложится никогда, сколько ни повторяй запрос.
+     */
+    const expect422 = async (report: Record<string, unknown>) => {
+      (prisma['rightsReviewImport'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeImportRecord({ reportJson: report }),
+      );
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findFirst.mockResolvedValue(null);
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const error = await service.materializeFromImport('import-1').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      const response = (error as UnprocessableEntityException).getResponse() as Record<
+        string,
+        unknown
+      >;
+      expect(response['code']).toBe('REPORT_NOT_MATERIALIZABLE');
+      // Индекс в сообщении — не украшение: без него оператор с сорока
+      // решениями в отчёте не найдёт виноватую запись.
+      expect(String(response['reason'])).toContain('territoryDecisions[0]');
+      expect(String(response['reason'])).toContain('countryCode');
+      return response;
+    };
+
+    it('044: countryCode = null в решении — 422, а не решение с пустым кодом', async () => {
+      const report = makeValidReportJson();
+      (report['territoryDecisions'] as Array<Record<string, unknown>>)[0]['countryCode'] = null;
+
+      await expect422(report);
+
+      expect(
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).create,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('044: нестроковый countryCode в решении — 422, а не молчаливая пустая строка', async () => {
+      const report = makeValidReportJson();
+      (report['territoryDecisions'] as Array<Record<string, unknown>>)[0]['countryCode'] = 7;
+
+      await expect422(report);
+    });
+
+    it('044: пустая строка в countryCode тоже отвергается', async () => {
+      const report = makeValidReportJson();
+      (report['territoryDecisions'] as Array<Record<string, unknown>>)[0]['countryCode'] = '  ';
+
+      await expect422(report);
     });
 
     it('G.6: отчёт без requiredActions и evidence материализуется без этих записей', async () => {

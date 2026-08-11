@@ -296,6 +296,117 @@ describe('CommentsService', () => {
     });
   });
 
+  /**
+   * `CommentDto.children` объявлен как `CommentDto[]`, где `user` обязателен.
+   * Prisma отдаёт ровно то, что попросили, поэтому забытый `include` даёт
+   * `children[].user === undefined` при зелёном typecheck — расхождение вылезет
+   * обращением к `user.name` в рантайме (`LEGACY-102`).
+   *
+   * Проверяется каждый путь, возвращающий ветку, а не один: автор был потерян
+   * именно потому, что `include` писался в четырёх местах по отдельности.
+   */
+  describe('вложенная ветка: автор и фильтр скрытых (LEGACY-102)', () => {
+    beforeEach(() => {
+      prisma.userRole.findMany.mockResolvedValue([]);
+      config.set('ADMIN_EMAILS', '');
+      config.set('CONTENT_MANAGER_EMAILS', '');
+    });
+
+    // Проверяются оба свойства ветки сразу и на каждом из четырёх путей.
+    // Раздельная проверка — как в первой версии этих тестов, где фильтр
+    // сверялся только у `get()`, — пропустила бы ровно ту регрессию, которую
+    // код-ревью и нашло: `create` и `update` получили автора, но остались без
+    // `where`, и скрытый ответ поехал бы с именем и аватаром.
+    const childrenArgOf = (args: unknown) => {
+      const include = (args as { include?: Record<string, unknown> } | undefined)?.include;
+      return include?.children as
+        | { where?: Record<string, unknown>; include?: Record<string, unknown> }
+        | undefined;
+    };
+
+    const expectAuthor = (children: ReturnType<typeof childrenArgOf>) =>
+      expect(children?.include).toHaveProperty('user');
+
+    const VISIBLE_ONLY = { isDeleted: false, isHidden: false };
+    const MODERATOR = { isDeleted: false };
+
+    it('create() — автор есть, скрытые отфильтрованы', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce(undefined);
+      prisma.bookVersion.findUnique.mockResolvedValueOnce({ id: 'v1' });
+      prisma.comment.create.mockResolvedValueOnce({ id: 'c1' });
+
+      await service.create('u1', { bookVersionId: 'v1', text: 'hi' } as CreateCommentDto);
+
+      const children = childrenArgOf(prisma.comment.create.mock.calls[0][0]);
+      expectAuthor(children);
+      expect(children?.where).toEqual(VISIBLE_ONLY);
+    });
+
+    it('get() — автор есть, скрытые отфильтрованы', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1', isDeleted: false });
+
+      await service.get('c1');
+
+      const children = childrenArgOf(prisma.comment.findUnique.mock.calls[0][0]);
+      expectAuthor(children);
+      expect(children?.where).toEqual(VISIBLE_ONLY);
+    });
+
+    it('update() — автор есть, скрытые отфильтрованы для обычного пользователя', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({
+        id: 'c1',
+        userId: 'u1',
+        isDeleted: false,
+      });
+      prisma.userRole.findMany.mockResolvedValueOnce([]);
+      prisma.comment.update.mockResolvedValueOnce({ id: 'c1' });
+
+      await service.update('c1', { userId: 'u1', email: 'u1@test.com' }, { text: 'edited' });
+
+      const children = childrenArgOf(prisma.comment.update.mock.calls[0][0]);
+      expectAuthor(children);
+      // 🔴 Регрессия, найденная ревью: без `where` здесь скрытый модератором
+      // ответ возвращался бы автору корневого комментария вместе с личностью
+      // того, кого скрыли.
+      expect(children?.where).toEqual(VISIBLE_ONLY);
+    });
+
+    it('list() — автор есть, скрытые отфильтрованы', async () => {
+      prisma.comment.findMany.mockResolvedValueOnce([]);
+      prisma.comment.count.mockResolvedValueOnce(0);
+
+      await service.list({ target: 'version', targetId: 'v1', page: 1, limit: 10 });
+
+      const children = childrenArgOf(prisma.comment.findMany.mock.calls[0][0]);
+      expectAuthor(children);
+      expect(children?.where).toEqual(VISIBLE_ONLY);
+    });
+
+    it('модератор видит скрытые ответы — иначе модерировать пришлось бы вслепую', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1', isDeleted: false });
+      prisma.userRole.findMany.mockResolvedValueOnce([{ role: { name: 'content_manager' } }]);
+
+      await service.get('c1', { userId: 'm1', email: 'mod@test.com' });
+
+      expect(childrenArgOf(prisma.comment.findUnique.mock.calls[0][0])?.where).toEqual(MODERATOR);
+    });
+
+    it('list(includeHidden) отдаёт скрытые — тот же признак, что и у корневых', async () => {
+      prisma.comment.findMany.mockResolvedValueOnce([]);
+      prisma.comment.count.mockResolvedValueOnce(0);
+
+      await service.list({
+        target: 'version',
+        targetId: 'v1',
+        page: 1,
+        limit: 10,
+        includeHidden: true,
+      });
+
+      expect(childrenArgOf(prisma.comment.findMany.mock.calls[0][0])?.where).toEqual(MODERATOR);
+    });
+  });
+
   describe('list()', () => {
     it('applies hidden filter and target mapping with pagination', async () => {
       prisma.comment.findMany.mockResolvedValueOnce([{ id: 'c1' }]);

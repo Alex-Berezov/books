@@ -45,23 +45,6 @@ interface RightsIntakeWithLanguages {
   targetLanguages: unknown;
 }
 
-interface SiblingVersionWithRights {
-  id: string;
-  primaryCategoryId: string | null;
-  rightsProfileId: string | null;
-  approvedRightsReviewId: string | null;
-  rightsStatus: string | null;
-  rightsAllowedCountryCodes: unknown;
-  rightsBlockedCountryCodes: unknown;
-  rightsLicenseRequiredCountryCodes: unknown;
-  rightsPendingCountryCodes: unknown;
-  rightsRequiredActions: unknown;
-  rightsGeoBlockRequired: boolean | null;
-  rightsGeoBlockConfigured: boolean | null;
-  rightsGeoBlockConfiguredAt: Date | null;
-  rightsGeoBlockNotesRu: string | null;
-}
-
 @Injectable()
 export class BookVersionService {
   private readonly logger = new Logger(BookVersionService.name);
@@ -234,7 +217,11 @@ export class BookVersionService {
       throw new BadRequestException('Version for this language already exists for this book');
     }
 
-    let version;
+    // Аннотация обязательна: `let` без типа и без инициализатора — «развивающийся
+    // any», и всё, что читается из него ниже (`rightsProfileId`, `id`,
+    // `approvedRightsReviewId`), проверку типов не проходит вовсе. Пока файл был
+    // выведен из-под unsafe-правил ESLint, этого не было видно (`LEGACY-038`).
+    let version: Prisma.BookVersionGetPayload<{ include: { seo: true } }>;
     try {
       version = await this.prisma.$transaction(async (tx) => {
         let seoId: number | undefined;
@@ -250,10 +237,10 @@ export class BookVersionService {
 
         // Search for any existing sibling version of this book to copy tags/categories from
 
-        const siblingVersion = (await tx.bookVersion.findFirst({
+        const siblingVersion = await tx.bookVersion.findFirst({
           where: { bookId },
           orderBy: { createdAt: 'asc' },
-        })) as unknown as SiblingVersionWithRights | null;
+        });
 
         const effectivePrimaryCategoryId =
           dto.primaryCategoryId || siblingVersion?.primaryCategoryId || undefined;
@@ -328,13 +315,6 @@ export class BookVersionService {
             rightsGeoBlockNotesRu,
             rightsGeoBlockVerifiedAt: null,
             rightsGeoBlockVerifiedByUserId: null,
-          } as Prisma.BookVersionUncheckedCreateInput & {
-            rightsGeoBlockRequired: boolean;
-            rightsGeoBlockConfigured: boolean;
-            rightsGeoBlockConfiguredAt: Date | null;
-            rightsGeoBlockNotesRu: string | null;
-            rightsGeoBlockVerifiedAt: Date | null;
-            rightsGeoBlockVerifiedByUserId: string | null;
           },
           include: { seo: true },
         });
@@ -558,7 +538,7 @@ export class BookVersionService {
               person: true,
             },
           },
-        } as any,
+        },
       });
       if (foundProfile) {
         currentProfile = foundProfile as Record<string, unknown>;

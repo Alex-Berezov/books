@@ -29,6 +29,31 @@ const PUBLIC_COMMENT_USER_SELECT = {
   avatarUrl: true,
 } as const;
 
+/**
+ * Вложенная ветка ответов: и кого показывать, и кто их написал.
+ *
+ * ⚠️ Одной функцией, и по той же причине, что и селект выше. `include` для ветки
+ * писался в четырёх местах отдельно, и автор оказался только в одном из них
+ * (`LEGACY-102`). Расхождение не ловится typecheck'ом: Prisma возвращает то, что
+ * попросили, а `CommentDto` обещает `children: CommentDto[]` с обязательным
+ * `user`, и поле приходит `undefined` там, где тип гарантирует объект.
+ *
+ * 🔴 **`where` входит сюда же, и это не удобство, а условие правильности.**
+ * Первая версия правки вынесла в общую константу только `include`, оставив
+ * фильтр дописываться по месту, — и два пути из четырёх (`create`, `update`)
+ * остались без него. Результат был бы хуже исходного дефекта: скрытый
+ * модератором ответ и раньше возвращался этими путями, но теперь приезжал бы
+ * с именем и аватаром автора — ровно та выдача личности, которую закрывала
+ * `LEGACY-089`. Общая часть обязана включать всё, что должно быть одинаковым,
+ * иначе она даёт ложное чувство единообразия.
+ *
+ * Модератор скрытое видит: иначе модерировать пришлось бы вслепую.
+ */
+const commentChildren = (canModerate: boolean) => ({
+  where: { isDeleted: false, ...(canModerate ? {} : { isHidden: false }) },
+  include: { user: { select: PUBLIC_COMMENT_USER_SELECT } },
+});
+
 @Injectable()
 export class CommentsService {
   constructor(
@@ -68,12 +93,7 @@ export class CommentsService {
           // модератором ответ оставался виден в публичном листинге, хотя
           // корневые комментарии он отсекал правильно. Сокрытие работало ровно
           // до первого ответа в ветке.
-          children: {
-            where: { isDeleted: false, ...(includeHidden ? {} : { isHidden: false }) },
-            include: {
-              user: { select: PUBLIC_COMMENT_USER_SELECT },
-            },
-          },
+          children: commentChildren(includeHidden ?? false),
           rating: true,
           user: { select: PUBLIC_COMMENT_USER_SELECT },
         },
@@ -153,7 +173,9 @@ export class CommentsService {
         include: {
           rating: true,
           user: { select: PUBLIC_COMMENT_USER_SELECT },
-          children: true,
+          // Автор ответа создаёт комментарий, а не модерирует: скрытые ответы
+          // ему в выдаче не место.
+          children: commentChildren(false),
         },
       });
     });
@@ -181,9 +203,7 @@ export class CommentsService {
       include: {
         rating: true,
         user: { select: PUBLIC_COMMENT_USER_SELECT },
-        children: {
-          where: { isDeleted: false, ...(canModerate ? {} : { isHidden: false }) },
-        },
+        children: commentChildren(canModerate),
       },
     });
     if (!comment || comment.isDeleted) {
@@ -230,7 +250,7 @@ export class CommentsService {
       include: {
         rating: true,
         user: { select: PUBLIC_COMMENT_USER_SELECT },
-        children: true,
+        children: commentChildren(canModerate),
       },
     });
 

@@ -47,9 +47,70 @@ const isUniqueConstraintViolation = (error: unknown): boolean =>
  * неизвестное значение enum'а, нарушенный констрейнт. Такой отчёт не разложится никогда,
  * сколько ни повторяй запрос, поэтому ответ — 422, а не 500 (WP-6.3).
  */
+class ReportShapeError extends Error {}
+
 const isReportShapeError = (error: unknown): boolean =>
+  error instanceof ReportShapeError ||
   error instanceof Prisma.PrismaClientValidationError ||
   error instanceof Prisma.PrismaClientKnownRequestError;
+
+/**
+ * Код страны — идентичность строки, а не её описание.
+ *
+ * Раньше нестроковое значение молча превращалось в `''` (`LEGACY-044`): запись
+ * создавалась, не попадала ни в целевые страны, ни в справочник регионов, но
+ * существовала в профиле и участвовала в счётчиках. Соседние места делали
+ * обратную ошибку — `(x as string).toUpperCase()` на `null` давал `TypeError`
+ * и голую 500 вместо диагностируемой 422.
+ *
+ * Дефолт допустим там, где значение по существу необязательно (`reasonRu`,
+ * WP-G.4). Для идентичности его быть не должно: отсутствие обязано быть ошибкой.
+ *
+ * 🔴 **Но «ошибка» — не одно и то же на двух путях, и это не деталь.** Первая
+ * версия правки бросала всегда, и код-ревью нашло, чем это оборачивается:
+ * `mapExistingTerritoryDecisions` зовётся не только при разборе импорта, но и из
+ * `recomputeTerritoryDecisionsFromComponents` — а тот идёт из
+ * `RightsActionService` внутри чужой транзакции, где никто не переводит ошибку в
+ * 422. Модератор, закрывающий действие на удаление компонента у профиля со
+ * старыми битыми данными, получал голую 500, и вместе с ней откатывались смена
+ * статуса и её событие аудита. Действие становилось незакрываемым навсегда:
+ * повтор упирался в тот же сохранённый отчёт. То есть правка убирала голую 500
+ * на одном пути и заводила её на другом.
+ *
+ * Поэтому режим выбирает вызывающий, и оба варианта прямо названы в записи:
+ *
+ * - `reject` — разбор **входящего** отчёта. Отчёт ещё не принят, отказать
+ *   громко правильно: `ReportShapeError` → 422 `REPORT_NOT_MATERIALIZABLE`.
+ * - `skip` — пересчёт по **уже сохранённым** данным. Битое значение здесь не
+ *   новость, а наследство; ронять чужую транзакцию из-за него нельзя. Запись
+ *   отбрасывается с предупреждением в лог.
+ */
+type InvalidCountryCode = 'reject' | 'skip';
+
+const readCountryCode = (
+  value: unknown,
+  where: string,
+  mode: InvalidCountryCode,
+  logger: Logger,
+): string | null => {
+  if (typeof value === 'string' && value.trim() !== '') return value.trim().toUpperCase();
+
+  // Пустая строка и строка из пробелов — не «строка»: описывать их как `string`
+  // значило бы сказать оператору, что тип верен, хотя проблема именно в значении.
+  const got =
+    value === null
+      ? 'null'
+      : typeof value === 'string'
+        ? 'blank string'
+        : value === undefined
+          ? 'undefined'
+          : typeof value;
+  const reason = `${where}: countryCode must be a non-empty string, got ${got}`;
+
+  if (mode === 'reject') throw new ReportShapeError(reason);
+  logger.warn(`${reason}. Запись пропущена при пересчёте; исходные данные не менялись.`);
+  return null;
+};
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 
@@ -619,10 +680,18 @@ export class RightsMaterializationService {
             : [];
           const normalizedAssessments: ComponentTerritoryAssessmentInput[] = [];
 
-          for (const assessment of componentTerritoryAssessments) {
+          for (const [assessmentIndex, assessment] of componentTerritoryAssessments.entries()) {
             hasComponentTerritoryAssessments = true;
             const normalizedAssessment = {
-              countryCode: (assessment['countryCode'] as string).toUpperCase(),
+              // Разбор входящего отчёта — режим `reject`: значение ещё не
+              // принято, и отказать громко правильно. Возврат `null` здесь
+              // невозможен, что и фиксирует утверждение ниже.
+              countryCode: readCountryCode(
+                assessment['countryCode'],
+                `components[].territoryAssessments[${assessmentIndex}]`,
+                'reject',
+                this.logger,
+              ) as string,
               status: assessment['status'] as ComponentTerritoryFinalStatus,
               accessPolicy: assessment['accessPolicy'] as ComponentTerritoryAccessPolicy,
               geoBlockRequired: (assessment['geoBlockRequired'] as boolean) ?? false,
@@ -714,9 +783,11 @@ export class RightsMaterializationService {
         }
       }
 
+      // Разбор входящего отчёта: негодный код страны — повод отказать целиком.
       const existingTerritoryDecisions = this.mapExistingTerritoryDecisions(
         territoryDecisions,
         reportJson['confidence'],
+        'reject',
       );
       const decisionsToCreate = hasComponentTerritoryAssessments
         ? this.componentTerritoryAggregationService.aggregateTerritoryDecisionsFromComponents({
@@ -1085,16 +1156,31 @@ export class RightsMaterializationService {
         confidence: component['confidence'] as ComponentTerritoryConfidence,
         territoryAssessments: (
           (component['territoryAssessments'] as Array<Record<string, unknown>> | undefined) ?? []
-        ).map((assessment) => ({
-          countryCode: (assessment['countryCode'] as string).toUpperCase(),
-          status: assessment['status'] as ComponentTerritoryFinalStatus,
-          accessPolicy: assessment['accessPolicy'] as ComponentTerritoryAccessPolicy,
-          geoBlockRequired: (assessment['geoBlockRequired'] as boolean) ?? false,
-          reasonRu: (assessment['reasonRu'] as string) ?? null,
-          legalBasisRu: (assessment['legalBasisRu'] as string) ?? null,
-          confidence: (assessment['confidence'] as ComponentTerritoryConfidence | null) ?? null,
-          rightsExpireAt: this.parseDateOrNull(assessment['rightsExpireAt']),
-        })),
+        ).flatMap((assessment, index) => {
+          // Значение приходит из таблицы `RightsComponentTerritoryAssessment`,
+          // а не из отчёта. Метка обязана называть источник честно: сказать
+          // оператору «исправьте отчёт» о битой строке в БД — послать его
+          // переимпортировать заведомо годный отчёт и упереться в ту же ошибку.
+          const countryCode = readCountryCode(
+            assessment['countryCode'],
+            `RightsComponentTerritoryAssessment[${index}] компонента ${String(component['id'])} (строка БД)`,
+            'skip',
+            this.logger,
+          );
+          if (countryCode === null) return [];
+          return [
+            {
+              countryCode,
+              status: assessment['status'] as ComponentTerritoryFinalStatus,
+              accessPolicy: assessment['accessPolicy'] as ComponentTerritoryAccessPolicy,
+              geoBlockRequired: (assessment['geoBlockRequired'] as boolean) ?? false,
+              reasonRu: (assessment['reasonRu'] as string) ?? null,
+              legalBasisRu: (assessment['legalBasisRu'] as string) ?? null,
+              confidence: (assessment['confidence'] as ComponentTerritoryConfidence | null) ?? null,
+              rightsExpireAt: this.parseDateOrNull(assessment['rightsExpireAt']),
+            },
+          ];
+        }),
       }),
     );
 
@@ -1132,9 +1218,13 @@ export class RightsMaterializationService {
         targetCountryCodes: Array.isArray(intake?.['targetCountryCodes'])
           ? (intake['targetCountryCodes'] as string[])
           : [],
+        // Пересчёт по сохранённому профилю идёт внутри чужой транзакции
+        // (`RightsActionService`), где ошибку никто не переведёт в 422. Отказ
+        // здесь откатил бы смену статуса действия и сделал его незакрываемым.
         existingTerritoryDecisions: this.mapExistingTerritoryDecisions(
           reportJson['territoryDecisions'] as Array<Record<string, unknown>> | undefined,
           reportJson['confidence'],
+          'skip',
         ),
         componentRemovalsConfirmed: areComponentRemovalsConfirmed(
           actions.map((action) => ({
@@ -1209,11 +1299,23 @@ export class RightsMaterializationService {
   private mapExistingTerritoryDecisions(
     territoryDecisions: Array<Record<string, unknown>> | undefined,
     reportConfidence: unknown,
+    onInvalidCountryCode: InvalidCountryCode,
   ): ExistingTerritoryDecisionInput[] {
     const fallbackConfidence = this.readConfidence(reportConfidence) ?? 'LOW';
 
-    return (territoryDecisions ?? []).map((territory) => {
-      const rawCountryCode = territory['countryCode'];
+    // `flatMap`, а не `map`: в режиме `skip` запись с негодным кодом страны
+    // выбывает целиком. Оставить её с `countryCode: null` значило бы заменить
+    // пустую строку из `LEGACY-044` на `null` — тот же призрак, только новый.
+    return (territoryDecisions ?? []).flatMap((territory, index) => {
+      // Индекс в метке обязателен: отчёт с сорока решениями и одним битым
+      // кодом иначе даёт сообщение, по которому нельзя найти виноватую запись.
+      const countryCode = readCountryCode(
+        territory['countryCode'],
+        `territoryDecisions[${index}]`,
+        onInvalidCountryCode,
+        this.logger,
+      );
+      if (countryCode === null) return [];
       const rawFinalStatus = territory['finalStatus'];
       const rawReasonRu = territory['reasonRu'];
       // WP-G.2 × WP-B.3: дефолт для записи сохраняется (колонки `NOT NULL`, инцидент R4-01),
@@ -1222,21 +1324,23 @@ export class RightsMaterializationService {
         typeof rawReasonRu === 'string' && rawReasonRu.trim() !== '' ? rawReasonRu : null;
       const agentConfidence = this.readConfidence(territory['confidence']);
 
-      return {
-        countryCode: typeof rawCountryCode === 'string' ? rawCountryCode.toUpperCase() : '',
-        finalStatus: (typeof rawFinalStatus === 'string'
-          ? normalizeTerritoryFinalStatus(rawFinalStatus)
-          : rawFinalStatus) as ComponentTerritoryFinalStatus,
-        accessPolicy: territory['accessPolicy'] as ComponentTerritoryAccessPolicy,
-        geoBlockRequired: (territory['geoBlockRequired'] as boolean) ?? false,
-        geoBlockScope: (territory['geoBlockScope'] as string) ?? null,
-        reasonRu: agentReasonRu ?? TERRITORY_DECISION_DEFAULT_REASON_RU,
-        legalBasisRu: (territory['legalBasisRu'] as string) ?? null,
-        confidence: agentConfidence ?? fallbackConfidence,
-        reasonRuFromAgent: agentReasonRu !== null,
-        confidenceFromAgent: agentConfidence !== null,
-        nextReviewAt: this.parseDateOrNull(territory['nextReviewAt']),
-      };
+      return [
+        {
+          countryCode,
+          finalStatus: (typeof rawFinalStatus === 'string'
+            ? normalizeTerritoryFinalStatus(rawFinalStatus)
+            : rawFinalStatus) as ComponentTerritoryFinalStatus,
+          accessPolicy: territory['accessPolicy'] as ComponentTerritoryAccessPolicy,
+          geoBlockRequired: (territory['geoBlockRequired'] as boolean) ?? false,
+          geoBlockScope: (territory['geoBlockScope'] as string) ?? null,
+          reasonRu: agentReasonRu ?? TERRITORY_DECISION_DEFAULT_REASON_RU,
+          legalBasisRu: (territory['legalBasisRu'] as string) ?? null,
+          confidence: agentConfidence ?? fallbackConfidence,
+          reasonRuFromAgent: agentReasonRu !== null,
+          confidenceFromAgent: agentConfidence !== null,
+          nextReviewAt: this.parseDateOrNull(territory['nextReviewAt']),
+        },
+      ];
     });
   }
 
