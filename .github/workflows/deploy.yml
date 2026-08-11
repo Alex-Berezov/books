@@ -120,8 +120,13 @@ jobs:
             jest-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-
             jest-${{ runner.os }}-
 
-      - name: 🧪 Unit Tests
-        run: yarn test
+      # ⚠️ `test:cov`, а не `test`: порог покрытия живёт в `jest.coverageThreshold`
+      # и проверяется только при `--coverage`. Если здесь оставить `yarn test`,
+      # порог будет краснеть в CI и молчать при выкате — ровно то расхождение
+      # конвейеров, которое закрывал LEGACY-078 на фронте. Цена — прогон дольше
+      # обычного, и она принята сознательно.
+      - name: 🧪 Unit Tests (with coverage thresholds)
+        run: yarn test:cov
         env:
           NODE_ENV: test
 

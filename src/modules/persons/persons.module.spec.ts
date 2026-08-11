@@ -1,5 +1,6 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { collectTransitiveImports } from '../../common/testing/module-graph';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { PersonResolverService } from './person-resolver.service';
@@ -38,24 +39,3 @@ describe('PersonsModule', () => {
     expect(reachable).not.toContain(RightsIntakeModule);
   });
 });
-
-/**
- * Обход метаданных `imports` вширь. `undefined` в результате оставляет циклический require: при
- * цикле модуль-константа ещё не инициализирована в момент выполнения декоратора, и в массиве
- * `imports` остаётся дыра. Поэтому `undefined` не пропускается, а попадает в множество и
- * проверяется тестом наравне с самой ссылкой на модуль.
- */
-function collectTransitiveImports(root: unknown): Set<unknown> {
-  const visited = new Set<unknown>();
-  const queue: unknown[] = [root];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    const imports = (Reflect.getMetadata('imports', current as object) as unknown[]) ?? [];
-    for (const imported of imports) {
-      if (visited.has(imported)) continue;
-      visited.add(imported);
-      if (imported !== undefined) queue.push(imported);
-    }
-  }
-  return visited;
-}

@@ -872,7 +872,7 @@ describe('RightsApprovalService', () => {
         pdComponent(),
         pdComponent({
           id: 'component-2',
-          componentType: 'ILLUSTRATIONS',
+          componentType: 'ILLUSTRATION',
           status: 'COPYRIGHTED',
           requiredAction: 'KEEP',
           titleRu: 'Иллюстрации',

@@ -12,7 +12,7 @@ describe('areComponentRemovalsConfirmed', () => {
 
   it('confirms it even when unrelated actions are still open', () => {
     expect(
-      areComponentRemovalsConfirmed([{ actionType: 'VERIFY_SOURCE', status: 'PENDING' }], false),
+      areComponentRemovalsConfirmed([{ actionType: 'VERIFY_EDITION', status: 'PENDING' }], false),
     ).toBe(true);
   });
 

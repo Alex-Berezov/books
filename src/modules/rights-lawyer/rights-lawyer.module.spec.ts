@@ -1,5 +1,6 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { collectTransitiveImports } from '../../common/testing/module-graph';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { RightsLawyerModule } from './rights-lawyer.module';
@@ -32,8 +33,30 @@ describe('RightsLawyerModule', () => {
     await moduleRef.close();
   });
 
-  it('is never imported back by RightsIntakeModule', () => {
-    const imports = (Reflect.getMetadata('imports', RightsIntakeModule) as unknown[]) ?? [];
-    expect(imports).not.toContain(RightsLawyerModule);
+  /**
+   * Собственный граф модуля — та же проверка, что у шести соседних спек:
+   * замыкание не содержит ни сам модуль (ацикличность), ни `undefined`
+   * (след циклического `require`, при котором ссылка в `imports` не успевает
+   * инициализироваться).
+   */
+  it('держит собственный граф ацикличным', () => {
+    const reachable = collectTransitiveImports(RightsLawyerModule);
+
+    expect(reachable).not.toContain(undefined);
+    expect(reachable).not.toContain(RightsLawyerModule);
+  });
+
+  /**
+   * ⚠️ Односторонность проверялась прямыми `imports` одного модуля и потому
+   * ловила только цикл длиной 2. Цикл через посредника —
+   * `RightsIntakeModule → X → RightsLawyerModule` — проходил незамеченным,
+   * хотя ADR-003 запрещает и его (`LEGACY-042`).
+   *
+   * `undefined` здесь намеренно **не** проверяется: то же утверждение на том же
+   * корне уже делает `rights-intake.module.spec.ts`, и дубль сообщал бы о
+   * циклическом `require` в чужом замыкании как о проблеме этого модуля.
+   */
+  it('никогда не достижим из RightsIntakeModule — ни прямо, ни через посредника', () => {
+    expect(collectTransitiveImports(RightsIntakeModule)).not.toContain(RightsLawyerModule);
   });
 });

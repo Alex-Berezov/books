@@ -22,7 +22,7 @@
     "drift-check:self-test": "node scripts/drift-check.mjs --self-test",
     "test": "jest --maxWorkers=50%",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage",
+    "test:cov": "jest --coverage --maxWorkers=50%",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --forceExit",
     "test:e2e:parallel": "NODE_OPTIONS=\"--max-old-space-size=8192 --expose-gc\" jest --config ./test/jest-e2e.json --forceExit --logHeapUsage",
@@ -137,6 +137,14 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
+    "coverageThreshold": {
+      "global": {
+        "statements": 58,
+        "branches": 54,
+        "functions": 55,
+        "lines": 59
+      }
+    },
     "testEnvironment": "node"
   },
   "prisma": {

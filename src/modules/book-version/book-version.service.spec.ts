@@ -1373,7 +1373,7 @@ describe('BookVersionService', () => {
       const mockProfile = {
         id: 'profile-1',
         rightsIntakeId: 'intake-1',
-        overallStatus: 'APPROVED',
+        overallStatus: 'PUBLISHABLE',
         confidence: 'HIGH',
         publicationGate: 'ALLOW',
         sourceEdition: {
@@ -1396,7 +1396,7 @@ describe('BookVersionService', () => {
           {
             countryCode: 'US',
             accessPolicy: 'ALLOW',
-            finalStatus: 'PUBLIC_DOMAIN',
+            finalStatus: 'ALLOWED',
             geoBlockRequired: false,
           },
           {
@@ -1407,7 +1407,7 @@ describe('BookVersionService', () => {
           },
           {
             countryCode: 'FR',
-            accessPolicy: 'LICENSE_REQUIRED',
+            accessPolicy: 'REVIEW_REQUIRED',
             finalStatus: 'LICENSE_REQUIRED',
             geoBlockRequired: false,
           },
@@ -1466,7 +1466,7 @@ describe('BookVersionService', () => {
             ],
           },
         ],
-        evidence: [{ id: 'ev-1', evidenceType: 'AUTHOR_DEATH_YEAR_RECORD' }],
+        evidence: [{ id: 'ev-1', evidenceType: 'AUTHORITY_RECORD' }],
         actions: [
           { id: 'act-1', actionType: 'CONFIGURE_GEO_BLOCK', status: 'PENDING', isBlocking: true },
         ],
@@ -1475,16 +1475,16 @@ describe('BookVersionService', () => {
       const mockReview = {
         id: 'review-1',
         rightsProfileId: 'profile-1',
-        overallStatus: 'APPROVED',
+        overallStatus: 'PUBLISHABLE',
         publicationGate: 'ALLOW',
         confidence: 'HIGH',
-        rightsReviewImport: { id: 'import-1', provider: 'COMMUNITY' },
+        rightsReviewImport: { id: 'import-1' },
       };
 
       const mockApproval = {
         id: 'approval-1',
         rightsIntakeId: 'intake-1',
-        decision: 'APPROVE',
+        decision: 'APPROVED',
         createdAt: new Date('2026-07-26T10:00:00Z'),
       };
 

@@ -32,8 +32,14 @@ step "Schema/migration drift check"
 yarn drift-check:self-test
 yarn drift-check
 
-step "Unit tests"
-yarn test
+# С покрытием, а не просто `yarn test`: порог в `jest.coverageThreshold`
+# срабатывает только при `--coverage`, иначе он декорация (LEGACY-016).
+# Замер 11.08.2026: statements 63.98, branches 59.64, functions 61.18,
+# lines 64.80 — пороги стоят примерно на 5 п.п. ниже. Запас взят намеренно
+# большой: у фронта порог с зазором 0.1 п.п. краснел от любого коммита и
+# приучал игнорировать CI (LEGACY-078).
+step "Unit tests (with coverage thresholds)"
+yarn test:cov
 
 # E2E are optional by default to keep the script provider-agnostic.
 # Enable by setting CI_E2E=1 and providing a working DATABASE_URL.

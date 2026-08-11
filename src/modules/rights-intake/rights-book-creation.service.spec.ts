@@ -261,7 +261,7 @@ describe('RightsBookCreationService', () => {
             id: 'action-1',
             isBlocking: true,
             status,
-            actionType: 'LICENSE_CHECK',
+            actionType: 'OBTAIN_LICENSE',
             descriptionRu: 'Test',
             affectedCountryCodes: [],
           },
@@ -590,7 +590,7 @@ describe('RightsBookCreationService', () => {
       (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
         {
           id: 'action-1',
-          actionType: 'LICENSE_CHECK',
+          actionType: 'OBTAIN_LICENSE',
           status: 'PENDING',
           descriptionRu: 'Проверка лицензии',
           affectedCountryCodes: ['US'],
@@ -621,7 +621,7 @@ describe('RightsBookCreationService', () => {
           rightsRequiredActions: expect.arrayContaining([
             expect.objectContaining({
               id: 'action-1',
-              actionType: 'LICENSE_CHECK',
+              actionType: 'OBTAIN_LICENSE',
             }),
           ]),
         }),
