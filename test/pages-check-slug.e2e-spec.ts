@@ -248,4 +248,119 @@ describe('Pages: Check Slug (e2e)', () => {
       });
     });
   });
+
+  /**
+   * A reserved slug is free in the database and unavailable all the same: the
+   * frontend router answers `/:lang/catalog` before any page can. Uniqueness
+   * checks cannot see it, so it has to be a rule of its own.
+   */
+  describe('reserved slugs', () => {
+    it('reports a route-owned slug as reserved, not as taken', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/admin/pages/check-slug')
+        .query({ slug: 'catalog', lang: 'en' })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      // `exists` stays false — no page holds it — and `reserved` carries the
+      // reason. Folding them together would mean an `exists: true` with no
+      // `existingPage` behind it.
+      expect(response.body.reserved).toBe(true);
+      expect(response.body.exists).toBe(false);
+      expect(response.body.existingPage).toBeUndefined();
+      expect(response.body.suggestedSlug).toBe('catalog-2');
+    });
+
+    it('refuses to create a page under a reserved slug', async () => {
+      await request(app.getHttpServer())
+        .post('/admin/en/pages')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          slug: 'privacy',
+          title: 'Privacy',
+          type: 'generic',
+          content: 'Test content',
+        })
+        .expect(400);
+
+      const written = await prisma.page.findFirst({ where: { slug: 'privacy', language: 'en' } });
+      expect(written).toBeNull();
+    });
+
+    it('refuses to rename an existing page into a reserved slug', async () => {
+      const page = await prisma.page.create({
+        data: {
+          slug: 'reserved-rename-source',
+          title: 'Rename Source',
+          type: 'generic',
+          content: 'Test content',
+          language: 'en',
+          status: 'draft',
+        },
+      });
+
+      await request(app.getHttpServer())
+        .patch(`/admin/en/pages/${page.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ slug: 'terms' })
+        .expect(400);
+
+      const untouched = await prisma.page.findUnique({ where: { id: page.id } });
+      expect(untouched?.slug).toBe('reserved-rename-source');
+
+      // The rename must leave no history either: a redirect to an address the
+      // router never yields would strand whoever follows it.
+      const redirect = await prisma.slugRedirect.findFirst({
+        where: { entityType: 'page', oldSlug: 'reserved-rename-source' },
+      });
+      expect(redirect).toBeNull();
+
+      await prisma.page.delete({ where: { id: page.id } });
+    });
+
+    it('does not report a page against its own grandfathered slug', async () => {
+      // Written straight to the database: the API refuses to create it, but rows
+      // predating the rule exist, and their edit form must not be told that the
+      // slug the API accepts is unavailable.
+      const legacy = await prisma.page.create({
+        data: {
+          slug: 'genres',
+          title: 'Legacy Genres Page',
+          type: 'generic',
+          content: 'Test content',
+          language: 'en',
+          status: 'draft',
+        },
+      });
+
+      const response = await request(app.getHttpServer())
+        .get('/admin/pages/check-slug')
+        .query({ slug: 'genres', excludeId: legacy.id, lang: 'en' })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(response.body).toEqual({ exists: false });
+
+      // Another page asking about the same slug still gets the warning.
+      const forOthers = await request(app.getHttpServer())
+        .get('/admin/pages/check-slug')
+        .query({ slug: 'genres', lang: 'en' })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(forOthers.body.reserved).toBe(true);
+
+      await prisma.page.delete({ where: { id: legacy.id } });
+    });
+
+    it('leaves an ordinary slug available', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/admin/pages/check-slug')
+        .query({ slug: 'catalogue-of-things', lang: 'en' })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(response.body).toEqual({ exists: false });
+    });
+  });
 });

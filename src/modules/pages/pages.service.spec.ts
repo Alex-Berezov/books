@@ -142,6 +142,52 @@ describe('PagesService (unit)', () => {
     });
   });
 
+  describe('reserved slugs', () => {
+    it('refuses to create a page whose slug a frontend route already owns', async () => {
+      await expect(
+        service.create(
+          {
+            slug: 'catalog',
+            title: 'Catalog',
+            type: 'generic',
+            content: '',
+          } as unknown as import('./dto/create-page.dto').CreatePageDto,
+          'en' as Language,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.page.create).not.toHaveBeenCalled();
+    });
+
+    it('is case- and whitespace-insensitive', async () => {
+      await expect(
+        service.create(
+          {
+            slug: '  CATALOG ',
+            title: 'Catalog',
+            type: 'generic',
+            content: '',
+          } as unknown as import('./dto/create-page.dto').CreatePageDto,
+          'en' as Language,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.page.create).not.toHaveBeenCalled();
+    });
+
+    it('leaves ordinary slugs alone', async () => {
+      prisma.page.create.mockResolvedValueOnce({ id: 'p1', slug: 'about-us' });
+      await service.create(
+        {
+          slug: 'about-us',
+          title: 'About',
+          type: 'generic',
+          content: '',
+        } as unknown as import('./dto/create-page.dto').CreatePageDto,
+        'en' as Language,
+      );
+      expect(prisma.page.create).toHaveBeenCalled();
+    });
+  });
+
   describe('update (negative seoId cases)', () => {
     it('throws BadRequest when seoId points to non-existing SEO (pre-check)', async () => {
       prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
@@ -151,6 +197,48 @@ describe('PagesService (unit)', () => {
           seoId: 999,
         } as unknown as import('./dto/update-page.dto').UpdatePageDto),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects renaming a page into a slug the router owns', async () => {
+      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
+      await expect(
+        service.update('p1', {
+          slug: 'catalog',
+        } as unknown as import('./dto/update-page.dto').UpdatePageDto),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      // Nothing may reach the database: a rejected rename must not leave a
+      // SlugRedirect pointing at an address the router will never yield.
+      expect(prisma.page.update).not.toHaveBeenCalled();
+      expect(slugRedirects.record).not.toHaveBeenCalled();
+      expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    });
+
+    it('still lets a page already sitting on a reserved slug be edited', async () => {
+      // Such a page predates the rule. Refusing it would brick the only form its
+      // owner could use to rename it away.
+      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'catalog', language: 'en' });
+      prisma.page.findFirst.mockResolvedValueOnce(null);
+      prisma.page.update.mockResolvedValueOnce({ id: 'p1', slug: 'catalog', title: 'Renamed' });
+
+      await service.update('p1', {
+        slug: 'catalog',
+        title: 'Renamed',
+      } as unknown as import('./dto/update-page.dto').UpdatePageDto);
+
+      expect(prisma.page.update).toHaveBeenCalled();
+    });
+
+    it('refuses to carry a grandfathered reserved slug into another language', async () => {
+      // The exemption is "leave the broken page where it is", not "let it
+      // travel": moving `catalog` from en to ru mints a second unreachable
+      // address in a language that was intact.
+      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'catalog', language: 'en' });
+      await expect(
+        service.update('p1', {
+          language: 'ru',
+        } as unknown as import('./dto/update-page.dto').UpdatePageDto),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.page.update).not.toHaveBeenCalled();
     });
 
     it('maps Prisma P2003 (Page_seoId_fkey) to BadRequest', async () => {

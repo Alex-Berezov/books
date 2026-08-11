@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
+import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/reserved-slugs';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 @Injectable()
@@ -181,6 +182,10 @@ export class PagesService {
   }
 
   async create(dto: CreatePageDto, language: Language) {
+    // Before anything is written: a reserved slug is not a page with a bad name,
+    // it is a page with no address — the router answers that path first.
+    if (isReservedSlug(dto.slug)) throw new BadRequestException(RESERVED_SLUG_MESSAGE);
+
     // Handle SEO: if dto.seo is provided, create SEO entity first
     let finalSeoId = dto.seoId;
     if (dto.seo) {
@@ -238,6 +243,24 @@ export class PagesService {
     if (dto.slug || dto.language) {
       const newSlug = dto.slug ?? exists.slug;
       const newLang: Language = dto.language ?? exists.language;
+      // Renaming *into* a reserved slug is worse than creating one: the old
+      // address gets a `SlugRedirect` pointing at a path the router will never
+      // hand to a page, so the redirect built to preserve the URL would strand
+      // the visitor.
+      //
+      // Only an actual move is refused. A page that already sits on a reserved
+      // slug predates this rule, and blocking it would brick the very form its
+      // owner needs to rename it — the edit form submits the whole record, so an
+      // unchanged slug arrives in `dto` like any other field. Renaming away stays
+      // open, which is the way out.
+      //
+      // A language change counts as a move even when the slug is untouched: it
+      // mints `/ru/catalog` out of `/en/catalog`, so the exemption for one broken
+      // address would quietly manufacture a second one.
+      const moved = newSlug !== exists.slug || newLang !== exists.language;
+      if (moved && isReservedSlug(newSlug)) {
+        throw new BadRequestException(RESERVED_SLUG_MESSAGE);
+      }
       const dup = await this.prisma.page.findFirst({
         where: { slug: newSlug, language: newLang, NOT: { id } },
         select: { id: true },
@@ -357,6 +380,18 @@ export class PagesService {
    * @param excludeId - Optional page ID to exclude (when editing)
    * @returns The existing page or null if slug is available
    */
+  /**
+   * The slug a page currently holds, or null when the id names nothing.
+   *
+   * Exists so `check-slug` can tell a reserved slug apart from *this page's own*
+   * reserved slug. `update()` grandfathers the latter, and without this lookup
+   * the check would keep warning the owner about a slug the API accepts.
+   */
+  async getCurrentSlug(id: string): Promise<string | null> {
+    const page = await this.prisma.page.findUnique({ where: { id }, select: { slug: true } });
+    return page?.slug ?? null;
+  }
+
   async checkSlugExists(slug: string, language: Language, excludeId?: string) {
     const where: Prisma.PageWhereInput = {
       slug,

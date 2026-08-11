@@ -40,4 +40,17 @@ export class CheckPageSlugResponseDto {
     type: ExistingPageDto,
   })
   existingPage?: ExistingPageDto;
+
+  /**
+   * Reported separately from `exists` on purpose. A taken slug and a reserved one
+   * are both unavailable, but only the first has an `existingPage` to describe —
+   * folding the two together would hand clients an `exists: true` with nothing
+   * behind it, which is exactly the shape that crashes a UI rendering the owner.
+   */
+  @ApiPropertyOptional({
+    description:
+      'true if the slug is reserved by a site route and can never be reached, even though no page holds it',
+    example: false,
+  })
+  reserved?: boolean;
 }

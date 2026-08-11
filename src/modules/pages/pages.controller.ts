@@ -17,6 +17,7 @@ import { PagesService } from './pages.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
+import { isReservedSlug } from '../../shared/constants/reserved-slugs';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -60,6 +61,23 @@ export class PagesController {
   async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckPageSlugResponseDto> {
     // lang is already validated by class-validator in CheckSlugQueryDto
     const lang = query.lang as Language;
+
+    // A reserved slug is unavailable no matter what the Page table says, and the
+    // editor deserves to learn that while typing rather than from a 400 on save.
+    //
+    // One exception, and it mirrors `update()`: the page that already holds this
+    // slug is grandfathered, so warning its own edit form would contradict the
+    // API that accepts its save.
+    const ownSlug = query.excludeId ? await this.service.getCurrentSlug(query.excludeId) : null;
+    const isOwnSlug = ownSlug !== null && ownSlug === query.slug;
+
+    if (!isOwnSlug && isReservedSlug(query.slug)) {
+      return {
+        exists: false,
+        reserved: true,
+        suggestedSlug: await this.service.generateUniqueSuggestedSlug(query.slug, lang),
+      };
+    }
 
     const existingPage = await this.service.checkSlugExists(query.slug, lang, query.excludeId);
 
