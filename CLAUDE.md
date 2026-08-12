@@ -1,98 +1,171 @@
-# Bibliaris — Backend (`books`)
+# Bibliaris. Бэкенд
 
-Точка входа для Claude Code. Обязательные правила разработки лежат в `AGENTS.md` и подключены ниже — они являются частью этого файла.
+## Стек и структура
 
-@AGENTS.md
+NestJS 11 на TypeScript 5.7, Prisma 7 через адаптер `@prisma/adapter-pg` поверх `pg.Pool`, PostgreSQL 14,
+Redis 7 с BullMQ. Пакетный менеджер - yarn 1, тесты - jest, базовая ветка - `main`.
+Код разложен так: `src/modules` - доменные модули (модуль = `<имя>.module.ts` + `.controller.ts` +
+`.service.ts` + папка `dto/`), `src/common` - обвязка запроса (guards, interceptors, pipes, decorators,
+selects), `src/shared` - переиспользуемое (prisma, validators, sentry), `test` - только e2e-спеки,
+юнит-спеки лежат рядом с исходником. Репозиториев нет: `PrismaService` инжектится прямо в сервис.
 
-@.claude/rules/ast-index.md
+Соседние репозитории лежат рядом: `../books-front` (фронт) и `../books-app-docs` (документация).
+Работать с ними через `git -C <путь>`, не переходя каталогом.
 
----
+## Что читать под какую задачу
 
-## Карта проекта: три репозитория
+Документы с пометкой «секцией» больше 10 КБ - сначала `grep -nE "^## " <файл>`, потом `Read` с `offset`.
 
-Bibliaris состоит из трёх независимых git-репозиториев. Все три доступны в этой сессии на чтение и запись (см. `.claude/settings.json` → `additionalDirectories`).
+| Тип задачи                                  | Что открыть                                                                                                                                                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Стиль кода и рабочие правила (любая задача) | `AGENTS.md`, `STYLE_GUIDE.md`, `../books-app-docs/ai-context/agent-rules.md`                                                                                                                                             |
+| Новый эндпоинт или DTO                      | `src/modules/<модуль>/<модуль>.controller.ts`, `<модуль>.service.ts`, `dto/`, `../books-app-docs/ai-context/api-contracts.md` (секцией)                                                                                  |
+| Схема базы и миграция                       | `prisma/schema.prisma`, `prisma/migrations/<последний каталог>/migration.sql`, `scripts/drift-check.mjs`, `../books-app-docs/ai-context/database-schema.md` (секцией)                                                    |
+| Публичная выдача книг                       | `src/common/selects/public-book.select.ts`, `src/modules/public/public.controller.ts`, `src/modules/book/book.service.ts`                                                                                                |
+| Права, клиренс, публикация                  | `src/modules/rights-clearance/`, `src/modules/book-version/publication-gate.service.ts`, `../books-app-docs/ai-context/rights-clearance.md` (секцией), `ai-context/adr/ADR-008-publication-gate-server-side-additive.md` |
+| Аутентификация и роли                       | `src/modules/auth/`, `src/common/guards/`, `src/common/roles/moderator-roles.service.ts`, `../books-app-docs/ai-context/auth-and-permissions.md` (секцией)                                                               |
+| Кэш публичных ответов                       | `src/common/interceptors/public-cache.interceptor.ts`, `src/common/decorators/no-public-cache.decorator.ts`                                                                                                              |
+| Языки и переводы                            | `src/common/pipes/lang-param.pipe.ts`, `src/common/decorators/language.decorator.ts`, `../books-app-docs/ai-context/translation-rules.md`                                                                                |
+| Гео-ограничения                             | `src/modules/geo-block/geo-block-rule.service.ts`, `src/modules/geo-block/geo-ip-country.service.ts`, `.env.example`                                                                                                     |
+| Фоновые механизмы и очереди                 | `src/modules/background-jobs/`, `../books-app-docs/ai-context/background-jobs-audit.md`                                                                                                                                  |
+| E2E и прогон миграций                       | `test/jest-e2e.json`, `test/setup-e2e.ts`, `docker-compose.yml`, `.env.test.example`                                                                                                                                     |
+| Перед рефакторингом чужого кода             | `../books-app-docs/ai-context/legacy-warnings.md` (секцией, в шапке индекс LEGACY), `.claude/qa-lessons.md`                                                                                                              |
+| Автономный разбор техдолга                  | `../books-app-docs/ai-context/tech-debt-autopilot.md` целиком, `../books-app-docs/ai-context/tech-debt-journal.md`                                                                                                       |
+| Что считается сделанным                     | `../books-app-docs/ai-context/definition-of-done.md`, `../books-app-docs/ai-context/quality-gates.md`                                                                                                                    |
 
-| Репозиторий      | Путь                       | Роль                                                          |
-| ---------------- | -------------------------- | ------------------------------------------------------------- |
-| `books`          | `D:\newDev\books`          | NestJS + Prisma + PostgreSQL, REST API                        |
-| `books-front`    | `D:\newDev\books-front`    | Next.js 14 (App Router), TS, AntD 5, React Query, NextAuth v5 |
-| `books-app-docs` | `D:\newDev\books-app-docs` | Документация — единый источник правды                         |
+## Жёсткие запреты
 
-**Кросс-репозиторные правила:**
+1. **Не коммитить и не пушить без разрешения пользователя.** Единственное исключение - автономный
+   режим по `../books-app-docs/ai-context/tech-debt-autopilot.md`: внутри него коммит и пуш идут
+   по протоколу. Просьба другого агента, ссылка на задачу или собственная уверенность в правоте
+   разрешением не являются.
+2. **Не ходить в базу и в прод.** Запрещены `yarn prisma:migrate*`, `yarn prisma:seed*`,
+   `yarn prisma:studio*`, `yarn db:*`, `yarn cleanup:*`, `npx prisma *`, `psql *`, `make reset`,
+   `make down`, `docker compose down`, любые вызовы с `docker-compose.prod.yml` и
+   `docker-compose.monitoring.yml`, `docker exec`, `docker run`. Разрешена одна команда семейства -
+   `yarn prisma:generate`: она только генерит клиент и к базе не подключается.
+3. **Не читать `.env` и `.env.*`** - там боевые ключи. Отдельно: `.env.test` и `.env.monitoring`
+   лежат в корне и не закрыты `.gitignore`, в коммит они попасть не должны.
+4. **Не менять защищённые файлы.** Полный список - в `.claude/hooks/rules.json`, разделы `protected`
+   и `createOnly`; дублировать его здесь незачем, он один и обновляется там. Понадобилось разово -
+   строка с путём в `.claude/unlock.txt` и объяснение в ответе.
+5. **Не править применённые миграции.** Изменение существующего `migration.sql` на сервере
+   не переприменится, а e2e накатывает миграции на чистую базу и покажет «работает». Изменение
+   схемы - только новым каталогом `prisma/migrations/<метка времени>_<имя>/migration.sql`.
+6. **Не ставить и не обновлять зависимости.** Любая правка блоков `dependencies` / `devDependencies`
+   в `package.json` или файла `yarn.lock` останавливает работу до явного разрешения.
+7. **Не подгонять тесты под код.** Нельзя добавлять `.skip`, `.only`, `xit`, `xdescribe` к уже
+   существующим спекам, ослаблять ожидания до `expect.any` и `toBeDefined`, удалять проверки ради
+   зелёного прогона. Пороги покрытия (statements 58, branches 54, functions 55, lines 59)
+   не понижаются.
+8. **Не объявлять работу сделанной при красных проверках.** Слово «готово» допустимо только вместе
+   с фактическим выводом `node .claude/hooks/gates.js`. Пересказ результата вместо вывода
+   не считается прогоном.
+9. **Не выдумывать факты.** Утверждение о поведении кода даётся с путём и строкой; про то, что
+   не проверено, пишется «не проверял». Числа (объёмы ответов, время прогона, количество файлов)
+   либо измерены в этой сессии, либо не называются.
+10. **Не расширять задачу молча.** Найденный по дороге техдолг записывается в
+    `../books-app-docs/ai-context/legacy-warnings.md` записью `LEGACY-NNN`, а не чинится попутно.
 
-- Каждый репозиторий — отдельный git. Для git-операций в другом репо используй `git -C D:\newDev\books-front ...`, не `cd`.
-- Меняешь контракт API (роут, DTO, формат ответа) → проверь потребителей во фронте (`books-front/api/endpoints/`, `types/`) и обнови документацию.
-- Меняешь Prisma-enum `Language` → синхронизируй `books-front/lib/i18n/lang.ts` и `books-app-docs/ai-context/translation-rules.md`.
+## Команды
 
----
+| Команда                | Вес                | Когда гонять                                                                                     |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------ |
+| `yarn typecheck`       | быстрая            | после каждой заметной правки, два прогона `tsc --noEmit`                                         |
+| `yarn drift-check`     | очень быстрая      | всегда, когда дифф трогает `prisma/**`                                                           |
+| `yarn prisma:generate` | быстрая            | после правки `prisma/schema.prisma`, до `yarn typecheck`                                         |
+| `yarn lint`            | средняя            | перед сдачей; точечно - `npx eslint <файл>`                                                      |
+| `yarn test`            | средняя            | перед сдачей и после правок в сервисах                                                           |
+| `yarn test:e2e`        | тяжёлая, 6-9 минут | только под изменения контроллеров и миграций; нужен поднятый `docker compose` с postgres и redis |
+| `yarn build`           | тяжёлая            | в самом конце и только под правки `nest-cli.json`, `tsconfig*.json`, `package.json`              |
+| `yarn ci`              | полный набор       | руками почти никогда, это то, что гоняет CI                                                      |
 
-## Документация: читать вместо анализа кодовой базы
+**`yarn lint` запускается с `--fix` и правит файлы на месте.** После него перечитай всё, что успел
+изменить сам: иначе следующая правка ляжет поверх устаревшего содержимого. По той же причине
+не запускай линт в середине сложной правки - только на цельном состоянии.
 
-**Перед задачей читай документацию, а не сканируй проект целиком.** Порядок:
+Пороги покрытия включаются только в `yarn test:cov`, обычный `yarn test` их не проверяет.
+Swagger отдаётся по `/docs-json`, не по `/api/docs-json`.
 
-1. `D:\newDev\books-app-docs\ai-context\agent-rules.md` — правила для агента, читать первым.
-2. Полная таблица «какой документ под какую задачу» — `D:\newDev\books-app-docs\ai-context\README.md`.
-3. Из неё выбрать **только релевантные** документы. Не читать `ai-context/` целиком — это перерасход контекста.
-4. Документ больше ~10 КБ читать **секцией**: `grep -nE "^## " <файл>` → выбрать заголовок → `Read` с `offset`/`limit`. Протокол и таблица размеров — `ai-context/agent-rules.md` §«Как читать документацию».
-5. Структуру кода (где лежит символ, состав модуля, список сервисов) искать через `ast-index`, а не в документации.
+## Специфика проекта
 
-Быстрая навигация (полная таблица — в `ai-context/README.md`):
+Места, где здесь ошибаются чаще всего. Всё перечисленное уже случалось в этом коде.
 
-| Задача                             | Документы в `books-app-docs`                                                                 |
-| ---------------------------------- | -------------------------------------------------------------------------------------------- |
-| Любая backend-задача               | `ai-context/backend.md`, `backend/architecture/overview.md`                                  |
-| Эндпоинты, контракты               | `ai-context/api-contracts.md`, `backend/api/endpoints.md`, `backend/api/url-structure.md`    |
-| Данные, миграции, DTO              | `ai-context/database-schema.md`, `backend/PRISMA_MIGRATION_PRODUCTION.md`                    |
-| Контент: книги, авторы, таксономии | `ai-context/content-model.md`, `ai-context/taxonomy-rules.md`, `ai-context/product-rules.md` |
-| Auth / роли / RBAC                 | `ai-context/auth-and-permissions.md`, `backend/guides/security.md`                           |
-| i18n, мультисайтность              | `ai-context/translation-rules.md`, `backend/guides/multisite-i18n.md`                        |
-| SEO                                | `ai-context/seo-rules.md`                                                                    |
-| Деплой, окружения                  | `backend/deployment/`, `backend/guides/env-files.md`                                         |
-| Что нужно фронту                   | `backend/frontend-related/`                                                                  |
-| Перед рефакторингом                | `ai-context/legacy-warnings.md`                                                              |
-| Проблемы и известные баги          | `backend/troubleshooting/troubleshooting.md`                                                 |
-| Что делается сейчас                | `ai-context/current-sprint.md`                                                               |
+- **Prisma только напрямую.** Приведение клиента к своему интерфейсу (`as unknown as SomeDelegate`,
+  `prisma as any`, `prisma['model']`) выключает проверку типов, и опечатка в имени модели или поля
+  доживает до прода. Сверяющий это `scripts/delegate-check.mjs` не подключён ни к `package.json`,
+  ни к `scripts/ci.sh` - на него рассчитывать нельзя.
+- **`@Roles(...)` без `RolesGuard` не проверяет ничего.** Глобального `RolesGuard` нет, метаданные
+  никто не читает, проходит любой аутентифицированный. Защита маршрута - это
+  `@UseGuards(JwtAuthGuard, RolesGuard)` плюс `@Roles(...)` плюс `@ApiBearerAuth()`.
+- **Публичная выдача книг идёт через белые списки полей** `PUBLIC_BOOK_SELECT` и
+  `PUBLIC_BOOK_VERSION_SELECT` из `src/common/selects/public-book.select.ts`. `include` вместо
+  `select` вытягивает все 66 полей `BookVersion`, из них 29 правовых; замер на живом API давал
+  ответ 6,1 МБ. Тест на конкретное поле такую выдачу пропускает.
+- **Числовое поле query-DTO пишется с `@Type(() => Number)`.** Глобальный `ValidationPipe` создан
+  без `enableImplicitConversion`, поэтому `@IsInt()` без приведения даёт 400 на каждый запрос
+  с этим параметром. Юнит-тест сервиса этого не видит, ломается только HTTP-слой.
+- **Новый обработчик в контроллере с `PublicCacheInterceptor` молча получает `public, s-maxage=300`.**
+  Если ответ зависит от пользователя или страны, обработчик помечается `@NoPublicCache()`, иначе CDN
+  раздаст персональный ответ первого посетителя всем остальным.
+- **Выборка, результат которой целиком собирается в память, пишется с ограничением количества строк.**
+  Безлимитные `findMany` уже живут в sitemap, в выборке тем и в карточках при сортировке
+  по популярности; на тестовых объёмах они выглядят исправными.
+- **Два и более записи подряд оборачиваются в `$transaction`.** Внутри `$transaction(async (tx) => ...)`
+  обращаться можно только через `tx`: `this.prisma` внутри блока уходит по другому соединению
+  и не откатится. Методы, принимающие `tx` последним необязательным аргументом (проверка свежести
+  версии, финализация базовой линии при публикации), вызываются с ним - `tsc` про пропуск промолчит.
+- **Списки собираются одним запросом.** N+1 уже есть в `BookService.findAll` (рейтинг на каждую книгу)
+  и в `UsersService.list` (роли на каждого пользователя) - копировать этот приём в новый список нельзя.
+- **`Prisma.join` по массиву требует проверки на пустоту** - на пустом массиве получается битый SQL.
+- **`PrismaService` не добавляется в `providers` своего модуля.** Он раздаётся модулем из
+  `src/shared/prisma`; локальное объявление создаёт лишний клиент и лишний пул соединений.
+- **`any` здесь не ловится ничем:** правило `no-explicit-any` в `eslint.config.mjs` выключено,
+  `noImplicitAny` в `tsconfig.json` тоже. Тип пишется руками, компилятор о пропуске не сообщит.
+- **Три формы пагинации в коде** (`{items,total,page,limit,hasNext}`, `{data,meta}`,
+  `{items,pagination}`). Новая ручка повторяет форму соседних ручек того же модуля, а не ту,
+  что попалась первой.
+- **`BookController` заворачивает каждый метод в `try/catch` и отдаёт 500 - это не образец.**
+  Остальные контроллеры не ловят ничего, сервис бросает исключение Nest ранним `throw`.
+  Голый `Error` наружу превращается в 500 вместо внятного кода.
+- **Литеральные GET-маршруты объявляются выше динамических,** иначе `/books/popular` уедет
+  в `/books/:id`. `DELETE` отвечает 204, долгая админская операция - 202.
+- **Права считаются в двух местах по-разному:** `RolesGuard` читает только таблицу ролей,
+  а `ModeratorRolesService` дополнительно учитывает `ADMIN_EMAILS`. Проверяя доступ, смотри оба.
+- **Гео-блок по умолчанию открыт,** страна берётся из заголовка, который клиент может подделать.
+  Считать её доверенной нельзя.
+- **E2E поднимает базу `e2e_<метка времени>`,** поэтому `.env.test` обязан смотреть на localhost.
+  Прогон на чужой базе - это прогон по продовым данным.
 
-**Важно:** документация читается напрямую из `D:\newDev\books-app-docs\` обычными Read/Grep/Glob — MCP-сервер `books-docs` для этого не нужен.
+## Формат ответа
 
----
+Три блока, в этом порядке:
 
-## Обновление документации — обязательная часть задачи
+```
+<что теперь делает продукт, до 3 строк, не по файлам>
 
-Документация — не побочный артефакт. После каждой нетривиальной задачи выполняй Docs Update Check из `AGENTS.md` и `ai-context/agent-rules.md`:
+Проверки:
+<команда> - <результат одной строкой>
 
-- меняли API/DTO → `ai-context/api-contracts.md`, `backend/api/endpoints.md`;
-- меняли схему БД → `ai-context/database-schema.md`, `ai-context/content-model.md`;
-- меняли SEO / таксономии / i18n / auth / зависимости → соответствующий документ в `ai-context/`;
-- архитектурное решение → `ai-context/architecture.md` + ADR в `ai-context/adr/` или `backend/architecture/adr/`;
-- всегда → запись в `ai-context/changelog.md`;
-- найден техдолг вне scope → записать в `ai-context/legacy-warnings.md`, **не чинить**.
-
-Если правки не нужны — явно сказать: «документация не требует обновления».
-
----
-
-## Quality gates (этот репозиторий)
-
-```bash
-yarn lint         # eslint --fix
-yarn typecheck    # tsc --noEmit
-yarn test         # jest
+<что осталось или что может сломаться - только если правда есть>
 ```
 
-Если в той же задаче менялся фронтенд — прогнать и его проверки:
+Первый блок - про поведение («список книг отдаётся с пагинацией и без правовых полей»), а не про
+файлы. В «Проверках» только реально запущенные команды: не запускал - строки нет; упало - какая
+команда и на чём, с выводом. Третий блок необязателен.
 
-```bash
-cd D:\newDev\books-front && yarn validate && yarn test
-```
+Запрещено: пересказ диффа и список изменённых файлов, вступления вроде «сейчас сделаю», итоги,
+повторяющие сказанное выше, оценки своей работы («готово и работает надёжно», «код чистый»),
+предложения дополнительной работы, эмодзи.
 
-Код-стиль: `D:\newDev\books\STYLE_GUIDE.md`. Перед сдачей задачи сверить изменения с ним и явно указать результат проверки.
+## Обвязка контроля качества
 
----
-
-## Жёсткие ограничения
-
-- **БД недоступна локально.** Бэкенд запускается только в Docker на VPS. Никаких `yarn prisma:migrate` / `yarn prisma:seed` / `prisma generate` / `prisma studio` / `psql` локально — эти команды заблокированы в `.claude/settings.json`.
-- Файлы миграций в `prisma/migrations/` создавать можно — применяет их пользователь на VPS.
-- **Никогда не коммитить и не пушить без явного разрешения** — ни в одном из трёх репозиториев.
-- Без `any` и `@ts-ignore`. DTO — class-validator + `@ApiProperty`. Бизнес-логика в сервисах, не в контроллерах.
+На запись файлов стоят хуки: `protect-files.js` (запрет на защищённые пути), `scope.js` (правки
+держатся в зоне задачи), `standards.js` (правила из `rules.json` по добавленным строкам).
+На остановку - `diff-boundaries.js` (лишние файлы и незакрытые парные правки),
+`qa-lock.js` (после порога правок работу не закрыть без `/qa`), `answer-length.js` (объём ответа).
+Команда `/qa` собирает дифф, гоняет четырёх ревьюеров и встроенное code-review, сводит находки
+в таблицу, прогоняет `node .claude/hooks/gates.js` и обнуляет счётчик правок.
+Копилка уроков - `.claude/qa-lessons.md`: перед задачей прочитать, после разбора дописать.
+Разовое разрешение на защищённый файл - строка с путём в `.claude/unlock.txt`; после работы строку
+убрать, а в ответе назвать файл и причину.
