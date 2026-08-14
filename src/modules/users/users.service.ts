@@ -5,14 +5,23 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { User, Language as PrismaLanguage, RoleName, Prisma } from '@prisma/client';
+import { Language as PrismaLanguage, RoleName, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { STAFF_ROLE_NAMES } from './users.constants';
+import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
 
-type PublicUser = Omit<User, 'passwordHash'>;
+/**
+ * Проверка существования пользователя читает одно поле (`LEGACY-116`).
+ *
+ * ⚠️ `ACCOUNT_USER_SELECT` здесь не нужен: методу важно только, есть запись или
+ * нет, а лишние поля — это лишние данные в памяти без единого потребителя.
+ */
+const USER_EXISTS_SELECT = { id: true } satisfies Prisma.UserSelect;
+
+type PublicUser = AccountUser;
 
 @Injectable()
 export class UsersService {
@@ -22,7 +31,10 @@ export class UsersService {
   ) {}
 
   async me(userId: string): Promise<PublicUser & { roles: RoleName[] }> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: ACCOUNT_USER_SELECT,
+    });
     if (!user) throw new NotFoundException('User not found');
     const roles = await this.computeRoles(user);
     return {
@@ -60,6 +72,7 @@ export class UsersService {
           nickname: { equals: data.nickname, mode: 'insensitive' },
           id: { not: userId },
         },
+        select: USER_EXISTS_SELECT,
       });
       if (existing) {
         throw new ConflictException('Nickname is already in use');
@@ -69,6 +82,7 @@ export class UsersService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data,
+      select: ACCOUNT_USER_SELECT,
     });
     return {
       id: user.id,
@@ -86,7 +100,10 @@ export class UsersService {
   }
 
   async deleteById(userId: string): Promise<PublicUser> {
-    const userBefore = await this.prisma.user.findUnique({ where: { id: userId } });
+    const userBefore = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_EXISTS_SELECT,
+    });
     if (!userBefore) throw new NotFoundException('User not found');
 
     const deleted = await this.prisma.$transaction(async (tx) => {
@@ -129,7 +146,7 @@ export class UsersService {
       await tx.userRole.deleteMany({ where: { userId } });
 
       // 10) Finally delete the user
-      return tx.user.delete({ where: { id: userId } });
+      return tx.user.delete({ where: { id: userId }, select: ACCOUNT_USER_SELECT });
     });
 
     return {
@@ -148,7 +165,10 @@ export class UsersService {
   }
 
   async listRoles(userId: string): Promise<RoleName[]> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_EXISTS_SELECT,
+    });
     if (!user) throw new NotFoundException('User not found');
     const roles = await this.prisma.userRole.findMany({
       where: { userId },
@@ -161,7 +181,10 @@ export class UsersService {
     userId: string,
     roleName: RoleName,
   ): Promise<{ userId: string; role: RoleName }> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_EXISTS_SELECT,
+    });
     if (!user) throw new NotFoundException('User not found');
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException('Role not found');
@@ -178,7 +201,10 @@ export class UsersService {
     roleName: RoleName,
   ): Promise<{ userId: string; role: RoleName }> {
     if (roleName === 'user') throw new BadRequestException('Cannot revoke base user role');
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_EXISTS_SELECT,
+    });
     if (!user) throw new NotFoundException('User not found');
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException('Role not found');
@@ -186,7 +212,11 @@ export class UsersService {
     return { userId, role: role.name };
   }
 
-  private async computeRoles(user: User): Promise<RoleName[]> {
+  /**
+   * ⚠️ Аргумент сужен до двух полей намеренно (`LEGACY-116`): полный `User` в
+   * сигнатуре требовал бы читать пользователя целиком ради `id` и `email`.
+   */
+  private async computeRoles(user: { id: string; email: string }): Promise<RoleName[]> {
     // Roles from DB
     const dbLinks = await this.prisma.userRole.findMany({
       where: { userId: user.id },
@@ -305,6 +335,7 @@ export class UsersService {
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
+        select: ACCOUNT_USER_SELECT,
       }),
     ]);
 
@@ -329,7 +360,10 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto): Promise<PublicUser & { roles: RoleName[] }> {
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      select: USER_EXISTS_SELECT,
+    });
     if (existing) throw new ConflictException('Email already in use');
 
     const passwordHash = await argon2.hash(dto.password);
@@ -351,7 +385,7 @@ export class UsersService {
           })),
         },
       },
-      include: { roles: { include: { role: true } } },
+      select: { ...ACCOUNT_USER_SELECT, roles: { select: { role: { select: { name: true } } } } },
     });
 
     const roles = user.roles.map((ur) => ur.role.name);
@@ -373,7 +407,11 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<PublicUser & { roles: RoleName[] }> {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    // Читаются ровно те поля, из которых ниже собирается `name`.
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, firstName: true, lastName: true },
+    });
     if (!user) throw new NotFoundException('User not found');
 
     const { password, roles: rolesDto, ...rest } = dto;
@@ -392,7 +430,7 @@ export class UsersService {
     }
 
     const updatedUser = await this.prisma.$transaction(async (tx) => {
-      const u = await tx.user.update({ where: { id }, data });
+      const u = await tx.user.update({ where: { id }, data, select: ACCOUNT_USER_SELECT });
 
       if (rolesDto) {
         const desired = Array.from(new Set(rolesDto));

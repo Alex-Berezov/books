@@ -4,6 +4,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { RoleName, Language as PrismaLanguage, User } from '@prisma/client';
+import { ACCOUNT_USER_SELECT } from '../../common/selects/account-user.select';
 
 describe('UsersService (unit)', () => {
   let service: UsersService;
@@ -29,6 +30,7 @@ describe('UsersService (unit)', () => {
         update: jest.fn(),
         findMany: jest.fn(),
         delete: jest.fn(),
+        create: jest.fn(),
         count: jest.fn(),
       },
       userRole: {
@@ -101,6 +103,7 @@ describe('UsersService (unit)', () => {
     expect(prismaMock.user.update).toHaveBeenCalledWith({
       where: { id: 'u1' },
       data: { name: 'Jane', avatarUrl: 'a.png' },
+      select: ACCOUNT_USER_SELECT,
     });
     expect(res.name).toBe('Jane');
     expect((res as any).passwordHash).toBeUndefined();
@@ -261,6 +264,145 @@ describe('UsersService (unit)', () => {
       });
       expect(res[0].replies.length).toBe(1);
       expect(res[0].replies[0].text).toBe('reply');
+    });
+  });
+
+  // Посадка LEGACY-116: чтения пользователя сужены белым списком, и хеш пароля
+  // не попадает ни в аргументы запроса, ни в ответ. Возврат запроса без
+  // `select` красит эти спеки.
+  describe('passwordHash не читается из базы (LEGACY-116)', () => {
+    /** Аргументы всех вызовов Prisma, где выбирались поля пользователя. */
+    function selectsOf(fn: jest.Mock): Record<string, unknown>[] {
+      return fn.mock.calls.map((c) => (c[0] as { select?: Record<string, unknown> }).select ?? {});
+    }
+
+    it('me: findUnique зовётся с select без passwordHash', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+      prismaMock.userRole.findMany.mockResolvedValueOnce([]);
+      await service.me('u1');
+
+      const [select] = selectsOf(prismaMock.user.findUnique as jest.Mock);
+      expect(select).toEqual(ACCOUNT_USER_SELECT);
+      expect(select).not.toHaveProperty('passwordHash');
+    });
+
+    it('me: в ответе нет ключа passwordHash', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+      prismaMock.userRole.findMany.mockResolvedValueOnce([]);
+      const res = await service.me('u1');
+
+      expect(Object.keys(res)).not.toContain('passwordHash');
+    });
+
+    it('list: findMany зовётся с select без passwordHash', async () => {
+      (prismaMock.user.count as jest.Mock).mockResolvedValueOnce(1);
+      (prismaMock.user.findMany as jest.Mock).mockResolvedValueOnce([baseUser]);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
+      await service.list({ page: 1, limit: 10 });
+
+      const [select] = selectsOf(prismaMock.user.findMany as jest.Mock);
+      expect(select).toEqual(ACCOUNT_USER_SELECT);
+      expect(select).not.toHaveProperty('passwordHash');
+    });
+
+    it('list: ни в одном элементе ответа нет ключа passwordHash', async () => {
+      (prismaMock.user.count as jest.Mock).mockResolvedValueOnce(1);
+      (prismaMock.user.findMany as jest.Mock).mockResolvedValueOnce([baseUser]);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
+      const res = await service.list({ page: 1, limit: 10 });
+
+      expect(res.items).toHaveLength(1);
+      for (const item of res.items) {
+        expect(Object.keys(item)).not.toContain('passwordHash');
+      }
+    });
+
+    it('проверка существования читает только id', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
+      prismaMock.userRole.findMany.mockResolvedValueOnce([]);
+      await service.listRoles('u1');
+
+      const [select] = selectsOf(prismaMock.user.findUnique as jest.Mock);
+      expect(select).toEqual({ id: true });
+    });
+
+    // 🔴 Отдельно от чтений: `create`, `update` и `delete` возвращают строку
+    // пользователя точно так же, как `findUnique`, и без `select` отдают хеш.
+    // Без этих спек возврат `include`/безусловной записи проходит незамеченным.
+    it('create: запись зовётся с select без passwordHash', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce(null);
+      (prismaMock.user.create as jest.Mock).mockResolvedValueOnce({
+        ...baseUser,
+        roles: [{ role: { name: 'user' } }],
+      });
+
+      await service.create({
+        email: 'new@example.com',
+        password: 'secret-password',
+        roles: [RoleName.user],
+      } as any);
+
+      const [select] = selectsOf(prismaMock.user.create as jest.Mock);
+      expect(select).not.toHaveProperty('passwordHash');
+      expect(select).toMatchObject(ACCOUNT_USER_SELECT);
+      // Проверка занятости почты читает только идентификатор.
+      expect(selectsOf(prismaMock.user.findUnique as jest.Mock)[0]).toEqual({ id: true });
+    });
+
+    it('update: чтение и запись сужены, passwordHash не читается', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({
+        id: 'u1',
+        firstName: 'John',
+        lastName: null,
+      });
+      prismaMock.user.update.mockResolvedValueOnce(baseUser);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
+
+      await service.update('u1', { nickname: 'new_nick' } as any);
+
+      const [readSelect] = selectsOf(prismaMock.user.findUnique as jest.Mock);
+      expect(readSelect).not.toHaveProperty('passwordHash');
+      expect(Object.keys(readSelect).sort()).toEqual(['firstName', 'id', 'lastName']);
+
+      const [writeSelect] = selectsOf(prismaMock.user.update as jest.Mock);
+      expect(writeSelect).toEqual(ACCOUNT_USER_SELECT);
+    });
+
+    it('deleteById: удаление зовётся с select без passwordHash', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
+      (prismaMock.comment.findMany as jest.Mock).mockResolvedValueOnce([]);
+      prismaMock.user.delete.mockResolvedValueOnce(baseUser);
+
+      await service.deleteById('u1');
+
+      const [deleteSelect] = selectsOf(prismaMock.user.delete as jest.Mock);
+      expect(deleteSelect).toEqual(ACCOUNT_USER_SELECT);
+      expect(selectsOf(prismaMock.user.findUnique as jest.Mock)[0]).toEqual({ id: true });
+    });
+
+    it('ни одна операция над пользователем не идёт без select', async () => {
+      prismaMock.user.findFirst.mockResolvedValueOnce(null);
+      prismaMock.user.update.mockResolvedValueOnce(baseUser);
+      await service.updateMe('u1', { nickname: 'free_nick' });
+
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
+      prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: RoleName.admin });
+      await service.assignRole('u1', RoleName.admin);
+
+      prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
+      prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: RoleName.admin });
+      await service.revokeRole('u1', RoleName.admin);
+
+      const calls = [
+        ...(prismaMock.user.findUnique as jest.Mock).mock.calls,
+        ...(prismaMock.user.findFirst as jest.Mock).mock.calls,
+        ...(prismaMock.user.update as jest.Mock).mock.calls,
+      ];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const [args] of calls) {
+        expect(args).toHaveProperty('select');
+        expect(args.select).not.toHaveProperty('passwordHash');
+      }
     });
   });
 });

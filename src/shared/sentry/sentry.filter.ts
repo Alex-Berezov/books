@@ -4,6 +4,23 @@ import type { Request } from 'express';
 import * as Sentry from '@sentry/node';
 
 /**
+ * Ключи, значения которых не уезжают во внешний сервис (`LEGACY-115`).
+ *
+ * 🔴 Маска существует с самого начала, но применялась только к телу запроса,
+ * а `headers`, `query` и `params` уходили в событие как есть. В заголовках
+ * лежат `Authorization` с рабочим JWT и `Cookie` с сессией, то есть в проекте
+ * Sentry оседали действующие токены доступа тех, чей запрос упал с 5xx.
+ *
+ * ⚠️ Регистр не важен: Express отдаёт имена заголовков в нижнем регистре
+ * (`authorization`, `cookie`), а тело запроса приходит в чужом регистре
+ * (`Authorization`, `accessToken`), и оба случая закрывает флаг `i`.
+ *
+ * ⚠️ Совпадение частичное и это намеренно: `accessToken`, `refresh_token`,
+ * `set-cookie` и `proxy-authorization` попадают под маску сами.
+ */
+const SENSITIVE_KEY_PATTERN = /password|token|authorization|secret|cookie/i;
+
+/**
  * Global exception filter that reports 5xx errors to Sentry.
  * 4xx (400/401/403/404/429) are deliberately ignored to reduce noise.
  */
@@ -38,21 +55,22 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
             if (req) {
               const { method, path } = req;
               const routePath = this.getRoutePath(req);
+              const safeUrl = this.redactUrl(req.originalUrl);
               scope.setTag('method', method);
               scope.setTag('route', routePath ?? path ?? 'unknown');
               scope.setTag('status_code', String(status));
               scope.setContext('request', {
-                url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+                url: `${req.protocol}://${req.get('host')}${safeUrl}`,
                 method,
-                headers: req.headers,
-                query: req.query,
-                params: req.params,
-                body: this.safeBody(req.body),
+                headers: this.redactKeys(req.headers),
+                query: this.redactKeys(req.query),
+                params: this.redactKeys(req.params),
+                body: this.redactKeys(req.body),
                 ip: req.ip,
               });
               // Optional lightweight breadcrumbs for request timeline
               const breadcrumbs = [
-                { category: 'http', level: 'info', message: `${method} ${req.originalUrl}` },
+                { category: 'http', level: 'info', message: `${method} ${safeUrl}` },
                 { category: 'http', level: 'error', message: `→ ${status}` },
               ] as const;
               scope.addBreadcrumb(breadcrumbs[0]);
@@ -80,17 +98,53 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
     return HttpStatus.INTERNAL_SERVER_ERROR;
   }
 
-  private safeBody(body: unknown): unknown {
-    if (!this.isPlainObject(body)) return body;
-    const src = body;
-    const clone: Record<string, unknown> = { ...src };
-    // Mask potentially sensitive fields
+  /**
+   * Общий редактор ключей для всего, что кладётся в контекст события.
+   *
+   * ⚠️ Любое новое поле контекста обязано проходить через него — это записано
+   * правилом в `LEGACY-115`, потому что заголовки миновали маску ровно так:
+   * поле добавили рядом с уже замаскированным телом и сочли вопрос закрытым.
+   *
+   * ⚠️ Проход **поверхностный**: вложенное `{ user: { password } }` он не
+   * чистит. Так было и в исходной маске тела; рекурсия — отдельная правка со
+   * своей ценой (глубина, циклы, размер события), а не «заодно».
+   */
+  private redactKeys(value: unknown): unknown {
+    if (!this.isPlainObject(value)) return value;
+    const clone: Record<string, unknown> = { ...value };
     for (const key of Object.keys(clone)) {
-      if (/password|token|authorization|secret|cookie/i.test(key)) {
+      if (SENSITIVE_KEY_PATTERN.test(key)) {
         clone[key] = '[Filtered]';
       }
     }
     return clone;
+  }
+
+  /**
+   * Адрес события без значений секретных параметров строки запроса (`LEGACY-189`).
+   *
+   * 🔴 Редактор ключей сюда неприменим по форме: он маскирует ключи объекта, а
+   * `req.originalUrl` — текст. Без этого разбора значение, замаскированное в
+   * `query`, тем же событием уезжало открытым в `url` и вторым разом в хлебной
+   * крошке, то есть маска на `query` закрывала одно место из трёх.
+   *
+   * ⚠️ Разбором, а не регуляркой по строке: параметр может повторяться, быть
+   * пустым и содержать процентное кодирование. Путь не трогаем — без него
+   * событие бесполезно.
+   */
+  private redactUrl(rawUrl: string): string {
+    const queryStart = rawUrl.indexOf('?');
+    if (queryStart === -1) return rawUrl;
+
+    const pathPart = rawUrl.slice(0, queryStart);
+    const params = new URLSearchParams(rawUrl.slice(queryStart + 1));
+    for (const key of Array.from(new Set(params.keys()))) {
+      if (SENSITIVE_KEY_PATTERN.test(key)) {
+        params.set(key, '[Filtered]');
+      }
+    }
+    const query = params.toString();
+    return query ? `${pathPart}?${query}` : pathPart;
   }
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
