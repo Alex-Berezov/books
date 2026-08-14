@@ -3,11 +3,11 @@ import { Reflector } from '@nestjs/core';
 import { ROLES_KEY, Role } from '../decorators/roles.decorator';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { rolesCache } from '../roles/roles-cache';
 import type { UserRole as UserRoleModel, Role as RoleModel } from '@prisma/client';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  private cache = new Map<string, { roles: Set<Role>; exp: number }>();
   private readonly ttlMs: number;
   constructor(
     private reflector: Reflector,
@@ -35,10 +35,16 @@ export class RolesGuard implements CanActivate {
 
     // cache first
     const now = Date.now();
-    const cached = this.cache.get(user.userId);
-    if (cached && cached.exp > now) {
-      return requiredRoles.some((role) => cached.roles.has(role));
+    const cached = rolesCache.get(user.userId, now);
+    if (cached) {
+      return requiredRoles.some((role) => cached.has(role));
     }
+
+    // Отметка берётся ДО чтения из базы: если между чтением и записью в кэш
+    // роль отзовут, результат этого чтения уже устарел и в кэш не попадёт
+    // (`LEGACY-112`). Строкой ниже её брать бессмысленно — гонка как раз в
+    // промежутке.
+    const readGeneration = rolesCache.beginRead();
 
     // Roles from DB (fresh) — the only source.
     //
@@ -57,7 +63,7 @@ export class RolesGuard implements CanActivate {
     roleNamesFromDb.add(Role.User);
 
     // store in cache
-    this.cache.set(user.userId, { roles: roleNamesFromDb, exp: now + this.ttlMs });
+    rolesCache.set(user.userId, roleNamesFromDb, now + this.ttlMs, now, readGeneration);
     return requiredRoles.some((role) => roleNamesFromDb.has(role));
   }
 }

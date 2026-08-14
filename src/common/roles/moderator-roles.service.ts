@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { RoleName } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
@@ -31,7 +32,21 @@ export class ModeratorRolesService {
     return (await this.rolesOf(actor)).has('admin');
   }
 
-  private async rolesOf(actor?: { userId: string; email: string }): Promise<Set<string>> {
+  /**
+   * Роли пользователя из обоих источников, без неявной базовой `user`.
+   *
+   * ⚠️ Публичный метод — точка сведения (`LEGACY-111`), а не приглашение
+   * считать роли по-своему. Звать его можно там, где нужен **полный** набор
+   * ролей (выдача профиля), а не ответ «модератор ли это»: для второго есть
+   * `isModerator` и `isAdmin`.
+   *
+   * 🔴 В `RolesGuard` этот метод не переиспользуется намеренно. Гвард закрывает
+   * админские маршруты и роли из окружения не учитывает: список сверялся с
+   * почтой **из токена**, то есть роль решал claim в запросе, а не учётная
+   * запись (`roles.guard.ts`, комментарий у чтения из БД). Подстановка `rolesOf`
+   * туда вернёт эскалацию по почте.
+   */
+  async rolesOf(actor?: { userId: string; email: string }): Promise<Set<RoleName>> {
     if (!actor) return new Set();
 
     const dbRoles = await this.prisma.userRole.findMany({

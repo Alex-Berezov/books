@@ -12,6 +12,8 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { STAFF_ROLE_NAMES } from './users.constants';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
+import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+import { rolesCache } from '../../common/roles/roles-cache';
 
 /**
  * Проверка существования пользователя читает одно поле (`LEGACY-116`).
@@ -28,6 +30,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
+    private moderatorRoles: ModeratorRolesService,
   ) {}
 
   async me(userId: string): Promise<PublicUser & { roles: RoleName[] }> {
@@ -148,6 +151,7 @@ export class UsersService {
       // 10) Finally delete the user
       return tx.user.delete({ where: { id: userId }, select: ACCOUNT_USER_SELECT });
     });
+    rolesCache.invalidate(userId);
 
     return {
       id: deleted.id,
@@ -193,6 +197,7 @@ export class UsersService {
       create: { userId, roleId: role.id },
       update: {},
     });
+    rolesCache.invalidate(userId);
     return { userId, role: role.name };
   }
 
@@ -209,6 +214,7 @@ export class UsersService {
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException('Role not found');
     await this.prisma.userRole.delete({ where: { userId_roleId: { userId, roleId: role.id } } });
+    rolesCache.invalidate(userId);
     return { userId, role: role.name };
   }
 
@@ -217,28 +223,11 @@ export class UsersService {
    * сигнатуре требовал бы читать пользователя целиком ради `id` и `email`.
    */
   private async computeRoles(user: { id: string; email: string }): Promise<RoleName[]> {
-    // Roles from DB
-    const dbLinks = await this.prisma.userRole.findMany({
-      where: { userId: user.id },
-      include: { role: true },
-    });
-    const set = new Set<RoleName>(dbLinks.map((l) => l.role.name));
-
-    // ENV-based elevated roles (same logic as RolesGuard)
-    const adminsList = (this.config.get<string>('ADMIN_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    const managersList = (this.config.get<string>('CONTENT_MANAGER_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    if (adminsList.includes(user.email.toLowerCase())) set.add('admin');
-    if (managersList.includes(user.email.toLowerCase())) set.add('content_manager');
-
-    // Baseline 'user'
+    // Оба источника роли — связи `UserRole` и списки окружения — считает
+    // `ModeratorRolesService` (`LEGACY-111`). Здесь остаётся только неявная
+    // базовая `user`: её выдача — свойство этой ручки, а не общей проверки.
+    const set = await this.moderatorRoles.rolesOf({ userId: user.id, email: user.email });
     set.add('user');
-
     return Array.from(set);
   }
 
@@ -450,6 +439,7 @@ export class UsersService {
 
       return u;
     });
+    if (rolesDto) rolesCache.invalidate(id);
 
     const roles = await this.computeRoles(updatedUser);
 

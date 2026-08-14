@@ -5,11 +5,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { RoleName, Language as PrismaLanguage, User } from '@prisma/client';
 import { ACCOUNT_USER_SELECT } from '../../common/selects/account-user.select';
+import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+import { rolesCache } from '../../common/roles/roles-cache';
+import { Role } from '../../common/decorators/roles.decorator';
 
 describe('UsersService (unit)', () => {
   let service: UsersService;
   let prismaMock: any;
   let config: any;
+  let moderatorRoles: ModeratorRolesService;
 
   const baseUser: User = {
     id: 'u1',
@@ -68,7 +72,37 @@ describe('UsersService (unit)', () => {
       }),
     };
 
-    service = new UsersService(prismaMock as unknown as PrismaService, config as ConfigService);
+    // Настоящий `ModeratorRolesService` на тех же моках: сведение
+    // `computeRoles` к нему (`LEGACY-111`) обязано сохранить поведение
+    // один в один, и соседние спеки на роли это и проверяют.
+    moderatorRoles = new ModeratorRolesService(
+      prismaMock as unknown as PrismaService,
+      config as ConfigService,
+    );
+    service = new UsersService(
+      prismaMock as unknown as PrismaService,
+      config as ConfigService,
+      moderatorRoles,
+    );
+
+    // Кэш ролей общий на процесс (`LEGACY-112`) — гасить его надо на весь файл,
+    // а не в одном вложенном блоке: первый же тест, который позовёт гвард,
+    // потечёт в соседние.
+    rolesCache.clear();
+  });
+
+  it('me: роли считает ModeratorRolesService, а не собственная копия', async () => {
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    const rolesOf = jest
+      .spyOn(moderatorRoles, 'rolesOf')
+      .mockResolvedValueOnce(new Set<RoleName>(['content_manager']));
+
+    const res = await service.me('u1');
+
+    expect(rolesOf).toHaveBeenCalledWith({ userId: 'u1', email: baseUser.email });
+    expect(res.roles.sort()).toEqual(['content_manager', 'user']);
+    // Своего чтения ролей у сервиса не осталось: мок сервиса решает всё.
+    expect(prismaMock.userRole.findMany).not.toHaveBeenCalled();
   });
 
   it('me: throws NotFound if user missing', async () => {
@@ -176,6 +210,96 @@ describe('UsersService (unit)', () => {
     (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
     (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce(null);
     await expect(service.revokeRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  /**
+   * `LEGACY-112`: кэш ролей в `RolesGuard` живёт до истечения TTL, поэтому
+   * каждая запись в `UserRole` обязана его сбросить. Мест записи в этом сервисе
+   * четыре — назначение, отзыв, удаление пользователя и замена набора ролей
+   * в админской правке; проверяются все четыре, а не один метод из четырёх.
+   * Полный перечень мест записи по всему `src`, вместе с теми, что сброса не
+   * требуют, держит `src/common/roles/roles-cache-callers.spec.ts`.
+   */
+  describe('сброс кэша ролей после записи в UserRole', () => {
+    const seed = (userId: string): void => {
+      rolesCache.set(
+        userId,
+        new Set([Role.Admin]),
+        Date.now() + 60_000,
+        Date.now(),
+        rolesCache.beginRead(),
+      );
+    };
+    const cached = (userId: string): ReadonlySet<Role> | undefined =>
+      rolesCache.get(userId, Date.now());
+
+    beforeEach(() => {
+      (prismaMock.user.findUnique as jest.Mock).mockResolvedValue(baseUser);
+      (prismaMock.role.findUnique as jest.Mock).mockResolvedValue({
+        id: 'r1',
+        name: 'admin' as RoleName,
+      });
+      prismaMock.userRole.upsert = jest.fn().mockResolvedValue({});
+      prismaMock.userRole.delete = jest.fn().mockResolvedValue({});
+    });
+
+    afterAll(() => rolesCache.clear());
+
+    it('assignRole', async () => {
+      seed('u1');
+      await service.assignRole('u1', 'admin');
+      expect(cached('u1')).toBeUndefined();
+    });
+
+    it('assignRole сбрасывает только названного — соседи в кэше остаются', async () => {
+      seed('u1');
+      seed('сосед');
+      await service.assignRole('u1', 'admin');
+      // `clear()` вместо `invalidate(userId)` отправил бы в базу всех вошедших.
+      expect(cached('сосед')).toEqual(new Set([Role.Admin]));
+    });
+
+    it('revokeRole', async () => {
+      seed('u1');
+      await service.revokeRole('u1', 'admin');
+      expect(cached('u1')).toBeUndefined();
+    });
+
+    it('deleteById', async () => {
+      seed('u1');
+      (prismaMock.comment.findMany as jest.Mock).mockResolvedValueOnce([]);
+      (prismaMock.like.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prismaMock.bookshelf.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prismaMock.readingProgress.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prismaMock.viewStat.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prismaMock.mediaAsset.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prismaMock.userRole.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prismaMock.user.delete as jest.Mock).mockResolvedValue(baseUser);
+
+      await service.deleteById('u1');
+      expect(cached('u1')).toBeUndefined();
+    });
+
+    it('update с новым набором ролей', async () => {
+      seed('u1');
+      prismaMock.role.findMany = jest.fn().mockResolvedValue([{ id: 'r1', name: 'admin' }]);
+      prismaMock.userRole.createMany = jest.fn().mockResolvedValue({ count: 1 });
+      (prismaMock.userRole.deleteMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (prismaMock.user.update as jest.Mock).mockResolvedValue(baseUser);
+      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+
+      await service.update('u1', { roles: ['admin'] });
+      expect(cached('u1')).toBeUndefined();
+    });
+
+    it('update без ролей кэш не трогает — сброс не веерный', async () => {
+      seed('u1');
+      (prismaMock.user.update as jest.Mock).mockResolvedValue(baseUser);
+      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+
+      await service.update('u1', { firstName: 'Jane' });
+      expect(cached('u1')).toEqual(new Set([Role.Admin]));
+    });
   });
 
   it('list: pagination boundaries and staff=exclude filter', async () => {

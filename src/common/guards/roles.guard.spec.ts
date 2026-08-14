@@ -4,6 +4,7 @@ import { ExecutionContext } from '@nestjs/common';
 import { Role } from '../decorators/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { rolesCache } from '../roles/roles-cache';
 
 type MockUser = { email: string; userId: string } | undefined;
 type MockReq = { user?: { email: string; userId: string } };
@@ -60,6 +61,9 @@ function makeGuard(params: {
 }
 
 describe('RolesGuard', () => {
+  // Кэш ролей общий на процесс (`LEGACY-112`), поэтому между спеками он течёт.
+  beforeEach(() => rolesCache.clear());
+
   it('returns true when no roles are required', async () => {
     const { guard, prisma } = makeGuard({ requiredRoles: undefined });
     const res = await guard.canActivate(makeContext({ email: 'a@a.com', userId: 'u1' }));
@@ -71,6 +75,20 @@ describe('RolesGuard', () => {
     const { guard } = makeGuard({ requiredRoles: [Role.Admin] });
     const res = await guard.canActivate(makeContext(undefined));
     expect(res).toBe(false);
+  });
+
+  // Читателей `UserRole` в коде два — гвард и `ModeratorRolesService.rolesOf`
+  // (`LEGACY-111` свёл копии проверки, но не источник из окружения). Запрос
+  // у них обязан совпадать, иначе `/uploads` и `/users/me` начнут отвечать не
+  // то же, что админские маршруты; зеркальное утверждение стоит в
+  // `moderator-roles.service.spec.ts`.
+  it('читает роли тем же запросом, что и ModeratorRolesService', async () => {
+    const { guard, prisma } = makeGuard({ requiredRoles: [Role.Admin], dbRoles: [] });
+    await guard.canActivate(makeContext({ email: 'q@example.com', userId: 'query-shape' }));
+    expect(prisma.userRole.findMany).toHaveBeenCalledWith({
+      where: { userId: 'query-shape' },
+      include: { role: true },
+    });
   });
 
   it('uses DB roles and caches them; cache hit avoids DB second time', async () => {
@@ -179,5 +197,103 @@ describe('RolesGuard', () => {
     });
     const res = await guard.canActivate(makeContext({ email: 'l@example.com', userId: 'u9' }));
     expect(res).toBe(false);
+  });
+
+  // `LEGACY-112`: отзыв роли обязан действовать сразу, а не через TTL.
+  describe('сброс кэша', () => {
+    it('после invalidate доступ пропадает в том же тике, без ожидания TTL', async () => {
+      const { guard, prisma } = makeGuard({
+        requiredRoles: [Role.Admin],
+        ttlMs: 60_000,
+        dbRoles: [{ role: { name: Role.Admin } }],
+      });
+      const ctx = makeContext({ email: 'a@example.com', userId: 'revoked' });
+
+      expect(await guard.canActivate(ctx)).toBe(true);
+      expect(prisma.userRole.findMany).toHaveBeenCalledTimes(1);
+
+      // Роль снята в базе; TTL ещё не истёк.
+      prisma.userRole.findMany.mockResolvedValue([]);
+      expect(await guard.canActivate(ctx)).toBe(true);
+      expect(prisma.userRole.findMany).toHaveBeenCalledTimes(1);
+
+      rolesCache.invalidate('revoked');
+
+      expect(await guard.canActivate(ctx)).toBe(false);
+      expect(prisma.userRole.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('отзыв роли во время чтения из базы в кэш не попадает', async () => {
+      const { guard, prisma } = makeGuard({
+        requiredRoles: [Role.Admin],
+        ttlMs: 60_000,
+        dbRoles: [{ role: { name: Role.Admin } }],
+      });
+      const ctx = makeContext({ email: 'r@example.com', userId: 'racing' });
+
+      // Роль снимают, пока запрос ждёт ответа базы: его результат устарел,
+      // но записать он успевает уже после сброса.
+      prisma.userRole.findMany.mockImplementationOnce(async () => {
+        rolesCache.invalidate('racing');
+        return Promise.resolve([{ role: { name: Role.Admin } }]);
+      });
+
+      expect(await guard.canActivate(ctx)).toBe(true);
+
+      prisma.userRole.findMany.mockResolvedValue([]);
+      // Устаревший ответ в кэш не лёг, поэтому следующий запрос идёт в базу
+      // и видит отзыв. Возьми гвард отметку поколения после чтения — здесь
+      // был бы попадание в кэш и `true` ещё на весь TTL.
+      expect(await guard.canActivate(ctx)).toBe(false);
+      expect(prisma.userRole.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('сбрасывает только названного пользователя', async () => {
+      const { guard, prisma } = makeGuard({
+        requiredRoles: [Role.Admin],
+        ttlMs: 60_000,
+        dbRoles: [{ role: { name: Role.Admin } }],
+      });
+      const kept = makeContext({ email: 'k@example.com', userId: 'kept' });
+      const dropped = makeContext({ email: 'd@example.com', userId: 'dropped' });
+
+      expect(await guard.canActivate(kept)).toBe(true);
+      expect(await guard.canActivate(dropped)).toBe(true);
+      expect(prisma.userRole.findMany).toHaveBeenCalledTimes(2);
+
+      rolesCache.invalidate('dropped');
+
+      expect(await guard.canActivate(kept)).toBe(true);
+      expect(prisma.userRole.findMany).toHaveBeenCalledTimes(2);
+      expect(await guard.canActivate(dropped)).toBe(true);
+      expect(prisma.userRole.findMany).toHaveBeenCalledTimes(3);
+    });
+
+    it('кэш общий для разных экземпляров гварда — их создаётся по одному на модуль', async () => {
+      const first = makeGuard({
+        requiredRoles: [Role.Admin],
+        ttlMs: 60_000,
+        dbRoles: [{ role: { name: Role.Admin } }],
+      });
+      const second = makeGuard({
+        requiredRoles: [Role.Admin],
+        ttlMs: 60_000,
+        dbRoles: [{ role: { name: Role.Admin } }],
+      });
+      const ctx = makeContext({ email: 's@example.com', userId: 'shared' });
+
+      expect(await first.guard.canActivate(ctx)).toBe(true);
+      expect(await second.guard.canActivate(ctx)).toBe(true);
+      // Второй экземпляр читает запись первого — в базу он не ходил.
+      expect(second.prisma.userRole.findMany).not.toHaveBeenCalled();
+
+      rolesCache.invalidate('shared');
+      second.prisma.userRole.findMany.mockResolvedValue([]);
+
+      expect(await second.guard.canActivate(ctx)).toBe(false);
+      // Свежую запись второго экземпляра видит первый: в базу он ходил один раз.
+      expect(await first.guard.canActivate(ctx)).toBe(false);
+      expect(first.prisma.userRole.findMany).toHaveBeenCalledTimes(1);
+    });
   });
 });
