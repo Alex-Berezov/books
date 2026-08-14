@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 import { RightsClaimAttachmentType } from '../rights-claim-interface';
 
 export class CreateClaimAttachmentDto {
@@ -25,7 +25,7 @@ export class CreateClaimAttachmentDto {
 
   @ApiPropertyOptional({ description: 'One of mediaAssetId / storageKey / url is required' })
   @IsOptional()
-  @IsString()
+  @IsUUID()
   mediaAssetId?: string;
 
   @ApiPropertyOptional()

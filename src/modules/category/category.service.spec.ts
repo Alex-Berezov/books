@@ -222,6 +222,25 @@ describe('CategoryService', () => {
     expect(res.data[0].langBookCount).toBe(1);
   });
 
+  // LEGACY-117. `Prisma.join([])` бросает TypeError на сборке условия, и публичный
+  // список уходил в 500 на пустой выборке. Проверяется именно **отсутствие вызова**
+  // `$queryRaw`: код, который зовёт raw и глотает исключение, тоже вернёт пустой
+  // список.
+  it('list returns an empty page without touching $queryRaw when the page is out of range', async () => {
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+    prisma.category.count.mockResolvedValue(42);
+    prisma.category.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockRejectedValue(new Error('$queryRaw must not be reached'));
+
+    const res = await service.list(99, 20, 'genre', Language.ru);
+
+    expect(res.data).toEqual([]);
+    expect(res.meta).toEqual({ page: 99, limit: 20, total: 42, totalPages: 3 });
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
   describe('getTree projects per-language indexability', () => {
     beforeEach(() => {
       prisma.category.findMany.mockResolvedValue([

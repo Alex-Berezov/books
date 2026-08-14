@@ -6,6 +6,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
 } from 'class-validator';
 import {
@@ -82,21 +83,30 @@ export class CreateRightsClaimDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   claimantPersonId?: string;
 
   // --- Target ---
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   bookId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   bookVersionId?: string;
 
+  // 🔴 Эти два поля намеренно остались `@IsString()`, см. `LEGACY-200`.
+  // `uuid` у `RightsProfile` и `RightsIntake` — только **дефолт** схемы, колонка
+  // текстовая, и идентификатор здесь задаётся снаружи: `prisma/seed.ts:99,117`
+  // кладёт `seed-intake-harry-potter` и `seed-profile-harry-potter`,
+  // `test/helpers/book-with-rights.ts:40-41` — `test-intake-<slug>`. Пути,
+  // создающего профиль, в `src` нет вовсе. Пока не проверено, какие значения
+  // лежат в боевой базе, ужесточение отбило бы запрос по идентификатору,
+  // который в базе валиден. Граница записи `LEGACY-119` требовала этой сверки
+  // именно здесь.
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -109,12 +119,12 @@ export class CreateRightsClaimDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   mediaAssetId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   parentClaimId?: string;
 
   // --- Territories and languages ---
@@ -184,7 +194,7 @@ export class CreateRightsClaimDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   assignedToUserId?: string;
 
   @ApiPropertyOptional()

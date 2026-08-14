@@ -31,6 +31,7 @@ interface PrismaStub {
     aggregate: jest.Mock;
   };
   $transaction: jest.Mock;
+  $queryRaw: jest.Mock;
 }
 
 const createPrismaStub = (): PrismaStub => {
@@ -61,6 +62,7 @@ const createPrismaStub = (): PrismaStub => {
       aggregate: jest.fn(),
     },
     $transaction: jest.fn(),
+    $queryRaw: jest.fn(),
   };
 
   stub.$transaction.mockImplementation(async (callback: unknown) => {
@@ -211,6 +213,25 @@ describe('AuthorService', () => {
       await expect(service.getPublicBySlug('oscar-wilde', Language.en)).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('list', () => {
+    // LEGACY-117. Здесь ранний выход уже стоял (`countPublishedBooksByAuthor`
+    // возвращает пустую карту до сборки условия) — спека держит его на месте:
+    // `Prisma.join([])` бросает TypeError, и снятие проверки красит её.
+    // Проверяется именно **отсутствие вызова** `$queryRaw`.
+    it('returns an empty page without touching $queryRaw when the page is out of range', async () => {
+      prisma.$transaction.mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+      prisma.author.count.mockResolvedValue(42);
+      prisma.author.findMany.mockResolvedValue([]);
+      prisma.$queryRaw.mockRejectedValue(new Error('$queryRaw must not be reached'));
+
+      const res = await service.list(99, 20, Language.en);
+
+      expect(res.data).toEqual([]);
+      expect(res.meta).toEqual({ page: 99, limit: 20, total: 42, totalPages: 3 });
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 });

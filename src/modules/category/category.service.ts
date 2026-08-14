@@ -85,6 +85,23 @@ export class CategoryService {
 
     // Get distinct book counts for these categories (optionally filtered by language)
     const categoryIds = items.map((item) => item.id);
+
+    // 🔴 `Prisma.join([])` бросает TypeError **в момент сборки условия**, а не при
+    // запросе, и наружу это выходит как 500 на штатном пути: страница за пределами
+    // выборки, фильтр без совпадений, язык без переводов, пустая база нового
+    // окружения. Ранний выход обязан стоять до сборки `whereConditions`.
+    if (categoryIds.length === 0) {
+      return {
+        data: [],
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    }
+
     const whereConditions: Prisma.Sql[] = [
       Prisma.sql`bc."categoryId" IN (${Prisma.join(categoryIds)})`,
       Prisma.sql`bv.status = 'published'`,

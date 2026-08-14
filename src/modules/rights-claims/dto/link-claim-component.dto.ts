@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 /** Mirrors the Prisma `RightsComponentType` enum, which the generated client does not expose here. */
 export enum ClaimComponentType {
@@ -30,7 +30,7 @@ export enum ClaimComponentType {
 export class LinkClaimComponentDto {
   @ApiPropertyOptional({ description: 'Existing rights profile component' })
   @IsOptional()
-  @IsString()
+  @IsUUID()
   rightsComponentId?: string;
 
   @ApiPropertyOptional({ enum: ClaimComponentType, description: 'Used when there is no profile' })

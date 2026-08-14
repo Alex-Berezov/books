@@ -31,6 +31,7 @@ import {
   Min,
   Max,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -55,12 +56,18 @@ class PublicUserDto {
 }
 
 class ListUsersQueryDto {
+  // 🔴 Глобальный `ValidationPipe` создан без `enableImplicitConversion`, поэтому
+  // в проекте конвертация поштучная: числовое поле query-DTO без `@Type(() => Number)`
+  // получает из строки запроса строку, `@IsInt` отвергает её, и маршрут отвечает 400
+  // на **любое** значение параметра. Образец — `src/shared/dto/pagination.dto.ts`.
   @IsOptionalCls()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   page?: number = 1;
 
   @IsOptionalCls()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(100)

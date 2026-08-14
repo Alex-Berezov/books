@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 import { ClaimBlockScope } from '../rights-claim-interface';
 
 export class ApplyClaimBlockDto {
@@ -18,12 +26,12 @@ export class ApplyClaimBlockDto {
 
   @ApiPropertyOptional({ description: 'Defaults to the claim target version' })
   @IsOptional()
-  @IsString()
+  @IsUUID()
   bookVersionId?: string;
 
   @ApiPropertyOptional({ description: 'Defaults to the claim target book' })
   @IsOptional()
-  @IsString()
+  @IsUUID()
   bookId?: string;
 
   @ApiProperty()

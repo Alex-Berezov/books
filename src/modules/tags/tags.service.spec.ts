@@ -182,6 +182,20 @@ describe('TagsService', () => {
         expect.objectContaining({ language: Language.es, bookCount: 2, autoIndexable: false }),
       ]);
     });
+
+    // LEGACY-117. Проверяется именно **отсутствие вызова** `$queryRaw`: код, который
+    // зовёт raw и глотает исключение, тоже вернёт пустой список.
+    it('returns an empty page without touching $queryRaw when the page is out of range', async () => {
+      prisma.tag.count.mockResolvedValue(42);
+      prisma.tag.findMany.mockResolvedValue([]);
+      prisma.$queryRaw.mockRejectedValue(new Error('$queryRaw must not be reached'));
+
+      const res = await service.list(99, 20, undefined, Language.es);
+
+      expect(res.data).toEqual([]);
+      expect(res.meta).toEqual({ page: 99, limit: 20, total: 42, totalPages: 3 });
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
   });
 
   it('attach is idempotent and checks existence', async () => {

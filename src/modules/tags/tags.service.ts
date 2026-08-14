@@ -62,6 +62,22 @@ export class TagsService {
 
     // Count distinct books per tag (via bookId, not BookVersion), optionally filtered by language
     const tagIds = items.map((item) => item.id);
+
+    // 🔴 Проверка `tagIds.length > 0` ниже, на самом `$queryRaw`, не спасала:
+    // `Prisma.join([])` бросает TypeError уже при сборке условия, то есть строкой
+    // выше. См. `CategoryService.list` — тот же дефект, тот же ранний выход.
+    if (tagIds.length === 0) {
+      return {
+        data: [],
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    }
+
     const tagWhereConditions: Prisma.Sql[] = [
       Prisma.sql`bt."tagId" IN (${Prisma.join(tagIds)})`,
       Prisma.sql`bv.status = 'published'`,
@@ -69,16 +85,13 @@ export class TagsService {
     if (lang) {
       tagWhereConditions.push(Prisma.sql`bv.language = ${lang}::"Language"`);
     }
-    const bookCounts =
-      tagIds.length > 0
-        ? await this.prisma.$queryRaw<Array<{ tagId: string; booksCount: number }>>`
-          SELECT bt."tagId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
-          FROM "BookTag" bt
-          JOIN "BookVersion" bv ON bt."bookVersionId" = bv.id
-          WHERE ${Prisma.join(tagWhereConditions, ' AND ')}
-          GROUP BY bt."tagId"
-        `
-        : [];
+    const bookCounts = await this.prisma.$queryRaw<Array<{ tagId: string; booksCount: number }>>`
+      SELECT bt."tagId", COUNT(DISTINCT bv."bookId")::int as "booksCount"
+      FROM "BookTag" bt
+      JOIN "BookVersion" bv ON bt."bookVersionId" = bv.id
+      WHERE ${Prisma.join(tagWhereConditions, ' AND ')}
+      GROUP BY bt."tagId"
+    `;
     const countMap = new Map(bookCounts.map((row) => [row.tagId, row.booksCount]));
 
     const data = items.map((item) => {

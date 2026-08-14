@@ -92,6 +92,32 @@ describe('Rights claims e2e', () => {
     await app.close();
   });
 
+  // LEGACY-119. Идентификаторы модуля объявлены `@IsString()`, то есть любая
+  // непустая строка доходила до сервиса и до базы: пустой результат поиска и 404
+  // либо отказ на внешнем ключе, который клиент видит как 500. В схеме все они
+  // uuid — форма значения известна заранее и проверяема.
+  it('rejects a non-uuid identifier with 400 and names the field', async () => {
+    await request(http())
+      .post('/admin/rights/claims')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        claimType: 'DMCA_TAKEDOWN',
+        severity: 'HIGH',
+        claimantName: 'Acme Publishing',
+        claimantType: 'PUBLISHER',
+        claimantIsAuthorized: true,
+        bookId: 'not-a-uuid',
+        descriptionRu: 'Правообладатель требует удалить текст.',
+        goodFaithStatement: true,
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        // Именно про поле, а не «просто 400»: 400 отдаёт и любая другая
+        // непройденная проверка тела.
+        expect((body.message as string[]).join(' ')).toContain('bookId');
+      });
+  });
+
   it('registers a claim that blocks publication with ACTIVE_RIGHTS_CLAIM', async () => {
     const created = await request(http())
       .post('/admin/rights/claims')

@@ -7,6 +7,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   Min,
@@ -70,19 +71,23 @@ export class QueryRightsClaimsDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   assignedToUserId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   bookId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   bookVersionId?: string;
 
+  // 🔴 Намеренно `@IsString()`, см. `LEGACY-200` и парное поле в
+  // `create-rights-claim.dto.ts`: `uuid` у `RightsProfile` — только дефолт схемы,
+  // колонка текстовая, а идентификатор задаётся снаружи. Фильтр по сохранённой
+  // ссылке отбило бы 400 на значении, которое в базе валидно.
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
