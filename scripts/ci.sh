@@ -32,6 +32,13 @@ step "Schema/migration drift check"
 yarn drift-check:self-test
 yarn drift-check
 
+# Nothing else compares the keys the code reads with `.env.example`: there is no validation
+# schema on ConfigModule and no test over the example. That is how LEGACY-171 lived for years —
+# the geo-block policy key was simply missing from the example (LEGACY-207).
+step "Environment key check"
+yarn check:env:self-test
+yarn check:env
+
 # С покрытием, а не просто `yarn test`: порог в `jest.coverageThreshold`
 # срабатывает только при `--coverage`, иначе он декорация (LEGACY-016).
 # Замер 11.08.2026: statements 63.98, branches 59.64, functions 61.18,

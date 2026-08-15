@@ -20,6 +20,8 @@
     "typecheck:test": "tsc --noEmit -p test/tsconfig.json",
     "drift-check": "node scripts/drift-check.mjs",
     "drift-check:self-test": "node scripts/drift-check.mjs --self-test",
+    "check:env": "node scripts/check-env.mjs",
+    "check:env:self-test": "node scripts/check-env.mjs --self-test",
     "test": "jest --maxWorkers=50%",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage --maxWorkers=50%",
