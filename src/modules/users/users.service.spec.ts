@@ -4,6 +4,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RoleName, Language as PrismaLanguage, User } from '@prisma/client';
 import { ACCOUNT_USER_SELECT } from '../../common/selects/account-user.select';
+import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { rolesCache } from '../../common/roles/roles-cache';
 import { Role } from '../../common/decorators/roles.decorator';
@@ -399,6 +400,32 @@ describe('UsersService (unit)', () => {
       });
       expect(res[0].replies.length).toBe(1);
       expect(res[0].replies[0].text).toBe('reply');
+    });
+
+    // Посадка LEGACY-191: `parent.user` — автор чужого комментария, `children.user` —
+    // все, кто ответил, и то и другое третьи лица. Проверяются **аргументы** запроса,
+    // а не форма ответа: ответ собирается из мока и о составе селекта ничего не знает.
+    //
+    // Два утверждения на каждый селект, и они закрывают разные дыры. `toEqual`
+    // требует ровно общий белый список — иначе инлайн-литерал с любым другим полем
+    // схемы (`passwordHash` в том числе) проходил бы мимо проверки на почту.
+    // `not.toContain('email')` смотрит на состав ключей уже самой константы: её
+    // расширение почтой `toEqual` не заметит, потому что сравнивает её саму с собой.
+    it('не запрашивает почту авторов чужих комментариев (LEGACY-191)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      await service.getActivities('u1');
+
+      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
+      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+        include: {
+          parent: { include: { user: { select: Record<string, unknown> } } };
+          children: { include: { user: { select: Record<string, unknown> } } };
+        };
+      };
+
+      expect(args.include.parent.include.user.select).toEqual(PUBLIC_COMMENT_USER_SELECT);
+      expect(args.include.children.include.user.select).toEqual(PUBLIC_COMMENT_USER_SELECT);
+      expect(Object.keys(PUBLIC_COMMENT_USER_SELECT)).not.toContain('email');
     });
   });
 

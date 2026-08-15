@@ -6,33 +6,16 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 
 /**
- * Поля автора, которые можно показать читателю отзывов.
- *
- * 🔴 До 10.08.2026 сюда входил `email`, и `GET /comments` отдавал почту всех
- * комментаторов анониму — блок отзывов виден без входа и токена не шлёт вовсе
- * (`LEGACY-089`). Рядом уезжал `id`, по которому открывалась вторая утечка:
- * `reader-bootstrap?userId=` возвращал чужой прогресс чтения (`LEGACY-088`).
- *
- * ⚠️ Селект держится одной константой намеренно. Он повторялся в шести местах,
- * и добавить поле в пять из них, забыв шестое, было ровно так же легко, как
- * не заметить `email` во всех шести сразу.
- */
-const PUBLIC_COMMENT_USER_SELECT = {
-  id: true,
-  name: true,
-  nickname: true,
-  avatarUrl: true,
-} as const;
-
-/**
  * Вложенная ветка ответов: и кого показывать, и кто их написал.
  *
- * ⚠️ Одной функцией, и по той же причине, что и селект выше. `include` для ветки
+ * ⚠️ Одной функцией, и по той же причине, что и `PUBLIC_COMMENT_USER_SELECT`
+ * (`src/common/selects/public-comment-user.select.ts`). `include` для ветки
  * писался в четырёх местах отдельно, и автор оказался только в одном из них
  * (`LEGACY-102`). Расхождение не ловится typecheck'ом: Prisma возвращает то, что
  * попросили, а `CommentDto` обещает `children: CommentDto[]` с обязательным

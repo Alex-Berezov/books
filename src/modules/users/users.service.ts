@@ -11,6 +11,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { STAFF_ROLE_NAMES } from './users.constants';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
+import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { rolesCache } from '../../common/roles/roles-cache';
 
@@ -440,17 +441,13 @@ export class UsersService {
       include: {
         parent: {
           include: {
-            user: {
-              select: { id: true, email: true, name: true, nickname: true, avatarUrl: true },
-            },
+            user: { select: PUBLIC_COMMENT_USER_SELECT },
           },
         },
         children: {
           where: { isDeleted: false },
           include: {
-            user: {
-              select: { id: true, email: true, name: true, nickname: true, avatarUrl: true },
-            },
+            user: { select: PUBLIC_COMMENT_USER_SELECT },
           },
         },
         bookVersion: {
