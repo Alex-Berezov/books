@@ -444,8 +444,15 @@ export class UsersService {
             user: { select: PUBLIC_COMMENT_USER_SELECT },
           },
         },
+        // 🔴 Владелец страницы активности модератором не является: ветка ему
+        // положена в том же виде, что анониму в публичной ветке. До 15.08.2026
+        // здесь стоял только `isDeleted`, и скрытый модератором ответ приезжал
+        // сюда целиком — с текстом и с личностью написавшего (`LEGACY-210`).
+        // Образец — `commentChildren` в модуле комментариев, но переносить её
+        // сюда нельзя: она завязана на `canModerate`, которого у этого маршрута
+        // нет вовсе.
         children: {
-          where: { isDeleted: false },
+          where: { isDeleted: false, isHidden: false },
           include: {
             user: { select: PUBLIC_COMMENT_USER_SELECT },
           },
@@ -489,7 +496,21 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const activeComments = comments.filter((c) => !c.parent || !c.parent.isDeleted);
+    // Скрытый модератором родитель приравнивается к удалённому: запись
+    // активности уходит из ответа целиком, как уже уходила при `isDeleted`
+    // (`LEGACY-210`). Оба признака проверяются в одном месте и маппер не
+    // трогается, поэтому форма ответа не меняется — из выдачи пропадают
+    // элементы, полей не убавляется.
+    //
+    // ⚠️ Отсев именно здесь — не потому, что база так не умеет: `where` внутри
+    // `include` связь «к одному» действительно не принимает, но фильтр по ней
+    // ставится на верхнем уровне (`parent: { is: { … } }`). Пока выборка идёт
+    // без `take`/`skip`, разницы нет. Появится пагинация — фильтр обязан
+    // переехать в запрос, иначе страницы поедут короче `limit`, а последняя
+    // окажется пустой при непустом остатке.
+    const activeComments = comments.filter(
+      (c) => !c.parent || (!c.parent.isDeleted && !c.parent.isHidden),
+    );
 
     return activeComments.map((comment) => {
       let bookVersion = comment.bookVersion;

@@ -427,6 +427,86 @@ describe('UsersService (unit)', () => {
       expect(args.include.children.include.user.select).toEqual(PUBLIC_COMMENT_USER_SELECT);
       expect(Object.keys(PUBLIC_COMMENT_USER_SELECT)).not.toContain('email');
     });
+
+    // Посадка LEGACY-210: владелец страницы активности не модератор, и ветка ему
+    // положена в том же виде, что анониму. Сверяются аргументы запроса: ответ
+    // собирается из мока и о `where` ничего не знает.
+    //
+    // 🔴 Точное равенство объекта, а не `toHaveProperty('isHidden')`: последнее
+    // прошло бы и на `isHidden: true`, то есть на выдаче одних только скрытых.
+    it('не запрашивает скрытые модератором ответы (LEGACY-210)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      await service.getActivities('u1');
+
+      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
+      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+        include: { children: { where: Record<string, unknown> } };
+      };
+
+      expect(args.include.children.where).toEqual({ isDeleted: false, isHidden: false });
+    });
+
+    // Вторая половина той же записи: у `parent` фильтра в запросе нет вовсе —
+    // связь «к одному» не принимает `where` внутри `include`, — поэтому скрытый
+    // родитель отсеивается в памяти наравне с удалённым.
+    it('не отдаёт активность под скрытым родителем (LEGACY-210)', async () => {
+      const base = {
+        text: 'mine',
+        createdAt: new Date(),
+        children: [],
+        bookVersion: null,
+        chapter: null,
+        audioChapter: null,
+      };
+      prismaMock.comment.findMany.mockResolvedValueOnce([
+        {
+          ...base,
+          id: 'c1',
+          parentId: 'p1',
+          parent: {
+            id: 'p1',
+            text: 'hidden parent',
+            createdAt: new Date(),
+            isDeleted: false,
+            isHidden: true,
+            user: { id: 'u2' },
+          },
+        },
+        {
+          ...base,
+          id: 'c2',
+          parentId: 'p2',
+          parent: {
+            id: 'p2',
+            text: 'visible parent',
+            createdAt: new Date(),
+            isDeleted: false,
+            isHidden: false,
+            user: { id: 'u3' },
+          },
+        },
+        // Удалённый родитель отсеивался и до правки. Третий случай стоит здесь,
+        // потому что выражение переписано целиком: без него снятие
+        // `!c.parent.isDeleted` не покраснит ни один тест (урок `L-004`).
+        {
+          ...base,
+          id: 'c3',
+          parentId: 'p3',
+          parent: {
+            id: 'p3',
+            text: 'deleted parent',
+            createdAt: new Date(),
+            isDeleted: true,
+            isHidden: false,
+            user: { id: 'u4' },
+          },
+        },
+      ]);
+
+      const res = await service.getActivities('u1');
+
+      expect(res.map((r) => r.id)).toEqual(['c2']);
+    });
   });
 
   // Посадка LEGACY-116: чтения пользователя сужены белым списком, и хеш пароля

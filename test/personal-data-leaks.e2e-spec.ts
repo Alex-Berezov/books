@@ -208,6 +208,110 @@ describe('Personal data leaks (e2e)', () => {
     });
   });
 
+  /**
+   * `LEGACY-210`. То же сокрытие, но на собственной странице активности:
+   * `GET /users/me/activities` знал только про `isDeleted`, и то, что убрано
+   * из публичной ветки, оставалось видно автору ветки — с текстом и с личностью
+   * написавшего. Владелец страницы модератором не является, значит ветка ему
+   * положена в том же виде, что анониму.
+   *
+   * ⚠️ Проверяется живое тело ответа, а не аргументы запроса: юнит-посадка
+   * в `users.service.spec.ts` смотрит на `where`, и подмена маппера ею
+   * не ловится.
+   */
+  describe('LEGACY-210 — скрытые ответы в активности', () => {
+    it('скрытый ответ не приходит в GET /users/me/activities', async () => {
+      const root = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({ bookVersionId: versionId, text: 'Activity thread root' })
+        .expect(201);
+
+      const reply = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({
+          parentId: (root.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'Hidden activity reply text',
+        })
+        .expect(201);
+
+      await request(http())
+        .patch(`/comments/${(reply.body as { id: string }).id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ isHidden: true })
+        .expect(200);
+
+      const activities = await request(http())
+        .get('/users/me/activities')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(200);
+
+      const body = JSON.stringify(activities.body);
+      // Ответ целиком: вместе с текстом уезжали `id`, `name`, `nickname`
+      // и `avatarUrl` того, кого скрыли, — ровно та выдача личности, которую
+      // закрывала `LEGACY-089`.
+      expect(body).not.toContain('Hidden activity reply text');
+      // 🔴 Положительный контроль обязателен: на одних отрицаниях маршрут,
+      // отдавший пустой список по любой причине, прошёл бы зелёным, и тест
+      // не отличал бы «скрытое отфильтровано» от «не пришло ничего».
+      expect(body).toContain('Activity thread root');
+    });
+
+    it('запись со скрытым родителем не приходит вовсе — как и с удалённым', async () => {
+      const root = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ bookVersionId: versionId, text: 'Hidden activity parent text' })
+        .expect(201);
+
+      await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({
+          parentId: (root.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'Reply under hidden parent',
+        })
+        .expect(201);
+
+      // Ответ под видимым родителем — положительный контроль: он обязан
+      // остаться в активности, иначе тест не отличает фильтр от пустого ответа.
+      const visibleRoot = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ bookVersionId: versionId, text: 'Visible activity parent text' })
+        .expect(201);
+
+      await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({
+          parentId: (visibleRoot.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'Reply under visible parent',
+        })
+        .expect(201);
+
+      await request(http())
+        .patch(`/comments/${(root.body as { id: string }).id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ isHidden: true })
+        .expect(200);
+
+      const activities = await request(http())
+        .get('/users/me/activities')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(200);
+
+      const body = JSON.stringify(activities.body);
+      expect(body).not.toContain('Hidden activity parent text');
+      expect(body).not.toContain('Reply under hidden parent');
+      expect(body).toContain('Reply under visible parent');
+    });
+  });
+
   describe('LEGACY-088 — чужой прогресс чтения', () => {
     it('игнорирует userId в query: подставить чужой идентификатор больше нечем', async () => {
       const res = await request(http())

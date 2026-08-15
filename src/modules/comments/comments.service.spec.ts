@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 
@@ -307,8 +308,25 @@ describe('CommentsService', () => {
         | undefined;
     };
 
+    const rootUserOf = (args: unknown) =>
+      (args as { include?: { user?: unknown } } | undefined)?.include?.user;
+
+    // Посадка LEGACY-211: до 15.08.2026 здесь проверялось только наличие ключа
+    // `user`, и возврат к инлайн-литералу с почтой не красил в модуле
+    // комментариев ничего — единственным сторожем публичной выдачи оставался
+    // e2e `test/personal-data-leaks.e2e-spec.ts`, а он на обычном прогоне
+    // не запускается.
+    //
+    // 🔴 Сравнение с константой её собственных расширений не заметит: допиши
+    // в неё поле — поедут обе стороны сразу. Состав константы поэтому
+    // проверяется отдельным тестом ниже.
+    const AUTHOR = { select: PUBLIC_COMMENT_USER_SELECT };
+
     const expectAuthor = (children: ReturnType<typeof childrenArgOf>) =>
-      expect(children?.include).toHaveProperty('user');
+      expect(children?.include?.user).toEqual(AUTHOR);
+
+    /** Автор корневого комментария — то же третье лицо, что и автор ответа. */
+    const expectRootAuthor = (args: unknown) => expect(rootUserOf(args)).toEqual(AUTHOR);
 
     const VISIBLE_ONLY = { isDeleted: false, isHidden: false };
     const MODERATOR = { isDeleted: false };
@@ -320,8 +338,13 @@ describe('CommentsService', () => {
 
       await service.create('u1', { bookVersionId: 'v1', text: 'hi' } as CreateCommentDto);
 
-      const children = childrenArgOf(prisma.comment.create.mock.calls[0][0]);
+      // Счётчик рядом с чтением `calls[0]`: без него второй запрос за тем же
+      // комментарием, добавленный позже, в проверку не попадёт вовсе (`L-005`).
+      expect(prisma.comment.create).toHaveBeenCalledTimes(1);
+      const args = prisma.comment.create.mock.calls[0][0];
+      const children = childrenArgOf(args);
       expectAuthor(children);
+      expectRootAuthor(args);
       expect(children?.where).toEqual(VISIBLE_ONLY);
     });
 
@@ -330,8 +353,11 @@ describe('CommentsService', () => {
 
       await service.get('c1');
 
-      const children = childrenArgOf(prisma.comment.findUnique.mock.calls[0][0]);
+      expect(prisma.comment.findUnique).toHaveBeenCalledTimes(1);
+      const args = prisma.comment.findUnique.mock.calls[0][0];
+      const children = childrenArgOf(args);
       expectAuthor(children);
+      expectRootAuthor(args);
       expect(children?.where).toEqual(VISIBLE_ONLY);
     });
 
@@ -346,8 +372,11 @@ describe('CommentsService', () => {
 
       await service.update('c1', { userId: 'u1', email: 'u1@test.com' }, { text: 'edited' });
 
-      const children = childrenArgOf(prisma.comment.update.mock.calls[0][0]);
+      expect(prisma.comment.update).toHaveBeenCalledTimes(1);
+      const args = prisma.comment.update.mock.calls[0][0];
+      const children = childrenArgOf(args);
       expectAuthor(children);
+      expectRootAuthor(args);
       // 🔴 Регрессия, найденная ревью: без `where` здесь скрытый модератором
       // ответ возвращался бы автору корневого комментария вместе с личностью
       // того, кого скрыли.
@@ -360,8 +389,11 @@ describe('CommentsService', () => {
 
       await service.list({ target: 'version', targetId: 'v1', page: 1, limit: 10 });
 
-      const children = childrenArgOf(prisma.comment.findMany.mock.calls[0][0]);
+      expect(prisma.comment.findMany).toHaveBeenCalledTimes(1);
+      const args = prisma.comment.findMany.mock.calls[0][0];
+      const children = childrenArgOf(args);
       expectAuthor(children);
+      expectRootAuthor(args);
       expect(children?.where).toEqual(VISIBLE_ONLY);
     });
 
@@ -371,7 +403,14 @@ describe('CommentsService', () => {
 
       await service.get('c1', { userId: 'm1', email: 'mod@test.com' });
 
-      expect(childrenArgOf(prisma.comment.findUnique.mock.calls[0][0])?.where).toEqual(MODERATOR);
+      expect(prisma.comment.findUnique).toHaveBeenCalledTimes(1);
+      const args = prisma.comment.findUnique.mock.calls[0][0];
+      // Модератору расширяется видимость ветки, но не состав автора: почта
+      // третьих лиц не показывается и ему — за ней есть свой маршрут
+      // `GET /admin/comments` под `RolesGuard`.
+      expectAuthor(childrenArgOf(args));
+      expectRootAuthor(args);
+      expect(childrenArgOf(args)?.where).toEqual(MODERATOR);
     });
 
     it('list(includeHidden) отдаёт скрытые — тот же признак, что и у корневых', async () => {
@@ -387,6 +426,22 @@ describe('CommentsService', () => {
       });
 
       expect(childrenArgOf(prisma.comment.findMany.mock.calls[0][0])?.where).toEqual(MODERATOR);
+    });
+
+    // Вторая половина посадки LEGACY-211: утверждения выше сравнивают аргумент
+    // запроса с самой константой и её расширения не заметят.
+    //
+    // 🔴 Список ключей целиком, а не одно `not.toContain('email')`: список
+    // белый, и опасна тут любая новая колонка схемы, а не только почта.
+    // Отрицание на почту пропускало `lastLogin`, `firstName` и остальное —
+    // правило обвязки `email:\s*true` их тоже не ловит.
+    it('состав публичного селекта закреплён целиком (LEGACY-211)', () => {
+      expect(Object.keys(PUBLIC_COMMENT_USER_SELECT)).toEqual([
+        'id',
+        'name',
+        'nickname',
+        'avatarUrl',
+      ]);
     });
   });
 
