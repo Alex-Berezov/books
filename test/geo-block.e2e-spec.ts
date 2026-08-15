@@ -153,6 +153,24 @@ describe('GeoIP market blocking e2e', () => {
     await request(http()).get(`/versions/${textVersionId}`).set('X-Geo-Country', 'US').expect(200);
   });
 
+  // LEGACY-172. Every other spec here names the country with `X-Geo-Country`, which short-circuits
+  // the chain at its first branch — the headers a real reader arrives with were never exercised.
+  // This one goes down the production path: `CF-IPCountry` decides, and a header no proxy in front
+  // of the origin overwrites (`X-Vercel-IP-Country` was accepted unconditionally until 15.08.2026)
+  // does not, so the request falls through to the unknown-country branch and the rule holds.
+  it('takes the country from CF-IPCountry and from no other edge header', async () => {
+    await request(http()).get(`/versions/${textVersionId}`).set('CF-IPCountry', 'GB').expect(451);
+    await request(http()).get(`/versions/${textVersionId}`).set('CF-IPCountry', 'US').expect(200);
+
+    await request(http())
+      .get(`/versions/${textVersionId}`)
+      .set('X-Vercel-IP-Country', 'US')
+      .expect(451)
+      .expect(({ body }) => {
+        expect(body.countryCode).toBe('UNKNOWN');
+      });
+  });
+
   it('blocks chapter list and chapter detail', async () => {
     await request(http())
       .get(`/versions/${textVersionId}/chapters`)

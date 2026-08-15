@@ -358,6 +358,11 @@ describe('GeoBlockRuleService', () => {
     expect(result.reasonCode).toBeNull();
   });
 
+  // LEGACY-171. Snapshot of the decision, not a statement of intent: with the policy unset the
+  // reader is served even though we could not tell where they are, and only an already generated
+  // covering rule stops that. The owner chose to keep `allow` on 15.08.2026 because production has
+  // 0 active geo-block rules, so `deny` would refuse readers without protecting anything. When that
+  // decision changes, this expectation inverts — it is here to make the change visible.
   it('allows access when the country is unknown and the version has no active rules', async () => {
     const result = await service.checkAccess({
       bookVersionId: 'version-1',
@@ -367,6 +372,24 @@ describe('GeoBlockRuleService', () => {
 
     expect(result.allowed).toBe(true);
     expect(result.countryCode).toBe('UNKNOWN');
+    // The allow branch is not unconditional: it must first look for a rule that could cover this
+    // request. One lookup, not zero — dropping it would open versions that are already restricted.
+    expect(prisma.geoBlockRule.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  // LEGACY-171. The widest way this opens: with neither identifier there is nothing to match a rule
+  // against, so the lookup is skipped entirely and access is granted whatever the rules table says.
+  // Pinned so that narrowing `buildRuleMatchConditions` — which would send more requests down this
+  // branch — cannot happen unnoticed.
+  it('allows an unknown country outright when the request names no book and no version', async () => {
+    const result = await service.checkAccess({
+      countryCode: null,
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.countryCode).toBe('UNKNOWN');
+    expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
   });
 
   it('denies access when the country is unknown and an active rule covers the request', async () => {
@@ -458,8 +481,30 @@ describe('GeoBlockRuleService', () => {
     expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
   });
 
-  it('falls back to the allow policy when the configured value is not recognised', async () => {
-    service = createService({ RIGHTS_GEO_UNKNOWN_COUNTRY_POLICY: 'whatever' });
+  // LEGACY-171. Everything except the exact word `deny` opens access, so a value meant as a refusal
+  // ('0', 'block', a typo) silently allows. Known behaviour, pinned here so that it is a decision
+  // and not an accident; after a decision in favour of strictness these cases must flip to denied.
+  it.each([['whatever'], ['0'], ['block'], ['denied']])(
+    'falls back to the allow policy when the configured value is %p',
+    async (configured) => {
+      service = createService({ RIGHTS_GEO_UNKNOWN_COUNTRY_POLICY: configured });
+
+      const result = await service.checkAccess({
+        bookVersionId: 'version-1',
+        countryCode: null,
+        scope: GeoBlockScope.TEXT_READER,
+      });
+
+      expect(result.allowed).toBe(true);
+      // Allowed, but not short-circuited: an unrecognised value must still consult the rules
+      // table, or a typo in the secret would open versions that are already restricted.
+      expect(prisma.geoBlockRule.findMany).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  // Surrounding whitespace and case are normalised, so a secret pasted as 'DENY ' still denies.
+  it.each([['DENY'], ['deny ']])('honours the deny policy written as %p', async (configured) => {
+    service = createService({ RIGHTS_GEO_UNKNOWN_COUNTRY_POLICY: configured });
 
     const result = await service.checkAccess({
       bookVersionId: 'version-1',
@@ -467,7 +512,11 @@ describe('GeoBlockRuleService', () => {
       scope: GeoBlockScope.TEXT_READER,
     });
 
-    expect(result.allowed).toBe(true);
+    expect(result.allowed).toBe(false);
+    // The refusal has to come from the policy itself, not from a rule that happened to match:
+    // the deny branch answers before the rules table is consulted at all.
+    expect(result.reasonCode).toBe('GEO_BLOCKED_BY_RIGHTS');
+    expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
   });
 
   it('answers 451 with BLOCKED_BY_RIGHTS_CLAIM when a claim block matched', async () => {

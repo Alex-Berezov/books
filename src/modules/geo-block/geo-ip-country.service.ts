@@ -20,6 +20,13 @@ export class GeoIpCountryService {
 
   constructor(private readonly config: ConfigService) {}
 
+  /**
+   * LEGACY-172. `cf-ipcountry` is trusted for one reason only: firewalld lets Cloudflare ranges
+   * reach the origin and nothing else (LEGACY-077), so Cloudflare overwrites the header on every
+   * request that gets here. Drop those rules or add a second entry point and this method starts
+   * believing whatever the client typed, silently — a header is just a string to types and tests.
+   * Never add a header no proxy in front of the origin overwrites.
+   */
   resolveCountry(headers: GeoRequestHeaders, allowDebugHeader = false): string | null {
     const canUseGeoTestHeader =
       this.config.get<string>('NODE_ENV') === 'test' ||
@@ -33,9 +40,6 @@ export class GeoIpCountryService {
 
     const cloudflareCountry = this.normalize(this.getHeader(headers, 'cf-ipcountry'));
     if (cloudflareCountry) return this.record('cf-ipcountry', cloudflareCountry, allowDebugHeader);
-
-    const vercelCountry = this.normalize(this.getHeader(headers, 'x-vercel-ip-country'));
-    if (vercelCountry) return this.record('x-vercel-ip-country', vercelCountry, allowDebugHeader);
 
     if (this.config.get<string>('ENABLE_X_COUNTRY_CODE_HEADER') === 'true') {
       const fallbackCountry = this.normalize(this.getHeader(headers, 'x-country-code'));
