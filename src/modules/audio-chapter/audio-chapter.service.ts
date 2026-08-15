@@ -175,7 +175,6 @@ export class AudioChapterService {
     }
     await this.geoBlockRuleService.assertAccess({
       bookVersionId: item.bookVersionId,
-      mediaAssetId: item.mediaId ?? undefined,
       countryCode,
       scope: GeoBlockScope.AUDIO,
     });

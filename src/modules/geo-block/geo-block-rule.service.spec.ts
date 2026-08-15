@@ -416,6 +416,33 @@ describe('GeoBlockRuleService', () => {
     });
   });
 
+  // LEGACY-122 / WP-3.3: matching has nothing to match an asset with — `GeoBlockRule` carries no
+  // asset reference. This pins the conditions to book, version and scope: an asset-shaped key here
+  // would mean asset-level matching was introduced without adding the asset to the model, and the
+  // request would silently stop matching the edition-wide rules that block it today.
+  it('matches on book, version and scope only, never on a media asset', async () => {
+    await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'gb',
+      scope: GeoBlockScope.AUDIO,
+    });
+
+    // One query, not one plus a narrowing second: a second `findMany` would leave the assertion
+    // below satisfied by the first call while the added one decides the answer.
+    expect(prisma.geoBlockRule.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.geoBlockRule.findMany).toHaveBeenCalledWith({
+      where: {
+        isActive: true,
+        countryCode: 'GB',
+        OR: [
+          { bookId: 'book-1', scope: GeoBlockScope.ENTIRE_BOOK },
+          { bookVersionId: 'version-1', scope: GeoBlockScope.LANGUAGE_EDITION },
+          { bookVersionId: 'version-1', scope: GeoBlockScope.AUDIO },
+        ],
+      },
+    });
+  });
+
   it('denies an unknown country everywhere when the policy is deny', async () => {
     service = createService({ RIGHTS_GEO_UNKNOWN_COUNTRY_POLICY: 'deny' });
 

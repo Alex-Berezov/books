@@ -1037,13 +1037,11 @@ export class BookVersionService {
     }
     await this.geoBlockRuleService.assertAccess({
       bookVersionId: id,
-      mediaAssetId: version.previewMediaId,
       countryCode,
       scope: GeoBlockScope.AUDIO,
     });
     await this.geoBlockRuleService.assertAccess({
       bookVersionId: id,
-      mediaAssetId: version.previewMediaId,
       countryCode,
       scope: GeoBlockScope.DOWNLOADS,
     });

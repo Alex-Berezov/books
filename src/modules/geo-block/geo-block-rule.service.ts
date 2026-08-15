@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { GeoBlockRule, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
 import {
@@ -23,50 +24,16 @@ import {
   VerifyGeoBlockRulesDto,
 } from './dto/geo-block.dto';
 
+/**
+ * WP-3.3: there is no `mediaAssetId` here on purpose. `GeoBlockRule` carries no asset reference,
+ * so an asset can never narrow or widen a match; a field the matching cannot read would promise
+ * asset-level checks that do not exist. See `resolveScope` for the generating side of the same gap.
+ */
 export interface GeoAccessCheckInput {
   bookId?: string;
   bookVersionId?: string;
-  mediaAssetId?: string;
   countryCode: string | null;
   scope: GeoBlockScope;
-}
-
-interface GeoBlockRuleRecord {
-  id: string;
-  bookId: string | null;
-  bookVersionId: string | null;
-  rightsProfileId: string | null;
-  territoryDecisionId: string | null;
-  scope: GeoBlockScope;
-  countryCode: string;
-  accessPolicy: string;
-  sourceFinalStatus: string | null;
-  isActive: boolean;
-  reasonRu: string | null;
-  legalBasisRu: string | null;
-  generatedFrom: string;
-  generatedAt: Date;
-  verifiedAt: Date | null;
-  verifiedByUserId: string | null;
-  verificationNotesRu: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-interface GeoBlockRuleDelegate {
-  findMany(args: Record<string, unknown>): Promise<GeoBlockRuleRecord[]>;
-  updateMany(args: Record<string, unknown>): Promise<{ count: number }>;
-  upsert(args: Record<string, unknown>): Promise<GeoBlockRuleRecord>;
-}
-
-interface DynamicBookVersionDelegate {
-  update(args: Record<string, unknown>): Promise<Record<string, unknown>>;
-}
-
-interface GeoBlockDatabaseClient {
-  geoBlockRule: GeoBlockRuleDelegate;
-  bookVersion: DynamicBookVersionDelegate;
-  $transaction<T>(callback: (client: GeoBlockDatabaseClient) => Promise<T>): Promise<T>;
 }
 
 interface BookVersionGeoBlockState {
@@ -132,9 +99,8 @@ export class GeoBlockRuleService {
         decision.geoBlockRequired,
     );
     const generatedAt = new Date();
-    const database = this.getDatabase();
 
-    await database.$transaction(async (transaction) => {
+    await this.prisma.$transaction(async (transaction) => {
       await transaction.geoBlockRule.updateMany({
         where: { bookVersionId, isActive: true },
         data: { isActive: false },
@@ -192,7 +158,7 @@ export class GeoBlockRuleService {
 
   async getRulesForVersion(bookVersionId: string): Promise<GeoBlockRulesResponseDto> {
     const version = await this.getVersionState(bookVersionId);
-    const rules = await this.getDatabase().geoBlockRule.findMany({
+    const rules = await this.prisma.geoBlockRule.findMany({
       where: { bookVersionId },
       orderBy: [{ isActive: 'desc' }, { countryCode: 'asc' }, { scope: 'asc' }],
     });
@@ -211,7 +177,7 @@ export class GeoBlockRuleService {
         activeRulesCount: activeRules.length,
         verifiedRulesCount: activeRules.filter((rule) => rule.verifiedAt !== null).length,
         blockedCountries: Array.from(new Set(activeRules.map((rule) => rule.countryCode))).sort(),
-        scopes: Array.from(new Set(activeRules.map((rule) => rule.scope))).sort(),
+        scopes: Array.from(new Set(activeRules.map((rule) => this.toDtoScope(rule.scope)))).sort(),
       },
     };
   }
@@ -222,8 +188,7 @@ export class GeoBlockRuleService {
     userId: string,
   ): Promise<GeoBlockRulesResponseDto> {
     const version = await this.getVersionState(bookVersionId);
-    const database = this.getDatabase();
-    const activeRules = await database.geoBlockRule.findMany({
+    const activeRules = await this.prisma.geoBlockRule.findMany({
       where: { bookVersionId, isActive: true },
     });
 
@@ -232,7 +197,7 @@ export class GeoBlockRuleService {
     }
 
     const verifiedAt = dto.verified ? new Date() : null;
-    await database.$transaction(async (transaction) => {
+    await this.prisma.$transaction(async (transaction) => {
       await transaction.geoBlockRule.updateMany({
         where: { bookVersionId, isActive: true },
         data: {
@@ -286,7 +251,7 @@ export class GeoBlockRuleService {
 
     if (conditions.length === 0) return this.allowedResult(input, countryCode);
 
-    const matchedRules = await this.getDatabase().geoBlockRule.findMany({
+    const matchedRules = await this.prisma.geoBlockRule.findMany({
       where: {
         isActive: true,
         countryCode,
@@ -345,7 +310,7 @@ export class GeoBlockRuleService {
   }
 
   async getActiveRulesForVersion(bookVersionId: string): Promise<GeoBlockRuleDto[]> {
-    const rules = await this.getDatabase().geoBlockRule.findMany({
+    const rules = await this.prisma.geoBlockRule.findMany({
       where: { bookVersionId, isActive: true },
       orderBy: [{ countryCode: 'asc' }, { scope: 'asc' }],
     });
@@ -358,7 +323,7 @@ export class GeoBlockRuleService {
    */
   private async buildRuleMatchConditions(
     input: GeoAccessCheckInput,
-  ): Promise<Array<Record<string, unknown>>> {
+  ): Promise<Prisma.GeoBlockRuleWhereInput[]> {
     const version = input.bookVersionId
       ? await this.prisma.bookVersion.findUnique({
           where: { id: input.bookVersionId },
@@ -368,7 +333,7 @@ export class GeoBlockRuleService {
     if (input.bookVersionId && !version) throw new NotFoundException('BookVersion not found');
 
     const bookId = input.bookId ?? version?.bookId;
-    const conditions: Array<Record<string, unknown>> = [];
+    const conditions: Prisma.GeoBlockRuleWhereInput[] = [];
     if (bookId) conditions.push({ bookId, scope: GeoBlockScope.ENTIRE_BOOK });
     if (input.bookVersionId) {
       conditions.push({
@@ -398,7 +363,7 @@ export class GeoBlockRuleService {
     const conditions = await this.buildRuleMatchConditions(input);
     const coveringRules =
       conditions.length > 0
-        ? await this.getDatabase().geoBlockRule.findMany({
+        ? await this.prisma.geoBlockRule.findMany({
             where: { isActive: true, OR: conditions },
             take: 1,
           })
@@ -434,25 +399,20 @@ export class GeoBlockRuleService {
     };
   }
 
-  private getDatabase(): GeoBlockDatabaseClient {
-    return this.prisma as unknown as GeoBlockDatabaseClient;
-  }
-
   private async getVersionState(bookVersionId: string): Promise<BookVersionGeoBlockState> {
-    const rawVersion = await this.prisma.bookVersion.findUnique({
+    const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
     });
-    if (!rawVersion) throw new NotFoundException('BookVersion not found');
-    const version = rawVersion as unknown as Partial<BookVersionGeoBlockState>;
+    if (!version) throw new NotFoundException('BookVersion not found');
 
     return {
-      id: rawVersion.id,
-      bookId: rawVersion.bookId,
-      rightsProfileId: rawVersion.rightsProfileId,
-      rightsGeoBlockRequired: rawVersion.rightsGeoBlockRequired,
-      rightsGeoBlockConfigured: rawVersion.rightsGeoBlockConfigured,
-      rightsGeoBlockVerifiedAt: version.rightsGeoBlockVerifiedAt ?? null,
-      rightsGeoBlockLastGeneratedAt: version.rightsGeoBlockLastGeneratedAt ?? null,
+      id: version.id,
+      bookId: version.bookId,
+      rightsProfileId: version.rightsProfileId,
+      rightsGeoBlockRequired: version.rightsGeoBlockRequired,
+      rightsGeoBlockConfigured: version.rightsGeoBlockConfigured,
+      rightsGeoBlockVerifiedAt: version.rightsGeoBlockVerifiedAt,
+      rightsGeoBlockLastGeneratedAt: version.rightsGeoBlockLastGeneratedAt,
     };
   }
 
@@ -477,7 +437,7 @@ export class GeoBlockRuleService {
     return GeoBlockScope.LANGUAGE_EDITION;
   }
 
-  private scopeRank(scope: GeoBlockScope): number {
+  private scopeRank(scope: GeoBlockRule['scope']): number {
     if (scope === GeoBlockScope.ENTIRE_BOOK) return 3;
     if (scope === GeoBlockScope.LANGUAGE_EDITION) return 2;
     return 1;
@@ -495,14 +455,22 @@ export class GeoBlockRuleService {
     };
   }
 
-  private mapRule(rule: GeoBlockRuleRecord): GeoBlockRuleDto {
+  /**
+   * The response enum and the schema enum carry the same members, and the lookup keeps that
+   * agreement checked by the compiler: a member added to the schema alone stops compiling here.
+   */
+  private toDtoScope(scope: GeoBlockRule['scope']): GeoBlockScope {
+    return GeoBlockScope[scope];
+  }
+
+  private mapRule(rule: GeoBlockRule): GeoBlockRuleDto {
     return {
       id: rule.id,
       bookId: rule.bookId,
       bookVersionId: rule.bookVersionId,
       rightsProfileId: rule.rightsProfileId,
       territoryDecisionId: rule.territoryDecisionId,
-      scope: rule.scope,
+      scope: this.toDtoScope(rule.scope),
       countryCode: rule.countryCode,
       accessPolicy: rule.accessPolicy,
       sourceFinalStatus: rule.sourceFinalStatus,

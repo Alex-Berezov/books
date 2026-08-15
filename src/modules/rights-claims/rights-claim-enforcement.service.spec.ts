@@ -69,6 +69,28 @@ describe('RightsClaimEnforcementService', () => {
     expect(result.reasonCode).toBeNull();
   });
 
+  // LEGACY-121: the query is the only place where a typo in a column name silently changes which
+  // blocks are found. `tsc` is the barrier for the names; this pins the set of conditions itself,
+  // so a narrowed or widened lookup cannot pass as a retyping.
+  it('asks for active blocks of the version and of the whole book, in one query', async () => {
+    await service.checkClaimAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'DE',
+      scope: ClaimBlockScope.TEXT_READER,
+    });
+
+    expect(prisma.rightsClaimAccessBlock.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaimAccessBlock.findMany).toHaveBeenCalledWith({
+      where: {
+        status: RightsClaimBlockStatus.ACTIVE,
+        OR: [
+          { bookVersionId: 'version-1' },
+          { bookId: 'book-1', scope: ClaimBlockScope.ENTIRE_BOOK },
+        ],
+      },
+    });
+  });
+
   it('blocks any country when a worldwide ENTIRE_BOOK block is active', async () => {
     prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
       createBlock({ scope: ClaimBlockScope.ENTIRE_BOOK, bookVersionId: null, countryCode: null }),

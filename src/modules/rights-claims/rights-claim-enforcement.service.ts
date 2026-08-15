@@ -1,16 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma, RightsClaimAccessBlock } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CLAIM_ACCESS_BLOCK_MESSAGE_RU,
   CLAIM_ACCESS_BLOCK_REASON_CODE,
 } from './rights-claim.constants';
-import {
-  ClaimBlockScope,
-  ClaimBookVersionDelegate,
-  RightsClaimAccessBlockDelegate,
-  RightsClaimAccessBlockRecord,
-  RightsClaimBlockStatus,
-} from './rights-claim-interface';
+import { ClaimBlockScope, RightsClaimBlockStatus } from './rights-claim-interface';
 
 export interface ClaimAccessCheckInput {
   bookId?: string;
@@ -28,11 +23,6 @@ export interface ClaimAccessCheckResult {
   messageRu: string | null;
 }
 
-interface ClaimEnforcementDatabase {
-  rightsClaimAccessBlock: RightsClaimAccessBlockDelegate;
-  bookVersion: ClaimBookVersionDelegate;
-}
-
 /**
  * Runtime enforcement of temporary access blocks created from rights claims.
  *
@@ -43,29 +33,24 @@ interface ClaimEnforcementDatabase {
 export class RightsClaimEnforcementService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private getDatabase(): ClaimEnforcementDatabase {
-    return this.prisma as unknown as ClaimEnforcementDatabase;
-  }
-
   async checkClaimAccess(input: ClaimAccessCheckInput): Promise<ClaimAccessCheckResult> {
-    const database = this.getDatabase();
     const countryCode = input.countryCode ? input.countryCode.toUpperCase() : null;
 
     let bookId = input.bookId ?? null;
     if (!bookId && input.bookVersionId) {
-      const version = await database.bookVersion.findUnique({
+      const version = await this.prisma.bookVersion.findUnique({
         where: { id: input.bookVersionId },
         select: { id: true, bookId: true, status: true },
       });
       bookId = version?.bookId ?? null;
     }
 
-    const targetConditions: Array<Record<string, unknown>> = [];
+    const targetConditions: Prisma.RightsClaimAccessBlockWhereInput[] = [];
     if (input.bookVersionId) targetConditions.push({ bookVersionId: input.bookVersionId });
     if (bookId) targetConditions.push({ bookId, scope: ClaimBlockScope.ENTIRE_BOOK });
     if (targetConditions.length === 0) return this.allowed(input, countryCode);
 
-    const blocks = await database.rightsClaimAccessBlock.findMany({
+    const blocks = await this.prisma.rightsClaimAccessBlock.findMany({
       where: {
         status: RightsClaimBlockStatus.ACTIVE,
         OR: targetConditions,
@@ -86,10 +71,10 @@ export class RightsClaimEnforcementService {
   }
 
   private pickMatchingBlock(
-    blocks: RightsClaimAccessBlockRecord[],
+    blocks: RightsClaimAccessBlock[],
     requestedScope: ClaimBlockScope,
     countryCode: string | null,
-  ): RightsClaimAccessBlockRecord | null {
+  ): RightsClaimAccessBlock | null {
     const now = Date.now();
 
     const candidates = blocks.filter((block) => {
@@ -113,17 +98,20 @@ export class RightsClaimEnforcementService {
     })[0];
   }
 
-  private scopeCovers(blockScope: ClaimBlockScope, requestedScope: ClaimBlockScope): boolean {
+  private scopeCovers(
+    blockScope: RightsClaimAccessBlock['scope'],
+    requestedScope: ClaimBlockScope,
+  ): boolean {
     if (blockScope === ClaimBlockScope.ENTIRE_BOOK) return true;
     if (blockScope === ClaimBlockScope.LANGUAGE_EDITION) return true;
     return blockScope === requestedScope;
   }
 
-  private worldwideRank(block: RightsClaimAccessBlockRecord): number {
+  private worldwideRank(block: RightsClaimAccessBlock): number {
     return block.countryCode === null ? 1 : 0;
   }
 
-  private scopeRank(scope: ClaimBlockScope): number {
+  private scopeRank(scope: RightsClaimAccessBlock['scope']): number {
     if (scope === ClaimBlockScope.ENTIRE_BOOK) return 3;
     if (scope === ClaimBlockScope.LANGUAGE_EDITION) return 2;
     return 1;
