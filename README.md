@@ -265,8 +265,9 @@ docker compose down
 Самые частые операции:
 
 ```bash
-# SSH доступ
-ssh deploy@bibliaris.com
+# SSH доступ (bibliaris.com за Cloudflare, порт 22 там закрыт)
+ssh deploy@ssh.bibliaris.com   # или: ssh deploy@192.64.118.164
+cd /opt/books/app/src          # каталог репозитория на сервере
 
 # Включить/отключить Swagger
 ./scripts/toggle_swagger.sh enable
@@ -455,8 +456,11 @@ make e2e-serial   # yarn test:e2e:serial
 - RATE_LIMIT_ENABLED — включение лимитов (0/1)
 - RATE_LIMIT_COMMENTS_PER_MINUTE — лимит операций для комментариев за окно (дефолт 10)
 - RATE_LIMIT_COMMENTS_WINDOW_MS — размер окна для лимита (дефолт 60000)
-- ADMIN_EMAILS — список email через запятую для авто-выдачи роли admin (например, `admin@example.com`)
-- CONTENT_MANAGER_EMAILS — список email через запятую для авто-выдачи роли content_manager
+- ADMIN_EMAILS — список email через запятую; роль `admin` выдаётся по нему **только при регистрации
+  аккаунта и в сиде**, записью в таблицу `UserRole` (например, `admin@example.com`). Проверка прав
+  на живом запросе эти списки не читает (`LEGACY-170`): добавление почты уже зарегистрированному
+  пользователю прав не даёт, роль назначается через `POST /api/users/:id/roles/admin`
+- CONTENT_MANAGER_EMAILS — то же самое для роли `content_manager`
 
 ### Безопасность: Helmet, CORS и лимиты тела
 

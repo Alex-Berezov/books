@@ -1,26 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import type { RoleName } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * «Может ли этот пользователь видеть то, что скрыто от посетителя».
  *
- * ⚠️ Роль складывается из **двух** источников: связей `UserRole` в базе и
- * списков `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` в окружении. Забыть второй
- * — обычная ошибка: она даёт проверку, которая на проде отвечает «нет» тому,
- * кто на самом деле админ (`LEGACY-071`: вычистка `ADMIN_EMAILS` не снимала
- * эскалацию именно потому, что роли лежат ещё и в БД).
+ * 🔴 Источник роли ровно один — связи `UserRole` в базе, тот же, что читает
+ * `RolesGuard`. Списки `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` роль времени
+ * выполнения **не выдают** (`LEGACY-170`): пока они это делали, один и тот же
+ * аккаунт был модератором для `isModerator` и получал 403 на маршруте с
+ * `@Roles(Role.Admin)` — права разъезжались по двум источникам истины.
+ * Возвращать сюда чтение окружения нельзя; первого администратора заводят
+ * `register()` и `prisma/seed.ts`, и оба пишут в `UserRole`.
  *
  * Вынесено в общее место 10.08.2026: та же логика лежала копией в
  * `CommentsService.isModerator`, и `book-summary` стал бы третьей.
  */
 @Injectable()
 export class ModeratorRolesService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async isModerator(actor?: { userId: string; email: string }): Promise<boolean> {
     const roles = await this.rolesOf(actor);
@@ -33,18 +31,15 @@ export class ModeratorRolesService {
   }
 
   /**
-   * Роли пользователя из обоих источников, без неявной базовой `user`.
+   * Роли пользователя из базы, без неявной базовой `user`.
    *
    * ⚠️ Публичный метод — точка сведения (`LEGACY-111`), а не приглашение
    * считать роли по-своему. Звать его можно там, где нужен **полный** набор
    * ролей (выдача профиля), а не ответ «модератор ли это»: для второго есть
    * `isModerator` и `isAdmin`.
    *
-   * 🔴 В `RolesGuard` этот метод не переиспользуется намеренно. Гвард закрывает
-   * админские маршруты и роли из окружения не учитывает: список сверялся с
-   * почтой **из токена**, то есть роль решал claim в запросе, а не учётная
-   * запись (`roles.guard.ts`, комментарий у чтения из БД). Подстановка `rolesOf`
-   * туда вернёт эскалацию по почте.
+   * `email` в аргументе остаётся ради общей формы актора у вызывающих; роль он
+   * не решает и решать не должен — это claim из токена, а не учётная запись.
    */
   async rolesOf(actor?: { userId: string; email: string }): Promise<Set<RoleName>> {
     if (!actor) return new Set();
@@ -53,18 +48,7 @@ export class ModeratorRolesService {
       where: { userId: actor.userId },
       include: { role: true },
     });
-    const roleSet = new Set(dbRoles.map((r) => r.role.name));
 
-    const fromEnv = (key: string): string[] =>
-      (this.config.get<string>(key) || '')
-        .split(',')
-        .map((x) => x.trim().toLowerCase())
-        .filter(Boolean);
-
-    const email = actor.email.toLowerCase();
-    if (fromEnv('ADMIN_EMAILS').includes(email)) roleSet.add('admin');
-    if (fromEnv('CONTENT_MANAGER_EMAILS').includes(email)) roleSet.add('content_manager');
-
-    return roleSet;
+    return new Set(dbRoles.map((r) => r.role.name));
   }
 }

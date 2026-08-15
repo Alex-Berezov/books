@@ -90,7 +90,7 @@ describe('AuthService (unit)', () => {
     prisma.user.create.mockResolvedValueOnce(user);
     prisma.role.findUnique.mockResolvedValue({ id: 'r-user', name: 'user' });
     prisma.userRole.upsert.mockResolvedValue({});
-    prisma.userRole.findMany.mockResolvedValue([]); // no DB roles, will get from ENV
+    prisma.userRole.findMany.mockResolvedValue([]);
     prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
 
     const res = await service.register({ email: user.email, password: 'p', name: 'n' });
@@ -100,6 +100,42 @@ describe('AuthService (unit)', () => {
     expect(res.user.roles).toEqual(['user']); // should include roles now
     expect(res.accessToken).toBe('acc');
     expect(res.refreshToken).toBe('ref');
+  });
+
+  /**
+   * 🔴 Вторая половина контракта `LEGACY-170`. Роль времени выполнения по почте
+   * больше не выдаётся нигде, но **бутстрап первого администратора этими же
+   * списками жив** и обязан оставаться живым: без него на свежем стенде роль в
+   * `UserRole` положить некому. Снимут блок `adminsList` в `register()` — этот
+   * тест краснеет; e2e-сторож `test/env-role-escalation.e2e-spec.ts` его не
+   * ловит, он проверяет ровно противоположный случай.
+   */
+  it('register: почта из ADMIN_EMAILS пишет роль admin в UserRole', async () => {
+    config.get = jest.fn((k: string) => {
+      const map: Record<string, string> = {
+        JWT_ACCESS_SECRET: 'a',
+        JWT_REFRESH_SECRET: 'r',
+        ADMIN_EMAILS: user.email,
+        CONTENT_MANAGER_EMAILS: '',
+      };
+      return map[k];
+    });
+    (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
+    prisma.user.findUnique.mockResolvedValueOnce(null);
+    prisma.user.create.mockResolvedValueOnce(user);
+    prisma.role.findUnique.mockImplementation((args: { where: { name: string } }) =>
+      Promise.resolve({ id: `r-${args.where.name}`, name: args.where.name }),
+    );
+    prisma.userRole.upsert.mockResolvedValue({});
+    prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.admin } }]);
+    prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
+
+    await service.register({ email: user.email, password: 'p', name: 'n' });
+
+    const upsertedRoleIds = prisma.userRole.upsert.mock.calls.map(
+      (call: [{ create: { roleId: string } }]) => call[0].create.roleId,
+    );
+    expect(upsertedRoleIds).toContain(`r-${RoleName.admin}`);
   });
 
   it('login: Unauthorized for missing user', async () => {
@@ -121,7 +157,7 @@ describe('AuthService (unit)', () => {
     prisma.user.findUnique.mockResolvedValueOnce(user);
     (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
     jwt.signAsync = jest.fn().mockResolvedValueOnce('acc2').mockResolvedValueOnce('ref2');
-    prisma.userRole.findMany.mockResolvedValue([]); // no DB roles, will get from ENV
+    prisma.userRole.findMany.mockResolvedValue([]);
     prisma.user.update.mockResolvedValueOnce({ ...user, lastLogin: now });
 
     const res = await service.login({ email: user.email, password: 'p' });

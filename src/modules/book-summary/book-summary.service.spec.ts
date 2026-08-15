@@ -1,4 +1,3 @@
-import { ConfigService } from '@nestjs/config';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BookSummaryService } from './book-summary.service';
@@ -15,30 +14,21 @@ const createPrismaStub = (): PrismaStub => ({
   userRole: { findMany: jest.fn().mockResolvedValue([]) },
 });
 
-class ConfigStub {
-  private store: Record<string, string> = {};
-  get(key: string): string | undefined {
-    return this.store[key];
-  }
-  set(key: string, value: string) {
-    this.store[key] = value;
-  }
-}
-
 describe('BookSummaryService', () => {
   let service: BookSummaryService;
   let prisma: PrismaStub;
-  let config: ConfigStub;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    config = new ConfigStub();
     // Настоящий сервис ролей поверх тех же стабов — см. `comments.service.spec`.
-    const moderatorRoles = new ModeratorRolesService(
-      prisma as unknown as PrismaService,
-      config as unknown as ConfigService,
-    );
+    const moderatorRoles = new ModeratorRolesService(prisma as unknown as PrismaService);
     service = new BookSummaryService(prisma as unknown as PrismaService, moderatorRoles);
+  });
+
+  // Сторож `LEGACY-170` выставляет список почт; снимать его надо здесь, иначе
+  // упавшее ожидание унесёт переменную в остальные файлы воркера.
+  afterEach(() => {
+    delete process.env.ADMIN_EMAILS;
   });
 
   it('getByVersion throws when version not found', async () => {
@@ -78,14 +68,16 @@ describe('BookSummaryService', () => {
     expect(res?.id).toBe('s1');
   });
 
-  // Второй источник роли — список почт в окружении, а не только связи в БД.
-  it('отдаёт саммари черновика админу из ADMIN_EMAILS', async () => {
+  // 🔴 Сторож `LEGACY-170`: источник роли один — связи в БД. Почта в
+  // `ADMIN_EMAILS` черновик не открывает.
+  it('не отдаёт саммари черновика по одной лишь почте из ADMIN_EMAILS', async () => {
+    process.env.ADMIN_EMAILS = 'admin@ex.com';
     prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1', status: 'draft' });
-    config.set('ADMIN_EMAILS', 'admin@ex.com');
     prisma.bookSummary.findFirst.mockResolvedValue({ id: 's1', bookVersionId: 'v1', summary: 'S' });
 
-    const res = await service.getByVersion('v1', { userId: 'u2', email: 'admin@ex.com' });
-    expect(res?.id).toBe('s1');
+    await expect(
+      service.getByVersion('v1', { userId: 'u2', email: 'admin@ex.com' }),
+    ).rejects.toThrow('BookVersion not found');
   });
 
   // Вошедший ≠ редактор: обычный пользователь черновик не видит.

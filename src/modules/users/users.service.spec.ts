@@ -2,17 +2,21 @@
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
 import { RoleName, Language as PrismaLanguage, User } from '@prisma/client';
 import { ACCOUNT_USER_SELECT } from '../../common/selects/account-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { rolesCache } from '../../common/roles/roles-cache';
 import { Role } from '../../common/decorators/roles.decorator';
+import { STAFF_ROLE_NAMES } from './users.constants';
+
+/** Условие «сотрудник» в фильтре `staff`: только роли из `UserRole`. */
+const STAFF_ROLE_CONDITION = {
+  roles: { some: { role: { name: { in: [...STAFF_ROLE_NAMES] } } } },
+};
 
 describe('UsersService (unit)', () => {
   let service: UsersService;
   let prismaMock: any;
-  let config: any;
   let moderatorRoles: ModeratorRolesService;
 
   const baseUser: User = {
@@ -64,32 +68,31 @@ describe('UsersService (unit)', () => {
       }),
     };
 
-    config = {
-      get: jest.fn((key: string) => {
-        if (key === 'ADMIN_EMAILS') return '';
-        if (key === 'CONTENT_MANAGER_EMAILS') return '';
-        return undefined;
-      }),
-    };
-
     // Настоящий `ModeratorRolesService` на тех же моках: сведение
     // `computeRoles` к нему (`LEGACY-111`) обязано сохранить поведение
     // один в один, и соседние спеки на роли это и проверяют.
-    moderatorRoles = new ModeratorRolesService(
-      prismaMock as unknown as PrismaService,
-      config as ConfigService,
-    );
-    service = new UsersService(
-      prismaMock as unknown as PrismaService,
-      config as ConfigService,
-      moderatorRoles,
-    );
+    moderatorRoles = new ModeratorRolesService(prismaMock as unknown as PrismaService);
+    service = new UsersService(prismaMock as unknown as PrismaService, moderatorRoles);
 
     // Кэш ролей общий на процесс (`LEGACY-112`) — гасить его надо на весь файл,
     // а не в одном вложенном блоке: первый же тест, который позовёт гвард,
     // потечёт в соседние.
     rolesCache.clear();
   });
+
+  // Списки почт код под тестом не читает, но сторожа `LEGACY-170` их
+  // выставляют. Снимать надо здесь: упавшее ожидание до `delete` в теле теста
+  // не доходит и уносит переменную в соседние файлы.
+  afterEach(() => {
+    delete process.env.ADMIN_EMAILS;
+    delete process.env.CONTENT_MANAGER_EMAILS;
+  });
+
+  /** `where`, с которым сервис реально пошёл в базу за страницей. */
+  const whereOfLastList = (): unknown => {
+    const calls = (prismaMock.user.findMany as jest.Mock).mock.calls;
+    return calls[calls.length - 1][0].where;
+  };
 
   it('me: роли считает ModeratorRolesService, а не собственная копия', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
@@ -118,16 +121,15 @@ describe('UsersService (unit)', () => {
     expect(res.roles).toContain('user');
   });
 
-  it('me: ENV elevates to admin/content_manager', async () => {
-    config.get.mockImplementation((key: string) => {
-      if (key === 'ADMIN_EMAILS') return 'user@example.com';
-      if (key === 'CONTENT_MANAGER_EMAILS') return 'other@example.com,user@example.com';
-      return undefined as any;
-    });
+  // 🔴 Сторож `LEGACY-170`: почта в списках окружения роль не выдаёт, в
+  // `/users/me` уезжает только то, что лежит в `UserRole`.
+  it('me: ENV не поднимает до admin/content_manager', async () => {
+    process.env.ADMIN_EMAILS = baseUser.email;
+    process.env.CONTENT_MANAGER_EMAILS = baseUser.email;
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
     prismaMock.userRole.findMany.mockResolvedValueOnce([]);
     const res = await service.me('u1');
-    expect(res.roles).toEqual(expect.arrayContaining(['user', 'admin', 'content_manager']));
+    expect(res.roles).toEqual(['user']);
   });
 
   it('updateMe: updates allowed fields and returns public user', async () => {
@@ -313,26 +315,35 @@ describe('UsersService (unit)', () => {
     expect(res.page).toBe(1);
     expect(res.limit).toBe(1);
     expect(Array.isArray(res.items)).toBe(true);
+    // Условие проверяется целиком: снятое `NOT` тест обязан заметить, иначе
+    // «не сотрудники» начнут включать админов.
+    expect(whereOfLastList()).toEqual({
+      AND: [{}, { NOT: STAFF_ROLE_CONDITION }],
+    });
   });
 
-  it('list: staff only includes users with DB roles or ENV emails; returns items with computed roles', async () => {
-    config.get.mockImplementation((key: string) => {
-      if (key === 'ADMIN_EMAILS') return 'admin@example.com';
-      if (key === 'CONTENT_MANAGER_EMAILS') return '';
-      return undefined as any;
-    });
+  /**
+   * 🔴 Сторож `LEGACY-170`. Раньше в фильтр подмешивались почты из
+   * `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS`, и список сотрудников расходился
+   * с тем, что решает `RolesGuard`: в админке человек значился сотрудником, а
+   * на маршрут его не пускали. Сотрудник определяется строками `UserRole`.
+   */
+  it('list: staff=only фильтрует по ролям в базе, а не по спискам почт', async () => {
+    process.env.ADMIN_EMAILS = 'admin@example.com';
     const uA = { ...baseUser, id: 'uA', email: 'admin@example.com' } as User;
-    const uB = { ...baseUser, id: 'uB', email: 'plain@example.com' } as User;
-    (prismaMock.user.count as jest.Mock).mockResolvedValue(2);
-    (prismaMock.user.findMany as jest.Mock).mockResolvedValue([uA, uB]);
-    // computeRoles path → mock userRole.findMany empty so ENV elevates uA only
-    (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+    (prismaMock.user.count as jest.Mock).mockResolvedValue(1);
+    (prismaMock.user.findMany as jest.Mock).mockResolvedValue([uA]);
+    (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([{ role: { name: 'admin' } }]);
 
     const res = await service.list({ page: 1, limit: 10, staff: 'only' });
+
     expect(prismaMock.$transaction).toHaveBeenCalled();
-    expect(res.items.length).toBe(2);
-    const adminItem = res.items.find((i) => i.email === 'admin@example.com')!;
-    expect(adminItem.roles).toContain('admin');
+    // Условие сверяется целиком, а не одним отрицанием: пустой `where` такую
+    // проверку не пройдёт, а `staff=only` без условия отдал бы в админский
+    // список сотрудников всех читателей подряд.
+    expect(whereOfLastList()).toEqual({ AND: [{}, STAFF_ROLE_CONDITION] });
+    expect(JSON.stringify(whereOfLastList())).not.toContain('admin@example.com');
+    expect(res.items.find((i) => i.email === 'admin@example.com')!.roles).toContain('admin');
   });
 
   describe('updateMe (nickname)', () => {

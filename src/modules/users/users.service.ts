@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Language as PrismaLanguage, RoleName, Prisma } from '@prisma/client';
-import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -29,7 +28,6 @@ type PublicUser = AccountUser;
 export class UsersService {
   constructor(
     private prisma: PrismaService,
-    private config: ConfigService,
     private moderatorRoles: ModeratorRolesService,
   ) {}
 
@@ -223,9 +221,9 @@ export class UsersService {
    * сигнатуре требовал бы читать пользователя целиком ради `id` и `email`.
    */
   private async computeRoles(user: { id: string; email: string }): Promise<RoleName[]> {
-    // Оба источника роли — связи `UserRole` и списки окружения — считает
-    // `ModeratorRolesService` (`LEGACY-111`). Здесь остаётся только неявная
-    // базовая `user`: её выдача — свойство этой ручки, а не общей проверки.
+    // Роли считает `ModeratorRolesService` (`LEGACY-111`) и берёт их только из
+    // `UserRole` (`LEGACY-170`). Здесь остаётся неявная базовая `user`: её
+    // выдача — свойство этой ручки, а не общей проверки.
     const set = await this.moderatorRoles.rolesOf({ userId: user.id, email: user.email });
     set.add('user');
     return Array.from(set);
@@ -255,21 +253,12 @@ export class UsersService {
       : {};
 
     // Staff filter
-    // We need to consider both DB roles and ENV-based elevation.
-    // ENV staff: emails listed in ADMIN_EMAILS or CONTENT_MANAGER_EMAILS
-    const adminsList = (this.config.get<string>('ADMIN_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim())
-      .filter(Boolean);
-    const managersList = (this.config.get<string>('CONTENT_MANAGER_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim())
-      .filter(Boolean);
-
-    const envStaffEmails = [...new Set([...adminsList, ...managersList])];
-    const envEmailOr: Prisma.UserWhereInput[] = envStaffEmails.map((e) => ({
-      email: { equals: e },
-    }));
+    //
+    // 🔴 Сотрудник определяется строками `UserRole`, и только ими. Раньше сюда
+    // подмешивались почты из `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS`, и
+    // список сотрудников расходился с тем, что решает `RolesGuard`
+    // (`LEGACY-170`). Вернуть окружение в этот фильтр - значит снова показать
+    // в админке сотрудником того, кого гвард на маршрут не пустит.
 
     // Prisma where building
     let where: Prisma.UserWhereInput = baseWhere;
@@ -278,18 +267,11 @@ export class UsersService {
         AND: [
           baseWhere,
           {
-            OR: [
-              // Users with DB roles admin or content_manager
-              {
-                roles: {
-                  some: {
-                    role: { name: { in: [...STAFF_ROLE_NAMES] as RoleName[] } },
-                  },
-                },
+            roles: {
+              some: {
+                role: { name: { in: [...STAFF_ROLE_NAMES] as RoleName[] } },
               },
-              // Or users elevated via ENV lists
-              ...(envEmailOr.length > 0 ? envEmailOr : []),
-            ].filter(Boolean),
+            },
           },
         ],
       };
@@ -298,20 +280,13 @@ export class UsersService {
         AND: [
           baseWhere,
           {
-            AND: [
-              // Not having DB staff roles
-              {
-                NOT: {
-                  roles: {
-                    some: {
-                      role: { name: { in: [...STAFF_ROLE_NAMES] as RoleName[] } },
-                    },
-                  },
+            NOT: {
+              roles: {
+                some: {
+                  role: { name: { in: [...STAFF_ROLE_NAMES] as RoleName[] } },
                 },
               },
-              // And not in ENV staff emails
-              ...(envEmailOr.length > 0 ? [{ NOT: { OR: envEmailOr } }] : []),
-            ].filter(Boolean),
+            },
           },
         ],
       };

@@ -1,5 +1,4 @@
 import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { CommentsService } from './comments.service';
@@ -50,33 +49,23 @@ const createPrismaStub = (): PrismaStub => {
   return stub;
 };
 
-class ConfigStub {
-  private store: Record<string, string> = {};
-  get(key: string): string | undefined {
-    return this.store[key];
-  }
-  set(key: string, value: string) {
-    this.store[key] = value;
-  }
-}
-
 describe('CommentsService', () => {
   let service: CommentsService;
   let prisma: PrismaStub;
-  let config: ConfigStub;
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    config = new ConfigStub();
-    // Сервис ролей здесь **настоящий**, а не стаб: он читает те же два
-    // источника (`userRole` в БД и `ADMIN_EMAILS` в окружении), что уже
-    // застаблены ниже. Стаб на его месте превратил бы проверки «модератор по
-    // роли» и «модератор по списку почт» в проверки самого стаба.
-    const moderatorRoles = new ModeratorRolesService(
-      prisma as unknown as PrismaService,
-      config as unknown as ConfigService,
-    );
+    // Сервис ролей здесь **настоящий**, а не стаб: он читает тот же `userRole`,
+    // что уже застаблен ниже. Стаб на его месте превратил бы проверку «модератор
+    // ли это» в проверку самого стаба.
+    const moderatorRoles = new ModeratorRolesService(prisma as unknown as PrismaService);
     service = new CommentsService(prisma as unknown as PrismaService, moderatorRoles);
+  });
+
+  // Сторож `LEGACY-170` выставляет список почт; снимать его надо здесь, иначе
+  // упавшее ожидание унесёт переменную в остальные файлы воркера.
+  afterEach(() => {
+    delete process.env.ADMIN_EMAILS;
   });
 
   describe('create()', () => {
@@ -158,8 +147,6 @@ describe('CommentsService', () => {
   describe('update()', () => {
     beforeEach(() => {
       prisma.userRole.findMany.mockResolvedValue([]);
-      config.set('ADMIN_EMAILS', '');
-      config.set('CONTENT_MANAGER_EMAILS', '');
     });
 
     it('allows author to edit text', async () => {
@@ -188,16 +175,16 @@ describe('CommentsService', () => {
       expect(res).toEqual({ id: 'c1', text: 'm', isHidden: true, ratingScore: null });
     });
 
-    it('allows moderators (by email list) to hide', async () => {
+    // 🔴 Сторож `LEGACY-170`: почта из `ADMIN_EMAILS` без строки в `UserRole`
+    // модератором не делает. Пока делала, этот же аккаунт скрывал чужие
+    // комментарии, но получал 403 на админских маршрутах.
+    it('forbids hiding by email list alone', async () => {
+      process.env.ADMIN_EMAILS = 'admin@ex.com';
       prisma.comment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1', isDeleted: false });
-      config.set('ADMIN_EMAILS', 'admin@ex.com');
-      prisma.comment.update.mockResolvedValueOnce({ id: 'c1', isHidden: true });
-      const res = await service.update(
-        'c1',
-        { userId: 'u2', email: 'admin@ex.com' },
-        { isHidden: true },
-      );
-      expect(res).toEqual({ id: 'c1', isHidden: true, ratingScore: null });
+      await expect(
+        service.update('c1', { userId: 'u2', email: 'admin@ex.com' }, { isHidden: true }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.comment.update).not.toHaveBeenCalled();
     });
 
     it('returns existing when no changes provided', async () => {
@@ -222,8 +209,6 @@ describe('CommentsService', () => {
   describe('remove()', () => {
     beforeEach(() => {
       prisma.userRole.findMany.mockResolvedValue([]);
-      config.set('ADMIN_EMAILS', '');
-      config.set('CONTENT_MANAGER_EMAILS', '');
     });
 
     it('is idempotent if already deleted or missing', async () => {
@@ -308,8 +293,6 @@ describe('CommentsService', () => {
   describe('вложенная ветка: автор и фильтр скрытых (LEGACY-102)', () => {
     beforeEach(() => {
       prisma.userRole.findMany.mockResolvedValue([]);
-      config.set('ADMIN_EMAILS', '');
-      config.set('CONTENT_MANAGER_EMAILS', '');
     });
 
     // Проверяются оба свойства ветки сразу и на каждом из четырёх путей.
