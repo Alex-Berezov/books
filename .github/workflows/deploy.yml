@@ -111,6 +111,16 @@ jobs:
           yarn drift-check:self-test
           yarn drift-check
 
+      # ⚠️ Продублировано из `scripts/ci.sh` по той же причине, что и drift-check выше:
+      # `ci.yml` триггерится только на push в `main` и на pull request, а выкат идёт отсюда
+      # и по тегу `v*` тоже. Без этой строки релиз по тегу уезжал бы без сверки ключей
+      # окружения с `.env.example` — то самое расхождение конвейеров, которое закрывал
+      # LEGACY-078 на фронте (LEGACY-207, LEGACY-209).
+      - name: 🔑 Environment Key Check
+        run: |
+          yarn check:env:self-test
+          yarn check:env
+
       - name: ♻️ Cache Jest transform
         uses: actions/cache@v4
         with:
