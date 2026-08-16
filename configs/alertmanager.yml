@@ -1,31 +1,71 @@
 # Alertmanager: маршрутизация оповещений.
 #
-# ⚠️ Внешней доставки пока нет — по решению 10.08.2026 алерты копятся в UI
-# (http://127.0.0.1:9093 через SSH-туннель). Это **осознанный компромисс**, а не
-# готовое состояние: падение ночью так никто не увидит. Канал (Telegram или
-# SMTP) добавляется одним receiver'ом, когда появятся учётные данные.
+# Доставка — приватный Telegram-канал (LEGACY-096, 16.08.2026). Один канал на
+# оба уровня важности намеренно: два канала на один стек означают, что половину
+# сообщений перестают читать. Понадобится развести — critical уходит вторым
+# `route` на отдельный receiver, остальное не переписывается.
 #
-# 🔴 Прежний конфиг подставлял `${SMTP_HOST}`, `${SLACK_WEBHOOK_URL}` и прочие
-# переменные окружения. Alertmanager их **не разворачивает** — строки попали бы
-# в конфиг буквально, и рассылка молча уходила бы в никуда (или сервис не
-# стартовал бы вовсе). Переменных здесь быть не должно.
+# 🔴 Токена в этом файле нет и быть не может. Alertmanager **не разворачивает**
+# переменные окружения: прежний конфиг подставлял `${SMTP_HOST}`,
+# `${SLACK_WEBHOOK_URL}` — строки попадали в конфиг буквально, и рассылка молча
+# уходила в никуда. Поэтому токен лежит отдельным файлом на сервере
+# (`configs/telegram_token`, в git не едет, закрыт `.gitignore`), а сюда
+# подставляется через `bot_token_file` — тем же приёмом, что `credentials_file`
+# у Prometheus (`configs/prometheus.yml:35`).
+#
+# 🔴 Владелец файла с токеном — **uid 65534**, не `deploy`. Образ
+# `prom/alertmanager` объявляет `USER nobody` и делает `chown -R nobody:nobody
+# /etc/alertmanager`, поэтому файл `600`, принадлежащий `deploy`, изнутри
+# контейнера не читается вовсе. На сервере: `chown 65534:65534` плюс `chmod 400`.
+# Ошибка здесь не видна снаружи — контейнер здоров, UI зелёный, а канал молчит.
+#
+# ⚠️ `bot_token_file` читается при каждой отправке, а не при старте
+# (`notify/telegram/telegram.go`, `getBotToken()` вызывается из `Notify`):
+# недоступный или пустой файл ломает не запуск сервиса, а молча саму доставку.
+# После замены токена проверять дымовым алертом (`amtool alert add`), а логи
+# смотреть в `docker logs books-alertmanager` — там `permission denied`,
+# `is a directory` или `could not read`. Перевод строки в конце файла безвреден:
+# `getBotToken()` применяет `strings.TrimSpace`.
+#
+# Поле `bot_token_file` поддержано начиная с Alertmanager 0.26.0 (PR #3226,
+# запись в CHANGELOG этого же тега); образ пришпилен на `v0.26.0`. Понижать
+# версию образа без замены этого поля на `bot_token` нельзя — конфиг не
+# загрузится, разбор строгий.
 
 route:
   group_by: ['alertname', 'service', 'severity']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
-  receiver: 'collect-only'
+  receiver: 'telegram'
   routes:
     - match:
         severity: critical
-      receiver: 'collect-only'
+      receiver: 'telegram'
       group_wait: 10s
       repeat_interval: 1h
 
 receivers:
   # Пустой receiver: алерт регистрируется и виден в UI, наружу не уходит.
+  # Оставлен объявленным намеренно: им глушится канал на время шумного инцидента
+  # — достаточно переставить `receiver` в `route`, не трогая остальное.
   - name: 'collect-only'
+
+  - name: 'telegram'
+    telegram_configs:
+      # `send_resolved` — осознанно: без него приходит «упало» и не приходит
+      # «поднялось», и канал копит тревоги, на которые уже не надо реагировать.
+      - send_resolved: true
+        bot_token_file: /etc/alertmanager/telegram_token
+        chat_id: -1003719761491
+        parse_mode: HTML
+        # ⚠️ `severity` в заголовке обязателен: два правила носят одно имя
+        # `HighMemoryUsage` (critical и warning), без него они неразличимы.
+        message: |
+          <b>{{ .Status | toUpper }}</b> · {{ .CommonLabels.severity }} · {{ .CommonLabels.alertname }}
+          {{ range .Alerts }}{{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
 
 inhibit_rules:
   # Критическое перекрывает предупреждение о том же самом.

@@ -80,6 +80,18 @@ services:
       - '127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093'
     volumes:
       - ./configs/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Токен Telegram-бота: файл создаётся на сервере руками, в git не едет
+      # (`.gitignore`). Владелец файла — uid 65534 (`nobody`), права 400: под
+      # этим пользователем работает процесс в контейнере, файл `deploy:600`
+      # он прочитать не сможет.
+      #
+      # 🔴 Файл обязан существовать ДО первого `up -d`. Если источника
+      # bind-mount нет, docker создаёт на его месте **каталог** root:root:
+      # отправка начинает падать на EISDIR, а `> configs/telegram_token`
+      # отвечает `Is a directory` — чинится только `sudo rm -rf` и
+      # пересозданием контейнера. Наличие обоих файлов с секретами проверяет
+      # `scripts/setup_monitoring.sh` перед запуском стека.
+      - ./configs/telegram_token:/etc/alertmanager/telegram_token:ro
       - alertmanager_data:/alertmanager
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'

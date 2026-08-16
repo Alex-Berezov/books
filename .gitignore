@@ -47,6 +47,16 @@ lerna-debug.log*
 .env.local
 .env.prod
 
+# Секреты мониторинга: файлы создаются на сервере руками, в репозитории их нет.
+# Игнорирование здесь — не только защита от случайного коммита: выкат делает
+# `git stash --include-untracked` (`.github/workflows/deploy.yml:319`), и он
+# уносит неотслеживаемый файл в стеш, а игнорируемый не трогает. Для
+# `metrics_token` это уже происходило на каждом выкате: Prometheus держался
+# только на том, что его контейнер не пересоздавали, а первое же `up -d`
+# оставило бы job `books-app` без bearer и подняло бы ложный BooksAppDown.
+configs/metrics_token
+configs/telegram_token
+
 # temp directory
 .temp
 .tmp

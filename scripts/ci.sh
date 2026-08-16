@@ -39,6 +39,25 @@ step "Environment key check"
 yarn check:env:self-test
 yarn check:env
 
+# Конфигурация мониторинга — единственная часть репозитория, которую до сих пор
+# не читал ни один прогон: ни typecheck, ни lint, ни jest её не видят. Опечатка
+# в `expr` или лишний отступ в `receivers` уезжали в main зелёными и всплывали
+# только тем, что Alertmanager не поднимался на сервере (LEGACY-096, LEGACY-220).
+# Образы пришпилены на те же версии, что в docker-compose.monitoring.yml:
+# разойдутся — проверка перестанет отвечать на вопрос «а заведётся ли на проде».
+# `amtool check-config` разбирает конфиг, но не читает `bot_token_file`, поэтому
+# отсутствие секрета на машине проверке не мешает.
+step "Monitoring config check (promtool + amtool)"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "[CI] docker не найден, а без него конфиги мониторинга проверить нечем." >&2
+  echo "[CI] Поставь docker или запускай этот шаг там, где он есть." >&2
+  exit 1
+fi
+docker run --rm --entrypoint promtool -v "$ROOT_DIR/configs:/cfg:ro" \
+  prom/prometheus:v2.45.1 check rules /cfg/alert_rules.yml /cfg/recording_rules.yml
+docker run --rm --entrypoint amtool -v "$ROOT_DIR/configs:/cfg:ro" \
+  prom/alertmanager:v0.26.0 check-config /cfg/alertmanager.yml
+
 # С покрытием, а не просто `yarn test`: порог в `jest.coverageThreshold`
 # срабатывает только при `--coverage`, иначе он декорация (LEGACY-016).
 # Замер 11.08.2026: statements 63.98, branches 59.64, functions 61.18,

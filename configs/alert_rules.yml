@@ -21,20 +21,17 @@ groups:
           summary: 'Books application is down'
           description: 'Books application has been down for more than 1 minute'
 
-      # Замена BooksAppDown на время, пока job `books-app` отключён (LEGACY-072).
-      # Опирается на `books-app-health` (`/api/health/readiness`) — единственный
-      # источник, у которого сейчас есть данные. Без этого правила падение
-      # приложения не заметил бы никто: правило выше молчит из-за отсутствия серии,
-      # а не из-за исправности.
-      - alert: BooksAppHealthProbeDown
-        expr: up{job="books-app-health"} == 0
-        for: 1m
-        labels:
-          severity: critical
-          service: books-app
-        annotations:
-          summary: 'Books application readiness probe is unreachable'
-          description: 'The readiness endpoint has not answered for more than 1 minute'
+      # 🔴 Здесь стояло правило BooksAppHealthProbeDown (снято 16.08.2026,
+      # LEGACY-220). Оно заводилось временной заменой BooksAppDown, пока job
+      # `books-app` был отключён, и смотрело на `up{job="books-app-health"}`.
+      # Этот job снят из `prometheus.yml` 10.08.2026: серии больше нет, выражение
+      # не вычисляется ни в true, ни в false — правило не срабатывало никогда,
+      # то есть создавало видимость страховки вместо страховки.
+      #
+      # Заводить его заново не надо, и job возвращать тоже:
+      # `/api/health/readiness` отдаёт JSON, а не exposition-формат, и цель была
+      # бы вечно красной (проверено 10.08.2026, LEGACY-095). Падение приложения
+      # ловит BooksAppDown выше — job `books-app` работает.
 
       - alert: HighErrorRate
         expr: books_app:http_error_ratio:rate5m > 10

@@ -121,6 +121,18 @@ jobs:
           yarn check:env:self-test
           yarn check:env
 
+      # ⚠️ Продублировано из `scripts/ci.sh` по той же причине, что и два шага выше:
+      # выкат идёт по тегу `v*`, где `ci.yml` не запускается вовсе. Конфиги мониторинга
+      # не читает ни одна другая проверка — ни tsc, ни eslint, ни jest их не видят,
+      # и битый `alertmanager.yml` обнаруживался бы только тем, что контейнер на сервере
+      # не поднялся (LEGACY-096). Версии образов совпадают с docker-compose.monitoring.yml.
+      - name: 📡 Monitoring Config Check
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/configs:/cfg:ro" \
+            prom/prometheus:v2.45.1 check rules /cfg/alert_rules.yml /cfg/recording_rules.yml
+          docker run --rm --entrypoint amtool -v "$PWD/configs:/cfg:ro" \
+            prom/alertmanager:v0.26.0 check-config /cfg/alertmanager.yml
+
       - name: ♻️ Cache Jest transform
         uses: actions/cache@v4
         with:

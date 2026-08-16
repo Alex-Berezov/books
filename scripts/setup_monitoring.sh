@@ -66,8 +66,15 @@ setup_configs() {
         "configs/alert_rules.yml"
         "configs/alertmanager.yml"
         "docker-compose.monitoring.yml"
+        # Секреты. Их нет в git (см. .gitignore), они создаются на сервере
+        # руками, и оба смонтированы в docker-compose.monitoring.yml. Без этой
+        # проверки docker создаёт на месте отсутствующего файла КАТАЛОГ, стек
+        # поднимается зелёным, а bearer к /api/metrics и доставка в Telegram
+        # молча не работают.
+        "configs/metrics_token"
+        "configs/telegram_token"
     )
-    
+
     for file in "${required_files[@]}"; do
         if [[ ! -f "$file" ]]; then
             error "File $file not found. Ensure all configuration files are present."

@@ -76,18 +76,18 @@ const READ_BUT_NOT_IN_EXAMPLE = {
  */
 const IN_EXAMPLE_BUT_NOT_READ = {
   ALERT_EMAIL_FROM:
-    'Alert delivery channel, not wired yet — see the header of configs/alertmanager.yml.',
+    'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
   ALERT_EMAIL_TO:
-    'Alert delivery channel, not wired yet — see the header of configs/alertmanager.yml.',
-  SMTP_HOST: 'Alert delivery channel, not wired yet — see the header of configs/alertmanager.yml.',
+    'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
+  SMTP_HOST: 'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
   SMTP_USERNAME:
-    'Alert delivery channel, not wired yet — see the header of configs/alertmanager.yml.',
+    'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
   SMTP_PASSWORD:
-    'Alert delivery channel, not wired yet — see the header of configs/alertmanager.yml.',
+    'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
   SLACK_WEBHOOK_URL:
-    'Alert delivery channel, not wired yet — see the header of configs/alertmanager.yml.',
+    'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
   SLACK_CHANNEL:
-    'Alert delivery channel, not wired yet — see the header of configs/alertmanager.yml.',
+    'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
 };
 
 /**
