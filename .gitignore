@@ -57,6 +57,20 @@ lerna-debug.log*
 configs/metrics_token
 configs/telegram_token
 
+# Второй env-файл приложения: `docker-compose.prod.yml` подключает его рядом с
+# `.env.prod` именно потому, что `.env.prod` целиком пересоздаётся из секрета
+# `ENV_PROD` при каждом выкате. Здесь живёт `METRICS_TOKEN`.
+#
+# 🔴 Без этой строки файл неотслеживаемый и не игнорируемый, то есть его уносит
+# тот же `git stash --include-untracked`. 16.08.2026 так и вышло: приложение
+# перезапустилось без `METRICS_TOKEN`, гвард перестал принимать bearer, скрейп
+# `books-app` получил 401 и `BooksAppDown` загорелся при живом приложении.
+.env.monitoring-secrets
+
+# Копия правил, которую делает `scripts/setup_monitoring.sh`. Никуда не
+# монтируется и не читается, но неотслеживаемой попадала под тот же стеш.
+configs/prometheus_alert_rules.yml
+
 # temp directory
 .temp
 .tmp
