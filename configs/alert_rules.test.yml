@@ -125,11 +125,17 @@ tests:
   # без этого кейса порог можно поменять на любой, и файл останется зелёным.
   # В promtool `time()` стартует с нуля, поэтому ряд со значением 0 в момент 27h
   # даёт возраст 27 часов.
-  - interval: 1h
+  #
+  # 🔴 Шаг ряда — минута, а не час, и это не расточительство. Мгновенный селектор
+  # видит образец не старше пяти минут (lookback delta), а правило вычисляется раз
+  # в минуту (`evaluation_interval`). При часовом шаге выражение пусто во все
+  # минуты, кроме тех, где стоит образец, состояние `for: 10m` сбрасывается,
+  # и алерт не набирает нужного времени: got:[] при верном выражении.
+  - interval: 1m
     name: nightly backup did not run — stale fires
     input_series:
       - series: 'books_backup_last_success_timestamp_seconds{kind="daily"}'
-        values: '0x40'
+        values: '0x1630'
     alert_rule_test:
       - eval_time: 27h
         alertname: DatabaseBackupStale
@@ -146,11 +152,11 @@ tests:
         exp_alerts: []
 
   # Бэкап идёт по расписанию: отметка обновляется каждый час вместе с `time()`.
-  - interval: 1h
+  - interval: 1m
     name: nightly backup is fresh — no alert
     input_series:
       - series: 'books_backup_last_success_timestamp_seconds{kind="daily"}'
-        values: '0+3600x40'
+        values: '0+60x1630'
     alert_rule_test:
       - eval_time: 27h
         alertname: DatabaseBackupStale
