@@ -18,8 +18,15 @@ describe('DevOps: monitoring config wiring', () => {
   const composePath = join(root, 'docker-compose.monitoring.yml');
   const compose = readFileSync(composePath, 'utf8');
 
-  /** Секреты, которые в git не едут (`.gitignore`) и создаются на сервере руками. */
-  const HOST_SECRETS = ['metrics_token', 'telegram_token'];
+  /**
+   * Секреты монтируются по сервису из каталога **вне репозитория** (`LEGACY-226`):
+   * каждый контейнер видит только свой. Пока они лежали в `configs/`, каталожный
+   * монтаж отдавал Prometheus токен бота, а Alertmanager — bearer ко всем метрикам.
+   */
+  const SERVICE_SECRETS: Record<string, string> = {
+    prometheus: 'metrics_token',
+    alertmanager: 'telegram_token',
+  };
 
   /**
    * Секреты вне `configs/`, которые обязаны быть закрыты `.gitignore` по той же
@@ -112,6 +119,28 @@ describe('DevOps: monitoring config wiring', () => {
   };
 
   /**
+   * Разбор элемента `volumes` на источник, цель и режим. По последним двум
+   * двоеточиям, а не по первому: источник сам содержит `:` внутри
+   * `${VAR:-default}`, и наивный `split(':')` вернул бы `${VAR`.
+   */
+  const parseMount = (item: string): { source: string; target: string; mode: string } => {
+    const m = /^(.+):(\/[^:]+):(ro|rw)$/.exec(item);
+    expect({ item, parsed: m !== null }).toEqual({ item, parsed: true });
+    return { source: m![1], target: m![2], mode: m![3] };
+  };
+
+  /** Куда сервис монтирует свой каталог секретов и что монтирует. */
+  const secretsMount = (service: string): { source: string; target: string; mode: string } => {
+    const mounts = listUnder(serviceLines(service), 'volumes')
+      .filter((v) => /:\/secrets:/.test(v))
+      .map(parseMount);
+    // Ровно одно: второе монтирование секретов означало бы, что сервис видит
+    // и чужой токен — тот самый дефект, из-за которого их разносили.
+    expect(mounts).toHaveLength(1);
+    return mounts[0];
+  };
+
+  /**
    * Ссылки вида `<что-то>_file: <путь>` из конфига. Кавычки и хвостовой
    * комментарий отбрасываются: без этого валидная запись `bot_token_file:
    * '/cfg/telegram_token'` выпала бы из выборки, и проверка стала бы пустой.
@@ -187,27 +216,37 @@ describe('DevOps: monitoring config wiring', () => {
     ])(
       'ссылки на файлы в %s ведут ровно к своим файлам внутри монтирования',
       (configFile, service) => {
-        const target = configsMountTarget(service);
         const refs = configReferences(configFile);
         const expected = EXPECTED_REFS[configFile];
+        const secrets = secretsMount(service);
         // Сверяются обе стороны: каждая найденная ссылка ожидаема, и каждая
         // ожидаемая найдена. Список, а не объект: одноимённые ключи схлопнулись бы
         // в последний, и второй `bot_token_file` со старым путём (например
         // в отдельной ветке для critical) прошёл бы незамеченным.
         expect(refs.map(({ key, path }) => `${key}=${path}`).sort()).toEqual(
           Object.entries(expected)
-            .map(([key, base]) => `${key}=${target}/${base}`)
+            .map(([key, base]) => `${key}=${secrets.target}/${base}`)
             .sort(),
         );
-        for (const base of Object.values(expected)) {
-          // Либо файл лежит в репозитории, либо это секрет, создаваемый на сервере
-          // и объявленный в `HOST_SECRETS` — и тогда он обязан быть в `.gitignore`
-          // (проверка ниже), иначе его унесёт `git stash --include-untracked`.
-          const known = existsSync(join(root, 'configs', base)) || HOST_SECRETS.includes(base);
-          expect({ base, known }).toEqual({ base, known: true });
-        }
       },
     );
+
+    // Каждый сервис монтирует свой каталог секретов, и только свой: имя каталога
+    // на хосте совпадает с именем сервиса, а внутри лежит именно его токен.
+    it.each(Object.keys(SERVICE_SECRETS))('%s монтирует только свой секрет', (service) => {
+      const { source, target, mode } = secretsMount(service);
+      expect(source.endsWith(`/${service}`)).toBe(true);
+      // Вне репозитория: относительный путь вернул бы секреты под `git stash
+      // --include-untracked` и `git reset --hard` на выкате (LEGACY-223).
+      expect(source.startsWith('./')).toBe(false);
+      expect(target).toBe('/secrets');
+      // Внутрь рабочего дерева — тоже нет: там секреты попадают под
+      // `git stash --include-untracked` и `git reset --hard` на выкате.
+      // Слово `configs` не должно встречаться нигде в источнике, включая значение
+      // по умолчанию внутри `${VAR:-…}`: `.../configs}` тоже ведёт в репозиторий.
+      expect(source).not.toContain('configs');
+      expect(mode).toBe('ro');
+    });
 
     it('rule_files заданы относительными путями и все файлы существуют', () => {
       const text = readFileSync(join(root, 'configs', 'prometheus.yml'), 'utf8');
@@ -257,7 +296,10 @@ describe('DevOps: monitoring config wiring', () => {
     // `git stash --include-untracked` на первом же выкате, и отказ выглядит как
     // падение приложения. Поэтому каждый секрет из `HOST_SECRETS` обязан быть
     // закрыт `.gitignore` — иначе объявить его здесь мало.
-    it.each([...HOST_SECRETS.map((s) => `configs/${s}`), ...HOST_SECRET_FILES])(
+    // Секреты мониторинга живут вне репозитория (LEGACY-226), но маски в
+    // `.gitignore` остаются страховкой от возврата файлов внутрь `configs/`:
+    // ротация, записанная по привычке в старое место, иначе уедет в коммит.
+    it.each([...Object.values(SERVICE_SECRETS).map((s) => `configs/${s}`), ...HOST_SECRET_FILES])(
       'секрет %s закрыт .gitignore',
       (path) => {
         expect({ path, ignored: isGitIgnored(path) }).toEqual({ path, ignored: true });
@@ -315,6 +357,32 @@ describe('DevOps: monitoring config wiring', () => {
     // Проверка разбирает однострочный `if:`. Свёрнутый (`if: >` / `if: |`)
     // прошёл бы мимо неё молча, поэтому такой формы в воркфлоу быть не должно:
     // либо она запрещена, либо проверку надо доучивать вместе с ней.
+    // LEGACY-227. У job без `needs:` нет предков, и `failure()` в его условии
+    // не значит «что-то упало раньше». Откат обязан зависеть от выката и
+    // срабатывать только на его отказе, иначе упавший юнит-тест на ручном прогоне
+    // переливает прод, которого не выкатывали.
+    it('откат зависит от выката и срабатывает только на его отказе', () => {
+      const lines = readFileSync(join(workflowsDir, 'deploy.yml'), 'utf8').split(/\r?\n/);
+      const start = lines.findIndex((l) => /^ {2}rollback:\s*$/.test(l));
+      expect(start).toBeGreaterThan(-1);
+      const rest = lines.slice(start + 1);
+      const end = rest.findIndex((l) => /^ {0,2}\S/.test(l) && !/^\s*#/.test(l));
+      const body = (end === -1 ? rest : rest.slice(0, end)).filter((l) => !/^\s*#/.test(l));
+      // Форма записи `needs` не важна — важно, что зависимость от `deploy` есть:
+      // поточная (`[deploy]`), блочная (`- deploy`) и расширенная равно годятся.
+      expect(
+        body.some((l) => /^\s{4}needs:.*\bdeploy\b/.test(l) || /^\s{6}-\s*deploy\s*$/.test(l)),
+      ).toBe(true);
+      const cond = jobCondition('rollback');
+      expect(cond).toContain("needs.deploy.result == 'failure'");
+      // 🔴 Одного `result == 'failure'` мало: он истинен и при отказе checkout
+      // или настройки ssh, то есть до того, как выкат вообще дошёл до сервера.
+      // Без этой отметки сбой GitHub переливал бы прод предыдущим образом.
+      expect(cond).toContain("needs.deploy.outputs.server_stage_reached == 'true'");
+      expect(cond).toContain('!cancelled()');
+      expect(cond).toContain("github.event_name == 'workflow_dispatch'");
+    });
+
     it('условия if: записаны одной строкой', () => {
       const folded: string[] = [];
       for (const file of readdirSync(workflowsDir).filter((f) => /\.ya?ml$/.test(f))) {

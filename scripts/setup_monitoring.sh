@@ -87,21 +87,51 @@ setup_configs() {
         "configs/recording_rules.yml"
         "configs/alertmanager.yml"
         "docker-compose.monitoring.yml"
-        # Секреты. Их нет в git (см. .gitignore), они создаются на сервере
-        # руками и попадают в контейнеры вместе со всем configs/ (LEGACY-224).
-        # Без этой проверки стек поднимается зелёным, а bearer к /api/metrics
-        # и доставка в Telegram молча не работают: оба файла читаются не при
-        # старте, а при обращении. До 16.08.2026 отсутствующий файл был ещё
-        # и ловушкой пофайлового монтажа — docker создавал на его месте
-        # КАТАЛОГ; с монтированием каталога этого больше не происходит,
-        # но проверка нужна ровно так же.
-        "configs/metrics_token"
-        "configs/telegram_token"
+    )
+
+    # LEGACY-226. Секреты живут вне репозитория и по сервису: каждый контейнер
+    # монтирует только свой каталог, поэтому Prometheus больше не видит токен
+    # бота, а Alertmanager — bearer ко всем метрикам. Создаются руками на сервере;
+    # без них стек поднимается зелёным, а bearer к /api/metrics и доставка
+    # в Telegram молча не работают — оба файла читаются не при старте,
+    # а при обращении.
+    local secrets_root="${MONITORING_SECRETS_DIR:-/opt/books/monitoring/secrets}"
+
+    # 🔴 Каталоги заводятся здесь, а не «ожидаются готовыми». Если их нет к моменту
+    # `up -d`, docker создаёт на их месте пустые root:root, оба контейнера
+    # поднимаются здоровыми, а скрейп и доставка молча мертвы. Так и вышло
+    # 16.08.2026 при переносе секретов. Ошибки `mkdir`/`chown` установку не роняют:
+    # то же решение, что у каталога textfile-коллектора ниже.
+    local secret_dir
+    for secret_dir in "$secrets_root/prometheus" "$secrets_root/alertmanager"; do
+        if [[ ! -d "$secret_dir" ]]; then
+            if mkdir -p "$secret_dir" 2>/dev/null; then
+                log "✓ Created secrets directory: $secret_dir"
+            else
+                warn "Could not create $secret_dir — create it manually: sudo mkdir -p $secret_dir"
+            fi
+        fi
+        # Владелец — тот же uid, под которым работает процесс в контейнере.
+        # `700` при этом владельце достаточно: посторонним каталог не нужен вовсе.
+        chown 65534:65534 "$secret_dir" 2>/dev/null || warn "Could not chown $secret_dir to 65534"
+        chmod 700 "$secret_dir" 2>/dev/null || true
+    done
+
+    required_files+=(
+        "$secrets_root/prometheus/metrics_token"
+        "$secrets_root/alertmanager/telegram_token"
     )
 
     for file in "${required_files[@]}"; do
         if [[ ! -f "$file" ]]; then
-            error "File $file not found. Ensure all configuration files are present."
+            case "$file" in
+                "$secrets_root"/*)
+                    error "Secret $file not found. Fix: sudo install -o 65534 -g 65534 -m 400 /dev/stdin $file <<< 'ЗНАЧЕНИЕ'"
+                    ;;
+                *)
+                    error "File $file not found. Ensure all configuration files are present."
+                    ;;
+            esac
         fi
     done
 
@@ -112,11 +142,11 @@ setup_configs() {
     # молчит — и канал не получает ничего. Проверять здесь, а не по факту тишины в Telegram.
     #
     # Требование одинаково для обоих секретов: `prom/prometheus` работает под тем же
-    # uid 65534. Нечитаемый `configs/metrics_token` даёт не 401 от приложения,
-    # а ошибку чтения `credentials_file` на скрейпе — job `books-app` уходит в down
-    # и `BooksAppDown` горит при полностью живом приложении.
+    # uid 65534. Нечитаемый `metrics_token` даёт не 401 от приложения, а ошибку чтения
+    # `credentials_file` на скрейпе — job `books-app` уходит в down и `BooksAppDown`
+    # горит при полностью живом приложении.
     local secret_uid secret
-    for secret in configs/telegram_token configs/metrics_token; do
+    for secret in "$secrets_root/alertmanager/telegram_token" "$secrets_root/prometheus/metrics_token"; do
         secret_uid=$(stat -c '%u' "$secret" 2>/dev/null || echo "?")
         if [[ "$secret_uid" != "65534" ]]; then
             warn "$secret принадлежит uid ${secret_uid}, а процесс в контейнере работает под 65534"
@@ -124,19 +154,35 @@ setup_configs() {
         fi
     done
 
-    # LEGACY-229. Предусловие, которого не было при пофайловом монтаже: с 16.08.2026
-    # монтируется каталог (LEGACY-224), и uid 65534 обязан иметь на него `x`, иначе
-    # не откроется ни один файл внутри. Отказ выглядит как «Prometheus не стартовал»
-    # без объяснения: `open /cfg/prometheus.yml: permission denied` в логах контейнера.
-    # Нужен именно бит `x` для остальных: файл открывается по полному пути, листинг
-    # каталога никому не нужен, поэтому `751` достаточно, а `750` — уже нет.
-    local configs_mode configs_other
-    configs_mode=$(stat -c '%a' configs 2>/dev/null || echo "?")
-    configs_other="${configs_mode: -1}"
-    if [[ ! "$configs_other" =~ ^[0-7]$ ]] || (( (configs_other & 1) == 0 )); then
-        warn "каталог configs/ имеет права ${configs_mode}: uid 65534 в него не войдёт"
-        warn "Ни Prometheus, ни Alertmanager не поднимутся. Fix: sudo chmod 755 configs"
-    fi
+    # LEGACY-229. Предусловие, которого не было при пофайловом монтаже: монтируются
+    # каталоги (LEGACY-224, LEGACY-226), и uid 65534 обязан иметь на каждый бит `x`,
+    # иначе не откроется ни один файл внутри. Отказ выглядит как «Prometheus
+    # не стартовал» без объяснения: `permission denied` в логах контейнера.
+    # Нужен именно `x`: файл открывается по полному пути, листинг каталога никому
+    # не нужен, поэтому `751` достаточно, а `750` — уже нет.
+    # Считается доступ именно для uid 65534, а не «для остальных»: у `configs/`
+    # владелец `deploy`, и процессу в контейнере важен последний бит, а у каталогов
+    # секретов владелец — сам 65534, и там решает владельческий бит. Проверка
+    # только по «остальным» уговаривала бы расширить доступ к хранилищу секретов
+    # до траверса любым пользователем хоста.
+    local dir_mode dir_uid dir_digit checked_dir
+    for checked_dir in configs "$secrets_root/prometheus" "$secrets_root/alertmanager"; do
+        dir_mode=$(stat -c '%a' "$checked_dir" 2>/dev/null || echo "?")
+        dir_uid=$(stat -c '%u' "$checked_dir" 2>/dev/null || echo "?")
+        if [[ "$dir_uid" == "65534" ]]; then
+            dir_digit="${dir_mode:0:1}"   # владельческие биты
+        else
+            dir_digit="${dir_mode: -1}"   # биты «для остальных»
+        fi
+        if [[ ! "$dir_digit" =~ ^[0-7]$ ]] || (( (dir_digit & 1) == 0 )); then
+            warn "каталог $checked_dir (uid ${dir_uid}, права ${dir_mode}) не проходим для uid 65534"
+            if [[ "$dir_uid" == "65534" ]]; then
+                warn "Fix: sudo chmod 700 $checked_dir"
+            else
+                warn "Fix: sudo chmod 751 $checked_dir"
+            fi
+        fi
+    done
 
     # LEGACY-219. Каталог textfile-коллектора: сюда backup_database.sh кладёт
     # отметку успешного прогона, отсюда node-exporter её читает.

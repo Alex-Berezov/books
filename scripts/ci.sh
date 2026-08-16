@@ -80,22 +80,30 @@ docker run --rm --entrypoint promtool -w /cfg -v "$ROOT_DIR/configs:/cfg:ro" \
 # Точка монтирования `/cfg` совпадает с продовой (`docker-compose.monitoring.yml`),
 # поэтому проверяются те же абсолютные пути, что будут на сервере.
 step "Prometheus config check (promtool check config)"
+# Оба каталога создаются до trap'а по одному, чтобы уборка ловила и отказ второго
+# `mktemp`. Других trap'ов в файле нет — этот не перекрывает чужой; через trap,
+# а не строкой после вызова, потому что при `set -e` падение `check config`
+# оборвало бы скрипт до уборки.
 CFG_CHECK_DIR="$(mktemp -d)"
-# Через trap, а не строкой после вызова: при `set -e` падение `check config` оборвало бы
-# скрипт до уборки. Других trap'ов в файле нет — этот не перекрывает чужой.
-trap 'rm -rf "$CFG_CHECK_DIR"' EXIT
-# 🔴 Секреты в копию не попадают вовсе (`--exclude`), и не только из гигиены: на сервере
-# и на машине, где они заведены по инструкции, файл принадлежит uid 65534 с правами 400,
-# и `cp` из-под `deploy` вернул бы `Permission denied`, оборвав прогон под `set -e`.
+trap 'rm -rf "$CFG_CHECK_DIR" "${SECRETS_CHECK_DIR:-}"' EXIT
+SECRETS_CHECK_DIR="$(mktemp -d)"
 # Каталог копируется целиком, включая `grafana/**`: иначе `rule_files`, указывающий
-# во вложенный каталог, краснел бы в CI при исправном сервере.
+# во вложенный каталог, краснел бы в CI при исправном сервере. Прямое монтирование
+# `configs/` не годится: `chmod -R a+rX` нужен, чтобы promtool под `nobody` вошёл
+# в каталог, а рабочее дерево портить нельзя. `--exclude` — страховка от возврата
+# секрета внутрь `configs/` (там он `400` и принадлежит 65534, `cp` из-под `deploy`
+# вернул бы `Permission denied`); с 16.08.2026 секретов там быть не должно вовсе.
 tar -cf - -C "$ROOT_DIR/configs" --exclude='*token*' . | tar -xf - -C "$CFG_CHECK_DIR"
-printf 'ci-dummy-token\n' > "$CFG_CHECK_DIR/metrics_token"
+# Секреты монтируются отдельным каталогом (LEGACY-226), поэтому и пустышка лежит
+# в отдельном: `credentials_file` указывает в `/secrets`, а `check config`
+# в непроверочном режиме требует, чтобы файл существовал. Значение не участвует.
+printf 'ci-dummy-token\n' > "$SECRETS_CHECK_DIR/metrics_token"
 # 🔴 `mktemp -d` создаёт каталог `0700`, а promtool в образе работает под `nobody`
-# (uid 65534): без прав на вход он не откроет даже `prometheus.yml`. Соседние шаги
+# (uid 65534): без прав на вход он не откроет ни конфиг, ни секрет. Соседние шаги
 # живы потому, что монтируют `configs/` после checkout, то есть `0755`.
-chmod -R a+rX "$CFG_CHECK_DIR"
-docker run --rm --entrypoint promtool -v "$CFG_CHECK_DIR:/cfg:ro" \
+chmod -R a+rX "$CFG_CHECK_DIR" "$SECRETS_CHECK_DIR"
+docker run --rm --entrypoint promtool \
+  -v "$CFG_CHECK_DIR:/cfg:ro" -v "$SECRETS_CHECK_DIR:/secrets:ro" \
   prom/prometheus:v2.45.1 check config /cfg/prometheus.yml
 
 # С покрытием, а не просто `yarn test`: порог в `jest.coverageThreshold`

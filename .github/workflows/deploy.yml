@@ -157,15 +157,17 @@ jobs:
       - name: 📡 Prometheus Config Check
         run: |
           CFG_CHECK_DIR="$(mktemp -d)"
-          trap 'rm -rf "$CFG_CHECK_DIR"' EXIT
-          # 🔴 Секреты в копию не попадают (`--exclude`): в CI их нет, а там, где есть,
-          # они принадлежат uid 65534 с правами 400 и `cp` вернул бы `Permission denied`.
+          SECRETS_CHECK_DIR="$(mktemp -d)"
+          trap 'rm -rf "$CFG_CHECK_DIR" "$SECRETS_CHECK_DIR"' EXIT
           tar -cf - -C configs --exclude='*token*' . | tar -xf - -C "$CFG_CHECK_DIR"
-          printf 'ci-dummy-token\n' > "$CFG_CHECK_DIR/metrics_token"
+          # Секреты монтируются отдельным каталогом (LEGACY-226), и `check config`
+          # в непроверочном режиме требует существования файла из `credentials_file`.
+          printf 'ci-dummy-token\n' > "$SECRETS_CHECK_DIR/metrics_token"
           # 🔴 `mktemp -d` даёт `0700`, а promtool в образе работает под `nobody`
-          # (uid 65534): без прав на вход он не откроет даже `prometheus.yml`.
-          chmod -R a+rX "$CFG_CHECK_DIR"
-          docker run --rm --entrypoint promtool -v "$CFG_CHECK_DIR:/cfg:ro" \
+          # (uid 65534): без прав на вход он не откроет ни конфиг, ни секрет.
+          chmod -R a+rX "$CFG_CHECK_DIR" "$SECRETS_CHECK_DIR"
+          docker run --rm --entrypoint promtool \
+            -v "$CFG_CHECK_DIR:/cfg:ro" -v "$SECRETS_CHECK_DIR:/secrets:ro" \
             prom/prometheus:v2.45.1 check config /cfg/prometheus.yml
 
       - name: ♻️ Cache Jest transform
@@ -327,6 +329,9 @@ jobs:
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://${{ vars.PRODUCTION_DOMAIN }}
+    outputs:
+      # Читает job `rollback`: откат допустим только если выкат дошёл до сервера.
+      server_stage_reached: ${{ steps.server_stage.outputs.reached }}
 
     steps:
       - name: 📥 Checkout Deployment Scripts
@@ -350,6 +355,16 @@ jobs:
           echo "Image: ${{ needs.build.outputs.image-tag }}"
           echo "Server: ${{ vars.PRODUCTION_SERVER }}"
           echo "Domain: ${{ vars.PRODUCTION_DOMAIN }}"
+
+      # 🔴 LEGACY-227. Отметка «до сервера дошли». Без неё условие отката
+      # (`needs.deploy.result == 'failure'`) срабатывает и на отказе шагов,
+      # которые идут до ssh: `Checkout Deployment Scripts` и `Setup SSH Agent`.
+      # Сбой GitHub на checkout переливал бы прод предыдущим образом, при том
+      # что на сервер никто не заходил. Шаг стоит вплотную перед выкатом:
+      # всё, что падает раньше, откат не вооружает.
+      - name: 📍 Mark server stage reached
+        id: server_stage
+        run: echo "reached=true" >> "$GITHUB_OUTPUT"
 
       - name: 🚀 Deploy to Server
         run: |
@@ -459,9 +474,10 @@ jobs:
           # Check main endpoints. Retried: a single attempt right after a container swap tests the
           # timing of the deployment, not the health of the application.
           # `/api/metrics` used to be checked here. It is blocked at Caddy (403)
-          # since 07.08.2026, so this loop would fail every deploy from now on —
-          # and on a workflow_dispatch run that failure triggers the automatic
-          # rollback below, undoing a perfectly good deployment. The endpoint is
+          # since 07.08.2026, so this loop would fail every deploy from now on.
+          # On a workflow_dispatch run that failure now really does trigger the
+          # rollback job below: since LEGACY-227 it depends on this job's result,
+          # so a red step here undoes a perfectly good deployment. The endpoint is
           # not a health signal anyway: readiness is. See LEGACY-072.
           endpoints=(
             "/api/health/readiness"
@@ -628,7 +644,24 @@ jobs:
   rollback:
     name: ⏪ Emergency Rollback
     runs-on: ubuntu-22.04
-    if: failure() && github.event_name == 'workflow_dispatch'
+    # 🔴 LEGACY-227. `needs: [deploy]` обязателен, и не ради порядка запуска: у job
+    # без зависимостей нет предков, и `failure()` в его условии не значит «что-то
+    # упало раньше» — у него нет «раньше». Пока зависимости не было, job либо
+    # не запускался никогда (и тогда врал комментарий про «автоматический откат»
+    # у проверки живости), либо реагировал на отказ любой стадии. Второе стало
+    # достижимым после починки LEGACY-222: до неё job `test` на ручном запуске
+    # всегда получал `skipped`, а теперь может упасть — и упавший юнит-тест
+    # переливал бы прод на предыдущую версию, при том что выката не было вовсе.
+    #
+    # Условие сужено до настоящего неудачного выката, и одного `needs.deploy.result
+    # == 'failure'` для этого мало: он истинен при отказе **любого** шага job
+    # `deploy`, включая checkout и настройку ssh-агента, которые идут до сервера.
+    # Поэтому требуется ещё отметка `server_stage_reached` — её ставит шаг
+    # `📍 Mark server stage reached` вплотную перед выкатом. Отменённые прогоны
+    # отсеиваются `!cancelled()`: отмена руками не повод переливать прод.
+    # Инвариант закреплён спекой `src/devops/monitoring-wiring.spec.ts`.
+    needs: [deploy]
+    if: ${{ !cancelled() && needs.deploy.result == 'failure' && needs.deploy.outputs.server_stage_reached == 'true' && github.event_name == 'workflow_dispatch' }}
     environment:
       name: production
 

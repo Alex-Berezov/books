@@ -9,10 +9,10 @@ global:
 # каталога процесса: внутри контейнера это `/cfg` (LEGACY-224). Абсолютный путь
 # здесь пришлось бы менять при каждой смене точки монтирования. Что файлы
 # действительно находятся, проверяет шаг `promtool check config` в `scripts/ci.sh`
-# и парный в `deploy.yml`: он монтирует в тот же `/cfg` копию этого каталога
-# (с пустышкой вместо секрета — он в git не едет) и падает, если `rule_files`
-# указывает в пустоту. Что перечислены все наборы правил из `configs/` —
-# `src/devops/monitoring-wiring.spec.ts`.
+# и парный в `deploy.yml`: он монтирует в тот же `/cfg` копию этого каталога,
+# а рядом отдельным каталогом `/secrets` — пустышку вместо токена, и падает,
+# если `rule_files` указывает в пустоту. Что перечислены все наборы правил
+# из `configs/` — `src/devops/monitoring-wiring.spec.ts`.
 rule_files:
   - 'alert_rules.yml'
   - 'recording_rules.yml'
@@ -40,11 +40,12 @@ scrape_configs:
     scrape_timeout: 10s
     authorization:
       type: Bearer
-      # LEGACY-224: путь внутри контейнера — `/cfg`, каталог `configs/` смонтирован
-      # целиком (`docker-compose.monitoring.yml`). При пофайловом монтаже скрейп
-      # три дня жил на токене, которого на диске уже не было: bind-mount держал
-      # прежний inode.
-      credentials_file: /cfg/metrics_token
+      # LEGACY-226: секрет лежит вне репозитория и монтируется отдельным каталогом
+      # `/secrets`, видимым только этому сервису (`docker-compose.monitoring.yml`).
+      # Каталогом, а не файлом: при пофайловом монтаже скрейп три дня жил
+      # на токене, которого на диске уже не было — bind-mount держал прежний inode
+      # (LEGACY-224).
+      credentials_file: /secrets/metrics_token
 
   # Scrape Prometheus itself
   - job_name: 'prometheus'
