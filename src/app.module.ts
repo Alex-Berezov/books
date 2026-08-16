@@ -88,7 +88,6 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     TagsModule,
     PagesModule,
     MediaModule,
-    PublicModule,
     SitemapModule,
     HealthModule,
     MetricsModule,
@@ -109,6 +108,14 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     RightsRecheckModule,
     RightsLawyerModule,
     // ...other modules
+    // 🔴 `PublicModule` — последний, и переставлять его нельзя (`LEGACY-201`).
+    // Его контроллер объявлен как `@Controller(':lang')`, то есть параметр стоит
+    // в первом сегменте и перехватывает любой литеральный путь той же длины,
+    // объявленный ниже: `GET /admin/authors` уезжал в `:lang/authors`,
+    // `LangParamPipe` получал `lang = 'admin'` и отвечал 404 — до гварда дело
+    // не доходило. В файле самого маршрута этого не видно вовсе: исход решает
+    // порядок модулей здесь. Инвариант стережёт `src/common/testing/module-order.spec.ts`.
+    PublicModule,
   ],
   controllers: [AppController],
   providers: [
