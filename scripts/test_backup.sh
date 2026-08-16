@@ -46,17 +46,17 @@ MAX_BACKUP_AGE_DAYS="${MAX_BACKUP_AGE_DAYS:-7}"
 # Counter increment helpers
 pass_test() {
     log_success "$1"
-    ((TESTS_PASSED++))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
 fail_test() {
     log_error "$1"
-    ((TESTS_FAILED++))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
 }
 
 warn_test() {
     log_warning "$1"
-    ((TESTS_WARNING++))
+    TESTS_WARNING=$((TESTS_WARNING + 1))
 }
 
 # Check existence of backup directories
@@ -102,8 +102,8 @@ check_backup_files() {
         if [[ -d "$dir_path" ]]; then
             # Counting database backups
             while IFS= read -r -d '' file; do
-                ((backup_count++))
-                ((total_backups++))
+                backup_count=$((backup_count + 1))
+                total_backups=$((total_backups + 1))
                 local file_size=$(du -b "$file" | cut -f1)
                 dir_size=$((dir_size + file_size))
                 total_size=$((total_size + file_size))
@@ -175,7 +175,7 @@ check_backup_sizes() {
             pass_test "$(basename "$file"): size OK (${file_size_mb}MB)"
         else
             fail_test "$(basename "$file"): suspicious small size (${file_size_mb}MB < ${MIN_BACKUP_SIZE_MB}MB)"
-            ((small_backups++))
+            small_backups=$((small_backups + 1))
         fi
     done < <(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f -print0 2>/dev/null)
     
@@ -196,7 +196,7 @@ check_compressed_integrity() {
             pass_test "$(basename "$file"): compression OK"
         else
             fail_test "$(basename "$file"): corrupted archive"
-            ((corrupted_backups++))
+            corrupted_backups=$((corrupted_backups + 1))
         fi
     done < <(find "$BACKUP_DIR" -name "*.gz" -type f -print0 2>/dev/null)
     
@@ -207,7 +207,7 @@ check_compressed_integrity() {
                 pass_test "$(basename "$file"): .dump integrity OK"
             else
                 fail_test "$(basename "$file"): .dump integrity FAILED"
-                ((corrupted_backups++))
+                corrupted_backups=$((corrupted_backups + 1))
             fi
         else
             # Fallback: check file is non-empty
@@ -215,7 +215,7 @@ check_compressed_integrity() {
                 pass_test "$(basename "$file"): .dump size OK (pg_restore not available)"
             else
                 fail_test "$(basename "$file"): .dump is empty"
-                ((corrupted_backups++))
+                corrupted_backups=$((corrupted_backups + 1))
             fi
         fi
     done < <(find "$BACKUP_DIR" -name "*.dump" -type f -print0 2>/dev/null)
@@ -257,7 +257,7 @@ check_sql_structure() {
             
             for table in "${expected_tables[@]}"; do
                 if echo "$dump_list" | grep -q "\"$table\""; then
-                    ((found_tables++))
+                    found_tables=$((found_tables + 1))
                 fi
             done
             
@@ -304,7 +304,7 @@ check_sql_structure() {
         
         for table in "${expected_tables[@]}"; do
             if echo "$full_content" | grep -q "CREATE TABLE.*\"$table\""; then
-                ((found_tables++))
+                found_tables=$((found_tables + 1))
             fi
         done
         
@@ -323,7 +323,7 @@ check_uploads_backups() {
     local uploads_count=0
     
     while IFS= read -r -d '' file; do
-        ((uploads_count++))
+        uploads_count=$((uploads_count + 1))
         
     # Archive integrity check
         if tar -tzf "$file" >/dev/null 2>&1; then

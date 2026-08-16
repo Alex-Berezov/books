@@ -66,6 +66,38 @@ step "Monitoring alert rules behaviour (promtool test rules)"
 docker run --rm --entrypoint promtool -w /cfg -v "$ROOT_DIR/configs:/cfg:ro" \
   prom/prometheus:v2.45.1 test rules /cfg/alert_rules.test.yml
 
+# LEGACY-224/225. `prometheus.yml` до 16.08.2026 не разбирал ни один шаг: `check rules`
+# читает только файлы правил, `amtool check-config` — только конфиг Alertmanager. При этом
+# именно в `prometheus.yml` живут абсолютные пути внутрь контейнера (`credentials_file`)
+# и относительные `rule_files`, резолвящиеся от каталога конфига. Опечатка в любом из них
+# не краснеет нигде и всплывает только тем, что Prometheus на сервере не поднимается.
+#
+# ⚠️ Каталог копируется, а не монтируется как есть: в непроверочном режиме `check config`
+# требует существования файла из `credentials_file`, а `configs/metrics_token` в git
+# не едет (`.gitignore`). Пустышка нужна ровно для проверки раскладки путей, значение
+# секрета здесь не участвует. `--syntax-only` не годится: он отключает как раз проверку
+# существования файлов правил, то есть единственное, зачем этот шаг заведён.
+# Точка монтирования `/cfg` совпадает с продовой (`docker-compose.monitoring.yml`),
+# поэтому проверяются те же абсолютные пути, что будут на сервере.
+step "Prometheus config check (promtool check config)"
+CFG_CHECK_DIR="$(mktemp -d)"
+# Через trap, а не строкой после вызова: при `set -e` падение `check config` оборвало бы
+# скрипт до уборки. Других trap'ов в файле нет — этот не перекрывает чужой.
+trap 'rm -rf "$CFG_CHECK_DIR"' EXIT
+# 🔴 Секреты в копию не попадают вовсе (`--exclude`), и не только из гигиены: на сервере
+# и на машине, где они заведены по инструкции, файл принадлежит uid 65534 с правами 400,
+# и `cp` из-под `deploy` вернул бы `Permission denied`, оборвав прогон под `set -e`.
+# Каталог копируется целиком, включая `grafana/**`: иначе `rule_files`, указывающий
+# во вложенный каталог, краснел бы в CI при исправном сервере.
+tar -cf - -C "$ROOT_DIR/configs" --exclude='*token*' . | tar -xf - -C "$CFG_CHECK_DIR"
+printf 'ci-dummy-token\n' > "$CFG_CHECK_DIR/metrics_token"
+# 🔴 `mktemp -d` создаёт каталог `0700`, а promtool в образе работает под `nobody`
+# (uid 65534): без прав на вход он не откроет даже `prometheus.yml`. Соседние шаги
+# живы потому, что монтируют `configs/` после checkout, то есть `0755`.
+chmod -R a+rX "$CFG_CHECK_DIR"
+docker run --rm --entrypoint promtool -v "$CFG_CHECK_DIR:/cfg:ro" \
+  prom/prometheus:v2.45.1 check config /cfg/prometheus.yml
+
 # С покрытием, а не просто `yarn test`: порог в `jest.coverageThreshold`
 # срабатывает только при `--coverage`, иначе он декорация (LEGACY-016).
 # Замер 11.08.2026: statements 63.98, branches 59.64, functions 61.18,

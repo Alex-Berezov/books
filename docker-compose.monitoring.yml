@@ -5,6 +5,29 @@
 # а этот сервер уже получал попытку RCE через опубликованный наружу Redis без
 # пароля (`LEGACY-071`). Доступ к интерфейсам — через SSH-туннель:
 #   ssh -L 9090:127.0.0.1:9090 -L 3000:127.0.0.1:3000 deploy@ssh.bibliaris.com
+#
+# 🔴 LEGACY-224. Конфиги Prometheus и Alertmanager монтируются **каталогом**
+# `./configs:/cfg:ro`, а не файлами по отдельности. Bind-mount отдельного файла
+# привязан к inode: у отслеживаемых файлов новый inode создаёт `git reset --hard`
+# на выкате (пишет во временный файл и переименовывает), у игнорируемых секретов —
+# пересоздание руками или возврат из стеша (`LEGACY-223`). Контейнер после этого
+# до конца жизни видит старое содержимое, а `POST /-/reload` перечитывает ту же
+# устаревшую копию и отвечает `200`. Так 16.08.2026 на проде остались 13 правил
+# из 19 при зелёном выкате, и так же три дня работал разошедшийся `metrics_token`.
+#
+# Точка монтирования `/cfg`, а не `/etc/prometheus`: флаги `--web.console.*`
+# смотрят внутрь `/etc/prometheus`, монтирование поверх затёрло бы их. Тот же
+# `/cfg` использует `scripts/ci.sh` при прогоне promtool, поэтому абсолютные пути
+# внутри конфигов проверяются ровно те, что будут на сервере. Согласованность
+# точек монтирования с путями внутри `configs/*.yml` стережёт
+# `src/devops/monitoring-wiring.spec.ts` — единственная проверка этой связки,
+# которая может покраснеть без сервера.
+#
+# ⚠️ Применённость конфигурации доказывают две разные вещи, и путать их нельзя:
+#   docker exec books-prometheus stat -c %i /cfg/alert_rules.yml   # = inode на хосте: монтаж живой
+#   curl -s 127.0.0.1:9090/api/v1/rules                           # что реально загрузил процесс
+# Первое про монтирование, второе про `reload`. Совпадение inode само по себе
+# не значит, что процесс перечитал файл: он мог этого и не делать.
 
 services:
   prometheus:
@@ -13,18 +36,31 @@ services:
     ports:
       - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
     volumes:
-      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./configs/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
-      - ./configs/recording_rules.yml:/etc/prometheus/recording_rules.yml:ro
-      - ./configs/metrics_token:/etc/prometheus/metrics_token:ro
+      # LEGACY-224, механизм — в шапке файла.
+      #
+      # ⚠️ Оба контейнера получают **весь** `configs/`, а значит и оба секрета
+      # сразу: Prometheus видит `telegram_token`, Alertmanager — `metrics_token`
+      # (bearer к `/api/metrics`), плюс оба видят `Caddyfile.prod` и
+      # `ufw-rules.txt`. Права `400`/`65534` этому не мешают — процессы в обоих
+      # контейнерах работают под тем самым uid 65534. Решением владельца принято
+      # как есть: раскладывать секреты в каталог вне репозитория (он тоже
+      # монтируется каталогом, то есть починку inode сохраняет) — отдельная
+      # работа на сервере, заведена записью `LEGACY-226`.
+      - ./configs:/cfg:ro
       - prometheus_data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--config.file=/cfg/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=14d'
       - '--storage.tsdb.retention.size=2GB'
+      # Каталоги из образа, а не из монтирования — см. шапку файла.
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
+      # LEGACY-224: после перехода на каталог `POST 9090/-/reload` подхватывает
+      # правки `prometheus.yml`, `alert_rules.yml` и `recording_rules.yml` без
+      # пересоздания контейнера; до 16.08.2026 он отвечал `200`, не меняя ничего.
+      # Конфиг Alertmanager это перечитывание не касается — у него свой
+      # `POST 9093/-/reload`, а `configs/grafana/**` требует рестарта Grafana.
       - '--web.enable-lifecycle'
     restart: unless-stopped
     networks:
@@ -85,22 +121,29 @@ services:
     ports:
       - '127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093'
     volumes:
-      - ./configs/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      # Токен Telegram-бота: файл создаётся на сервере руками, в git не едет
-      # (`.gitignore`). Владелец файла — uid 65534 (`nobody`), права 400: под
-      # этим пользователем работает процесс в контейнере, файл `deploy:600`
-      # он прочитать не сможет.
+      # LEGACY-224: тот же каталог и та же причина, что у Prometheus (шапка файла).
+      # Для токена это важно отдельно: `configs/telegram_token` читается при
+      # каждой отправке, и при пофайловом монтаже заменённый на хосте токен
+      # внутри контейнера оставался прежним до пересоздания.
       #
-      # 🔴 Файл обязан существовать ДО первого `up -d`. Если источника
-      # bind-mount нет, docker создаёт на его месте **каталог** root:root:
-      # отправка начинает падать на EISDIR, а `> configs/telegram_token`
-      # отвечает `Is a directory` — чинится только `sudo rm -rf` и
-      # пересозданием контейнера. Наличие обоих файлов с секретами проверяет
-      # `scripts/setup_monitoring.sh` перед запуском стека.
-      - ./configs/telegram_token:/etc/alertmanager/telegram_token:ro
+      # 🔴 Владелец файла с токеном — uid 65534 (`nobody`), права 400: под этим
+      # пользователем работает процесс в контейнере, файл `deploy:600` он
+      # прочитать не сможет. Права на хосте — единственное, что теперь решает:
+      # `chown -R nobody:nobody /etc/alertmanager` из образа конфига больше
+      # не касается, он лежит в `/cfg`.
+      #
+      # ⚠️ Неверный путь или нечитаемый токен ломают **только доставку**, и молча:
+      # конфиг валиден, `amtool check-config` зелёный (он `bot_token_file`
+      # не читает — об этом сказано у шага «Monitoring config check» в
+      # `scripts/ci.sh`), контейнер здоров, а первый же алерт
+      # умирает в `could not read` в `docker logs books-alertmanager`. Поэтому
+      # приёмка после любой правки этой строки — дымовая отправка
+      # (`amtool alert add`), а не взгляд на состояние контейнера. Наличие обоих
+      # секретов проверяет `scripts/setup_monitoring.sh` перед запуском стека.
+      - ./configs:/cfg:ro
       - alertmanager_data:/alertmanager
     command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--config.file=/cfg/alertmanager.yml'
       - '--storage.path=/alertmanager'
       - '--web.external-url=http://localhost:9093'
     restart: unless-stopped

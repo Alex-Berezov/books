@@ -82,13 +82,19 @@ setup_configs() {
     required_files=(
         "configs/prometheus.yml"
         "configs/alert_rules.yml"
+        # `rule_files` в prometheus.yml перечисляет и его: без файла Prometheus
+        # не поднимется вовсе, а раньше скрипт печатал «✓ verified».
+        "configs/recording_rules.yml"
         "configs/alertmanager.yml"
         "docker-compose.monitoring.yml"
         # Секреты. Их нет в git (см. .gitignore), они создаются на сервере
-        # руками, и оба смонтированы в docker-compose.monitoring.yml. Без этой
-        # проверки docker создаёт на месте отсутствующего файла КАТАЛОГ, стек
-        # поднимается зелёным, а bearer к /api/metrics и доставка в Telegram
-        # молча не работают.
+        # руками и попадают в контейнеры вместе со всем configs/ (LEGACY-224).
+        # Без этой проверки стек поднимается зелёным, а bearer к /api/metrics
+        # и доставка в Telegram молча не работают: оба файла читаются не при
+        # старте, а при обращении. До 16.08.2026 отсутствующий файл был ещё
+        # и ловушкой пофайлового монтажа — docker создавал на его месте
+        # КАТАЛОГ; с монтированием каталога этого больше не происходит,
+        # но проверка нужна ровно так же.
         "configs/metrics_token"
         "configs/telegram_token"
     )
@@ -104,11 +110,32 @@ setup_configs() {
     # способ создать файл (`echo ... > configs/telegram_token` из-под `deploy`) даёт
     # `deploy:deploy 600`. Alertmanager при этом стартует, UI зелёный, `AlertmanagerDown`
     # молчит — и канал не получает ничего. Проверять здесь, а не по факту тишины в Telegram.
-    local token_uid
-    token_uid=$(stat -c '%u' configs/telegram_token 2>/dev/null || echo "?")
-    if [[ "$token_uid" != "65534" ]]; then
-        warn "configs/telegram_token принадлежит uid ${token_uid}, а Alertmanager работает под 65534"
-        warn "Доставка в Telegram молча не заработает. Fix: sudo chown 65534:65534 configs/telegram_token && sudo chmod 400 configs/telegram_token"
+    #
+    # Требование одинаково для обоих секретов: `prom/prometheus` работает под тем же
+    # uid 65534. Нечитаемый `configs/metrics_token` даёт не 401 от приложения,
+    # а ошибку чтения `credentials_file` на скрейпе — job `books-app` уходит в down
+    # и `BooksAppDown` горит при полностью живом приложении.
+    local secret_uid secret
+    for secret in configs/telegram_token configs/metrics_token; do
+        secret_uid=$(stat -c '%u' "$secret" 2>/dev/null || echo "?")
+        if [[ "$secret_uid" != "65534" ]]; then
+            warn "$secret принадлежит uid ${secret_uid}, а процесс в контейнере работает под 65534"
+            warn "Fix: sudo chown 65534:65534 $secret && sudo chmod 400 $secret"
+        fi
+    done
+
+    # LEGACY-229. Предусловие, которого не было при пофайловом монтаже: с 16.08.2026
+    # монтируется каталог (LEGACY-224), и uid 65534 обязан иметь на него `x`, иначе
+    # не откроется ни один файл внутри. Отказ выглядит как «Prometheus не стартовал»
+    # без объяснения: `open /cfg/prometheus.yml: permission denied` в логах контейнера.
+    # Нужен именно бит `x` для остальных: файл открывается по полному пути, листинг
+    # каталога никому не нужен, поэтому `751` достаточно, а `750` — уже нет.
+    local configs_mode configs_other
+    configs_mode=$(stat -c '%a' configs 2>/dev/null || echo "?")
+    configs_other="${configs_mode: -1}"
+    if [[ ! "$configs_other" =~ ^[0-7]$ ]] || (( (configs_other & 1) == 0 )); then
+        warn "каталог configs/ имеет права ${configs_mode}: uid 65534 в него не войдёт"
+        warn "Ни Prometheus, ни Alertmanager не поднимутся. Fix: sudo chmod 755 configs"
     fi
 
     # LEGACY-219. Каталог textfile-коллектора: сюда backup_database.sh кладёт
@@ -202,7 +229,11 @@ wait_for_services() {
                 break
             fi
             
-            ((attempt++))
+            # LEGACY-228. Не `((attempt++))`: постфиксная форма возвращает прежнее
+            # значение, то есть при `attempt=0` код возврата 1, и под `set -e` (:6)
+            # установка обрывалась на первой же неготовой службе. Из-за этого
+            # 16.08.2026 скрипт не запускался вовсе и стек поднимали руками.
+            attempt=$((attempt + 1))
             if [[ $attempt -eq $max_attempts ]]; then
                 warn "$name not ready after $max_attempts attempts"
             else

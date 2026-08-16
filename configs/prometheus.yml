@@ -5,6 +5,14 @@ global:
     cluster: 'books-app'
     environment: 'production'
 
+# Пути относительные и резолвятся от каталога **этого файла**, а не от рабочего
+# каталога процесса: внутри контейнера это `/cfg` (LEGACY-224). Абсолютный путь
+# здесь пришлось бы менять при каждой смене точки монтирования. Что файлы
+# действительно находятся, проверяет шаг `promtool check config` в `scripts/ci.sh`
+# и парный в `deploy.yml`: он монтирует в тот же `/cfg` копию этого каталога
+# (с пустышкой вместо секрета — он в git не едет) и падает, если `rule_files`
+# указывает в пустоту. Что перечислены все наборы правил из `configs/` —
+# `src/devops/monitoring-wiring.spec.ts`.
 rule_files:
   - 'alert_rules.yml'
   - 'recording_rules.yml'
@@ -32,7 +40,11 @@ scrape_configs:
     scrape_timeout: 10s
     authorization:
       type: Bearer
-      credentials_file: /etc/prometheus/metrics_token
+      # LEGACY-224: путь внутри контейнера — `/cfg`, каталог `configs/` смонтирован
+      # целиком (`docker-compose.monitoring.yml`). При пофайловом монтаже скрейп
+      # три дня жил на токене, которого на диске уже не было: bind-mount держал
+      # прежний inode.
+      credentials_file: /cfg/metrics_token
 
   # Scrape Prometheus itself
   - job_name: 'prometheus'

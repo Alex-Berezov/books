@@ -49,13 +49,26 @@ lerna-debug.log*
 
 # Секреты мониторинга: файлы создаются на сервере руками, в репозитории их нет.
 # Игнорирование здесь — не только защита от случайного коммита: выкат делает
-# `git stash --include-untracked` (`.github/workflows/deploy.yml:335`), и он
-# уносит неотслеживаемый файл в стеш, а игнорируемый не трогает. Для
+# `git stash --include-untracked` (шаг `🚀 Deploy to Server` в
+# `.github/workflows/deploy.yml`; номер строки не ставится — он уже дважды
+# разъезжался с кодом), и он уносит неотслеживаемый файл в стеш,
+# а игнорируемый не трогает. Для
 # `metrics_token` это уже происходило на каждом выкате: Prometheus держался
 # только на том, что его контейнер не пересоздавали, а первое же `up -d`
 # оставило бы job `books-app` без bearer и подняло бы ложный BooksAppDown.
-configs/metrics_token
-configs/telegram_token
+#
+# ⚠️ Маска, а не два точных имени: штатная ротация — записать новый токен рядом
+# (`telegram_token.new`) и подменить. Такой файл был бы неотслеживаемым и
+# не игнорируемым, то есть уехал бы в стеш на следующем выкате — ровно то, как
+# потерялся `.env.monitoring-secrets` (LEGACY-223).
+#
+# Исключение — шаблоны: они описывают формат секрета и обязаны лежать
+# в репозитории. В репозитории приняты оба имени — `.env.example` и
+# `.env.prod.template`, поэтому исключены оба; без них `git add` отвечает
+# «paths are ignored» и требует `-f`.
+configs/*token*
+!configs/*token*.example
+!configs/*token*.template
 
 # Второй env-файл приложения: `docker-compose.prod.yml` подключает его рядом с
 # `.env.prod` именно потому, что `.env.prod` целиком пересоздаётся из секрета
@@ -65,10 +78,19 @@ configs/telegram_token
 # тот же `git stash --include-untracked`. 16.08.2026 так и вышло: приложение
 # перезапустилось без `METRICS_TOKEN`, гвард перестал принимать bearer, скрейп
 # `books-app` получил 401 и `BooksAppDown` загорелся при живом приложении.
-.env.monitoring-secrets
+#
+# ⚠️ Маска по той же причине, что у секретов мониторинга выше: ротация через
+# `.env.monitoring-secrets.new` или `~`-копию редактора даёт файл, который
+# стеш уносит вместе с новым `METRICS_TOKEN`. Шаблоны исключены так же.
+.env.monitoring-secrets*
+!.env.monitoring-secrets.example
+!.env.monitoring-secrets.template
 
-# Копия правил, которую делает `scripts/setup_monitoring.sh`. Никуда не
-# монтируется и не читается, но неотслеживаемой попадала под тот же стеш.
+# Копия правил, которую делает `scripts/setup_monitoring.sh`. Prometheus её
+# не читает: `rule_files` перечисляет файлы поимённо. Но с 16.08.2026 она лежит
+# внутри контейнера вместе со всем `configs/` (LEGACY-224), поэтому перевод
+# `rule_files` на маску `*.yml` загрузил бы одни и те же правила дважды.
+# В остальном строка здесь по той же причине, что и выше: иначе стеш.
 configs/prometheus_alert_rules.yml
 
 # temp directory

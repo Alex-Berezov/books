@@ -183,7 +183,7 @@ wait_for_dns() {
             sleep 30
         fi
         
-        ((attempt++))
+        attempt=$((attempt + 1))
     done
     
     log_warning "DNS propagation will take longer"

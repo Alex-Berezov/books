@@ -11,13 +11,25 @@
 # уходила в никуда. Поэтому токен лежит отдельным файлом на сервере
 # (`configs/telegram_token`, в git не едет, закрыт `.gitignore`), а сюда
 # подставляется через `bot_token_file` — тем же приёмом, что `credentials_file`
-# у Prometheus (`configs/prometheus.yml:35`).
+# в `scrape_configs` файла `configs/prometheus.yml` (номер строки не ставится:
+# он уже дважды разъезжался с кодом; связку «ключ → файл» на обеих сторонах
+# закрепляет `src/devops/monitoring-wiring.spec.ts`).
 #
-# 🔴 Владелец файла с токеном — **uid 65534**, не `deploy`. Образ
-# `prom/alertmanager` объявляет `USER nobody` и делает `chown -R nobody:nobody
-# /etc/alertmanager`, поэтому файл `600`, принадлежащий `deploy`, изнутри
-# контейнера не читается вовсе. На сервере: `chown 65534:65534` плюс `chmod 400`.
+# ⚠️ Путь `/cfg` — точка монтирования каталога `configs/` целиком
+# (`docker-compose.monitoring.yml`, LEGACY-224). Пофайловый монтаж привязан
+# к inode, поэтому заменённый на хосте токен внутри контейнера оставался старым
+# до пересоздания — при том что сам файл читается заново на каждой отправке.
+# Что этот путь лежит внутри смонтированного каталога, стережёт
+# `src/devops/monitoring-wiring.spec.ts`.
+#
+# 🔴 Владелец файла с токеном — **uid 65534**, не `deploy`: образ
+# `prom/alertmanager` объявляет `USER nobody`, и файл `600`, принадлежащий
+# `deploy`, изнутри контейнера не читается вовсе. На сервере: `chown 65534:65534`
+# плюс `chmod 400`. Права на хосте — единственное, что теперь решает: конфиг
+# лежит в `/cfg`, и `chown -R nobody:nobody /etc/alertmanager` из образа его
+# не касается.
 # Ошибка здесь не видна снаружи — контейнер здоров, UI зелёный, а канал молчит.
+# Единственная проверка, которая её ловит, — дымовая отправка `amtool alert add`.
 #
 # ⚠️ `bot_token_file` читается при каждой отправке, а не при старте
 # (`notify/telegram/telegram.go`, `getBotToken()` вызывается из `Notify`):
@@ -56,7 +68,7 @@ receivers:
       # `send_resolved` — осознанно: без него приходит «упало» и не приходит
       # «поднялось», и канал копит тревоги, на которые уже не надо реагировать.
       - send_resolved: true
-        bot_token_file: /etc/alertmanager/telegram_token
+        bot_token_file: /cfg/telegram_token
         chat_id: -1003719761491
         parse_mode: HTML
         # ⚠️ `severity` в заголовке обязателен: два правила носят одно имя

@@ -51,7 +51,12 @@ jobs:
   test:
     name: 🧪 Tests & Quality Checks
     runs-on: ubuntu-22.04
-    if: ${{ !github.event.inputs.skip_tests }}
+    # LEGACY-222. Сравнение именно с `'true'`, а не `!github.event.inputs.skip_tests`:
+    # булев вход `workflow_dispatch` приходит в `github.event.inputs` **строкой**, и
+    # непустая `'false'` в выражениях GitHub истинна — с отрицанием job пропускалась
+    # при любом ручном запуске, и со снятой галкой тоже. На push в `main` и на теге
+    # `v*` вход пуст: `'' != 'true'` истинно, job выполняется.
+    if: ${{ github.event.inputs.skip_tests != 'true' }}
 
     services:
       postgres:
@@ -122,10 +127,12 @@ jobs:
           yarn check:env
 
       # ⚠️ Продублировано из `scripts/ci.sh` по той же причине, что и два шага выше:
-      # выкат идёт по тегу `v*`, где `ci.yml` не запускается вовсе. Конфиги мониторинга
-      # не читает ни одна другая проверка — ни tsc, ни eslint, ни jest их не видят,
-      # и битый `alertmanager.yml` обнаруживался бы только тем, что контейнер на сервере
+      # выкат идёт по тегу `v*`, где `ci.yml` не запускается вовсе. Содержимое конфигов
+      # мониторинга не разбирает больше ничто — ни tsc, ни eslint; битый
+      # `alertmanager.yml` обнаруживался бы только тем, что контейнер на сервере
       # не поднялся (LEGACY-096). Версии образов совпадают с docker-compose.monitoring.yml.
+      # (Раскладку монтирований и пути внутри контейнера сверяет спека
+      # `src/devops/monitoring-wiring.spec.ts` — но не то, что написано в правилах.)
       - name: 📡 Monitoring Config Check
         run: |
           docker run --rm --entrypoint promtool -v "$PWD/configs:/cfg:ro" \
@@ -136,6 +143,30 @@ jobs:
           # скобками и несовпадающими метками молчит навсегда при зелёном конвейере.
           docker run --rm --entrypoint promtool -w /cfg -v "$PWD/configs:/cfg:ro" \
             prom/prometheus:v2.45.1 test rules /cfg/alert_rules.test.yml
+
+      # LEGACY-224/225. Пара к шагу `Prometheus config check` в `scripts/ci.sh` — здесь
+      # обязательно, потому что выкат идёт по тегу `v*`, где `ci.yml` не запускается.
+      # `prometheus.yml` не разбирал ни один шаг до 16.08.2026: `check rules` читает только
+      # файлы правил, `amtool check-config` — только конфиг Alertmanager. А абсолютные пути
+      # внутрь контейнера (`credentials_file`) и относительные `rule_files` живут именно там.
+      #
+      # ⚠️ Каталог копируется с пустышкой вместо токена: в непроверочном режиме
+      # `check config` требует существования файла из `credentials_file`, а
+      # `configs/metrics_token` в git не едет (`.gitignore`). `--syntax-only` не годится —
+      # он отключает как раз проверку существования файлов правил.
+      - name: 📡 Prometheus Config Check
+        run: |
+          CFG_CHECK_DIR="$(mktemp -d)"
+          trap 'rm -rf "$CFG_CHECK_DIR"' EXIT
+          # 🔴 Секреты в копию не попадают (`--exclude`): в CI их нет, а там, где есть,
+          # они принадлежат uid 65534 с правами 400 и `cp` вернул бы `Permission denied`.
+          tar -cf - -C configs --exclude='*token*' . | tar -xf - -C "$CFG_CHECK_DIR"
+          printf 'ci-dummy-token\n' > "$CFG_CHECK_DIR/metrics_token"
+          # 🔴 `mktemp -d` даёт `0700`, а promtool в образе работает под `nobody`
+          # (uid 65534): без прав на вход он не откроет даже `prometheus.yml`.
+          chmod -R a+rX "$CFG_CHECK_DIR"
+          docker run --rm --entrypoint promtool -v "$CFG_CHECK_DIR:/cfg:ro" \
+            prom/prometheus:v2.45.1 check config /cfg/prometheus.yml
 
       - name: ♻️ Cache Jest transform
         uses: actions/cache@v4
@@ -289,7 +320,10 @@ jobs:
     runs-on: ubuntu-22.04
     # Ждёт обоих: тесты больше не блокируют сборку, но по-прежнему блокируют выкат.
     needs: [test, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests) }}
+    # LEGACY-222. `skip_tests == 'true'`, а не сам вход: строка `'false'` истинна, и выкат
+    # считал пропуск проверок разрешённым на каждом ручном запуске. Теперь пропуск проходит
+    # только по осознанно поставленной галке, а на push и теге требуется `test == 'success'`.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') }}
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://${{ vars.PRODUCTION_DOMAIN }}
@@ -499,13 +533,16 @@ jobs:
       # сообщение о ней приучает не читать канал.
       #
       # 🔴 У `test` проверяется именно `== 'failure'`, а не `!= 'success'`, и это
-      # не небрежность. Job `test` отключается собственным условием
-      # `if: ${{ !github.event.inputs.skip_tests }}` (:54), а булев вход
-      # `workflow_dispatch` приходит в `github.event.inputs` **строкой**: `'false'`
-      # истинна, поэтому при любом ручном запуске `test` получает `skipped`.
-      # С `!= 'success'` каждый успешный ручной выкат слал бы «Выкат упал ·
-      # проверки (skipped)». Job `deploy` этот же случай допускает явно (:292).
-      # Сама строка :54 — чужой дефект, он записан отдельно как LEGACY-222.
+      # не небрежность. Job `test` пропускается по собственному условию (`if:` в самом
+      # начале job `test`) при осознанно поставленной галке `skip_tests` — это аварийный
+      # выкат, а не отказ, и `skipped` в этом случае сообщать некуда. С `!= 'success'`
+      # каждый такой выкат слал бы «Выкат упал · проверки (skipped)». Job `deploy` тот же
+      # случай допускает явно, своим `if:`. Номера строк здесь не ставятся намеренно:
+      # они уже дважды разъезжались с кодом от правок в этом же файле. Оба условия
+      # закреплены спекой `src/devops/monitoring-wiring.spec.ts`.
+      # До починки LEGACY-222 (16.08.2026) `skipped` приходил вообще на
+      # каждом ручном запуске — строка `'false'` в `!github.event.inputs.skip_tests`
+      # истинна; теперь пропуск бывает только по галке, но условие от этого не меняется.
       #
       # 🔴 Токен передаётся через `env`, а не подставляется в строку команды:
       # GitHub маскирует в логах только точные совпадения со значением секрета,

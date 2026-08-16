@@ -20,17 +20,17 @@ log_info() {
 
 log_pass() {
     echo -e "${GREEN}[PASS]${NC} $1"
-    ((CHECKS_PASSED++))
+    CHECKS_PASSED=$((CHECKS_PASSED + 1))
 }
 
 log_fail() {
     echo -e "${RED}[FAIL]${NC} $1"
-    ((CHECKS_FAILED++))
+    CHECKS_FAILED=$((CHECKS_FAILED + 1))
 }
 
 log_warning() {
     echo -e "${YELLOW}[WARN]${NC} $1"
-    ((CHECKS_WARNING++))
+    CHECKS_WARNING=$((CHECKS_WARNING + 1))
 }
 
 # SSH configuration check
