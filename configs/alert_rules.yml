@@ -124,6 +124,72 @@ groups:
           summary: 'Disk space running low'
           description: 'Disk usage is {{ $value }}% on {{ $labels.instance }} ({{ $labels.mountpoint }})'
 
+      # LEGACY-206. Гео-контур целиком держится на заголовке от внешнего прокси
+      # (`cf-ipcountry`), и его отвал не поднимал ничего: счётчики жили в памяти
+      # процесса и были видны одной админской ручкой. При политике `allow`
+      # (LEGACY-171) отвал источника молча снимает гео-блок со всех версий.
+      #
+      # Доля считается по окну в самом правиле, а не берётся готовой из ручки:
+      # счётчики в приложении не сбрасываются, и их доля со временем становится
+      # средней за всю жизнь процесса, в которой свежий отвал растворяется.
+      #
+      # Порог 0.05 совпадает с `DEGRADED_UNKNOWN_RATIO` в
+      # `src/modules/geo-block/geo-ip-country.service.ts` намеренно: разъедутся —
+      # правило начнёт врать относительно того, что показывает админка. Расхождение
+      # ловит спека `src/modules/geo-block/geo-metrics-wiring.spec.ts`: она читает этот
+      # файл и сравнивает число с константой. Правило целиком, вместе с сопоставлением
+      # меток, проверяется `promtool test rules configs/alert_rules.test.yml`.
+      #
+      # 🔴 Обе части обязаны быть под `sum(...)`, и это не украшение.
+      # `geo_country_resolved_total` несёт метку `header`, `geo_country_unknown_total`
+      # не несёт ничего; бинарные операторы PromQL сопоставляют ряды по ПОЛНОМУ
+      # набору меток, пары не находится, и выражение молча становится пустым —
+      # правило не срабатывает ни при каком состоянии системы. Ровно тот дефект,
+      # за который снято BooksAppHealthProbeDown. `promtool check rules` его не
+      # ловит: синтаксис верный.
+      #
+      # `or vector(0)` — против отсутствующего ряда: счётчик с `labelNames`
+      # не публикуется до первого `inc`, и после рестарта при уже отвалившемся
+      # источнике ряда `resolved` нет вовсе.
+      - alert: GeoCountrySourceDegraded
+        expr: >-
+          (sum(rate(geo_country_unknown_total[5m])) or vector(0))
+          /
+          (
+            (sum(rate(geo_country_unknown_total[5m])) or vector(0))
+            + (sum(rate(geo_country_resolved_total[5m])) or vector(0))
+          )
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: books-app
+        annotations:
+          summary: 'Geo country source degraded'
+          description: 'Share of requests without a country is {{ $value | humanizePercentage }} over 5m'
+
+      # Полная пропажа источника: страну не даёт ни один заголовок, а запросы
+      # идут. Отдельным правилом и critical, потому что деградация в 6% и
+      # источник, замолчавший целиком, требуют разной скорости реакции.
+      #
+      # 🔴 Порог по объёму выборки обязателен и взят из `MIN_SAMPLES_FOR_OUTAGE = 20`
+      # в том же сервисе. Без него правило критикует ночной провал трафика: один
+      # посетитель через Tor даёт `cf-ipcountry: T1`, страна не распознаётся, и при
+      # нулевом остальном трафике `resolved == 0 and unknown > 0` истинно уже на
+      # одном запросе. Админская ручка в этот момент честно скажет `NO_DATA` —
+      # правило обязано молчать там же, где молчит она.
+      - alert: GeoCountrySourceUnavailable
+        expr: >-
+          (sum(rate(geo_country_resolved_total[5m])) or vector(0)) == 0
+          and (sum(increase(geo_country_unknown_total[5m])) or vector(0)) >= 20
+        for: 5m
+        labels:
+          severity: critical
+          service: books-app
+        annotations:
+          summary: 'Geo country source is gone'
+          description: 'No request resolved a country in 5m while countryless traffic continues'
+
   - name: monitoring_system_alerts
     rules:
       - alert: PrometheusDown
@@ -145,3 +211,94 @@ groups:
         annotations:
           summary: 'Node Exporter is down'
           description: 'Node Exporter has been down for more than 1 minute'
+
+      # LEGACY-096. Доставка отказала, а алерты продолжают копиться: токен
+      # отозван, бот выкинут из канала, Telegram недоступен.
+      #
+      # ⚠️ Та же честная граница, что у AlertmanagerDown ниже, и здесь она даже
+      # жёстче: единственный receiver — это Telegram, поэтому при отозванном токене
+      # или выкинутом из канала боте сообщение об отказе доставки уходит тем же
+      # отказавшим путём и до человека не доходит. Правило ловит только транзиентный
+      # случай — Telegram полежал и вернулся, — и остаётся видимым в UI Prometheus.
+      # Отказ, который канал не может сообщить сам о себе, заметит только внешняя
+      # сторона, а её в этом контуре нет.
+      - alert: AlertmanagerNotificationsFailing
+        expr: rate(alertmanager_notifications_failed_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: monitoring
+        annotations:
+          summary: 'Alertmanager cannot deliver notifications'
+          description: 'Failed notifications to {{ $labels.integration }} for more than 10 minutes'
+
+      # LEGACY-219. Ночной бэкап падал молча: три задания cron заглушают вывод
+      # (`>/dev/null 2>&1`), скрипт пишет только в `backup.log` на сервере, и не
+      # прошедший бэкап неотличим от прошедшего — до того дня, когда база
+      # понадобится.
+      #
+      # Правило смотрит на возраст отметки, а не ждёт сигнала об ошибке, и
+      # поэтому ловит оба отказа: упавший скрипт и не запустившийся cron.
+      # 26 часов, а не 24: ежедневное задание стоит на 02:00, и суточный порог
+      # краснел бы от любого сдвига прогона на пару минут.
+      - alert: DatabaseBackupStale
+        expr: >-
+          time() - books_backup_last_success_timestamp_seconds{kind="daily"} > 93600
+        for: 10m
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: 'Nightly database backup did not run'
+          description: 'Last successful daily backup was {{ $value | humanizeDuration }} ago'
+
+      # Второй отказ того же класса и отдельным правилом: серии нет вовсе.
+      # `absent()` нужен потому, что выражение выше на отсутствующей серии не
+      # вычисляется ни в true, ни в false и молчит — ровно тем дефектом, из-за
+      # которого сняли BooksAppHealthProbeDown (LEGACY-220).
+      #
+      # ⚠️ `for: 27h`, а не полчаса, и это не перестраховка. Ряд появляется
+      # только после первого ночного прогона: предвыкатный бэкап пишет
+      # `kind="before-deploy"` и этой серии не создаёт. С коротким окном стек,
+      # поднятый днём, шлёт critical через полчаса и дальше каждый час
+      # (`repeat_interval: 1h`) до 02:00 — полтора десятка ложных сообщений
+      # в первый же день, после которых канал глушат. Окно на час больше порога
+      # `DatabaseBackupStale`: не настроенный коллектор всё равно всплывёт,
+      # но не раньше, чем пропущен настоящий прогон.
+      - alert: DatabaseBackupMetricMissing
+        expr: absent(books_backup_last_success_timestamp_seconds{kind="daily"})
+        for: 27h
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: 'No backup metric at all'
+          description: 'node-exporter reports no daily backup timestamp: the textfile collector or the backup script is not wired'
+
+      # Битый или недописанный `.prom` заставляет textfile-коллектор отбросить
+      # ВСЕ свои метрики разом, а не только испорченную: без этого правила отказ
+      # выглядит как `DatabaseBackupMetricMissing` и уводит разбор не туда.
+      - alert: NodeTextfileCollectorBroken
+        expr: node_textfile_scrape_error > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: monitoring
+        annotations:
+          summary: 'Textfile collector cannot read its directory'
+          description: 'node-exporter failed to parse a *.prom file: every textfile metric is dropped, including the backup timestamp'
+
+      # ⚠️ Честная граница: если Alertmanager лежит, доставить это правило
+      # некому — оно поднимется в UI Prometheus и будет ждать, пока Alertmanager
+      # вернётся. Тем же дефектом страдает PrometheusDown выше. Настоящий
+      # dead-man's-switch требует внешней стороны, которая заметит тишину;
+      # такой стороны в этом контуре нет, и заводить её эта пачка не бралась.
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: monitoring
+        annotations:
+          summary: 'Alertmanager is down'
+          description: 'Alertmanager has been unreachable for more than 2 minutes: nothing is being delivered'

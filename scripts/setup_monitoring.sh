@@ -43,6 +43,24 @@ check_dependencies() {
     log "✓ All dependencies are installed"
 }
 
+# Load `.env.monitoring` before anything reads its variables.
+#
+# 🔴 Раньше он подхватывался только внутри `start_monitoring()`, то есть уже
+# после `setup_configs()`. `NODE_TEXTFILE_DIR` при этом читалась дважды из разных
+# источников: скрипт брал умолчание, а docker — значение из `.env.monitoring`.
+# Итог — каталог создан по одному пути, смонтирован по другому: бэкап пишет
+# метрику туда, где node-exporter её не видит, при исправных бэкапах горит
+# `DatabaseBackupMetricMissing`. Значение обязано быть одно на всех.
+load_monitoring_env() {
+    if [[ -f ".env.monitoring" ]]; then
+        log "Loading environment variables from .env.monitoring"
+        set -a
+        # shellcheck disable=SC1091
+        source .env.monitoring
+        set +a
+    fi
+}
+
 # Create Docker networks
 create_networks() {
     log "Creating Docker networks..."
@@ -80,7 +98,33 @@ setup_configs() {
             error "File $file not found. Ensure all configuration files are present."
         fi
     done
-    
+
+    # LEGACY-219. Каталог textfile-коллектора: сюда backup_database.sh кладёт
+    # отметку успешного прогона, отсюда node-exporter её читает.
+    #
+    # 🔴 Одного `mkdir` мало. Скрипт установки запускается от root
+    # (`setup_server.sh` зовёт его после `check_root`), а бэкап ходит под
+    # пользователем cron — `BACKUP_USER`, по умолчанию `deploy`. Каталог
+    # `root:root 755` этому пользователю на запись недоступен, и метрика молча
+    # не пишется. Поэтому обязателен `chown`.
+    #
+    # Ни одна из трёх команд не имеет права уронить установку: под `set -e`
+    # отказ `chmod`/`chown` на уже существующем чужом каталоге оборвал бы
+    # скрипт до `start_monitoring`, то есть правка, включающая оповещения,
+    # ломала бы их установку.
+    local textfile_dir="${NODE_TEXTFILE_DIR:-/opt/books/monitoring/textfile}"
+    local textfile_owner="${BACKUP_USER:-deploy}"
+
+    if ! mkdir -p "$textfile_dir" 2>/dev/null; then
+        warn "Could not create $textfile_dir — create it manually and rerun"
+    elif ! chown "$textfile_owner" "$textfile_dir" 2>/dev/null; then
+        warn "Could not chown $textfile_dir to $textfile_owner — the backup metric will not be written"
+        warn "Fix: sudo chown $textfile_owner $textfile_dir"
+    else
+        chmod 755 "$textfile_dir" 2>/dev/null || true
+        log "✓ Textfile collector directory ready: $textfile_dir (owner $textfile_owner)"
+    fi
+
     # Copy alert_rules.yml into Prometheus config dir
     cp configs/alert_rules.yml configs/prometheus_alert_rules.yml 2>/dev/null || true
     
@@ -119,12 +163,8 @@ start_monitoring() {
     # Stop existing containers (if any)
     docker-compose -f docker-compose.monitoring.yml down 2>/dev/null || true
     
-    # Load env variables
-    if [[ -f ".env.monitoring" ]]; then
-        log "Loading environment variables from .env.monitoring"
-        export $(cat .env.monitoring | grep -v '^#' | xargs)
-    fi
-    
+    # Переменные уже загружены `load_monitoring_env` первым шагом `main`.
+
     # Start services
     docker-compose -f docker-compose.monitoring.yml up -d
     
@@ -218,6 +258,7 @@ main() {
     echo "████████████████████████████████████████████████████"
     echo -e "${NC}"
     
+    load_monitoring_env
     check_dependencies
     create_networks
     setup_configs

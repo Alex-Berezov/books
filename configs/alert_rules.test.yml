@@ -1,0 +1,136 @@
+# Кейсы для `promtool test rules configs/alert_rules.test.yml`.
+#
+# Зачем это существует. `promtool check rules` проверяет синтаксис, и правило с
+# верным синтаксисом может не сработать никогда: 16.08.2026 оба гео-правила были
+# написаны без `sum(...)`, PromQL не нашёл пары рядов по меткам (`header` у одного
+# ряда, пусто у другого) и выражение молча становилось пустым. Зелёный конвейер,
+# мёртвое правило — то же, за что снято `BooksAppHealthProbeDown` (`LEGACY-220`).
+# Здесь в правила подставляются настоящие ряды и проверяется, срабатывают ли они.
+#
+# Покрыты правила, добавленные пачкой «Оповещения». Существующие правила опираются
+# на `recording_rules.yml`, который в этот прогон не подключён.
+rule_files:
+  - alert_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Источник работает: один запрос без страны на шестьдесят с ней — 0.016 против
+  # порога 0.05.
+  - interval: 1m
+    name: geo source healthy — no alert
+    input_series:
+      - series: 'geo_country_resolved_total{header="cf-ipcountry"}'
+        values: '0+60x30'
+      - series: 'geo_country_unknown_total'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GeoCountrySourceDegraded
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: GeoCountrySourceUnavailable
+        exp_alerts: []
+
+  # Деградация: каждый пятый запрос без страны — 0.2 против порога 0.05.
+  # Ловит именно то, что ломалось без `sum(...)`: слева ряд с меткой `header`,
+  # справа — без меток.
+  - interval: 1m
+    name: geo source degraded — warning fires
+    input_series:
+      - series: 'geo_country_resolved_total{header="cf-ipcountry"}'
+        values: '0+40x30'
+      - series: 'geo_country_unknown_total'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GeoCountrySourceDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: books-app
+            exp_annotations:
+              summary: 'Geo country source degraded'
+              description: 'Share of requests without a country is 20% over 5m'
+
+  # Полная пропажа: ряда `resolved` не существует вовсе — prom-client не публикует
+  # счётчик с метками до первого `inc`. Проверяет и `or vector(0)`, и порог объёма.
+  - interval: 1m
+    name: geo source gone — critical fires
+    input_series:
+      - series: 'geo_country_unknown_total'
+        values: '0+50x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GeoCountrySourceUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: books-app
+            exp_annotations:
+              summary: 'Geo country source is gone'
+              description: 'No request resolved a country in 5m while countryless traffic continues'
+
+  # Ночной провал трафика: один запрос без страны за всё окно и ни одного с ней.
+  # Это не отвал источника — порог по объёму выборки обязан промолчать.
+  - interval: 1m
+    name: geo source quiet at night — critical stays silent
+    input_series:
+      - series: 'geo_country_unknown_total'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GeoCountrySourceUnavailable
+        exp_alerts: []
+
+  # Битый `.prom` в каталоге коллектора.
+  - interval: 1m
+    name: broken textfile collector
+    input_series:
+      - series: 'node_textfile_scrape_error'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NodeTextfileCollectorBroken
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: monitoring
+            exp_annotations:
+              summary: 'Textfile collector cannot read its directory'
+              description: 'node-exporter failed to parse a *.prom file: every textfile metric is dropped, including the backup timestamp'
+
+  # Alertmanager не отвечает.
+  - interval: 1m
+    name: alertmanager down
+    input_series:
+      - series: 'up{job="alertmanager"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AlertmanagerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: monitoring
+            exp_annotations:
+              summary: 'Alertmanager is down'
+              description: 'Alertmanager has been unreachable for more than 2 minutes: nothing is being delivered'
+
+  # Серии бэкапа нет вовсе: коллектор не настроен или скрипт ни разу не отработал.
+  # Единственное, что это ловит, — `absent()`; выражение на возраст молчит.
+  - interval: 1h
+    name: no backup metric at all — absent fires
+    input_series:
+      - series: 'up{job="node-exporter"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: DatabaseBackupMetricMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: backup
+            exp_annotations:
+              summary: 'No backup metric at all'
+              description: 'node-exporter reports no daily backup timestamp: the textfile collector or the backup script is not wired'

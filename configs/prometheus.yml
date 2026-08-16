@@ -46,6 +46,15 @@ scrape_configs:
       - targets: ['node-exporter:9100']
     scrape_interval: 15s
 
+  # LEGACY-096. Сам канал доставки тоже нужно наблюдать: до этой цели ни одна
+  # серия не говорила, доходят ли сообщения. Отозванный токен, бот, выкинутый
+  # из канала, или упавший контейнер выглядели одинаково — тишиной, неотличимой
+  # от «ничего не случилось».
+  - job_name: 'alertmanager'
+    static_configs:
+      - targets: ['alertmanager:9093']
+    scrape_interval: 30s
+
   # 🔴 Здесь стоял job `books-app-health`, скребущий `/api/health/readiness`.
   # Маршрут отдаёт **JSON**, а Prometheus ждёт текстовый exposition-формат:
   # цель была бы вечно красной, а `up == 0` читался бы как «приложение лежит».

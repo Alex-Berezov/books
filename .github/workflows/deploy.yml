@@ -132,6 +132,10 @@ jobs:
             prom/prometheus:v2.45.1 check rules /cfg/alert_rules.yml /cfg/recording_rules.yml
           docker run --rm --entrypoint amtool -v "$PWD/configs:/cfg:ro" \
             prom/alertmanager:v0.26.0 check-config /cfg/alertmanager.yml
+          # Поведение правил, а не только синтаксис: без этого шага правило с верными
+          # скобками и несовпадающими метками молчит навсегда при зелёном конвейере.
+          docker run --rm --entrypoint promtool -w /cfg -v "$PWD/configs:/cfg:ro" \
+            prom/prometheus:v2.45.1 test rules /cfg/alert_rules.test.yml
 
       - name: ♻️ Cache Jest transform
         uses: actions/cache@v4
@@ -457,10 +461,16 @@ jobs:
   notify:
     name: 📢 Notifications
     runs-on: ubuntu-22.04
-    needs: [build, deploy]
+    # `test` в списке намеренно: `deploy` зависит от него (`needs: [test, build]`),
+    # и при красных тестах получает `skipped`. Без `test` здесь сообщение называло
+    # бы стадией «выкат», а сломаны были бы тесты — человек шёл бы смотреть не туда.
+    needs: [test, build, deploy]
     if: always()
 
     steps:
+      # Успех наружу не уходит по решению владельца от 16.08.2026: сообщение
+      # о каждом удачном выкате превращает канал в ленту, которую перестают
+      # читать, и тогда в ней теряется отказ. В логе прогона он остаётся.
       - name: 📢 Notify Success
         if: ${{ needs.deploy.result == 'success' }}
         run: |
@@ -469,18 +479,104 @@ jobs:
           echo "Environment: ${{ github.event.inputs.environment || 'production' }}"
           echo "URL: https://${{ vars.PRODUCTION_DOMAIN }}"
 
-          # Here you can add integrations with:
-          # - Slack (webhook)
-          # - Discord
-          # - Telegram
-          # - Email
-
+      # LEGACY-221. Второй путь доставки в тот же Telegram-канал, что и у
+      # Alertmanager, и это не дублирование: Alertmanager живёт на сервере и про
+      # GitHub не знает, раннер GitHub не видит хост. Отказ выката не виден ни
+      # одному правилу мониторинга — приложение на сервере продолжает работать
+      # на старом образе, все метрики зелёные, а новая версия просто не доехала.
+      #
+      # ⚠️ `continue-on-error` здесь намеренно НЕ ставится, хотя `LEGACY-221` его разрешал.
+      # Он не нужен: тело шага упасть не может — отсутствие секретов даёт `exit 0`, сетевой
+      # отказ снят через `set +e`, обе ветки разбора кода ответа печатают предупреждение и
+      # выходят нулём. А поставленный «на всякий случай», он погасил бы единственный сигнал
+      # о поломке самого оповещения: после любой будущей правки этого bash-тела шаг был бы
+      # зелёным при полном молчании канала. Отказ Telegram выкат не красит и без него.
+      #
+      # 🔴 Условие шире, чем `deploy.result == 'failure'`: при падении `test` или
+      # `build` job `deploy` не запускается вовсе и получает `skipped`, а не
+      # `failure` — с прежним условием отказ сборки не сообщался никуда. Отменённые
+      # прогоны отсеиваются `!cancelled()`: отмена руками — не происшествие, а
+      # сообщение о ней приучает не читать канал.
+      #
+      # 🔴 У `test` проверяется именно `== 'failure'`, а не `!= 'success'`, и это
+      # не небрежность. Job `test` отключается собственным условием
+      # `if: ${{ !github.event.inputs.skip_tests }}` (:54), а булев вход
+      # `workflow_dispatch` приходит в `github.event.inputs` **строкой**: `'false'`
+      # истинна, поэтому при любом ручном запуске `test` получает `skipped`.
+      # С `!= 'success'` каждый успешный ручной выкат слал бы «Выкат упал ·
+      # проверки (skipped)». Job `deploy` этот же случай допускает явно (:288).
+      # Сама строка :54 — чужой дефект, он записан отдельно как LEGACY-222.
+      #
+      # 🔴 Токен передаётся через `env`, а не подставляется в строку команды:
+      # GitHub маскирует в логах только точные совпадения со значением секрета,
+      # и токен, разрезанный переносом строки или склейкой, в лог попадёт целиком.
+      # Ни `echo`, ни `set -x` в этом шаге быть не должно.
       - name: 🚨 Notify Failure
-        if: ${{ needs.deploy.result == 'failure' }}
+        if: ${{ !cancelled() && (needs.test.result == 'failure' || needs.build.result != 'success' || needs.deploy.result != 'success') }}
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TEST_RESULT: ${{ needs.test.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          VERSION: ${{ needs.build.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          echo "❌ Deployment failed!"
-          echo "Version: ${{ needs.build.outputs.version }}"
-          echo "Check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          set -euo pipefail
+
+          # Первая по порядку сломавшаяся стадия — она и есть причина;
+          # остальные после неё получают `skipped` и о причине ничего не говорят.
+          if [[ "${TEST_RESULT}" == "failure" ]]; then
+            STAGE="проверки (${TEST_RESULT})"
+          elif [[ "${BUILD_RESULT}" != "success" ]]; then
+            STAGE="сборка (${BUILD_RESULT})"
+          else
+            STAGE="выкат (${DEPLOY_RESULT})"
+          fi
+
+          echo "❌ Deployment failed on stage: ${STAGE}"
+          echo "Version: ${VERSION:-unknown}"
+          echo "Check the logs: ${RUN_URL}"
+
+          if [[ -z "${TG_TOKEN}" || -z "${TG_CHAT}" ]]; then
+            echo "::warning::TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы — сообщение не отправлено"
+            exit 0
+          fi
+
+          # Текст собирается в переменную, а не многострочным литералом внутри
+          # вызова: блочный скаляр YAML сохранил бы отступ продолжающих строк,
+          # и он приехал бы в сообщение.
+          TEXT="<b>Выкат упал</b> · books · ${VERSION:-без версии}"$'\n'
+          TEXT="${TEXT}Этап: ${STAGE}"$'\n'
+          TEXT="${TEXT}${RUN_URL}"
+
+          # --data-urlencode, а не -d: в тексте переносы строк и символы,
+          # которые -d отправил бы как есть и сломал бы форму запроса.
+          #
+          # 🔴 Код ответа проверяется обязательно. Telegram отвечает на отозванный
+          # токен `401`, на выкинутого из канала бота `403`, на битый chat_id
+          # `400` — и всё это с телом JSON и кодом возврата curl 0. Без проверки
+          # шаг зелёный, в логе пусто, до человека не дошло ничего: то же исходное
+          # состояние LEGACY-221, только с галкой. Для пути через Alertmanager
+          # за этим следит правило AlertmanagerNotificationsFailing, у пути через
+          # GitHub другого сторожа нет.
+          #
+          # `set +e` на время вызова: при `set -e` сетевой отказ оборвал бы шаг до печати
+          # предупреждения. Дописывать `|| echo "000"` нельзя — curl при отказе соединения
+          # сам печатает `000` и возвращает ненулевой код, и в переменную попало бы `000000`.
+          set +e
+          HTTP_CODE=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
+            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=${TEXT}")
+          set -e
+
+          if [[ "${HTTP_CODE}" != "200" ]]; then
+            echo "::warning::Telegram отклонил сообщение о падении выката: HTTP ${HTTP_CODE}. Проверь TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID и что бот остался администратором канала."
+          else
+            echo "Telegram: сообщение доставлено"
+          fi
 
   # =====================================================
   # ROLLBACK (Manual trigger)

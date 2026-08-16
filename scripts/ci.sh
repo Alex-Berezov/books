@@ -58,6 +58,14 @@ docker run --rm --entrypoint promtool -v "$ROOT_DIR/configs:/cfg:ro" \
 docker run --rm --entrypoint amtool -v "$ROOT_DIR/configs:/cfg:ro" \
   prom/alertmanager:v0.26.0 check-config /cfg/alertmanager.yml
 
+# `check rules` разбирает синтаксис, и правило с верным синтаксисом молчит навсегда,
+# если наборы меток по обе стороны бинарного оператора не совпали. Так и случилось
+# 16.08.2026 с обоими гео-правилами. `test rules` подставляет настоящие ряды и
+# проверяет, срабатывает правило или нет — единственная проверка, которая это ловит.
+step "Monitoring alert rules behaviour (promtool test rules)"
+docker run --rm --entrypoint promtool -w /cfg -v "$ROOT_DIR/configs:/cfg:ro" \
+  prom/prometheus:v2.45.1 test rules /cfg/alert_rules.test.yml
+
 # С покрытием, а не просто `yarn test`: порог в `jest.coverageThreshold`
 # срабатывает только при `--coverage`, иначе он декорация (LEGACY-016).
 # Замер 11.08.2026: statements 63.98, branches 59.64, functions 61.18,

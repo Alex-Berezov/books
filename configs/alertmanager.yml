@@ -74,3 +74,14 @@ inhibit_rules:
     target_match:
       severity: 'warning'
     equal: ['alertname', 'service']
+
+  # Правило выше глушит только одноимённые пары, а про отвал гео-источника
+  # сообщают два правила с разными именами: при полной пропаже доля неизвестных
+  # равна единице, то есть `GeoCountrySourceDegraded` тоже firing. Без этой
+  # строки один инцидент даёт два сообщения в канал — warning каждые 4 часа
+  # и critical каждый час.
+  - source_match:
+      alertname: 'GeoCountrySourceUnavailable'
+    target_match:
+      alertname: 'GeoCountrySourceDegraded'
+    equal: ['service']

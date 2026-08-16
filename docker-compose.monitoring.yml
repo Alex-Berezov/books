@@ -64,11 +64,17 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      # LEGACY-219. Каталог textfile-коллектора: `backup_database.sh` кладёт сюда
+      # отметку успешного прогона, node-exporter отдаёт её как обычную метрику.
+      # Через неё правило видит и упавший бэкап, и не запустившийся cron —
+      # метрика в обоих случаях просто перестаёт обновляться.
+      - ${NODE_TEXTFILE_DIR:-/opt/books/monitoring/textfile}:/var/lib/node_exporter/textfile:ro
     command:
       - '--path.procfs=/host/proc'
       - '--path.rootfs=/rootfs'
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/var/lib/node_exporter/textfile'
     restart: unless-stopped
     networks:
       - monitoring

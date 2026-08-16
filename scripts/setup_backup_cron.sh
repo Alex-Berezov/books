@@ -280,6 +280,14 @@ POSTGRES_USER=postgres
 # Docker Configuration
 USE_DOCKER=auto
 
+# LEGACY-219. node-exporter textfile collector directory: backup_database.sh writes the
+# success timestamp here and Prometheus alerts on its age. Cron does not inherit the shell
+# environment, and this file is the only environment the backup gets — so the path has to be
+# stated here as well as in .env.monitoring, which compose and setup_monitoring.sh read.
+# Change it in one place only and the metric is written where node-exporter does not look:
+# backups keep running while DatabaseBackupMetricMissing fires every hour.
+NODE_TEXTFILE_DIR=${NODE_TEXTFILE_DIR:-/opt/books/monitoring/textfile}
+
 # Logging
 LOG_LEVEL=INFO
 EOF

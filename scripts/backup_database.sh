@@ -39,6 +39,14 @@ BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 COMPRESS_BACKUPS="${COMPRESS_BACKUPS:-true}"
 BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"
 LOG_FILE="${BACKUP_DIR}/backup.log"
+# LEGACY-219. node-exporter textfile collector directory: it serves every `*.prom` here to
+# Prometheus as ordinary metrics. That is what makes a successful run visible off the server —
+# before it, a backup that did not happen was indistinguishable from one that did, right up to
+# the day the database was needed.
+#
+# Overriding the path means overriding it in every consumer: `.env.monitoring` (compose and
+# `setup_monitoring.sh`) and `.env.backup` (this script under cron, sourced above).
+NODE_TEXTFILE_DIR="${NODE_TEXTFILE_DIR:-/opt/books/monitoring/textfile}"
 UPLOADS_DIR="/opt/books/uploads"
 INCLUDE_UPLOADS="${INCLUDE_UPLOADS:-true}"
 BACKUP_TAG=""
@@ -592,6 +600,78 @@ cleanup_remote_old_backups() {
     fi
 }
 
+# LEGACY-219. Publish the timestamp of a successful run for Prometheus.
+#
+# The rule watches the age of this metric rather than waiting for an error signal, which catches
+# both failures at once: the script dying (the metric stops advancing) and cron never firing (the
+# metric simply grows stale). Sending a message from the script on failure misses the second case
+# — the very one this was built for — which is why the `curl` variant was rejected.
+#
+# 🔴 This function must never abort the run. The file is under `set -euo pipefail` and the call
+# happens AFTER the dump has been taken and uploaded: any failure here would turn a successful
+# backup into exit code 1. Worse, `deploy_production.sh` runs this script as the pre-deploy backup
+# through `eval` under the same `set -e`, so an unwritable metrics directory would fail the deploy
+# step and trigger a rollback. Hence both `-d` and `-w` are checked and every write is guarded.
+# A missing metric surfaces as `DatabaseBackupMetricMissing` — a sound way to learn about the
+# problem, unlike a broken deploy.
+#
+# The write is atomic through a temporary file: node-exporter reads the directory on its own
+# schedule and a half-written file would raise a parse error instead of a metric. The temporary
+# name does not end in `.prom`, so the collector ignores it.
+write_backup_success_metric() {
+    local backup_type="$1"
+
+    if [[ ! -d "$NODE_TEXTFILE_DIR" ]]; then
+        log_warning "Textfile directory $NODE_TEXTFILE_DIR is missing — backup metric not written"
+        return 0
+    fi
+
+    if [[ ! -w "$NODE_TEXTFILE_DIR" ]]; then
+        log_warning "Textfile directory $NODE_TEXTFILE_DIR is not writable by $(id -un) — backup metric not written"
+        log_warning "Fix: chown $(id -un) $NODE_TEXTFILE_DIR (see scripts/setup_monitoring.sh)"
+        return 0
+    fi
+
+    # One file for every kind, not one file per kind.
+    #
+    # 🔴 The textfile collector concatenates every `*.prom` in the directory and rejects a metric
+    # family declared in more than one of them: it drops the whole family and raises
+    # `node_textfile_scrape_error`. Four kinds run here (daily, weekly, monthly, before-deploy),
+    # all publishing `books_backup_last_success_timestamp_seconds` — separate files would kill the
+    # series outright the first time a pre-deploy backup landed next to a nightly one.
+    #
+    # The other kinds' lines are carried over rather than overwritten: a weekly run must not erase
+    # the daily timestamp the alert rule watches.
+    local metric_file="${NODE_TEXTFILE_DIR}/books_backup.prom"
+    local tmp_file="${metric_file}.$$"
+    local metric_name='books_backup_last_success_timestamp_seconds'
+    local kept=""
+
+    if [[ -f "$metric_file" ]]; then
+        kept=$(grep -E "^${metric_name}\{" "$metric_file" 2>/dev/null \
+            | grep -v "kind=\"${backup_type}\"" || true)
+    fi
+
+    if ! {
+        echo "# HELP ${metric_name} Unix time of the last successful backup run"
+        echo "# TYPE ${metric_name} gauge"
+        if [[ -n "$kept" ]]; then echo "$kept"; fi
+        echo "${metric_name}{kind=\"${backup_type}\"} $(date +%s)"
+    } > "$tmp_file" 2>/dev/null; then
+        rm -f "$tmp_file"
+        log_warning "Could not write backup metric to $tmp_file — backup itself is fine"
+        return 0
+    fi
+
+    if ! chmod 644 "$tmp_file" 2>/dev/null || ! mv -f "$tmp_file" "$metric_file" 2>/dev/null; then
+        rm -f "$tmp_file"
+        log_warning "Could not publish backup metric to $metric_file — backup itself is fine"
+        return 0
+    fi
+
+    log_success "Backup metric written: $metric_file (kind=${backup_type})"
+}
+
 # Main function
 main() {
     local backup_type="${1:-daily}"
@@ -667,6 +747,9 @@ main() {
     # Generate report
     generate_backup_report "$db_backup_file" "$uploads_backup_file" "$backup_type"
     
+    # Reached only when none of the exits above fired.
+    write_backup_success_metric "$backup_type"
+
     log_success "=== Backup creation completed successfully ==="
     
     {
@@ -696,6 +779,8 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     echo "  COMPRESS_BACKUPS        - compress backups (true/false)"
     echo "  INCLUDE_UPLOADS         - include uploads/media files (true/false)"
     echo "  USE_DOCKER              - use Docker (true/false/auto)"
+    echo "  NODE_TEXTFILE_DIR       - node-exporter textfile collector dir (/opt/books/monitoring/textfile);"
+    echo "                            override in .env.monitoring AND .env.backup"
     echo "  POSTGRES_HOST           - PostgreSQL host (localhost)"
     echo "  POSTGRES_PORT           - PostgreSQL port (5432)"
     echo "  POSTGRES_DB             - database name (books)"

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MetricsService } from '../metrics/metrics.service';
 import { GeoCountrySourceHealthDto, GeoCountrySourceStatus } from './dto/geo-block.dto';
 
 export type GeoRequestHeaders = Record<string, string | string[] | undefined>;
@@ -18,7 +19,10 @@ export class GeoIpCountryService {
   private lastUnknownAt: Date | null = null;
   private readonly windowStartedAt = new Date();
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   /**
    * LEGACY-172. `cf-ipcountry` is trusted for one reason only: firewalld lets Cloudflare ranges
@@ -83,6 +87,11 @@ export class GeoIpCountryService {
   /**
    * Admin lookups pass their own header and would distort the picture of production traffic,
    * so they are observed but not counted.
+   *
+   * LEGACY-206. The same two outcomes also go out as prom-client counters, and for the same
+   * reason the debug branch is excluded from both: an alert built on admin traffic would read
+   * differently from what the admin endpoint shows. Both branches must increment — with only one
+   * of them wired the ratio in the alert rule is silently wrong instead of missing.
    */
   private record(
     header: string | null,
@@ -91,13 +100,19 @@ export class GeoIpCountryService {
   ): string | null {
     if (isDebugLookup) return countryCode;
 
-    if (countryCode) {
+    // A country always arrives together with the header that carried it: the three resolving
+    // call sites pass both, the fourth passes neither. The `header &&` half of the condition
+    // states that invariant instead of papering over it with a `'unknown'` label value that
+    // no traffic can ever produce — a series like that only misleads whoever queries it.
+    if (countryCode && header) {
       this.resolvedCount += 1;
       this.lastResolvedHeader = header;
       this.lastResolvedAt = new Date();
+      this.metrics.recordGeoCountryResolved(header);
     } else {
       this.unknownCount += 1;
       this.lastUnknownAt = new Date();
+      this.metrics.recordGeoCountryUnknown();
     }
     return countryCode;
   }
