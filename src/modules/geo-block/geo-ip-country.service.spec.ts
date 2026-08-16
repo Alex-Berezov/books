@@ -152,31 +152,40 @@ describe('GeoIpCountryService', () => {
     // required to agree (`geo-metrics-wiring.spec.ts` compares the numbers); without a test at the
     // edge, `DEGRADED_UNKNOWN_RATIO` could be multiplied in place and every other case here would
     // stay green while the admin endpoint said HEALTHY and the channel got a warning.
-    it('switches to DEGRADED exactly at the ratio the alert rule uses', () => {
-      const healthy = createService({ NODE_ENV: 'production' }).service;
-      for (let index = 0; index < 96; index += 1) healthy.resolveCountry({ 'cf-ipcountry': 'de' });
-      for (let index = 0; index < 4; index += 1) healthy.resolveCountry({});
+    // Three points around the threshold, the middle one exactly on it. The alert rule carries the
+    // same 0.05 and the two are required to agree, so the comparison itself has to be pinned: with
+    // only 4 % and 6 % measured, `>` could become `>=` (or the constant could be multiplied at the
+    // point of use) and every case here would stay green while the admin endpoint said DEGRADED
+    // and the rule stayed silent.
+    it.each([
+      [96, 4, 0.04, GeoCountrySourceStatus.HEALTHY],
+      [95, 5, 0.05, GeoCountrySourceStatus.HEALTHY],
+      [94, 6, 0.06, GeoCountrySourceStatus.DEGRADED],
+    ])(
+      'with %i resolved and %i countryless requests the ratio is %f and the status is %s',
+      (resolved, unknown, ratio, status) => {
+        const { service } = createService({ NODE_ENV: 'production' });
 
-      // 4 % — at the threshold, not above it.
-      expect(healthy.getSourceHealth().unknownRatio).toBeCloseTo(0.04, 5);
-      expect(healthy.getSourceHealth().status).toBe(GeoCountrySourceStatus.HEALTHY);
+        for (let index = 0; index < resolved; index += 1) {
+          service.resolveCountry({ 'cf-ipcountry': 'de' });
+        }
+        for (let index = 0; index < unknown; index += 1) service.resolveCountry({});
 
-      const degraded = createService({ NODE_ENV: 'production' }).service;
-      for (let index = 0; index < 94; index += 1) degraded.resolveCountry({ 'cf-ipcountry': 'de' });
-      for (let index = 0; index < 6; index += 1) degraded.resolveCountry({});
-
-      expect(degraded.getSourceHealth().unknownRatio).toBeCloseTo(0.06, 5);
-      expect(degraded.getSourceHealth().status).toBe(GeoCountrySourceStatus.DEGRADED);
-    });
+        expect(service.getSourceHealth().unknownRatio).toBeCloseTo(ratio, 5);
+        expect(service.getSourceHealth().status).toBe(status);
+      },
+    );
 
     // The lower bound of UNAVAILABLE: MIN_SAMPLES_FOR_OUTAGE keeps a quiet night from reading as
-    // an outage, and the alert rule carries the same floor as a sample-count threshold.
-    it('does not call it an outage below the minimum sample count', () => {
+    // an outage, and the alert rule carries the same floor as a sample-count threshold. Asserting
+    // the exact status, not merely "not UNAVAILABLE" — an early return of HEALTHY below the floor
+    // would satisfy a negative assertion while hiding an outage on low traffic from the admin too.
+    it('calls 19 countryless requests degraded, not an outage', () => {
       const { service } = createService({ NODE_ENV: 'production' });
 
       for (let index = 0; index < 19; index += 1) service.resolveCountry({});
 
-      expect(service.getSourceHealth().status).not.toBe(GeoCountrySourceStatus.UNAVAILABLE);
+      expect(service.getSourceHealth().status).toBe(GeoCountrySourceStatus.DEGRADED);
     });
 
     it('does not count admin debug lookups as production traffic', () => {

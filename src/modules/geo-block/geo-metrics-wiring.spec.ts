@@ -6,7 +6,6 @@ import { ModeratorRolesModule } from '../../common/roles/moderator-roles.module'
 import { PrismaService } from '../../prisma/prisma.service';
 import { MetricsController } from '../metrics/metrics.controller';
 import { MetricsModule } from '../metrics/metrics.module';
-import { MetricsService } from '../metrics/metrics.service';
 import { GeoBlockModule } from './geo-block.module';
 import { GeoIpCountryService } from './geo-ip-country.service';
 
@@ -39,24 +38,30 @@ describe('geo metrics wiring (LEGACY-206)', () => {
       .compile();
 
     const geo = moduleRef.get(GeoIpCountryService);
-    // The registry is taken from `MetricsController` itself, not from a module chosen by this
-    // spec: the controller is what answers `/api/metrics`, so whatever it holds is by definition
-    // the registry Prometheus scrapes. Resolving it any other way lets a second private registry
-    // inside either module satisfy the assertions while the endpoint serves nothing.
-    const controller = moduleRef.get(MetricsController);
-    const metrics = (controller as unknown as { metrics: MetricsService }).metrics;
 
     geo.resolveCountry({ 'cf-ipcountry': 'de' });
     geo.resolveCountry({ host: 'api.bibliaris.com' });
 
-    expect(
-      await metrics.getCounterValue('geo_country_resolved_total', { header: 'cf-ipcountry' }),
-    ).toBe(1);
-    expect(await metrics.getCounterValue('geo_country_unknown_total')).toBe(1);
+    // The assertion runs against the body of `MetricsController.getMetrics` — the actual answer
+    // to `/api/metrics` — not against a service this spec picked out of the graph. Reading the
+    // controller's injected field instead would still pass if the handler built its own registry
+    // on the fly, and the endpoint would serve a document without a single geo series.
+    const controller = moduleRef.get(MetricsController);
+    const exposed = await controller.getMetrics({ setHeader: () => undefined } as unknown as never);
 
-    const exposed = await metrics.getMetrics();
     expect(exposed).toContain('geo_country_resolved_total{header="cf-ipcountry"} 1');
     expect(exposed).toContain('geo_country_unknown_total 1');
+
+    // The alert rules address these series by name; a rename in the code with no matching rename
+    // in `alert_rules.yml` leaves both rules without data, and nothing else notices.
+    const rules = readFileSync(
+      join(__dirname, '..', '..', '..', 'configs/alert_rules.yml'),
+      'utf8',
+    );
+    for (const series of ['geo_country_resolved_total', 'geo_country_unknown_total']) {
+      expect(rules).toContain(series);
+      expect(exposed).toContain(series);
+    }
 
     await moduleRef.close();
   });

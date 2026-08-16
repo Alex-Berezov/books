@@ -25,6 +25,18 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
 }
 
+# LEGACY-219. Diagnostics about the Prometheus metric go to the log file as well, not only to
+# stderr: all three cron jobs end in `>/dev/null 2>&1`, so a stderr-only warning reaches nobody.
+# Without this the backup reports "completed successfully", the metric is silently absent, and the
+# only signal is `DatabaseBackupMetricMissing` 27 hours later — which cannot tell "collector not
+# wired" from "script never ran".
+metric_warn() {
+    log_warning "$1"
+    if [[ -n "${LOG_FILE:-}" ]] && [[ -w "$(dirname "$LOG_FILE")" ]]; then
+        echo "[WARNING] $(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+}
+
 # Source backup-specific environment (e.g., S3/R2 credentials)
 BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-/opt/books/app/.env.backup}"
 if [[ -f "$BACKUP_ENV_FILE" ]]; then
@@ -622,13 +634,13 @@ write_backup_success_metric() {
     local backup_type="$1"
 
     if [[ ! -d "$NODE_TEXTFILE_DIR" ]]; then
-        log_warning "Textfile directory $NODE_TEXTFILE_DIR is missing — backup metric not written"
+        metric_warn "Textfile directory $NODE_TEXTFILE_DIR is missing — backup metric not written"
         return 0
     fi
 
     if [[ ! -w "$NODE_TEXTFILE_DIR" ]]; then
-        log_warning "Textfile directory $NODE_TEXTFILE_DIR is not writable by $(id -un) — backup metric not written"
-        log_warning "Fix: chown $(id -un) $NODE_TEXTFILE_DIR (see scripts/setup_monitoring.sh)"
+        metric_warn "Textfile directory $NODE_TEXTFILE_DIR is not writable by $(id -un) — backup metric not written"
+        metric_warn "Fix: chown $(id -un) $NODE_TEXTFILE_DIR (see scripts/setup_monitoring.sh)"
         return 0
     fi
 
@@ -647,8 +659,21 @@ write_backup_success_metric() {
     local metric_name='books_backup_last_success_timestamp_seconds'
     local kept=""
 
+    # 🔴 Чтение и подмена — одна операция, иначе они не атомарны как пара.
+    # Заданий четыре (`daily` в 02:00, `weekly` в 03:00, `monthly` в 04:00 и
+    # `before-deploy` в произвольный момент из deploy_production.sh), и два
+    # прогона, попавшие в одно окно, оба возьмут старый снимок `kept` — строка
+    # того, кто записал первым, пропадёт, а «последний успех» уедет назад.
+    # `flock` без ожидания: параллельный прогон просто не перезапишет метрику,
+    # свою строку он допишет следующим разом.
+    exec {metric_lock}>"${metric_file}.lock" 2>/dev/null || true
+    if [[ -n "${metric_lock:-}" ]] && ! flock -n "$metric_lock"; then
+        metric_warn "Backup metric file is locked by another run — metric not written"
+        return 0
+    fi
+
     if [[ -f "$metric_file" ]]; then
-        kept=$(grep -E "^${metric_name}\{" "$metric_file" 2>/dev/null \
+        kept=$(grep -E "^${metric_name}\{kind=\"[a-z-]+\"\} [0-9]+$" "$metric_file" 2>/dev/null \
             | grep -v "kind=\"${backup_type}\"" || true)
     fi
 
@@ -659,13 +684,13 @@ write_backup_success_metric() {
         echo "${metric_name}{kind=\"${backup_type}\"} $(date +%s)"
     } > "$tmp_file" 2>/dev/null; then
         rm -f "$tmp_file"
-        log_warning "Could not write backup metric to $tmp_file — backup itself is fine"
+        metric_warn "Could not write backup metric to $tmp_file — backup itself is fine"
         return 0
     fi
 
     if ! chmod 644 "$tmp_file" 2>/dev/null || ! mv -f "$tmp_file" "$metric_file" 2>/dev/null; then
         rm -f "$tmp_file"
-        log_warning "Could not publish backup metric to $metric_file — backup itself is fine"
+        metric_warn "Could not publish backup metric to $metric_file — backup itself is fine"
         return 0
     fi
 

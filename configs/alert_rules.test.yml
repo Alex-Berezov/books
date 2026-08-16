@@ -35,8 +35,13 @@ tests:
   # Деградация: каждый пятый запрос без страны — 0.2 против порога 0.05.
   # Ловит именно то, что ломалось без `sum(...)`: слева ряд с меткой `header`,
   # справа — без меток.
+  #
+  # Молчание `GeoCountrySourceUnavailable` проверяется здесь же и обязательно:
+  # без этой строки можно выбросить из правила половину
+  # `sum(rate(resolved)) == 0 and`, и весь файл останется зелёным, а в проде
+  # critical будет уходить при живом источнике на любых 20 запросах без страны.
   - interval: 1m
-    name: geo source degraded — warning fires
+    name: geo source degraded — warning fires, critical stays silent
     input_series:
       - series: 'geo_country_resolved_total{header="cf-ipcountry"}'
         values: '0+40x30'
@@ -52,14 +57,21 @@ tests:
             exp_annotations:
               summary: 'Geo country source degraded'
               description: 'Share of requests without a country is 20% over 5m'
+      - eval_time: 20m
+        alertname: GeoCountrySourceUnavailable
+        exp_alerts: []
 
   # Полная пропажа: ряда `resolved` не существует вовсе — prom-client не публикует
-  # счётчик с метками до первого `inc`. Проверяет и `or vector(0)`, и порог объёма.
+  # счётчик с метками до первого `inc`. Проверяет и `or vector(0)`, и порог объёма
+  # у самой границы: 5 запросов в минуту дают прирост 25 за окно 5m при пороге 20.
+  #
+  # Warning здесь тоже firing (доля равна единице) — это ожидаемо: два сообщения
+  # об одном инциденте разводит `inhibit_rules` в alertmanager.yml, а не правило.
   - interval: 1m
-    name: geo source gone — critical fires
+    name: geo source gone — critical fires just past the sample floor
     input_series:
       - series: 'geo_country_unknown_total'
-        values: '0+50x30'
+        values: '0+5x30'
     alert_rule_test:
       - eval_time: 20m
         alertname: GeoCountrySourceUnavailable
@@ -71,16 +83,25 @@ tests:
               summary: 'Geo country source is gone'
               description: 'No request resolved a country in 5m while countryless traffic continues'
 
-  # Ночной провал трафика: один запрос без страны за всё окно и ни одного с ней.
-  # Это не отвал источника — порог по объёму выборки обязан промолчать.
+  # Ночной провал трафика: два запроса без страны в минуту, прирост за окно — 10
+  # при пороге 20. Это не отвал источника, critical обязан промолчать.
+  #
+  # 🔴 Прирост, а не постоянное значение: ряд вида `1x30` стоит на единице и даёт
+  # `increase` = 0, то есть кейс был бы зелёным при любом пороге, включая `>= 1`,
+  # и порог не проверял бы вовсе.
   - interval: 1m
-    name: geo source quiet at night — critical stays silent
+    name: geo source quiet at night — below the sample floor, both stay silent
     input_series:
       - series: 'geo_country_unknown_total'
-        values: '1x30'
+        values: '0+2x30'
     alert_rule_test:
       - eval_time: 20m
         alertname: GeoCountrySourceUnavailable
+        exp_alerts: []
+      # Доля здесь равна единице, то есть без порога объёма warning бы сработал.
+      # Эта строка и есть проверка того, что порог у ratio-правила существует.
+      - eval_time: 20m
+        alertname: GeoCountrySourceDegraded
         exp_alerts: []
 
   # Битый `.prom` в каталоге коллектора.
@@ -100,6 +121,60 @@ tests:
               summary: 'Textfile collector cannot read its directory'
               description: 'node-exporter failed to parse a *.prom file: every textfile metric is dropped, including the backup timestamp'
 
+  # Ночной бэкап не прошёл: отметке больше 26 часов. Главное правило LEGACY-219 —
+  # без этого кейса порог можно поменять на любой, и файл останется зелёным.
+  # В promtool `time()` стартует с нуля, поэтому ряд со значением 0 в момент 27h
+  # даёт возраст 27 часов.
+  - interval: 1h
+    name: nightly backup did not run — stale fires
+    input_series:
+      - series: 'books_backup_last_success_timestamp_seconds{kind="daily"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: DatabaseBackupStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: backup
+              kind: daily
+            exp_annotations:
+              summary: 'Nightly database backup did not run'
+              description: 'Last successful daily backup was 1d 3h 0m 0s ago'
+      - eval_time: 27h
+        alertname: DatabaseBackupMetricMissing
+        exp_alerts: []
+
+  # Бэкап идёт по расписанию: отметка обновляется каждый час вместе с `time()`.
+  - interval: 1h
+    name: nightly backup is fresh — no alert
+    input_series:
+      - series: 'books_backup_last_success_timestamp_seconds{kind="daily"}'
+        values: '0+3600x40'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: DatabaseBackupStale
+        exp_alerts: []
+
+  # Канал доставки отказал: Alertmanager не может отправить уведомление.
+  # Метка `integration` попадает в алерт из ряда — на неё ссылается аннотация.
+  - interval: 1m
+    name: alertmanager cannot deliver
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="telegram"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: monitoring
+              integration: telegram
+            exp_annotations:
+              summary: 'Alertmanager cannot deliver notifications'
+              description: 'Failed notifications to telegram for more than 10 minutes'
+
   # Alertmanager не отвечает.
   - interval: 1m
     name: alertmanager down
@@ -110,9 +185,13 @@ tests:
       - eval_time: 5m
         alertname: AlertmanagerDown
         exp_alerts:
+          # `job` здесь не лишний: правило `up{job="alertmanager"} == 0` не агрегирует,
+          # поэтому алерт наследует все метки ряда. `promtool` сверяет набор меток
+          # точно, а не подмножеством, и пропуск любой из них красит прогон.
           - exp_labels:
               severity: critical
               service: monitoring
+              job: alertmanager
             exp_annotations:
               summary: 'Alertmanager is down'
               description: 'Alertmanager has been unreachable for more than 2 minutes: nothing is being delivered'
@@ -128,9 +207,12 @@ tests:
       - eval_time: 30h
         alertname: DatabaseBackupMetricMissing
         exp_alerts:
+          # `absent()` переносит в результат равенства из селектора, поэтому у алерта
+          # есть `kind="daily"` — по той же причине, что и `job` в кейсе выше.
           - exp_labels:
               severity: critical
               service: backup
+              kind: daily
             exp_annotations:
               summary: 'No backup metric at all'
               description: 'node-exporter reports no daily backup timestamp: the textfile collector or the backup script is not wired'

@@ -99,6 +99,18 @@ setup_configs() {
         fi
     done
 
+    # LEGACY-096. Мало того что файл существует — его должен читать процесс в контейнере.
+    # Образ `prom/alertmanager` работает под `USER nobody` (uid 65534), а самый естественный
+    # способ создать файл (`echo ... > configs/telegram_token` из-под `deploy`) даёт
+    # `deploy:deploy 600`. Alertmanager при этом стартует, UI зелёный, `AlertmanagerDown`
+    # молчит — и канал не получает ничего. Проверять здесь, а не по факту тишины в Telegram.
+    local token_uid
+    token_uid=$(stat -c '%u' configs/telegram_token 2>/dev/null || echo "?")
+    if [[ "$token_uid" != "65534" ]]; then
+        warn "configs/telegram_token принадлежит uid ${token_uid}, а Alertmanager работает под 65534"
+        warn "Доставка в Telegram молча не заработает. Fix: sudo chown 65534:65534 configs/telegram_token && sudo chmod 400 configs/telegram_token"
+    fi
+
     # LEGACY-219. Каталог textfile-коллектора: сюда backup_database.sh кладёт
     # отметку успешного прогона, отсюда node-exporter её читает.
     #
