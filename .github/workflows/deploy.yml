@@ -479,25 +479,79 @@ jobs:
           # rollback job below: since LEGACY-227 it depends on this job's result,
           # so a red step here undoes a perfectly good deployment. The endpoint is
           # not a health signal anyway: readiness is. See LEGACY-072.
+          #
+          # 🔴 Дым по админским маршрутам, а не только по readiness. Единственный
+          # `/api/health/readiness` зелен и тогда, когда таблица маршрутов съедена:
+          # `@Controller(':lang')` перехватывает литеральные админские пути той же
+          # длины, зарегистрированные позже, и ручка отдаёт **404 вместо 401** при
+          # полностью исправном приложении и базе. Так `GET /admin/authors` и
+          # `/admin/authors/check-slug` были мертвы неделями (`LEGACY-201`: на проде
+          # 14.08.2026 оба — 404, при том что соседний `/api/admin/pages/check-slug` —
+          # 401; после починки 16.08.2026 и на них 401 — проверено запросом без токена
+          # 17.08.2026, то есть ожидания ниже сняты с живого домена, а не с исходников).
+          # Статические сторожа этого класса
+          # уже есть (`src/common/testing/module-order.spec.ts` и `route-order.spec.ts`),
+          # но они читают исходники; здесь проверяется то, чего им не видно вовсе:
+          # что на живом домене за реверс-прокси эти пути действительно доезжают до
+          # гварда именно в том образе, который только что выкатили.
+          #
+          # 🔴 Ожидаемый код задаётся у каждого пути явно, а «лишь бы ответило» не
+          # годится ни в одну сторону: 404 и 5xx на закрытой ручке обязаны краснеть,
+          # а 401 на ней — это **успех**, доказательство того, что маршрут дошёл до
+          # гварда, то есть контроллер зарегистрирован и не перекрыт. Токен здесь не
+          # нужен и не должен появиться: пускает ли гвард админа — вопрос e2e
+          # (`test/admin-authors.e2e-spec.ts`), а не выката, и секрет на раннере ради
+          # этого не заводится.
+          #
+          # Формат строки — «путь ожидаемый_код», разделитель ровно один пробел.
+          # Список и способ сравнения держит спека `src/devops/deploy-smoke.spec.ts`.
           endpoints=(
-            "/api/health/readiness"
+            "/api/health/readiness 200"
+            "/api/admin/rights/intakes 401"
+            "/api/admin/authors 401"
+            "/api/admin/authors/check-slug?slug=deploy-smoke 401"
+            "/api/books 401"
           )
 
-          for endpoint in "${endpoints[@]}"; do
+          for entry in "${endpoints[@]}"; do
+            endpoint="${entry%% *}"
+            expected="${entry##* }"
+            code=""
             ok=false
             for attempt in 1 2 3 4 5; do
-              if curl -sf --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}$endpoint" > /dev/null; then
+              # 🔴 Код сравнивается строкой из `-w '%{http_code}'`, а не берётся из
+              # `curl -sf`: `-f` возвращает ненулевой код на 401, и правильный ответ
+              # закрытой ручки выглядел бы как отказ выката. По той же причине `-f`
+              # не должен появиться здесь и «для краткости» на публичных путях.
+              #
+              # `set +e` на время вызова: при `set -e` (шаг идёт через `bash -e`)
+              # сетевой отказ оборвал бы цикл до печати кода и до ретраев. Дописывать
+              # `|| echo "000"` нельзя — curl при отказе соединения сам печатает `000`
+              # и возвращает ненулевой код, в переменную попало бы `000000`.
+              set +e
+              code=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
+                "https://${{ vars.PRODUCTION_DOMAIN }}$endpoint")
+              set -e
+
+              if [[ "$code" == "$expected" ]]; then
                 ok=true
                 break
               fi
-              echo "⏳ $endpoint - attempt $attempt/5 failed, retrying..."
+              # ⚠️ Ретраи покрывают таймаут, сброс соединения и не доехавший образ,
+              # но **не 429**: пять попыток по 10 с укладываются в 40 с, а окно
+              # глобального лимитера — 60 с (`RATE_LIMIT_GLOBAL_WINDOW_MS`, 100
+              # точек на `global:<ip>`). `/api/health/*` лимитер пропускает, четыре
+              # админских пути — нет. Пять «HTTP 429, expected 401» подряд в логе
+              # означают исчерпанную корзину адреса раннера, а не сломанный
+              # маршрут; лечится задержкой длиннее окна или чтением `Retry-After`.
+              echo "⏳ $endpoint - attempt $attempt/5: HTTP $code, expected $expected, retrying..."
               sleep 10
             done
 
             if [[ "$ok" == true ]]; then
-              echo "✅ $endpoint - OK"
+              echo "✅ $endpoint - HTTP $code"
             else
-              echo "❌ $endpoint - FAILED"
+              echo "❌ $endpoint - expected HTTP $expected, got HTTP $code"
               exit 1
             fi
           done
