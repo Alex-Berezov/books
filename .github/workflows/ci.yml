@@ -41,8 +41,9 @@ jobs:
 
   # LEGACY-149. До 17.08.2026 на pull request не выполнялся ни один из 72 наборов
   # `test/*.e2e-spec.ts`: единственный job звал `yarn ci` с `CI_E2E: '0'`, а
-  # настоящий прогон жил в `deploy.yml`, который срабатывает уже после слияния —
-  # на push в `main` и на теге `v*`. Регрессия в маршруте, миграции или порядке
+  # настоящий прогон жил в `deploy.yml`, который срабатывал уже после слияния —
+  # на push в `main` и на теге `v*` (с 17.08.2026 push оттуда снят, остался только
+  # тег и ручной запуск — `LEGACY-241`). Регрессия в маршруте, миграции или порядке
   # регистрации модулей краснела в конвейере выката, то есть на горячем пути.
   #
   # Дублирование прогона с `deploy.yml` намеренное и не подлежит «оптимизации»:
@@ -153,3 +154,45 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           E2E_WORKERS: 2
+
+  # 🔴 LEGACY-241. Сборка образа на пути слияния. До 17.08.2026 её делала job `build` в
+  # `deploy.yml`, срабатывавшая на каждый push в `main`; со снятием того триггера сборка
+  # ушла бы с пути слияния целиком, и поломка `Dockerfile` впервые краснела бы на теге —
+  # то есть в момент релиза, когда окно выката уже объявлено в канал. Это ровно тот класс
+  # «шаг заведён только на одном пути», который закрывали LEGACY-078, 207 и 209.
+  #
+  # ⚠️ Отдельным job'ом и здесь, а не шагом в `scripts/ci.sh`: скрипт зовут ещё и локально
+  # перед сдачей, а холодная сборка образа тянет полный `yarn install` из сети и добавляет
+  # минуты к каждому прогону. В job'е доступен кэш слоёв `type=gha`, которого у голого
+  # `docker build` нет вовсе.
+  #
+  # ⚠️ `push: false` и `target: runner`: проверяется собираемость, а не публикация.
+  # Настоящий образ по-прежнему собирает и пушит job `build` в `deploy.yml`; `target`
+  # там не задан, поэтому стадия совпадает ровно пока `runner` — конечная стадия
+  # `Dockerfile`. Что она конечная, проверяет `src/devops/deploy-trigger.spec.ts`.
+  #
+  # ⚠️ `build-args` те же, что в `deploy.yml`: без них проверялась бы другая сборка.
+  image:
+    name: Docker image (build only)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runner
+          push: false
+          build-args: |
+            BUILD_DATE=${{ github.run_id }}
+            VCS_REF=${{ github.sha }}
+            VERSION=ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

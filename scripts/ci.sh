@@ -26,6 +26,24 @@ yarn lint
 step "Typecheck"
 yarn typecheck
 
+# LEGACY-241. Синтаксис shell-скриптов. `scripts/*.sh` — слепая зона: их не читает ни
+# eslint (он ходит по `{src,apps,libs,test}/**/*.ts`), ни tsc, ни jest. До 17.08.2026
+# это было терпимо: единственный `deploy_production.sh` исполнялся на сервере, и его
+# отказ был отказом выката. Теперь `notify_telegram.sh` вызывается из job'а `deploy`
+# **до** отметки `📍 Mark server stage reached`, и опечатка в нём валит релиз при
+# полностью исправном приложении.
+#
+# ⚠️ Стоит рядом с линтом, а не в конце: это самая дешёвая проверка в файле (доли
+# секунды на 26 скриптов), и ответ о неразобранной кавычке не должен ждать тестов.
+#
+# ⚠️ `bash -n` ловит только синтаксис. Логику он не проверяет и проверять не должен:
+# поведенческие ветки скрипта закрывает `src/devops/deploy-trigger.spec.ts`.
+step "Shell script syntax (bash -n)"
+for sh_file in "$ROOT_DIR"/scripts/*.sh; do
+  echo "  $(basename "$sh_file")"
+  bash -n "$sh_file"
+done
+
 # Migrations are hand-written and applied by a human on the VPS (ADR-011), so nothing else
 # proves that their sum still equals schema.prisma. Drift surfaces only in production.
 step "Schema/migration drift check"

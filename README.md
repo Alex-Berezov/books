@@ -21,7 +21,9 @@
 - **Backend УЖЕ РАЗВЕРНУТ** на production сервере (bibliaris.com)
 - **Для тестирования и отладки** используйте production API, а не локальный сервер
 - **Не нужно** запускать Docker или локальный сервер для проверки API
-- **Все изменения** автоматически деплоятся на сервер через GitHub Actions при push в `main`
+- **Push в `main` прод не катит** (с 17.08.2026, `LEGACY-241`): он запускает только проверки
+  (`ci.yml`). Выкат идёт по тегу `v*` или ручным запуском `📦 Production Deployment` —
+  правка в `main` попадёт на сервер следующим релизом, а не сразу
 
 ### Production URLs:
 
@@ -115,7 +117,8 @@ yarn test:e2e
 
 **Почему это важно:**
 
-- Push в `main` автоматически деплоится на production через GitHub Actions
+- Красный `main` блокирует релиз: job `deploy` требует `needs.test.result == 'success'`, и увидит
+  это уже тот, кто ставит тег, — то есть чужая правка задержит чужой выкат
 - Падающие тесты могут сломать production сайт bibliaris.com
 - Проверка занимает 1-2 минуты, но экономит часы отладки на production
 
@@ -290,10 +293,13 @@ curl https://bibliaris.com/api/health/liveness
 # - Настройте DEPLOY_SSH_KEY для SSH-доступа
 # - См. docs/GITHUB_SECRETS_SETUP.md для деталей
 
-# 2. Деплой через GitHub Actions (автоматически при push в main)
-git push origin main
+# 2. Деплой через GitHub Actions — по тегу, не по push в main (LEGACY-241).
+#    Push в main запускает только проверки; окно отказа админки открывает релиз,
+#    и открывать его должен человек осознанно.
+git tag v1.2.3 && git push origin v1.2.3
+#    Либо вручную: вкладка Actions → 📦 Production Deployment → Run workflow
 
-# 3. Или ручной деплой на сервере:
+# 3. Или ручной деплой на сервере (тянет вершину main, а не тег — см. LEGACY-241):
 ./scripts/deploy_production.sh --version main
 
 # 4. Проверка готовности
@@ -310,7 +316,7 @@ git push origin main
 ### Возможности системы деплоя
 
 - **🔧 Автоматическая настройка сервера** - Docker, безопасность, мониторинг
-- **🔄 CI/CD Pipeline** - GitHub Actions с тестами и автоматическим деплоем
+- **🔄 CI/CD Pipeline** - GitHub Actions: проверки на каждый push и pull request, выкат по тегу `v*`
 - **🔒 Безопасность** - SSH, Firewall, SSL сертификаты, Rate limiting
 - **📊 Мониторинг** - Prometheus + Grafana + AlertManager
 - **💾 Бэкапы** - Автоматические бэкапы PostgreSQL с ротацией

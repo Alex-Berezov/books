@@ -1,11 +1,29 @@
 name: 📦 Production Deployment
 
+# 🔴 LEGACY-241. `branches: [main]` снят 17.08.2026 решением владельца. Выкат — это
+# `prisma migrate deploy` плюс пересоздание контейнера (`scripts/deploy_production.sh`),
+# то есть окно, в котором админка не отвечает. С триггером на push каждое слияние
+# открывало это окно в произвольный момент, в том числе посреди публикации контента,
+# и предупредить об этом было нечем. Теперь выкат — явное действие: тег `v*` или
+# `workflow_dispatch`.
+#
+# ⚠️ Проверок от этого не убавилось, но само собой это не получилось. Всё, что делает
+# job `test` ниже, на push в `main` выполняет `ci.yml`: `yarn ci` (lint, typecheck,
+# `bash -n` по `scripts/*.sh`, drift-check, check:env, конфиги Prometheus и Alertmanager,
+# `test:cov` с порогом) плюс отдельный job `e2e` с postgres и redis.
+#
+# 🔴 А вот job `build` counterpart'а не имела: `docker/build-push-action` жила только
+# здесь, и со снятием триггера сборка образа ушла бы с пути слияния целиком — поломка
+# `Dockerfile` впервые краснела бы на теге, когда окно выката уже объявлено в канал.
+# Поэтому в `scripts/ci.sh` заведён шаг `Docker image build (no push)`. Сверять надо
+# было **обе** job'ы, а не только `test`; проверено пошагово 17.08.2026.
+#
+# Инварианты держит `src/devops/deploy-trigger.spec.ts`: и возврат `branches:` сюда,
+# и пропажа сборки образа из `scripts/ci.sh` краснеют по отдельности.
 on:
   push:
     tags:
       - 'v*' # Triggers on tags like v1.0.0, v2.1.3, etc.
-    branches:
-      - main # Auto-deploy from main branch (optional)
   workflow_dispatch:
     inputs:
       version:
@@ -54,8 +72,9 @@ jobs:
     # LEGACY-222. Сравнение именно с `'true'`, а не `!github.event.inputs.skip_tests`:
     # булев вход `workflow_dispatch` приходит в `github.event.inputs` **строкой**, и
     # непустая `'false'` в выражениях GitHub истинна — с отрицанием job пропускалась
-    # при любом ручном запуске, и со снятой галкой тоже. На push в `main` и на теге
-    # `v*` вход пуст: `'' != 'true'` истинно, job выполняется.
+    # при любом ручном запуске, и со снятой галкой тоже. На теге `v*` вход пуст:
+    # `'' != 'true'` истинно, job выполняется. (До 17.08.2026 сюда же попадал push
+    # в `main` — триггер снят, `LEGACY-241`.)
     if: ${{ github.event.inputs.skip_tests != 'true' }}
 
     services:
@@ -110,6 +129,18 @@ jobs:
         run: |
           yarn lint
           yarn typecheck
+
+      # ⚠️ Продублировано из `scripts/ci.sh` по той же причине, что и шаги ниже: выкат
+      # идёт по тегу `v*`, где `ci.yml` не запускается вовсе. `scripts/*.sh` не читает ни
+      # eslint, ни tsc, ни jest, а `notify_telegram.sh` вызывается из job `deploy` до
+      # отметки `📍 Mark server stage reached` — опечатка в нём валит релиз при исправном
+      # приложении (LEGACY-241).
+      - name: 🐚 Shell Script Syntax
+        run: |
+          for sh_file in scripts/*.sh; do
+            echo "  $(basename "$sh_file")"
+            bash -n "$sh_file"
+          done
 
       - name: 🔀 Schema/Migration Drift Check
         run: |
@@ -339,6 +370,7 @@ jobs:
         with:
           sparse-checkout: |
             scripts/deploy_production.sh
+            scripts/notify_telegram.sh
             docker-compose.prod.yml
             .env.prod.template
           sparse-checkout-cone-mode: false
@@ -356,6 +388,50 @@ jobs:
           echo "Server: ${{ vars.PRODUCTION_SERVER }}"
           echo "Domain: ${{ vars.PRODUCTION_DOMAIN }}"
 
+      # LEGACY-241. Окно обслуживания объявляется до того, как оно откроется.
+      # Дальше идут `prisma migrate deploy` и пересоздание контейнера — минуты, в
+      # которые админка не отвечает, и человек за ней должен знать, что это выкат,
+      # а не поломка, и что сохранять сейчас нечего.
+      #
+      # ⚠️ Шаг стоит здесь, а не отдельным job'ом перед `test`: до этой точки уже
+      # пройдены тесты и сборка, то есть выкат действительно начинается. Объявление
+      # раньше врало бы каждый раз, когда конвейер краснеет на проверках.
+      #
+      # ⚠️ Это не отмена решения владельца от 16.08.2026 не слать в канал успехи.
+      # То решение снимало ленту: при триггере на push сообщение уходило бы на каждое
+      # слияние. Выкат теперь идёт только по тегу `v*` и ручному запуску, и сообщение
+      # говорит не «всё хорошо», а «сервис сейчас недоступен» — это разные поводы.
+      # Закрывают окно три пути, и вместе они покрывают все исходы прогона:
+      # `📢 Deploy Window Closed` в конце этого же job'а (успех), `🚨 Notify Failure`
+      # (отказ) и `🚨 Notify Cancelled` (отмена) в job `notify`. Объявленное и никогда
+      # не закрываемое окно приучает не читать канал ровно так же, как лента успехов.
+      #
+      # 🔴 Версия и ссылка идут через `env`, а не подставляются в тело `run:`.
+      # `needs.build.outputs.version` — это либо имя тега, либо свободный ввод
+      # `workflow_dispatch`; подстановка `${{ }}` происходит до shell, поэтому версия
+      # вида `x" "$(...)` исполнилась бы на раннере в шаге, где в окружении лежат
+      # `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID`. Соседний `🚨 Notify Failure` делает
+      # так же и по той же причине.
+      #
+      # ⚠️ Проверки `-f` на существование скрипта здесь **нет**, и это решение, а не
+      # пропуск. Первая редакция её ставила, оправдывая повторным запуском прогона по
+      # старому тегу, — обоснование не выдержало проверки: `gh run rerun` берёт воркфлоу
+      # из того же коммита, где нет ни этого шага, ни строки `scripts/notify_telegram.sh`
+      # в разреженном чекауте. Единственный настоящий способ потерять файл — правка списка
+      # `sparse-checkout`, и она уже краснеет спекой. Гард в этом положении только глушил
+      # бы отключение оповещения правкой одной чужой строки.
+      - name: 📢 Deploy Window Opened
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          VERSION: ${{ needs.build.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash scripts/notify_telegram.sh \
+            "Выкат начат · books · ${VERSION:-без версии}" \
+            "Админка и API недоступны несколько минут." \
+            "${RUN_URL}"
+
       # 🔴 LEGACY-227. Отметка «до сервера дошли». Без неё условие отката
       # (`needs.deploy.result == 'failure'`) срабатывает и на отказе шагов,
       # которые идут до ssh: `Checkout Deployment Scripts` и `Setup SSH Agent`.
@@ -366,6 +442,24 @@ jobs:
         id: server_stage
         run: echo "reached=true" >> "$GITHUB_OUTPUT"
 
+      # 🔴 LEGACY-241. Рабочее дерево на сервере переводится ровно на ту ревизию, из
+      # которой собран образ (`github.sha`), а не на вершину `main`. Пока выкат шёл на
+      # push в `main`, `origin/main` и коммит образа совпадали по построению, и прежний
+      # `git fetch origin main` + `git reset --hard origin/main` был безобиден. С
+      # переводом на тег они расходятся всегда: job `build` делает `actions/checkout@v4`
+      # без `ref`, то есть собирает `github.sha`, а сервер тянул бы `docker-compose.prod.yml`,
+      # `configs/**` и сам `deploy_production.sh` с вершины `main` — из кода, которого в
+      # релизе нет. Обратный случай не менее живой: выкат старого тега ради отката не
+      # вернул бы старый compose, и откат «вперёд» молча не откатывал бы ничего, кроме образа.
+      #
+      # 🔴 Совпадение `HEAD` с `github.sha` сверяется явно, а не берётся из кода возврата
+      # `checkout`: промах ревизии обязан краснеть здесь, до `prisma migrate deploy`, а не
+      # проявиться контейнером, который не поднялся. Инвариант держит
+      # `src/devops/deploy-trigger.spec.ts`.
+      #
+      # ⚠️ `\$` внутри heredoc обязателен: `<< EOF` без кавычек разворачивает подстановки
+      # на раннере, и `$(git rev-parse HEAD)` без экранирования посчитался бы там, где
+      # рабочего дерева прода нет вовсе.
       - name: 🚀 Deploy to Server
         run: |
           # Lowercase repository name for Docker
@@ -383,14 +477,23 @@ jobs:
               echo "📦 Stashing local changes..."
               git stash --include-untracked || true
               
-              echo "🔄 Fetching latest code..."
-              git fetch origin main
-              
-              echo "🔄 Updating to latest version..."
-              git reset --hard origin/main
-              
+              echo "🔄 Fetching deployed revision..."
+              git fetch origin --prune --tags --force '+refs/heads/*:refs/remotes/origin/*'
+
+              echo "🔄 Checking out ${{ github.sha }}..."
+              git checkout --detach --force ${{ github.sha }}
+
+              HEAD_SHA=\$(git rev-parse HEAD)
+              if [[ "\$HEAD_SHA" != "${{ github.sha }}" ]]; then
+                echo "Working tree is at \$HEAD_SHA, expected ${{ github.sha }}"
+                exit 1
+              fi
+
               echo "✅ Code updated successfully"
               chmod +x scripts/deploy_production.sh
+            else
+              echo "/opt/books/app/src is not a git working tree — cannot pin the release revision"
+              exit 1
             fi
             
             # Create .env.prod from secrets
@@ -558,6 +661,32 @@ jobs:
 
           echo "✅ All verifications passed!"
 
+      # LEGACY-241. Закрытие окна обслуживания на успешном пути.
+      #
+      # ⚠️ `if: ${{ success() }}` ничего не добавляет к поведению — это условие шага по
+      # умолчанию, и после красного `📊 Verify Deployment` шаг был бы пропущен и без него.
+      # Записано явно затем, чтобы правка на `always()` или `!cancelled()` была видна в
+      # диффе и краснела спекой: «завершён» после отказа — худший вариант молчания, чем
+      # отсутствие сообщения вовсе. Условие закреплено `src/devops/deploy-trigger.spec.ts`
+      # именно как `success()`, а не «любое непустое».
+      #
+      # Шаг последний в job'е намеренно — после проверки здоровья и дыма по маршрутам:
+      # «завершён» означает «прод отвечает тем образом, который выкатили», а не
+      # «ssh отработал». Что он последний, спека проверяет отдельно: шаг, дописанный
+      # после объявления, снова растянул бы окно за границу сообщения.
+      - name: 📢 Deploy Window Closed
+        if: ${{ success() }}
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          VERSION: ${{ needs.build.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash scripts/notify_telegram.sh \
+            "Выкат завершён · books · ${VERSION:-без версии}" \
+            "Админка и API снова доступны." \
+            "${RUN_URL}"
+
   # =====================================================
   # NOTIFICATIONS
   # =====================================================
@@ -572,9 +701,42 @@ jobs:
     if: always()
 
     steps:
+      # LEGACY-241. Чекаут ради одного файла — `scripts/notify_telegram.sh`. До 17.08.2026
+      # у job'а `notify` его не было вовсе, и тело отправки жило здесь второй копией; это
+      # было оправдано, пока отправитель был один. Их стало три (окно открыть, окно закрыть,
+      # отказ), а сторож сверял копии по подстрокам — то есть замена `sed` на равный по
+      # смыслу `printf` красила проверку, а расхождение по `--max-time` или `chat_id` не
+      # красило ничего. Теперь отправитель ровно один, и спека это проверяет буквально:
+      # `api.telegram.org` не должен встречаться в `.github/workflows/**` ни разу.
+      #
+      # ⚠️ Цена размена названа прямо: сигнал об упавшем выкате теперь зависит от того,
+      # что чекаут отработал. Отказ чекаута красит сам job `notify`, то есть виден в
+      # списке прогонов; путь через Alertmanager он не затрагивает вовсе — тот живёт на
+      # сервере и про GitHub не знает.
+      #
+      # 🔴 `if: always()` обязателен, и это не перестраховка. Условие шага по умолчанию —
+      # `success()`, а он ложен не только на отказе, но и **на отмене прогона**. Главный
+      # потребитель этого чекаута — `🚨 Notify Cancelled`, который срабатывает ровно при
+      # отмене: без `always()` чекаут пропускался бы именно тогда, когда нужен, и окно
+      # выката оставалось бы открытым навсегда при зелёном job'е.
+      #
+      # 🔴 `ref` — ветка по умолчанию, а не выкатываемый тег. Скрипт здесь утилита, а не
+      # часть релиза: повторный запуск прогона по старому тегу иначе остался бы без файла,
+      # и сообщение об упавшем выкате не ушло бы никуда.
+      - name: 📥 Checkout Notifier
+        if: ${{ always() }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            scripts/notify_telegram.sh
+          sparse-checkout-cone-mode: false
+
       # Успех наружу не уходит по решению владельца от 16.08.2026: сообщение
       # о каждом удачном выкате превращает канал в ленту, которую перестают
       # читать, и тогда в ней теряется отказ. В логе прогона он остаётся.
+      # (Закрытие окна выката — не то же самое: его шлёт `📢 Deploy Window Closed`
+      # в job `deploy`, и это сообщение про доступность сервиса, а не про успех.)
       - name: 📢 Notify Success
         if: ${{ needs.deploy.result == 'success' }}
         run: |
@@ -590,11 +752,16 @@ jobs:
       # на старом образе, все метрики зелёные, а новая версия просто не доехала.
       #
       # ⚠️ `continue-on-error` здесь намеренно НЕ ставится, хотя `LEGACY-221` его разрешал.
-      # Он не нужен: тело шага упасть не может — отсутствие секретов даёт `exit 0`, сетевой
-      # отказ снят через `set +e`, обе ветки разбора кода ответа печатают предупреждение и
-      # выходят нулём. А поставленный «на всякий случай», он погасил бы единственный сигнал
-      # о поломке самого оповещения: после любой будущей правки этого bash-тела шаг был бы
-      # зелёным при полном молчании канала. Отказ Telegram выкат не красит и без него.
+      # Он не нужен: `scripts/notify_telegram.sh` упасть не может — отсутствие секретов даёт
+      # `exit 0`, сетевой отказ снят через `set +e`, обе ветки разбора кода ответа печатают
+      # предупреждение и выходят нулём. А поставленный «на всякий случай», он погасил бы
+      # единственный сигнал о поломке самого оповещения: после любой будущей правки скрипта
+      # шаг был бы зелёным при полном молчании канала. Отказ Telegram выкат не красит и без него.
+      #
+      # ⚠️ Отсутствие самого скрипта под эту гарантию не подпадает и намеренно **не**
+      # прикрыто проверкой `-f`, в отличие от шагов в job `deploy`. Там пропущенное
+      # объявление — неудобство, здесь пропущенное сообщение об отказе — потеря
+      # единственного сигнала, и она обязана краснеть job'ом `notify`.
       #
       # 🔴 Условие шире, чем `deploy.result == 'failure'`: при падении `test` или
       # `build` job `deploy` не запускается вовсе и получает `skipped`, а не
@@ -617,7 +784,12 @@ jobs:
       # 🔴 Токен передаётся через `env`, а не подставляется в строку команды:
       # GitHub маскирует в логах только точные совпадения со значением секрета,
       # и токен, разрезанный переносом строки или склейкой, в лог попадёт целиком.
-      # Ни `echo`, ни `set -x` в этом шаге быть не должно.
+      # Ни `echo` токена, ни `set -x` в этом шаге быть не должно — то же правило
+      # записано в шапке `scripts/notify_telegram.sh`, и спека проверяет оба места.
+      #
+      # 🔴 Версия тоже через `env`, а не `${{ }}` в теле: подстановка происходит до shell,
+      # и свободный ввод `workflow_dispatch` вида `x" "$(...)` исполнился бы прямо здесь,
+      # в шаге с токеном в окружении.
       - name: 🚨 Notify Failure
         if: ${{ !cancelled() && (needs.test.result == 'failure' || needs.build.result != 'success' || needs.deploy.result != 'success') }}
         env:
@@ -645,51 +817,54 @@ jobs:
           echo "Version: ${VERSION:-unknown}"
           echo "Check the logs: ${RUN_URL}"
 
-          if [[ -z "${TG_TOKEN}" || -z "${TG_CHAT}" ]]; then
-            echo "::warning::TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы — сообщение не отправлено"
-            exit 0
-          fi
+          bash scripts/notify_telegram.sh \
+            "Выкат упал · books · ${VERSION:-без версии}" \
+            "Этап: ${STAGE}" \
+            "${RUN_URL}"
 
-          # Текст собирается в переменную, а не многострочным литералом внутри
-          # вызова: блочный скаляр YAML сохранил бы отступ продолжающих строк,
-          # и он приехал бы в сообщение.
-          # Версия приходит из входа `workflow_dispatch` и может содержать `&`, `<`, `>`
-          # (ветка `feature/a<b>`). При `parse_mode=HTML` Telegram на таком отвечает 400,
-          # и сообщение об упавшем выкате не доходит именно тогда, когда выкат упал.
-          SAFE_VERSION=$(printf '%s' "${VERSION:-без версии}" \
-            | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+      # 🔴 LEGACY-241. Третий путь закрытия окна — отмена прогона. Без него сценарий
+      # такой: `📢 Deploy Window Opened` ушёл, прогон отменили руками, `📢 Deploy Window
+      # Closed` пропущен по `success()`, `🚨 Notify Failure` — по `!cancelled()`, и
+      # последним словом в канале навсегда остаётся «Админка и API недоступны несколько
+      # минут». Это худший вид молчания: отмена рвёт ssh-клиент, а `deploy_production.sh`
+      # на сервере может быть уже внутри `prisma migrate deploy`, то есть прод остаётся
+      # в промежуточном состоянии — и именно об этом никто не узнаёт.
+      #
+      # ⚠️ `cancelled()`, а не `always()`: успех и отказ закрыты двумя шагами выше, и
+      # третье сообщение на тех же исходах вернуло бы ленту. Шаг выполняется, потому что
+      # job объявлен с `if: always()` — такие job'ы GitHub доводит до конца и на отмене.
+      #
+      # ⚠️ Условие не сужается до `needs.deploy.result == 'cancelled'`, но текст сообщения
+      # разный. Один текст на оба случая был бы ложной тревогой: отмена на стадии `test`
+      # или `build` до сервера не доходила вовсе, а «прод мог остаться посреди миграций»
+      # погонит дежурного смотреть `_prisma_migrations` на нетронутом проде. Два-три таких
+      # сообщения — и канал перестают читать, то есть ровно то, от чего защищались.
+      # Различает их `needs.deploy.result`: `skipped` значит, что job `deploy` не
+      # стартовал, всё остальное — что стартовал и был прерван.
+      #
+      # ⚠️ Проверки `-f` здесь нет намеренно, как и в `🚨 Notify Failure` выше: в этом
+      # job'е пропавшее сообщение — потеря единственного сигнала, и она обязана краснеть.
+      - name: 🚨 Notify Cancelled
+        if: ${{ cancelled() }}
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          VERSION: ${{ needs.build.outputs.version }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
 
-          TEXT="<b>Выкат упал</b> · books · ${SAFE_VERSION}"$'\n'
-          TEXT="${TEXT}Этап: ${STAGE}"$'\n'
-          TEXT="${TEXT}${RUN_URL}"
-
-          # --data-urlencode, а не -d: в тексте переносы строк и символы,
-          # которые -d отправил бы как есть и сломал бы форму запроса.
-          #
-          # 🔴 Код ответа проверяется обязательно. Telegram отвечает на отозванный
-          # токен `401`, на выкинутого из канала бота `403`, на битый chat_id
-          # `400` — и всё это с телом JSON и кодом возврата curl 0. Без проверки
-          # шаг зелёный, в логе пусто, до человека не дошло ничего: то же исходное
-          # состояние LEGACY-221, только с галкой. Для пути через Alertmanager
-          # за этим следит правило AlertmanagerNotificationsFailing, у пути через
-          # GitHub другого сторожа нет.
-          #
-          # `set +e` на время вызова: при `set -e` сетевой отказ оборвал бы шаг до печати
-          # предупреждения. Дописывать `|| echo "000"` нельзя — curl при отказе соединения
-          # сам печатает `000` и возвращает ненулевой код, и в переменную попало бы `000000`.
-          set +e
-          HTTP_CODE=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
-            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TG_CHAT}" \
-            --data-urlencode "parse_mode=HTML" \
-            --data-urlencode "text=${TEXT}")
-          set -e
-
-          if [[ "${HTTP_CODE}" != "200" ]]; then
-            echo "::warning::Telegram отклонил сообщение о падении выката: HTTP ${HTTP_CODE}. Проверь TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID и что бот остался администратором канала."
+          if [[ "${DEPLOY_RESULT}" == "skipped" ]]; then
+            DETAIL="Прогон отменён до начала выката — прод не тронут."
           else
-            echo "Telegram: сообщение доставлено"
+            DETAIL="Прогон отменён во время выката. Прод мог остаться посреди миграций — проверь состояние вручную."
           fi
+
+          bash scripts/notify_telegram.sh \
+            "Выкат прерван · books · ${VERSION:-без версии}" \
+            "${DETAIL}" \
+            "${RUN_URL}"
 
   # =====================================================
   # ROLLBACK (Manual trigger)
