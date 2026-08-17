@@ -25,5 +25,131 @@ jobs:
           yarn ci
         env:
           CI: true
-          # Set CI_E2E=1 and DATABASE_URL to enable e2e against an external DB.
+          # LEGACY-149. Остаётся '0' сознательно, и это больше не пробел: e2e гоняет
+          # соседний job `e2e`, где postgres и redis подняты сервисами runner'а.
+          # Ветка e2e внутри `scripts/ci.sh` зовёт `test:e2e:serial` (`--runInBand`),
+          # то есть все 72 набора строго подряд; включённая здесь, она отодвинула бы
+          # ответ линта и typecheck на всю длительность прогона и сделала бы ту же
+          # работу медленнее. Сам скрипт остаётся портируемым: где базы нет, там
+          # ветка просто не включается.
+          #
+          # 🔴 Ставить сюда '1' без `DATABASE_URL` нельзя: `scripts/ci.sh` в этом
+          # случае печатает «skipping e2e» и идёт дальше зелёным, а конвейер
+          # выглядит включённым — тот же дефект, только с галкой. Сторож —
+          # `src/devops/ci-e2e-wiring.spec.ts`.
           CI_E2E: '0'
+
+  # LEGACY-149. До 17.08.2026 на pull request не выполнялся ни один из 72 наборов
+  # `test/*.e2e-spec.ts`: единственный job звал `yarn ci` с `CI_E2E: '0'`, а
+  # настоящий прогон жил в `deploy.yml`, который срабатывает уже после слияния —
+  # на push в `main` и на теге `v*`. Регрессия в маршруте, миграции или порядке
+  # регистрации модулей краснела в конвейере выката, то есть на горячем пути.
+  #
+  # Дублирование прогона с `deploy.yml` намеренное и не подлежит «оптимизации»:
+  # `ci.yml` не запускается по тегу `v*`, а `deploy.yml` — на pull request, и шаг,
+  # заведённый только в одном, на втором пути отсутствует молча (LEGACY-207, 209).
+  #
+  # Отдельным job'ом, а не шагом внутри `build`: прогон занимает 6–9 минут при
+  # тёплом кэше ts-jest (на холодном дольше — 72 набора транспилируются заново) и
+  # идёт параллельно линту, typecheck и сборке, ничего не удлиняя.
+  e2e:
+    name: E2E (postgres + redis)
+    # ⚠️ Пришпилено к той же версии, что и job `test` в `deploy.yml`, а не
+    # `ubuntu-latest`: тот сегодня 24.04 и переедет дальше сам, а Prisma тянет
+    # движки под системные библиотеки раннера. Разойдутся версии — прогон на
+    # слиянии перестанет отвечать на вопрос «пройдёт ли то же самое на выкате».
+    runs-on: ubuntu-22.04
+    # Прогон укладывается в 6–9 минут; зависший на блокировке базы без этой
+    # строки держал бы раннер дефолтные 360 минут, и очередь встала бы вся.
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: books_test
+        # ⚠️ `max_connections` здесь не поднять: `services` в GitHub Actions не
+        # принимает команду контейнера, а у `postgres:14` он по умолчанию 100.
+        #
+        # 🔴 Расход подключений держится числом воркеров, и только им. Соседний
+        # комментарий в `deploy.yml` называет потолком `connection_limit=5` из
+        # `test/setup-after-env-e2e.ts` — это параметр движка Prisma, а клиент
+        # собран на драйверном адаптере (`src/prisma/prisma.service.ts`:
+        # `new Pool({ connectionString })` без `max`), и `pg` его не читает.
+        # Поэтому `--maxWorkers` выше двух упирается в «sorry, too many clients
+        # already», причём падает не тест, а случайный запрос внутри него, и
+        # выглядит это как сломанный код.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: |
+          yarn install --frozen-lockfile
+          yarn prisma:generate
+
+      # Кэш транспиляции ts-jest: без него каждый pull request заново собирает все
+      # 72 набора, и это заметная часть прогона. Путь тот же, что в `deploy.yml`.
+      # ⚠️ Префикс ключа **свой** (`jest-e2e-ci-`), а не общий с `deploy.yml`: на
+      # push в `main` оба конвейера идут одновременно и писали бы один и тот же
+      # ключ, а второй получал бы отказ сохранения.
+      - name: Cache Jest transform
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jest_rs
+          key: jest-e2e-ci-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            jest-e2e-ci-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-
+            jest-e2e-ci-${{ runner.os }}-
+
+      # Отдельного шага `prisma migrate deploy` + `prisma db seed` здесь нет
+      # намеренно: `test/setup-e2e.ts` сам создаёт базу-шаблон, накатывает на неё
+      # миграции и seed и копирует её `CREATE DATABASE ... TEMPLATE` на каждый
+      # воркер. База `books_test` из сервиса участвует только как адрес — из неё
+      # берутся хост, порт и учётные данные, а подключение идёт к `/postgres`.
+      # Шаг против самой `books_test` повторил бы миграции и seed вхолостую.
+      # Сломанная миграция краснеет и так: `globalSetup` накатывает её первой.
+      #
+      # ⚠️ `E2E_WORKERS` обязан совпадать с `--maxWorkers`: столько баз создаёт
+      # `globalSetup`, а `setup-after-env-e2e.ts` раскладывает воркеров по ним по
+      # кругу. Воркеров больше баз — два набора пишут в одну базу и портят данные
+      # друг другу, а прогон при этом чаще зелёный, чем красный (10.08.2026:
+      # совпали только три места с общей сущностью).
+      #
+      # `NODE_OPTIONS` здесь не задаётся: скрипт `test:e2e:parallel` выставляет
+      # свой (`--max-old-space-size=8192 --expose-gc`) прямо в команде, и он
+      # перекрывает любое значение из окружения job'а.
+      - name: E2E tests
+        run: yarn test:e2e:parallel --maxWorkers=2
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/books_test?schema=public
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          E2E_WORKERS: 2
