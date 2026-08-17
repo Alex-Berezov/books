@@ -16,13 +16,37 @@ groups:
         expr: rate(http_request_duration_seconds_count{status_code=~"4..|5.."}[1m])
 
       # HTTP error ratio (errors / total requests)
+      #
+      # 🔴 `sum(...)` с обеих сторон — не украшение. Без него деление сопоставляет
+      # ряды по совпадающим меткам, а совпадают они только сами с собой: у
+      # числителя `status_code="404"`, и знаменатель к нему подбирается тот же
+      # самый ряд с тем же `status_code`. Доля выходила ровно **100%** при любой
+      # одной ошибке в минуту — и именно 100% стояло во всех ночных сообщениях
+      # 17.08.2026. Тот же дефект, что был у гео-правил (см. шапку
+      # `alert_rules.test.yml`): синтаксис верный, смысл потерян.
       - record: books_app:http_error_ratio:rate5m
         expr: |
           (
-            rate(http_request_duration_seconds_count{status_code=~"4..|5.."}[5m])
+            sum(rate(http_request_duration_seconds_count{status_code=~"4..|5.."}[5m]))
             /
-            rate(http_request_duration_seconds_count[5m])
+            sum(rate(http_request_duration_seconds_count[5m]))
           ) * 100
+
+      # Доля именно серверных отказов. Заведена отдельно от общей: 4xx — это
+      # ответ клиенту (бот перебирает адреса и собирает 404, чужой запрос
+      # к `/admin` получает 401), и будить по ней нельзя, а 5xx — это мы.
+      - record: books_app:http_server_error_ratio:rate5m
+        expr: |
+          (
+            sum(rate(http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_request_duration_seconds_count[5m]))
+          ) * 100
+
+      # Объём запросов за то же окно — знаменатель доли отдельным рядом, чтобы
+      # правило могло потребовать минимума наблюдений (порог объёма).
+      - record: books_app:http_requests:increase5m
+        expr: sum(increase(http_request_duration_seconds_count[5m]))
 
       # P95 response time
       - record: books_app:http_request_duration:p95

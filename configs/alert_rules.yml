@@ -33,15 +33,27 @@ groups:
       # бы вечно красной (проверено 10.08.2026, LEGACY-095). Падение приложения
       # ловит BooksAppDown выше — job `books-app` работает.
 
+      # 🔴 Ночью 17.08.2026 это правило будило трижды с одним и тем же «100%»:
+      # доля считалась без `sum(...)` и была равна единице при любой ошибке
+      # (разбор — в `recording_rules.yml`), а 4xx от переборщика адресов
+      # засчитывались наравне с отказами сервера. Две поправки:
+      #   1) будим только на 5xx — 4xx это ответ клиенту, а не наша поломка;
+      #   2) порог объёма. Доля от трёх запросов за пять минут ничего не значит:
+      #      один 500 из трёх — это 33% и повод для звонка по прежнему правилу.
+      # Тот же приём, что у гео-правил: сначала «наблюдений достаточно», потом
+      # «доля велика».
       - alert: HighErrorRate
-        expr: books_app:http_error_ratio:rate5m > 10
+        expr: |
+          books_app:http_server_error_ratio:rate5m > 10
+          and
+          books_app:http_requests:increase5m > 20
         for: 5m
         labels:
           severity: critical
           service: books-app
         annotations:
           summary: 'High HTTP error rate'
-          description: 'HTTP error rate is {{ $value }}% over the last 5 minutes'
+          description: 'Server error rate is {{ $value }}% over the last 5 minutes'
 
       - alert: VeryHighResponseTime
         expr: books_app:http_request_duration:p99 > 5

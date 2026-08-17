@@ -7,9 +7,14 @@
 # мёртвое правило — то же, за что снято `BooksAppHealthProbeDown` (`LEGACY-220`).
 # Здесь в правила подставляются настоящие ряды и проверяется, срабатывают ли они.
 #
-# Покрыты правила, добавленные пачкой «Оповещения». Существующие правила опираются
-# на `recording_rules.yml`, который в этот прогон не подключён.
+# Покрыты правила, добавленные пачкой «Оповещения», и `HighErrorRate`.
+#
+# ⚠️ `recording_rules.yml` подключён с 17.08.2026 и обязателен: `HighErrorRate`
+# читает `books_app:http_server_error_ratio:rate5m` и `books_app:http_requests:increase5m`.
+# Без этого файла выражение пусто, алерт молчит всегда, и любой кейс на него
+# зелёный по построению — ровно та мёртвая проверка, ради которой файл заведён.
 rule_files:
+  - recording_rules.yml
   - alert_rules.yml
 
 evaluation_interval: 1m
@@ -102,6 +107,53 @@ tests:
       # Эта строка и есть проверка того, что порог у ratio-правила существует.
       - eval_time: 20m
         alertname: GeoCountrySourceDegraded
+        exp_alerts: []
+
+  # Ночь 17.08.2026 ровно как она была: живого трафика нет, кто-то перебирает
+  # адреса и собирает 404. Прежнее правило считало это стопроцентной долей
+  # ошибок и будило владельца трижды за ночь.
+  - interval: 1m
+    name: night 404 storm — client errors do not page
+    input_series:
+      - series: 'http_request_duration_seconds_count{status_code="404", method="GET", route="/api/x"}'
+        values: '0+6x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: HighErrorRate
+        exp_alerts: []
+
+  # Настоящий отказ: три пятисотых на семь двухсотых, объём выше порога.
+  - interval: 1m
+    name: server errors with real traffic — fires
+    input_series:
+      - series: 'http_request_duration_seconds_count{status_code="500", method="GET", route="/api/x"}'
+        values: '0+3x40'
+      - series: 'http_request_duration_seconds_count{status_code="200", method="GET", route="/api/x"}'
+        values: '0+7x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: HighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: books-app
+            exp_annotations:
+              summary: 'High HTTP error rate'
+              description: 'Server error rate is 30% over the last 5 minutes'
+
+  # 🔴 Порог объёма отдельным кейсом: доля 50%, но наблюдений за окно всего 10
+  # при пороге 20. Без этой строки порог можно снять целиком, и файл останется
+  # зелёным — а ночные звонки вернутся на первом же одиноком 500.
+  - interval: 1m
+    name: server errors at night — below the sample floor, stays silent
+    input_series:
+      - series: 'http_request_duration_seconds_count{status_code="500", method="GET", route="/api/x"}'
+        values: '0+1x40'
+      - series: 'http_request_duration_seconds_count{status_code="200", method="GET", route="/api/x"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: HighErrorRate
         exp_alerts: []
 
   # Битый `.prom` в каталоге коллектора.

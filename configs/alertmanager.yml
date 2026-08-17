@@ -43,18 +43,48 @@
 # версию образа без замены этого поля на `bot_token` нельзя — конфиг не
 # загрузится, разбор строгий.
 
+# Ночная тишина (17.08.2026). Владелец спит с полуночи до десяти утра по Еревану
+# и отреагировать всё равно не может, а канал за ночь набивался повторами.
+#
+# 🔴 Это **глушение, а не накопление**. Alertmanager не умеет придержать
+# сообщение и отдать пачкой: он либо шлёт, либо молчит. Всё, что вспыхнуло
+# и погасло внутри окна, наружу не уйдёт **никогда** — в десять утра придёт
+# только то, что горит на этот момент. Осознанный размен: за ночь никто всё
+# равно не встаёт, а прогоревшие вспышки видны в UI Alertmanager и в Grafana.
+#
+# ⚠️ `location` обязателен: без него окно считается по UTC, а это четыре часа
+# в сторону — тишина накрыла бы 04:00–14:00 по Еревану, то есть полрабочего дня.
+# Поле поддержано с Alertmanager 0.24, образ пришпилен на 0.26.0.
+time_intervals:
+  - name: night-yerevan
+    time_intervals:
+      - times:
+          - start_time: '00:00'
+            end_time: '10:00'
+        location: 'Asia/Yerevan'
+
 route:
   group_by: ['alertname', 'service', 'severity']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
   receiver: 'telegram'
+  # 🔴 `mute_time_intervals` на корневом маршруте Alertmanager не принимает вовсе:
+  # `amtool check-config` отвечает «root route must not have any mute time
+  # intervals» и конфиг не грузится. Поэтому доставка целиком вынесена в дочерние
+  # маршруты, а корневой оставлен только развилкой; его `receiver` обязателен
+  # по схеме, но недостижим — второй дочерний ловит всё, что не critical.
   routes:
     - match:
         severity: critical
       receiver: 'telegram'
       group_wait: 10s
       repeat_interval: 1h
+      mute_time_intervals: ['night-yerevan']
+    # Ловушка на всё остальное. Без неё warning уходил бы через корневой
+    # маршрут, то есть мимо ночного окна — и ночь снова стала бы шумной.
+    - receiver: 'telegram'
+      mute_time_intervals: ['night-yerevan']
 
 receivers:
   # Пустой receiver: алерт регистрируется и виден в UI, наружу не уходит.
