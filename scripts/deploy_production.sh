@@ -346,18 +346,34 @@ save_current_state() {
     
     cd "$DEPLOY_DIR"
     
-    local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    # 🔴 Ревизия берётся из DEPLOY_PREVIOUS_SHA, если она задана вызывающим.
+    # `git rev-parse HEAD` здесь врёт на пути CI: шаг `🚀 Deploy to Server` переводит
+    # рабочее дерево на выкатываемый `github.sha` ДО вызова скрипта и зовёт его с
+    # `--skip-git-update`. То есть к моменту `save_current_state` в дереве уже новая
+    # ревизия, и записанный «откат» указывал на неё же — откатываться было некуда.
+    # Тот же приём, что у DEPLOY_EXPANDED_DATABASE_URL: значение готовит вызывающий.
+    local current_commit="${DEPLOY_PREVIOUS_SHA:-}"
+    if [[ -z "$current_commit" ]]; then
+        current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    fi
     local current_tag=$(git describe --tags --exact-match 2>/dev/null || echo "no-tag")
     # docker compose images --format json outputs an array; prefer the 'app' service image
     local current_image=$(docker compose -f docker-compose.prod.yml images --format json \
         | jq -r 'map(select(.Service == "app")) | if length>0 then (.[0].Repository + ":" + .[0].Tag) else (.[0].Repository + ":" + .[0].Tag) end' 2>/dev/null || echo "unknown")
-    
+    # 🔴 Идентификатор образа, а не его тег. Теги переставляются каждым выкатом
+    # (`books-app:prod` — тот самый, который поднимает docker-compose.prod.yml), поэтому
+    # откат «на books-app:prod» был бы откатом в никуда. ID неизменен, и именно он —
+    # единственная надёжная ручка на то, что работало до этого выката.
+    local current_image_id=$(docker compose -f docker-compose.prod.yml images --format json \
+        | jq -r 'map(select(.Service == "app")) | .[0].ID // ""' 2>/dev/null || echo "")
+
     cat > "$ROLLBACK_FILE" << EOF
 {
     "timestamp": "$(date -Iseconds)",
     "commit": "$current_commit",
-    "tag": "$current_tag", 
+    "tag": "$current_tag",
     "image": "$current_image",
+    "image_id": "$current_image_id",
     "image_tag": "$IMAGE_TAG",
     "deployment_user": "$(whoami)"
 }
@@ -666,27 +682,56 @@ EOF
 }
 
 # Rollback to previous version
+# Rollback to previous version.
+#
+# 🔴 ADR-018: откат в этом проекте — это откат ОБРАЗА, а не схемы. Отсюда и способ:
+# образ, работавший до выката, переставляется обратно на тег `books-app:prod`, который
+# поднимает `docker-compose.prod.yml`, и сервисы перезапускаются. Пересборки здесь нет
+# и быть не должно.
+#
+# До 18.08.2026 функция делала `update_code` + `build_image` и была мертва трижды:
+#   - `.commit` указывал на выкатываемую (сломанную) ревизию, см. `save_current_state`;
+#   - `--rollback` идёт без `--image-tag`, поэтому `IMAGE_TAG` пуст и `build_image`
+#     выполнял `docker build --tag books-app:` — `invalid reference format`;
+#   - ветка локальной сборки не переставляет `books-app:prod`, то есть даже успешная
+#     сборка не меняла того, что поднимет compose.
+# Найдено ревью 18.08.2026 при закрытии `LEGACY-243`.
 perform_rollback() {
     log "Performing rollback..."
-    
+
     if [[ ! -f "$ROLLBACK_FILE" ]]; then
     log_error "Rollback file not found: $ROLLBACK_FILE"
         exit 1
     fi
-    
-    local rollback_version=$(jq -r '.commit // .tag' "$ROLLBACK_FILE" 2>/dev/null)
-    if [[ -z "$rollback_version" || "$rollback_version" == "null" ]]; then
-    log_error "Could not determine version for rollback"
+
+    local rollback_image_id=$(jq -r '.image_id // ""' "$ROLLBACK_FILE" 2>/dev/null)
+    if [[ -z "$rollback_image_id" || "$rollback_image_id" == "null" ]]; then
+    log_error "No image_id in $ROLLBACK_FILE - nothing to roll back to."
+    log_error "This file predates the image-based rollback, or the previous deploy never ran."
+    log_error "Do not improvise: see books-app-docs/backend/guides/migration-failure-runbook.md"
         exit 1
     fi
-    
-    log_info "Rolling back to version: $rollback_version"
-    
-    VERSION="$rollback_version"
-    update_code
-    build_image
+
+    log_info "Rolling back to image: $rollback_image_id"
+
+    # Рабочее дерево переводится на предыдущую ревизию только чтобы `docker-compose.prod.yml`
+    # и `configs/**` соответствовали поднимаемому образу. Если ревизия неизвестна, откат
+    # всё равно делается: образ важнее, а расхождение конфигов лечится следующим выкатом.
+    local rollback_version=$(jq -r '.commit // ""' "$ROLLBACK_FILE" 2>/dev/null)
+    if [[ -n "$rollback_version" && "$rollback_version" != "null" && "$rollback_version" != "unknown" ]]; then
+    log_info "Restoring working tree to: $rollback_version"
+        VERSION="$rollback_version"
+        SKIP_GIT_UPDATE=false
+        update_code
+    else
+    log_warning "Previous revision unknown - rolling back the image only"
+    fi
+
+    execute "docker tag $rollback_image_id books-app:prod"
+    execute "docker tag $rollback_image_id books-app:latest"
+
     deploy_services
-    
+
     if verify_deployment; then
     log_success "Rollback successful"
     else

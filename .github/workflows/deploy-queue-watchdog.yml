@@ -48,25 +48,44 @@ jobs:
             scripts/notify_telegram.sh
           sparse-checkout-cone-mode: false
 
-      # 🔴 Ноль стартовавших job'ов — единственный признак, отличающий снятие из очереди
-      # от отмены руками. `total_count` берётся у самого прогона, а не у попытки: повторный
-      # запуск отменённого прогона иначе выглядел бы как новый снятый.
-      - name: 🔍 Did any job start?
+      # 🔴 Признак — «отработал ли job `notify` наблюдаемого прогона», а не «сколько job'ов
+      # у него в списке». Разница принципиальная. Считать стартовавшие job'ы значило бы
+      # угадывать, заводит ли GitHub записи job'ов для прогона, который стоит в очереди и
+      # ни разу не стартовал; проверить это без трёх тегов на проде нельзя, а сторож,
+      # чьё нормальное состояние — молчание, в случае ошибки неотличим от исправного.
+      #
+      # `📢 Notifications` в `deploy.yml` объявлен с `if: always()`, то есть отрабатывает и
+      # при отмене руками, и при отказе. Значит вопрос «сказали ли уже про этот прогон в
+      # канал» отвечается прямо: если этот job дошёл до `conclusion`, сообщение было —
+      # молчим. Если не дошёл, не было — говорим. Дублирования не возникает по построению,
+      # а не по совпадению.
+      #
+      # ⚠️ `runs/<id>/jobs` по умолчанию отдаёт `filter=latest`, то есть job'ы последней
+      # попытки. Это то, что нужно: повторный запуск прогона рассматривается сам по себе.
+      - name: 🔍 Did the run report to the channel?
         id: jobs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          count=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/jobs" --jq '.total_count')
-          echo "jobs started: ${count}"
-          echo "started=${count}" >> "$GITHUB_OUTPUT"
+          jobs_json=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs" --paginate)
+          total=$(printf '%s' "$jobs_json" | jq -s 'map(.jobs) | add | length')
+          reported=$(printf '%s' "$jobs_json" | jq -s --arg name "📢 Notifications" \
+            '[ (map(.jobs) | add)[] | select(.name == $name and .conclusion != null) ] | length')
+          echo "jobs in run: ${total}, notify job finished: ${reported}"
+          echo "reported=${reported}" >> "$GITHUB_OUTPUT"
 
-      # Сообщение уходит только про прогон, снятый из очереди. Всё остальное — не наше дело:
-      # отмену руками объявляет `🚨 Notify Cancelled` внутри `deploy.yml`, и вторая копия
-      # сообщения хуже её отсутствия.
-      - name: 🚨 Notify Dropped From Queue
-        if: ${{ steps.jobs.outputs.started == '0' }}
+      # Сообщение уходит только про прогон, о котором в канал ещё не сказали. Отмену руками
+      # посреди выката объявляет `🚨 Notify Cancelled` внутри `deploy.yml`, и вторая копия
+      # сообщения хуже её отсутствия: канал перестают читать, и в нём теряется отказ.
+      #
+      # Формулировка не утверждает причину. Снятие из очереди и отмена руками до назначения
+      # раннера дают одно и то же наблюдаемое состояние, а ложная тревога гонит дежурного
+      # искать несуществующий второй тег.
+      - name: 🚨 Notify Silent Cancellation
+        if: ${{ steps.jobs.outputs.reported == '0' }}
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -74,7 +93,7 @@ jobs:
           RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
           bash scripts/notify_telegram.sh \
-            "Выкат снят из очереди · books · ${REF_NAME:-без ревизии}" \
-            "Прогон отменён, пока стоял в очереди: следом в неё встал более новый." \
-            "Ни одна job не запускалась — образ не собран и на прод ничего не уезжало." \
+            "Выкат отменён до старта · books · ${REF_NAME:-без ревизии}" \
+            "Прогон отменён, не запустив ни одной job: снят из очереди более новым тегом либо отменён руками сразу после пуска." \
+            "На прод ничего не уезжало, миграции не начинались." \
             "${RUN_URL}"

@@ -545,6 +545,15 @@ jobs:
 
             # Save local changes and update code
             if [[ -d ".git" ]]; then
+              # 🔴 Ревизия, работающая ПРЯМО СЕЙЧАС, снимается до чекаута и уезжает в
+              # `save_current_state` переменной `DEPLOY_PREVIOUS_SHA`. Без неё скрипт брал
+              # `git rev-parse HEAD` уже после `checkout --detach --force`, то есть писал в
+              # `.rollback_info` выкатываемую ревизию, и откат откатывался на неё же.
+              # Найдено ревью 18.08.2026 при закрытии `LEGACY-243`.
+              DEPLOY_PREVIOUS_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+              export DEPLOY_PREVIOUS_SHA
+              echo "↩️  Previous revision: ${DEPLOY_PREVIOUS_SHA:-unknown}"
+
               echo "📦 Stashing local changes..."
               git stash --include-untracked || true
 

@@ -1,20 +1,101 @@
 {
   "_readme": [
-    "Миграции, уже применённые на проде до введения ADR-018. Задним числом их не переписывают.",
-    "Список краснеет в обе стороны: запись про несуществующую миграцию и запись про миграцию",
-    "без разрушающих конструкций — обе ошибки. Держит scripts/check-migration-compat.mjs.",
+    "Миграции, уже применённые на проде до введения ADR-018. Задним числом их не переписывают:",
+    "правка применённого migration.sql запрещена (rules.books.json, createOnly) и не переприменится.",
+    "",
+    "Формат: имя каталога -> { reason, constructs }. Исключение выдаётся на ПЕРЕЧИСЛЕННЫЕ",
+    "конструкции, а не на каталог целиком: новая разрушающая правка в разрешённой миграции",
+    "всё равно краснеет. Список краснеет в обе стороны — запись про несуществующую миграцию,",
+    "запись про миграцию без разрушающих конструкций и перечисленная конструкция, которой в",
+    "файле нет, одинаково ошибки.",
+    "",
     "Новая запись сюда — это признание, что релиз ломает предыдущий образ. Обычный ответ",
     "другой: разнести изменение на два тега (расширение, потом сжатие)."
   ],
   "allowed": {
-    "20251115153102_add_cascade_delete_for_books": "DROP CONSTRAINT: внешние ключи пересоздаются с ON DELETE CASCADE. Применена 15.11.2025, задолго до ADR-018.",
-    "20251226094253_add_translation_group_id_to_pages": "DROP CONSTRAINT: те же FK таксономии пересоздаются под новую связь. Применена 26.12.2025.",
-    "20260420173712_add_description_and_seo_to_taxonomy_translations": "DROP CONSTRAINT IF EXISTS: идемпотентное пересоздание FK переводов таксономии. Применена 20.04.2026.",
-    "20260624142000_localize_author_fields": "DROP COLUMN плюс SET NOT NULL: поля автора переехали в таблицу переводов. Применена 24.06.2026.",
-    "20260630000000_taxonomy_restructure": "ALTER COLUMN TYPE и RENAME TO: подмена enum CategoryType по классической схеме Prisma. Применена 30.06.2026.",
-    "20260705000001_add_key_to_taxonomies": "SET NOT NULL: колонка key заполнена в той же миграции до постановки ограничения. Применена 05.07.2026.",
-    "20260724140000_add_rights_approval_workflow": "ALTER COLUMN TYPE и RENAME TO: подмена enum'ов RightsProfileStatus и RightsReviewStatus. Применена 24.07.2026.",
-    "20260801100000_edition_rights_per_language": "SET NOT NULL: колонка заполнена в той же миграции до постановки ограничения. Применена 01.08.2026.",
-    "20260802010000_drop_dead_rights_content_hash_columns": "DROP COLUMN IF EXISTS: снятие мёртвых колонок content hash, код перестал их читать релизом раньше. Применена 02.08.2026 — это и есть образец двухшагового удаления."
+    "20250812142005_add_book_version_constraints": {
+      "reason": "Уникальный индекс на живые колонки BookVersion. Применена 12.08.2025, за год до ADR-018.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250816135513_add_chapter_unique_constraint": {
+      "reason": "Уникальный индекс на живые колонки Chapter. Применена 16.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250817120000_add_audio_chapter_unique_constraint": {
+      "reason": "Уникальный индекс на живые колонки AudioChapter. Применена 17.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250817123500_add_book_category_unique": {
+      "reason": "Уникальный индекс на живые колонки BookCategory. Применена 17.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250817131000_add_bookshelf_unique": {
+      "reason": "Уникальный индекс на живые колонки Bookshelf. Применена 17.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250819123000_add_likes_constraints": {
+      "reason": "Уникальный индекс на живые колонки Like. Применена 19.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250820120000_add_reading_progress_unique": {
+      "reason": "Уникальный индекс на живые колонки ReadingProgress. Применена 20.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250824153000_add_xor_checks_comments_likes": {
+      "reason": "CHECK-ограничения на живые Comment и Like плюс удаление строк, им не удовлетворявших. Единственная миграция в каталоге, теряющая данные: откат образа их не вернёт. Применена 24.08.2025.",
+      "constructs": ["ADD CONSTRAINT", "DELETE FROM"]
+    },
+    "20250825112250_qwerty": {
+      "reason": "Уникальный индекс на живые колонки. Применена 25.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20250830120000_page_unique_language_slug": {
+      "reason": "Уникальный индекс на живую пару (language, slug) в Page. Применена 30.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20251226094253_add_translation_group_id_to_pages": {
+      "reason": "Снятие индекса MediaAsset_createdById_idx. Внешние ключи здесь же дропаются и пересоздаются под теми же именами, поэтому разрушающими не считаются. Применена 26.12.2025.",
+      "constructs": ["DROP INDEX"]
+    },
+    "20260420173712_add_description_and_seo_to_taxonomy_translations": {
+      "reason": "Внешние ключи переводов таксономии пересоздаются под другими именами (CASCADE вместо RESTRICT), поэтому пара DROP/ADD не схлопывается. Применена 20.04.2026.",
+      "constructs": ["ADD CONSTRAINT", "DROP CONSTRAINT"]
+    },
+    "20260614104340_add_slug_to_book_version": {
+      "reason": "Составной уникальный индекс: одна колонка новая, вторая живая. Применена 14.06.2026.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
+    "20260624142000_localize_author_fields": {
+      "reason": "Поля автора перенесены в AuthorTranslation: колонки сняты, индексы пересозданы, NOT NULL поставлен после бэкфилла в той же миграции. Применена 24.06.2026.",
+      "constructs": ["CREATE UNIQUE INDEX", "DROP COLUMN", "DROP INDEX", "SET NOT NULL"]
+    },
+    "20260630000000_taxonomy_restructure": {
+      "reason": "Подмена enum CategoryType по классической схеме Prisma: новый тип, ALTER COLUMN TYPE, переименование, снятие старого. Применена 30.06.2026.",
+      "constructs": ["ALTER COLUMN TYPE", "DROP TYPE", "RENAME TYPE"]
+    },
+    "20260705000001_add_key_to_taxonomies": {
+      "reason": "NOT NULL на key поставлен после бэкфилла из slug и проверки дублей DO-блоком в той же миграции. Применена 05.07.2026.",
+      "constructs": ["SET NOT NULL"]
+    },
+    "20260724140000_add_rights_approval_workflow": {
+      "reason": "Подмена enum'ов RightsProfileStatus и RightsReviewStatus по той же схеме Prisma. Применена 24.07.2026.",
+      "constructs": ["ALTER COLUMN TYPE", "DROP TYPE", "RENAME TYPE"]
+    },
+    "20260724180000_create_book_from_approved_clearance": {
+      "reason": "Внешний ключ на живую колонку. Применена 24.07.2026.",
+      "constructs": ["ADD CONSTRAINT"]
+    },
+    "20260801100000_edition_rights_per_language": {
+      "reason": "Права на издание разнесены по языкам: индексы пересозданы, NOT NULL на languageCode поставлен после бэкфилла в той же миграции. Применена 01.08.2026.",
+      "constructs": ["CREATE UNIQUE INDEX", "DROP INDEX", "SET NOT NULL"]
+    },
+    "20260802010000_drop_dead_rights_content_hash_columns": {
+      "reason": "Снятие колонок content hash, за восемнадцать фаз ни разу не записанных и не прочитанных, вместе с их индексом. Расширения перед сжатием не было: это уборка мёртвого поля, а не двухшаговое удаление. Применена 02.08.2026.",
+      "constructs": ["DROP COLUMN", "DROP INDEX"]
+    },
+    "20260809000000_page_system_key": {
+      "reason": "Уникальный индекс на живую колонку Page. Применена 09.08.2026.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    }
   }
 }

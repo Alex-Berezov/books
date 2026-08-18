@@ -681,50 +681,111 @@ describe('LEGACY-246: тело heredoc уезжает на сервер как �
  * (`LEGACY-207`, `LEGACY-209`).
  */
 describe('LEGACY-242: разрушающая миграция краснеет на обоих путях', () => {
-  const COMPAT = 'check-migration-compat';
+  const SELF_TEST = 'yarn check-migration-compat:self-test';
+  const RUN = 'yarn check-migration-compat';
 
-  /** Вызовы `yarn <script>` в тексте, по порядку, без строк-комментариев. */
-  const yarnCalls = (text: string): string[] =>
-    [...stripComments(text).matchAll(/^\s*yarn\s+(\S+)\s*$/gm)].map((m) => m[1]);
+  // 🔴 Блок сверяется целиком и по отступу, а не вхождением подстроки. Мутации, которые
+  // проходили при сверке по вхождению: `… .mjs --self-test` вторым вызовом (шаг зелёный
+  // всегда), `… || true`, и обёртка блока в `if [[ … ]]; then … fi` — последняя не меняет
+  // ни одной строки, только отступ, и сторож переставал вызываться вовсе.
+  it('scripts/ci.sh зовёт сторож сразу после своей шапки, без обёрток', () => {
+    const lines = CI_SH_RAW.split(/\r?\n/);
+    const at = lines.findIndex((l) => l === 'step "Migration backwards-compatibility check"');
+    expect(at).toBeGreaterThan(-1);
+    expect(lines.slice(at + 1, at + 3)).toEqual([SELF_TEST, RUN]);
 
-  it('scripts/ci.sh зовёт сторож, и self-test идёт первым', () => {
-    const calls = yarnCalls(CI_SH_RAW);
-    const self = calls.indexOf(`${COMPAT}:self-test`);
-    const check = calls.indexOf(COMPAT);
-    expect([self, check].every((i) => i > -1)).toBe(true);
-    expect(self).toBeLessThan(check);
+    // 🔴 И на верхнем уровне скрипта. Обёртка `if [[ "${RUN_COMPAT:-0}" == "1" ]]; then … fi`
+    // не меняет ни одной строки блока — только его окружение, — и сторож переставал
+    // вызываться вовсе при зелёной сверке содержимого.
+    let depth = 0;
+    for (const line of lines.slice(0, at)) {
+      if (/^\s*(?:if|for|while|until|case)\b/.test(line) && !/^\s*#/.test(line)) depth += 1;
+      if (/^\s*(?:fi|done|esac)\b/.test(line)) depth -= 1;
+    }
+    expect([`вложенность блока перед шагом`, depth]).toEqual([`вложенность блока перед шагом`, 0]);
   });
 
-  // 🔴 Самопроверка обязана идти **до** самого прогона, а не рядом: режим отказа такого
-  // сторожа — молчаливое «всё совместимо» из-за пробела в разборе SQL, и без self-test
-  // зелёный результат ничего не значит. Тот же довод, что у `drift-check` и `check:env`.
-  it('job test в deploy.yml зовёт сторож, и self-test идёт первым', () => {
-    const calls = yarnCalls(
-      step('test', '🧬 Migration Backwards-Compatibility Check').lines.join('\n'),
-    );
-    expect(calls).toEqual([`${COMPAT}:self-test`, COMPAT]);
+  // 🔴 Шаг сверяется равенством строк. Набор `toContain` пропускал и `if:` на шаге (булев
+  // вход `workflow_dispatch` на теге ложен всегда — шаг молча пропускается на каждом
+  // выкате, ровно `LEGACY-222`), и `continue-on-error: true`. Соседняя спека
+  // `ci-e2e-wiring.spec.ts` закрепляет то же самое и тем же способом.
+  it('job test в deploy.yml зовёт сторож без if: и continue-on-error', () => {
+    const lines = step('test', '🧬 Migration Backwards-Compatibility Check')
+      .lines.map((l) => l.trim())
+      .filter(Boolean);
+    expect(lines).toEqual([
+      '- name: 🧬 Migration Backwards-Compatibility Check',
+      'run: |',
+      SELF_TEST,
+      RUN,
+    ]);
   });
 
-  it('сторож и его самопроверка объявлены в package.json', () => {
+  it('сторож и его самопроверка объявлены в package.json ровно так, как вызываются', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
-    expect(pkg.scripts[COMPAT]).toContain('check-migration-compat.mjs');
-    expect(pkg.scripts[`${COMPAT}:self-test`]).toContain('--self-test');
+    expect(pkg.scripts['check-migration-compat']).toBe('node scripts/check-migration-compat.mjs');
+    expect(pkg.scripts['check-migration-compat:self-test']).toBe(
+      'node scripts/check-migration-compat.mjs --self-test',
+    );
   });
 
-  // Список исключений — не свалка: запись без причины бессмысленна, а сам сторож краснеет
-  // и на записи про несуществующую миграцию, и на записи про миграцию без разрушающих
-  // конструкций (это его собственный self-test). Здесь закрепляется только форма файла.
-  it('у каждого исключения есть непустая причина', () => {
+  // Список исключений — не свалка. Форма записи закрепляется здесь, а содержательные
+  // проверки (запись про несуществующую миграцию, про миграцию без разрушающих конструкций,
+  // про конструкцию, которой в файле нет) живут в self-test самого сторожа.
+  it('у каждого исключения есть причина и перечень конструкций', () => {
     const raw = JSON.parse(
       readFileSync(join(ROOT, 'scripts', 'migration-compat-allowlist.json'), 'utf8'),
-    ) as { allowed: Record<string, string> };
-    const empty = Object.entries(raw.allowed)
-      .filter(([, reason]) => typeof reason !== 'string' || reason.trim() === '')
+    ) as { allowed: Record<string, { reason?: string; constructs?: string[] }> };
+    const entries = Object.entries(raw.allowed);
+    expect(entries.length).toBeGreaterThan(0);
+    const broken = entries
+      .filter(
+        ([, e]) =>
+          typeof e.reason !== 'string' ||
+          e.reason.trim().length < 10 ||
+          !Array.isArray(e.constructs) ||
+          e.constructs.length === 0,
+      )
       .map(([name]) => name);
-    expect(empty).toEqual([]);
-    expect(Object.keys(raw.allowed).length).toBeGreaterThan(0);
+    expect(broken).toEqual([]);
+  });
+});
+
+/**
+ * Сторож самого отката (`LEGACY-243`).
+ *
+ * Job `rollback` покрыл теговый выкат, и тело шага перестало быть безразличным: до
+ * 18.08.2026 оно заходило в `/opt/books/app`, где скрипта нет, и печатало
+ * «Rollback script not found!». Job срабатывает так редко, что мёртвую строку никто не
+ * наблюдал месяцами — поэтому её и закрепляем.
+ */
+describe('LEGACY-243: откат заходит туда, где лежит скрипт, и зовёт его', () => {
+  const rollbackStep = (): string => runBody(step('rollback', '⏪ Rollback Deployment'));
+
+  it('откат работает в каталоге рабочего дерева', () => {
+    const body = rollbackStep();
+    expect(body).toMatch(/^\s*cd \/opt\/books\/app\/src\s*$/m);
+    expect(body).not.toMatch(/^\s*cd \/opt\/books\/app\s*$/m);
+  });
+
+  it('откат зовёт deploy_production.sh, а не печатает сообщение', () => {
+    expect(rollbackStep()).toMatch(/\.\/scripts\/deploy_production\.sh --rollback --force/);
+  });
+
+  // 🔴 `save_current_state` берёт ревизию из `DEPLOY_PREVIOUS_SHA`, и снять её обязан шаг
+  // выката — до `git checkout --detach --force`. Иначе скрипт считает `git rev-parse HEAD`
+  // уже после чекаута, пишет в `.rollback_info` выкатываемую ревизию, и откат откатывается
+  // на неё же. Порядок проверяется по позициям в теле, а не наличием строк.
+  it('предыдущая ревизия снимается до чекаута и уезжает в скрипт', () => {
+    const body = runBody(step('deploy', '🚀 Deploy to Server'));
+    const captured = body.indexOf('DEPLOY_PREVIOUS_SHA=$(git rev-parse HEAD');
+    const exported = body.indexOf('export DEPLOY_PREVIOUS_SHA');
+    const checkout = body.indexOf('git checkout --detach --force');
+    expect(captured).toBeGreaterThan(-1);
+    expect(exported).toBeGreaterThan(captured);
+    expect(checkout).toBeGreaterThan(exported);
   });
 });
 
@@ -740,28 +801,52 @@ describe('LEGACY-249: снятый из очереди прогон не исч�
   const WATCHDOG = 'deploy-queue-watchdog.yml';
   const RAW = readFileSync(join(WORKFLOWS_DIR, WATCHDOG), 'utf8');
   const CODE = stripComments(RAW);
+  const line = (re: RegExp): string =>
+    orFail(
+      CODE.split(/\r?\n/).find((l) => re.test(l)),
+      `в ${WATCHDOG} нет строки ${String(re)}`,
+    ).trim();
 
   it('сторож смотрит на завершение выката снаружи', () => {
     expect(CODE).toMatch(/^on:\s*$/m);
     expect(CODE).toMatch(/^\s*workflow_run:\s*$/m);
-    expect(CODE).toMatch(/workflows:\s*\['📦 Production Deployment'\]/);
-    expect(CODE).toMatch(/types:\s*\[completed\]/);
+    expect(line(/^\s*workflows:/)).toBe("workflows: ['📦 Production Deployment']");
+    expect(line(/^\s*types:/)).toBe('types: [completed]');
     // Имя обязано совпадать с именем самого выката, иначе `workflow_run` не сработает
     // ни разу и сторож будет зелёным ровно потому, что мёртв.
     expect(LINES[0]).toBe('name: 📦 Production Deployment');
   });
 
-  it('сторож реагирует только на отменённые прогоны', () => {
-    expect(CODE).toContain("github.event.workflow_run.conclusion == 'cancelled'");
+  // Равенством, а не вхождением: `… == 'cancelled' || … == 'failure'` оставило бы подстроку
+  // на месте и задублировало `🚨 Notify Failure` на каждом упавшем выкате.
+  it('сторож реагирует ровно на отменённые прогоны', () => {
+    expect(line(/^\s*if:.*conclusion/)).toBe(
+      "if: ${{ github.event.workflow_run.conclusion == 'cancelled' }}",
+    );
   });
 
-  // 🔴 Отмену руками объявляет `🚨 Notify Cancelled` внутри `deploy.yml`. Без отбора по
-  // числу стартовавших job'ов сторож дублировал бы её на каждой ручной отмене, а вторая
-  // копия сообщения хуже её отсутствия: канал перестают читать.
-  it('сообщение уходит только когда не стартовало ни одной job', () => {
+  // 🔴 Запрашивать надо job'ы **наблюдаемого** прогона. `RUN_ID: ${{ github.run_id }}` —
+  // свой собственный — оставляет и `/jobs`, и разбор ответа на месте, но условие отправки
+  // не выполняется никогда: сторож зелёный ровно потому, что мёртв.
+  it('сторож спрашивает про наблюдаемый прогон, а не про свой', () => {
+    expect(line(/^\s*RUN_ID:/)).toBe('RUN_ID: ${{ github.event.workflow_run.id }}');
     expect(CODE).toContain('/jobs');
-    expect(CODE).toMatch(/total_count/);
-    expect(CODE).toMatch(/steps\.jobs\.outputs\.started == '0'/);
+  });
+
+  // 🔴 Признак — «отработал ли job `notify` наблюдаемого прогона», а не число job'ов:
+  // считать стартовавшие значило бы угадывать, заводит ли GitHub записи job'ов для прогона,
+  // который стоит в очереди. Имя сверяется с тем, что реально написано в `deploy.yml`.
+  it('сообщение уходит только про прогон, о котором в канал ещё не сказали', () => {
+    const notifyName = orFail(
+      jobBody('notify')
+        .find((l) => /^ {4}name:/.test(l))
+        ?.replace(/^ {4}name:\s*/, '')
+        .trim(),
+      'у job `notify` в deploy.yml нет имени',
+    );
+    expect(CODE).toContain(`--arg name "${notifyName}"`);
+    expect(line(/^\s*if:.*steps\.jobs/)).toBe("if: ${{ steps.jobs.outputs.reported == '0' }}");
+    expect(CODE).toMatch(/reported=\$\{reported\}/);
   });
 
   it('сторож зовёт того же отправителя, а не свой curl', () => {
@@ -771,16 +856,25 @@ describe('LEGACY-249: снятый из очереди прогон не исч�
     expect(CODE).toContain('TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}');
   });
 
-  // Файл чекаутится ровно один, и без него шаг отправки падает. Тот же довод, что у
-  // `📥 Checkout Notifier` в `deploy.yml`.
-  it('отправитель попадает в разреженный чекаут', () => {
-    expect(CODE).toContain(NOTIFIER_PATH);
-    expect(CODE).toContain('ref: ${{ github.event.repository.default_branch }}');
+  // Строкой целиком, а не вхождением пути: `scripts/notify_telegram.sh` уже есть в теле
+  // шага отправки, поэтому подмена выкачиваемого файла проверку по вхождению проходила.
+  it('в разреженный чекаут попадает именно отправитель', () => {
+    const at = CODE.split(/\r?\n/).findIndex((l) => /^\s*sparse-checkout:\s*\|\s*$/.test(l));
+    expect(at).toBeGreaterThan(-1);
+    expect(CODE.split(/\r?\n/)[at + 1].trim()).toBe(NOTIFIER_PATH);
+    expect(line(/^\s*ref:/)).toBe('ref: ${{ github.event.repository.default_branch }}');
+  });
+
+  // Без `actions: read` вызов `gh api …/jobs` отдаёт 403, шаг падает, сообщения нет —
+  // и увидеть это можно только на живом снятии прогона из очереди, то есть примерно никогда.
+  it('у сторожа есть право читать список job’ов', () => {
+    expect(CODE).toMatch(/^permissions:\s*$/m);
+    expect(line(/^\s*actions:/)).toBe('actions: read');
   });
 
   // 🔴 Сторож обязан отработать, пока очередь занята. Попади он в группу `production-deploy`,
-  // он встал бы в неё сам и сообщил бы о снятом прогоне после того, как выкат закончится, —
-  // либо был бы снят из очереди ровно тем же способом, о котором обязан рассказывать.
+  // он сообщил бы о снятом прогоне после окончания выката — либо был бы снят из очереди
+  // ровно тем же способом, о котором обязан рассказывать.
   it('сторож не встаёт в очередь выката', () => {
     expect(CODE).not.toContain('production-deploy');
   });

@@ -373,21 +373,24 @@ describe('DevOps: monitoring config wiring', () => {
       expect(
         body.some((l) => /^\s{4}needs:.*\bdeploy\b/.test(l) || /^\s{6}-\s*deploy\s*$/.test(l)),
       ).toBe(true);
-      const cond = jobCondition('rollback');
-      expect(cond).toContain("needs.deploy.result == 'failure'");
-      // 🔴 Одного `result == 'failure'` мало: он истинен и при отказе checkout
-      // или настройки ssh, то есть до того, как выкат вообще дошёл до сервера.
-      // Без этой отметки сбой GitHub переливал бы прод предыдущим образом.
-      expect(cond).toContain("needs.deploy.outputs.server_stage_reached == 'true'");
-      expect(cond).toContain('!cancelled()');
-      // 🔴 LEGACY-243. Здесь до 18.08.2026 требовался ещё и
-      // `github.event_name == 'workflow_dispatch'`. Условие писалось, когда основным путём
-      // был push в `main`; после `LEGACY-241` автоматический путь остался один — тег `v*`, —
-      // и откат ему не полагался вовсе. Ограничение снято, и теперь проверяется обратное:
-      // отбор по типу события не вернулся. Снимать его было можно только вместе с ADR-018 —
-      // откат откатывает **образ**, а не схему, и полноценным становится лишь при обратно
-      // совместимых миграциях; это держит сторож `check-migration-compat`.
-      expect(cond).not.toContain('github.event_name');
+      // 🔴 Равенством, а не набором `toContain`, — по той же причине, что у job `deploy`
+      // десятью строками выше: дописанное `&& false` или `&& github.ref_type == 'branch'`
+      // оставляет все подстроки на месте, и откат не срабатывает ни разу.
+      //
+      // Смысл частей. `needs.deploy.result == 'failure'` один слишком широк: он истинен и
+      // при отказе checkout или настройки ssh, то есть до того, как выкат дошёл до сервера,
+      // — поэтому рядом стоит отметка `server_stage_reached` (`LEGACY-227`). `!cancelled()`
+      // отсеивает отменённые прогоны: отмена руками не повод переливать прод.
+      //
+      // 🔴 LEGACY-243. До 18.08.2026 в условии был ещё и
+      // `github.event_name == 'workflow_dispatch'`. Оно писалось, когда основным путём был
+      // push в `main`; после `LEGACY-241` автоматический путь остался один — тег `v*`, — и
+      // откат ему не полагался вовсе. Снимать это было можно только вместе с ADR-018: откат
+      // откатывает **образ**, а не схему, и полноценным становится лишь при обратно
+      // совместимых миграциях; это держит сторож `check-migration-compat` в обоих путях.
+      expect(jobCondition('rollback')).toBe(
+        "${{ !cancelled() && needs.deploy.result == 'failure' && needs.deploy.outputs.server_stage_reached == 'true' }}",
+      );
     });
 
     it('условия if: записаны одной строкой', () => {
