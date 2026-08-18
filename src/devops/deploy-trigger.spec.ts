@@ -666,3 +666,122 @@ describe('LEGACY-246: тело heredoc уезжает на сервер как �
     expect(args.join('\n')).toMatch(/(^|\s)\$BACKUP_FLAG(\s|$)/m);
   });
 });
+
+/**
+ * Сторож обратной совместимости миграций (`LEGACY-242`, ADR-018).
+ *
+ * Релиз несёт всё, что слито с прошлого тега (`LEGACY-241`), а `prisma migrate deploy`
+ * применяет каталоги по одному и **не** оборачивает пачку в транзакцию. Отказ на пятой
+ * миграции из семи оставляет четыре применёнными. Пережить это можно ровно пока предыдущий
+ * образ работает на новой схеме — то есть пока в миграции нет разрушающей конструкции.
+ * Откат здесь откатывает **образ**, а не схему, поэтому проверка и делает откат осмысленным.
+ *
+ * Проверка заводится в **оба** пути: `ci.yml` не запускается по тегу `v*`, `deploy.yml` —
+ * на pull request. Шаг, заведённый только в одном, на втором отсутствует молча
+ * (`LEGACY-207`, `LEGACY-209`).
+ */
+describe('LEGACY-242: разрушающая миграция краснеет на обоих путях', () => {
+  const COMPAT = 'check-migration-compat';
+
+  /** Вызовы `yarn <script>` в тексте, по порядку, без строк-комментариев. */
+  const yarnCalls = (text: string): string[] =>
+    [...stripComments(text).matchAll(/^\s*yarn\s+(\S+)\s*$/gm)].map((m) => m[1]);
+
+  it('scripts/ci.sh зовёт сторож, и self-test идёт первым', () => {
+    const calls = yarnCalls(CI_SH_RAW);
+    const self = calls.indexOf(`${COMPAT}:self-test`);
+    const check = calls.indexOf(COMPAT);
+    expect([self, check].every((i) => i > -1)).toBe(true);
+    expect(self).toBeLessThan(check);
+  });
+
+  // 🔴 Самопроверка обязана идти **до** самого прогона, а не рядом: режим отказа такого
+  // сторожа — молчаливое «всё совместимо» из-за пробела в разборе SQL, и без self-test
+  // зелёный результат ничего не значит. Тот же довод, что у `drift-check` и `check:env`.
+  it('job test в deploy.yml зовёт сторож, и self-test идёт первым', () => {
+    const calls = yarnCalls(
+      step('test', '🧬 Migration Backwards-Compatibility Check').lines.join('\n'),
+    );
+    expect(calls).toEqual([`${COMPAT}:self-test`, COMPAT]);
+  });
+
+  it('сторож и его самопроверка объявлены в package.json', () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts[COMPAT]).toContain('check-migration-compat.mjs');
+    expect(pkg.scripts[`${COMPAT}:self-test`]).toContain('--self-test');
+  });
+
+  // Список исключений — не свалка: запись без причины бессмысленна, а сам сторож краснеет
+  // и на записи про несуществующую миграцию, и на записи про миграцию без разрушающих
+  // конструкций (это его собственный self-test). Здесь закрепляется только форма файла.
+  it('у каждого исключения есть непустая причина', () => {
+    const raw = JSON.parse(
+      readFileSync(join(ROOT, 'scripts', 'migration-compat-allowlist.json'), 'utf8'),
+    ) as { allowed: Record<string, string> };
+    const empty = Object.entries(raw.allowed)
+      .filter(([, reason]) => typeof reason !== 'string' || reason.trim() === '')
+      .map(([name]) => name);
+    expect(empty).toEqual([]);
+    expect(Object.keys(raw.allowed).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Сторож наблюдения за очередью выката (`LEGACY-249`).
+ *
+ * `concurrency` держит на группу один выполняющийся прогон и один ожидающий; третий,
+ * встав в очередь, отменяет ожидавшего. Такой прогон не запускает ни одного job'а, поэтому
+ * изнутри `deploy.yml` он не наблюдаем вовсе: `if: cancelled()` вычисляется только внутри
+ * запущенного job'а. Смотреть на это может лишь отдельный воркфлоу на `workflow_run`.
+ */
+describe('LEGACY-249: снятый из очереди прогон не исчезает молча', () => {
+  const WATCHDOG = 'deploy-queue-watchdog.yml';
+  const RAW = readFileSync(join(WORKFLOWS_DIR, WATCHDOG), 'utf8');
+  const CODE = stripComments(RAW);
+
+  it('сторож смотрит на завершение выката снаружи', () => {
+    expect(CODE).toMatch(/^on:\s*$/m);
+    expect(CODE).toMatch(/^\s*workflow_run:\s*$/m);
+    expect(CODE).toMatch(/workflows:\s*\['📦 Production Deployment'\]/);
+    expect(CODE).toMatch(/types:\s*\[completed\]/);
+    // Имя обязано совпадать с именем самого выката, иначе `workflow_run` не сработает
+    // ни разу и сторож будет зелёным ровно потому, что мёртв.
+    expect(LINES[0]).toBe('name: 📦 Production Deployment');
+  });
+
+  it('сторож реагирует только на отменённые прогоны', () => {
+    expect(CODE).toContain("github.event.workflow_run.conclusion == 'cancelled'");
+  });
+
+  // 🔴 Отмену руками объявляет `🚨 Notify Cancelled` внутри `deploy.yml`. Без отбора по
+  // числу стартовавших job'ов сторож дублировал бы её на каждой ручной отмене, а вторая
+  // копия сообщения хуже её отсутствия: канал перестают читать.
+  it('сообщение уходит только когда не стартовало ни одной job', () => {
+    expect(CODE).toContain('/jobs');
+    expect(CODE).toMatch(/total_count/);
+    expect(CODE).toMatch(/steps\.jobs\.outputs\.started == '0'/);
+  });
+
+  it('сторож зовёт того же отправителя, а не свой curl', () => {
+    expect(CODE).toContain(`bash ${NOTIFIER_PATH}`);
+    expect(CODE).not.toContain('api.telegram.org');
+    expect(CODE).toContain('TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}');
+    expect(CODE).toContain('TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}');
+  });
+
+  // Файл чекаутится ровно один, и без него шаг отправки падает. Тот же довод, что у
+  // `📥 Checkout Notifier` в `deploy.yml`.
+  it('отправитель попадает в разреженный чекаут', () => {
+    expect(CODE).toContain(NOTIFIER_PATH);
+    expect(CODE).toContain('ref: ${{ github.event.repository.default_branch }}');
+  });
+
+  // 🔴 Сторож обязан отработать, пока очередь занята. Попади он в группу `production-deploy`,
+  // он встал бы в неё сам и сообщил бы о снятом прогоне после того, как выкат закончится, —
+  // либо был бы снят из очереди ровно тем же способом, о котором обязан рассказывать.
+  it('сторож не встаёт в очередь выката', () => {
+    expect(CODE).not.toContain('production-deploy');
+  });
+});

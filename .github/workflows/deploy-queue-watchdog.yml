@@ -1,0 +1,80 @@
+name: 👁 Deploy Queue Watchdog
+
+# 🔴 LEGACY-249. Очередь выката (`concurrency: production-deploy`, `LEGACY-245`) держит
+# на группу один выполняющийся прогон и **один** ожидающий. Третий, встав в очередь,
+# отменяет ожидавшего — `cancel-in-progress` управляет только отменой выполняющегося
+# и на это не влияет. Сценарий не экзотический, а ровно тот, ради которого заводили
+# очередь: теги ставят пачками, когда чинят неудачный релиз.
+#
+# 🔴 Отменённый в ожидании прогон не запускает **ни одного** job'а. Поэтому его не видит
+# ничто внутри самого `deploy.yml`: `🚨 Notify Cancelled` живёт в job `notify`, а условие
+# шага вычисляется только внутри запущенного job'а. Тег уходил из Telegram-журнала целиком —
+# ни «Выкат начат», ни закрывающего сообщения, — и со стороны это неотличимо от «выкачен».
+#
+# Отсюда отдельный воркфлоу: `workflow_run` смотрит на прогоны **снаружи** и видит
+# `conclusion: cancelled` там, где изнутри смотреть уже некому.
+#
+# ⚠️ Отмену руками этот сторож дублировать не должен — по ней `🚨 Notify Cancelled`
+# отрабатывает сам. Отличаются они числом стартовавших job'ов: у снятого из очереди
+# прогона их ноль. Именно это и проверяется, а не тип события.
+#
+# Файл обязан лежать в ветке по умолчанию: `workflow_run` берётся только оттуда.
+# В группу `production-deploy` этот воркфлоу не входит намеренно — он ничего не катит
+# и обязан отработать, пока очередь занята.
+on:
+  workflow_run:
+    workflows: ['📦 Production Deployment']
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report-dropped-run:
+    name: 🚨 Notify Dropped From Queue
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    if: ${{ github.event.workflow_run.conclusion == 'cancelled' }}
+
+    steps:
+      # Ветка по умолчанию, а не выкатываемый ref: скрипт здесь утилита, а не часть релиза.
+      # Тот же довод, что и у `📥 Checkout Notifier` в `deploy.yml`.
+      - name: 📥 Checkout Notifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            scripts/notify_telegram.sh
+          sparse-checkout-cone-mode: false
+
+      # 🔴 Ноль стартовавших job'ов — единственный признак, отличающий снятие из очереди
+      # от отмены руками. `total_count` берётся у самого прогона, а не у попытки: повторный
+      # запуск отменённого прогона иначе выглядел бы как новый снятый.
+      - name: 🔍 Did any job start?
+        id: jobs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          count=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/jobs" --jq '.total_count')
+          echo "jobs started: ${count}"
+          echo "started=${count}" >> "$GITHUB_OUTPUT"
+
+      # Сообщение уходит только про прогон, снятый из очереди. Всё остальное — не наше дело:
+      # отмену руками объявляет `🚨 Notify Cancelled` внутри `deploy.yml`, и вторая копия
+      # сообщения хуже её отсутствия.
+      - name: 🚨 Notify Dropped From Queue
+        if: ${{ steps.jobs.outputs.started == '0' }}
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REF_NAME: ${{ github.event.workflow_run.head_branch }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          bash scripts/notify_telegram.sh \
+            "Выкат снят из очереди · books · ${REF_NAME:-без ревизии}" \
+            "Прогон отменён, пока стоял в очереди: следом в неё встал более новый." \
+            "Ни одна job не запускалась — образ не собран и на прод ничего не уезжало." \
+            "${RUN_URL}"

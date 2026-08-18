@@ -1,0 +1,20 @@
+{
+  "_readme": [
+    "Миграции, уже применённые на проде до введения ADR-018. Задним числом их не переписывают.",
+    "Список краснеет в обе стороны: запись про несуществующую миграцию и запись про миграцию",
+    "без разрушающих конструкций — обе ошибки. Держит scripts/check-migration-compat.mjs.",
+    "Новая запись сюда — это признание, что релиз ломает предыдущий образ. Обычный ответ",
+    "другой: разнести изменение на два тега (расширение, потом сжатие)."
+  ],
+  "allowed": {
+    "20251115153102_add_cascade_delete_for_books": "DROP CONSTRAINT: внешние ключи пересоздаются с ON DELETE CASCADE. Применена 15.11.2025, задолго до ADR-018.",
+    "20251226094253_add_translation_group_id_to_pages": "DROP CONSTRAINT: те же FK таксономии пересоздаются под новую связь. Применена 26.12.2025.",
+    "20260420173712_add_description_and_seo_to_taxonomy_translations": "DROP CONSTRAINT IF EXISTS: идемпотентное пересоздание FK переводов таксономии. Применена 20.04.2026.",
+    "20260624142000_localize_author_fields": "DROP COLUMN плюс SET NOT NULL: поля автора переехали в таблицу переводов. Применена 24.06.2026.",
+    "20260630000000_taxonomy_restructure": "ALTER COLUMN TYPE и RENAME TO: подмена enum CategoryType по классической схеме Prisma. Применена 30.06.2026.",
+    "20260705000001_add_key_to_taxonomies": "SET NOT NULL: колонка key заполнена в той же миграции до постановки ограничения. Применена 05.07.2026.",
+    "20260724140000_add_rights_approval_workflow": "ALTER COLUMN TYPE и RENAME TO: подмена enum'ов RightsProfileStatus и RightsReviewStatus. Применена 24.07.2026.",
+    "20260801100000_edition_rights_per_language": "SET NOT NULL: колонка заполнена в той же миграции до постановки ограничения. Применена 01.08.2026.",
+    "20260802010000_drop_dead_rights_content_hash_columns": "DROP COLUMN IF EXISTS: снятие мёртвых колонок content hash, код перестал их читать релизом раньше. Применена 02.08.2026 — это и есть образец двухшагового удаления."
+  }
+}

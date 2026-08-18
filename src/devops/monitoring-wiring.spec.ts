@@ -380,7 +380,14 @@ describe('DevOps: monitoring config wiring', () => {
       // Без этой отметки сбой GitHub переливал бы прод предыдущим образом.
       expect(cond).toContain("needs.deploy.outputs.server_stage_reached == 'true'");
       expect(cond).toContain('!cancelled()');
-      expect(cond).toContain("github.event_name == 'workflow_dispatch'");
+      // 🔴 LEGACY-243. Здесь до 18.08.2026 требовался ещё и
+      // `github.event_name == 'workflow_dispatch'`. Условие писалось, когда основным путём
+      // был push в `main`; после `LEGACY-241` автоматический путь остался один — тег `v*`, —
+      // и откат ему не полагался вовсе. Ограничение снято, и теперь проверяется обратное:
+      // отбор по типу события не вернулся. Снимать его было можно только вместе с ADR-018 —
+      // откат откатывает **образ**, а не схему, и полноценным становится лишь при обратно
+      // совместимых миграциях; это держит сторож `check-migration-compat`.
+      expect(cond).not.toContain('github.event_name');
     });
 
     it('условия if: записаны одной строкой', () => {

@@ -181,6 +181,18 @@ jobs:
           yarn drift-check:self-test
           yarn drift-check
 
+      # 🔴 ADR-018, `LEGACY-242`. Релиз несёт всё, что слито с прошлого тега, а
+      # `prisma migrate deploy` не оборачивает пачку в транзакцию: отказ на пятой миграции
+      # из семи оставляет четыре применёнными. Пережить это можно ровно пока предыдущий
+      # образ работает на новой схеме — то есть пока в миграции нет разрушающей конструкции.
+      # Откат в этом проекте откатывает образ, а не схему, поэтому проверка и делает откат
+      # осмысленным. Продублировано из `scripts/ci.sh`: выкат идёт по тегу `v*`, где
+      # `ci.yml` не запускается вовсе (`LEGACY-207`, `LEGACY-209`).
+      - name: 🧬 Migration Backwards-Compatibility Check
+        run: |
+          yarn check-migration-compat:self-test
+          yarn check-migration-compat
+
       # ⚠️ Продублировано из `scripts/ci.sh` по той же причине, что и drift-check выше:
       # `ci.yml` триггерится только на push в `main` и на pull request, а выкат идёт отсюда
       # и по тегу `v*` тоже. Без этой строки релиз по тегу уезжал бы без сверки ключей
@@ -950,8 +962,19 @@ jobs:
     # `📍 Mark server stage reached` вплотную перед выкатом. Отменённые прогоны
     # отсеиваются `!cancelled()`: отмена руками не повод переливать прод.
     # Инвариант закреплён спекой `src/devops/monitoring-wiring.spec.ts`.
+    #
+    # 🔴 LEGACY-243. Ограничение `github.event_name == 'workflow_dispatch'` снято 18.08.2026.
+    # Оно писалось, когда основным путём был push в `main`, а после `LEGACY-241` автоматический
+    # путь остался один — тег `v*`, — и у него отката не было вовсе. Снимать это было нельзя до
+    # ADR-018: откат здесь откатывает **образ**, а не схему, и полноценным откатом он становится
+    # только при обратно совместимых миграциях. Теперь это правило держит шаг
+    # `🧬 Migration Backwards-Compatibility Check` в обоих путях.
+    #
+    # Остальные три части условия сохранены дословно и снятию не подлежат: `!cancelled()`,
+    # настоящий отказ выката, и отметка `server_stage_reached` — без неё откат срабатывал на
+    # отказе checkout и переливал прод (`LEGACY-227`).
     needs: [deploy]
-    if: ${{ !cancelled() && needs.deploy.result == 'failure' && needs.deploy.outputs.server_stage_reached == 'true' && github.event_name == 'workflow_dispatch' }}
+    if: ${{ !cancelled() && needs.deploy.result == 'failure' && needs.deploy.outputs.server_stage_reached == 'true' }}
     environment:
       name: production
 
@@ -967,8 +990,14 @@ jobs:
             set -euo pipefail
             
             echo "⏪ Starting emergency rollback..."
-            cd /opt/books/app
-            
+            # 🔴 Рабочее дерево лежит в `/opt/books/app/src` — это `DEPLOY_DIR` из самого
+            # `deploy_production.sh:45` и тот же каталог, куда заходит шаг `🚀 Deploy to Server`.
+            # До 18.08.2026 здесь стоял `/opt/books/app`, где скрипта нет: откат уходил в ветку
+            # `else` и печатал «Rollback script not found!». Job срабатывал так редко
+            # (только `workflow_dispatch` плюс отказ выката после отметки о сервере), что
+            # мёртвую строку никто не наблюдал.
+            cd /opt/books/app/src
+
             if [[ -f "./scripts/deploy_production.sh" ]]; then
               ./scripts/deploy_production.sh --rollback --force
               echo "✅ Rollback completed!"

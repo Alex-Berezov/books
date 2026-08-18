@@ -306,6 +306,16 @@ git tag v1.2.3 && git push origin v1.2.3
 ./scripts/health_check.sh --url https://bibliaris.com
 ```
 
+**Правило миграций (ADR-018).** Каждая миграция обязана оставлять предыдущий образ приложения
+работоспособным: релиз несёт всё, что слито с прошлого тега, `prisma migrate deploy` не оборачивает
+пачку в транзакцию, а откат здесь откатывает **образ**, а не схему. Удаление колонки или таблицы,
+переименование, сужение типа и `SET NOT NULL` — это два релиза: сначала расширение, потом сжатие.
+Правило держит `yarn check-migration-compat` (входит в `yarn ci` и в job `test` выката), уже
+применённые миграции перечислены в `scripts/migration-compat-allowlist.json`.
+
+Если пачка всё-таки не доехала — не откатывать схему руками, а идти по рунбуку:
+`books-app-docs/backend/guides/migration-failure-runbook.md`.
+
 ### Работающие Production URL
 
 - **API Health**: https://bibliaris.com/api/health/liveness

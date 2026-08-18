@@ -50,6 +50,15 @@ step "Schema/migration drift check"
 yarn drift-check:self-test
 yarn drift-check
 
+# ADR-018. Релиз несёт всё, что слито с прошлого тега (LEGACY-241), а `prisma migrate deploy`
+# не оборачивает пачку в транзакцию: отказ на пятой миграции из семи оставляет четыре
+# применёнными. Пережить это можно ровно пока предыдущий образ работает на новой схеме —
+# то есть пока в миграции нет разрушающей конструкции. Откат здесь откатывает образ, а не
+# схему, поэтому проверка и делает откат осмысленным (LEGACY-242).
+step "Migration backwards-compatibility check"
+yarn check-migration-compat:self-test
+yarn check-migration-compat
+
 # Nothing else compares the keys the code reads with `.env.example`: there is no validation
 # schema on ConfigModule and no test over the example. That is how LEGACY-171 lived for years —
 # the geo-block policy key was simply missing from the example (LEGACY-207).
