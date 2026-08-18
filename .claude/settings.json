@@ -30,6 +30,13 @@
       "Bash(docker compose -f docker-compose.monitoring.yml:*)",
       "Bash(docker compose --profile prod:*)",
       "Bash(docker exec:*)",
+      "Bash(docker run:*)",
+      "Bash(docker container:*)",
+      "Bash(docker create:*)",
+      "Bash(docker start:*)",
+      "Bash(docker cp:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker compose --file:*)",
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(//d/newDev/.env.prod.server)"

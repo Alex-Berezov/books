@@ -15,11 +15,13 @@ name: 📦 Production Deployment
 # 🔴 А вот job `build` counterpart'а не имела: `docker/build-push-action` жила только
 # здесь, и со снятием триггера сборка образа ушла бы с пути слияния целиком — поломка
 # `Dockerfile` впервые краснела бы на теге, когда окно выката уже объявлено в канал.
-# Поэтому в `scripts/ci.sh` заведён шаг `Docker image build (no push)`. Сверять надо
-# было **обе** job'ы, а не только `test`; проверено пошагово 17.08.2026.
+# Поэтому в `ci.yml` заведён отдельный job `image` (`Docker image (build only)`) —
+# именно job, а не шаг в `scripts/ci.sh`: скрипт зовут и локально перед сдачей, а холодная
+# сборка образа тянет полный `yarn install` из сети и не имеет кэша слоёв `type=gha`.
+# Сверять надо было **обе** job'ы, а не только `test`; проверено пошагово 17.08.2026.
 #
 # Инварианты держит `src/devops/deploy-trigger.spec.ts`: и возврат `branches:` сюда,
-# и пропажа сборки образа из `scripts/ci.sh` краснеют по отдельности.
+# и пропажа сборки образа с пути слияния краснеют по отдельности.
 on:
   push:
     tags:
@@ -30,6 +32,19 @@ on:
         description: 'Version to deploy (tag, branch, or commit)'
         required: true
         default: 'main'
+      # 🔴 LEGACY-247. Вариант `staging` убран 18.08.2026. Он не переключал ничего:
+      # ssh шёл на `vars.PRODUCTION_SERVER`, проверка живости и дым — на
+      # `vars.PRODUCTION_DOMAIN`, миграции применялись к боевой базе, а после
+      # `LEGACY-241` «стейджевый» запуск ещё и объявлял контент-менеджеру окно
+      # недоступности прода. Менялись только имя окружения GitHub и строка в логе.
+      # Вход `workflow_dispatch`, который не меняет поведения, опаснее отсутствующего:
+      # он читается как предохранитель, и выбравший его при неуверенности катит прод.
+      #
+      # Стенда в проекте нет — из переменных репозитория объявлены только
+      # `PRODUCTION_SERVER` и `PRODUCTION_DOMAIN`. Появится — вариант возвращается
+      # вместе с парой `STAGING_SERVER` / `STAGING_DOMAIN` и выбором адресов по входу,
+      # включая адрес дыма; вернуть его без этой пары не даёт спека
+      # `src/devops/deploy-trigger.spec.ts`.
       environment:
         description: 'Target environment'
         required: true
@@ -37,7 +52,6 @@ on:
         type: choice
         options:
           - production
-          - staging
       skip_tests:
         description: 'Skip tests (emergency deploy)'
         required: false
@@ -68,9 +82,14 @@ permissions:
 #
 # 🔴 `cancel-in-progress: false` обязателен. Выкат, отменённый посреди
 # `prisma migrate deploy`, оставляет частично применённую пачку миграций
-# (`LEGACY-242`) — это хуже очереди. У `ci.yml` `concurrency` пока нет вовсе
-# (`LEGACY-240` открыт), и когда появится — там значение будет противоположным,
-# потому что отменять устаревший прогон проверок как раз правильно. Записи не путать.
+# (`LEGACY-242`) — это хуже очереди.
+#
+# ⚠️ У `ci.yml` с 18.08.2026 свой `concurrency` (`LEGACY-240`), и записи не путать:
+# там группа включает `github.ref` **и** суффикс, уникальный на прогон для всего, кроме
+# `pull_request`, — то есть push в `main` в очередь не встаёт вообще. Отмена включена
+# ровно для `pull_request`; для push в `main` она не просто выключена значением
+# `cancel-in-progress`, а исключена самой группой — см. абзац про глубину очереди ниже,
+# он применим к обоим файлам.
 #
 # `workflow_dispatch` попадает в ту же группу намеренно: ручной выкат во время
 # тегового обязан ждать, а не идти рядом.
@@ -345,6 +364,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 🔴 LEGACY-244. У `latest` было условие `enable={{is_default_branch}}`. Оно писалось,
+      # когда воркфлоу срабатывал на push в `main`; после `LEGACY-241` он туда не ходит,
+      # а на push тега ветка по умолчанию ложна — то есть на **автоматическом** пути
+      # `latest` перестал двигаться вовсе и застыл на сборке от 17.08.2026. Оставался
+      # ровно один путь, где он двигался: ручной запуск с `main`, где `is_default_branch`
+      # истинно, — то есть тег обновлялся только тогда, когда кто-то вручную катал ветку,
+      # и указывал на непомеченную ревизию. Застывший плавающий тег хуже отсутствующего:
+      # он молчит, и потянувший его для отладки или восстановления получает не тот образ.
+      #
+      # `latest` здесь означает **последний релиз**, и условие сужено втрое:
+      # 1. `github.event_name == 'push'` — ручной запуск исключён целиком. Без этого
+      #    условие ловило бы `workflow_dispatch`, запущенный **с тега** (в списке
+      #    «Use workflow from» теги выбираются наравне с ветками, а `📥 Checkout Code`
+      #    идёт без `ref:` и берёт именно его): дежурный, вручную перекатывающий старый
+      #    тег ради отката, молча переставлял бы `latest` назад.
+      # 2. `github.ref_type == 'tag'` — собственно релизный путь.
+      # 3. `!contains(github.ref_name, '-')` — пред-релизы. `v1.2.0-rc1` по семверу
+      #    содержит дефис; без этой части первый же кандидат стал бы `latest`.
+      #
+      # ⚠️ Комментарий стоит здесь, а не внутри `tags: |`: это блочный скаляр, и строки
+      # внутри него — не комментарии YAML, а значение, которое уедет в action.
       - name: 🏷️ Extract Metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -355,7 +395,7 @@ jobs:
             type=ref,event=tag
             type=sha,prefix={{branch}}-
             type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
 
       - name: 🔧 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -385,11 +425,30 @@ jobs:
           output-file: ./sbom-${{ steps.version.outputs.version }}.spdx.json
 
       - name: 🔍 Security Scan
+        id: scan
         uses: anchore/scan-action@v3
         continue-on-error: true # Don't block deployment on scan errors
         with:
           image: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:${{ steps.version.outputs.version }}
           fail-build: false # Don't stop deployment on medium vulnerabilities
+
+      # 🔴 Тот же шаг, что и на пути слияния, и по той же причине: без выгруженного отчёта
+      # отказ сканера неотличим от чистого образа, а `continue-on-error` выше делает такой
+      # отказ ещё и незаметным. Здесь это важнее, чем на слиянии: тег — это и есть релиз,
+      # решение о котором уже принято. Шаг, заведённый только на одном пути, на втором
+      # отсутствует молча (`LEGACY-207`, `LEGACY-209`), поэтому оба держит спека.
+      #
+      # Условие и `continue-on-error` — как в `ci.yml`: пустой выход `sarif` уронил бы
+      # `actions/upload-artifact` на обязательном входе `path` и покрасил бы выкат отказом
+      # сканера, а до сервера этот job идёт раньше выката.
+      - name: 📤 Upload Scan Report
+        if: always() && steps.scan.outputs.sarif != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: vuln-scan-${{ steps.version.outputs.version }}
+          path: ${{ steps.scan.outputs.sarif }}
+          if-no-files-found: warn
 
   # =====================================================
   # PRODUCTION DEPLOYMENT

@@ -57,7 +57,9 @@ const CI_SH = stripComments(CI_SH_RAW);
  * по сырому тексту проходила бы на одном комментарии (найдено ревью 17.08.2026).
  */
 const DEPLOY_CODE = stripComments(DEPLOY);
-const CI_YML = stripComments(readFileSync(join(WORKFLOWS_DIR, 'ci.yml'), 'utf8'));
+const CI_YML_RAW = readFileSync(join(WORKFLOWS_DIR, 'ci.yml'), 'utf8');
+const CI_YML = stripComments(CI_YML_RAW);
+const CI_LINES = CI_YML_RAW.split(/\r?\n/);
 const DOCKERFILE = readFileSync(join(ROOT, 'Dockerfile'), 'utf8');
 
 /** Помощники бросают, а не зовут `expect`: падение на сборе набора скрыло бы имя кейса. */
@@ -66,26 +68,57 @@ const orFail = <T>(value: T | undefined, message: string): T => {
   return value;
 };
 
-/** Тело блока верхнего уровня (`on:`, `jobs:`) — до следующей строки нулевого отступа. */
-const topLevelBlock = (key: string): string[] => {
-  const start = LINES.findIndex((line) => new RegExp(`^${key}:\\s*$`).test(line));
-  if (start === -1) throw new Error(`в deploy.yml нет блока верхнего уровня \`${key}:\``);
-  const rest = LINES.slice(start + 1);
+/**
+ * Тело блока верхнего уровня (`on:`, `jobs:`, `concurrency:`) — до следующей строки
+ * нулевого отступа. Файл передаётся строками: те же блоки разбираются и в `ci.yml`
+ * (`LEGACY-240`, `LEGACY-248`), а второй копии разбора здесь быть не должно.
+ */
+const topLevelBlockOf = (lines: string[], file: string, key: string): string[] => {
+  const start = lines.findIndex((line) => new RegExp(`^${key}:\\s*$`).test(line));
+  if (start === -1) throw new Error(`в ${file} нет блока верхнего уровня \`${key}:\``);
+  const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => /^\S/.test(line));
   return (end === -1 ? rest : rest.slice(0, end)).filter((line) => !isComment(line));
 };
 
+const topLevelBlock = (key: string): string[] => topLevelBlockOf(LINES, 'deploy.yml', key);
+
 /** Тело job'а первого уровня вложенности, без комментариев. */
-const jobBody = (job: string): string[] => {
-  const jobs = LINES.findIndex((line) => /^jobs:\s*$/.test(line));
-  if (jobs === -1) throw new Error('в deploy.yml нет блока `jobs:`');
-  const start = LINES.findIndex(
+const jobBodyOf = (lines: string[], file: string, job: string): string[] => {
+  const jobs = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  if (jobs === -1) throw new Error(`в ${file} нет блока \`jobs:\``);
+  const start = lines.findIndex(
     (line, i) => i > jobs && new RegExp(`^ {2}${job}:\\s*$`).test(line),
   );
-  if (start === -1) throw new Error(`в deploy.yml нет job'а \`${job}\``);
-  const rest = LINES.slice(start + 1);
+  if (start === -1) throw new Error(`в ${file} нет job'а \`${job}\``);
+  const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => /^ {0,2}\S/.test(line) && !isComment(line));
   return (end === -1 ? rest : rest.slice(0, end)).filter((line) => !isComment(line));
+};
+
+const jobBody = (job: string): string[] => jobBodyOf(LINES, 'deploy.yml', job);
+
+/**
+ * Значение ключа блока `concurrency:` как записано, без окружающих кавычек YAML.
+ *
+ * 🔴 Ровно одно вхождение, а не первое совпадение: две строки `cancel-in-progress:`
+ * подряд — `false`, затем `true` — прошли бы `find` зелёными, а какая из них доедет до
+ * боевого прогона, зависит от снисходительности парсера GitHub.
+ *
+ * Помощник общий на оба файла: требования к `deploy.yml` (`LEGACY-245`) и к `ci.yml`
+ * (`LEGACY-240`) противоположны по смыслу, но разбираются одинаково, и второй копии
+ * разбора здесь быть не должно — правка формата иначе нужна в двух местах.
+ */
+const concurrencyValue = (lines: string[], file: string, key: string): string => {
+  const found = topLevelBlockOf(lines, file, 'concurrency').filter((line) =>
+    new RegExp(`^ {2}${key}:`).test(line),
+  );
+  expect([file, key, found.length]).toEqual([file, key, 1]);
+  return found[0]
+    .replace(new RegExp(`^ {2}${key}:\\s*`), '')
+    .trim()
+    .replace(/^(['"])([\s\S]*)\1$/, '$2')
+    .trim();
 };
 
 interface Step {
@@ -176,7 +209,7 @@ describe('LEGACY-241: окно выката объявляется, закрыв
   });
 
   // 🔴 Со снятием триггера с пути слияния ушла не только выкатка, но и job `build`:
-  // сборка образа жила только в `deploy.yml`. Без встречного шага в `scripts/ci.sh`
+  // сборка образа жила только в `deploy.yml`. Без встречного job'а `image` в `ci.yml`
   // поломка `Dockerfile` впервые краснела бы на теге — в момент релиза.
   describe('сборка образа осталась на пути слияния', () => {
     // Сборка живёт в `ci.yml` отдельным job'ом, а не шагом `scripts/ci.sh`: скрипт зовут
@@ -445,8 +478,9 @@ describe('LEGACY-241: окно выката объявляется, закрыв
  *
  * Проверяется только `deploy.yml`. Кейс, написанный по всем файлам
  * `.github/workflows/**`, был бы неверен: `concurrency` для `ci.yml` — это
- * `LEGACY-240`, отдельная запись, и значение `cancel-in-progress` там будет
- * противоположным.
+ * `LEGACY-240`, отдельная запись, и требования там **противоположны** —
+ * группа обязана содержать `github.ref` и суффикс, уникальный на прогон для всего,
+ * кроме `pull_request`, а отмена включена именно для него.
  */
 describe('LEGACY-245: выкат встаёт в очередь, а не идёт вторым прогоном рядом', () => {
   // 🔴 Чёрного списка контекстов здесь быть не может: `github.run_number`,
@@ -456,23 +490,7 @@ describe('LEGACY-245: выкат встаёт в очередь, а не идё�
   // постоянных на все прогоны воркфлоу.
   const CONSTANT_CONTEXTS = ['github.workflow', 'github.repository'];
 
-  /** Строки блока `concurrency:`, задающие ключ верхнего уровня. */
-  const concurrencyKey = (key: string): string[] =>
-    topLevelBlock('concurrency').filter((line) => new RegExp(`^ {2}${key}:`).test(line));
-
-  /** Значение ключа как записано, без окружающих кавычек YAML. */
-  const value = (key: string): string => {
-    const lines = concurrencyKey(key);
-    // 🔴 Ровно одно вхождение, а не первое совпадение: две строки `cancel-in-progress:`
-    // подряд — `false`, затем `true` — прошли бы `find` зелёными, а какая из них доедет
-    // до боевого прогона, зависит от снисходительности парсера GitHub.
-    expect([key, lines.length]).toEqual([key, 1]);
-    return lines[0]
-      .replace(new RegExp(`^ {2}${key}:\\s*`), '')
-      .trim()
-      .replace(/^(['"])([\s\S]*)\1$/, '$2')
-      .trim();
-  };
+  const value = (key: string): string => concurrencyValue(LINES, 'deploy.yml', key);
 
   // 🔴 Отменённый посреди `prisma migrate deploy` выкат оставляет частично применённую
   // пачку миграций (`LEGACY-242`) — это хуже очереди. Значение сверяется точным
@@ -878,4 +896,343 @@ describe('LEGACY-249: снятый из очереди прогон не исч�
   it('сторож не встаёт в очередь выката', () => {
     expect(CODE).not.toContain('production-deploy');
   });
+});
+
+/**
+ * Отмена устаревших прогонов на пути слияния (`LEGACY-240`).
+ *
+ * Три push подряд в ветку запроса на слияние давали три параллельных прогона `e2e`,
+ * каждый со своими postgres и redis, и все занимали раннеры до конца.
+ *
+ * 🔴 Здесь ошибиться можно в обе стороны, и обе ошибки тихие.
+ *
+ * Первая — включить в группу push в `main`. Это **не** лечится `cancel-in-progress`:
+ * очередь GitHub в группе глубиной один, и третий вставший в неё прогон отменяет
+ * ожидавшего независимо от значения. Три слияния за 6–9 минут прогона `e2e` оставили бы
+ * средний коммит `main` без единого job'а, и увидеть это можно только по пропавшему
+ * прогону в истории. Поэтому суффикс группы для всего, кроме `pull_request`, —
+ * `github.run_id`: он уникален на прогон.
+ *
+ * Вторая — сделать группу уникальной **всегда**: `concurrency` тогда выключен целиком,
+ * `LEGACY-240` регрессирует, а проверка «в группе есть `github.ref`» этого не видит.
+ * Ровно поэтому первая версия этой спеки, сверявшая группу через `toContain`, была
+ * негодной: она пропускала собственную починку блокера. Группа сверяется **равенством**.
+ */
+describe('LEGACY-240: устаревший прогон на слиянии отменяется, прогон main не встаёт в очередь', () => {
+  const value = (key: string): string => concurrencyValue(CI_LINES, 'ci.yml', key);
+
+  const GROUP =
+    "${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}";
+
+  // Равенство, а не `toContain`: `${{ github.event_name == 'pull_request' || true }}`
+  // и голое `true` содержат нужную подстроку и отменяют прогоны ветки по умолчанию.
+  it('отмена включена ровно для запроса на слияние', () => {
+    expect(value('cancel-in-progress')).toBe("${{ github.event_name == 'pull_request' }}");
+  });
+
+  // 🔴 Равенством целиком. Любая из трёх частей, снятая по отдельности, ломает свою
+  // половину правила, и ни одна поломка не наблюдаема иначе как пропавшим прогоном.
+  it('группа записана ровно так, как требуют обе половины правила', () => {
+    expect(value('group')).toBe(GROUP);
+  });
+
+  // Те же два требования, но по отдельности и с внятным сообщением: кейс выше говорит
+  // «строка не та», а эти два — какая именно половина правила нарушена.
+  it('прогон push в main получает собственную группу', () => {
+    expect(value('group')).toContain('github.run_id');
+  });
+
+  it('прогоны одной ветки запроса на слияние делят группу', () => {
+    const group = value('group');
+    expect(group).toContain('${{ github.ref }}');
+    expect(group).toContain("github.event_name == 'pull_request'");
+  });
+
+  /**
+   * 🔴 Оба значения выше опираются на событие `pull_request`. Убери его из триггеров —
+   * и `cancel-in-progress` станет тождественно ложным, а суффикс группы — всегда
+   * уникальным: `concurrency` выключен целиком при четырёх зелёных кейсах выше.
+   * Заодно закреплено, что путь слияния вообще срабатывает на оба события.
+   */
+  it('оба события, на которых держатся значения выше, объявлены', () => {
+    const on = topLevelBlockOf(CI_LINES, 'ci.yml', 'on');
+    expect(on.some((line) => /^ {2}pull_request:/.test(line))).toBe(true);
+    expect(on.some((line) => /^ {2}push:/.test(line))).toBe(true);
+    const at = on.findIndex((line) => /^ {2}push:/.test(line));
+    const rest = on.slice(at + 1);
+    const end = rest.findIndex((line) => /^ {0,2}\S/.test(line));
+    expect((end === -1 ? rest : rest.slice(0, end)).join('\n')).toContain('branches: [main]');
+  });
+});
+
+/**
+ * Плавающий тег образа (`LEGACY-244`).
+ *
+ * `latest` ставился по условию `is_default_branch`. После `LEGACY-241` воркфлоу на push
+ * в `main` не ходит, а на push тега ветка по умолчанию ложна — значит на автоматическом
+ * пути тег не двигался вовсе. Оставался один путь, где он двигался: ручной запуск с
+ * `main`, то есть `latest` указывал на непомеченную ревизию ровно тогда, когда кто-то
+ * катал ветку руками. Отказ тихий и вылезает вне конвейера: потянувший `:latest` для
+ * отладки или восстановления получает не тот образ и не узнаёт об этом.
+ *
+ * 🔴 Условие сужено втрое, и каждая часть закрывает свой сценарий: событие — ручной
+ * перекат старого тега ради отката (он бы переставил `latest` назад), тип ссылки —
+ * собственно релизный путь, дефис в имени — пред-релизы (`v1.2.0-rc1` не должен
+ * становиться `latest`). Сверяется строка целиком: снятая часть не наблюдаема ничем,
+ * кроме реестра, а туда никто не смотрит до инцидента.
+ */
+describe('LEGACY-244: latest указывает на последний релиз', () => {
+  const metaTags = (): string[] => {
+    const lines = step('build', '🏷️ Extract Metadata').lines;
+    const at = lines.findIndex((line) => /^\s*tags:\s*\|\s*$/.test(line));
+    if (at === -1) throw new Error('в шаге `🏷️ Extract Metadata` нет блока `tags: |`');
+    return lines.slice(at + 1).filter((line) => /^\s+type=/.test(line));
+  };
+
+  it('latest ставится только на push релизного тега', () => {
+    // 🔴 Ровно одна строка, а не первое совпадение: `docker/metadata-action` применяет
+    // **все** записи списка, поэтому вторая строка `type=raw,value=latest,enable=true`
+    // под первой вернула бы тег на ручной перекат и на пред-релиз, а поиск первого
+    // совпадения остался бы зелёным. Тот же урок, что в `concurrencyValue` и `key`.
+    const latest = metaTags().filter((line) => line.includes('value=latest'));
+    expect(latest.map((line) => line.trim())).toEqual([
+      'type=raw,value=latest,' +
+        "enable=${{ github.event_name == 'push' && github.ref_type == 'tag' " +
+        "&& !contains(github.ref_name, '-') }}",
+    ]);
+  });
+
+  // 🔴 Отдельным кейсом, потому что `is_default_branch` — это не «другое значение», а
+  // ровно то условие, при котором тег перестал обновляться: воркфлоу на ветку не ходит.
+  it('условие ветки по умолчанию не вернулось ни к одному тегу', () => {
+    expect(metaTags().join('\n')).not.toContain('is_default_branch');
+  });
+});
+
+/**
+ * Вход `environment` (`LEGACY-247`).
+ *
+ * Вариант `staging` не переключал ничего: ssh шёл на `vars.PRODUCTION_SERVER`, дым — на
+ * `vars.PRODUCTION_DOMAIN`, миграции применялись к боевой базе. Вход `workflow_dispatch`,
+ * который не меняет поведения, опаснее отсутствующего: он читается как предохранитель.
+ *
+ * 🔴 Проверяется не отсутствие слова `staging`, а **обеспеченность каждого варианта**:
+ * запрет на слово держался бы ровно до первого `preprod`, а правило здесь общее — вариант
+ * существует тогда, когда у него есть свои адреса.
+ */
+describe('LEGACY-247: у каждого варианта окружения есть свои адреса', () => {
+  /**
+   * Варианты входа `environment`, и именно его: поиск первого блока `options:` внутри
+   * `on:` начал бы проверять соседний `choice`-вход, заведённый выше, а `environment`
+   * перестал бы проверяться вовсе.
+   */
+  const options = (): string[] => {
+    const lines = topLevelBlock('on');
+    const input = lines.findIndex((line) => /^\s{6}environment:\s*$/.test(line));
+    if (input === -1) throw new Error('во входах `workflow_dispatch` нет `environment:`');
+    const body = lines.slice(input + 1);
+    const bodyEnd = body.findIndex((line) => /^\s{0,6}\S/.test(line));
+    const own = bodyEnd === -1 ? body : body.slice(0, bodyEnd);
+    const at = own.findIndex((line) => /^\s{8}options:\s*$/.test(line));
+    if (at === -1) throw new Error('у входа `environment` нет блока `options:`');
+    const rest = own.slice(at + 1);
+    const end = rest.findIndex((line) => !/^\s{10}- /.test(line));
+    return (end === -1 ? rest : rest.slice(0, end)).map((line) => line.trim().replace(/^- /, ''));
+  };
+
+  /** Строки, где берётся адрес сервера или домена из переменных репозитория. */
+  const addressLines = (): string[] =>
+    DEPLOY_CODE.split(/\r?\n/).filter((line) => /vars\.[A-Z0-9_]+_(SERVER|DOMAIN)/.test(line));
+
+  it('варианты вообще перечислены', () => {
+    expect(options().length).toBeGreaterThan(0);
+  });
+
+  it.each([['SERVER'], ['DOMAIN']])('каждый вариант обеспечен своей переменной %s', (suffix) => {
+    for (const option of options()) {
+      const variable = `vars.${option.toUpperCase()}_${suffix}`;
+      // Сообщение печатает вариант: по `false !== true` не понять, какой из них голый.
+      expect([option, DEPLOY_CODE.includes(variable)]).toEqual([option, true]);
+    }
+  });
+
+  /**
+   * 🔴 Кейс выше сам по себе негоден и оставлен только как источник внятного сообщения:
+   * он ловит литерал `vars.STAGING_SERVER` где угодно в файле, а рядом, в шаге сводки,
+   * уже стоит `echo "Server: ${{ vars.PRODUCTION_SERVER }}"` — то есть форма, которой
+   * достаточно, чтобы вернуть `staging` в `options` при неизменном поведении: ssh, дым
+   * и `environment.url` остались бы на `PRODUCTION_*`. Ровно этот дефект `LEGACY-247` и
+   * закрывает, поэтому обеспеченность проверяется по **месту использования**: как только
+   * вариантов больше одного, каждая строка, берущая адрес, обязана выбирать его по входу.
+   */
+  it('при нескольких вариантах адрес выбирается по входу, а не прибит к одному', () => {
+    if (options().length < 2) return;
+    for (const line of addressLines()) {
+      expect([line.trim(), /inputs\.environment/.test(line)]).toEqual([line.trim(), true]);
+    }
+  });
+
+  // Пока вариант один, действует обратное требование: адреса обязаны быть его, то есть
+  // никаких других префиксов в файле быть не может. Иначе «единственный вариант» — слово.
+  it('при единственном варианте все адреса принадлежат ему', () => {
+    const only = options();
+    if (only.length !== 1) return;
+    const prefix = only[0].toUpperCase();
+    for (const line of addressLines()) {
+      const used = [...line.matchAll(/vars\.([A-Z0-9_]+)_(?:SERVER|DOMAIN)/g)].map((m) => m[1]);
+      expect([line.trim(), used.every((name) => name === prefix)]).toEqual([line.trim(), true]);
+    }
+  });
+});
+
+/**
+ * Состав образа и его уязвимости на пути слияния (`LEGACY-248`).
+ *
+ * Оба шага жили только в job `build` файла `deploy.yml`. До `LEGACY-241` она срабатывала
+ * на каждый push в `main`; со снятием триггера отчёт стал появляться только на теге —
+ * когда решение о релизе уже принято, а смотрят его на запросе на слияние.
+ *
+ * 🔴 Это наблюдение, а не гейт: у обоих шагов `continue-on-error: true`, у скана ещё и
+ * `fail-build: false`. Покраснеть они не могут по построению, значит их пропажу не
+ * заметит ни один прогон — держит её только эта спека (`LEGACY-207`, `LEGACY-209`).
+ */
+describe('LEGACY-248: состав образа описывается на обоих путях', () => {
+  const ciStep = (job: string, name: string): Step =>
+    orFail(
+      steps(jobBodyOf(CI_LINES, 'ci.yml', job)).find((s) => s.name === name),
+      `в job \`${job}\` файла ci.yml нет шага \`${name}\``,
+    );
+
+  /**
+   * Значение ключа внутри шага (`uses:`, `image:`, `tags:`, `load:`).
+   *
+   * 🔴 Ровно одно вхождение, как и в `concurrencyValue`: вторая строка `push: true`,
+   * дописанная под первой, вернула бы `false` поиском первого совпадения, а какая из
+   * двух доедет до action — на усмотрение парсера.
+   */
+  const key = (s: Step, name: string): string => {
+    const found = s.lines.filter((l) => new RegExp(`^\\s*${name}:\\s`).test(l));
+    expect([s.name, name, found.length]).toEqual([s.name, name, 1]);
+    const raw = found[0].replace(new RegExp(`^\\s*${name}:\\s*`), '').trim();
+    // Концевой комментарий YAML частью значения не является: у половины этих ключей
+    // рядом стоит пояснение (`continue-on-error: true # Don't block deployment…`),
+    // и без среза сверка равенством ловила бы текст комментария. У значения в кавычках
+    // `#` — обычный символ, поэтому там не режем.
+    return /^['"]/.test(raw) ? raw : raw.replace(/\s+#.*$/, '').trim();
+  };
+
+  const SBOM = '📋 Generate SBOM';
+  const SCAN = '🔍 Security Scan';
+  const USES: Array<[string, string]> = [
+    [SBOM, 'anchore/sbom-action@v0'],
+    [SCAN, 'anchore/scan-action@v3'],
+  ];
+
+  // 🔴 Обе стороны сверяются **одной и той же** строкой с версией. Пока теговый путь
+  // проверялся регуляркой `/^anchore\//`, апгрейд действия в одном файле проходил
+  // зелёным: на слиянии смотрят отчёт одного сканера, релиз описывает другой, и
+  // расхождение не читается никем — оба шага стоят с `continue-on-error`.
+  it.each(USES)('шаг %s зовёт %s на обоих путях', (name, uses) => {
+    expect(key(ciStep('image', name), 'uses')).toBe(uses);
+    expect(key(step('build', name), 'uses')).toBe(uses);
+  });
+
+  // 🔴 Главное отличие от тегового пути: там образ уже в реестре, здесь его туда не
+  // публикуют. Без `load: true` собранный образ существует только слоями в кэше buildx,
+  // и оба шага молча описывали бы пустоту — `continue-on-error` это ещё и скроет.
+  it('на пути слияния сканируется образ, собранный здесь же', () => {
+    const built = ciStep('image', 'Build image (no push)');
+    expect(key(built, 'load')).toBe('true');
+    const tag = key(built, 'tags');
+    expect(tag).not.toContain('ghcr.io');
+    expect(key(ciStep('image', SBOM), 'image')).toBe(tag);
+    expect(key(ciStep('image', SCAN), 'image')).toBe(tag);
+  });
+
+  // То же требование для тегового пути: там образ берётся из реестра, и сверять его надо
+  // с тем, что действительно собрано и опубликовано, — иначе опечатка в теге даёт пустой
+  // SBOM и пустой скан, а `continue-on-error` это скрывает.
+  /**
+   * 🔴 Ссылка выводится из блока `tags:` шага метаданных, а не записана литералом рядом.
+   * Литерал сверял бы текст с текстом: убери из `tags:` строку `type=raw,value=<версия>`,
+   * и оба шага начнут описывать тег, которого в реестре нет, — при `continue-on-error`
+   * это пустой отчёт и зелёный прогон. Проверяется, что образ собран из образов реестра
+   * и что его версия — та же, что публикуется.
+   */
+  it('на теговом пути сканируется опубликованная версия', () => {
+    const meta = step('build', '🏷️ Extract Metadata');
+    const at = meta.lines.findIndex((line) => /^\s*tags:\s*\|\s*$/.test(line));
+    const tags = meta.lines.slice(at + 1).filter((line) => /^\s+type=/.test(line));
+    const version = '${{ steps.version.outputs.version }}';
+    expect(tags.some((line) => line.trim() === `type=raw,value=${version}`)).toBe(true);
+
+    const images = key(meta, 'images');
+    for (const name of [SBOM, SCAN]) {
+      expect([name, key(step('build', name), 'image')]).toEqual([name, `${images}:${version}`]);
+    }
+  });
+
+  // Путь слияния по-прежнему ничего не публикует: `load` — не `push`.
+  it('загрузка образа в демон не превратилась в публикацию', () => {
+    expect(key(ciStep('image', 'Build image (no push)'), 'push')).toBe('false');
+  });
+
+  /**
+   * 🔴 Неблокирующий режим — решение, а не случайность, и закрепить его надо в обе
+   * стороны. Снять `continue-on-error` со скана значит заблокировать все запросы на
+   * слияние первым же CVE в базовом образе, который никто не выбирал и не может убрать
+   * правкой кода; вернуть `fail-build: true` — то же самое другим способом. Ни то ни
+   * другое не краснеет: шаг просто начинает валить чужие прогоны.
+   */
+  it.each([[SBOM], [SCAN]])('шаг %s остаётся наблюдением, а не гейтом, на обоих путях', (name) => {
+    expect(key(ciStep('image', name), 'continue-on-error')).toBe('true');
+    expect(key(step('build', name), 'continue-on-error')).toBe('true');
+  });
+
+  it('скан не валит сборку ни на одном пути', () => {
+    expect(key(ciStep('image', SCAN), 'fail-build')).toBe('false');
+    expect(key(step('build', SCAN), 'fail-build')).toBe('false');
+  });
+
+  /**
+   * 🔴 Без выгруженного отчёта «наблюдение» остаётся словом: при отказе самого сканера
+   * шаг зелёный и в логе нет ничего, что отличало бы это от чистого образа. SBOM
+   * выкладывает себя сам (`artifact-name`), скану нужен отдельный шаг — и он обязан
+   * выполняться при `always()`, иначе пропадёт ровно в том случае, ради которого заведён.
+   */
+  const UPLOAD = '📤 Upload Scan Report';
+
+  it.each([
+    ['ci.yml', () => ciStep('image', UPLOAD), () => ciStep('image', SCAN)],
+    ['deploy.yml', () => step('build', UPLOAD), () => step('build', SCAN)],
+  ] as Array<[string, () => Step, () => Step]>)(
+    'отчёт скана выкладывается артефактом на пути %s',
+    (_file, upload, scan) => {
+      // Версия равенством, а не `/^actions\/upload-artifact@/`: ровно от такой формы
+      // отказались для `anchore/*` — она пропускает апгрейд на одном из путей.
+      expect(key(upload(), 'uses')).toBe('actions/upload-artifact@v4');
+      expect(key(upload(), 'path')).toBe('${{ steps.scan.outputs.sarif }}');
+      // Шаг ссылается на `steps.scan`, значит идентификатор обязан существовать.
+      expect(key(scan(), 'id')).toBe('scan');
+    },
+  );
+
+  /**
+   * 🔴 Главный инвариант этого шага, и он не про наличие. `anchore/scan-action` выставляет
+   * `sarif` только после успешной записи отчёта, а `path` у `actions/upload-artifact@v4`
+   * читается как `required: true` и на пустой строке падает с `Input required and not
+   * supplied`. Шаг с одним `if: always()` краснел бы **именно при отказе сканера** — то
+   * есть ровно в том случае, ради наблюдаемости которого заведён, — и блокировал бы
+   * слияние. Поэтому проверяется и непустой выход в условии, и `continue-on-error`.
+   */
+  it.each([
+    ['ci.yml', () => ciStep('image', UPLOAD)],
+    ['deploy.yml', () => step('build', UPLOAD)],
+  ] as Array<[string, () => Step]>)(
+    'выгрузка отчёта не краснеет от отказа сканера на пути %s',
+    (_file, upload) => {
+      expect(stepCondition(upload())).toBe("always() && steps.scan.outputs.sarif != ''");
+      expect(key(upload(), 'continue-on-error')).toBe('true');
+    },
+  );
 });
