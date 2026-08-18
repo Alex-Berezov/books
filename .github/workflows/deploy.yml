@@ -61,15 +61,28 @@ permissions:
 # тегов `github.ref` разный, прогоны попадают в разные группы и идут параллельно —
 # два `prisma migrate deploy` против одной базы и два пересоздания контейнера на
 # одном сервере. Теги ставят пачками, когда чинят неудачный релиз, так что это
-# обычный ход событий, а не край.
+# обычный ход событий, а не край. Спека требует, чтобы в `group` не было ни одного
+# `${{ }}`, кроме постоянных на все прогоны `github.workflow` и `github.repository`:
+# перечислять запрещённые контексты поимённо бесполезно, мимо списка проходят
+# `github.run_number`, `github.run_attempt`, `inputs.*` и любой следующий.
 #
 # 🔴 `cancel-in-progress: false` обязателен. Выкат, отменённый посреди
 # `prisma migrate deploy`, оставляет частично применённую пачку миграций
-# (`LEGACY-242`) — это хуже очереди. Для `ci.yml` значение противоположное
-# (`LEGACY-240`), записи не путать.
+# (`LEGACY-242`) — это хуже очереди. У `ci.yml` `concurrency` пока нет вовсе
+# (`LEGACY-240` открыт), и когда появится — там значение будет противоположным,
+# потому что отменять устаревший прогон проверок как раз правильно. Записи не путать.
 #
 # `workflow_dispatch` попадает в ту же группу намеренно: ручной выкат во время
 # тегового обязан ждать, а не идти рядом.
+#
+# ⚠️ Очередь здесь глубиной один, и это ограничение GitHub, а не настройки.
+# В группе держится один выполняющийся прогон и один ожидающий; третий, встав в
+# очередь, **отменяет** ожидавшего — независимо от `cancel-in-progress`, который
+# управляет только отменой выполняющегося. Три тега подряд: первый катится, второй
+# снимается в ожидании, третий катится следом. Отменённый в ожидании прогон не
+# запускает ни одного job'а, поэтому по нему не уходит ни «Выкат начат», ни
+# `🚨 Notify Cancelled` — тег молча исчезает из журнала выкатов (`LEGACY-249`).
+# Для базы это безопасно: миграции такого прогона не начинались.
 #
 # Инвариант держит `src/devops/deploy-trigger.spec.ts`.
 concurrency:
@@ -89,6 +102,7 @@ jobs:
   test:
     name: 🧪 Tests & Quality Checks
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     # LEGACY-222. Сравнение именно с `'true'`, а не `!github.event.inputs.skip_tests`:
     # булев вход `workflow_dispatch` приходит в `github.event.inputs` **строкой**, и
     # непустая `'false'` в выражениях GitHub истинна — с отрицанием job пропускалась
@@ -283,6 +297,7 @@ jobs:
   build:
     name: 🏗️ Build Docker Image
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -371,6 +386,7 @@ jobs:
   deploy:
     name: 🚀 Deploy to Production
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     # Ждёт обоих: тесты больше не блокируют сборку, но по-прежнему блокируют выкат.
     needs: [test, build]
     # LEGACY-222. `skip_tests == 'true'`, а не сам вход: строка `'false'` истинна, и выкат
@@ -477,42 +493,58 @@ jobs:
       # проявиться контейнером, который не поднялся. Инвариант держит
       # `src/devops/deploy-trigger.spec.ts`.
       #
-      # ⚠️ `\$` внутри heredoc обязателен: `<< EOF` без кавычек разворачивает подстановки
-      # на раннере, и `$(git rev-parse HEAD)` без экранирования посчитался бы там, где
-      # рабочего дерева прода нет вовсе.
+      # 🔴 LEGACY-246. Делимитер heredoc **в кавычках** — `<< 'EOF'`, и это не косметика.
+      # Без кавычек тело разворачивается shell'ом раннера ещё до отправки, и сервером
+      # считается только то, что вручную экранировано через `\$`. Так и потерялся
+      # `$BACKUP_FLAG`: переменная задаётся здесь же, внутри heredoc, то есть на сервере,
+      # а раскрывалась на раннере, где её нет; `run:` идёт через `bash -e` **без** `-u`,
+      # поэтому подстановка молча давала пустую строку и галка `skip_backup_emergency`
+      # не делала ничего.
       #
-      # 🔴 LEGACY-246. Ровно на этом и погорел `\$BACKUP_FLAG`: переменная задаётся здесь же,
-      # внутри heredoc, то есть на сервере, а использовалась неэкранированной. Раннер
-      # выполняет `run:` через `bash -e` **без** `-u`, своей `BACKUP_FLAG` у него нет, и
-      # строка уезжала на сервер уже пустой — галка `skip_backup_emergency` не делала ничего.
-      # Неэкранированными остаются только `${{ }}` и переменные, объявленные на раннере
-      # выше по шагу (сейчас это один `REPO_LOWER`). Держит `src/devops/deploy-trigger.spec.ts`.
+      # С кавычками правило простое и не требует помнить про каждый `$`: **весь текст
+      # уезжает на сервер как есть**. Экранирование `\$` больше не нужно и было бы
+      # ошибкой — на сервер приехал бы литерал `\$`.
+      #
+      # ⚠️ `${{ }}` кавычки не отменяют: эти подстановки делает GitHub Actions над текстом
+      # воркфлоу до всякого shell. Поэтому `${{ secrets.ENV_PROD }}` по-прежнему попадает
+      # в тело — но теперь **значение секрета** больше не проходит через shell раннера.
+      # До кавычек секрет вида `JWT_SECRET=a$bc` уезжал на прод обрезанным до `a`, а
+      # `$(...)` или обратный апостроф в секрете исполнились бы прямо на раннере.
+      #
+      # 🔴 Обратная сторона: переменную раннера внутрь такого heredoc уже не передать.
+      # Поэтому `REPO_LOWER` считается на сервере из `${{ github.repository }}`, а не
+      # шагом выше. Ссылка на переменную, заданную в `run:` до `ssh`, здесь молча
+      # приехала бы на сервер пустой — это краснеет спекой.
+      #
+      # Инвариант держит `src/devops/deploy-trigger.spec.ts`: и потеря кавычек вокруг
+      # делимитера, и ссылка на раннерную переменную внутри закавыченного тела.
       - name: 🚀 Deploy to Server
         run: |
-          # Lowercase repository name for Docker
-          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-
           # Connect to server and execute deployment
-          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << EOF
+          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
             set -euo pipefail
-            
+
             echo "🔄 Preparing deployment environment..."
             cd /opt/books/app/src
-            
+
+            # Lowercase repository name for Docker. Считается на сервере: значение
+            # приходит подстановкой Actions, а `tr` выполняется уже внутри heredoc.
+            REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
             # Save local changes and update code
             if [[ -d ".git" ]]; then
               echo "📦 Stashing local changes..."
               git stash --include-untracked || true
-              
+
               echo "🔄 Fetching deployed revision..."
               git fetch origin --prune --tags --force '+refs/heads/*:refs/remotes/origin/*'
 
               echo "🔄 Checking out ${{ github.sha }}..."
               git checkout --detach --force ${{ github.sha }}
 
-              HEAD_SHA=\$(git rev-parse HEAD)
-              if [[ "\$HEAD_SHA" != "${{ github.sha }}" ]]; then
-                echo "Working tree is at \$HEAD_SHA, expected ${{ github.sha }}"
+              HEAD_SHA=$(git rev-parse HEAD)
+              if [[ "$HEAD_SHA" != "${{ github.sha }}" ]]; then
+                echo "Working tree is at $HEAD_SHA, expected ${{ github.sha }}"
                 exit 1
               fi
 
@@ -522,7 +554,7 @@ jobs:
               echo "/opt/books/app/src is not a git working tree — cannot pin the release revision"
               exit 1
             fi
-            
+
             # Create .env.prod from secrets
             echo "📝 Creating .env.prod from secrets..."
             cat > .env.prod << 'ENVEOF'
@@ -530,25 +562,25 @@ jobs:
           ENVEOF
             chmod 600 .env.prod
             echo "✅ .env.prod created successfully"
-            
+
             # Login to registry to pull image
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-            
+
             BACKUP_FLAG=""
             if [[ "${{ github.event.inputs.skip_backup_emergency }}" == "true" ]]; then
               echo "⚠️  EMERGENCY: Skipping pre-deploy backup!"
               BACKUP_FLAG="--no-backup"
             fi
-            
+
             echo "🚀 Starting deployment..."
             ./scripts/deploy_production.sh \
               --image-tag "${{ needs.build.outputs.version }}" \
-              --registry "${{ env.REGISTRY }}/${REPO_LOWER}" \
+              --registry "${{ env.REGISTRY }}/$REPO_LOWER" \
               --skip-git-update \
               --pull \
-              \$BACKUP_FLAG \
+              $BACKUP_FLAG \
               --force
-            
+
             echo "✅ Deployment completed!"
           EOF
 
@@ -721,6 +753,7 @@ jobs:
   notify:
     name: 📢 Notifications
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     # `test` в списке намеренно: `deploy` зависит от него (`needs: [test, build]`),
     # и при красных тестах получает `skipped`. Без `test` здесь сообщение называло
     # бы стадией «выкат», а сломаны были бы тесты — человек шёл бы смотреть не туда.
@@ -900,6 +933,7 @@ jobs:
   rollback:
     name: ⏪ Emergency Rollback
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     # 🔴 LEGACY-227. `needs: [deploy]` обязателен, и не ради порядка запуска: у job
     # без зависимостей нет предков, и `failure()` в его условии не значит «что-то
     # упало раньше» — у него нет «раньше». Пока зависимости не было, job либо

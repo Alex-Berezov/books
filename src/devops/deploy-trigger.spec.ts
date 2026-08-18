@@ -435,7 +435,6 @@ describe('LEGACY-241: окно выката объявляется, закрыв
     });
   });
 });
-
 /**
  * Сторож очереди выката (`LEGACY-245`).
  *
@@ -445,82 +444,225 @@ describe('LEGACY-241: окно выката объявляется, закрыв
  * и два пересоздания контейнера на одном сервере.
  *
  * Проверяется только `deploy.yml`. Кейс, написанный по всем файлам
- * `.github/workflows/**`, был бы неверен: у `ci.yml` значение `cancel-in-progress`
- * противоположное по `LEGACY-240`.
+ * `.github/workflows/**`, был бы неверен: `concurrency` для `ci.yml` — это
+ * `LEGACY-240`, отдельная запись, и значение `cancel-in-progress` там будет
+ * противоположным.
  */
 describe('LEGACY-245: выкат встаёт в очередь, а не идёт вторым прогоном рядом', () => {
-  it('у deploy.yml есть блок верхнего уровня concurrency', () => {
-    expect(topLevelBlock('concurrency').some((line) => /^ {2}group:\s*\S/.test(line))).toBe(true);
-  });
+  // 🔴 Чёрного списка контекстов здесь быть не может: `github.run_number`,
+  // `github.run_attempt`, `github.workflow_sha`, `inputs.*` и любой следующий пройдут
+  // мимо любого перечисления, а каждый из них уникален на прогон — то есть `concurrency`
+  // выключается целиком при зелёной спеке. Поэтому запрещены **все** подстановки, кроме
+  // постоянных на все прогоны воркфлоу.
+  const CONSTANT_CONTEXTS = ['github.workflow', 'github.repository'];
+
+  /** Строки блока `concurrency:`, задающие ключ верхнего уровня. */
+  const concurrencyKey = (key: string): string[] =>
+    topLevelBlock('concurrency').filter((line) => new RegExp(`^ {2}${key}:`).test(line));
+
+  /** Значение ключа как записано, без окружающих кавычек YAML. */
+  const value = (key: string): string => {
+    const lines = concurrencyKey(key);
+    // 🔴 Ровно одно вхождение, а не первое совпадение: две строки `cancel-in-progress:`
+    // подряд — `false`, затем `true` — прошли бы `find` зелёными, а какая из них доедет
+    // до боевого прогона, зависит от снисходительности парсера GitHub.
+    expect([key, lines.length]).toEqual([key, 1]);
+    return lines[0]
+      .replace(new RegExp(`^ {2}${key}:\\s*`), '')
+      .trim()
+      .replace(/^(['"])([\s\S]*)\1$/, '$2')
+      .trim();
+  };
 
   // 🔴 Отменённый посреди `prisma migrate deploy` выкат оставляет частично применённую
   // пачку миграций (`LEGACY-242`) — это хуже очереди. Значение сверяется точным
   // равенством: `cancel-in-progress: ${{ ... }}` тоже прошёл бы проверку на наличие.
   it('cancel-in-progress равен ровно false', () => {
-    const line = orFail(
-      topLevelBlock('concurrency').find((l) => /^ {2}cancel-in-progress:/.test(l)),
-      'в блоке `concurrency:` нет ключа `cancel-in-progress`',
-    );
-    expect(line.replace(/^ {2}cancel-in-progress:\s*/, '').trim()).toBe('false');
+    expect(value('cancel-in-progress')).toBe('false');
   });
 
-  // 🔴 Привычное `${{ github.workflow }}-${{ github.ref }}` здесь само является дефектом:
-  // у двух разных тегов `github.ref` разный, прогоны попадают в разные группы и идут
-  // параллельно — ровно то, от чего защищаемся. Группа обязана быть одна на все прогоны.
   it('группа не разъезжается по прогонам', () => {
-    const line = orFail(
-      topLevelBlock('concurrency').find((l) => /^ {2}group:/.test(l)),
-      'в блоке `concurrency:` нет ключа `group`',
-    );
-    const group = line.replace(/^ {2}group:\s*/, '').trim();
+    const group = value('group');
     expect(group).not.toBe('');
-    for (const varying of ['github.ref', 'github.sha', 'github.run_id', 'github.event.inputs']) {
-      expect([varying, group.includes(varying)]).toEqual([varying, false]);
-    }
+    const rest = CONSTANT_CONTEXTS.reduce(
+      (acc, ctx) =>
+        acc.replace(new RegExp(`\\$\\{\\{\\s*${ctx.replace(/\./g, '\\.')}\\s*\\}\\}`, 'g'), ''),
+      group,
+    );
+    // Сообщение печатает саму группу: иначе по `false !== true` не понять, что не так.
+    expect([group, rest.includes('${{')]).toEqual([group, false]);
   });
 });
 
 /**
- * Сторож heredoc'а выката (`LEGACY-246`).
+ * Сторож heredoc'ов выката (`LEGACY-246`).
  *
- * `ssh ... << EOF` **без кавычек** вокруг `EOF` разворачивает подстановки на раннере,
- * до отправки на сервер. Раннер выполняет `run:` через `bash -e` без `-u`, поэтому
- * неизвестная ему переменная подставляется пустой строкой молча: галка
- * `skip_backup_emergency` ставилась, а `--no-backup` до `deploy_production.sh` не
- * доезжал вовсе. Всё, что должно вычисляться на сервере, обязано быть экранировано.
+ * `ssh ... << EOF` **без кавычек** вокруг делимитера разворачивает тело shell'ом
+ * раннера ещё до отправки: сервером считается только то, что вручную экранировано
+ * через `\$`. На этом и потерялся `--no-backup` — переменная задавалась внутри
+ * heredoc, то есть на сервере, а раскрывалась на раннере, где её нет.
+ *
+ * 🔴 Закрепляется не «экранирование расставлено правильно», а **закавыченный
+ * делимитер**: это не одна из двух равноправных форм, а единственная, при которой
+ * правило не надо помнить для каждого нового `$`. Заодно закрытым оказывается
+ * `${{ secrets.ENV_PROD }}`: до кавычек **значение секрета** проходило через shell
+ * раннера, и секрет вида `JWT_SECRET=a$bc` уезжал на прод обрезанным до `a`.
+ *
+ * Проверяются все heredoc'ы `ssh` в файле, а не только шаг выката: у job'а `rollback`
+ * heredoc того же класса, и терять кавычки ему нельзя ровно так же.
  */
-describe('LEGACY-246: переменные heredoc считаются на сервере, а не на раннере', () => {
-  /** Единственная переменная, объявленная на раннере выше по шагу, — она и раскрывается там. */
-  const RUNNER_VARS = ['REPO_LOWER'];
+describe('LEGACY-246: тело heredoc уезжает на сервер как есть', () => {
+  /**
+   * Переменные, которые на сервере задаёт не сам heredoc, а окружение сессии `ssh`.
+   * Список короткий намеренно: новая строка сюда должна стоить отдельного решения.
+   */
+  const SERVER_ENV = ['HOME', 'PATH', 'USER', 'SHELL', 'PWD'];
 
-  /** Тело heredoc'а шага `🚀 Deploy to Server` — от `<< EOF` и до конца шага. */
-  const heredoc = (): string => {
-    const body = runBody(step('deploy', '🚀 Deploy to Server'));
-    const at = body.indexOf('<< EOF');
-    if (at === -1) throw new Error('в шаге `🚀 Deploy to Server` нет heredoc `<< EOF`');
-    return body.slice(at);
+  /** Job'ы, в шагах которых бывает `ssh` с heredoc. */
+  const SSH_JOBS = ['deploy', 'rollback'];
+
+  interface Heredoc {
+    /** Шаг, в котором открыт heredoc, — им подписаны находки. */
+    step: string;
+    delimiter: string;
+    quoted: boolean;
+    /** Строки шага до открывающей строки — здесь живут переменные раннера. */
+    before: string[];
+    /** Тело heredoc, вместе с комментариями: раннер разворачивает и их тоже. */
+    body: string[];
+  }
+
+  /**
+   * Строки job'а **с комментариями**. `jobBody` их вырезает, и сторож поверх него был бы
+   * слеп к `$(...)` и обратным апострофам внутри shell-комментария heredoc'а — а
+   * незакавыченное тело раскрывает их наравне с кодом.
+   */
+  const rawJobBody = (job: string): string[] => {
+    const jobs = LINES.findIndex((line) => /^jobs:\s*$/.test(line));
+    if (jobs === -1) throw new Error('в deploy.yml нет блока `jobs:`');
+    const start = LINES.findIndex(
+      (line, i) => i > jobs && new RegExp(`^ {2}${job}:\\s*$`).test(line),
+    );
+    if (start === -1) throw new Error(`в deploy.yml нет job'а \`${job}\``);
+    const rest = LINES.slice(start + 1);
+    const end = rest.findIndex((line) => /^ {0,2}\S/.test(line) && !isComment(line));
+    return end === -1 ? rest : rest.slice(0, end);
   };
 
-  it('неэкранированных серверных подстановок в heredoc нет', () => {
-    // Подстановки `${{ ... }}` раннерные по определению — их снимаем до разбора,
-    // иначе `${{ github.sha }}` попал бы в находки как `${ github` .
-    const shell = heredoc().replace(/\$\{\{[\s\S]*?\}\}/g, '');
-    const offenders = [...shell.matchAll(/(\\?)\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)|(\()|(`))/g)]
-      .filter((m) => m[1] !== '\\')
-      .filter((m) => !RUNNER_VARS.includes(m[2] ?? m[3] ?? ''))
-      .map((m) => m[0]);
+  /** Все heredoc'ы, открытые вызовом `ssh`, по всем job'ам файла. */
+  const sshHeredocs = (): Heredoc[] => {
+    const out: Heredoc[] = [];
+    for (const job of SSH_JOBS) {
+      for (const s of steps(rawJobBody(job))) {
+        const at = s.lines.findIndex((line) => !isComment(line) && /\bssh\b.*<<-?\s*\S/.test(line));
+        if (at === -1) continue;
+        const opener = orFail(
+          /<<-?\s*(['"]?)([A-Za-z_]\w*)\1\s*$/.exec(s.lines[at]) ?? undefined,
+          `в шаге \`${s.name}\` не разобрана открывающая строка heredoc: ${s.lines[at].trim()}`,
+        );
+        const delimiter = opener[2];
+        const rest = s.lines.slice(at + 1);
+        const close = rest.findIndex((line) => line.trim() === delimiter);
+        if (close === -1)
+          throw new Error(`в шаге \`${s.name}\` не закрыт heredoc \`${delimiter}\``);
+        out.push({
+          step: s.name,
+          delimiter,
+          quoted: opener[1] !== '',
+          before: s.lines.slice(0, at),
+          body: rest.slice(0, close),
+        });
+      }
+    }
+    if (out.length === 0) throw new Error('в deploy.yml не нашлось ни одного heredoc `ssh`');
+    return out;
+  };
+
+  /** Тело без подстановок GitHub: их делает Actions над текстом, до всякого shell. */
+  const withoutActions = (h: Heredoc): string =>
+    h.body.join('\n').replace(/\$\{\{[\s\S]*?\}\}/g, '');
+
+  /** Имена, присвоенные в тексте: `NAME=`, `export NAME=`. */
+  const assignedIn = (text: string): Set<string> =>
+    new Set([...text.matchAll(/^\s*(?:export\s+)?([A-Za-z_]\w*)=/gm)].map((m) => m[1]));
+
+  it('делимитер каждого heredoc ssh закавычен', () => {
+    const unquoted = sshHeredocs()
+      .filter((h) => !h.quoted)
+      .map((h) => `${h.step}: << ${h.delimiter}`);
+    expect(unquoted).toEqual([]);
+  });
+
+  // 🔴 Обратная сторона кавычек: переменную раннера внутрь такого heredoc уже не передать.
+  // Ссылка на неё уедет на сервер как есть, а там её нет — под `set -u` это отказ, без
+  // него пустая строка. Поэтому каждое имя, использованное в теле, обязано быть присвоено
+  // **в этом же теле**.
+  it('в закавыченном теле нет ссылок на переменные, заданные вне его', () => {
+    const offenders: string[] = [];
+    for (const h of sshHeredocs().filter((x) => x.quoted)) {
+      const text = withoutActions(h);
+      const assigned = assignedIn(text);
+      // `${ИМЯ}`, `${ИМЯ:-…}`, `${#ИМЯ}` и голое `$ИМЯ` — имя берётся первым словом.
+      for (const m of text.matchAll(/\$\{[#!]?([A-Za-z_]\w*)[^}]*\}|\$([A-Za-z_]\w*)/g)) {
+        const name = m[1] ?? m[2];
+        if (assigned.has(name) || SERVER_ENV.includes(name)) continue;
+        offenders.push(`${h.step}: ${m[0]}`);
+      }
+    }
     expect(offenders).toEqual([]);
   });
 
-  it('обратных апострофов в heredoc нет — они тоже считались бы на раннере', () => {
-    expect(heredoc().replace(/\$\{\{[\s\S]*?\}\}/g, '')).not.toContain('`');
+  // Экранирование `\$` в закавыченном heredoc не безобидно: на сервер приедет литерал
+  // `\$ИМЯ`, а не значение. Это прямой след прошлой формы, и он обязан краснеть.
+  it('в закавыченном теле нет экранирования \\$ — оно уехало бы на сервер литералом', () => {
+    const offenders: string[] = [];
+    for (const h of sshHeredocs().filter((x) => x.quoted)) {
+      for (const m of withoutActions(h).matchAll(/\\+\$/g)) offenders.push(`${h.step}: ${m[0]}`);
+    }
+    expect(offenders).toEqual([]);
   });
 
-  // Экранирование без самого флага бессмысленно: удалённая ветка присваивания оставила бы
-  // проверку выше зелёной, а галку — по-прежнему неработающей.
-  it('флаг пропуска бэкапа собирается и доезжает до скрипта', () => {
-    const body = heredoc();
+  // 🔴 Вторая линия обороны на случай, если делимитер всё-таки потеряет кавычки: тогда
+  // возвращается прежнее правило — всё серверное экранировано. Кейс выше краснеет первым,
+  // этот не даёт незакавыченному heredoc'у уехать ещё и с потерянными подстановками.
+  it('в незакавыченном теле всё серверное экранировано', () => {
+    const offenders: string[] = [];
+    for (const h of sshHeredocs().filter((x) => !x.quoted)) {
+      const text = withoutActions(h);
+      const runnerVars = assignedIn(h.before.join('\n'));
+      // Экранирован тот `$`, перед которым нечётное число обратных слэшей: `\\$` — это
+      // экранированный слэш плюс живая подстановка.
+      for (const m of text.matchAll(/(\\*)([$`])/g)) {
+        if (m[1].length % 2 === 1) continue;
+        const tail = text.slice((m.index ?? 0) + m[0].length);
+        const name = /^\{?([A-Za-z_]\w*)/.exec(tail)?.[1];
+        if (m[2] === '$' && name !== undefined && runnerVars.has(name)) continue;
+        offenders.push(`${h.step}: ${m[2]}${tail.slice(0, 12)}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  // 🔴 Проверяются именно аргументы вызова, а не вхождение в тело: перенос `$BACKUP_FLAG`
+  // в соседний `echo` с удалением из строки вызова оставил бы кейс, написанный по всему
+  // heredoc, зелёным — а галка `skip_backup_emergency` снова не делала бы ничего. Это и
+  // есть симптом `LEGACY-246`.
+  it('флаг пропуска бэкапа собирается и стоит в аргументах deploy_production.sh', () => {
+    const deploy = orFail(
+      sshHeredocs().find((h) => h.step === '🚀 Deploy to Server'),
+      'в job `deploy` нет шага `🚀 Deploy to Server` с heredoc `ssh`',
+    );
+    const body = deploy.body.join('\n');
     expect(body).toContain('BACKUP_FLAG="--no-backup"');
-    expect(body).toMatch(/\\\$BACKUP_FLAG/);
+
+    // Вызов — открывающая строка плюс все продолжения через `\`.
+    const at = deploy.body.findIndex((line) => /\.\/scripts\/deploy_production\.sh\b/.test(line));
+    expect(at).toBeGreaterThan(-1);
+    const args: string[] = [];
+    for (let i = at; i < deploy.body.length; i += 1) {
+      args.push(deploy.body[i]);
+      if (!/\\\s*$/.test(deploy.body[i])) break;
+    }
+    expect(args.join('\n')).toMatch(/(^|\s)\$BACKUP_FLAG(\s|$)/m);
   });
 });
