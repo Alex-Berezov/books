@@ -435,3 +435,92 @@ describe('LEGACY-241: окно выката объявляется, закрыв
     });
   });
 });
+
+/**
+ * Сторож очереди выката (`LEGACY-245`).
+ *
+ * После `LEGACY-241` тег `v*` — единственный автоматический путь на прод, а теги
+ * ставят пачками, когда чинят неудачный релиз. Без `concurrency` два тега подряд
+ * дают два одновременных прогона: два `prisma migrate deploy` против одной базы
+ * и два пересоздания контейнера на одном сервере.
+ *
+ * Проверяется только `deploy.yml`. Кейс, написанный по всем файлам
+ * `.github/workflows/**`, был бы неверен: у `ci.yml` значение `cancel-in-progress`
+ * противоположное по `LEGACY-240`.
+ */
+describe('LEGACY-245: выкат встаёт в очередь, а не идёт вторым прогоном рядом', () => {
+  it('у deploy.yml есть блок верхнего уровня concurrency', () => {
+    expect(topLevelBlock('concurrency').some((line) => /^ {2}group:\s*\S/.test(line))).toBe(true);
+  });
+
+  // 🔴 Отменённый посреди `prisma migrate deploy` выкат оставляет частично применённую
+  // пачку миграций (`LEGACY-242`) — это хуже очереди. Значение сверяется точным
+  // равенством: `cancel-in-progress: ${{ ... }}` тоже прошёл бы проверку на наличие.
+  it('cancel-in-progress равен ровно false', () => {
+    const line = orFail(
+      topLevelBlock('concurrency').find((l) => /^ {2}cancel-in-progress:/.test(l)),
+      'в блоке `concurrency:` нет ключа `cancel-in-progress`',
+    );
+    expect(line.replace(/^ {2}cancel-in-progress:\s*/, '').trim()).toBe('false');
+  });
+
+  // 🔴 Привычное `${{ github.workflow }}-${{ github.ref }}` здесь само является дефектом:
+  // у двух разных тегов `github.ref` разный, прогоны попадают в разные группы и идут
+  // параллельно — ровно то, от чего защищаемся. Группа обязана быть одна на все прогоны.
+  it('группа не разъезжается по прогонам', () => {
+    const line = orFail(
+      topLevelBlock('concurrency').find((l) => /^ {2}group:/.test(l)),
+      'в блоке `concurrency:` нет ключа `group`',
+    );
+    const group = line.replace(/^ {2}group:\s*/, '').trim();
+    expect(group).not.toBe('');
+    for (const varying of ['github.ref', 'github.sha', 'github.run_id', 'github.event.inputs']) {
+      expect([varying, group.includes(varying)]).toEqual([varying, false]);
+    }
+  });
+});
+
+/**
+ * Сторож heredoc'а выката (`LEGACY-246`).
+ *
+ * `ssh ... << EOF` **без кавычек** вокруг `EOF` разворачивает подстановки на раннере,
+ * до отправки на сервер. Раннер выполняет `run:` через `bash -e` без `-u`, поэтому
+ * неизвестная ему переменная подставляется пустой строкой молча: галка
+ * `skip_backup_emergency` ставилась, а `--no-backup` до `deploy_production.sh` не
+ * доезжал вовсе. Всё, что должно вычисляться на сервере, обязано быть экранировано.
+ */
+describe('LEGACY-246: переменные heredoc считаются на сервере, а не на раннере', () => {
+  /** Единственная переменная, объявленная на раннере выше по шагу, — она и раскрывается там. */
+  const RUNNER_VARS = ['REPO_LOWER'];
+
+  /** Тело heredoc'а шага `🚀 Deploy to Server` — от `<< EOF` и до конца шага. */
+  const heredoc = (): string => {
+    const body = runBody(step('deploy', '🚀 Deploy to Server'));
+    const at = body.indexOf('<< EOF');
+    if (at === -1) throw new Error('в шаге `🚀 Deploy to Server` нет heredoc `<< EOF`');
+    return body.slice(at);
+  };
+
+  it('неэкранированных серверных подстановок в heredoc нет', () => {
+    // Подстановки `${{ ... }}` раннерные по определению — их снимаем до разбора,
+    // иначе `${{ github.sha }}` попал бы в находки как `${ github` .
+    const shell = heredoc().replace(/\$\{\{[\s\S]*?\}\}/g, '');
+    const offenders = [...shell.matchAll(/(\\?)\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)|(\()|(`))/g)]
+      .filter((m) => m[1] !== '\\')
+      .filter((m) => !RUNNER_VARS.includes(m[2] ?? m[3] ?? ''))
+      .map((m) => m[0]);
+    expect(offenders).toEqual([]);
+  });
+
+  it('обратных апострофов в heredoc нет — они тоже считались бы на раннере', () => {
+    expect(heredoc().replace(/\$\{\{[\s\S]*?\}\}/g, '')).not.toContain('`');
+  });
+
+  // Экранирование без самого флага бессмысленно: удалённая ветка присваивания оставила бы
+  // проверку выше зелёной, а галку — по-прежнему неработающей.
+  it('флаг пропуска бэкапа собирается и доезжает до скрипта', () => {
+    const body = heredoc();
+    expect(body).toContain('BACKUP_FLAG="--no-backup"');
+    expect(body).toMatch(/\\\$BACKUP_FLAG/);
+  });
+});

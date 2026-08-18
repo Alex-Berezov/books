@@ -56,6 +56,26 @@ permissions:
   id-token: write
   attestations: write
 
+# 🔴 LEGACY-245. Группа — константа, и это не небрежность. Привычное
+# `${{ github.workflow }}-${{ github.ref }}` здесь само является дефектом: у двух
+# тегов `github.ref` разный, прогоны попадают в разные группы и идут параллельно —
+# два `prisma migrate deploy` против одной базы и два пересоздания контейнера на
+# одном сервере. Теги ставят пачками, когда чинят неудачный релиз, так что это
+# обычный ход событий, а не край.
+#
+# 🔴 `cancel-in-progress: false` обязателен. Выкат, отменённый посреди
+# `prisma migrate deploy`, оставляет частично применённую пачку миграций
+# (`LEGACY-242`) — это хуже очереди. Для `ci.yml` значение противоположное
+# (`LEGACY-240`), записи не путать.
+#
+# `workflow_dispatch` попадает в ту же группу намеренно: ручной выкат во время
+# тегового обязан ждать, а не идти рядом.
+#
+# Инвариант держит `src/devops/deploy-trigger.spec.ts`.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: books-app
@@ -460,6 +480,13 @@ jobs:
       # ⚠️ `\$` внутри heredoc обязателен: `<< EOF` без кавычек разворачивает подстановки
       # на раннере, и `$(git rev-parse HEAD)` без экранирования посчитался бы там, где
       # рабочего дерева прода нет вовсе.
+      #
+      # 🔴 LEGACY-246. Ровно на этом и погорел `\$BACKUP_FLAG`: переменная задаётся здесь же,
+      # внутри heredoc, то есть на сервере, а использовалась неэкранированной. Раннер
+      # выполняет `run:` через `bash -e` **без** `-u`, своей `BACKUP_FLAG` у него нет, и
+      # строка уезжала на сервер уже пустой — галка `skip_backup_emergency` не делала ничего.
+      # Неэкранированными остаются только `${{ }}` и переменные, объявленные на раннере
+      # выше по шагу (сейчас это один `REPO_LOWER`). Держит `src/devops/deploy-trigger.spec.ts`.
       - name: 🚀 Deploy to Server
         run: |
           # Lowercase repository name for Docker
@@ -519,7 +546,7 @@ jobs:
               --registry "${{ env.REGISTRY }}/${REPO_LOWER}" \
               --skip-git-update \
               --pull \
-              $BACKUP_FLAG \
+              \$BACKUP_FLAG \
               --force
             
             echo "✅ Deployment completed!"
