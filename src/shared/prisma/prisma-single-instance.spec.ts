@@ -1,8 +1,9 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
-import { readdirSync, readFileSync } from 'fs';
-import { join, relative, resolve } from 'path';
+import { readFileSync } from 'fs';
+import { relative, resolve } from 'path';
+import { listModuleFiles, metadataElements } from '../../common/testing/module-metadata';
 import { BookModule } from '../../modules/book/book.module';
 import { BookService } from '../../modules/book/book.service';
 import { CategoryService } from '../../modules/category/category.service';
@@ -13,19 +14,23 @@ import { SlugRedirectModule } from '../../modules/slug-redirect/slug-redirect.mo
 import { PrismaModule } from './prisma.module';
 
 /**
- * Сторож единственности `PrismaService` (`LEGACY-130`).
+ * Сторож единственности провайдеров из `@Global()`-модулей
+ * (`LEGACY-130` — `PrismaService`, `LEGACY-259` — `RolesGuard`).
  *
- * `PrismaModule` помечен `@Global()` и экспортирует `PrismaService`, поэтому
- * объявлять его в `providers` любого другого модуля не нужно. Nest на такое
- * объявление отвечает не ошибкой, а вторым экземпляром: конструктор
- * `PrismaService` делает `new Pool`, то есть у модуля появляется собственный пул
- * соединений с PostgreSQL и собственный контекст `$transaction`, который не
- * видит транзакций соседа. Ни типы, ни линт, ни e2e этого не показывают —
- * контейнер собирается, маршруты отвечают, а разница вылезает под нагрузкой
- * (исчерпание пула) и в сценарии, где два сервиса из разных модулей должны
- * попасть в одну транзакцию.
+ * `PrismaModule` и `SecurityModule` помечены `@Global()` и экспортируют свои
+ * провайдеры, поэтому объявлять их в `providers` любого другого модуля не нужно.
+ * Nest на такое объявление отвечает не ошибкой, а вторым экземпляром. Для
+ * `PrismaService` это дорого прямо: конструктор делает `new Pool`, то есть
+ * у модуля появляется собственный пул соединений с PostgreSQL и собственный
+ * контекст `$transaction`, который не видит транзакций соседа. Для `RolesGuard`
+ * дешевле, но так же неверно: `@UseGuards(RolesGuard)` Nest разрешает сам, из
+ * контекста модуля, и строка в `providers` только прячет, откуда гвард берётся.
  *
- * Первый кейс ловит возврат `PrismaService` в `providers` любого модуля;
+ * Ни типы, ни линт, ни e2e этого не показывают — контейнер собирается, маршруты
+ * отвечают, а разница вылезает под нагрузкой (исчерпание пула) и в сценарии, где
+ * два сервиса из разных модулей должны попасть в одну транзакцию.
+ *
+ * Первый кейс ловит возврат такого провайдера в `providers` любого модуля;
  * второй — то, ради чего первый написан: клиент, доставшийся сервису из
  * `BookModule` и сервису из `PublicModule`, обязан быть тем же объектом, что и
  * клиент корневого контейнера.
@@ -33,84 +38,26 @@ import { PrismaModule } from './prisma.module';
 
 const SRC_ROOT = resolve(__dirname, '../..');
 
-/** Единственное законное объявление — модуль, который его и экспортирует. */
-const OWNER = 'shared/prisma/prisma.module.ts';
+/** Провайдер и единственный модуль, которому позволено его объявлять. */
+const GLOBAL_PROVIDERS: Array<{ provider: string; owner: string; record: string }> = [
+  {
+    provider: 'PrismaService',
+    owner: 'shared/prisma/prisma.module.ts',
+    record: 'LEGACY-130',
+  },
+  {
+    provider: 'RolesGuard',
+    owner: 'shared/security/security.module.ts',
+    record: 'LEGACY-259',
+  },
+];
 
 /** Ниже этого числа обход считается сломанным, а не репозиторий — поредевшим. */
 const MIN_MODULES = 50;
 
-const listModules = (dir: string): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) return listModules(full);
-    return entry.isFile() && entry.name.endsWith('.module.ts') ? [full] : [];
-  });
+const relativeToSrc = (file: string): string => relative(SRC_ROOT, file).split('\\').join('/');
 
-/**
- * Элементы верхнего уровня всех массивов `providers: [...]` файла.
- *
- * ⚠️ Две ловушки, и обе дают молчаливо неверный ответ.
- *
- * 1. **Скобки надо считать, а не сопоставлять регуляркой.** Ленивое
- *    `\[[\s\S]*?\]` заканчивает массив на первой же `]`, а внутри `providers`
- *    они бывают вложенные: у `HealthModule` там `inject: [ConfigService]`
- *    в пятой строке массива длиной в двадцать пять. Дописанный ниже
- *    `PrismaService` в такой блок не попадает - сторож зелен при вернувшемся
- *    дефекте, причём ровно в том модуле, из которого дубль только что убрали.
- * 2. **Считать надо элементы, а не вхождения имени в текст.** Тот же
- *    `HealthModule` называет `PrismaService` внутри массива дважды законно -
- *    типом параметра `useFactory` и токеном в `inject`. Поиск по тексту блока
- *    объявляет нарушением фабрику, которой сервис нужен аргументом, и правило
- *    начинают обходить, а не соблюдать.
- *
- * Отсюда разбор до элементов: запятые считаются только на нулевой глубине,
- * скобки всех трёх видов и строковые литералы пропускаются целиком.
- */
-const providerElements = (content: string): string[] => {
-  const elements: string[] = [];
-  const opener = /providers:\s*\[/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = opener.exec(content)) !== null) {
-    let depth = 0;
-    let quote: string | null = null;
-    let current = '';
-
-    for (let i = match.index + match[0].length; i < content.length; i += 1) {
-      const ch = content[i];
-
-      if (quote) {
-        if (ch === quote && content[i - 1] !== '\\') quote = null;
-        current += ch;
-        continue;
-      }
-      if (ch === "'" || ch === '"' || ch === '`') {
-        quote = ch;
-        current += ch;
-        continue;
-      }
-      if (ch === '[' || ch === '{' || ch === '(') depth += 1;
-      else if (ch === '}' || ch === ')') depth -= 1;
-      else if (ch === ']') {
-        if (depth === 0) {
-          elements.push(current);
-          opener.lastIndex = i + 1;
-          break;
-        }
-        depth -= 1;
-      } else if (ch === ',' && depth === 0) {
-        elements.push(current);
-        current = '';
-        continue;
-      }
-      current += ch;
-    }
-  }
-
-  return elements.map((element) => element.trim()).filter(Boolean);
-};
-
-describe('PrismaService объявлен ровно в одном модуле (LEGACY-130)', () => {
+describe('провайдеры глобальных модулей объявлены ровно в одном месте', () => {
   let moduleRef: TestingModule | undefined;
 
   // Контейнер поднимает настоящий `PrismaService`, а тот в конструкторе делает
@@ -122,24 +69,24 @@ describe('PrismaService объявлен ровно в одном модуле (
     moduleRef = undefined;
   });
 
-  it('не встречается в providers ни одного модуля, кроме PrismaModule', () => {
-    const modules = listModules(SRC_ROOT);
+  it.each(GLOBAL_PROVIDERS)(
+    '$provider не значится в providers ни одного модуля, кроме своего ($record)',
+    ({ provider, owner }) => {
+      const modules = listModuleFiles(SRC_ROOT);
 
-    expect(modules.length).toBeGreaterThanOrEqual(MIN_MODULES);
+      expect(modules.length).toBeGreaterThanOrEqual(MIN_MODULES);
 
-    const offenders = modules
-      .map((file) => ({
-        file: relative(SRC_ROOT, file).split('\\').join('/'),
-        content: readFileSync(file, 'utf8'),
-      }))
-      .filter(({ file }) => file !== OWNER)
-      .filter(({ content }) =>
-        providerElements(content).some((element) => element === 'PrismaService'),
-      )
-      .map(({ file }) => file);
+      const offenders = modules
+        .map((file) => ({ file: relativeToSrc(file), content: readFileSync(file, 'utf8') }))
+        .filter(({ file }) => file !== owner)
+        .filter(({ content }) =>
+          metadataElements(content, 'providers').some((element) => element === provider),
+        )
+        .map(({ file }) => file);
 
-    expect(offenders).toEqual([]);
-  });
+      expect(offenders).toEqual([]);
+    },
+  );
 
   it('отдаёт сервисам разных модулей один и тот же клиент', async () => {
     moduleRef = await Test.createTestingModule({

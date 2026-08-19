@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Language, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ImportCategoryDto } from './dto/import-category.dto';
@@ -83,7 +83,10 @@ export class ImportService {
       }
     }
 
-    const batch = validItems.filter((item) => !result.errors.find((e) => e.key === item.key));
+    const batch = this.orderByParent(
+      validItems.filter((item) => !result.errors.find((e) => e.key === item.key)),
+      result,
+    );
 
     for (const item of batch) {
       try {
@@ -150,6 +153,63 @@ export class ImportService {
     return result;
   }
 
+  /**
+   * Переставить партию так, чтобы родитель шёл раньше ребёнка (`LEGACY-258`).
+   *
+   * Проверка выше разрешает ссылаться на родителя, которого в базе ещё нет, если
+   * он есть в этой же партии, — но порядка внутри партии не требует. Элементы
+   * обрабатывались в порядке массива, и файл, где ребёнок записан выше родителя,
+   * импортировался «успешно» с термином, оставшимся в корне дерева.
+   *
+   * Обход Кана: элементы без родителя в партии идут первыми, каждый следующий
+   * открывает своих детей. Кто остался — участник цикла (`a → b → a`), и для него
+   * порядка не существует вовсе: такой элемент уходит в `errors` и до записи не
+   * доходит. Ссылка на родителя вне партии ребром не считается: он либо уже в
+   * базе, либо проверка выше уже записала отказ.
+   */
+  private orderByParent(items: ImportCategoryDto[], result: ImportResult): ImportCategoryDto[] {
+    const byKey = new Map(items.map((item) => [item.key, item]));
+    const children = new Map<string, ImportCategoryDto[]>();
+    const pending = new Map<string, number>();
+    const ordered: ImportCategoryDto[] = [];
+    const queue: ImportCategoryDto[] = [];
+
+    for (const item of items) {
+      const parentInBatch = item.parentKey && byKey.has(item.parentKey) ? item.parentKey : null;
+      pending.set(item.key, parentInBatch ? 1 : 0);
+      if (parentInBatch) {
+        const siblings = children.get(parentInBatch) ?? [];
+        siblings.push(item);
+        children.set(parentInBatch, siblings);
+      } else {
+        queue.push(item);
+      }
+    }
+
+    while (queue.length > 0) {
+      const item = queue.shift() as ImportCategoryDto;
+      ordered.push(item);
+      for (const child of children.get(item.key) ?? []) {
+        const left = (pending.get(child.key) ?? 0) - 1;
+        pending.set(child.key, left);
+        if (left === 0) queue.push(child);
+      }
+    }
+
+    if (ordered.length < items.length) {
+      const orderedKeys = new Set(ordered.map((item) => item.key));
+      for (const item of items) {
+        if (orderedKeys.has(item.key)) continue;
+        result.errors.push({
+          key: item.key,
+          message: `parentKey "${item.parentKey ?? ''}" forms a cycle inside the batch`,
+        });
+      }
+    }
+
+    return ordered;
+  }
+
   private validateTranslations(translations: Record<string, TranslationInput>): string | null {
     const langs = Object.keys(translations);
     if (langs.length === 0) return 'At least one translation required';
@@ -188,38 +248,44 @@ export class ImportService {
     };
 
     if (existing) {
-      await this.prisma.category.update({
-        where: { key: dto.key },
-        data: {
-          type: dto.type,
-          name: this.getFirstName(dto.translations),
-          // 🔴 `slug` намеренно НЕ переписывается при повторном импорте.
-          //
-          // Базовый слаг берётся из `getFirstSlug` — то есть из ПЕРВОГО перевода по
-          // порядку ключей JSON. Значит тот же набор данных с переставленными языками
-          // переименовывал категорию сам по себе, а с историей слагов (LEGACY-062)
-          // это порождало бы ещё и 308 на переименования, которых никто не делал.
-          // Публичный адрес не может зависеть от форматирования файла импорта.
-          // При создании (ветка ниже) слаг по-прежнему выводится оттуда же — там
-          // выбирать не из чего, и прежнего адреса не существует.
-          indexable: dto.indexable ?? existing.indexable,
-          isVisible: dto.isVisible ?? existing.isVisible,
-          sortOrder: dto.sortOrder ?? existing.sortOrder,
-        },
-      });
+      // Обновление термина — тоже одна запись (`LEGACY-257`). До 19.08.2026 здесь
+      // шли независимые `await`, а каждый существующий перевод обновлялся своей
+      // транзакцией: отказ на третьем языке из пяти оставлял термин с частью
+      // новых переводов и уже переписанной базовой строкой, а счётчик `updated`
+      // при этом не увеличивался — отчёт расходился с базой молча.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.category.update({
+          where: { key: dto.key },
+          data: {
+            type: dto.type,
+            name: this.getFirstName(dto.translations),
+            // 🔴 `slug` намеренно НЕ переписывается при повторном импорте.
+            //
+            // Базовый слаг берётся из `getFirstSlug` — то есть из ПЕРВОГО перевода по
+            // порядку ключей JSON. Значит тот же набор данных с переставленными языками
+            // переименовывал категорию сам по себе, а с историей слагов (LEGACY-062)
+            // это порождало бы ещё и 308 на переименования, которых никто не делал.
+            // Публичный адрес не может зависеть от форматирования файла импорта.
+            // При создании (ветка ниже) слаг по-прежнему выводится оттуда же — там
+            // выбирать не из чего, и прежнего адреса не существует.
+            indexable: dto.indexable ?? existing.indexable,
+            isVisible: dto.isVisible ?? existing.isVisible,
+            sortOrder: dto.sortOrder ?? existing.sortOrder,
+          },
+        });
 
-      if (dto.parentKey !== undefined) {
-        await this.updateParentId(this.prisma, 'category', dto.key, dto.parentKey ?? null);
-      }
+        if (dto.parentKey !== undefined) {
+          await this.updateParentId(tx, dto.key, dto.parentKey ?? null);
+        }
 
-      for (const [langCode, tr] of Object.entries(dto.translations)) {
-        const language = langCode as Language;
-        const existingTr = existing.translations.find((t) => t.language === language);
-        if (existingTr) {
-          // Импорт — такой же путь смены слага, как форма в админке, и до 09.08.2026
-          // он шёл в обход истории: класс считался закрытым для категорий и тегов,
-          // хотя закрыт был только через сервисы (LEGACY-062).
-          await this.prisma.$transaction(async (tx) => {
+        for (const [langCode, tr] of Object.entries(dto.translations)) {
+          const language = langCode as Language;
+          const existingTr = existing.translations.find((t) => t.language === language);
+          if (existingTr) {
+            // Импорт — такой же путь смены слага, как форма в админке, и до 09.08.2026
+            // он шёл в обход истории: класс считался закрытым для категорий и тегов,
+            // хотя закрыт был только через сервисы (LEGACY-062). Запись в историю
+            // идёт тем же `tx`, что и сама смена, — иначе редирект переживёт откат.
             if (tr.slug && existingTr.slug !== tr.slug) {
               await this.slugRedirects.record(
                 { entityType: 'category', language, oldSlug: existingTr.slug, newSlug: tr.slug },
@@ -234,11 +300,11 @@ export class ImportService {
                 ...this.buildCategoryTranslationData(tr),
               },
             });
-          });
-        } else {
-          await this.createCategoryTranslation(this.prisma, existing.id, language, tr);
+          } else {
+            await this.createCategoryTranslation(tx, existing.id, language, tr);
+          }
         }
-      }
+      });
     } else {
       // Термин и его переводы — одна запись (`LEGACY-131`). Обрыв между ними
       // оставляет категорию, которая занимает `slug` и `key` и попадает в дерево,
@@ -250,7 +316,7 @@ export class ImportService {
         });
 
         if (dto.parentKey) {
-          await this.updateParentId(tx, 'category', dto.key, dto.parentKey);
+          await this.updateParentId(tx, dto.key, dto.parentKey);
         }
 
         for (const [langCode, tr] of Object.entries(dto.translations)) {
@@ -311,9 +377,12 @@ export class ImportService {
     });
 
     if (existing) {
-      // Базовый слаг тега приходит явным полем `dto.slug`, а не выводится из порядка
-      // переводов, — поэтому здесь его смена настоящая, и её можно записывать.
+      // Одна транзакция на весь термин (`LEGACY-257`): базовая строка, история
+      // слагов и все переводы. Раньше их было столько, сколько существующих
+      // переводов, плюс запись новых вообще без транзакции.
       await this.prisma.$transaction(async (tx) => {
+        // Базовый слаг тега приходит явным полем `dto.slug`, а не выводится из порядка
+        // переводов, — поэтому здесь его смена настоящая, и её можно записывать.
         if (dto.slug && existing.slug !== dto.slug) {
           await this.slugRedirects.recordBaseSlugChange('tag', existing.slug, dto.slug, tx);
         }
@@ -327,13 +396,11 @@ export class ImportService {
             sortOrder: dto.sortOrder ?? existing.sortOrder,
           },
         });
-      });
 
-      for (const [langCode, tr] of Object.entries(dto.translations)) {
-        const language = langCode as Language;
-        const existingTr = existing.translations.find((t) => t.language === language);
-        if (existingTr) {
-          await this.prisma.$transaction(async (tx) => {
+        for (const [langCode, tr] of Object.entries(dto.translations)) {
+          const language = langCode as Language;
+          const existingTr = existing.translations.find((t) => t.language === language);
+          if (existingTr) {
             if (tr.slug && existingTr.slug !== tr.slug) {
               await this.slugRedirects.record(
                 { entityType: 'tag', language, oldSlug: existingTr.slug, newSlug: tr.slug },
@@ -348,11 +415,11 @@ export class ImportService {
                 ...this.buildTagTranslationData(tr),
               },
             });
-          });
-        } else {
-          await this.createTagTranslation(this.prisma, existing.id, language, tr);
+          } else {
+            await this.createTagTranslation(tx, existing.id, language, tr);
+          }
         }
-      }
+      });
     } else {
       // Тот же рисунок, что у категорий, и та же причина (`LEGACY-131`): тег без
       // переводов занимает `slug` и `key`, но публичным маршрутам не виден.
@@ -435,29 +502,37 @@ export class ImportService {
     return result;
   }
 
-  private async updateParentId(
-    db: PrismaLike,
-    entity: 'category',
-    key: string,
-    parentKey: string | null,
-  ) {
+  /**
+   * Привязать категорию к родителю (`LEGACY-258`).
+   *
+   * Раньше здесь стоял `if (parent)` без `else`: не нашли родителя — молча ничего
+   * не сделали, а элемент всё равно уходил в `imported`. Оператор видел успешный
+   * импорт, а термин оставался в корне дерева. Теперь отсутствие родителя — отказ:
+   * он валит транзакцию термина и попадает в `errors` по его ключу. Порядок внутри
+   * партии за это отвечать не должен — его выправляет `orderByParent`.
+   */
+  private async updateParentId(db: PrismaLike, key: string, parentKey: string | null) {
     if (parentKey === null) {
       await db.category.update({
         where: { key },
         data: { parentId: null },
       });
-    } else {
-      const parent = await db.category.findUnique({
-        where: { key: parentKey },
-        select: { id: true },
-      });
-      if (parent) {
-        await db.category.update({
-          where: { key },
-          data: { parentId: parent.id },
-        });
-      }
+      return;
     }
+
+    const parent = await db.category.findUnique({
+      where: { key: parentKey },
+      select: { id: true },
+    });
+
+    if (!parent) {
+      throw new BadRequestException(`parentKey "${parentKey}" not found`);
+    }
+
+    await db.category.update({
+      where: { key },
+      data: { parentId: parent.id },
+    });
   }
 
   private getFirstName(translations: Record<string, TranslationInput>): string {

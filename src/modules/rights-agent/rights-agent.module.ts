@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { RolesGuard } from '../../common/guards/roles.guard';
 import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { RightsAgentAdminController } from './rights-agent-admin.controller';
@@ -29,7 +28,6 @@ import { RightsNotificationsModule } from './rights-notifications.module';
     RightsAgentSubmissionService,
     RightsAgentTokenGuard,
     RightsAgentUploadRateLimitGuard,
-    RolesGuard,
   ],
   // Модуль-лист реэкспортируется целиком: провайдер чужого модуля экспортировать нельзя,
   // а `rights-lawyer` и `rights-recheck` получают `RightsNotificationsService` отсюда.

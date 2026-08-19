@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { RolesGuard } from '../../common/guards/roles.guard';
 import { RightsAgentModule } from '../rights-agent/rights-agent.module';
 import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { RightsLawyerController } from './rights-lawyer.controller';
@@ -30,7 +29,6 @@ import { RightsRiskAssessmentService } from './rights-risk-assessment.service';
     RightsLawyerReviewService,
     RightsLegalOpinionService,
     RightsRiskAssessmentService,
-    RolesGuard,
   ],
   exports: [RightsLawyerReviewService, RightsRiskAssessmentService, RightsLawyerService],
 })

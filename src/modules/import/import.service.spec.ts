@@ -230,3 +230,193 @@ describe('ImportService — создание термина и переводо�
     expect(log).toContain('tx.tag.create');
   });
 });
+
+describe('ImportService — обновление термина одной транзакцией (LEGACY-257)', () => {
+  /** Термин уже в базе: один перевод есть, второй придёт с импортом. */
+  const existingCategory = {
+    id: 'cat-1',
+    indexable: true,
+    isVisible: true,
+    sortOrder: 0,
+    translations: [{ language: Language.en, slug: 'victorian-literature' }],
+  };
+
+  const existingTag = {
+    id: 'tag-1',
+    slug: 'aestheticism',
+    indexable: true,
+    isVisible: true,
+    sortOrder: 0,
+    translations: [{ language: Language.en, slug: 'aestheticism' }],
+  };
+
+  it('пишет базовую строку и оба перевода категории одним клиентом транзакции', async () => {
+    const log: WriteLog = [];
+    const { service, root, $transaction } = makeService(log);
+
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(existingCategory);
+    });
+
+    const result = await service.importCategories([categoryDto()]);
+
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+    // Одна транзакция на весь термин, а не по одной на каждый существующий перевод.
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(writesOf(log)).toEqual([
+      'tx.category.update',
+      'tx.categoryTranslation.update',
+      'tx.categoryTranslation.create',
+    ]);
+  });
+
+  it('не считает категорию обновлённой, если перевод упал на середине', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx, $transaction } = makeService(log);
+
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(existingCategory);
+    });
+    tx.categoryTranslation.create.mockImplementation(() => {
+      log.push('tx.categoryTranslation.create');
+      return Promise.reject(new Error('slug conflict'));
+    });
+
+    const result = await service.importCategories([categoryDto()]);
+
+    // Счётчик и база обязаны говорить одно и то же: инкремент `updated` стоит
+    // после коммита, а не до него.
+    expect(result.updated).toBe(0);
+    expect(result.errors).toEqual([{ key: 'victorian-literature', message: 'slug conflict' }]);
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(writesOf(log).filter((call) => call.startsWith('root.'))).toEqual([]);
+  });
+
+  it('пишет базовую строку и оба перевода тега одним клиентом транзакции', async () => {
+    const log: WriteLog = [];
+    const { service, root, $transaction } = makeService(log);
+
+    root.tag.findUnique.mockImplementation(() => {
+      log.push('root.tag.findUnique');
+      return Promise.resolve(existingTag);
+    });
+
+    const result = await service.importTags([tagDto()]);
+
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(writesOf(log)).toEqual([
+      'tx.tag.update',
+      'tx.tagTranslation.update',
+      'tx.tagTranslation.create',
+    ]);
+  });
+
+  it('не считает тег обновлённым, если перевод упал на середине', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx, $transaction } = makeService(log);
+
+    root.tag.findUnique.mockImplementation(() => {
+      log.push('root.tag.findUnique');
+      return Promise.resolve(existingTag);
+    });
+    tx.tagTranslation.create.mockImplementation(() => {
+      log.push('tx.tagTranslation.create');
+      return Promise.reject(new Error('slug conflict'));
+    });
+
+    const result = await service.importTags([tagDto()]);
+
+    expect(result.updated).toBe(0);
+    expect(result.errors).toEqual([{ key: 'aestheticism', message: 'slug conflict' }]);
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(writesOf(log).filter((call) => call.startsWith('root.'))).toEqual([]);
+  });
+});
+
+describe('ImportService — порядок родителей внутри партии (LEGACY-258)', () => {
+  const child: ImportCategoryDto = {
+    key: 'victorian-literature',
+    type: CategoryType.genre,
+    parentKey: 'classic-literature',
+    translations: {
+      [Language.en]: { name: 'Victorian Literature', slug: 'victorian-literature' },
+    },
+  } as ImportCategoryDto;
+
+  const parent: ImportCategoryDto = {
+    key: 'classic-literature',
+    type: CategoryType.genre,
+    translations: {
+      [Language.en]: { name: 'Classic Literature', slug: 'classic-literature' },
+    },
+  } as ImportCategoryDto;
+
+  it('создаёт родителя раньше ребёнка, даже если в файле ребёнок стоит первым', async () => {
+    const log: WriteLog = [];
+    const { service, tx } = makeService(log);
+
+    const created: string[] = [];
+    tx.category.create.mockImplementation((args: { data?: { key?: string } }) => {
+      log.push('tx.category.create');
+      created.push(args?.data?.key ?? '');
+      return Promise.resolve({ id: `cat-${created.length}` });
+    });
+    tx.category.findUnique.mockImplementation(() => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve({ id: 'cat-1' });
+    });
+
+    // Ребёнок записан выше родителя — ровно тот файл, который раньше давал
+    // «успешный» импорт с термином, оставшимся в корне дерева.
+    const result = await service.importCategories([child, parent]);
+
+    expect(result).toEqual({ imported: 2, updated: 0, errors: [] });
+    expect(created).toEqual(['classic-literature', 'victorian-literature']);
+    expect(tx.category.update).toHaveBeenCalledWith({
+      where: { key: 'victorian-literature' },
+      data: { parentId: 'cat-1' },
+    });
+  });
+
+  it('отбраковывает цикл внутри партии, не записав ни одного термина', async () => {
+    const log: WriteLog = [];
+    const { service } = makeService(log);
+
+    const a = { ...parent, parentKey: 'victorian-literature' } as ImportCategoryDto;
+    const result = await service.importCategories([child, a]);
+
+    expect(result.imported).toBe(0);
+    expect(result.errors.map((e) => e.key).sort()).toEqual([
+      'classic-literature',
+      'victorian-literature',
+    ]);
+    expect(writesOf(log)).toEqual([]);
+  });
+
+  it('валит термин с ошибкой, если родителя нет в базе к моменту записи', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // Родитель есть в базе на предварительной проверке...
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(args?.where?.key === 'classic-literature' ? { id: 'parent-1' } : null);
+    });
+    // ...но к моменту записи его уже нет. Раньше это молча давало термин без
+    // родителя и всё равно шло в `imported`.
+    tx.category.findUnique.mockImplementation(() => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve(null);
+    });
+
+    const result = await service.importCategories([child]);
+
+    expect(result.imported).toBe(0);
+    expect(result.errors).toEqual([
+      { key: 'victorian-literature', message: 'parentKey "classic-literature" not found' },
+    ]);
+  });
+});

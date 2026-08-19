@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { RolesGuard } from '../../common/guards/roles.guard';
 import { RightsAgentModule } from '../rights-agent/rights-agent.module';
 import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { RightsLegalChangeController } from './rights-legal-change.controller';
@@ -29,7 +28,6 @@ import { BackgroundJobsRegistryModule } from '../background-jobs/background-jobs
     RightsRecheckSchedulerService,
     RightsLegalChangeService,
     RightsReviewChainService,
-    RolesGuard,
   ],
   exports: [RightsRecheckService, RightsRecheckSchedulerService, RightsReviewChainService],
 })
