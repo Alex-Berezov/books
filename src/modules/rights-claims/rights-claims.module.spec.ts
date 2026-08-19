@@ -6,6 +6,7 @@ import { GeoBlockModule } from '../geo-block/geo-block.module';
 import { RightsClaimEnforcementService } from './rights-claim-enforcement.service';
 import { RightsClaimsModule } from './rights-claims.module';
 import { RightsClaimsService } from './rights-claims.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test для фазы 16 (R0-04).
@@ -19,7 +20,11 @@ import { RightsClaimsService } from './rights-claims.service';
 describe('RightsClaimsModule', () => {
   it('compiles the dependency container', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), RightsClaimsModule],
+      imports: [
+        PrismaModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        RightsClaimsModule,
+      ],
     })
       .overrideProvider(PrismaService)
       .useValue({})

@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { PrismaService } from '../../../prisma/prisma.service';
 import { TaxonomyIndexabilitySchedulerService } from './taxonomy-indexability-scheduler.service';
 import { TaxonomyIndexabilityService } from './taxonomy-indexability.service';
 import { BackgroundJobsRegistryModule } from '../../background-jobs/background-jobs-registry.module';
@@ -11,7 +10,7 @@ import { BackgroundJobsRegistryModule } from '../../background-jobs/background-j
  */
 @Module({
   imports: [BackgroundJobsRegistryModule, ConfigModule],
-  providers: [TaxonomyIndexabilityService, TaxonomyIndexabilitySchedulerService, PrismaService],
+  providers: [TaxonomyIndexabilityService, TaxonomyIndexabilitySchedulerService],
   exports: [TaxonomyIndexabilityService, TaxonomyIndexabilitySchedulerService],
 })
 export class TaxonomyIndexabilityModule {}

@@ -8,6 +8,7 @@ import { MetricsController } from '../metrics/metrics.controller';
 import { MetricsModule } from '../metrics/metrics.module';
 import { GeoBlockModule } from './geo-block.module';
 import { GeoIpCountryService } from './geo-ip-country.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * LEGACY-206. Two invariants no other run can see, both of which break silently.
@@ -26,6 +27,7 @@ describe('geo metrics wiring (LEGACY-206)', () => {
   it('feeds the counters into the same registry that /api/metrics exposes', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
+        PrismaModule,
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
         // Глобальный модуль, из которого MetricsAccessGuard берёт ModeratorRolesService.
         ModeratorRolesModule,

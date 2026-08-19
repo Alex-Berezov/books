@@ -8,6 +8,14 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 
+/**
+ * Клиент транзакции или обычный. Методы записи принимают его параметром, а не
+ * ходят в `this.prisma`: оставленный на `this.prisma` вызов внутри
+ * `$transaction` уходит на другое соединение и вместе с транзакцией уже не
+ * откатывается (`LEGACY-131`).
+ */
+type PrismaLike = Prisma.TransactionClient | PrismaService;
+
 interface TranslationInput {
   name: string;
   slug: string;
@@ -201,7 +209,7 @@ export class ImportService {
       });
 
       if (dto.parentKey !== undefined) {
-        await this.updateParentId('category', dto.key, dto.parentKey ?? null);
+        await this.updateParentId(this.prisma, 'category', dto.key, dto.parentKey ?? null);
       }
 
       for (const [langCode, tr] of Object.entries(dto.translations)) {
@@ -228,31 +236,38 @@ export class ImportService {
             });
           });
         } else {
-          await this.createCategoryTranslation(existing.id, language, tr);
+          await this.createCategoryTranslation(this.prisma, existing.id, language, tr);
         }
       }
     } else {
-      const created = await this.prisma.category.create({
-        data: commonData,
+      // Термин и его переводы — одна запись (`LEGACY-131`). Обрыв между ними
+      // оставляет категорию, которая занимает `slug` и `key` и попадает в дерево,
+      // но не показывается ни на одной языковой версии сайта: публичные маршруты
+      // отбирают по `CategoryTranslation` нужного языка.
+      await this.prisma.$transaction(async (tx) => {
+        const created = await tx.category.create({
+          data: commonData,
+        });
+
+        if (dto.parentKey) {
+          await this.updateParentId(tx, 'category', dto.key, dto.parentKey);
+        }
+
+        for (const [langCode, tr] of Object.entries(dto.translations)) {
+          await this.createCategoryTranslation(tx, created.id, langCode as Language, tr);
+        }
       });
-
-      if (dto.parentKey) {
-        await this.updateParentId('category', dto.key, dto.parentKey);
-      }
-
-      for (const [langCode, tr] of Object.entries(dto.translations)) {
-        await this.createCategoryTranslation(created.id, langCode as Language, tr);
-      }
     }
   }
 
   private async createCategoryTranslation(
+    db: PrismaLike,
     categoryId: string,
     language: Language,
     tr: TranslationInput,
   ) {
     const data = this.buildCategoryTranslationData(tr);
-    return this.prisma.categoryTranslation.create({
+    return db.categoryTranslation.create({
       data: {
         categoryId,
         language,
@@ -335,30 +350,39 @@ export class ImportService {
             });
           });
         } else {
-          await this.createTagTranslation(existing.id, language, tr);
+          await this.createTagTranslation(this.prisma, existing.id, language, tr);
         }
       }
     } else {
-      const created = await this.prisma.tag.create({
-        data: {
-          name: dto.name,
-          slug: dto.slug,
-          key: dto.key,
-          indexable: dto.indexable ?? true,
-          isVisible: dto.isVisible ?? true,
-          sortOrder: dto.sortOrder ?? 0,
-        },
-      });
+      // Тот же рисунок, что у категорий, и та же причина (`LEGACY-131`): тег без
+      // переводов занимает `slug` и `key`, но публичным маршрутам не виден.
+      await this.prisma.$transaction(async (tx) => {
+        const created = await tx.tag.create({
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            key: dto.key,
+            indexable: dto.indexable ?? true,
+            isVisible: dto.isVisible ?? true,
+            sortOrder: dto.sortOrder ?? 0,
+          },
+        });
 
-      for (const [langCode, tr] of Object.entries(dto.translations)) {
-        await this.createTagTranslation(created.id, langCode as Language, tr);
-      }
+        for (const [langCode, tr] of Object.entries(dto.translations)) {
+          await this.createTagTranslation(tx, created.id, langCode as Language, tr);
+        }
+      });
     }
   }
 
-  private async createTagTranslation(tagId: string, language: Language, tr: TranslationInput) {
+  private async createTagTranslation(
+    db: PrismaLike,
+    tagId: string,
+    language: Language,
+    tr: TranslationInput,
+  ) {
     const data = this.buildTagTranslationData(tr);
-    return this.prisma.tagTranslation.create({
+    return db.tagTranslation.create({
       data: {
         tagId,
         language,
@@ -411,19 +435,24 @@ export class ImportService {
     return result;
   }
 
-  private async updateParentId(entity: 'category', key: string, parentKey: string | null) {
+  private async updateParentId(
+    db: PrismaLike,
+    entity: 'category',
+    key: string,
+    parentKey: string | null,
+  ) {
     if (parentKey === null) {
-      await this.prisma.category.update({
+      await db.category.update({
         where: { key },
         data: { parentId: null },
       });
     } else {
-      const parent = await this.prisma.category.findUnique({
+      const parent = await db.category.findUnique({
         where: { key: parentKey },
         select: { id: true },
       });
       if (parent) {
-        await this.prisma.category.update({
+        await db.category.update({
           where: { key },
           data: { parentId: parent.id },
         });

@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { RightsContentHashService } from './rights-content-hash.service';
 
 /**
@@ -14,7 +13,7 @@ import { RightsContentHashService } from './rights-content-hash.service';
  * **Импортировать ничего не должен** — любой импорт вернёт цикл, ради которого модуль и создан.
  */
 @Module({
-  providers: [RightsContentHashService, PrismaService],
+  providers: [RightsContentHashService],
   exports: [RightsContentHashService],
 })
 export class RightsContentHashModule {}

@@ -1,5 +1,4 @@
 import { Global, Module } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { ModeratorRolesService } from './moderator-roles.service';
 
 /**
@@ -9,7 +8,7 @@ import { ModeratorRolesService } from './moderator-roles.service';
  */
 @Global()
 @Module({
-  providers: [ModeratorRolesService, PrismaService],
+  providers: [ModeratorRolesService],
   exports: [ModeratorRolesService],
 })
 export class ModeratorRolesModule {}

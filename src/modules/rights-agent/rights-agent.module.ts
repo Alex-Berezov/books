@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
@@ -31,7 +30,6 @@ import { RightsNotificationsModule } from './rights-notifications.module';
     RightsAgentTokenGuard,
     RightsAgentUploadRateLimitGuard,
     RolesGuard,
-    PrismaService,
   ],
   // Модуль-лист реэкспортируется целиком: провайдер чужого модуля экспортировать нельзя,
   // а `rights-lawyer` и `rights-recheck` получают `RightsNotificationsService` отсюда.

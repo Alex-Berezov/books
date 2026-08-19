@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { PrismaService } from '../../prisma/prisma.service';
 import { MetricsRegistryModule } from '../metrics/metrics-registry.module';
 import { RightsClaimsModule } from '../rights-claims/rights-claims.module';
 import { RightsClearanceModule } from '../rights-clearance/rights-clearance.module';
@@ -16,7 +15,7 @@ import { GeoIpCountryService } from './geo-ip-country.service';
   // the latter brings `MetricsController` and a guard that needs `ModeratorRolesService`.
   imports: [MetricsRegistryModule, RightsClaimsModule, RightsClearanceModule],
   controllers: [GeoBlockController, GeoCountrySourceController],
-  providers: [GeoBlockRuleService, GeoIpCountryService, PrismaService, RolesGuard],
+  providers: [GeoBlockRuleService, GeoIpCountryService, RolesGuard],
   exports: [GeoBlockRuleService, GeoIpCountryService],
 })
 export class GeoBlockModule {}

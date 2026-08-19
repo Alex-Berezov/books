@@ -7,6 +7,7 @@ import { RightsAgentTokenService } from './rights-agent-token.service';
 import { RightsAgentUploadRateLimitGuard } from './rights-agent-upload-rate-limit.guard';
 import { RightsNotificationsService } from './rights-notifications.service';
 import type { TestingModule } from '@nestjs/testing';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * Dependency-injection smoke test.
@@ -24,7 +25,11 @@ describe('RightsAgentModule (DI)', () => {
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), RightsAgentModule],
+      imports: [
+        PrismaModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        RightsAgentModule,
+      ],
     }).compile();
   });
 

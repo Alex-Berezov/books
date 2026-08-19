@@ -6,6 +6,7 @@ import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { GeoBlockRuleService } from './geo-block-rule.service';
 import { GeoBlockModule } from './geo-block.module';
 import { GeoIpCountryService } from './geo-ip-country.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test для фазы 12 (R0-04).
@@ -18,7 +19,11 @@ import { GeoIpCountryService } from './geo-ip-country.service';
 describe('GeoBlockModule', () => {
   it('compiles the dependency container', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), GeoBlockModule],
+      imports: [
+        PrismaModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        GeoBlockModule,
+      ],
     })
       .overrideProvider(PrismaService)
       .useValue({})

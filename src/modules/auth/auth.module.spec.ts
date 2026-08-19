@@ -1,9 +1,10 @@
 import { describeDiSmoke } from '../../common/testing/di-smoke';
 import { AuthModule } from './auth.module';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 const savedEnv = { ...process.env };
 
-describeDiSmoke('AuthModule', () => [AuthModule], {
+describeDiSmoke('AuthModule', () => [PrismaModule, AuthModule], {
   beforeEach: () => {
     // `JwtModule.registerAsync` читает секреты фабрикой на этапе сборки
     // контейнера, и `requireJwtAccessSecret` бросает при их отсутствии. Значения

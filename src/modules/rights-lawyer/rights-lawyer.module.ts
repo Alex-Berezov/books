@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RightsAgentModule } from '../rights-agent/rights-agent.module';
 import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
@@ -32,7 +31,6 @@ import { RightsRiskAssessmentService } from './rights-risk-assessment.service';
     RightsLegalOpinionService,
     RightsRiskAssessmentService,
     RolesGuard,
-    PrismaService,
   ],
   exports: [RightsLawyerReviewService, RightsRiskAssessmentService, RightsLawyerService],
 })

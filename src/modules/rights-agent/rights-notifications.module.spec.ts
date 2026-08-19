@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsNotificationsModule } from './rights-notifications.module';
 import { RightsNotificationsService } from './rights-notifications.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test. Модуль существует ровно затем, чтобы ядро (`RightsIntakeModule`) могло писать
@@ -10,7 +11,9 @@ import { RightsNotificationsService } from './rights-notifications.service';
  */
 describe('RightsNotificationsModule', () => {
   it('compiles on its own with nothing but Prisma', async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [RightsNotificationsModule] })
+    const moduleRef = await Test.createTestingModule({
+      imports: [PrismaModule, RightsNotificationsModule],
+    })
       .overrideProvider(PrismaService)
       .useValue({})
       .compile();

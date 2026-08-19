@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { RightsClearanceResolverService } from './rights-clearance-resolver.service';
 
 /**
@@ -8,7 +7,7 @@ import { RightsClearanceResolverService } from './rights-clearance-resolver.serv
  * dependency-free (Prisma aside) is what lets all three import it without a cycle.
  */
 @Module({
-  providers: [RightsClearanceResolverService, PrismaService],
+  providers: [RightsClearanceResolverService],
   exports: [RightsClearanceResolverService],
 })
 export class RightsClearanceModule {}

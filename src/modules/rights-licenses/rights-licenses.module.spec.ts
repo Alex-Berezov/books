@@ -6,6 +6,7 @@ import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { RightsLicenseCoverageService } from './rights-license-coverage.service';
 import { RightsLicensesModule } from './rights-licenses.module';
 import { RightsLicensesService } from './rights-licenses.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test для фазы 15 (R0-04).
@@ -20,6 +21,7 @@ describe('RightsLicensesModule', () => {
   it('compiles the dependency container', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
+        PrismaModule,
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
         RightsLicensesModule,
       ],

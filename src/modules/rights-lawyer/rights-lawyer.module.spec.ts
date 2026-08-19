@@ -8,6 +8,7 @@ import { RightsLawyerReviewService } from './rights-lawyer-review.service';
 import { RightsLawyerService } from './rights-lawyer.service';
 import { RightsLegalOpinionService } from './rights-legal-opinion.service';
 import { RightsRiskAssessmentService } from './rights-risk-assessment.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test: the container must compile with the real module graph, and the dependency
@@ -19,7 +20,7 @@ import { RightsRiskAssessmentService } from './rights-risk-assessment.service';
 describe('RightsLawyerModule', () => {
   it('compiles the dependency container', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true }), RightsLawyerModule],
+      imports: [PrismaModule, ConfigModule.forRoot({ isGlobal: true }), RightsLawyerModule],
     })
       .overrideProvider(PrismaService)
       .useValue({})

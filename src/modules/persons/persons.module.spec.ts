@@ -6,6 +6,7 @@ import { RightsIntakeModule } from '../rights-intake/rights-intake.module';
 import { PersonResolverService } from './person-resolver.service';
 import { PersonsModule } from './persons.module';
 import { PersonsService } from './persons.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test для персон (R0-04).
@@ -19,7 +20,11 @@ import { PersonsService } from './persons.service';
 describe('PersonsModule', () => {
   it('compiles the dependency container', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), PersonsModule],
+      imports: [
+        PrismaModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        PersonsModule,
+      ],
     })
       .overrideProvider(PrismaService)
       .useValue({})

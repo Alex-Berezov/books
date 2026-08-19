@@ -15,6 +15,7 @@ import { RightsMaterializationService } from './rights-materialization.service';
 import { RightsProfileService } from './rights-profile.service';
 import { RightsReviewImportService } from './rights-review-import.service';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test для ядра системы прав (R0-04).
@@ -28,7 +29,11 @@ import { TerritoryRegionAggregationService } from './territory-region-aggregatio
 describe('RightsIntakeModule', () => {
   it('compiles the dependency container', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), RightsIntakeModule],
+      imports: [
+        PrismaModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        RightsIntakeModule,
+      ],
     })
       .overrideProvider(PrismaService)
       .useValue({})

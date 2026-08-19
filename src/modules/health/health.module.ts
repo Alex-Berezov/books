@@ -34,7 +34,6 @@ class EnvRedisProbe implements RedisProbe {
   imports: [ConfigModule],
   controllers: [HealthController],
   providers: [
-    PrismaService,
     {
       provide: 'REDIS_PROBE',
       useFactory: (config: ConfigService) => new EnvRedisProbe(config),

@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { RightsNotificationsService } from './rights-notifications.service';
 
 /**
@@ -15,7 +14,7 @@ import { RightsNotificationsService } from './rights-notifications.service';
  * **Импортировать ничего не должен** — любой импорт вернёт цикл, ради которого модуль и создан.
  */
 @Module({
-  providers: [RightsNotificationsService, PrismaService],
+  providers: [RightsNotificationsService],
   exports: [RightsNotificationsService],
 })
 export class RightsNotificationsModule {}

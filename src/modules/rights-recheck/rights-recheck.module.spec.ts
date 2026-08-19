@@ -5,6 +5,7 @@ import { RightsRecheckModule } from './rights-recheck.module';
 import { RightsRecheckSchedulerService } from './rights-recheck-scheduler.service';
 import { RightsRecheckService } from './rights-recheck.service';
 import { RightsReviewChainService } from './rights-review-chain.service';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * DI smoke test: the container must compile with the real module graph.
@@ -17,7 +18,7 @@ import { RightsReviewChainService } from './rights-review-chain.service';
 describe('RightsRecheckModule', () => {
   it('compiles the dependency container', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true }), RightsRecheckModule],
+      imports: [PrismaModule, ConfigModule.forRoot({ isGlobal: true }), RightsRecheckModule],
     })
       .overrideProvider(PrismaService)
       .useValue({})
