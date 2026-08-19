@@ -195,7 +195,10 @@ jobs:
             bash -n "$sh_file"
           done
 
-      - name: 🔀 Schema/Migration Drift Check
+      # LEGACY-123. Тот же вызов несёт третий проход: идентификаторы сырого SQL из `src/`,
+      # `prisma/` и `libs/` сверяются со `schema.prisma`. Отдельного шага у него нет —
+      # см. `scripts/ci.sh`.
+      - name: 🔀 Schema/Migration Drift + Raw SQL Identifiers
         run: |
           yarn drift-check:self-test
           yarn drift-check

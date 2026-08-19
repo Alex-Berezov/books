@@ -46,7 +46,18 @@ done
 
 # Migrations are hand-written and applied by a human on the VPS (ADR-011), so nothing else
 # proves that their sum still equals schema.prisma. Drift surfaces only in production.
-step "Schema/migration drift check"
+#
+# LEGACY-123. С 19.08.2026 тот же прогон несёт третий проход: имена таблиц и колонок внутри
+# шаблонов `$queryRaw` и `Prisma.sql` сверяются с `schema.prisma`. Читаются `src/`, `prisma/`
+# и `libs/` — обслуживающие скрипты в `prisma/scripts/` ломает то же переименование. До него связь этих шести
+# запросов со схемой не держало ничто: `tsc` внутрь шаблона не смотрит, `prisma generate`
+# типизирует делегатов, и переименование колонки уезжало на прод зелёным, чтобы упасть
+# на публичном маршруте. Отдельного шага у прохода нет намеренно — источник имён у всех
+# трёх проходов один, а два места вызова означали бы два места, где можно забыть про третье.
+#
+# Self-test идёт первым и здесь тоже: проверка, которая не краснеет на подложенном дефекте,
+# приучает игнорировать свой вывод (LEGACY-045).
+step "Schema/migration drift + raw SQL identifiers"
 yarn drift-check:self-test
 yarn drift-check
 
