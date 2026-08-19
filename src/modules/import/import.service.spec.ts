@@ -68,7 +68,13 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
 
 /** Только записи: чтения ходят мимо транзакции законно. */
 const writesOf = (log: WriteLog): string[] =>
-  log.filter((call) => call.endsWith('.create') || call.endsWith('.update'));
+  log.filter(
+    (call) =>
+      call.endsWith('.create') ||
+      call.endsWith('.update') ||
+      call.includes('.slugRedirect.') ||
+      call.includes('slugRedirect.record'),
+  );
 
 const makeService = (log: WriteLog) => {
   const tx = makeClient('tx', log);
@@ -77,9 +83,21 @@ const makeService = (log: WriteLog) => {
     .fn()
     .mockImplementation((run: (client: FakeClient) => Promise<unknown>) => run(tx));
   const prisma = { ...root, $transaction };
+
+  // ⚠️ История слагов пишется не делегатом Prisma, а `SlugRedirectService`, и
+  // клиент он получает **необязательным** аргументом: `record(change, tx?)`.
+  // Значит забытый `tx` не ломает ни типы, ни вызов — запись просто уходит на
+  // другое соединение и переживает откат. Поэтому фейк журналирует не факт
+  // вызова, а то, **какой клиент** в него передали.
+  const noteRedirect = (op: string) =>
+    jest.fn().mockImplementation((...args: unknown[]) => {
+      const client = args[args.length - 1];
+      log.push(`${client === tx ? 'tx' : 'root'}.${op}`);
+      return Promise.resolve(undefined);
+    });
   const slugRedirects = {
-    record: jest.fn().mockResolvedValue(undefined),
-    recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+    record: noteRedirect('slugRedirect.record'),
+    recordBaseSlugChange: noteRedirect('slugRedirect.recordBaseSlugChange'),
   };
 
   const service = new ImportService(
@@ -232,43 +250,67 @@ describe('ImportService — создание термина и переводо�
 });
 
 describe('ImportService — обновление термина одной транзакцией (LEGACY-257)', () => {
-  /** Термин уже в базе: один перевод есть, второй придёт с импортом. */
+  /**
+   * Термин уже в базе: один перевод есть, второй придёт с импортом.
+   *
+   * ⚠️ Слаги здесь **намеренно старые** и не совпадают с теми, что придут в
+   * `categoryDto()` / `tagDto()`. Совпадающие слаги выглядят безобиднее, но тогда
+   * ветка `if (tr.slug && existingTr.slug !== tr.slug)` не исполняется ни разу,
+   * и главное утверждение `LEGACY-257` — «история слагов пишется тем же `tx`» —
+   * остаётся непроверенным: снятие `tx` у `slugRedirects.record` не красит
+   * ничего, потому что вызова просто нет.
+   */
   const existingCategory = {
     id: 'cat-1',
     indexable: true,
     isVisible: true,
     sortOrder: 0,
-    translations: [{ language: Language.en, slug: 'victorian-literature' }],
+    translations: [{ language: Language.en, slug: 'victorian-lit-old' }],
   };
 
   const existingTag = {
     id: 'tag-1',
-    slug: 'aestheticism',
+    slug: 'aestheticism-old',
     indexable: true,
     isVisible: true,
     sortOrder: 0,
-    translations: [{ language: Language.en, slug: 'aestheticism' }],
+    translations: [{ language: Language.en, slug: 'aestheticism-old' }],
   };
 
-  it('пишет базовую строку и оба перевода категории одним клиентом транзакции', async () => {
+  it('пишет базовую строку, родителя, историю слагов и оба перевода одним tx', async () => {
     const log: WriteLog = [];
-    const { service, root, $transaction } = makeService(log);
+    const { service, root, tx, $transaction } = makeService(log);
 
-    root.category.findUnique.mockImplementation(() => {
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
       log.push('root.category.findUnique');
-      return Promise.resolve(existingCategory);
+      return Promise.resolve(
+        args?.where?.key === 'classic-literature' ? { id: 'parent-1' } : existingCategory,
+      );
+    });
+    tx.category.findUnique.mockImplementation(() => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve({ id: 'parent-1' });
     });
 
-    const result = await service.importCategories([categoryDto()]);
+    const result = await service.importCategories([categoryDto('classic-literature')]);
 
     expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
     // Одна транзакция на весь термин, а не по одной на каждый существующий перевод.
     expect($transaction).toHaveBeenCalledTimes(1);
+    // Порядок и состав дословно: сюда входят и привязка родителя
+    // (`tx.category.update` вторым), и запись истории слагов.
     expect(writesOf(log)).toEqual([
       'tx.category.update',
+      'tx.category.update',
+      'tx.slugRedirect.record',
       'tx.categoryTranslation.update',
       'tx.categoryTranslation.create',
     ]);
+    expect(tx.category.update).toHaveBeenCalledTimes(2);
+    expect(tx.category.update).toHaveBeenCalledWith({
+      where: { key: 'victorian-literature' },
+      data: { parentId: 'parent-1' },
+    });
   });
 
   it('не считает категорию обновлённой, если перевод упал на середине', async () => {
@@ -286,15 +328,16 @@ describe('ImportService — обновление термина одной тр�
 
     const result = await service.importCategories([categoryDto()]);
 
-    // Счётчик и база обязаны говорить одно и то же: инкремент `updated` стоит
-    // после коммита, а не до него.
+    // Кейс краснеет не от позиции инкремента (`updated++` и раньше стоял после
+    // `await this.upsertCategory`), а от строки ниже: любая запись через `root.`
+    // означает, что вызов остался на `this.prisma` и откат его не заберёт.
     expect(result.updated).toBe(0);
     expect(result.errors).toEqual([{ key: 'victorian-literature', message: 'slug conflict' }]);
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(writesOf(log).filter((call) => call.startsWith('root.'))).toEqual([]);
   });
 
-  it('пишет базовую строку и оба перевода тега одним клиентом транзакции', async () => {
+  it('пишет базовую строку, историю базового слага и оба перевода тега одним tx', async () => {
     const log: WriteLog = [];
     const { service, root, $transaction } = makeService(log);
 
@@ -308,7 +351,9 @@ describe('ImportService — обновление термина одной тр�
     expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(writesOf(log)).toEqual([
+      'tx.slugRedirect.recordBaseSlugChange',
       'tx.tag.update',
+      'tx.slugRedirect.record',
       'tx.tagTranslation.update',
       'tx.tagTranslation.create',
     ]);
@@ -394,6 +439,66 @@ describe('ImportService — порядок родителей внутри па�
       'victorian-literature',
     ]);
     expect(writesOf(log)).toEqual([]);
+  });
+
+  it('держит порядок на глубине три и на нескольких детях одного родителя', async () => {
+    const log: WriteLog = [];
+    const { service, tx } = makeService(log);
+
+    const created: string[] = [];
+    tx.category.create.mockImplementation((args: { data?: { key?: string } }) => {
+      log.push('tx.category.create');
+      created.push(args?.data?.key ?? '');
+      return Promise.resolve({ id: `cat-${created.length}` });
+    });
+    tx.category.findUnique.mockImplementation(() => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve({ id: 'cat-1' });
+    });
+
+    const node = (key: string, parentKey?: string): ImportCategoryDto =>
+      ({
+        key,
+        type: CategoryType.genre,
+        parentKey,
+        translations: { [Language.en]: { name: `Name ${key}`, slug: key } },
+      }) as ImportCategoryDto;
+
+    // Дед → родитель → двое внуков, и всё это записано в файле задом наперёд.
+    // Обход, теряющий второго ребёнка одного родителя, отправил бы его в `errors`;
+    // обход, кладущий детей мимо очереди, объявил бы внука циклом.
+    const result = await service.importCategories([
+      node('grandchild-b', 'child'),
+      node('grandchild-a', 'child'),
+      node('child', 'root-genre'),
+      node('root-genre'),
+    ]);
+
+    expect(result).toEqual({ imported: 4, updated: 0, errors: [] });
+    expect(created.slice(0, 2)).toEqual(['root-genre', 'child']);
+    expect(created.slice(2).sort()).toEqual(['grandchild-a', 'grandchild-b']);
+  });
+
+  it('не теряет молча элемент с повторённым ключом', async () => {
+    const log: WriteLog = [];
+    const { service } = makeService(log);
+
+    const twin: ImportCategoryDto = {
+      key: 'victorian-literature',
+      type: CategoryType.genre,
+      translations: { [Language.en]: { name: 'Twin', slug: 'twin' } },
+    } as ImportCategoryDto;
+
+    const result = await service.importCategories([parent, twin, twin]);
+
+    // Отчёт обязан сходиться: сколько элементов пришло, столько и разобрано.
+    expect(result.imported + result.updated + result.errors.length).toBe(3);
+    expect(result.errors).toEqual([
+      {
+        key: 'victorian-literature',
+        message: 'duplicate key "victorian-literature" inside the batch',
+      },
+    ]);
   });
 
   it('валит термин с ошибкой, если родителя нет в базе к моменту записи', async () => {

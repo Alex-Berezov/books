@@ -14,7 +14,8 @@ import { PrismaModule } from '../../shared/prisma/prisma.module';
  * Модуль не импортирует ничего: претензии обязаны оставаться листом графа, потому что их
  * импортирует `GeoBlockModule` — ветка runtime enforcement. Добавить сюда `GeoBlockModule`
  * (или что-либо, что до него дотягивается) — и второй кейс краснеет. Первый кейс ловит
- * незарегистрированный провайдер: `RightsClaimsController` тянет `RolesGuard`, а тот —
+ * незарегистрированный провайдер: `RightsClaimsController` тянет `RolesGuard` (его Nest
+ * разрешает сам, из `module.injectables`, — в `providers` его нет с `LEGACY-259`), а тот —
  * `ConfigService` и `PrismaService` (ADR-003).
  */
 describe('RightsClaimsModule', () => {

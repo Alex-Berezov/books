@@ -34,7 +34,7 @@ export const listModuleFiles = (dir: string): string[] =>
   });
 
 /** Элементы верхнего уровня всех массивов `<key>: [...]` файла. */
-export const metadataElements = (content: string, key: 'providers' | 'exports'): string[] => {
+export const metadataElements = (content: string, key: string): string[] => {
   const elements: string[] = [];
   const opener = new RegExp(`${key}:\\s*\\[`, 'g');
   let match: RegExpExecArray | null;
@@ -77,3 +77,18 @@ export const metadataElements = (content: string, key: 'providers' | 'exports'):
 
   return elements.map((element) => element.trim()).filter(Boolean);
 };
+
+/**
+ * Объявляет ли элемент массива `providers` собственный экземпляр `name`.
+ *
+ * Форм две, и вторую легко не заметить: голое имя класса и фабрика, которая
+ * делает `new <name>(` в своём теле. Проверка «элемент равен имени» ловит только
+ * первую, и `providers: [{ provide: X, useFactory: () => new PrismaService() }]`
+ * проходит мимо обоих слоёв защиты — и мимо правила хука, и мимо сторожа.
+ *
+ * Токен в `inject` и тип параметра `useFactory` объявлением **не** считаются:
+ * фабрика, которой сервис нужен аргументом, получает его от инжектора и своего
+ * экземпляра не заводит.
+ */
+export const declaresOwnInstance = (element: string, name: string): boolean =>
+  element === name || new RegExp(`\\bnew\\s+${name}\\s*\\(`).test(element);

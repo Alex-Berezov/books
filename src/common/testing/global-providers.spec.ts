@@ -3,15 +3,15 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { readFileSync } from 'fs';
 import { relative, resolve } from 'path';
-import { listModuleFiles, metadataElements } from '../../common/testing/module-metadata';
+import { declaresOwnInstance, listModuleFiles, metadataElements } from './module-metadata';
 import { BookModule } from '../../modules/book/book.module';
 import { BookService } from '../../modules/book/book.service';
 import { CategoryService } from '../../modules/category/category.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PublicModule } from '../../modules/public/public.module';
-import { ModeratorRolesModule } from '../../common/roles/moderator-roles.module';
+import { ModeratorRolesModule } from '../roles/moderator-roles.module';
 import { SlugRedirectModule } from '../../modules/slug-redirect/slug-redirect.module';
-import { PrismaModule } from './prisma.module';
+import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
  * Сторож единственности провайдеров из `@Global()`-модулей
@@ -24,22 +24,21 @@ import { PrismaModule } from './prisma.module';
  * у модуля появляется собственный пул соединений с PostgreSQL и собственный
  * контекст `$transaction`, который не видит транзакций соседа. Для `RolesGuard`
  * дешевле, но так же неверно: `@UseGuards(RolesGuard)` Nest разрешает сам, из
- * контекста модуля, и строка в `providers` только прячет, откуда гвард берётся.
+ * `module.injectables`, а не из `providers`, — строка в `providers` только
+ * прячет, откуда гвард берётся.
  *
  * Ни типы, ни линт, ни e2e этого не показывают — контейнер собирается, маршруты
  * отвечают, а разница вылезает под нагрузкой (исчерпание пула) и в сценарии, где
  * два сервиса из разных модулей должны попасть в одну транзакцию.
  *
- * Первый кейс ловит возврат такого провайдера в `providers` любого модуля;
- * второй — то, ради чего первый написан: клиент, доставшийся сервису из
- * `BookModule` и сервису из `PublicModule`, обязан быть тем же объектом, что и
- * клиент корневого контейнера.
+ * ⚠️ Спека лежит в `common/testing`, а не рядом с одним из владельцев: владельцев
+ * двое, и «рядом с исходником» здесь означало бы две копии одного обхода.
  */
 
 const SRC_ROOT = resolve(__dirname, '../..');
 
 /** Провайдер и единственный модуль, которому позволено его объявлять. */
-const GLOBAL_PROVIDERS: Array<{ provider: string; owner: string; record: string }> = [
+const GLOBAL_PROVIDERS = [
   {
     provider: 'PrismaService',
     owner: 'shared/prisma/prisma.module.ts',
@@ -57,6 +56,12 @@ const MIN_MODULES = 50;
 
 const relativeToSrc = (file: string): string => relative(SRC_ROOT, file).split('\\').join('/');
 
+const readModules = (): Array<{ file: string; content: string }> =>
+  listModuleFiles(SRC_ROOT).map((file) => ({
+    file: relativeToSrc(file),
+    content: readFileSync(file, 'utf8'),
+  }));
+
 describe('провайдеры глобальных модулей объявлены ровно в одном месте', () => {
   let moduleRef: TestingModule | undefined;
 
@@ -69,18 +74,33 @@ describe('провайдеры глобальных модулей объявл�
     moduleRef = undefined;
   });
 
+  it('обход находит все модули репозитория', () => {
+    expect(readModules().length).toBeGreaterThanOrEqual(MIN_MODULES);
+  });
+
   it.each(GLOBAL_PROVIDERS)(
-    '$provider не значится в providers ни одного модуля, кроме своего ($record)',
+    '$provider объявлен и экспортирован своим модулем ($record)',
     ({ provider, owner }) => {
-      const modules = listModuleFiles(SRC_ROOT);
+      // Без этого кейса `owner` работал бы только как фильтр-исключение: удали
+      // провайдера у владельца или переименуй его каталог — и список нарушителей
+      // остался бы пустым, хотя единственного законного объявления больше нет.
+      const found = readModules().find(({ file }) => file === owner);
 
-      expect(modules.length).toBeGreaterThanOrEqual(MIN_MODULES);
+      expect(found).toBeDefined();
+      expect(metadataElements(found?.content ?? '', 'providers')).toContain(provider);
+      expect(metadataElements(found?.content ?? '', 'exports')).toContain(provider);
+    },
+  );
 
-      const offenders = modules
-        .map((file) => ({ file: relativeToSrc(file), content: readFileSync(file, 'utf8') }))
+  it.each(GLOBAL_PROVIDERS)(
+    '$provider не заводится заново ни в одном другом модуле ($record)',
+    ({ provider, owner }) => {
+      const offenders = readModules()
         .filter(({ file }) => file !== owner)
         .filter(({ content }) =>
-          metadataElements(content, 'providers').some((element) => element === provider),
+          metadataElements(content, 'providers').some((element) =>
+            declaresOwnInstance(element, provider),
+          ),
         )
         .map(({ file }) => file);
 

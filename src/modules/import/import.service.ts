@@ -168,7 +168,24 @@ export class ImportService {
    * базе, либо проверка выше уже записала отказ.
    */
   private orderByParent(items: ImportCategoryDto[], result: ImportResult): ImportCategoryDto[] {
-    const byKey = new Map(items.map((item) => [item.key, item]));
+    // Повторённый ключ ломает счётчик Кана (`pending` уходит в минус), и элемент
+    // молча выпадал из партии: ни в `imported`, ни в `errors`. Отбор идёт по
+    // порядку вхождения, а не по тождеству объекта: один и тот же элемент может
+    // стоять в файле дважды, и тогда сравнение ссылок обе копии считает первой.
+    const byKey = new Map<string, ImportCategoryDto>();
+    const unique: ImportCategoryDto[] = [];
+    for (const item of items) {
+      if (byKey.has(item.key)) {
+        result.errors.push({
+          key: item.key,
+          message: `duplicate key "${item.key}" inside the batch`,
+        });
+        continue;
+      }
+      byKey.set(item.key, item);
+      unique.push(item);
+    }
+    items = unique;
     const children = new Map<string, ImportCategoryDto[]>();
     const pending = new Map<string, number>();
     const ordered: ImportCategoryDto[] = [];
@@ -198,11 +215,30 @@ export class ImportService {
 
     if (ordered.length < items.length) {
       const orderedKeys = new Set(ordered.map((item) => item.key));
-      for (const item of items) {
-        if (orderedKeys.has(item.key)) continue;
+      const stuck = items.filter((item) => !orderedKeys.has(item.key));
+      const stuckKeys = new Set(stuck.map((item) => item.key));
+
+      // Участник цикла — тот, до кого от него самого есть путь по `parentKey`.
+      // Остальные застряли не своей виной: их предок в цикле, и говорить им про
+      // цикл в их собственной ссылке — значит посылать чинить не то место.
+      const inCycle = (item: ImportCategoryDto): boolean => {
+        const seen = new Set<string>();
+        let current: ImportCategoryDto | undefined = item;
+        while (current?.parentKey && stuckKeys.has(current.parentKey)) {
+          if (current.parentKey === item.key) return true;
+          if (seen.has(current.parentKey)) return false;
+          seen.add(current.parentKey);
+          current = byKey.get(current.parentKey);
+        }
+        return false;
+      };
+
+      for (const item of stuck) {
         result.errors.push({
           key: item.key,
-          message: `parentKey "${item.parentKey ?? ''}" forms a cycle inside the batch`,
+          message: inCycle(item)
+            ? `parentKey "${item.parentKey ?? ''}" forms a cycle inside the batch`
+            : `parentKey "${item.parentKey ?? ''}" is part of a cycle and cannot be imported`,
         });
       }
     }
@@ -230,6 +266,21 @@ export class ImportService {
     }
     return null;
   }
+
+  /**
+   * Границы интерактивной транзакции импорта.
+   *
+   * Дефолт Prisma — `timeout: 5000`, `maxWait: 2000`. После `LEGACY-257` термин
+   * пишется одной транзакцией целиком, и у тега со сменившимся базовым слагом и
+   * пятью переводами в ней набирается под четыре десятка операторов: запись
+   * истории слагов — три запроса на язык. Пяти секунд такой цепочке не хватает,
+   * а `P2028` откатывает термин целиком. Числа те же, что у `PersonsService`
+   * и `ContributorsService`, где цепочка такой же длины.
+   *
+   * ⚠️ Транзакция удерживает соединение всё это время, а пул у приложения один
+   * (`LEGACY-256`). Удлинять эти числа без нужды нельзя.
+   */
+  private static readonly TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 };
 
   private async upsertCategory(dto: ImportCategoryDto) {
     const existing = await this.prisma.category.findUnique({
@@ -275,7 +326,12 @@ export class ImportService {
         });
 
         if (dto.parentKey !== undefined) {
-          await this.updateParentId(tx, dto.key, dto.parentKey ?? null);
+          // `|| null`, а не `?? null`: пустая строка — это «родителя нет», как и
+          // в ветке создания (`if (dto.parentKey)`). С `??` она доезжала до
+          // поиска родителя по ключу `""` и после `LEGACY-258` валила весь
+          // термин — один и тот же файл проходил при первом импорте и падал при
+          // повторном.
+          await this.updateParentId(tx, dto.key, dto.parentKey || null);
         }
 
         for (const [langCode, tr] of Object.entries(dto.translations)) {
@@ -304,7 +360,7 @@ export class ImportService {
             await this.createCategoryTranslation(tx, existing.id, language, tr);
           }
         }
-      });
+      }, ImportService.TX_OPTIONS);
     } else {
       // Термин и его переводы — одна запись (`LEGACY-131`). Обрыв между ними
       // оставляет категорию, которая занимает `slug` и `key` и попадает в дерево,
@@ -322,7 +378,7 @@ export class ImportService {
         for (const [langCode, tr] of Object.entries(dto.translations)) {
           await this.createCategoryTranslation(tx, created.id, langCode as Language, tr);
         }
-      });
+      }, ImportService.TX_OPTIONS);
     }
   }
 
@@ -419,7 +475,7 @@ export class ImportService {
             await this.createTagTranslation(tx, existing.id, language, tr);
           }
         }
-      });
+      }, ImportService.TX_OPTIONS);
     } else {
       // Тот же рисунок, что у категорий, и та же причина (`LEGACY-131`): тег без
       // переводов занимает `slug` и `key`, но публичным маршрутам не виден.
@@ -438,7 +494,7 @@ export class ImportService {
         for (const [langCode, tr] of Object.entries(dto.translations)) {
           await this.createTagTranslation(tx, created.id, langCode as Language, tr);
         }
-      });
+      }, ImportService.TX_OPTIONS);
     }
   }
 

@@ -13,7 +13,8 @@ import { PrismaModule } from '../../shared/prisma/prisma.module';
  *
  * Модуль импортируется ядром (`RightsIntakeModule`), поэтому обратной зависимости иметь не может:
  * добавить `RightsIntakeModule` в `imports` — и второй кейс краснеет. Первый кейс ловит
- * незарегистрированный провайдер: `RolesGuard` тянет `ConfigService` и `PrismaService`, а покрытие
+ * незарегистрированный провайдер: `RolesGuard` (в `providers` его нет с `LEGACY-259`, Nest
+ * разрешает его сам) тянет `ConfigService` и `PrismaService`, а покрытие
  * лицензий — `RightsClearanceModule`; убрать любой из них из метаданных модуля, и container не
  * соберётся (ADR-003).
  */
