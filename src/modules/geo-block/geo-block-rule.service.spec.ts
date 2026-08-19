@@ -639,3 +639,63 @@ describe('GeoBlockRuleService', () => {
     );
   });
 });
+
+/**
+ * 🔴 `LEGACY-127`. `getVersionState` читал версию целиком - 66 колонок, из них
+ * 29 правовых, включая Json `rightsContentHashInput` в 1,18 МБ (`LEGACY-090`), -
+ * ради шести служебных полей, и делал это на каждой проверке гейта публикации
+ * и каждой генерации гео-правил. Наружу лишнее не уходило: метод собирает узкую
+ * структуру вручную. Поэтому сторожем здесь может быть только форма **запроса**,
+ * а не форма ответа - по ответу дефект неотличим от исправления.
+ */
+describe('GeoBlockRuleService: версия читается узким select (LEGACY-127)', () => {
+  let prisma: PrismaStub;
+  let service: GeoBlockRuleService;
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    service = new GeoBlockRuleService(
+      prisma as unknown as PrismaService,
+      createClaimEnforcementStub() as unknown as RightsClaimEnforcementService,
+      createConfigStub() as unknown as ConfigService,
+      createClearanceStub() as unknown as RightsClearanceResolverService,
+    );
+  });
+
+  it('в аргументах findUnique есть select, и в нём нет rightsContentHashInput', async () => {
+    await service.getRulesForVersion('version-1');
+
+    expect(prisma.bookVersion.findUnique).toHaveBeenCalledTimes(1);
+    const [args] = prisma.bookVersion.findUnique.mock.calls[0] as [
+      { select?: Record<string, boolean> },
+    ];
+    expect(args.select).toBeDefined();
+    expect(args.select).not.toHaveProperty('rightsContentHashInput');
+  });
+
+  it('select перечисляет ровно те поля, которые собирает состояние версии', async () => {
+    await service.getRulesForVersion('version-1');
+
+    const [args] = prisma.bookVersion.findUnique.mock.calls[0] as [
+      { select: Record<string, boolean> },
+    ];
+    expect(Object.keys(args.select).sort()).toEqual(
+      [
+        'bookId',
+        'id',
+        'rightsGeoBlockConfigured',
+        'rightsGeoBlockLastGeneratedAt',
+        'rightsGeoBlockRequired',
+        'rightsGeoBlockVerifiedAt',
+        'rightsProfileId',
+      ].sort(),
+    );
+  });
+
+  it('сводка по-прежнему собирается из прочитанных полей', async () => {
+    const res = await service.getRulesForVersion('version-1');
+
+    expect(res.summary.geoBlockRequired).toBe(true);
+    expect(res.summary.configured).toBe(false);
+  });
+});

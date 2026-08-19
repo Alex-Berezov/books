@@ -11,7 +11,7 @@ interface PrismaStub {
   book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
   bookVersion: { findMany: jest.Mock; findFirst: jest.Mock; groupBy: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
-  seo: { findUnique: jest.Mock };
+  seo: { findUnique: jest.Mock; findMany: jest.Mock };
   bookCategory: { findMany: jest.Mock };
   bookTag: { findMany: jest.Mock };
   bookRating: {
@@ -31,7 +31,7 @@ const createPrismaStub = (): PrismaStub => ({
     groupBy: jest.fn(),
   },
   bookSummary: { findFirst: jest.fn() },
-  seo: { findUnique: jest.fn() },
+  seo: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
   bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
   bookTag: { findMany: jest.fn().mockResolvedValue([]) },
   bookRating: {
@@ -111,13 +111,11 @@ describe('BookService.getOverview', () => {
       },
     ]);
     prisma.bookSummary.findFirst.mockResolvedValue({ id: 's1' });
-    prisma.seo.findUnique.mockImplementation((args: { where: { id: number } }) => {
-      if (args?.where?.id === 1)
-        return Promise.resolve({ metaTitle: 'T-text', metaDescription: 'D-text' });
-      if (args?.where?.id === 2)
-        return Promise.resolve({ metaTitle: 'T-audio', metaDescription: 'D-audio' });
-      return Promise.resolve(null);
-    });
+    // Все четыре поля `seo` собираются одной выборкой (`LEGACY-126`).
+    prisma.seo.findMany.mockResolvedValue([
+      { id: 1, metaTitle: 'T-text', metaDescription: 'D-text' },
+      { id: 2, metaTitle: 'T-audio', metaDescription: 'D-audio' },
+    ]);
 
     const res = await service.getOverview('slug-1', undefined, 'es');
 
@@ -169,10 +167,10 @@ describe('BookService.getOverview', () => {
       },
     ]);
     prisma.bookSummary.findFirst.mockResolvedValue({ id: 's2' });
-    prisma.seo.findUnique.mockResolvedValue({
-      metaTitle: 'T-any',
-      metaDescription: 'D-any',
-    });
+    prisma.seo.findMany.mockResolvedValue([
+      { id: 1, metaTitle: 'T-any', metaDescription: 'D-any' },
+      { id: 2, metaTitle: 'T-any', metaDescription: 'D-any' },
+    ]);
 
     const res = await service.getOverview('book-3', 'es');
     expect(res.versionIds.text).toBe('v-text-es');

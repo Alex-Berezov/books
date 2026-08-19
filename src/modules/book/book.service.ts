@@ -122,28 +122,31 @@ export class BookService {
       this.prisma.book.count({ where: bookWhere }),
     ]);
 
-    const data = await Promise.all(
-      books.map(async (book) => {
-        const rating = await this.getAverageRating(book.id);
-        const hasText = book.versions.some(
-          (v) => v.status === 'published' && (v._count?.chapters > 0 || v.type === 'text'),
-        );
-        const hasAudio = book.versions.some(
-          (v) => v.status === 'published' && v._count?.audioChapters > 0,
-        );
-        const hasSummary = book.versions.some(
-          (v) => v.status === 'published' && v._count?.summaries > 0,
-        );
+    // Рейтинги одним групповым запросом на страницу, а не агрегатом на книгу
+    // (`LEGACY-124`): при `limit=100` это было 100 обращений к базе поверх одного
+    // `findMany`, и `Promise.all` их только маскировал.
+    const ratingsMap = await this.getRatingsForBooks(books.map((b) => b.id));
 
-        return {
-          ...book,
-          rating,
-          hasText,
-          hasAudio,
-          hasSummary,
-        };
-      }),
-    );
+    const data = books.map((book) => {
+      const rating = ratingsMap.get(book.id)?.avg ?? null;
+      const hasText = book.versions.some(
+        (v) => v.status === 'published' && (v._count?.chapters > 0 || v.type === 'text'),
+      );
+      const hasAudio = book.versions.some(
+        (v) => v.status === 'published' && v._count?.audioChapters > 0,
+      );
+      const hasSummary = book.versions.some(
+        (v) => v.status === 'published' && v._count?.summaries > 0,
+      );
+
+      return {
+        ...book,
+        rating,
+        hasText,
+        hasAudio,
+        hasSummary,
+      };
+    });
 
     return {
       data,
@@ -365,24 +368,46 @@ export class BookService {
       (!!textVersion && textVersion._count.summaries > 0) ||
       (!!audioVersion && audioVersion._count.summaries > 0);
 
-    const loadSeo = async (versionId: string | null | undefined) => {
+    // 🔴 Все четыре поля `seo` собираются из **одной** выборки (`LEGACY-126`).
+    // Раньше здесь стояла локальная `loadSeo` без памяти, и один и тот же
+    // `seoId` уезжал в базу до четырёх раз подряд, последовательными `await`
+    // прямо в литерале объекта: запросы одинаковы до последнего поля и
+    // отличаются только временем ответа. Версий тут не больше трёх, поэтому
+    // идентификаторов в `in` тоже не больше трёх.
+    const seoIdsNeeded = Array.from(
+      new Set(
+        [textVersion?.id, audioVersion?.id, referralVersion?.id]
+          .map((versionId) => (versionId ? (seoIdOf.get(versionId) ?? null) : null))
+          .filter((seoId): seoId is number => seoId !== null),
+      ),
+    );
+    const seoRows = seoIdsNeeded.length
+      ? await this.prisma.seo.findMany({
+          where: { id: { in: seoIdsNeeded } },
+          select: { id: true, metaTitle: true, metaDescription: true },
+        })
+      : [];
+    const seoById = new Map(
+      seoRows.map((row) => [
+        row.id,
+        { metaTitle: row.metaTitle, metaDescription: row.metaDescription },
+      ]),
+    );
+    // Объект свой на каждое поле: прежняя `loadSeo` ходила в базу заново и
+    // возвращала разные строки, а общий на три поля объект сделал бы
+    // `seo.main === seo.read` — правка одного поля переписала бы соседние.
+    const seoOf = (versionId: string | null | undefined) => {
       if (!versionId) return null;
       const seoId = seoIdOf.get(versionId);
       if (!seoId) return null;
-      return this.prisma.seo.findUnique({
-        where: { id: seoId },
-        select: { metaTitle: true, metaDescription: true },
-      });
+      const row = seoById.get(seoId);
+      return row ? { ...row } : null;
     };
     const seo = {
-      main:
-        (await loadSeo(textVersion?.id)) ??
-        (await loadSeo(audioVersion?.id)) ??
-        (await loadSeo(referralVersion?.id)) ??
-        null,
-      read: (await loadSeo(textVersion?.id)) ?? null,
-      listen: (await loadSeo(audioVersion?.id)) ?? null,
-      summary: (await loadSeo(textVersion?.id)) ?? (await loadSeo(audioVersion?.id)) ?? null,
+      main: seoOf(textVersion?.id) ?? seoOf(audioVersion?.id) ?? seoOf(referralVersion?.id) ?? null,
+      read: seoOf(textVersion?.id) ?? null,
+      listen: seoOf(audioVersion?.id) ?? null,
+      summary: seoOf(textVersion?.id) ?? seoOf(audioVersion?.id) ?? null,
     } as const;
 
     // Каст здесь больше не нужен: с белым списком тип версии выводится сам
@@ -781,15 +806,66 @@ export class BookService {
       filterConditions.length > 0 ? { ...baseWhere, AND: filterConditions } : baseWhere;
 
     if (sort === 'popular') {
-      // For popular sort: fetch all matching bookIds, get ratings, sort by rating, then paginate
-      const allVersions = await this.prisma.bookVersion.findMany({
-        where,
-        select: { id: true, bookId: true, publishedAt: true },
-        distinct: ['bookId'],
-      });
+      // 🔴 Сортировка по рейтингу считается в базе (`LEGACY-128`). До этого
+      // ветка забирала **все** опубликованные версии под фильтр без `take`,
+      // агрегировала рейтинги по всему каталогу и резала страницу через
+      // `slice` уже в памяти процесса: стоимость первой страницы равнялась
+      // размеру каталога, а включался этот режим значением query-параметра,
+      // который приходит снаружи.
+      //
+      // 🔴 Порядок сохранён дословно, включая перевёрнутый второй ключ.
+      // Прежний код звал `comparePublishedAtDesc(b.publishedAt, a.publishedAt)`
+      // с **переставленными** аргументами, и функция, названная `Desc`, на
+      // деле сортировала `publishedAt` по **возрастанию**, а версии без даты
+      // ставила в начало группы. Отсюда `ASC NULLS FIRST`, а не `DESC NULLS
+      // LAST`, как в ветке `new` и как обещает JSDoc метода. Разворот второго
+      // ключа сдвинул бы границы всех страниц популярного каталога - у книг
+      // без оценок рейтинг общий, и таких на живом каталоге большинство;
+      // читатель увидел бы одни книги дважды, а другие пропустил. Дефект
+      // записан отдельно (`LEGACY-253`) и чинится не здесь.
+      // Рейтинг по убыванию, книга без оценок после любой оценённой -
+      // `COALESCE(..., -1)` вместо прежнего `?? -1`; третий ключ - `id`.
+      //
+      // `DISTINCT ON (bookId)` повторяет прежний `distinct: ['bookId']` и, как и
+      // он, сегодня ничего не отсеивает: `@@unique([bookId, language])` в схеме
+      // не даёт двух версий одной книги на один язык, а язык в фильтре задан
+      // всегда. Оставлен намеренно — снятие уникальности сделало бы выдачу
+      // с повторами книги, и заметно это стало бы только на витрине. Порядок
+      // внутри — самая свежая по `publishedAt`, при равенстве меньшая по `id`.
+      // ⚠️ Условия здесь — близнец `where`, собранного выше для остальных веток
+      // (`baseWhere` + `filterConditions`). Второй фильтр, добавленный туда и не
+      // добавленный сюда, применится к `sort=new` и молча не применится к
+      // `sort=popular`: одна и та же строка запроса отдаст разный список и разный
+      // `total`. Правишь один набор — правь оба, состав условий закреплён спекой.
+      const conditions: Prisma.Sql[] = [
+        Prisma.sql`bv.language = ${lang}::"Language"`,
+        Prisma.sql`bv.status = 'published'::"PublicationStatus"`,
+      ];
+      if (type === 'audio') {
+        conditions.push(
+          Prisma.sql`EXISTS (SELECT 1 FROM "AudioChapter" ac WHERE ac."bookVersionId" = bv.id)`,
+        );
+      } else if (type === 'text') {
+        conditions.push(
+          Prisma.sql`(EXISTS (SELECT 1 FROM "Chapter" ch WHERE ch."bookVersionId" = bv.id) OR bv.type = 'text'::"BookType")`,
+        );
+      }
+      if (q) {
+        conditions.push(
+          Prisma.sql`(bv.title ILIKE '%' || ${q} || '%' OR bv.author ILIKE '%' || ${q} || '%')`,
+        );
+      }
+      const whereSql = Prisma.join(conditions, ' AND ');
 
-      const allBookIds = allVersions.map((v) => v.bookId);
-      const total = allBookIds.length;
+      const totalRows = await this.prisma.$queryRaw<Array<{ total: number }>>`
+        SELECT COUNT(*)::int AS total
+        FROM (
+          SELECT DISTINCT bv."bookId"
+          FROM "BookVersion" bv
+          WHERE ${whereSql}
+        ) matched
+      `;
+      const total = totalRows[0]?.total ?? 0;
 
       if (total === 0) {
         return {
@@ -798,18 +874,26 @@ export class BookService {
         };
       }
 
-      const ratingsMap = await this.getRatingsForBooks(allBookIds);
+      const rows = await this.prisma.$queryRaw<Array<{ bookId: string }>>`
+        WITH matched AS (
+          SELECT DISTINCT ON (bv."bookId") bv."bookId", bv."publishedAt", bv.id
+          FROM "BookVersion" bv
+          WHERE ${whereSql}
+          ORDER BY bv."bookId", bv."publishedAt" DESC NULLS LAST, bv.id ASC
+        ),
+        ranked AS (
+          SELECT m."bookId", m."publishedAt", m.id, AVG(r.score) AS "avgScore"
+          FROM matched m
+          LEFT JOIN "BookRating" r ON r."bookId" = m."bookId"
+          GROUP BY m."bookId", m."publishedAt", m.id
+        )
+        SELECT "bookId"
+        FROM ranked
+        ORDER BY COALESCE("avgScore", -1) DESC, "publishedAt" ASC NULLS FIRST, id ASC
+        LIMIT ${effectiveLimit} OFFSET ${skip}
+      `;
 
-      const sorted = allVersions.sort((a, b) => {
-        const ratingA = ratingsMap.get(a.bookId)?.avg ?? -1;
-        const ratingB = ratingsMap.get(b.bookId)?.avg ?? -1;
-        if (ratingB !== ratingA) return ratingB - ratingA;
-        return (
-          this.comparePublishedAtDesc(b.publishedAt, a.publishedAt) || a.id.localeCompare(b.id)
-        );
-      });
-
-      const paginatedBookIds = sorted.slice(skip, skip + effectiveLimit).map((v) => v.bookId);
+      const paginatedBookIds = rows.map((row) => row.bookId);
       return this.buildCardsResponse(paginatedBookIds, lang, effectivePage, effectiveLimit, total);
     }
 
@@ -1476,13 +1560,21 @@ export class BookService {
       } else {
         // 2. Fallback: find progress in any other version of this book, ordered by latest updated
         const allVersionIds = overview.versions.map((v) => v.id);
+        // 🔴 `select` вместо `include: { bookVersion: true }` (`LEGACY-127`):
+        // прежний вариант тянул все 66 колонок версии, включая Json
+        // `rightsContentHashInput` в 1,18 МБ (`LEGACY-090`), ради одного
+        // `.type`. Наружу лишнее не уходило, но ездило из базы в процесс на
+        // каждом открытии читалки - и любой будущий `return { ...version }`
+        // превращал бы это в утечку правового контура.
         const fallbackProgress = await this.prisma.readingProgress.findFirst({
           where: {
             userId,
             bookVersionId: { in: allVersionIds },
           },
-          include: {
-            bookVersion: true,
+          select: {
+            chapterNumber: true,
+            position: true,
+            bookVersion: { select: { type: true } },
           },
           orderBy: {
             updatedAt: 'desc',

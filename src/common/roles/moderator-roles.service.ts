@@ -51,4 +51,31 @@ export class ModeratorRolesService {
 
     return new Set(dbRoles.map((r) => r.role.name));
   }
+
+  /**
+   * Роли сразу для набора пользователей — одним запросом на всех.
+   *
+   * 🔴 Заведён вместо вызова `rolesOf` в цикле (`LEGACY-125`): админский список
+   * при `limit=50` уходил в базу пятьдесят раз. Считать роли пакетно мимо этого
+   * сервиса нельзя — он остаётся единственной точкой сведения (`LEGACY-111`),
+   * и второй такой запрос разъедется с ним при первой же правке.
+   *
+   * В карте есть ключ на каждого запрошенного пользователя, в том числе пустое
+   * множество для тех, у кого нет ни одной связи `UserRole`.
+   */
+  async rolesOfMany(userIds: string[]): Promise<Map<string, Set<RoleName>>> {
+    const map = new Map<string, Set<RoleName>>();
+    for (const id of userIds) map.set(id, new Set());
+    if (userIds.length === 0) return map;
+
+    const dbRoles = await this.prisma.userRole.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, role: { select: { name: true } } },
+    });
+
+    for (const r of dbRoles) {
+      map.get(r.userId)?.add(r.role.name);
+    }
+    return map;
+  }
 }

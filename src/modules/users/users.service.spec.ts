@@ -334,7 +334,11 @@ describe('UsersService (unit)', () => {
     const uA = { ...baseUser, id: 'uA', email: 'admin@example.com' } as User;
     (prismaMock.user.count as jest.Mock).mockResolvedValue(1);
     (prismaMock.user.findMany as jest.Mock).mockResolvedValue([uA]);
-    (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([{ role: { name: 'admin' } }]);
+    // Список считает роли пакетно (`LEGACY-125`), поэтому строка связи несёт
+    // `userId`: по нему роль и раскладывается по пользователям.
+    (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([
+      { userId: 'uA', role: { name: 'admin' } },
+    ]);
 
     const res = await service.list({ page: 1, limit: 10, staff: 'only' });
 
@@ -345,6 +349,106 @@ describe('UsersService (unit)', () => {
     expect(whereOfLastList()).toEqual({ AND: [{}, STAFF_ROLE_CONDITION] });
     expect(JSON.stringify(whereOfLastList())).not.toContain('admin@example.com');
     expect(res.items.find((i) => i.email === 'admin@example.com')!.roles).toContain('admin');
+  });
+
+  /**
+   * 🔴 `LEGACY-125`. Список пользователей считал роли поштучно: на каждую
+   * строку - свой `userRole.findMany`, то есть при `limit=50` пятьдесят лишних
+   * запросов на один просмотр таблицы. Ответ при этом был верен до последнего
+   * поля, и заметить дефект можно только по **числу** обращений к базе -
+   * отсюда `toHaveBeenCalledTimes`, а не `toHaveBeenCalledWith`.
+   */
+  describe('list: роли считаются одним запросом (LEGACY-125)', () => {
+    const tenUsers = Array.from(
+      { length: 10 },
+      (_, i) => ({ ...baseUser, id: `u${i}`, email: `u${i}@example.com` }) as User,
+    );
+
+    beforeEach(() => {
+      (prismaMock.user.count as jest.Mock).mockResolvedValue(tenUsers.length);
+      (prismaMock.user.findMany as jest.Mock).mockResolvedValue(tenUsers);
+    });
+
+    it('на 10 пользователях userRole.findMany зовётся ровно один раз', async () => {
+      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+
+      await service.list({ page: 1, limit: 10 });
+
+      expect(prismaMock.userRole.findMany).toHaveBeenCalledTimes(1);
+      const [args] = (prismaMock.userRole.findMany as jest.Mock).mock.calls[0];
+      expect(args.where).toEqual({ userId: { in: tenUsers.map((u) => u.id) } });
+    });
+
+    it('роль из UserRole достаётся своему пользователю, а не всем подряд', async () => {
+      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([
+        { userId: 'u3', role: { name: 'content_manager' } },
+      ]);
+
+      const res = await service.list({ page: 1, limit: 10 });
+
+      expect(res.items.find((i) => i.id === 'u3')!.roles.sort()).toEqual(
+        ['content_manager', 'user'].sort(),
+      );
+      expect(res.items.find((i) => i.id === 'u4')!.roles).toEqual(['user']);
+    });
+
+    /**
+     * Базовая `user` - свойство выдачи этой ручки. Пакетный путь обязан отдавать
+     * тот же состав, что и одиночный `computeRoles`, иначе у половины ответов
+     * пропадёт роль, которой нет ни в одной строке `UserRole`.
+     */
+    it('базовая роль user есть у каждого, в том числе без связей в UserRole', async () => {
+      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+
+      const res = await service.list({ page: 1, limit: 10 });
+
+      for (const item of res.items) {
+        expect(item.roles).toContain('user');
+      }
+    });
+
+    /**
+     * 🔴 Пакет обязан идти через `ModeratorRolesService` (`LEGACY-111`).
+     * Сторож на число запросов этого не показывает: спека держит настоящий
+     * сервис на том же моке, поэтому прямой `userRole.findMany` из
+     * `UsersService` дал бы ровно тот же единственный вызов - и второй
+     * источник ролей завёлся бы незаметно.
+     */
+    it('роли берутся через ModeratorRolesService, а не своим запросом', async () => {
+      const spy = jest.spyOn(moderatorRoles, 'rolesOfMany');
+      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+
+      await service.list({ page: 1, limit: 10 });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(tenUsers.map((u) => u.id));
+      spy.mockRestore();
+    });
+
+    it('на пустой странице в базу за ролями не ходит вовсе', async () => {
+      (prismaMock.user.count as jest.Mock).mockResolvedValue(0);
+      (prismaMock.user.findMany as jest.Mock).mockResolvedValue([]);
+
+      const res = await service.list({ page: 7, limit: 10 });
+
+      expect(res.items).toEqual([]);
+      expect(prismaMock.userRole.findMany).toHaveBeenCalledTimes(0);
+    });
+
+    /**
+     * ⚠️ Сторож `LEGACY-170` со стороны выдачи: почта из `ADMIN_EMAILS` роль
+     * времени выполнения не даёт - ни в одиночном пути, ни в пакетном. Раньше
+     * запись `125` требовала обратного; правило поменялось решением владельца
+     * 15.08.2026, и здесь закреплено действующее.
+     */
+    it('почта из ADMIN_EMAILS роли не добавляет', async () => {
+      process.env.ADMIN_EMAILS = 'u0@example.com';
+      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+
+      const res = await service.list({ page: 1, limit: 10 });
+
+      expect(res.items.find((i) => i.id === 'u0')!.roles).toEqual(['user']);
+    });
   });
 
   describe('updateMe (nickname)', () => {

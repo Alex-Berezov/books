@@ -226,6 +226,24 @@ export class UsersService {
     // `UserRole` (`LEGACY-170`). Здесь остаётся неявная базовая `user`: её
     // выдача — свойство этой ручки, а не общей проверки.
     const set = await this.moderatorRoles.rolesOf({ userId: user.id, email: user.email });
+    return this.withBaseRole(set);
+  }
+
+  /**
+   * Роли для набора пользователей — одним запросом (`LEGACY-125`).
+   *
+   * Базовая `user` добавляется тем же `withBaseRole`, что и в одиночном
+   * `computeRoles`: два пути обязаны отдавать один и тот же состав ролей.
+   */
+  private async computeRolesForMany(userIds: string[]): Promise<Map<string, RoleName[]>> {
+    const sets = await this.moderatorRoles.rolesOfMany(userIds);
+    const map = new Map<string, RoleName[]>();
+    for (const [userId, set] of sets) map.set(userId, this.withBaseRole(set));
+    return map;
+  }
+
+  /** Неявная базовая `user` — свойство выдачи этой ручки, а не общей проверки. */
+  private withBaseRole(set: Set<RoleName>): RoleName[] {
     set.add('user');
     return Array.from(set);
   }
@@ -304,22 +322,22 @@ export class UsersService {
       }),
     ]);
 
-    const items = await Promise.all(
-      users.map(async (u) => ({
-        id: u.id,
-        email: u.email,
-        name: u.name,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        nickname: u.nickname,
-        isActive: u.isActive,
-        avatarUrl: u.avatarUrl,
-        languagePreference: u.languagePreference,
-        createdAt: u.createdAt,
-        lastLogin: u.lastLogin,
-        roles: await this.computeRoles(u),
-      })),
-    );
+    const rolesByUser = await this.computeRolesForMany(users.map((u) => u.id));
+
+    const items = users.map((u) => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      nickname: u.nickname,
+      isActive: u.isActive,
+      avatarUrl: u.avatarUrl,
+      languagePreference: u.languagePreference,
+      createdAt: u.createdAt,
+      lastLogin: u.lastLogin,
+      roles: rolesByUser.get(u.id) ?? this.withBaseRole(new Set()),
+    }));
 
     return { items, total, page, limit };
   }

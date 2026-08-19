@@ -399,21 +399,30 @@ export class GeoBlockRuleService {
     };
   }
 
+  /**
+   * 🔴 `select` ровно на поля `BookVersionGeoBlockState` (`LEGACY-127`).
+   * Без него `findUnique` читал всю модель — 66 колонок, из них 29 правовых,
+   * включая Json `rightsContentHashInput` в 1,18 МБ (`LEGACY-090`), — а метод
+   * зовётся на каждой проверке гейта публикации и каждой генерации гео-правил.
+   * Список полей здесь один и тот же с интерфейсом намеренно: лишнее поле в
+   * `select` компилятор не заметит, а мегабайт снова поедет из базы.
+   */
   private async getVersionState(bookVersionId: string): Promise<BookVersionGeoBlockState> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
+      select: {
+        id: true,
+        bookId: true,
+        rightsProfileId: true,
+        rightsGeoBlockRequired: true,
+        rightsGeoBlockConfigured: true,
+        rightsGeoBlockVerifiedAt: true,
+        rightsGeoBlockLastGeneratedAt: true,
+      },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
 
-    return {
-      id: version.id,
-      bookId: version.bookId,
-      rightsProfileId: version.rightsProfileId,
-      rightsGeoBlockRequired: version.rightsGeoBlockRequired,
-      rightsGeoBlockConfigured: version.rightsGeoBlockConfigured,
-      rightsGeoBlockVerifiedAt: version.rightsGeoBlockVerifiedAt,
-      rightsGeoBlockLastGeneratedAt: version.rightsGeoBlockLastGeneratedAt,
-    };
+    return version;
   }
 
   /**
