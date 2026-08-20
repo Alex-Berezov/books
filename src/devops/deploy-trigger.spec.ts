@@ -1236,3 +1236,83 @@ describe('LEGACY-248: состав образа описывается на об
     },
   );
 });
+
+/**
+ * Первый настоящий тег (`v1.0.0`, 20.08.2026) показал, что путь «выкат по тегу» не работал
+ * вовсе: `type=sha,prefix={{branch}}-` на теге подставлял пустую ветку, и сборка падала на
+ * `invalid tag "ghcr.io/…/books:-9b9b4bc"`. Триггер по ветке сняли 17.08.2026 (LEGACY-241),
+ * и с этого момента у выката не осталось ни одного рабочего пути — заметить это было нечем.
+ *
+ * 🔴 Проверяется не «строка есть», а **обеспеченность каждой ветви ссылки**: тег с префиксом
+ * ветки разрешён только там, где ветка существует, и на всё остальное заведён свой тег.
+ * Запрет на подстроку `{{branch}}` держался бы ровно до следующего шаблона.
+ */
+describe('выкат по тегу собирает образ с годным именем', () => {
+  const metaTagLines = (): string[] => {
+    const lines = step('build', '🏷️ Extract Metadata').lines;
+    const at = lines.findIndex((line) => /^\s*tags:\s*\|\s*$/.test(line));
+    if (at === -1) throw new Error('в шаге `🏷️ Extract Metadata` нет блока `tags: |`');
+    return lines
+      .slice(at + 1)
+      .filter((line) => /^\s+type=/.test(line))
+      .map((line) => line.trim());
+  };
+
+  it('шаблон с веткой в префиксе ограничен ссылкой-веткой', () => {
+    const withBranch = metaTagLines().filter((line) => line.includes('{{branch}}'));
+
+    expect(withBranch).not.toHaveLength(0);
+    for (const line of withBranch) {
+      expect(line).toContain("enable=${{ github.ref_type == 'branch' }}");
+    }
+  });
+
+  it('на теге у образа остаётся тег по sha', () => {
+    expect(metaTagLines()).toContain("type=sha,enable=${{ github.ref_type != 'branch' }}");
+  });
+});
+
+/**
+ * Гейт зелёного `ci.yml` на коммите тега.
+ *
+ * `ci.yml` висит на push в `main` и на pull request, на тег он не срабатывает вовсе. Job
+ * `test` внутри выката гоняет `yarn ci`, но это проверка кода в момент выката, а не факт,
+ * что этот коммит проходил конвейер целиком — с e2e на postgres и redis и со сборкой образа.
+ *
+ * 🔴 Проверяется и наличие job'ы, и то, что выкат от неё зависит. Job, на которую никто не
+ * ссылается в `needs`, выполняется параллельно и ничего не задерживает: её отказ был бы
+ * виден в интерфейсе и не мешал бы выкату дойти до сервера.
+ */
+describe('тег без зелёного CI до сервера не доходит', () => {
+  /** Значение верхнеуровневого ключа job'ы: строки job'ы идут с отступом в четыре пробела. */
+  const jobKey = (job: string, name: string): string => {
+    const line = jobBody(job).find((l) => new RegExp(`^ {4}${name}:`).test(l));
+    return orFail(line, `в job '${job}' нет ключа '${name}'`).trim();
+  };
+
+  it('job гейта существует и работает только на пуше тега', () => {
+    const gate = jobBody('ci_gate');
+
+    expect(gate.length).toBeGreaterThan(0);
+    expect(gate.join('\n')).toContain(
+      "if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}",
+    );
+  });
+
+  it('выкат ждёт гейт', () => {
+    expect(jobKey('deploy', 'needs')).toContain('ci_gate');
+  });
+
+  /**
+   * 🔴 Перечисление допустимых состояний, а не исключение недопустимых. `!= 'failure'`
+   * пропустил бы `cancelled`, а любое новое состояние job'ы по умолчанию считалось бы
+   * разрешением — ошибка в сторону выката.
+   */
+  it('условие выката перечисляет допустимые состояния гейта', () => {
+    const condition = jobKey('deploy', 'if');
+
+    expect(condition).toContain("needs.ci_gate.result == 'success'");
+    expect(condition).toContain("needs.ci_gate.result == 'skipped'");
+    expect(condition).not.toContain('needs.ci_gate.result != ');
+  });
+});

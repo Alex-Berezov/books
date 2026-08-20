@@ -388,6 +388,14 @@ jobs:
       #
       # ⚠️ Комментарий стоит здесь, а не внутри `tags: |`: это блочный скаляр, и строки
       # внутри него — не комментарии YAML, а значение, которое уедет в action.
+      #
+      # 🔴 Тег по SHA. `prefix={{branch}}-` на выкате с тега подставлял пустую строку, и
+      # сборка падала на `invalid tag "ghcr.io/…/books:-9b9b4bc"` — то есть путь «тег v*»,
+      # ради которого 17.08.2026 сняли триггер по ветке, не работал вовсе и обнаружился
+      # только на первом настоящем теге (v1.0.0, 20.08.2026). Боевой сервер при этом не
+      # пострадал: job `deploy` ждёт `build`, поэтому окно выката не открывалось.
+      # Теперь префикс с веткой ставится только там, где ветка есть, а на теге образ
+      # получает `sha-<короткий sha>`. Инвариант держит `deploy-trigger.spec.ts`.
       - name: 🏷️ Extract Metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -396,7 +404,8 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=sha,prefix={{branch}}-
+            type=sha,prefix={{branch}}-,enable=${{ github.ref_type == 'branch' }}
+            type=sha,enable=${{ github.ref_type != 'branch' }}
             type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
 
@@ -457,16 +466,77 @@ jobs:
   # PRODUCTION DEPLOYMENT
   # =====================================================
 
+  # 🔒 Выкат по тегу не запускает `ci.yml` вовсе: тот висит на push в `main` и на pull
+  # request. Собственная job `test` ниже гоняет тот же `yarn ci`, но она — про код в
+  # момент выката, а не про то, что этот коммит когда-либо проходил конвейер целиком
+  # (`ci.yml` держит ещё e2e с postgres и redis и отдельную сборку образа).
+  #
+  # Гейт ждёт, пока прогон `ci.yml` по этому же SHA завершится, и требует `success`.
+  # Тег, поставленный на коммит, который в `main` не проходил, до сервера не доходит.
+  # На `workflow_dispatch` гейт пропускается: там ветку выбирает человек, а `ci.yml`
+  # по ней прогонялся на слиянии.
+  ci_gate:
+    name: 🔒 CI Green For This Commit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: 🔎 Wait for a successful ci.yml run on ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Пуш тега часто идёт следом за пушем коммита, поэтому прогон может ещё не
+          # завершиться — ждём. Отсутствие прогона вовсе тоже ожидание: он заводится
+          # не мгновенно.
+          deadline=$(( $(date +%s) + 25 * 60 ))
+          while :; do
+            runs=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+              --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")]')
+            total=$(echo "$runs" | jq 'length')
+            done_ok=$(echo "$runs" | jq '[.[] | select(.conclusion == "success")] | length')
+            pending=$(echo "$runs" | jq '[.[] | select(.status != "completed")] | length')
+
+            if [ "$done_ok" -gt 0 ]; then
+              echo "✅ ci.yml прошёл на $SHA."
+              exit 0
+            fi
+
+            if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
+              echo "::error::Прогон ci.yml на коммите $SHA завершился неуспешно. Выкат отменён."
+              echo "$runs" | jq -r '.[] | "  \(.name): \(.status) \(.conclusion) \(.html_url)"'
+              exit 1
+            fi
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::За 25 минут у коммита $SHA так и не появилось успешного прогона ci.yml (найдено прогонов: $total). Выкат отменён."
+              exit 1
+            fi
+
+            echo "⏳ Жду ci.yml на $SHA (прогонов: $total, из них незавершённых: $pending)..."
+            sleep 30
+          done
+
   deploy:
     name: 🚀 Deploy to Production
     runs-on: ubuntu-22.04
     timeout-minutes: 30
-    # Ждёт обоих: тесты больше не блокируют сборку, но по-прежнему блокируют выкат.
-    needs: [test, build]
+    # Ждёт троих: тесты больше не блокируют сборку, но по-прежнему блокируют выкат,
+    # а `ci_gate` держит требование зелёного `ci.yml` на самом коммите тега.
+    needs: [test, build, ci_gate]
     # LEGACY-222. `skip_tests == 'true'`, а не сам вход: строка `'false'` истинна, и выкат
     # считал пропуск проверок разрешённым на каждом ручном запуске. Теперь пропуск проходит
     # только по осознанно поставленной галке, а на push и теге требуется `test == 'success'`.
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') }}
+    # `ci_gate` на ручном запуске пропускается, и `skipped` здесь — разрешение, а не отказ;
+    # `failure` и `cancelled` останавливают выкат. Перечислены допустимые значения, а не
+    # исключены недопустимые: новое состояние job'ы должно ошибаться в безопасную сторону.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.ci_gate.result == 'success' || needs.ci_gate.result == 'skipped') }}
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://${{ vars.PRODUCTION_DOMAIN }}
