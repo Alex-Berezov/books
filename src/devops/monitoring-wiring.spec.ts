@@ -348,9 +348,14 @@ describe('DevOps: monitoring config wiring', () => {
     // Равенством, а не набором `toContain`: дописанное `|| github.event_name ==
     // 'workflow_dispatch'` оставило бы все подстроки на месте, и ручной выкат снова
     // уходил бы на прод при красных тестах — последствие LEGACY-222 в полном объёме.
+    //
+    // 20.08.2026 к условию добавлен гейт `ci_gate` (зелёный `ci.yml` на коммите тега).
+    // Строка переписана целиком, а не ослаблена до `toContain`: смысл проверки в том,
+    // что условие выката читается человеком при каждой правке, и любое новое слагаемое
+    // обязано пройти через этот тест.
     it('выкат требует пройденных тестов, пропуск — только по галке', () => {
       expect(jobCondition('deploy')).toBe(
-        "${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') }}",
+        "${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.ci_gate.result == 'success' || needs.ci_gate.result == 'skipped') }}",
       );
     });
 
