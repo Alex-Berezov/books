@@ -83,6 +83,27 @@ describe('ChapterService', () => {
     });
   });
 
+  it('rejects public listing for a version that is not published', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue({ status: 'draft' });
+    await expect(service.listByVersion('v1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('lists chapters of a draft version for admin', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1', status: 'draft' });
+    (prisma.chapter.findMany as jest.Mock).mockResolvedValue([{ id: 'c1', number: 1 }]);
+    const res = await service.listAdminByVersion('v1');
+    expect(res.length).toBe(1);
+    expect(prisma.chapter.findMany).toHaveBeenCalledWith({
+      where: { bookVersionId: 'v1' },
+      orderBy: { number: 'asc' },
+    });
+  });
+
+  it('rejects admin listing when the version does not exist', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue(null);
+    await expect(service.listAdminByVersion('missing')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('creates unique chapter by number', async () => {
     (prisma.chapter.findFirst as jest.Mock).mockResolvedValue(null);
     (prisma.chapter.create as jest.Mock).mockResolvedValue({ id: 'c1' });

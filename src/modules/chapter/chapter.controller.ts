@@ -53,6 +53,25 @@ export class ChapterController {
     );
   }
 
+  @Get('admin/versions/:bookVersionId/chapters')
+  @ApiOperation({
+    summary: 'Admin: list chapters by book version (any status, including drafts)',
+  })
+  @ApiParam({ name: 'bookVersionId' })
+  @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
+  @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  listAdmin(
+    @Param('bookVersionId') bookVersionId: string,
+    @Query('page') rawPage?: string,
+    @Query('limit') rawLimit?: string,
+  ) {
+    const page = rawPage ? parseInt(rawPage, 10) : undefined;
+    const limit = rawLimit ? parseInt(rawLimit, 10) : undefined;
+    return this.service.listAdminByVersion(bookVersionId, page, limit);
+  }
+
   @Post('versions/:bookVersionId/chapters')
   @ApiOperation({ summary: 'Create chapter for a book version' })
   @ApiParam({ name: 'bookVersionId' })

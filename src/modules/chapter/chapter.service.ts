@@ -28,6 +28,20 @@ export class ChapterService {
       scope: GeoBlockScope.TEXT_READER,
     });
 
+    return this.listInternal(bookVersionId, page, limit);
+  }
+
+  /**
+   * Админский список глав: черновик — рабочее состояние версии, а не отсутствие версии.
+   * Публичная выдача остаётся за `listByVersion` с проверками публикации и гео-блокировок;
+   * здесь проверяется только существование версии, как в `AudioChapterService.listAdmin`.
+   */
+  async listAdminByVersion(bookVersionId: string, page?: number, limit?: number) {
+    await this.ensureVersionExists(bookVersionId);
+    return this.listInternal(bookVersionId, page, limit);
+  }
+
+  private listInternal(bookVersionId: string, page?: number, limit?: number) {
     if (page && limit) {
       const skip = (page - 1) * limit;
       return this.prisma.chapter.findMany({
@@ -140,6 +154,14 @@ export class ChapterService {
       return deleted;
     });
     return result;
+  }
+
+  private async ensureVersionExists(bookVersionId: string): Promise<void> {
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: bookVersionId },
+      select: { id: true },
+    });
+    if (!version) throw new NotFoundException('Book version not found');
   }
 
   private async ensureVersionPublished(bookVersionId: string): Promise<void> {
