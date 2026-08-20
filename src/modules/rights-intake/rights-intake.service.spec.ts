@@ -147,16 +147,17 @@ describe('RightsIntakeService', () => {
     });
 
     /**
-     * WP-M.1: незнакомый домен теперь тоже источник. Провайдер становится `OTHER` — это всё,
-     * что о нём известно, — но внешний ID из адреса не выдумывается и тип текста не выводится
-     * даже при совпадении языков: про площадку не известно, что она публикует.
+     * WP-M.1: у незнакомой площадки провайдер остаётся `UNKNOWN`. `OTHER` был бы тем же
+     * «неизвестно», но уже неотличимым от выбора редактора: `readiness` перестал бы
+     * предупреждать `SOURCE_PROVIDER_UNKNOWN`, а фильтр `?sourceProvider=UNKNOWN` —
+     * находить такие записи.
      */
-    it('незнакомый домен даёт OTHER без внешнего ID', async () => {
+    it('незнакомый домен не устанавливает провайдера и не выдумывает внешний ID', async () => {
       prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
 
       await service.create({ ...baseDto, sourceUrl: 'https://example.com/ebooks/932' }, 'user-1');
 
-      expect(createdData().sourceProvider).toBe('OTHER');
+      expect(createdData().sourceProvider).toBe('UNKNOWN');
       expect(createdData().sourceExternalId).toBeNull();
     });
 
@@ -193,6 +194,50 @@ describe('RightsIntakeService', () => {
       expect(createdData().sourceProvider).toBe('OTHER');
       expect(createdData().sourceExternalId).toBe('Преступление_и_наказание_(Достоевский)');
       expect(createdData().sourceTextType).toBe('ORIGINAL_TEXT');
+    });
+
+    /**
+     * Ветка обновления: тот же охранник, что и при создании. Без него `PATCH` с любой ссылкой
+     * и совпадающими языками записывал бы `ORIGINAL_TEXT` — утверждение о природе источника,
+     * выведенное из площадки, про которую не известно ничего.
+     */
+    it('update не выводит ORIGINAL_TEXT для незнакомого домена при совпадении языков', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'DRAFT',
+        sourceProvider: 'UNKNOWN',
+        sourceExternalId: null,
+        sourceUrl: null,
+        sourceLanguage: 'ru',
+        originalLanguage: 'ru',
+        sourceTextType: 'UNKNOWN',
+      });
+      prisma.rightsIntake.update.mockResolvedValue({ id: 'i1' });
+
+      await service.update('i1', { sourceUrl: 'https://example.com/book' });
+
+      expect(updatedData().sourceTextType).toBeUndefined();
+      expect(updatedData().sourceProvider).toBeUndefined();
+    });
+
+    it('update заполняет провайдера по ссылке на узнанную площадку', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue({
+        id: 'i1',
+        workflowStatus: 'DRAFT',
+        sourceProvider: 'UNKNOWN',
+        sourceExternalId: null,
+        sourceUrl: null,
+        sourceLanguage: 'ru',
+        originalLanguage: 'ru',
+        sourceTextType: 'UNKNOWN',
+      });
+      prisma.rightsIntake.update.mockResolvedValue({ id: 'i1' });
+
+      await service.update('i1', { sourceUrl: 'https://ru.wikisource.org/wiki/Бедные_люди' });
+
+      expect(updatedData().sourceProvider).toBe('OTHER');
+      expect(updatedData().sourceExternalId).toBe('Бедные_люди');
+      expect(updatedData().sourceTextType).toBe('ORIGINAL_TEXT');
     });
 
     it('не переписывает явный выбор редактора', async () => {

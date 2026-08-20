@@ -9,7 +9,7 @@ import {
   RIGHTS_AGENT_REPORT_SCHEMA_URL,
   RIGHTS_AGENT_SUBMISSION_ENDPOINT,
 } from './rights-intake.constants';
-import { deriveSourceFromUrl } from './rights-intake-source-url.util';
+import { deriveSourceFromUrl, resolveSourceKind } from './rights-intake-source-url.util';
 import type { DerivedSourceKind } from './rights-intake-source-url.util';
 import type { RightsAgentManifestDto } from './dto/rights-agent-manifest.dto';
 import type {
@@ -274,11 +274,15 @@ export class RightsIntakeManifestService {
     // несёт. Признак `derivedFromUrl` говорит агенту, что перед ним догадка приложения.
     const derived = deriveSourceFromUrl(intake.sourceUrl);
     const storedProvider = typeof intake.sourceProvider === 'string' ? intake.sourceProvider : '';
-    const provider =
-      storedProvider === '' || storedProvider === 'UNKNOWN'
-        ? (derived?.provider ?? storedProvider)
-        : storedProvider;
-    const externalId = intake.sourceExternalId ?? derived?.externalId ?? null;
+    const providerIsGap = storedProvider === '' || storedProvider === 'UNKNOWN';
+    const providerFromUrl = providerIsGap && derived?.provider != null;
+    const provider = providerFromUrl ? (derived?.provider as string) : storedProvider;
+
+    const externalIdIsGap = intake.sourceExternalId === null || intake.sourceExternalId === '';
+    const externalIdFromUrl = externalIdIsGap && derived?.externalId != null;
+    const externalId = externalIdFromUrl
+      ? (derived?.externalId as string)
+      : (intake.sourceExternalId ?? null);
 
     return {
       manifestVersion: RIGHTS_AGENT_MANIFEST_VERSION,
@@ -311,7 +315,13 @@ export class RightsIntakeManifestService {
         title: intake.sourceTitle,
         language: intake.sourceLanguage,
         textType: sourceTextType,
-        derivedFromUrl: derived !== null && provider === derived.provider,
+        /**
+         * Признак означает ровно одно: провайдер или внешний ID подставлены приложением из
+         * ссылки. Прежняя формула `provider === derived.provider` после WP-M.1 давала `true`
+         * почти всегда — `OTHER` стало и результатом разбора, и тем значением, которое
+         * редактор выбирает руками, — и агент переставал отличать догадку от факта.
+         */
+        derivedFromUrl: providerFromUrl || externalIdFromUrl,
       },
       publicationPlan: {
         targetLanguages: intake.targetLanguages as string[],
@@ -325,7 +335,7 @@ export class RightsIntakeManifestService {
         requiredChecks: this.buildRequiredChecks(
           plannedComponents,
           sourceTextType,
-          derived?.kind ?? null,
+          resolveSourceKind(storedProvider, derived),
         ),
         requiredOutputs: this.buildRequiredOutputs(plannedComponents),
         importantRules: this.buildImportantRules(),

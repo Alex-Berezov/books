@@ -351,10 +351,11 @@ describe('RightsIntakeManifestService', () => {
     });
 
     /**
-     * WP-M.1: незнакомый домен даёт `OTHER` и имя площадки в `providerHint`, но внешний ID
-     * из адреса не выдумывается: у сайта, про который ничего не известно, нет каталога.
+     * WP-M.1: незнакомый домен провайдера не устанавливает — в манифест уходит `UNKNOWN`, —
+     * но площадка всё равно названа в `providerHint`. Внешний ID из адреса не выдумывается:
+     * у сайта, про который ничего не известно, нет каталога.
      */
-    it('незнакомый домен даёт OTHER и хост в providerHint', async () => {
+    it('незнакомый домен оставляет провайдера UNKNOWN, но называет хост', async () => {
       prisma.rightsIntake.findUnique.mockResolvedValue(
         makeIntake({
           sourceProvider: 'UNKNOWN',
@@ -365,9 +366,57 @@ describe('RightsIntakeManifestService', () => {
 
       const manifest = await service.generate('intake-1');
 
-      expect(manifest.source.provider).toBe('OTHER');
+      expect(manifest.source.provider).toBe('UNKNOWN');
       expect(manifest.source.providerHint).toBe('example.com');
       expect(manifest.source.externalId).toBeNull();
+      expect(manifest.source.derivedFromUrl).toBe(false);
+    });
+
+    /**
+     * Признак означает «подставило приложение», а не «совпало с разбором ссылки». Прежняя
+     * формула после WP-M.1 давала `true` почти всегда: `OTHER` стало и результатом разбора,
+     * и тем значением, которое редактор выбирает руками, — и агент переставал отличать
+     * догадку приложения от факта, установленного человеком.
+     */
+    it('выбор редактора не помечается догадкой приложения', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          sourceProvider: 'OTHER',
+          sourceExternalId: 'manual-7',
+          sourceUrl: 'https://ru.wikisource.org/wiki/Бедные_люди',
+        }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(manifest.source.provider).toBe('OTHER');
+      expect(manifest.source.externalId).toBe('manual-7');
+      expect(manifest.source.derivedFromUrl).toBe(false);
+    });
+
+    it('подставленный из ссылки внешний ID помечается догадкой даже при заданном провайдере', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          sourceProvider: 'OTHER',
+          sourceExternalId: null,
+          sourceUrl: 'https://ru.wikisource.org/wiki/Бедные_люди',
+        }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(manifest.source.externalId).toBe('Бедные_люди');
+      expect(manifest.source.derivedFromUrl).toBe(true);
+    });
+
+    it('providerHint пуст, когда ссылки нет вовсе', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ sourceProvider: 'OTHER', sourceUrl: null }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(manifest.source.providerHint).toBeNull();
     });
   });
 
@@ -420,6 +469,35 @@ describe('RightsIntakeManifestService', () => {
 
       expect(checks).toContain('Project Gutenberg status');
       expect(checks).not.toContain('community-edited transcription');
+    });
+
+    /**
+     * Пробел `SOURCE_URL_MISSING` выдачу манифеста не блокирует, поэтому интейк без ссылки
+     * до агента доходит. Пункт про Gutenberg до WP-M.1 стоял в списке безусловно — выбор
+     * по одной только ссылке молча отнимал его у такого интейка.
+     */
+    it('провайдер Gutenberg даёт его проверку и без ссылки', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ sourceProvider: 'PROJECT_GUTENBERG', sourceUrl: null }),
+      );
+
+      const checks = (await service.generate('intake-1')).agentTask.requiredChecks.join(' ');
+
+      expect(checks).toContain('Project Gutenberg status');
+    });
+
+    it('провайдер Gutenberg перебивает ссылку на зеркало', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          sourceProvider: 'PROJECT_GUTENBERG',
+          sourceUrl: 'https://gutenberg.net.au/ebooks/x.html',
+        }),
+      );
+
+      const checks = (await service.generate('intake-1')).agentTask.requiredChecks.join(' ');
+
+      expect(checks).toContain('Project Gutenberg status');
+      expect(checks).not.toContain('not a known rights-bearing catalogue');
     });
 
     it('у незнакомого сайта требует назвать, кто и на каком основании выложил текст', async () => {

@@ -5,9 +5,9 @@ import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
 import {
+  canInferTextTypeFrom,
   deriveSourceFromUrl,
   isSameLanguage,
-  mayInferTextTypeFrom,
 } from './rights-intake-source-url.util';
 
 /**
@@ -218,11 +218,13 @@ export class RightsIntakeService {
       dto.sourceProvider && dto.sourceProvider !== 'UNKNOWN'
         ? dto.sourceProvider
         : (derived?.provider ?? 'UNKNOWN');
+    // `derived.provider === null` — площадка не узнана, и провайдер остаётся `UNKNOWN`:
+    // `OTHER` здесь был бы тем же «неизвестно», но уже неотличимым от выбора редактора.
     const sourceExternalId = dto.sourceExternalId ?? derived?.externalId ?? null;
     const sourceTextType =
       dto.sourceTextType && dto.sourceTextType !== 'UNKNOWN'
         ? dto.sourceTextType
-        : mayInferTextTypeFrom(derived) && isSameLanguage(dto.sourceLanguage, dto.originalLanguage)
+        : canInferTextTypeFrom(derived) && isSameLanguage(dto.sourceLanguage, dto.originalLanguage)
           ? 'ORIGINAL_TEXT'
           : 'UNKNOWN';
 
@@ -329,7 +331,7 @@ export class RightsIntakeService {
     }
 
     const provider = dto.sourceProvider !== undefined ? dto.sourceProvider : intake.sourceProvider;
-    if (!provider || provider === 'UNKNOWN') {
+    if ((!provider || provider === 'UNKNOWN') && derived.provider !== null) {
       data['sourceProvider'] = derived.provider;
     }
 
@@ -340,7 +342,7 @@ export class RightsIntakeService {
     }
 
     const textType = dto.sourceTextType !== undefined ? dto.sourceTextType : intake.sourceTextType;
-    if ((!textType || textType === 'UNKNOWN') && mayInferTextTypeFrom(derived)) {
+    if ((!textType || textType === 'UNKNOWN') && canInferTextTypeFrom(derived)) {
       const sourceLanguage =
         dto.sourceLanguage !== undefined ? dto.sourceLanguage : intake.sourceLanguage;
       const originalLanguage =
