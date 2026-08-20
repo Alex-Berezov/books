@@ -1,4 +1,5 @@
 import { CategoryType, Language } from '@prisma/client';
+import { CategoryTreeService } from '../category/category-tree.service';
 import { ImportService } from './import.service';
 import type { ImportCategoryDto } from './dto/import-category.dto';
 import type { ImportTagDto } from './dto/import-tag.dto';
@@ -103,6 +104,7 @@ const makeService = (log: WriteLog) => {
   const service = new ImportService(
     prisma as unknown as PrismaService,
     slugRedirects as unknown as SlugRedirectService,
+    new CategoryTreeService(prisma as unknown as PrismaService),
   );
 
   return { service, prisma, root, tx, $transaction };
@@ -140,9 +142,16 @@ describe('ImportService — создание термина и переводо�
       log.push('root.category.findUnique');
       return Promise.resolve(args?.where?.key === 'classic-literature' ? { id: 'parent-1' } : null);
     });
-    tx.category.findUnique.mockImplementation(() => {
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
       log.push('tx.category.findUnique');
-      return Promise.resolve({ id: 'parent-1' });
+      const where = args?.where ?? {};
+      if (where.key === 'classic-literature')
+        return Promise.resolve({ id: 'parent-1', type: CategoryType.genre });
+      if (where.key === 'victorian-literature')
+        return Promise.resolve({ id: 'cat-1', type: CategoryType.genre });
+      // Подъём по предкам: у родителя своего родителя нет, цикла нет.
+      if (where.id === 'parent-1') return Promise.resolve({ parentId: null });
+      return Promise.resolve(null);
     });
 
     const result = await service.importCategories([categoryDto('classic-literature')]);
@@ -165,7 +174,7 @@ describe('ImportService — создание термина и переводо�
     });
     expect(tx.category.findUnique).toHaveBeenCalledWith({
       where: { key: 'classic-literature' },
-      select: { id: true },
+      select: { id: true, type: true },
     });
     expect(tx.category.update).toHaveBeenCalledWith({
       where: { key: 'victorian-literature' },
@@ -287,9 +296,19 @@ describe('ImportService — обновление термина одной тр�
         args?.where?.key === 'classic-literature' ? { id: 'parent-1' } : existingCategory,
       );
     });
-    tx.category.findUnique.mockImplementation(() => {
+    // ⚠️ Родитель и термин — разные строки: с 20.08.2026 привязка проверяет, что
+    // родитель не совпадает с термином, не другого типа и не его потомок
+    // (`LEGACY-263`, `LEGACY-264`), и один общий ответ на все чтения означал бы
+    // «сам себе родитель».
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
       log.push('tx.category.findUnique');
-      return Promise.resolve({ id: 'parent-1' });
+      const where = args?.where ?? {};
+      if (where.key === 'classic-literature')
+        return Promise.resolve({ id: 'parent-1', type: CategoryType.genre });
+      if (where.key === 'victorian-literature')
+        return Promise.resolve({ id: 'cat-1', type: CategoryType.genre });
+      if (where.id === 'parent-1') return Promise.resolve({ parentId: null });
+      return Promise.resolve(null);
     });
 
     const result = await service.importCategories([categoryDto('classic-literature')]);
@@ -382,6 +401,32 @@ describe('ImportService — обновление термина одной тр�
 });
 
 describe('ImportService — порядок родителей внутри партии (LEGACY-258)', () => {
+  /**
+   * Чтения категорий по ключу и по идентификатору.
+   *
+   * ⚠️ Один общий ответ на все чтения больше не годится: с 20.08.2026 привязка
+   * родителя сверяет термин и родителя между собой (`LEGACY-263`, `LEGACY-264`),
+   * и одинаковый `id` у обоих читается как «сам себе родитель». Ключи
+   * раздаются в порядке создания — так же, как их раздаёт `tx.category.create`.
+   */
+  const readsByKey = (
+    log: WriteLog,
+    tx: { category: { findUnique: jest.Mock } },
+    created: string[],
+  ) =>
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
+      log.push('tx.category.findUnique');
+      const where = args?.where ?? {};
+      if (where.key) {
+        const index = created.indexOf(where.key);
+        return Promise.resolve(
+          index === -1 ? null : { id: `cat-${index + 1}`, type: CategoryType.genre },
+        );
+      }
+      // Подъём по предкам: в этих партиях дерево ещё плоское, петель нет.
+      return Promise.resolve({ parentId: null });
+    });
+
   const child: ImportCategoryDto = {
     key: 'victorian-literature',
     type: CategoryType.genre,
@@ -409,10 +454,7 @@ describe('ImportService — порядок родителей внутри па�
       created.push(args?.data?.key ?? '');
       return Promise.resolve({ id: `cat-${created.length}` });
     });
-    tx.category.findUnique.mockImplementation(() => {
-      log.push('tx.category.findUnique');
-      return Promise.resolve({ id: 'cat-1' });
-    });
+    readsByKey(log, tx, created);
 
     // Ребёнок записан выше родителя — ровно тот файл, который раньше давал
     // «успешный» импорт с термином, оставшимся в корне дерева.
@@ -451,10 +493,7 @@ describe('ImportService — порядок родителей внутри па�
       created.push(args?.data?.key ?? '');
       return Promise.resolve({ id: `cat-${created.length}` });
     });
-    tx.category.findUnique.mockImplementation(() => {
-      log.push('tx.category.findUnique');
-      return Promise.resolve({ id: 'cat-1' });
-    });
+    readsByKey(log, tx, created);
 
     const node = (key: string, parentKey?: string): ImportCategoryDto =>
       ({
@@ -523,5 +562,141 @@ describe('ImportService — порядок родителей внутри па�
     expect(result.errors).toEqual([
       { key: 'victorian-literature', message: 'parentKey "classic-literature" not found' },
     ]);
+  });
+});
+
+/**
+ * Импорт не имеет права замкнуть дерево категорий (`LEGACY-263`) и подвесить
+ * термин под родителя другого типа (`LEGACY-264`).
+ *
+ * Обе дыры были одной природы: `orderByParent` видит рёбра **только внутри
+ * партии**, а родитель, взятый из базы, проверялся ровно на одно условие —
+ * существует. Административный путь (`CategoryService.update`) те же две связи
+ * отвергает четырьмястами, и расхождение наблюдалось так: `POST /import/categories`
+ * с `{ key: "classic-literature", parentKey: "victorian-literature" }`, где
+ * victorian уже потомок classic, проходил целиком, после чего
+ * `GET /categories/{id}/ancestors` не отвечал **никогда**.
+ *
+ * ⚠️ Кейсы смотрят не только на текст отказа, но и на **отсутствие записи**:
+ * проверка, которая ругается после `category.update`, дерево уже замкнула.
+ */
+describe('ImportService — родитель из базы проверяется, а не только находится', () => {
+  /**
+   * Термин и родитель уже лежат в базе, родитель — потомок термина.
+   * `parent-of-child` задаёт `parentId` родителя, по которому идёт подъём.
+   */
+  const closedTree = (
+    log: WriteLog,
+    tx: { category: { findUnique: jest.Mock } },
+    opts: { parentType?: CategoryType; parentParentId?: string | null } = {},
+  ) => {
+    const { parentType = CategoryType.genre, parentParentId = null } = opts;
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
+      log.push('tx.category.findUnique');
+      const where = args?.where ?? {};
+      if (where.key === 'classic-literature')
+        return Promise.resolve({ id: 'cat-classic', type: CategoryType.genre });
+      if (where.key === 'victorian-literature')
+        return Promise.resolve({ id: 'cat-victorian', type: parentType });
+      if (where.id === 'cat-victorian') return Promise.resolve({ parentId: parentParentId });
+      if (where.id === 'cat-classic') return Promise.resolve({ parentId: null });
+      return Promise.resolve(null);
+    });
+  };
+
+  const classicWithParent = (): ImportCategoryDto =>
+    ({
+      key: 'classic-literature',
+      type: CategoryType.genre,
+      parentKey: 'victorian-literature',
+      translations: {
+        [Language.en]: { name: 'Classic Literature', slug: 'classic-literature' },
+      },
+    }) as ImportCategoryDto;
+
+  it('отказывает по ключу термина, когда родитель из базы — его потомок (LEGACY-263)', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      // Предварительная проверка находит родителя, термин уже существует.
+      return Promise.resolve(
+        args?.where?.key === 'victorian-literature'
+          ? { id: 'cat-victorian' }
+          : { id: 'cat-classic', translations: [] },
+      );
+    });
+    // victorian — потомок classic: подъём от него встречает cat-classic.
+    closedTree(log, tx, { parentParentId: 'cat-classic' });
+
+    const result = await service.importCategories([classicWithParent()]);
+
+    expect(result.imported).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(result.errors).toEqual([
+      { key: 'classic-literature', message: 'Cycle detected in category hierarchy' },
+    ]);
+    // Дерево не замкнулось: `parentId` не записан ни разу.
+    expect(
+      tx.category.update.mock.calls.filter(
+        (call) => (call[0] as { data?: { parentId?: unknown } })?.data?.parentId !== undefined,
+      ),
+    ).toEqual([]);
+  });
+
+  it('отказывает, когда тип родителя не совпадает с типом термина (LEGACY-264)', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(
+        args?.where?.key === 'victorian-literature'
+          ? { id: 'cat-victorian' }
+          : { id: 'cat-classic', translations: [] },
+      );
+    });
+    // Родитель — коллекция, импортируемый термин — жанр.
+    closedTree(log, tx, { parentType: CategoryType.collection });
+
+    const result = await service.importCategories([classicWithParent()]);
+
+    expect(result.imported).toBe(0);
+    expect(result.errors).toEqual([
+      {
+        key: 'classic-literature',
+        message: 'Parent category type mismatch: parent and child must have the same type',
+      },
+    ]);
+    expect(
+      tx.category.update.mock.calls.filter(
+        (call) => (call[0] as { data?: { parentId?: unknown } })?.data?.parentId !== undefined,
+      ),
+    ).toEqual([]);
+  });
+
+  it('пропускает законного родителя того же типа, не являющегося потомком', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(
+        args?.where?.key === 'victorian-literature'
+          ? { id: 'cat-victorian' }
+          : { id: 'cat-classic', translations: [] },
+      );
+    });
+    closedTree(log, tx, { parentParentId: null });
+
+    const result = await service.importCategories([classicWithParent()]);
+
+    expect(result.errors).toEqual([]);
+    expect(result.updated).toBe(1);
+    expect(tx.category.update).toHaveBeenCalledWith({
+      where: { key: 'classic-literature' },
+      data: { parentId: 'cat-victorian' },
+    });
   });
 });

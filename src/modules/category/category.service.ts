@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { CategoryTreeService } from './category-tree.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
@@ -49,6 +50,7 @@ export class CategoryService {
   constructor(
     private prisma: PrismaService,
     private readonly slugRedirects: SlugRedirectService,
+    private readonly categoryTree: CategoryTreeService,
     @Optional()
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
@@ -156,11 +158,10 @@ export class CategoryService {
     if (dto.parentId) {
       const parent = await this.prisma.category.findUnique({ where: { id: dto.parentId } });
       if (!parent) throw new BadRequestException('Parent category not found');
-      if (parent.type !== dto.type) {
-        throw new BadRequestException(
-          'Parent category type mismatch: parent and child must have the same type',
-        );
-      }
+      // Цикла на создании быть не может — у нового термина ещё нет потомков, —
+      // но правило о типах то же, что на `update` и на импорте, и живёт оно
+      // в одном месте (`LEGACY-264`).
+      this.categoryTree.assertSameType(dto.type, parent.type);
     }
     try {
       return await this.prisma.category.create({
@@ -211,24 +212,17 @@ export class CategoryService {
       if (dup) throw new BadRequestException('Category with same slug already exists');
     }
     // parent validations
-    if (typeof dto.parentId !== 'undefined') {
-      if (dto.parentId === id) {
-        throw new BadRequestException('Category cannot be parent of itself');
-      }
-      if (dto.parentId) {
-        const parent = await this.prisma.category.findUnique({ where: { id: dto.parentId } });
-        if (!parent) throw new BadRequestException('Parent category not found');
-        // check type consistency
-        const effectiveType = dto.type || exists.type;
-        if (parent.type !== effectiveType) {
-          throw new BadRequestException(
-            'Parent category type mismatch: parent and child must have the same type',
-          );
-        }
-        // check cycle: parent cannot be a descendant of current node
-        const hasCycle = await this.isDescendant(dto.parentId, id);
-        if (hasCycle) throw new BadRequestException('Cycle detected in category hierarchy');
-      }
+    if (dto.parentId) {
+      const parent = await this.prisma.category.findUnique({ where: { id: dto.parentId } });
+      if (!parent) throw new BadRequestException('Parent category not found');
+      // Самоссылка, тип и цикл — одним условием на оба пути записи: тот же вызов
+      // делает JSON-импорт (`LEGACY-263`, `LEGACY-264`). Своей копии этих трёх
+      // проверок здесь больше нет — расходящиеся комплекты правил о допустимых
+      // сочетаниях типов уже разбирались как `LEGACY-005`.
+      await this.categoryTree.assertParentAllowed(
+        { id, type: dto.type || exists.type },
+        { id: parent.id, type: parent.type },
+      );
     }
 
     // Базовый слаг участвует в резолве публичного URL как фолбэк, поэтому его смена
@@ -819,33 +813,13 @@ export class CategoryService {
       type: PrismaCategory['type'];
       parentId: string | null;
     }> = [];
-    let current: string | null = node.parentId;
-    while (current) {
-      const c = await this.prisma.category.findUnique({
-        where: { id: current },
-        select: { id: true, name: true, slug: true, type: true, parentId: true },
-      });
-      if (!c) break;
-      path.push(c);
-      current = c.parentId;
-    }
+    // Подъём — в `CategoryTreeService`: у него есть потолок глубины и множество
+    // посещённых, без которых замкнутое дерево вешает запрос навсегда
+    // (`LEGACY-263`). Петля в базе возможна и сейчас: её мог оставить импорт
+    // прежних версий.
+    path.push(...(await this.categoryTree.collectAncestors(id, node.parentId)));
     // we collected from child->parent, need root->... order excluding the node itself
     return path.reverse();
-  }
-
-  private async isDescendant(nodeId: string, maybeAncestorId: string): Promise<boolean> {
-    // climb up from nodeId to root to see if we meet maybeAncestorId
-    let current: string | null = nodeId;
-    while (current) {
-      const c: { parentId: string | null } | null = await this.prisma.category.findUnique({
-        where: { id: current },
-        select: { parentId: true },
-      });
-      if (!c) return false;
-      if (c.parentId === maybeAncestorId) return true;
-      current = c.parentId;
-    }
-    return false;
   }
 
   async checkSlugExists(slug: string, excludeId?: string) {

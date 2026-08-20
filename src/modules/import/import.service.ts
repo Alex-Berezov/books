@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { Language, Prisma } from '@prisma/client';
+import { CategoryType, Language, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ImportCategoryDto } from './dto/import-category.dto';
 import { ImportTagDto } from './dto/import-tag.dto';
 import { SLUG_REGEX } from '../../shared/validators/slug';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { CategoryTreeService } from '../category/category-tree.service';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 
@@ -53,6 +54,7 @@ export class ImportService {
   constructor(
     private prisma: PrismaService,
     private slugRedirects: SlugRedirectService,
+    private readonly categoryTree: CategoryTreeService,
   ) {}
 
   async importCategories(items: ImportCategoryDto[]): Promise<ImportResult> {
@@ -331,7 +333,12 @@ export class ImportService {
           // поиска родителя по ключу `""` и после `LEGACY-258` валила весь
           // термин — один и тот же файл проходил при первом импорте и падал при
           // повторном.
-          await this.updateParentId(tx, dto.key, dto.parentKey || null);
+          await this.updateParentId(
+            tx,
+            { id: existing.id, type: dto.type },
+            dto.key,
+            dto.parentKey || null,
+          );
         }
 
         for (const [langCode, tr] of Object.entries(dto.translations)) {
@@ -372,7 +379,7 @@ export class ImportService {
         });
 
         if (dto.parentKey) {
-          await this.updateParentId(tx, dto.key, dto.parentKey);
+          await this.updateParentId(tx, { id: created.id, type: dto.type }, dto.key, dto.parentKey);
         }
 
         for (const [langCode, tr] of Object.entries(dto.translations)) {
@@ -567,7 +574,12 @@ export class ImportService {
    * он валит транзакцию термина и попадает в `errors` по его ключу. Порядок внутри
    * партии за это отвечать не должен — его выправляет `orderByParent`.
    */
-  private async updateParentId(db: PrismaLike, key: string, parentKey: string | null) {
+  private async updateParentId(
+    db: PrismaLike,
+    child: { id: string; type: CategoryType },
+    key: string,
+    parentKey: string | null,
+  ) {
     if (parentKey === null) {
       await db.category.update({
         where: { key },
@@ -578,12 +590,27 @@ export class ImportService {
 
     const parent = await db.category.findUnique({
       where: { key: parentKey },
-      select: { id: true },
+      select: { id: true, type: true },
     });
 
     if (!parent) {
       throw new BadRequestException(`parentKey "${parentKey}" not found`);
     }
+
+    // 🔴 Родителя мало найти: `orderByParent` видит только рёбра **внутри партии**,
+    // а родитель из базы может оказаться потомком импортируемого термина. Такая
+    // запись замыкает дерево, и после неё подъём по предкам не завершается
+    // никогда (`LEGACY-263`). Типы родителя и ребёнка тоже обязаны совпадать:
+    // иначе термин не виден правильно ни в одном дереве — `getTree(type)`
+    // отбирает по типу (`LEGACY-264`).
+    //
+    // Условия не переписаны здесь заново, а взяты из `CategoryTreeService` —
+    // того же, что стережёт админский путь. Клиент передаётся **тот же**
+    // (`db`): проверка на `this.prisma` не увидела бы строк этой транзакции.
+    // Сам термин приходит параметром: вызывающий только что его создал или
+    // обновил, и перечитывать строку внутри транзакции незачем — подъём по
+    // предкам и так стоит до `CATEGORY_TREE_MAX_DEPTH` запросов в её бюджете.
+    await this.categoryTree.assertParentAllowed(child, parent, db);
 
     await db.category.update({
       where: { key },

@@ -9,9 +9,14 @@ import { CategoryService } from '../category/category.service';
 import { TagsService } from '../tags/tags.service';
 import { AuthorService } from '../author/author.service';
 import { GeoBlockModule } from '../geo-block/geo-block.module';
+import { CategoryTreeModule } from '../category/category-tree.module';
 
 @Module({
-  imports: [GeoBlockModule],
+  // ⚠️ `CategoryTreeModule` здесь не по своей воле: `PublicModule` объявляет
+  // собственный экземпляр `CategoryService` (`LEGACY-260`), а тот с 20.08.2026
+  // зависит от подъёма по дереву (`LEGACY-263`). Уйдёт дубль провайдера —
+  // уйдёт и эта строка.
+  imports: [GeoBlockModule, CategoryTreeModule],
   controllers: [PublicController],
   providers: [
     BookService,

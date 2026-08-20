@@ -1,4 +1,5 @@
 import { Language } from '@prisma/client';
+import { CategoryTreeService } from '../../category/category-tree.service';
 import { CategoryService } from '../../category/category.service';
 import { TagsService } from '../../tags/tags.service';
 import { SlugRedirectService } from '../../slug-redirect/slug-redirect.service';
@@ -86,7 +87,12 @@ describe('indexability contract: autoIndexable reaches the client', () => {
   let tags: TagsService;
 
   beforeEach(() => {
-    categories = new CategoryService(prismaStub(), slugRedirectStub());
+    const categoryPrisma = prismaStub();
+    categories = new CategoryService(
+      categoryPrisma,
+      slugRedirectStub(),
+      new CategoryTreeService(categoryPrisma),
+    );
     tags = new TagsService(prismaStub(), slugRedirectStub());
   });
 
@@ -143,7 +149,11 @@ describe('indexability contract: autoIndexable reaches the client', () => {
    */
   it('asks the database for the fields it promises to return', async () => {
     const prisma = prismaStub();
-    const service = new CategoryService(prisma, slugRedirectStub());
+    const service = new CategoryService(
+      prisma,
+      slugRedirectStub(),
+      new CategoryTreeService(prisma),
+    );
     await service.getTree('genre', Language.en);
 
     const call = (prisma.category.findMany as unknown as jest.Mock).mock.calls[0][0] as {

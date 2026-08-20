@@ -1,3 +1,4 @@
+import { CategoryTreeService } from './category-tree.service';
 import { CategoryService } from './category.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
@@ -77,6 +78,7 @@ describe('CategoryService', () => {
         record: jest.fn().mockResolvedValue(undefined),
         resolve: jest.fn().mockResolvedValue(null),
       } as unknown as SlugRedirectService,
+      new CategoryTreeService(prisma as unknown as PrismaService),
       indexability as unknown as TaxonomyIndexabilityService,
     );
   });
@@ -103,6 +105,39 @@ describe('CategoryService', () => {
     await expect(service.update('A', { parentId: 'B' })).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  /**
+   * Петля в базе уже могла остаться от прежних версий импорта (`LEGACY-263`):
+   * подъём обязан завершиться и на испорченном дереве, иначе публичный
+   * `GET /categories/{id}/ancestors` не отвечает **никогда** и держит соединение
+   * единственного пула до таймаута клиента.
+   *
+   * ⚠️ Счётчик обращений, а не голый `await`: зависший обход выглядел бы как
+   * молчащий тест, убитый общим таймаутом сьюта, а не как падение этого кейса.
+   */
+  it('getAncestors завершается на замкнутом дереве (LEGACY-263)', async () => {
+    const parentMap: Record<string, string | null> = { A: 'B', B: 'A' };
+    let calls = 0;
+    prisma.category.findUnique.mockImplementation((args: { where: { id: string } }) => {
+      calls += 1;
+      if (calls > 100) throw new Error(`Traversal did not terminate: ${calls} lookups`);
+      const id: string = args.where.id;
+      return {
+        id,
+        name: id,
+        slug: id.toLowerCase(),
+        type: 'genre',
+        parentId: parentMap[id] ?? null,
+      };
+    });
+
+    const path = await service.getAncestors('A');
+
+    // ⚠️ Сам `A` в собственные предки не попадает, хотя петля к нему и ведёт:
+    // иначе хлебные крошки рисуют категорию своим же родителем.
+    expect(path.map((node) => node.id)).toEqual(['B']);
+    expect(calls).toBeLessThanOrEqual(4);
   });
 
   it('remove rejects when category has children', async () => {
