@@ -113,6 +113,53 @@ describe('RightsBookCreationService', () => {
       );
     });
 
+    it('should allow creating again when the previously created book was deleted', async () => {
+      // `BOOK_CREATED` с пустым `createdBookId` — след удалённой книги: внешний ключ обнуляет
+      // ссылку сам, и проверка иначе застревала бы в статусе без выхода.
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake({ workflowStatus: 'BOOK_CREATED', createdBookId: null }),
+      );
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeReview(),
+      );
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const txStub = {
+        book: {
+          create: jest.fn().mockResolvedValue({
+            id: 'book-2',
+            slug: 'test-book',
+            rightsIntakeId: 'intake-1',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        },
+        bookVersion: { create: jest.fn().mockResolvedValue({ id: 'version-1' }) },
+        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+      };
+      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+
+      const result = await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(result.book.id).toBe('book-2');
+      expect(txStub.rightsIntake.update).toHaveBeenCalledWith({
+        where: { id: 'intake-1' },
+        data: { workflowStatus: 'BOOK_CREATED', createdBookId: 'book-2' },
+      });
+    });
+
+    it('should still refuse when the book of a BOOK_CREATED intake is alive', async () => {
+      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeIntake({ workflowStatus: 'BOOK_CREATED', createdBookId: 'book-1' }),
+      );
+
+      await expect(service.createBookFromApprovedClearance('intake-1', makeDto())).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
     it('should throw BadRequestException if approvedReviewId is null', async () => {
       (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
         makeIntake({ approvedReviewId: null }),

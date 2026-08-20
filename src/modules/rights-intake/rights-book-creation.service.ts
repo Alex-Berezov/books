@@ -91,13 +91,24 @@ export class RightsBookCreationService {
     }
 
     // 2. Check intake status is APPROVED
-    if (intake['workflowStatus'] !== 'APPROVED') {
+    //
+    // Книгу по проверке могли создать и затем удалить: внешний ключ обнуляет `createdBookId`
+    // (`onDelete: SetNull`), а `BOOK_CREATED` выхода не имеет — разрешённых ручных переходов из
+    // него нет вовсе. Проверка оставалась утверждённой, но создать по ней было нечего и нечем:
+    // единственным путём становилась повторная проверка тех же прав. Пустой `createdBookId`
+    // при `BOOK_CREATED` — это и есть «книгу удалили», и повторное создание разрешено.
+    // Ослабления здесь нет: утверждённый отчёт, текущий профиль и гейт публикации проверяются
+    // ниже заново, как при первом создании.
+    const workflowStatus = intake['workflowStatus'];
+    const isRecreationAfterDeletedBook =
+      workflowStatus === 'BOOK_CREATED' && !intake['createdBookId'];
+    if (workflowStatus !== 'APPROVED' && !isRecreationAfterDeletedBook) {
       throw new BadRequestException(
         failure(
           BOOK_CREATION_ERROR_CODES.INTAKE_NOT_APPROVED,
-          `Cannot create book: intake status is '${String(intake['workflowStatus'])}', expected 'APPROVED'`,
+          `Cannot create book: intake status is '${String(workflowStatus)}', expected 'APPROVED'`,
           'Книгу нельзя создать: проверка прав ещё не утверждена.',
-          { workflowStatus: intake['workflowStatus'] ?? null, expected: 'APPROVED' },
+          { workflowStatus: workflowStatus ?? null, expected: 'APPROVED' },
         ),
       );
     }
