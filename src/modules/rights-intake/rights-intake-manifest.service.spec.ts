@@ -135,11 +135,11 @@ describe('RightsIntakeManifestService', () => {
       expect(manifest.publicationPlan.plannedComponents).toEqual([]);
     });
 
-    it('includes manifestVersion = 1.2', async () => {
+    it('includes manifestVersion = 1.3', async () => {
       prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
 
       const manifest = await service.generate('intake-1');
-      expect(manifest.manifestVersion).toBe('1.2');
+      expect(manifest.manifestVersion).toBe('1.3');
     });
 
     it('includes expectedResultSchema.requiredTopLevelFields', async () => {
@@ -322,7 +322,9 @@ describe('RightsIntakeManifestService', () => {
 
       expect(rules).toContain('accessPolicy');
       // Обратная сторона: универсального «PD везде» в манифесте по-прежнему нет.
-      expect(rules).toContain('Do not assume that a Gutenberg file is globally public domain.');
+      expect(rules).toContain(
+        'Do not assume that a text taken from any source site — Project Gutenberg, a wiki, a digital library — is globally public domain',
+      );
       expect(rules.toLowerCase()).not.toContain('public domain worldwide');
     });
   });
@@ -348,7 +350,11 @@ describe('RightsIntakeManifestService', () => {
       expect(manifest.source.derivedFromUrl).toBe(true);
     });
 
-    it('чужой домен провайдера не выводит', async () => {
+    /**
+     * WP-M.1: незнакомый домен даёт `OTHER` и имя площадки в `providerHint`, но внешний ID
+     * из адреса не выдумывается: у сайта, про который ничего не известно, нет каталога.
+     */
+    it('незнакомый домен даёт OTHER и хост в providerHint', async () => {
       prisma.rightsIntake.findUnique.mockResolvedValue(
         makeIntake({
           sourceProvider: 'UNKNOWN',
@@ -359,9 +365,71 @@ describe('RightsIntakeManifestService', () => {
 
       const manifest = await service.generate('intake-1');
 
-      expect(manifest.source.provider).toBe('UNKNOWN');
+      expect(manifest.source.provider).toBe('OTHER');
+      expect(manifest.source.providerHint).toBe('example.com');
       expect(manifest.source.externalId).toBeNull();
-      expect(manifest.source.derivedFromUrl).toBe(false);
+    });
+  });
+
+  /**
+   * WP-M.1: интейк перестал быть про один Gutenberg. Проверялось на живом кейсе «Преступление
+   * и наказание» с ru.wikisource.org: провайдер оставался `UNKNOWN`, внешний ID редактор
+   * заполнял строкой `null`, а заданию агента нечего было сказать про расшифровку сообщества.
+   */
+  describe('WP-M.1: источник любой площадки', () => {
+    const WIKISOURCE_URL =
+      'https://ru.wikisource.org/wiki/%D0%9F%D1%80%D0%B5%D1%81%D1%82%D1%83%D0%BF%D0%BB%D0%B5%D0%BD%D0%B8%D0%B5_%D0%B8_%D0%BD%D0%B0%D0%BA%D0%B0%D0%B7%D0%B0%D0%BD%D0%B8%D0%B5_(%D0%94%D0%BE%D1%81%D1%82%D0%BE%D0%B5%D0%B2%D1%81%D0%BA%D0%B8%D0%B9)';
+
+    it('называет площадку и выводит ID страницы Викитеки', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          sourceProvider: 'UNKNOWN',
+          sourceExternalId: null,
+          sourceUrl: WIKISOURCE_URL,
+        }),
+      );
+
+      const manifest = await service.generate('intake-1');
+
+      expect(manifest.source.provider).toBe('OTHER');
+      expect(manifest.source.providerHint).toBe('Wikisource (ru)');
+      expect(manifest.source.externalId).toBe('Преступление_и_наказание_(Достоевский)');
+    });
+
+    it('заказывает проверку расшифровки и её лицензии, а не статуса Gutenberg', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ sourceProvider: 'OTHER', sourceUrl: WIKISOURCE_URL }),
+      );
+
+      const checks = (await service.generate('intake-1')).agentTask.requiredChecks.join(' ');
+
+      expect(checks).toContain('community-edited transcription');
+      expect(checks).toContain('licence of the transcription itself');
+      expect(checks).not.toContain('Project Gutenberg status');
+    });
+
+    it('для Gutenberg по-прежнему заказывает его собственную проверку', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({
+          sourceProvider: 'PROJECT_GUTENBERG',
+          sourceUrl: 'https://www.gutenberg.org/ebooks/932',
+        }),
+      );
+
+      const checks = (await service.generate('intake-1')).agentTask.requiredChecks.join(' ');
+
+      expect(checks).toContain('Project Gutenberg status');
+      expect(checks).not.toContain('community-edited transcription');
+    });
+
+    it('у незнакомого сайта требует назвать, кто и на каком основании выложил текст', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ sourceProvider: 'OTHER', sourceUrl: 'https://example.com/books/932' }),
+      );
+
+      const checks = (await service.generate('intake-1')).agentTask.requiredChecks.join(' ');
+
+      expect(checks).toContain('not a known rights-bearing catalogue');
     });
   });
 
@@ -386,9 +454,27 @@ describe('RightsIntakeManifestService', () => {
 
       expect(codes).toContain('TARGET_COUNTRIES_EMPTY');
       expect(codes).toContain('SOURCE_URL_MISSING');
-      expect(codes).toContain('SOURCE_EXTERNAL_ID_MISSING');
       expect(codes).toContain('PLANNED_COMPONENTS_EMPTY');
       expect(readiness.isReady).toBe(false);
+    });
+
+    /**
+     * WP-M.1: внешний ID переехал из `missing` в `warnings`. В `missing` он читался как
+     * «заполни, иначе не поедет» — и редактор вписывал в поле строку `null`, лишь бы
+     * список пробелов очистился.
+     */
+    it('внешний ID источника — предупреждение, а не пробел минимального пакета', async () => {
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ sourceExternalId: null, plannedComponents: ['ORIGINAL_TEXT'] }),
+      );
+
+      const readiness = await service.readiness('intake-1');
+
+      expect(readiness.missing.map((item) => item.code)).not.toContain(
+        'SOURCE_EXTERNAL_ID_MISSING',
+      );
+      expect(readiness.warnings.map((item) => item.code)).toContain('SOURCE_EXTERNAL_ID_MISSING');
+      expect(readiness.isReady).toBe(true);
     });
 
     it('полный интейк не даёт пробелов', async () => {

@@ -146,13 +146,53 @@ describe('RightsIntakeService', () => {
       expect(createdData().sourceTextType).toBe('UNKNOWN');
     });
 
-    it('не трогает ссылку чужого домена', async () => {
+    /**
+     * WP-M.1: незнакомый домен теперь тоже источник. Провайдер становится `OTHER` — это всё,
+     * что о нём известно, — но внешний ID из адреса не выдумывается и тип текста не выводится
+     * даже при совпадении языков: про площадку не известно, что она публикует.
+     */
+    it('незнакомый домен даёт OTHER без внешнего ID', async () => {
       prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
 
       await service.create({ ...baseDto, sourceUrl: 'https://example.com/ebooks/932' }, 'user-1');
 
-      expect(createdData().sourceProvider).toBe('UNKNOWN');
+      expect(createdData().sourceProvider).toBe('OTHER');
       expect(createdData().sourceExternalId).toBeNull();
+    });
+
+    it('не выводит ORIGINAL_TEXT для незнакомого домена даже при совпадении языков', async () => {
+      prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
+
+      await service.create(
+        {
+          ...baseDto,
+          sourceUrl: 'https://example.com/book',
+          sourceLanguage: 'en',
+          originalLanguage: 'en',
+        },
+        'user-1',
+      );
+
+      expect(createdData().sourceTextType).toBe('UNKNOWN');
+    });
+
+    it('выводит источник и внешний ID из ссылки на Викитеку', async () => {
+      prisma.rightsIntake.create.mockResolvedValue({ id: 'i1' });
+
+      await service.create(
+        {
+          ...baseDto,
+          sourceUrl:
+            'https://ru.wikisource.org/wiki/%D0%9F%D1%80%D0%B5%D1%81%D1%82%D1%83%D0%BF%D0%BB%D0%B5%D0%BD%D0%B8%D0%B5_%D0%B8_%D0%BD%D0%B0%D0%BA%D0%B0%D0%B7%D0%B0%D0%BD%D0%B8%D0%B5_(%D0%94%D0%BE%D1%81%D1%82%D0%BE%D0%B5%D0%B2%D1%81%D0%BA%D0%B8%D0%B9)',
+          sourceLanguage: 'ru',
+          originalLanguage: 'ru',
+        },
+        'user-1',
+      );
+
+      expect(createdData().sourceProvider).toBe('OTHER');
+      expect(createdData().sourceExternalId).toBe('Преступление_и_наказание_(Достоевский)');
+      expect(createdData().sourceTextType).toBe('ORIGINAL_TEXT');
     });
 
     it('не переписывает явный выбор редактора', async () => {

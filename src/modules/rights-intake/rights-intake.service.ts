@@ -4,7 +4,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
-import { deriveSourceFromUrl, isSameLanguage } from './rights-intake-source-url.util';
+import {
+  deriveSourceFromUrl,
+  isSameLanguage,
+  mayInferTextTypeFrom,
+} from './rights-intake-source-url.util';
 
 /**
  * Manual (Phase 1) status transitions.
@@ -218,7 +222,7 @@ export class RightsIntakeService {
     const sourceTextType =
       dto.sourceTextType && dto.sourceTextType !== 'UNKNOWN'
         ? dto.sourceTextType
-        : derived && isSameLanguage(dto.sourceLanguage, dto.originalLanguage)
+        : mayInferTextTypeFrom(derived) && isSameLanguage(dto.sourceLanguage, dto.originalLanguage)
           ? 'ORIGINAL_TEXT'
           : 'UNKNOWN';
 
@@ -297,9 +301,13 @@ export class RightsIntakeService {
   }
 
   /**
-   * WP-F.1: ссылка на Gutenberg заполняет только пробелы источника. Явно выбранные редактором
-   * провайдер, ID и тип текста приложение не переписывает: вывод из URL — его собственная
-   * догадка, а не установленный человеком факт.
+   * WP-F.1: ссылка заполняет только пробелы источника. Явно выбранные редактором провайдер,
+   * ID и тип текста приложение не переписывает: вывод из URL — его собственная догадка,
+   * а не установленный человеком факт.
+   *
+   * WP-M.1: ссылка на любую площадку, а не только на Gutenberg. Провайдер незнакомого сайта —
+   * `OTHER`, и это ровно то, что о нём известно; `UNKNOWN` в интейке означало бы, что источник
+   * не назван вовсе, хотя ссылка есть.
    */
   private fillSourceGapsFromUrl(
     intake: {
@@ -332,7 +340,7 @@ export class RightsIntakeService {
     }
 
     const textType = dto.sourceTextType !== undefined ? dto.sourceTextType : intake.sourceTextType;
-    if (!textType || textType === 'UNKNOWN') {
+    if ((!textType || textType === 'UNKNOWN') && mayInferTextTypeFrom(derived)) {
       const sourceLanguage =
         dto.sourceLanguage !== undefined ? dto.sourceLanguage : intake.sourceLanguage;
       const originalLanguage =

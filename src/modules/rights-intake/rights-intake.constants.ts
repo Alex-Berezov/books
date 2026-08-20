@@ -1,6 +1,11 @@
 import { LATEST_RIGHTS_REPORT_SCHEMA_VERSION } from './rights-review-schema.registry';
 
-export const RIGHTS_AGENT_MANIFEST_VERSION = '1.2';
+/**
+ * WP-M.1: 1.3 — в `source` появился `providerHint`, а задание агенту получило пункты,
+ * зависящие от вида площадки. Версия поднята, потому что внешним агентам нужно перечитать
+ * инструкции: контракт задания изменился.
+ */
+export const RIGHTS_AGENT_MANIFEST_VERSION = '1.3';
 
 export const RIGHTS_AGENT_MANIFEST_TYPE = 'BIBLIARIS_RIGHTS_CLEARANCE_INPUT';
 

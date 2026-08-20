@@ -15,6 +15,13 @@ class ManifestIntakeDto {
 
 class ManifestSourceDto {
   @ApiProperty() provider!: string;
+  /**
+   * WP-M.1: имя площадки, выведенное из ссылки. `provider` — значение enum'а из трёх
+   * вариантов, и для всего, кроме Gutenberg, это `OTHER`; агент по нему не отличит Викитеку
+   * от сайта издательства, поэтому площадка называется здесь.
+   */
+  @ApiProperty({ example: 'Wikisource (ru)', nullable: true })
+  providerHint!: string | null;
   @ApiProperty() externalId!: string | null;
   @ApiProperty() url!: string | null;
   @ApiProperty() title!: string | null;

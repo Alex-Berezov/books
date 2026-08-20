@@ -10,6 +10,7 @@ import {
   RIGHTS_AGENT_SUBMISSION_ENDPOINT,
 } from './rights-intake.constants';
 import { deriveSourceFromUrl } from './rights-intake-source-url.util';
+import type { DerivedSourceKind } from './rights-intake-source-url.util';
 import type { RightsAgentManifestDto } from './dto/rights-agent-manifest.dto';
 import type {
   RightsIntakeReadinessDto,
@@ -169,11 +170,6 @@ export class RightsIntakeManifestService {
     if (isBlank(intake.sourceUrl)) {
       missing.push(gap('SOURCE_URL_MISSING', 'sourceUrl', 'Не указана ссылка на источник.'));
     }
-    if (isBlank(intake.sourceExternalId)) {
-      missing.push(
-        gap('SOURCE_EXTERNAL_ID_MISSING', 'sourceExternalId', 'Не указан внешний ID источника.'),
-      );
-    }
     if (toStringArray(intake.plannedComponents).length === 0) {
       missing.push(
         gap(
@@ -184,6 +180,20 @@ export class RightsIntakeManifestService {
       );
     }
 
+    // WP-M.1: внешний ID перестал быть пробелом уровня `missing`. Каталожный номер есть
+    // у Gutenberg и цифровых библиотек, а у страницы Викитеки или у сайта издательства его
+    // нет вовсе: в списке «чего не хватает» он заставлял редактора выдумывать значение —
+    // в бою в это поле уехала строка `null`. Идентификатором источника остаётся ссылка.
+    if (isBlank(intake.sourceExternalId)) {
+      warnings.push(
+        gap(
+          'SOURCE_EXTERNAL_ID_MISSING',
+          'sourceExternalId',
+          'Не указан внешний ID источника — у площадок без каталожных номеров его и не бывает, ' +
+            'источник опознаётся по ссылке.',
+        ),
+      );
+    }
     if (intake.sourceProvider === 'UNKNOWN' || isBlank(intake.sourceProvider)) {
       warnings.push(
         gap('SOURCE_PROVIDER_UNKNOWN', 'sourceProvider', 'Провайдер источника не определён.'),
@@ -291,6 +301,11 @@ export class RightsIntakeManifestService {
       },
       source: {
         provider,
+        // WP-M.1: `provider` — одно из трёх значений enum'а, и для всего, кроме Gutenberg, это
+        // `OTHER`. Имя площадки агент берёт отсюда: «Wikisource (ru)», «Internet Archive»,
+        // либо просто хост. Заводить значение enum'а на каждый сайт означало бы миграцию
+        // на каждый новый источник.
+        providerHint: derived?.providerHint ?? null,
         externalId,
         url: intake.sourceUrl,
         title: intake.sourceTitle,
@@ -307,7 +322,11 @@ export class RightsIntakeManifestService {
       agentTask: {
         objective:
           'Check whether Bibliaris may create and later publish this work and planned language/content versions, considering copyright status, source edition status, translation rights, component rights, target countries, required removals/replacements, and possible geo restrictions.',
-        requiredChecks: this.buildRequiredChecks(plannedComponents, sourceTextType),
+        requiredChecks: this.buildRequiredChecks(
+          plannedComponents,
+          sourceTextType,
+          derived?.kind ?? null,
+        ),
         requiredOutputs: this.buildRequiredOutputs(plannedComponents),
         importantRules: this.buildImportantRules(),
       },
@@ -349,13 +368,20 @@ export class RightsIntakeManifestService {
    * заказывали всегда, агент честно заводил спекулятивные `COVER` / `AUDIO_NARRATION` со
    * статусом `UNCERTAIN`, и эти несуществующие материалы роняли страны в `PENDING_REVIEW`.
    */
-  private buildRequiredChecks(plannedComponents: string[], sourceTextType: string): string[] {
+  private buildRequiredChecks(
+    plannedComponents: string[],
+    sourceTextType: string,
+    sourceKind: DerivedSourceKind | null,
+  ): string[] {
     const has = (group: readonly string[]): boolean =>
       plannedComponents.some((component) => group.includes(component));
 
     const checks = [
       'Identify whether the source edition is an original text, translation, adaptation, abridgment, compilation, or unknown.',
-      'Check Project Gutenberg status and notices if the source provider is PROJECT_GUTENBERG.',
+      // WP-M.1: раньше здесь стоял один пункт про Project Gutenberg, и на любом другом
+      // источнике агент не получал задания разобраться в правах самой площадки.
+      'Check the source site itself: its licence, terms of use, and any rights it claims over the digitisation, transcription or scan it publishes.',
+      ...this.buildSourceKindChecks(sourceKind),
       'Check whether the original work appears to be public domain in target countries.',
       'Check whether the source edition itself appears to be public domain or otherwise usable in target countries.',
       'Identify the author and every contributor whose work is part of the planned components, with life dates, nationality, authority IDs (VIAF/LoC), and identity confidence.',
@@ -396,6 +422,40 @@ export class RightsIntakeManifestService {
     return checks;
   }
 
+  /**
+   * WP-M.1: пункты, зависящие от вида площадки. Права у Gutenberg, у Викитеки и у случайного
+   * сайта устроены по-разному, и общий пункт «проверь источник» этой разницы не передаёт:
+   * у Gutenberg — американское заявление о PD и своя обвязка в файле, у Викитеки — расшифровка
+   * сообщества под собственной лицензией поверх конкретного бумажного издания, у незнакомого
+   * сайта неизвестно даже, вправе ли он был выкладывать текст.
+   */
+  private buildSourceKindChecks(sourceKind: DerivedSourceKind | null): string[] {
+    switch (sourceKind) {
+      case 'GUTENBERG':
+        return [
+          'Check Project Gutenberg status and notices for this ebook, and treat its public-domain claim as a statement about the United States, not about the target countries.',
+        ];
+      case 'COMMUNITY_WIKI':
+        return [
+          'The source is a community-edited transcription: identify the printed edition it reproduces and assess the rights of that edition separately from the rights of the work.',
+          'Check the licence of the transcription itself (Wikisource and related projects publish under CC BY-SA or a public-domain dedication) and state what attribution or share-alike duty it imposes on Bibliaris.',
+          'Check whether the page carries editorial matter added by contributors — notes, prefaces, modernised spelling — and whether it is part of the planned components.',
+        ];
+      case 'DIGITAL_LIBRARY':
+        return [
+          'The source is a digital library: check the rights statement attached to this particular item, which may be narrower than the rights of the work itself.',
+          'Check whether the item is a scan of a specific edition and whether that edition, its typography or its apparatus carry separate rights in the target countries.',
+        ];
+      case 'UNKNOWN_WEB':
+        return [
+          'The source site is not a known rights-bearing catalogue: state what the site is, who published the text there, and whether that publication itself appears to be lawful.',
+          'Do not treat the presence of a text on this site as evidence of its rights status.',
+        ];
+      default:
+        return [];
+    }
+  }
+
   private buildRequiredOutputs(plannedComponents: string[]): string[] {
     const outputs = [
       'Human-readable Russian summary.',
@@ -426,7 +486,10 @@ export class RightsIntakeManifestService {
    */
   private buildImportantRules(): string[] {
     return [
-      'Do not assume that a Gutenberg file is globally public domain.',
+      // WP-M.1: правило было написано под один источник, и на Викитеке или в цифровой
+      // библиотеке агент его к себе не относил.
+      'Do not assume that a text taken from any source site — Project Gutenberg, a wiki, a digital library — is globally public domain: such a claim is always made for one jurisdiction.',
+      'The rights of the work, the rights of the edition reproduced, and the rights of the digitisation or transcription itself are three separate questions. Answer all three whenever the source site is not the original publisher.',
       'Do not treat a translation as equivalent to the original work.',
       'Do not collapse country-level decisions into broad regional decisions.',
       'If data is insufficient, mark it as insufficient data or pending review.',
