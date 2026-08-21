@@ -5,6 +5,7 @@ import {
   PublicationGateReasonDto,
 } from './dto/publication-gate-result.dto';
 import {
+  collectMissingVersionContentFields,
   DEFAULT_PUBLICATION_GATE_STAGE,
   isLawyerOverridableGateCode,
   isPreparationBlockingGateCode,
@@ -725,13 +726,7 @@ export class PublicationGateService {
     // прав. Компенсация — здесь: незаполненная оболочка наружу не уходит. Проверка не про права,
     // но именно этот гейт стоит перед публикацией, и код добавлен аддитивно (ADR-008). Подготовку
     // он не запрещает намеренно — наполнять версию и надо после создания.
-    const missingContentFields: string[] = [];
-    if (!version.description || version.description.trim() === '') {
-      missingContentFields.push('description');
-    }
-    if (!version.coverImageUrl || version.coverImageUrl.trim() === '') {
-      missingContentFields.push('coverImageUrl');
-    }
+    const missingContentFields = collectMissingVersionContentFields(version);
     if (missingContentFields.length > 0) {
       blockingReasons.push(
         new PublicationGateReasonDto({

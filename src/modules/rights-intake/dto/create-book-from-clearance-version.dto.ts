@@ -8,6 +8,7 @@ import {
   IsInt,
   MinLength,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
@@ -42,12 +43,22 @@ export class CreateBookFromClearanceVersionDto {
    * `VERSION_CONTENT_INCOMPLETE`. Версия заводится черновиком, наружу пустая оболочка не уйдёт.
    */
   @ApiPropertyOptional({ description: 'Description of the book' })
-  @IsOptional()
+  // Условия те же, что у `CreateBookVersionDto`: пустая строка проходит, `null` — нет. Разная
+  // валидация одного поля означала бы 201 в одной форме и 400 в другой на одинаковом теле.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   description?: string | null;
 
+  /**
+   * Пустая строка принимается так же, как её принимает обычное создание версии
+   * (`CreateBookVersionDto`): форма шлёт незаполненное поле именно так, и канал клиренса
+   * не должен отвечать на то же тело четырёхсоткой, когда канал версий отвечает 201.
+   * Ложное условие снимает **все** валидаторы поля, поэтому пропускаются ровно отсутствие поля
+   * и пустая строка — `null`, число или объект обязаны дойти до `@IsString()` и `@IsUrl()`.
+   */
   @ApiPropertyOptional({ description: 'Cover image URL' })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined && value !== '')
+  @IsString()
   @IsUrl()
   coverImageUrl?: string | null;
 

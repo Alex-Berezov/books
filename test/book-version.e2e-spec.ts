@@ -140,6 +140,74 @@ describe('BookVersions e2e', () => {
       .expect(204);
   });
 
+  /**
+   * Наполнение версии — работа на несколько заходов, поэтому черновик заводится с тем, что уже
+   * введено. Наружу пустая оболочка не уходит: публикацию закрывает блокер гейта
+   * `VERSION_CONTENT_INCOMPLETE`, а у опубликованной версии заполненное поле не стирается.
+   */
+  it('creates a draft without description and cover, refuses to publish it, and protects a published one', async () => {
+    const slug = `book-${Date.now()}-3`;
+    const bookWithRights = await createBookWithRights(prisma, slug);
+    createdBookSlugs.push(slug);
+
+    const createRes = await request(http())
+      .post(`/books/${bookWithRights.book.id}/versions`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        language: Language.en,
+        title: 'Title EN',
+        author: 'Author',
+        type: BookType.text,
+        isFree: true,
+      })
+      .expect(201);
+    const created: BookVersionResponse = createRes.body as BookVersionResponse;
+    expect(created.description).toBe('');
+    expect(created.coverImageUrl).toBe('');
+
+    // Нестроковая обложка — отказ валидации, а не пятисотка из Prisma.
+    await request(http())
+      .patch(`/versions/${created.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ coverImageUrl: 123 })
+      .expect(400);
+
+    // Пустая оболочка наружу не уходит.
+    const blocked = await request(http())
+      .patch(`/versions/${created.id}/publish`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+    expect(JSON.stringify(blocked.body)).toContain('VERSION_CONTENT_INCOMPLETE');
+
+    // Наполнили — публикуется.
+    await request(http())
+      .patch(`/versions/${created.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ description: 'Desc', coverImageUrl: 'https://example.com/cover.jpg' })
+      .expect(200);
+    await request(http())
+      .patch(`/versions/${created.id}/publish`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    // У опубликованной версии описание стереть нельзя, а править остальное — можно.
+    await request(http())
+      .patch(`/versions/${created.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ description: '' })
+      .expect(400);
+    await request(http())
+      .patch(`/versions/${created.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ title: 'Updated title' })
+      .expect(200);
+
+    await request(http())
+      .delete(`/versions/${created.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(204);
+  });
+
   it('enforces uniqueness (bookId, language)', async () => {
     const slug = `book-${Date.now()}-2`;
     const bookWithRights = await createBookWithRights(prisma, slug);

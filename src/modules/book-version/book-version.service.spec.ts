@@ -699,10 +699,16 @@ describe('BookVersionService', () => {
   });
 
   it('updates version and updates existing seo', async () => {
-    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValueOnce({
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
       id: 'v1',
       seoId: 10,
-    } as BookVersion);
+      status: 'draft',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      language: Language.en,
+      author: 'A',
+      slug: 'karamazovy',
+    } as unknown as BookVersion);
     (prisma.seo.update as jest.Mock).mockResolvedValue({ id: 10 });
     const now = new Date();
     (prisma.bookVersion.update as jest.Mock).mockResolvedValue({
@@ -725,6 +731,240 @@ describe('BookVersionService', () => {
     const res = await service.update('v1', updateDto);
     expect(res.title).toBe('T2');
     expect(prisma.seo.update).toHaveBeenCalled();
+  });
+
+  /**
+   * Черновик наполняется по частям, и версия заводится с тем, что уже введено: колонки в схеме
+   * обязательные, поэтому незаполненное описание и обложка ложатся пустой строкой. Наружу такая
+   * оболочка не уходит — версия создаётся черновиком, а публикацию закрывает блокер гейта
+   * `VERSION_CONTENT_INCOMPLETE`.
+   */
+  it('creates a version without description and cover image', async () => {
+    arrangeSimpleCreate();
+
+    await service.create('b1', {
+      language: Language.en,
+      title: 'T',
+      author: 'A',
+      type: BookType.text,
+      isFree: true,
+    });
+
+    const createArgs = (prisma.bookVersion.create as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionCreateArgs;
+    expect(createArgs.data.description).toBe('');
+    expect(createArgs.data.coverImageUrl).toBe('');
+    // В схеме у `status` стоит `@default(published)`: без явного черновика пустая оболочка
+    // попала бы в публичную выдачу сразу, минуя гейт.
+    expect(createArgs.data.status).toBe('draft');
+  });
+
+  /** Послабление касается только черновика: у живой карточки заполненное поле не стирается. */
+  it('refuses to empty the description of a published version', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+
+    await expect(service.update('v1', { description: '   ' })).rejects.toThrow(/description/);
+    await expect(service.update('v1', { description: '   ' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses to empty the cover image of a published version', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+
+    await expect(service.update('v1', { coverImageUrl: '' })).rejects.toThrow(/coverImageUrl/);
+    expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Запрет — про опустошение, а не про наполненность вообще. Опубликованные версии с пустым
+   * описанием в базе возможны (блокер гейта появился позже них, ADR-008), и требование
+   * наполненности от всякой правки заперло бы у такой карточки слаг и SEO.
+   */
+  it('lets an unrelated field be edited on a published version whose description is already empty', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      description: '',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+    const now = new Date();
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      bookId: 'b1',
+      language: Language.en,
+      title: 'T',
+      author: 'A',
+      description: '',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      type: BookType.text,
+      isFree: false,
+      referralUrl: null,
+      createdAt: now,
+      updatedAt: now,
+      seoId: null,
+      seo: null,
+    });
+
+    await service.update('v1', { isFree: false });
+
+    expect(prisma.bookVersion.update).toHaveBeenCalled();
+  });
+
+  it('names both fields when the edit clears the description and the cover at once', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+
+    await expect(service.update('v1', { description: '', coverImageUrl: '' })).rejects.toThrow(
+      /description and coverImageUrl/,
+    );
+  });
+
+  /**
+   * Описание приходит из визуального редактора: пустой абзац — это пустое описание, хотя строка
+   * непустая. Иначе запрет обходится подстановкой `<p></p>`, и читатель видит карточку без текста.
+   */
+  it('treats an empty paragraph as an empty description', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      description: '<p>Роман</p>',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+
+    await expect(service.update('v1', { description: '<p>&nbsp;</p>' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('lets a published version keep a description, replacing it with another one', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      description: '<p>Роман</p>',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1' } as BookVersion);
+
+    await service.update('v1', { description: '<p>Другой текст</p>' });
+
+    const updateArgs = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(updateArgs.data.description).toBe('<p>Другой текст</p>');
+    // Правка ничего не стирает, поэтому условие на статус в запись не добавляется.
+    expect(updateArgs.where).toEqual({ id: 'v1' });
+  });
+
+  it('sends an empty field to a published version whose field is already empty', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      description: '',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1' } as BookVersion);
+
+    await service.update('v1', { description: '', title: 'Новое название' });
+
+    expect(prisma.bookVersion.update).toHaveBeenCalled();
+    const updateArgs = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(updateArgs.where).toEqual({ id: 'v1' });
+  });
+
+  /**
+   * Прочитанный статус к моменту записи может устареть: параллельный `publish` строку не держит.
+   * Поэтому стирающая правка пишется с условием на статус, а не только после проверки в памяти.
+   */
+  it('writes a clearing edit only while the version is still a draft', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1' } as BookVersion);
+
+    await service.update('v1', { description: '' });
+
+    const updateArgs = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(updateArgs.where).toEqual({ id: 'v1', status: 'draft' });
+  });
+
+  it('answers 400, not 500, when the version was published mid-edit', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+    (prisma.bookVersion.update as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('Record to update not found'), { code: 'P2025' }),
+    );
+
+    await expect(service.update('v1', { description: '' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('lets a draft be saved with an empty description', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      seoId: null,
+    } as unknown as BookVersion);
+    const now = new Date();
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      bookId: 'b1',
+      language: Language.en,
+      title: 'T',
+      author: 'A',
+      description: '',
+      coverImageUrl: '',
+      type: BookType.text,
+      isFree: true,
+      referralUrl: null,
+      createdAt: now,
+      updatedAt: now,
+      seoId: null,
+      seo: null,
+    });
+
+    await service.update('v1', { description: '', coverImageUrl: '' });
+
+    const updateArgs = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(updateArgs.data.description).toBe('');
+    expect(updateArgs.data.coverImageUrl).toBe('');
   });
 
   it('throws NotFound on update missing', async () => {
@@ -921,6 +1161,45 @@ describe('BookVersionService', () => {
     await service.unpublish('v1');
 
     expect(finalizeBaselineOnPublish).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Гейт читает версию до транзакции, и между вердиктом и записью её успевает опустошить чужая
+   * правка. Поэтому условие на непустое содержимое стоит и в самой записи — его проверяет база.
+   */
+  it('publishes only while the description and the cover are not empty', async () => {
+    const now = new Date();
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+    } as BookVersion);
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      publishedAt: now,
+    } as BookVersion);
+
+    await service.publish('v1');
+
+    const updateArgs = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(updateArgs.where).toEqual({
+      id: 'v1',
+      description: { not: '' },
+      coverImageUrl: { not: '' },
+    });
+  });
+
+  it('answers 400, not 500, when the version was emptied between the gate and the write', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+    } as BookVersion);
+    (prisma.bookVersion.update as jest.Mock).mockRejectedValue(
+      Object.assign(new Error('Record to update not found'), { code: 'P2025' }),
+    );
+
+    await expect(service.publish('v1')).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('publish throws if gate blocks', async () => {

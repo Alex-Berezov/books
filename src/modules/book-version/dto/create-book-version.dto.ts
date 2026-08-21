@@ -11,6 +11,7 @@ import {
   Min,
   Max,
   IsArray,
+  ValidateIf,
 } from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 
@@ -37,13 +38,35 @@ export class CreateBookVersionDto {
   @IsString()
   author!: string;
 
-  @ApiProperty({ description: 'Описание', example: 'First book of the series' })
+  /**
+   * Описание и обложка — контентная работа, и делается она порциями. Требовать их при создании
+   * означало запрещать сохранить черновик, пока редактор не сочинил текст и не подобрал картинку;
+   * тем же соображением они уже сняты с канала создания книги из клиренса
+   * (`CreateBookFromClearanceVersionDto`).
+   *
+   * Компенсация одна на оба канала: пустое описание или обложка закрывают публикацию блокером
+   * гейта `VERSION_CONTENT_INCOMPLETE`. Версия заводится черновиком, наружу пустая оболочка
+   * не уйдёт.
+   */
+  @ApiPropertyOptional({ description: 'Описание', example: 'First book of the series' })
+  // `null` в колонку `NOT NULL` не ложится, поэтому его отбивает валидатор, а не Prisma:
+  // `@IsOptional()` пропустил бы его молча и превратил бы отказ в 500.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
-  description!: string;
+  description?: string;
 
-  @ApiProperty({ description: 'URL обложки', example: 'https://cdn.example.com/covers/hp1.jpg' })
+  @ApiPropertyOptional({
+    description: 'URL обложки',
+    example: 'https://cdn.example.com/covers/hp1.jpg',
+  })
+  // Ложное условие отключает **все** валидаторы поля разом, поэтому пропускаются ровно два
+  // случая: поля нет и поле пустое. Всё остальное — `null`, число, массив, объект — обязано
+  // дойти до `@IsString()` и `@IsUrl()` и получить 400, а не проскочить проверку и упасть
+  // на записи в базу пятисоткой.
+  @ValidateIf((_o, value) => value !== undefined && value !== '')
+  @IsString()
   @IsUrl()
-  coverImageUrl!: string;
+  coverImageUrl?: string;
 
   @ApiProperty({
     enum: Object.values(PrismaBookType),

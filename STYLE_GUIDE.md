@@ -344,6 +344,21 @@ export class UpdateBookDto {
 }
 ```
 
+**Исключение — поле, за которым стоит колонка `NOT NULL`.** `@IsOptional()` пропускает не только
+отсутствие поля, но и `null`, а `null` в такой колонке — это ошибка Prisma уже после валидации,
+то есть 500 вместо 400. Для таких полей условие пишется явно:
+
+```ts
+  @ApiPropertyOptional({ example: 'Updated description text' })
+  @ValidateIf((_o, value) => value !== undefined)
+  @IsString()
+  description?: string;
+```
+
+Живой пример — `description` и `coverImageUrl` в `UpdateBookVersionDto`: пустая строка там
+разрешена (черновик так очищают), `null` — нет. Возврат к `@IsOptional()` в этих полях вернёт
+пятисотку, поэтому правило выше на них не распространяется.
+
 ### Response DTO — только Swagger (без валидации)
 
 ```ts

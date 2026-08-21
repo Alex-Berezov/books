@@ -5,6 +5,11 @@ import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
 import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
 import { PublicationGateService } from './publication-gate.service';
+import {
+  isVersionContentFieldFilled,
+  VERSION_CONTENT_FIELDS,
+  type VersionContentField,
+} from './publication-gate.constants';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { Language, BookType, Prisma } from '@prisma/client';
@@ -273,8 +278,10 @@ export class BookVersionService {
             language: effectiveLanguage,
             title: dto.title,
             author: dto.author,
-            description: dto.description,
-            coverImageUrl: dto.coverImageUrl,
+            // Колонки в схеме обязательные, а поля DTO — уже нет: незаполненный черновик
+            // хранится пустой строкой, а не падает на записи.
+            description: dto.description ?? '',
+            coverImageUrl: dto.coverImageUrl ?? '',
             type: dto.type,
             isFree: dto.isFree,
             referralUrl: dto.referralUrl,
@@ -904,9 +911,35 @@ export class BookVersionService {
     };
   }
 
+  /**
+   * Какие поля содержимого правка **стирает** — то есть заменяет непустое значение пустым.
+   *
+   * Именно стирание, а не наполненность вообще: версии с пустым описанием в базе есть (блокер
+   * `VERSION_CONTENT_INCOMPLETE` появился позже них и на уже опубликованное не смотрит, ADR-008),
+   * и требование наполненности от всякого `PATCH` заперло бы у них правку слага и SEO до тех пор,
+   * пока редактор не сочинит описание тем же запросом.
+   */
+  private collectEmptiedContentFields(
+    current: { description: string; coverImageUrl: string },
+    dto: UpdateBookVersionDto,
+  ): VersionContentField[] {
+    return VERSION_CONTENT_FIELDS.filter((field) => {
+      const incoming = dto[field];
+      // Поля нет в правке — оно остаётся прежним, отнимать нечего.
+      if (incoming === undefined) return false;
+      // Оно и так пустое: правка ничего не отнимает, а чинить карточку не мешаем.
+      if (!isVersionContentFieldFilled(current[field])) return false;
+      return !isVersionContentFieldFilled(incoming);
+    });
+  }
+
   async update(id: string, dto: UpdateBookVersionDto) {
-    const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('BookVersion not found');
+    const exists = await this.prisma.bookVersion.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundException('BookVersion not found');
+
     if (dto.previewMediaId) {
       const media = await this.prisma.mediaAsset.findUnique({
         where: { id: dto.previewMediaId },
@@ -926,7 +959,34 @@ export class BookVersionService {
 
     try {
       const updated = await this.prisma.$transaction(async (tx) => {
-        let seoId = existing.seoId;
+        // Одно чтение строки на всю правку, и оно внутри транзакции: снаружи между проверкой
+        // и записью успевает пройти `publish`, и правка, отправленная как черновиковая,
+        // дописала бы пустое описание уже в живую карточку.
+        const current = await tx.bookVersion.findUnique({
+          where: { id },
+          select: {
+            language: true,
+            author: true,
+            slug: true,
+            status: true,
+            seoId: true,
+            description: true,
+            coverImageUrl: true,
+          },
+        });
+        if (!current) throw new NotFoundException('BookVersion not found');
+
+        // Стереть описание или обложку можно только у черновика: то, что уже видел читатель,
+        // не должно опустеть. Гейт стоит на входе в публикацию и правку не смотрит вовсе.
+        const emptiedFields = this.collectEmptiedContentFields(current, dto);
+        if (emptiedFields.length > 0 && current.status !== 'draft') {
+          throw new BadRequestException(
+            `A published version cannot be left without ${emptiedFields.join(' and ')}. ` +
+              'Fill the field in or unpublish the version first.',
+          );
+        }
+
+        let seoId = current.seoId;
         if (dto.seoMetaTitle !== undefined || dto.seoMetaDescription !== undefined) {
           if (seoId) {
             await tx.seo.update({
@@ -950,20 +1010,12 @@ export class BookVersionService {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { seoMetaTitle, seoMetaDescription, ...updateData } = dto;
 
-        // Смена имени автора обязана вести за собой ключ. Иначе версия осталась бы
-        // привязанной к прежнему автору — и это самая тихая форма расхождения:
-        // строка на странице показывает одного, счётчик считает другому.
-        const current = await tx.bookVersion.findUnique({
-          where: { id },
-          select: { language: true, author: true, slug: true },
-        });
-
         // Слаг версии — публичный адрес книги в этом языке. Его смена без записи в
         // историю превращает проиндексированный URL в 404 и теряет накопленные
         // сигналы молча — заметно это становится через недели (LEGACY-062).
         // Запись обязана идти в той же транзакции, что и сама смена: порознь
         // существовал бы момент, когда слаг уже новый, а старый адрес ведёт в никуда.
-        if (updateData.slug && current?.slug && updateData.slug !== current.slug) {
+        if (updateData.slug && current.slug && updateData.slug !== current.slug) {
           await this.slugRedirects.record(
             {
               entityType: 'book',
@@ -975,18 +1027,25 @@ export class BookVersionService {
           );
         }
 
+        // Смена имени автора обязана вести за собой ключ. Иначе версия осталась бы
+        // привязанной к прежнему автору — и это самая тихая форма расхождения:
+        // строка на странице показывает одного, счётчик считает другому.
         const resolvedAuthorId =
           updateData.author !== undefined || updateData.authorId !== undefined
             ? await this.resolveAuthorId(
                 tx,
-                current?.language as Language,
+                current?.language,
                 updateData.author ?? current?.author,
                 updateData.authorId,
               )
             : undefined;
 
         const updated = await tx.bookVersion.update({
-          where: { id },
+          // Правка, стирающая содержимое, разрешена только пока версия черновик, и проверяет это
+          // сама база в момент записи: прочитанный выше статус к этому моменту может устареть —
+          // параллельный `publish` под READ COMMITTED строку не держит. Условие не выполнилось —
+          // Prisma отдаёт `P2025`, и он разбирается ниже как 400, а не как 500.
+          where: { id, ...(emptiedFields.length > 0 ? { status: 'draft' as const } : {}) },
           data: {
             ...updateData,
             ...(resolvedAuthorId !== undefined ? { authorId: resolvedAuthorId } : {}),
@@ -1013,6 +1072,12 @@ export class BookVersionService {
     } catch (e: any) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Version for this language already exists for this book');
+      }
+      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2025') {
+        throw new BadRequestException(
+          'The version was published while you were editing it, so its description and cover ' +
+            'image can no longer be cleared. Reload the version and try again.',
+        );
       }
       throw e;
     }
@@ -1078,28 +1143,54 @@ export class BookVersionService {
     // WP-D.4: жёсткий выход из окна наполнения черновика. Публикация фиксирует слепок контента
     // окончательно и в той же транзакции пишет событие закрытия окна (ADR-009), после которого
     // правка главы снова уводит клиренс в `STALE`.
-    const published = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.bookVersion.update({
-        where: { id },
-        data: {
-          status: 'published',
-          publishedAt: new Date(),
-          rightsLicenseIds: coverage.licenseIds,
-          rightsLicenseCoverageStatus: coverage.status,
-          rightsLicenseCheckedAt: new Date(),
-          rightsLicenseUncoveredCountryCodes: coverage.uncoveredCountryCodes,
-          rightsLicenseAttributionTextRu:
-            existingAttribution && existingAttribution.trim() !== ''
-              ? existingAttribution
-              : coverage.attributionTextsRu.join('\n') || null,
-        } as unknown as Prisma.BookVersionUpdateInput,
-        include: { seo: true },
+    const published = await this.prisma
+      .$transaction(async (tx) => {
+        // Условие на содержимое стоит в самой записи, а не только в гейте. Гейт читает версию
+        // до транзакции, и между его вердиктом и этой записью проходит чужой `PATCH`, который
+        // успевает стереть описание: под READ COMMITTED ни чтение гейта, ни чтение внутри
+        // транзакции строку не держат. Условие в `where` проверяется в момент записи самой базой,
+        // поэтому опубликованной версия становится только вместе с непустым содержимым.
+        const updated = await tx.bookVersion.update({
+          where: { id, description: { not: '' }, coverImageUrl: { not: '' } },
+          data: {
+            status: 'published',
+            publishedAt: new Date(),
+            rightsLicenseIds: coverage.licenseIds,
+            rightsLicenseCoverageStatus: coverage.status,
+            rightsLicenseCheckedAt: new Date(),
+            rightsLicenseUncoveredCountryCodes: coverage.uncoveredCountryCodes,
+            rightsLicenseAttributionTextRu:
+              existingAttribution && existingAttribution.trim() !== ''
+                ? existingAttribution
+                : coverage.attributionTextsRu.join('\n') || null,
+          } as unknown as Prisma.BookVersionUpdateInput,
+          include: { seo: true },
+        });
+
+        await this.rightsContentHashService.finalizeBaselineOnPublish(id, null, tx);
+
+        return updated;
+      })
+      .catch((e: unknown) => {
+        // `P2025` здесь означает ровно одно: условие на непустое содержимое не выполнилось,
+        // то есть версию опустошили между вердиктом гейта и записью.
+        if ((e as Prisma.PrismaClientKnownRequestError)?.code === 'P2025') {
+          throw new BadRequestException({
+            message: 'Publication blocked by rights gate',
+            code: 'RIGHTS_PUBLICATION_BLOCKED',
+            canPublish: false,
+            blockingReasons: [
+              {
+                code: 'VERSION_CONTENT_INCOMPLETE',
+                severity: 'BLOCKER',
+                messageRu:
+                  'Версия не наполнена: нет описания или обложки. Заполните их в разделе «Книги» — публикация пустой карточки запрещена.',
+              },
+            ],
+          });
+        }
+        throw e;
       });
-
-      await this.rightsContentHashService.finalizeBaselineOnPublish(id, null, tx);
-
-      return updated;
-    });
 
     // Taxonomy pages open up once a term reaches enough published books.
     await this.taxonomyIndexabilityService?.recomputeForBookVersion(id);

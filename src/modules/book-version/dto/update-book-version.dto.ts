@@ -38,13 +38,24 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @IsString()
   author?: string;
 
+  /**
+   * Пустая строка принимается намеренно: у черновика поле можно очистить так же, как и заполнить.
+   * Опубликованную версию это не касается — стирание заполненного описания или обложки у неё
+   * отбивает `BookVersionService.update`, публикация без них запрещена.
+   */
   @ApiPropertyOptional({ example: 'Updated description text' })
-  @IsOptional()
+  // `null` в колонку `NOT NULL` не ложится: его отбивает валидатор, а не Prisma.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   description?: string;
 
   @ApiPropertyOptional({ example: 'https://cdn.example.com/covers/hp1-new.jpg' })
-  @IsOptional()
+  // Ложное условие отключает **все** валидаторы поля разом, поэтому пропускаются ровно два
+  // случая: поля нет и поле пустое. Всё остальное — `null`, число, массив, объект — обязано
+  // дойти до `@IsString()` и `@IsUrl()` и получить 400, а не проскочить проверку и упасть
+  // на записи в базу пятисоткой.
+  @ValidateIf((_o, value) => value !== undefined && value !== '')
+  @IsString()
   @IsUrl()
   coverImageUrl?: string;
 

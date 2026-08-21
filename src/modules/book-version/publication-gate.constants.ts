@@ -112,3 +112,48 @@ export const isLawyerOverridableGateCode = (code: string): boolean =>
 
 /** Код-маркер: в ответе гейта видно, что блокеры сняты заключением, а не исчезли сами. */
 export const LAWYER_OVERRIDE_APPLIED_CODE = 'LAWYER_OVERRIDE_APPLIED';
+
+/**
+ * Наполненность версии: одно определение на все места, где спрашивают, есть ли у карточки
+ * содержимое. Блок 6.22 гейта решает по нему, выпускать ли версию наружу, а
+ * `BookVersionService.update` — не опустошает ли правка уже опубликованную карточку. Двух копий
+ * этого правила быть не должно: разъехавшись, они дадут «гейт запрещает публикацию, а правка
+ * проходит» (ADR-008 отвергает отдельную точку проверки именно по этой причине).
+ */
+export const VERSION_CONTENT_FIELDS = ['description', 'coverImageUrl'] as const;
+
+export type VersionContentField = (typeof VERSION_CONTENT_FIELDS)[number];
+
+/**
+ * Заполнено — значит в значении есть текст. Описание приходит из визуального редактора и почти
+ * всегда обёрнуто в разметку, поэтому `<p></p>` и `<p>&nbsp;</p>` — это пустое описание, хотя
+ * строка непустая: читателю такая карточка покажется без описания. Проверка по сырой строке
+ * пропускала бы их и в публикацию, и в стирание уже опубликованного описания.
+ *
+ * Парная проверка на фронте — `isFilled` в
+ * `books-front/components/admin/books/BookForm/bookVersionSchema.ts`; правится вместе с этой,
+ * иначе форма и сервер разойдутся в ответе на один и тот же ввод.
+ */
+export const isVersionContentFieldFilled = (value: unknown): boolean => {
+  if (typeof value !== 'string') return false;
+
+  return (
+    value
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;|&#160;|&#xa0;/gi, ' ')
+      .trim() !== ''
+  );
+};
+
+/**
+ * Список незаполненных полей версии в порядке `VERSION_CONTENT_FIELDS`.
+ *
+ * Оба поля обязательны намеренно: если бы они были необязательными, сужение `select` у гейта
+ * (потеря `coverImageUrl` в выборке) компилировалось бы и превращало любую заполненную версию
+ * в «не наполнена».
+ */
+export const collectMissingVersionContentFields = (version: {
+  description: string | null;
+  coverImageUrl: string | null;
+}): VersionContentField[] =>
+  VERSION_CONTENT_FIELDS.filter((field) => !isVersionContentFieldFilled(version[field]));
