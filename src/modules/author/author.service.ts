@@ -19,15 +19,47 @@ import {
   type PublicAuthorsSort,
 } from './author-listing.constants';
 import {
-  INDEX_LETTER_SQL,
+  FOLD_FROM,
+  FOLD_TO,
   OTHER_LETTER,
   SHORT_BIO_SOURCE_LIMIT,
   alphabetForLanguage,
   buildShortBio,
+  indexLetterOf,
   isKnownLetter,
-  letterCondition,
   sortLetters,
 } from './author-index.util';
+
+/**
+ * Первая буква имени, посчитанная в SQL: сняли краевые пробелы, свернули
+ * диакритику, взяли первый символ, подняли в верхний регистр. То же, что делает
+ * `indexLetterOf`, — кроме последнего шага, «буква это или `#`», который остаётся
+ * вызывающему.
+ *
+ * ⚠️ `btrim` парен `.trim()` в `indexLetterOf`: без него имя с ведущим пробелом
+ * попало бы у базы в `#`, а у указателя — под свою букву.
+ *
+ * 🔴 Живёт здесь, а не рядом с алфавитом в `author-index.util.ts`, потому что
+ * `scripts/drift-check.mjs` связывает алиасы сырого SQL с таблицами в пределах
+ * файла. В файле без `FROM "AuthorTranslation" t` фрагмент со ссылкой на `t.name`
+ * не читается вовсе, а непрочитанный шаблон считается скрытой рассинхронизацией
+ * (`LEGACY-123`) — CI краснеет, и правильно делает.
+ */
+const INDEX_LETTER_SQL = Prisma.sql`upper(left(translate(btrim(t.name), ${FOLD_FROM}, ${FOLD_TO}), 1))`;
+
+/**
+ * Условие «имя начинается на эту букву» либо «не начинается ни на одну» для `#`.
+ *
+ * ⚠️ Через свёрнутую букву, а не через `ILIKE 'д%'`. Прямое сравнение отправило бы
+ * `Édouard` в `#`, хотя его место под `E`, и счётчик буквы `E` разошёлся бы
+ * с числом карточек под ней.
+ */
+function letterCondition(letter: string, lang: Language): Prisma.Sql {
+  if (letter === OTHER_LETTER) {
+    return Prisma.sql`${INDEX_LETTER_SQL} <> ALL (${alphabetForLanguage(lang)})`;
+  }
+  return Prisma.sql`${INDEX_LETTER_SQL} = ${indexLetterOf(letter, lang)}`;
+}
 
 /**
  * Строка отбора страницы: автор, оба счётчика и начало биографии.

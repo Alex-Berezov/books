@@ -1,4 +1,4 @@
-import { Language, Prisma } from '@prisma/client';
+import { Language } from '@prisma/client';
 
 /**
  * Алфавитный указатель авторов: какая буква у имени и какие буквы вообще бывают.
@@ -34,8 +34,19 @@ const LATIN_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
  * расширение, которого в схеме нет, и заводить его значило бы миграцию ради
  * указателя. `translate()` есть всегда.
  */
-const FOLD_FROM = 'àáâãäåÀÁÂÃÄÅèéêëÈÉÊËìíîïÌÍÎÏòóôõöøÒÓÔÕÖØùúûüÙÚÛÜçÇñÑýÿÝšŠžŽłŁďĎğĞřŘťŤёЁ';
-const FOLD_TO = 'aaaaaaAAAAAAeeeeEEEEiiiiIIIIooooooOOOOOOuuuuUUUUcCnNyyYsSzZlLdDgGrRtTеЕ';
+/**
+ * ⚠️ Таблицы свёртки экспортируются, потому что сам SQL-фрагмент живёт
+ * в `author.service.ts`, а не здесь.
+ *
+ * 🔴 Причина не стилистическая. `scripts/drift-check.mjs` читает шаблоны сырого SQL
+ * и связывает алиасы с таблицами **в пределах одного файла**: фрагмент, ссылающийся
+ * на `t.name` там, где нет ни одного `FROM ... t`, он прочитать не может и считает
+ * непрочитанный шаблон скрытой рассинхронизацией (`LEGACY-123`). Держать выражение
+ * рядом с запросом, который его подставляет, — единственный способ оставить проверку
+ * работающей.
+ */
+export const FOLD_FROM = 'àáâãäåÀÁÂÃÄÅèéêëÈÉÊËìíîïÌÍÎÏòóôõöøÒÓÔÕÖØùúûüÙÚÛÜçÇñÑýÿÝšŠžŽłŁďĎğĞřŘťŤёЁ';
+export const FOLD_TO = 'aaaaaaAAAAAAeeeeEEEEiiiiIIIIooooooOOOOOOuuuuUUUUcCnNyyYsSzZlLdDgGrRtTеЕ';
 
 /**
  * Таблицы свёртки читаются человеком и правятся руками, поэтому проверяются
@@ -80,32 +91,6 @@ function foldChar(char: string): string {
 export function indexLetterOf(name: string, lang: Language): string {
   const first = foldChar((name ?? '').trim().charAt(0)).toUpperCase();
   return alphabetForLanguage(lang).includes(first) ? first : OTHER_LETTER;
-}
-
-/**
- * Первая буква имени, посчитанная в SQL: сняли краевые пробелы, свернули
- * диакритику, взяли первый символ, подняли в верхний регистр. Ровно то же, что
- * делает `indexLetterOf`, — кроме последнего шага, «буква это или `#`», который
- * остаётся вызывающему.
- *
- * ⚠️ `btrim` здесь не украшение: `indexLetterOf` делает `.trim()`, и без парного
- * `btrim` имя с ведущим пробелом попало бы у базы в `#`, а у указателя — под свою
- * букву. Шапка файла требует одинакового ответа во всех трёх местах.
- */
-export const INDEX_LETTER_SQL = Prisma.sql`upper(left(translate(btrim(t.name), ${FOLD_FROM}, ${FOLD_TO}), 1))`;
-
-/**
- * Условие «имя начинается на эту букву» либо «не начинается ни на одну» для `#`.
- *
- * ⚠️ Через свёрнутую букву, а не через `ILIKE 'д%'`. Прямое сравнение отправило бы
- * `Édouard` в `#`, хотя его место под `E`, и счётчик буквы `E` разошёлся бы
- * с числом карточек под ней.
- */
-export function letterCondition(letter: string, lang: Language): Prisma.Sql {
-  if (letter === OTHER_LETTER) {
-    return Prisma.sql`${INDEX_LETTER_SQL} <> ALL (${alphabetForLanguage(lang)})`;
-  }
-  return Prisma.sql`${INDEX_LETTER_SQL} = ${indexLetterOf(letter, lang)}`;
 }
 
 /** Принимаем ли такую букву в адресе: своя буква алфавита или группа `#`. */
