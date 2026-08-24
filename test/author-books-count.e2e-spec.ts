@@ -105,13 +105,27 @@ describe('Authors: books count (e2e)', () => {
     await app.close();
   });
 
+  /**
+   * Столько строк просит спека, чтобы увидеть всех авторов тестовой базы разом.
+   *
+   * ⚠️ Ровно потолок ручки (`PUBLIC_AUTHORS_MAX_LIMIT`), а не «побольше на всякий
+   * случай». Раньше здесь стояла тысяча, и это работало лишь потому, что потолка
+   * не было вовсе: `?limit=1000` теперь отдаёт 400, `res.body.data` становится
+   * `undefined`, и `findAuthor` падает на `.find()`. Авторов в тестовой базе
+   * единицы, так что сотни хватает с запасом; перестанет хватать — спека
+   * обязана начать листать, а не просить ещё больше.
+   */
+  const AUTHORS_PAGE_LIMIT = 100;
+
   type ListedAuthor = { id: string; slug: string; name: string; booksCount: number };
   const findAuthor = (body: unknown, id: string): ListedAuthor | undefined =>
     (body as { data: ListedAuthor[] }).data.find((a) => a.id === id);
 
   // 🔴 Сам дефект: книга связана строкой, FK пуст — и счётчик обязан её увидеть.
   it('counts a book linked only by the author name string', async () => {
-    const res = await request(httpServerOf(app)).get('/en/authors').query({ limit: 1000 });
+    const res = await request(httpServerOf(app))
+      .get('/en/authors')
+      .query({ limit: AUTHORS_PAGE_LIMIT });
 
     expect(findAuthor(res.body, withBookId)?.booksCount).toBe(1);
   });
@@ -119,7 +133,9 @@ describe('Authors: books count (e2e)', () => {
   // 🔴 Контроль от противоположной ошибки: «считать хоть что-нибудь» — не решение.
   // Автор без книг обязан остаться нулём, иначе noindex не сработает никогда.
   it('leaves an author without books at zero', async () => {
-    const res = await request(httpServerOf(app)).get('/en/authors').query({ limit: 1000 });
+    const res = await request(httpServerOf(app))
+      .get('/en/authors')
+      .query({ limit: AUTHORS_PAGE_LIMIT });
 
     expect(findAuthor(res.body, emptyId)?.booksCount).toBe(0);
   });
@@ -127,7 +143,9 @@ describe('Authors: books count (e2e)', () => {
   // 🔴 Имя автора в русской версии книги записано по-русски. Сверять его с
   // английским переводом бессмысленно — совпадение обязано искаться в своём языке.
   it('matches the name within its own language', async () => {
-    const ru = await request(httpServerOf(app)).get('/ru/authors').query({ limit: 1000 });
+    const ru = await request(httpServerOf(app))
+      .get('/ru/authors')
+      .query({ limit: AUTHORS_PAGE_LIMIT });
 
     expect(findAuthor(ru.body, withBookId)?.booksCount).toBe(1);
     expect(findAuthor(ru.body, withBookId)?.name).toBe(withBookRu);
@@ -137,7 +155,9 @@ describe('Authors: books count (e2e)', () => {
   // 🔴 До правки язык пути в сервис не передавался вовсе, и слаг на любом языке
   // приходил английский.
   it('returns the requested language slug, not the English one', async () => {
-    const en = await request(httpServerOf(app)).get('/en/authors').query({ limit: 1000 });
+    const en = await request(httpServerOf(app))
+      .get('/en/authors')
+      .query({ limit: AUTHORS_PAGE_LIMIT });
 
     expect(findAuthor(en.body, withBookId)?.slug).toBe(`${prefix}-with-en`);
   });
@@ -147,7 +167,9 @@ describe('Authors: books count (e2e)', () => {
    * вела бы в 404, потому что soft-404 закрыт 05.08.2026.
    */
   it('hides an author that has no translation into the requested language', async () => {
-    const ru = await request(httpServerOf(app)).get('/ru/authors').query({ limit: 1000 });
+    const ru = await request(httpServerOf(app))
+      .get('/ru/authors')
+      .query({ limit: AUTHORS_PAGE_LIMIT });
 
     expect(findAuthor(ru.body, emptyId)).toBeUndefined();
     expect(findAuthor(ru.body, withBookId)).toBeDefined();
@@ -183,7 +205,9 @@ describe('Authors: books count (e2e)', () => {
     });
 
     try {
-      const en = await request(httpServerOf(app)).get('/en/authors').query({ limit: 1000 });
+      const en = await request(httpServerOf(app))
+        .get('/en/authors')
+        .query({ limit: AUTHORS_PAGE_LIMIT });
       expect(findAuthor(en.body, withBookId)?.booksCount).toBe(1);
     } finally {
       await prisma.bookVersion.deleteMany({ where: { bookId: otherBook.id } });
@@ -198,7 +222,9 @@ describe('Authors: books count (e2e)', () => {
       data: { status: 'draft' },
     });
 
-    const res = await request(httpServerOf(app)).get('/en/authors').query({ limit: 1000 });
+    const res = await request(httpServerOf(app))
+      .get('/en/authors')
+      .query({ limit: AUTHORS_PAGE_LIMIT });
     expect(findAuthor(res.body, withBookId)?.booksCount).toBe(0);
 
     await prisma.bookVersion.updateMany({

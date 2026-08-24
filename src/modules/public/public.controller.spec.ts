@@ -7,7 +7,11 @@ describe('PublicController (unit)', () => {
   const pages = { getPublicBySlug: jest.fn() } as any;
   const categories = { getByLangSlugWithBooks: jest.fn() } as any;
   const tags = { versionsByTagLangSlug: jest.fn() } as any;
-  const authors = { getPublicBySlug: jest.fn() } as any;
+  const authors = {
+    getPublicBySlug: jest.fn(),
+    listPublic: jest.fn(),
+    listPublicLetters: jest.fn(),
+  } as any;
   const geoIpCountry = { resolveCountry: jest.fn().mockReturnValue(null) } as any;
   const slugRedirects = { resolve: jest.fn().mockResolvedValue(null) } as any;
 
@@ -60,5 +64,69 @@ describe('PublicController (unit)', () => {
       undefined,
       undefined,
     );
+  });
+
+  it('authorsList: passes the whole validated query through to listPublic', async () => {
+    authors.listPublic.mockResolvedValueOnce({ data: [], meta: { total: 0 } });
+    const query = {
+      page: 2,
+      limit: 24,
+      search: 'дост',
+      letter: 'Д',
+      sort: 'books' as const,
+      hasBooks: true,
+    };
+
+    const res = await controller.authorsList(PrismaLanguage.ru, query);
+
+    expect(res).toEqual({ data: [], meta: { total: 0 } });
+    expect(authors.listPublic).toHaveBeenCalledTimes(1);
+    expect(authors.listPublic).toHaveBeenCalledWith(PrismaLanguage.ru, query);
+  });
+
+  // 🔴 Список ходит через `listPublic`, а не через `list`: последний отдаёт анониму
+  // биографию, quotes, faq и весь Seo каждого перевода (`LEGACY-214`).
+  it('authorsList: never reaches the admin list()', async () => {
+    authors.list = jest.fn();
+    authors.listPublic.mockResolvedValueOnce({ data: [], meta: {} });
+
+    await controller.authorsList(PrismaLanguage.en, {});
+
+    expect(authors.list).not.toHaveBeenCalled();
+  });
+
+  it('authorLetters: delegates to the alphabet index with the path language', async () => {
+    authors.listPublicLetters.mockResolvedValueOnce([{ letter: 'A', count: 2 }]);
+
+    const res = await controller.authorLetters(PrismaLanguage.en, {});
+
+    expect(res).toEqual([{ letter: 'A', count: 2 }]);
+    expect(authors.listPublicLetters).toHaveBeenCalledTimes(1);
+    expect(authors.listPublicLetters).toHaveBeenCalledWith(PrismaLanguage.en, undefined);
+  });
+
+  // 🔴 Указатель стоит над отфильтрованной сеткой, и его счётчики обязаны
+  // описывать её же: иначе буква говорит «12» над выдачей из двух человек.
+  it('authorLetters: passes the search filter through so the counts match the grid', async () => {
+    authors.listPublicLetters.mockResolvedValueOnce([]);
+
+    await controller.authorLetters(PrismaLanguage.ru, { search: 'дост' });
+
+    expect(authors.listPublicLetters).toHaveBeenCalledWith(PrismaLanguage.ru, 'дост');
+  });
+
+  /**
+   * 🔴 Nest сопоставляет маршруты в порядке объявления. Окажись `authors/letters`
+   * ниже `authors/:slug` — указатель уехал бы в поиск автора со слагом `letters`
+   * и отдавал бы 404, причём молча: сборка и типы этого не видят.
+   */
+  it('declares authors/letters above authors/:slug', () => {
+    const source = require('fs').readFileSync(__dirname + '/public.controller.ts', 'utf8');
+    const letters = source.indexOf("@Get('authors/letters')");
+    const bySlug = source.indexOf("@Get('authors/:slug')");
+
+    expect(letters).toBeGreaterThan(-1);
+    expect(bySlug).toBeGreaterThan(-1);
+    expect(letters).toBeLessThan(bySlug);
   });
 });

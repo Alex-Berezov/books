@@ -42,6 +42,7 @@ import {
   PUBLIC_CATEGORIES_MAX_LIMIT,
   PublicCategoriesQueryDto,
 } from './dto/public-categories-query.dto';
+import { PublicAuthorLettersQueryDto, PublicAuthorsQueryDto } from './dto/public-authors-query.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -337,19 +338,43 @@ export class PublicController {
   @Get('authors')
   @ApiOperation({ summary: 'Public authors list with language prefix' })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
   authorsList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query() query: PublicAuthorsQueryDto,
   ) {
     // 🔴 Язык пути не передавался в сервис вовсе (`_pathLang`), поэтому список на
     // любом языке отдавал английские слаг и имя, а счётчик книг не фильтровался
     // по языку. Фронт это обходил, доставая нужный перевод из вложенного
     // `translations`, — обход работал, но означал, что верхнеуровневые поля
     // ответа врут на четырёх языках из пяти.
-    return this.authors.list(page ? Number(page) : 1, limit ? Number(limit) : 50, pathLang);
+    //
+    // ⚠️ `listPublic`, а не `list`: у списка три читателя, и ни одному из них
+    // не нужны биография, цитаты, FAQ и `Seo` каждого перевода, которые `list`
+    // отдаёт анониму до сих пор (`LEGACY-214`). `list` остался за админкой.
+    return this.authors.listPublic(pathLang, query);
+  }
+
+  /**
+   * Счётчики алфавитного указателя авторов.
+   *
+   * ⚠️ Обязана стоять **выше** `authors/:slug`: Nest сопоставляет маршруты в порядке
+   * объявления, и ручка, заведённая ниже, была бы съедена как `slug = 'letters'` —
+   * ровно тот же порядок, что уже выписан у `pages/by-key/:systemKey`.
+   */
+  @Get('authors/letters')
+  @ApiOperation({ summary: 'Author alphabet index with per-letter counts' })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  @ApiQuery({
+    name: 'search',
+    required: false,
+    description:
+      'Same name filter as the list. The index sits above the filtered grid, so its counts must describe that grid and not the whole alphabet.',
+  })
+  authorLetters(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query() query: PublicAuthorLettersQueryDto,
+  ) {
+    return this.authors.listPublicLetters(pathLang, query.search);
   }
 
   // Localized author details by slug

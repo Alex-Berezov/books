@@ -27,6 +27,9 @@ export const SYSTEM_PAGE_KEYS = [
   { key: 'taxonomy-genres', purpose: 'Genres hub: meta, H1, SEO text, FAQ' },
   { key: 'taxonomy-collections', purpose: 'Collections hub: meta, H1, SEO text, FAQ' },
   { key: 'taxonomy-tags', purpose: 'Tags hub: meta, H1, SEO text, FAQ' },
+  // Не `taxonomy-authors`: автор не термин таксономии. `TaxonomyType` его не
+  // включает, и хаб авторов рисуется своей формой карточки, а не `TaxonomyOverview`.
+  { key: 'authors-hub', purpose: 'Authors hub: meta, H1, SEO text, FAQ' },
 ] as const;
 
 export type SystemPageKey = (typeof SYSTEM_PAGE_KEYS)[number]['key'];

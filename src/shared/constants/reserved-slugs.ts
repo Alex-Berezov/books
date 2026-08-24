@@ -15,15 +15,21 @@
  * The guard runs where the routes are, so it catches a new route; it cannot
  * catch an entry deleted from here. Removing one is therefore a deliberate act.
  *
- * Taxonomies, books and authors are absent on purpose: their slugs sit under a
- * prefix (`/:lang/category/:slug`), so a category named `book` collides with
- * nothing.
+ * Taxonomy, book and author **slugs** are absent on purpose: they sit under a
+ * prefix (`/:lang/category/:slug`, `/:lang/author/:slug`), so a category named
+ * `book` collides with nothing.
+ *
+ * The prefixes themselves are a different matter and are listed: `author` and
+ * `authors` are both here because `/:lang/author/:slug` and the hub at
+ * `/:lang/authors` are real route segments, and a CMS page saved under either
+ * name would have no address at all.
  */
 export const RESERVED_SLUGS = [
   '403',
   'audiobooks',
   'auth',
   'author',
+  'authors',
   'book',
   'bookshelf',
   'catalog',

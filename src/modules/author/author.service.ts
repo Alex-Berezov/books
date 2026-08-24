@@ -8,6 +8,83 @@ import {
   AuthorFaqDto as AuthorFaq,
 } from './dto/author-translation.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import {
+  PUBLIC_AUTHOR_PAGE_TRANSLATION_SELECT,
+  PUBLIC_AUTHOR_SELECT,
+  type PublicAuthorListItem,
+} from '../../common/selects/public-author.select';
+import {
+  PUBLIC_AUTHORS_DEFAULT_LIMIT,
+  PUBLIC_AUTHORS_MAX_LIMIT,
+  type PublicAuthorsSort,
+} from './author-listing.constants';
+import {
+  INDEX_LETTER_SQL,
+  OTHER_LETTER,
+  SHORT_BIO_SOURCE_LIMIT,
+  alphabetForLanguage,
+  buildShortBio,
+  isKnownLetter,
+  letterCondition,
+  sortLetters,
+} from './author-index.util';
+
+/**
+ * Строка отбора страницы: автор, оба счётчика и начало биографии.
+ *
+ * `bioSource` — не биография, а её первые `SHORT_BIO_SOURCE_LIMIT` знаков,
+ * обрезанные базой. Дальше из них считается `shortBio`, и наружу уходит только он.
+ */
+interface PublicAuthorPageRow {
+  authorId: string;
+  booksCount: number;
+  audioCount: number;
+  bioSource: string | null;
+}
+
+/** Параметры публичного списка авторов. Все необязательны, у каждого есть умолчание. */
+export interface PublicAuthorsListOptions {
+  page?: number;
+  limit?: number;
+  search?: string;
+  letter?: string;
+  sort?: PublicAuthorsSort;
+  /**
+   * Отбросить авторов без опубликованных книг на этом языке.
+   *
+   * 🔴 По умолчанию **выключен**, и включать его по умолчанию нельзя. У `booksCount`
+   * есть история: до 09.08.2026 он был нулём у всех авторов, включая тех, чьи книги
+   * лежали в каталоге (считался по внешнему ключу, который в проде NULL). Повторись
+   * эта история при фильтре по умолчанию — и разом опустеют хаб, блок авторов
+   * на главной и карта сайта авторов. Просит фильтр тот, кому он нужен: хаб и ручка букв.
+   */
+  hasBooks?: boolean;
+}
+
+/** Пагинация публичного списка. `limit` — применённый, а не запрошенный. */
+export interface PublicAuthorsListMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+/**
+ * Связь автора с опубликованными книгами — одной формулой на все запросы.
+ *
+ * 🔴 Формула хрупкая и неочевидная, поэтому существует ровно один её экземпляр.
+ * Строгая FK `BookVersion.authorId` в проде NULL у всех опубликованных версий,
+ * и фактический источник истины — совпадение по имени внутри своего языка
+ * (в ru-версии книги автор записан как «Сунь-цзы», сверять его с английским
+ * «Sun Tzu» бессмысленно). Три места считают по ней: счётчик книг, публичный
+ * список и ручка букв. Разъедься они — счётчик на карточке, число под буквой
+ * и `noindex` на странице автора начали бы отвечать по-разному, и заметить это
+ * можно было бы только глазами.
+ */
+const PUBLISHED_BOOKS_JOIN = Prisma.sql`
+  ON bv.language = t.language
+ AND bv.status = 'published'
+ AND (bv."authorId" = t."authorId" OR bv.author = t.name)`;
 
 @Injectable()
 export class AuthorService {
@@ -47,10 +124,7 @@ export class AuthorService {
     const rows = await this.prisma.$queryRaw<Array<{ authorId: string; booksCount: number }>>`
       SELECT t."authorId", COUNT(DISTINCT bv."bookId")::int AS "booksCount"
       FROM "AuthorTranslation" t
-      JOIN "BookVersion" bv
-        ON bv.language = t.language
-       AND bv.status = 'published'
-       AND (bv."authorId" = t."authorId" OR bv.author = t.name)
+      JOIN "BookVersion" bv ${PUBLISHED_BOOKS_JOIN}
       WHERE ${Prisma.join(conditions, ' AND ')}
       GROUP BY t."authorId"
     `;
@@ -119,6 +193,221 @@ export class AuthorService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Публичный список авторов для хаба `/:lang/authors`.
+   *
+   * Отдельный метод, а не параметры к `list()`, по трём причинам сразу:
+   *
+   * 1. `list()` ходит из админки и обязан отдавать переводы целиком; публичному
+   *    списку это запрещено (`PUBLIC_AUTHOR_SELECT`, `LEGACY-214`).
+   * 2. Он идёт от `Author`, а фильтровать надо по `AuthorTranslation.name` —
+   *    поиск и буква живут в переводе, а не в авторе.
+   * 3. Сортировка по числу книг обязана резать страницу **в SQL**. Счётчик
+   *    считается сырым запросом, и «взять всех, отсортировать в памяти, потом
+   *    отрезать двадцать четыре» на тысяче авторов собрало бы страницу
+   *    из случайных людей (`B11`).
+   *
+   * Отбор страницы и оба счётчика — один запрос; ещё один считает `total`; ещё
+   * два добирают отображаемые поля. Четыре запроса независимо от размера
+   * страницы, ни одного в цикле по автору.
+   */
+  async listPublic(
+    lang: Language,
+    options: PublicAuthorsListOptions = {},
+  ): Promise<{ data: PublicAuthorListItem[]; meta: PublicAuthorsListMeta }> {
+    const { search, letter, sort = 'name', hasBooks = false } = options;
+
+    // 🔴 Буква проверяется здесь, а не только в DTO: алфавит зависит от языка
+    // пути, а DTO о языке не знает. Без проверки `?letter=W` на `/ru/` уходил
+    // в `indexLetterOf`, сводился к литералу `'#'` и отдавал 200 с пустым
+    // списком — при том, что настоящая группа `#` строится другим предикатом
+    // (`<> ALL`). Два написания одного ведра отвечали по-разному, и ответ
+    // ещё и оседал в общем кэше на пять минут.
+    if (letter && !isKnownLetter(letter, lang)) {
+      throw new BadRequestException(
+        `letter must be a single letter of the ${lang} alphabet or "${OTHER_LETTER}"`,
+      );
+    }
+
+    const page = Math.max(1, Math.trunc(Number(options.page) || 1));
+    const limit = Math.min(
+      Math.max(1, Math.trunc(Number(options.limit) || PUBLIC_AUTHORS_DEFAULT_LIMIT)),
+      PUBLIC_AUTHORS_MAX_LIMIT,
+    );
+    const skip = (page - 1) * limit;
+
+    const conditions = this.buildPublicAuthorConditions(lang, search, letter);
+    // Считается по авторам, а не по строкам join'а: без `hasBooks` фильтра нет
+    // вовсе, поэтому и `HAVING` не пишется — пустой `HAVING` postgres не примет.
+    const having = hasBooks ? Prisma.sql`HAVING COUNT(DISTINCT bv."bookId") > 0` : Prisma.empty;
+
+    // Имя добавлено вторым ключом к обеим сортировкам: без него порядок внутри
+    // группы «столько же книг» и внутри тёзок не определён, и одна и та же
+    // страница при двух запросах отдавала бы разных людей.
+    const orderBy =
+      sort === 'books'
+        ? Prisma.sql`ORDER BY "booksCount" DESC, t.name ASC, t."authorId" ASC`
+        : Prisma.sql`ORDER BY t.name ASC, t."authorId" ASC`;
+
+    const [rows, totals] = await Promise.all([
+      this.prisma.$queryRaw<PublicAuthorPageRow[]>`
+        SELECT
+          t."authorId" AS "authorId",
+          COUNT(DISTINCT bv."bookId")::int AS "booksCount",
+          COUNT(DISTINCT bv."bookId") FILTER (WHERE bv.type = 'audio')::int AS "audioCount",
+          MIN(left(t.biography, ${SHORT_BIO_SOURCE_LIMIT})) AS "bioSource"
+        FROM "AuthorTranslation" t
+        LEFT JOIN "BookVersion" bv ${PUBLISHED_BOOKS_JOIN}
+        WHERE ${Prisma.join(conditions, ' AND ')}
+        GROUP BY t."authorId", t.name
+        ${having}
+        ${orderBy}
+        LIMIT ${limit} OFFSET ${skip}
+      `,
+      this.prisma.$queryRaw<Array<{ total: number }>>`
+        SELECT COUNT(*)::int AS total FROM (
+          SELECT t."authorId"
+          FROM "AuthorTranslation" t
+          LEFT JOIN "BookVersion" bv ${PUBLISHED_BOOKS_JOIN}
+          WHERE ${Prisma.join(conditions, ' AND ')}
+          GROUP BY t."authorId", t.name
+          ${having}
+        ) matched
+      `,
+    ]);
+
+    const total = totals[0]?.total ?? 0;
+    const meta = { page, limit, total, totalPages: Math.ceil(total / limit) };
+
+    if (rows.length === 0) return { data: [], meta };
+
+    const authorIds = rows.map((row) => row.authorId);
+    const [authors, pageTranslations] = await this.prisma.$transaction([
+      this.prisma.author.findMany({
+        where: { id: { in: authorIds } },
+        select: PUBLIC_AUTHOR_SELECT,
+      }),
+      this.prisma.authorTranslation.findMany({
+        where: { authorId: { in: authorIds }, language: lang },
+        select: PUBLIC_AUTHOR_PAGE_TRANSLATION_SELECT,
+      }),
+    ]);
+
+    const authorById = new Map(authors.map((author) => [author.id, author]));
+    const translationByAuthor = new Map(pageTranslations.map((tr) => [tr.authorId, tr]));
+
+    // Порядок задаёт SQL — он единственный знает про сортировку по числу книг.
+    // Пересобирать его по `authors` нельзя: `findMany` вернёт свой.
+    return {
+      data: rows.flatMap((row) => {
+        const author = authorById.get(row.authorId);
+        const translation = translationByAuthor.get(row.authorId);
+        // Перевод на язык страницы есть по построению выборки. Пропуск здесь —
+        // не «нет данных», а расхождение между двумя запросами, и молча
+        // подставлять пустое имя со ссылкой в никуда мы не станем.
+        if (!author || !translation) return [];
+
+        return [
+          {
+            id: author.id,
+            slug: translation.slug,
+            name: translation.name,
+            birthDate: author.birthDate,
+            deathDate: author.deathDate,
+            photoUrl: translation.photoUrl,
+            shortBio: buildShortBio(row.bioSource),
+            booksCount: row.booksCount,
+            audioCount: row.audioCount,
+            translations: author.translations.map((tr) => ({
+              language: tr.language,
+              slug: tr.slug,
+              name: tr.name,
+            })),
+          },
+        ];
+      }),
+      meta,
+    };
+  }
+
+  /**
+   * Счётчики алфавитного указателя: `[{ letter, count }]`, алфавит языка, `#` последней.
+   *
+   * ⚠️ Фильтр «только с книгами» здесь включён **всегда** и параметром не управляется.
+   * Единственный потребитель — хаб, а он показывает только авторов с книгами
+   * (`seo-rules.md`: ссылка, карта сайта и robots обязаны решать одинаково).
+   * Дай ручке считать всех — и буква скажет «12» там, где под ней восемь карточек.
+   *
+   * Алфавит отдаётся целиком, включая буквы с нулём: погашенную букву рисует фронт,
+   * и знать состав алфавита пяти языков ему для этого не требуется.
+   *
+   * `search` повторяет отбор списка: указатель показывается над отфильтрованной
+   * сеткой, и его счётчики обязаны описывать её же.
+   */
+  async listPublicLetters(
+    lang: Language,
+    search?: string,
+  ): Promise<Array<{ letter: string; count: number }>> {
+    // Счётчик буквы обязан совпадать с числом карточек под ней, а при активном
+    // поиске сетка отфильтрована. Без этого же условия указатель говорил бы
+    // «Д — 12» над выдачей из двух человек.
+    const conditions = this.buildPublicAuthorConditions(lang, search);
+
+    const rows = await this.prisma.$queryRaw<Array<{ letter: string; count: number }>>`
+      SELECT letter, COUNT(*)::int AS count FROM (
+        SELECT ${INDEX_LETTER_SQL} AS letter
+        FROM "AuthorTranslation" t
+        LEFT JOIN "BookVersion" bv ${PUBLISHED_BOOKS_JOIN}
+        WHERE ${Prisma.join(conditions, ' AND ')}
+        GROUP BY t."authorId", t.name
+        HAVING COUNT(DISTINCT bv."bookId") > 0
+      ) matched
+      GROUP BY letter
+    `;
+
+    // База считает первую букву; «своя это буква или `#`» решается здесь, одним
+    // правилом с `indexLetterOf`, а не вторым выражением внутри запроса.
+    const counts = new Map<string, number>(alphabetForLanguage(lang).map((letter) => [letter, 0]));
+    counts.set(OTHER_LETTER, 0);
+
+    for (const row of rows) {
+      const letter = counts.has(row.letter) ? row.letter : OTHER_LETTER;
+      counts.set(letter, (counts.get(letter) ?? 0) + row.count);
+    }
+
+    return sortLetters(
+      [...counts.entries()].map(([letter, count]) => ({ letter, count })),
+      lang,
+    );
+  }
+
+  /**
+   * Общая часть `WHERE` публичного списка: язык страницы, поиск по имени, буква.
+   *
+   * Вынесено, потому что тем же условием считается `total`. Разъедься эти два
+   * набора — и пагинация показала бы число страниц от одной выборки, а карточки
+   * от другой.
+   */
+  private buildPublicAuthorConditions(
+    lang: Language,
+    search?: string,
+    letter?: string,
+  ): Prisma.Sql[] {
+    const conditions: Prisma.Sql[] = [Prisma.sql`t.language = ${lang}::"Language"`];
+
+    const term = search?.trim();
+    if (term) {
+      // `%` и `_` в запросе пользователя — это символы, а не подстановки:
+      // поиск «100%» иначе совпал бы со всеми именами разом.
+      const escaped = term.replace(/([\\%_])/g, '\\$1');
+      conditions.push(Prisma.sql`t.name ILIKE ${`%${escaped}%`} ESCAPE '\\'`);
+    }
+
+    if (letter) conditions.push(letterCondition(letter, lang));
+
+    return conditions;
   }
 
   async create(dto: CreateAuthorDto) {
