@@ -30,9 +30,28 @@
 **What you STILL CANNOT do:**
 
 - Run the backend server locally
-- Run `yarn prisma:migrate`, `yarn prisma:seed`, `yarn prisma:studio` or `psql` **directly** — still denied in `.claude/settings.json`. Migrations reach a database only through the e2e harness (throwaway DB) or through the user on the VPS. ⚠️ `npx prisma …` и голый `prisma …` тоже закрыты — включая `generate`; для генерации типов есть разрешённый `yarn prisma:generate`
-- Touch anything pointing at production: `docker-compose.prod.yml`, `--profile prod`, `docker compose down` (it would drop the local volume)
-- Deploy. All backend changes are reviewed by the user before deployment
+- Touch anything pointing at production: `docker-compose.prod.yml`, `--profile prod`, `ssh`/`docker`/`psql` on the VPS, `prisma migrate deploy` bypassing the pipeline
+- Run `docker run`, `docker exec`, `docker cp`, `docker container`, `docker create`, `docker start` or bare `docker-compose` — still denied in `.claude/settings.json`. A mounted volume reads `.env` around `Read(./.env)`, and `db-guard.js` does not look inside a container image
+- Apply a **destructive** migration (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, narrowing a type with data loss). Write it, do not run it: `git revert` will not bring the rows back. It waits for the owner, and no release tag is cut in that pass
+
+**What changed on 25.08.2026** (ТЗ `tasks/2026-08-25-avtonomnyy-harness.md`, раздел 8): the local
+database is open. `yarn prisma:migrate`, `yarn prisma:seed`, `yarn prisma:studio`, `yarn db:*`,
+`npx prisma …` and `psql` against `localhost` are **allowed** — you write a migration, apply it
+locally, verify it, and ship it by tag through the pipeline. The line between the local database
+and production is no longer a `deny` list by command name but the hook
+`D:/newDev/.claude/hooks/db-guard.js`, which reads the connection string and sees the utility
+through `docker exec`, `docker run`, `npx`, `yarn` and a shell wrapper.
+
+⚠️ **Name the target in the command itself.** The guard is a whitelist: a command whose database
+is not visible gets refused, because the address would come from `.env`, which the guard does not
+read. Bare `yarn prisma:migrate` will not pass;
+`DATABASE_URL="postgresql://...@localhost:5432/..." yarn prisma:migrate` will. "I cannot see where
+it goes" is not "it goes locally" — that distinction is the whole point of replacing the `deny`
+list with a hook.
+
+Commit, push and release are allowed too, in the order `/auto` sets. `commit-gate.js` refuses a
+commit without a `/qa` mark and green gates **for the current diff**, so the order holds without
+a human in the loop.
 
 ### Local e2e
 
@@ -85,12 +104,25 @@ The AI agent MUST run `yarn lint`, `yarn typecheck`, and `yarn test` and ensure 
 
 ## Git Workflow
 
-**CRITICAL RULE: NEVER commit or push without explicit user permission!**
-
-The AI agent must **NEVER** execute `git commit` or `git push` on its own. All changes must be reviewed by the user first.
+**Commit and push are allowed, in the order `/auto` sets.** Changed 25.08.2026 (ТЗ
+`tasks/2026-08-25-avtonomnyy-harness.md`). The owner no longer reads diffs; what a human used
+to catch before a commit, a hook must now catch instead.
 
 **Correct workflow:**
 
-1. Complete task & verify tests/lint/typecheck
-2. Present diff summary to user
-3. Wait for explicit user confirmation before committing/pushing.
+1. Complete the task and land a test that goes red if the defect comes back
+2. Run `/qa` with the full reviewer set, then `node .claude/hooks/gates.js` with no `--repo`
+3. Update the documents, then commit each touched repository separately, conventional commits,
+   naming the record ids in the message
+4. Push to `main`, then watch the run: `gh run list --limit 3`
+
+**What holds the order is `D:/newDev/.claude/hooks/commit-gate.js`, not willpower.** It refuses
+a commit with no `/qa` mark and no green gates **for the current diff**, a commit carrying
+`--no-verify` or `--force`, build artefacts or freshly added secrets in the diff, a weakening
+of a check in the added lines, or a message that is not conventional commits. Fix the cause
+the refusal names; do not look for a way around it.
+
+The only place you still stop and ask is the owner's four closed topics: secrets;
+production infrastructure and the live database by hand, destructive migrations included;
+public addresses; the legal semantics of book rights. Everything else you decide yourself
+or through the `arbiter` subagent.
