@@ -108,6 +108,48 @@ describe('CategoryService', () => {
   });
 
   /**
+   * 🔴 `LEGACY-266`. Проверка цикла обязана ходить тем же клиентом, которым
+   * идёт запись. На клиенте пула между проверкой и `update` помещается чужая
+   * транзакция: два одновременных PATCH `A → B` и `B → A` не видят цикла ни
+   * один, обе записи коммитятся, дерево замкнуто.
+   *
+   * ⚠️ Мок `$transaction` отдаёт **отдельный** объект `tx`: пока `tx` — это тот
+   * же самый `prisma`, тест не отличает один клиент от другого и дефект
+   * проходит незамеченным.
+   */
+  it('смена родителя читает дерево клиентом транзакции, а не пулом (LEGACY-266)', async () => {
+    const parentMap: Record<string, string | null> = { A: null, B: null };
+    const reads: string[] = [];
+    const readVia = (client: 'pool' | 'tx') =>
+      jest.fn((args: { where: { id: string } }) => {
+        const id: string = args.where.id;
+        reads.push(`${client}:${id}`);
+        return Promise.resolve({
+          id,
+          name: id,
+          slug: id.toLowerCase(),
+          type: 'genre',
+          parentId: parentMap[id] ?? null,
+        });
+      });
+
+    prisma.category.findUnique = readVia('pool');
+    const txUpdate = jest.fn().mockResolvedValue({ id: 'A', parentId: 'B' });
+    const tx = { category: { findUnique: readVia('tx'), update: txUpdate } };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await service.update('A', { parentId: 'B' });
+
+    // На клиенте пула — только чтение самой категории до транзакции.
+    expect(reads.filter((r) => r.startsWith('pool:'))).toEqual(['pool:A']);
+    // Родитель и подъём по предкам — уже внутри транзакции.
+    expect(reads.filter((r) => r.startsWith('tx:')).length).toBeGreaterThan(0);
+    expect(txUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * Петля в базе уже могла остаться от прежних версий импорта (`LEGACY-263`):
    * подъём обязан завершиться и на испорченном дереве, иначе публичный
    * `GET /categories/{id}/ancestors` не отвечает **никогда** и держит соединение

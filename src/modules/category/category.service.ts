@@ -211,49 +211,77 @@ export class CategoryService {
       const dup = await this.prisma.category.findFirst({ where: { slug: dto.slug, NOT: { id } } });
       if (dup) throw new BadRequestException('Category with same slug already exists');
     }
-    // parent validations
-    if (dto.parentId) {
-      const parent = await this.prisma.category.findUnique({ where: { id: dto.parentId } });
-      if (!parent) throw new BadRequestException('Parent category not found');
-      // Самоссылка, тип и цикл — одним условием на оба пути записи: тот же вызов
-      // делает JSON-импорт (`LEGACY-263`, `LEGACY-264`). Своей копии этих трёх
-      // проверок здесь больше нет — расходящиеся комплекты правил о допустимых
-      // сочетаниях типов уже разбирались как `LEGACY-005`.
-      await this.categoryTree.assertParentAllowed(
-        { id, type: dto.type || exists.type },
-        { id: parent.id, type: parent.type },
-      );
-    }
-
     // Базовый слаг участвует в резолве публичного URL как фолбэк, поэтому его смена
     // ломает адрес во всех языках сразу (LEGACY-062). Запись — в той же транзакции.
     const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
 
-    return this.prisma.$transaction(async (tx) => {
-      if (baseSlugChanged && dto.slug) {
-        await this.slugRedirects.recordBaseSlugChange('category', exists.slug, dto.slug, tx);
-      }
+    return this.prisma.$transaction(
+      async (tx) => {
+        // parent validations
+        //
+        // 🔴 `LEGACY-266`. Чтение родителя и проверка идут **тем же клиентом**,
+        // которым делается запись. На клиенте пула между проверкой и `update`
+        // помещалась чужая транзакция: два одновременных PATCH `A → B` и `B → A`
+        // при обоих узлах в корне не видели цикла ни один, обе записи
+        // коммитились, дерево замыкалось — и публичный `/seo/resolve` получал
+        // петлю (`LEGACY-265`). Тот же порядок держит импорт
+        // (`import.service.ts`, `updateParentId`).
+        //
+        // ⚠️ Гонку двух одновременных PATCH это **не закрывает**: при `read
+        // committed` каждый оператор внутри транзакции берёт свежий снимок и
+        // чужих незакоммиченных строк всё равно не видит, а голые `SELECT`
+        // подъёма никого не блокируют. Полная защита — `SELECT ... FOR UPDATE`
+        // по цепочке предков или ограничение на стороне базы (`LEGACY-274`).
+        // Здесь восстановлен инвариант «проверка ходит клиентом записи», который
+        // держит импорт, — без него ни то, ни другое не построить.
+        if (dto.parentId) {
+          const parent = await tx.category.findUnique({
+            where: { id: dto.parentId },
+            select: { id: true, type: true },
+          });
+          if (!parent) throw new BadRequestException('Parent category not found');
+          // Самоссылка, тип и цикл — одним условием на оба пути записи: тот же вызов
+          // делает JSON-импорт (`LEGACY-263`, `LEGACY-264`). Своей копии этих трёх
+          // проверок здесь больше нет — расходящиеся комплекты правил о допустимых
+          // сочетаниях типов уже разбирались как `LEGACY-005`.
+          await this.categoryTree.assertParentAllowed(
+            { id, type: dto.type || exists.type },
+            { id: parent.id, type: parent.type },
+            tx,
+          );
+        }
 
-      return tx.category.update({
-        where: { id },
-        data: {
-          type: dto.type,
-          name: dto.name,
-          slug: dto.slug,
-          // `key` намеренно отсутствует: он неизменяем, а прежняя ветка
-          // `dto.slug -> key` молча делала слаг ключом при PATCH без `key`,
-          // то есть переименование ради URL уводило за собой опорный ключ.
-          ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
-          ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
-          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
-          ...(typeof dto.parentId === 'undefined'
-            ? {}
-            : dto.parentId
-              ? { parent: { connect: { id: dto.parentId } } }
-              : { parent: { disconnect: true } }),
-        },
-      });
-    });
+        if (baseSlugChanged && dto.slug) {
+          await this.slugRedirects.recordBaseSlugChange('category', exists.slug, dto.slug, tx);
+        }
+
+        return tx.category.update({
+          where: { id },
+          data: {
+            type: dto.type,
+            name: dto.name,
+            slug: dto.slug,
+            // `key` намеренно отсутствует: он неизменяем, а прежняя ветка
+            // `dto.slug -> key` молча делала слаг ключом при PATCH без `key`,
+            // то есть переименование ради URL уводило за собой опорный ключ.
+            ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+            ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+            ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+            ...(typeof dto.parentId === 'undefined'
+              ? {}
+              : dto.parentId
+                ? { parent: { connect: { id: dto.parentId } } }
+                : { parent: { disconnect: true } }),
+          },
+        });
+      },
+      // Подъём по предкам переехал внутрь транзакции, а это до
+      // `CATEGORY_TREE_MAX_DEPTH` последовательных чтений. На дефолтных 5000 мс
+      // Prisma испорченное дерево успевало бы отдать `P2028` и 500 вместо
+      // задуманного 400. Значения те же, что у импорта (`import.service.ts`),
+      // который держит тот же обход.
+      { timeout: 30_000, maxWait: 10_000 },
+    );
   }
 
   async remove(id: string) {

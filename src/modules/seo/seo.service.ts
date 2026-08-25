@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CategoryTreeService } from '../category/category-tree.service';
 import { Language, Seo } from '@prisma/client';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoQueryDto, ResolveSeoType } from './dto/resolve-seo.dto';
@@ -37,7 +38,10 @@ export class SeoService {
   private cache = new Map<string, { value: Seo | null; expires: number }>();
   private ttlMs: number;
 
-  constructor(private prisma: PrismaService) {
+  constructor(
+    private prisma: PrismaService,
+    private readonly categoryTree: CategoryTreeService,
+  ) {
     const raw = process.env.SEO_CACHE_TTL_MS;
     const parsed = raw ? Number(raw) : NaN;
     this.ttlMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 60 * 1000; // 5 minutes by default
@@ -223,6 +227,57 @@ export class SeoService {
       default:
         return 'Home';
     }
+  }
+
+  /**
+   * Цепочка категорий для хлебных крошек — от корня к узлу, уже с переводами.
+   *
+   * 🔴 `LEGACY-265`. Здесь было четыре одинаковых `while` по `parentId` без
+   * потолка и без множества посещённых — на публичных маршрутах `/seo/resolve`.
+   * Петля `A → B → A` в базе (её оставили прежние версии импорта, см.
+   * `LEGACY-263`) означала не медленный ответ, а запрос, который не вернётся
+   * никогда: окружающий `try { } catch { }` бесконечный цикл не ловит, потому
+   * что исключения нет. Подъём один и тот же для книги, категории, коллекции и
+   * жанра, поэтому и место ему одно.
+   *
+   * Переводы берутся **одним** `findMany` по собранным идентификаторам, а не
+   * запросом на уровень: было по два обращения на уровень, стало одно на
+   * уровень внутри `collectAncestors` плюс один запрос на всю цепочку.
+   *
+   * `includeSelf` — про ветку книги: её крошки содержат и саму категорию книги,
+   * тогда как страницы категории, коллекции и жанра добавляют себя отдельно,
+   * уже после цепочки предков.
+   *
+   * Фолбэк на базовое имя намеренно через `||`, а не `??`: пустая строка
+   * перевода и раньше уходила на `category.name`.
+   */
+  private async buildCategoryTrail(
+    node: { id: string; name: string; slug: string; parentId: string | null; type: string | null },
+    effLang: Language,
+    includeSelf: boolean,
+  ): Promise<Array<{ name: string; slug: string; type: string | null }>> {
+    const ancestors = await this.categoryTree.collectAncestors(node.id, node.parentId);
+    // От узла к корню: сперва сам узел (если он нужен), затем предки по порядку.
+    const chain: Array<{ id: string; name: string; slug: string; type: string | null }> =
+      includeSelf ? [node, ...ancestors] : [...ancestors];
+    if (chain.length === 0) return [];
+
+    const translations = await this.prisma.categoryTranslation.findMany({
+      where: { categoryId: { in: chain.map((c) => c.id) }, language: effLang },
+      select: { categoryId: true, name: true, slug: true },
+    });
+    const byCategory = new Map(translations.map((tr) => [tr.categoryId, tr]));
+
+    return chain
+      .map((c) => {
+        const trans = byCategory.get(c.id);
+        return {
+          name: trans?.name || c.name,
+          slug: trans?.slug || c.slug,
+          type: c.type,
+        };
+      })
+      .reverse();
   }
 
   /**
@@ -471,28 +526,8 @@ export class SeoService {
           cat = links[0]?.category ?? null;
         }
         if (cat) {
-          const catPath: Array<{ name: string; slug: string; type: string | null }> = [];
-          let current: CategoryWithParent | null = cat;
-          while (current) {
-            const trans = await this.prisma.categoryTranslation.findUnique({
-              where: { categoryId_language: { categoryId: current.id, language: effLang } },
-            });
-            catPath.push({
-              name: trans?.name || current.name,
-              slug: trans?.slug || current.slug,
-              type: current.type,
-            });
-            if (current.parentId) {
-              const parent = await this.prisma.category.findUnique({
-                where: { id: current.parentId },
-                select: { id: true, name: true, slug: true, parentId: true, type: true },
-              });
-              current = parent as CategoryWithParent | null;
-            } else {
-              current = null;
-            }
-          }
-          catPath.reverse().forEach((p) => {
+          const catPath = await this.buildCategoryTrail(cat, effLang, true);
+          catPath.forEach((p) => {
             const taxonomyType =
               p.type === 'genre' || p.type === 'collection' ? p.type : 'category';
             breadcrumbItems.push({
@@ -849,23 +884,10 @@ export class SeoService {
 
       // Add parent categories
       try {
-        let currentParentId = chosen.category?.parentId ?? null;
-        const catPath: Array<{ name: string; slug: string }> = [];
-        while (currentParentId) {
-          const parentTrans = await this.prisma.categoryTranslation.findUnique({
-            where: { categoryId_language: { categoryId: currentParentId, language: effLang } },
-          });
-          const parentCat = await this.prisma.category.findUnique({
-            where: { id: currentParentId },
-          });
-          if (!parentCat) break;
-          catPath.push({
-            name: parentTrans?.name || parentCat.name,
-            slug: parentTrans?.slug || parentCat.slug,
-          });
-          currentParentId = parentCat.parentId;
-        }
-        catPath.reverse().forEach((p) => {
+        const catPath = chosen.category
+          ? await this.buildCategoryTrail(chosen.category, effLang, false)
+          : [];
+        catPath.forEach((p) => {
           breadcrumbItems.push({
             name: p.name,
             url: getCanonicalUrl('category', p.slug, effLang),
@@ -1006,23 +1028,10 @@ export class SeoService {
 
       // Add parent categories
       try {
-        let currentParentId = chosen.category?.parentId ?? null;
-        const catPath: Array<{ name: string; slug: string }> = [];
-        while (currentParentId) {
-          const parentTrans = await this.prisma.categoryTranslation.findUnique({
-            where: { categoryId_language: { categoryId: currentParentId, language: effLang } },
-          });
-          const parentCat = await this.prisma.category.findUnique({
-            where: { id: currentParentId },
-          });
-          if (!parentCat) break;
-          catPath.push({
-            name: parentTrans?.name || parentCat.name,
-            slug: parentTrans?.slug || parentCat.slug,
-          });
-          currentParentId = parentCat.parentId;
-        }
-        catPath.reverse().forEach((p) => {
+        const catPath = chosen.category
+          ? await this.buildCategoryTrail(chosen.category, effLang, false)
+          : [];
+        catPath.forEach((p) => {
           breadcrumbItems.push({
             name: p.name,
             url: getCanonicalUrl('collection', p.slug, effLang),
@@ -1148,23 +1157,10 @@ export class SeoService {
       ];
 
       try {
-        let currentParentId = chosen.category?.parentId ?? null;
-        const catPath: Array<{ name: string; slug: string }> = [];
-        while (currentParentId) {
-          const parentTrans = await this.prisma.categoryTranslation.findUnique({
-            where: { categoryId_language: { categoryId: currentParentId, language: effLang } },
-          });
-          const parentCat = await this.prisma.category.findUnique({
-            where: { id: currentParentId },
-          });
-          if (!parentCat) break;
-          catPath.push({
-            name: parentTrans?.name || parentCat.name,
-            slug: parentTrans?.slug || parentCat.slug,
-          });
-          currentParentId = parentCat.parentId;
-        }
-        catPath.reverse().forEach((p) => {
+        const catPath = chosen.category
+          ? await this.buildCategoryTrail(chosen.category, effLang, false)
+          : [];
+        catPath.forEach((p) => {
           breadcrumbItems.push({
             name: p.name,
             url: getCanonicalUrl('genre', p.slug, effLang),

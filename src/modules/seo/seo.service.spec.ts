@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { SeoService } from './seo.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CategoryTreeService, CATEGORY_TREE_MAX_DEPTH } from '../category/category-tree.service';
 import { Language } from '@prisma/client';
 
 type PrismaStub = {
@@ -57,7 +58,10 @@ describe('SeoService (unit)', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    service = new SeoService(prisma as unknown as PrismaService);
+    service = new SeoService(
+      prisma as unknown as PrismaService,
+      new CategoryTreeService(prisma as unknown as PrismaService),
+    );
     process.env = { ...ORIGINAL_ENV, PUBLIC_SITE_URL: 'http://localhost:5000/static' };
   });
 
@@ -561,6 +565,219 @@ describe('SeoService (unit)', () => {
       expect(langCodes).toEqual(expect.arrayContaining(['en', 'ru']));
       expect(langCodes).not.toEqual(expect.arrayContaining(['es', 'fr', 'pt']));
       expect(langCodes).toHaveLength(2);
+    });
+  });
+
+  // 🔴 LEGACY-265: четыре подъёма по дереву категорий на публичных маршрутах
+  // `/seo/resolve` шли без потолка глубины. Петля `A → B → A` означала не
+  // медленный ответ, а запрос, который не возвращается никогда.
+  describe('resolvePublic — подъём по дереву категорий (LEGACY-265)', () => {
+    type CategoryRow = {
+      id: string;
+      name: string;
+      slug: string;
+      type: string;
+      parentId: string | null;
+      indexable: boolean;
+    };
+    type TranslationRow = {
+      id: string;
+      categoryId: string;
+      language: Language;
+      name: string;
+      slug: string;
+    };
+    type TransFindManyArgs = {
+      where: { OR?: unknown; categoryId?: string | { in: string[] }; language?: Language };
+    };
+
+    const cat = (id: string, parentId: string | null, type = 'category'): CategoryRow => ({
+      id,
+      name: `Name ${id}`,
+      slug: `slug-${id}`,
+      type,
+      parentId,
+      indexable: true,
+    });
+
+    const trans = (categoryId: string, name: string, slug: string): TranslationRow => ({
+      id: `tr-${categoryId}`,
+      categoryId,
+      language: Language.en,
+      name,
+      slug,
+    });
+
+    /**
+     * ⚠️ Стаб считает обращения и падает на превышении потолка. Без счётчика
+     * возврат дефекта дал бы не красный тест, а зависший jest, убитый по
+     * таймауту, — а это выглядит как отказ среды, а не как поломанный код.
+     * Тот же приём — в `category-tree.service.spec.ts`.
+     */
+    const wireTree = (rows: CategoryRow[], startId: string, translations: TranslationRow[]) => {
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      let reads = 0;
+
+      prisma.category.findUnique.mockImplementation((args: { where: { id: string } }) => {
+        reads += 1;
+        if (reads > CATEGORY_TREE_MAX_DEPTH * 4) {
+          throw new Error(
+            `category.findUnique вызван ${reads} раз — подъём по дереву идёт без потолка`,
+          );
+        }
+        return Promise.resolve(byId.get(args.where.id) ?? null);
+      });
+
+      prisma.categoryTranslation.findMany.mockImplementation((args: TransFindManyArgs) => {
+        const where = args.where;
+        if (where.OR) {
+          const own = translations.find(
+            (tr) => tr.categoryId === startId && tr.language === Language.en,
+          );
+          return Promise.resolve(
+            own
+              ? [
+                  {
+                    ...own,
+                    description: null,
+                    seoId: null,
+                    autoIndexable: true,
+                    category: byId.get(startId) ?? null,
+                  },
+                ]
+              : [],
+          );
+        }
+        if (typeof where.categoryId === 'string') {
+          const ownId = where.categoryId;
+          return Promise.resolve(translations.filter((tr) => tr.categoryId === ownId));
+        }
+        const ids = (where.categoryId as { in: string[] }).in;
+        return Promise.resolve(
+          translations.filter(
+            (tr) => ids.includes(tr.categoryId) && tr.language === where.language,
+          ),
+        );
+      });
+
+      return { reads: () => reads };
+    };
+
+    it.each(['category', 'genre', 'collection'] as const)(
+      'замкнутое дерево A → B → A не вешает %s: ответ возвращается, число чтений ограничено',
+      async (type) => {
+        const counter = wireTree([cat('A', 'B', type), cat('B', 'A', type)], 'A', [
+          trans('A', 'Node A', 'node-a'),
+        ]);
+
+        const result = await service.resolvePublic(type, 'node-a', { pathLang: Language.en });
+
+        const path = result.breadcrumbPath as Array<{ name: string; slug: string }>;
+        // Отсеиваем статическую крошку раздела (она есть только у коллекций).
+        const trail = path.filter((p) => p.slug.startsWith('slug-'));
+        // Подъём обрывается на петле: предок ровно один, и сам узел среди своих
+        // предков не появляется.
+        expect(trail).toEqual([{ name: 'Name B', slug: 'slug-b' }]);
+        expect(counter.reads()).toBeLessThanOrEqual(2);
+      },
+    );
+
+    /**
+     * ⚠️ Петля из трёх узлов, а не из двух: подъём, где вместо множества
+     * посещённых заведён один «предыдущий узел», двухузловую петлю переживает
+     * и зеленеет — а на трёхузловой уходит в потолок и возвращает сам узел
+     * среди своих предков.
+     */
+    it('петля A → B → C → A обрывается и не тащит сам узел в его предки', async () => {
+      const counter = wireTree([cat('A', 'B'), cat('B', 'C'), cat('C', 'A')], 'A', [
+        trans('A', 'Node A', 'node-a'),
+      ]);
+
+      const result = await service.resolvePublic('category', 'node-a', { pathLang: Language.en });
+
+      expect(result.breadcrumbPath).toEqual([
+        { name: 'Name C', slug: 'slug-c' },
+        { name: 'Name B', slug: 'slug-b' },
+      ]);
+      expect(counter.reads()).toBeLessThanOrEqual(3);
+    });
+
+    it('здоровое дерево: крошки идут от корня к узлу, перевода нет — берётся базовое имя', async () => {
+      wireTree([cat('A', 'M'), cat('M', 'R'), cat('R', null)], 'A', [
+        trans('A', 'Node A', 'node-a'),
+        trans('R', 'Root EN', 'root-en'),
+      ]);
+
+      const result = await service.resolvePublic('category', 'node-a', { pathLang: Language.en });
+
+      expect(result.breadcrumbPath).toEqual([
+        { name: 'Root EN', slug: 'root-en' },
+        { name: 'Name M', slug: 'slug-m' },
+      ]);
+    });
+
+    it('переводы предков берутся одним запросом, а не по запросу на уровень', async () => {
+      wireTree([cat('A', 'M'), cat('M', 'R'), cat('R', null)], 'A', [
+        trans('A', 'Node A', 'node-a'),
+        trans('R', 'Root EN', 'root-en'),
+      ]);
+
+      await service.resolvePublic('category', 'node-a', { pathLang: Language.en });
+
+      const batchCalls = prisma.categoryTranslation.findMany.mock.calls.filter(
+        (call) => typeof (call[0] as TransFindManyArgs).where.categoryId === 'object',
+      );
+      expect(batchCalls).toHaveLength(1);
+      expect(prisma.categoryTranslation.findUnique).not.toHaveBeenCalled();
+    });
+
+    describe('страница книги', () => {
+      const wireBook = (primaryCategoryId: string) => {
+        prisma.bookVersion.findFirst.mockResolvedValue(null);
+        prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
+        prisma.bookVersion.findMany.mockResolvedValue([
+          {
+            id: 'v-en',
+            bookId: 'b1',
+            language: 'en',
+            title: 'T EN',
+            author: 'A',
+            description: 'D EN',
+            coverImageUrl: null,
+            seoId: null,
+            slug: 'book-slug',
+            status: 'published',
+            type: 'text',
+            primaryCategoryId,
+          },
+        ]);
+      };
+
+      it('своя категория книги остаётся последней крошкой', async () => {
+        wireBook('A');
+        wireTree([cat('A', 'R'), cat('R', null)], 'A', [trans('R', 'Root EN', 'root-en')]);
+
+        const result = await service.resolvePublic('book', 'book-slug', { pathLang: Language.en });
+
+        expect(result.breadcrumbPath).toEqual([
+          { name: 'Root EN', slug: 'root-en', type: 'category' },
+          { name: 'Name A', slug: 'slug-a', type: 'category' },
+        ]);
+      });
+
+      it('замкнутое дерево не вешает страницу книги', async () => {
+        wireBook('A');
+        const counter = wireTree([cat('A', 'B'), cat('B', 'A')], 'A', []);
+
+        const result = await service.resolvePublic('book', 'book-slug', { pathLang: Language.en });
+
+        expect(result.breadcrumbPath).toEqual([
+          { name: 'Name B', slug: 'slug-b', type: 'category' },
+          { name: 'Name A', slug: 'slug-a', type: 'category' },
+        ]);
+        // Одно чтение самой категории книги плюс одно на единственного предка.
+        expect(counter.reads()).toBeLessThanOrEqual(3);
+      });
     });
   });
 });
