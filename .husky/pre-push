@@ -1,0 +1,27 @@
+#!/bin/sh
+# Belt and braces, not a bug fix: husky's shim (.husky/_/h) already runs this file
+# as `sh -e`. Kept so a direct `sh .husky/pre-push` behaves the same way, and so the
+# intent lives here rather than in a shim husky rewrites on install.
+set -e
+
+# A missing tool is a failure, not a permission slip (LEGACY-147). The deliberate
+# bypass stays git's own flag, which is at least visible in the command.
+command -v yarn >/dev/null 2>&1 || {
+  echo >&2 "pre-push: yarn is required but was not found in PATH."
+  echo >&2 "pre-push: install yarn, or bypass this hook deliberately with git's own flag."
+  exit 1
+}
+
+# Unconditional here on purpose: in pre-commit `drift-check` runs only when the index
+# touches prisma/**, so a bypassed commit slips a schema edit with no migration past it.
+# Pure Node, read-only, sub-second (LEGACY-148).
+printf "\nRunning drift-check...\n"
+yarn drift-check
+
+# The only local barrier that catches a red unit suite before the push. Measured
+# 26.08.2026: 33-66 s wall depending on the ts-jest cache. The suite count is left
+# out on purpose — it moves with every new spec and the number would rot here.
+# Heavier steps (lint, build, test:cov, e2e) stay in scripts/ci.sh.
+# Decision of 26.08.2026, decisions-log.md (LEGACY-148).
+printf "\nRunning unit tests...\n"
+yarn test

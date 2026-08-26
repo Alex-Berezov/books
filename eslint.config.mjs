@@ -6,11 +6,25 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
+    // Flat config reads exclusions ONLY from here: a root .eslintignore is dead
+    // weight under ESLint 9 and must not be reintroduced (see src/devops/eslint-ignores.spec.ts).
     ignores: [
       'eslint.config.mjs',
       'libs/api-client/dist/**/*',
       'libs/api-client/examples/**/*',
       'dist/**/*',
+      // openapi-typescript output: committed at src/types.ts, regenerated at types.ts
+      'libs/api-client/src/types.ts',
+      'libs/api-client/types.ts',
+      // Hand-written Node script that no lint can actually read. tsconfig.eslint.json
+      // includes scripts/**/* while allowJs is off, so type-aware ESLint cannot put a
+      // .js file in the program. Measured 26.08.2026: without this line
+      // `eslint scripts/generate-openapi-schema.js` exits 1 with
+      // `Parsing error: "parserOptions.project" ... file was not found`; with it, exit 0.
+      // lint-staged reaches the file through its *.{ts,tsx,js} glob, so the failure
+      // would land on every commit touching it. The four rule-suppression directives in
+      // its header are already dead for the same reason — see LEGACY-281.
+      'scripts/generate-openapi-schema.js',
     ],
   },
   eslint.configs.recommended,

@@ -1,10 +1,33 @@
 #!/bin/sh
+# Belt and braces, not a bug fix: git reaches this file through core.hooksPath and
+# .husky/_/h, whose last line is `sh -e "$s" "$@"` — errexit is already on for that
+# path, and a red `lint-staged` did abort the hook before this change too. `set -e`
+# here holds the same behaviour for a direct `sh .husky/pre-commit` and keeps the
+# intent in this file rather than in a shim husky rewrites on install.
+set -e
 
-# Yarn classic only; abort if yarn not installed
-command -v yarn >/dev/null 2>&1 || { echo >&2 "Yarn is required but it's not installed. Skipping pre-commit checks."; exit 0; }
+# Yarn classic only. A missing tool is a failure, not a permission slip: `exit 0`
+# here reported "checks passed" for a commit that nothing had checked (LEGACY-147).
+# The deliberate bypass stays git's own, which is at least visible in the command.
+command -v yarn >/dev/null 2>&1 || {
+  echo >&2 "pre-commit: yarn is required but was not found in PATH."
+  echo >&2 "pre-commit: install yarn, or bypass this hook deliberately with git's own flag."
+  exit 1
+}
 
 # Stage-wise lint-staged (runs on staged files)
 yarn lint-staged
+
+# Schema drift is the costliest local mistake in this repo: a `schema.prisma` edit
+# with no migration directory keeps typecheck and unit tests green (types come from
+# the schema, not from a database) and surfaces as a missing column in production.
+# Unconditional on purpose. A prisma-only condition misses the script's third pass,
+# which since LEGACY-123 checks the raw-SQL identifiers living in src/**, and it also
+# misses a staged deletion of a migration directory. Pure Node, read-only, 0.67 s
+# next to an unconditional whole-project typecheck below.
+# Decision of 26.08.2026, decisions-log.md (LEGACY-148).
+printf "\nRunning drift-check...\n"
+yarn drift-check
 
 # Fast typecheck for whole project
 printf "\nRunning typecheck...\n"
