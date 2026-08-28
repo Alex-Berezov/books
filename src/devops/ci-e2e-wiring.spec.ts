@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
  * До 17.08.2026 `.github/workflows/ci.yml` — единственный конвейер, привязанный к
  * pull request, — выполнял одну команду `yarn ci` с `CI_E2E: '0'`. Ветка e2e
  * внутри `scripts/ci.sh` закрыта условием `CI_E2E=1` плюс наличие `DATABASE_URL`,
- * поэтому из 72 наборов `test/*.e2e-spec.ts` на слиянии не выполнялся ни один.
+ * поэтому ни один набор `test/*.e2e-spec.ts` на слиянии не выполнялся.
  * Настоящий прогон жил в `deploy.yml`, а тот срабатывал на push в `main` и на
  * теге `v*`, то есть уже после слияния. С 17.08.2026 push оттуда снят (`LEGACY-241`),
  * и `deploy.yml` идёт только по тегу и ручному запуску — тем важнее, что прогон
@@ -54,14 +54,18 @@ const blockAt = (lines: string[], start: number): string[] => {
   return body;
 };
 
-/** Job'ы первого уровня вложенности вместе с их телом. */
-const jobs = (): Map<string, string[]> => {
-  const start = CI_LINES.findIndex((l) => /^jobs:\s*$/.test(l));
+/**
+ * Job'ы первого уровня вложенности вместе с их телом. По умолчанию — из
+ * `ci.yml`; аргументом передаётся любой другой воркфлоу, когда проверка
+ * обязана пройти по всем сразу (`LEGACY-237`).
+ */
+const jobs = (lines: string[] = CI_LINES): Map<string, string[]> => {
+  const start = lines.findIndex((l) => /^jobs:\s*$/.test(l));
   expect(start).toBeGreaterThan(-1);
   const found = new Map<string, string[]>();
-  for (let i = start + 1; i < CI_LINES.length; i += 1) {
-    const name = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(CI_LINES[i]);
-    if (name) found.set(name[1], blockAt(CI_LINES, i));
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const name = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+    if (name) found.set(name[1], blockAt(lines, i));
   }
   return found;
 };
@@ -218,7 +222,7 @@ describe('DevOps: e2e на pull request (LEGACY-149)', () => {
 
   // Прогон именно `test:e2e:parallel`, а не `:serial`: `--runInBand` в последнем
   // **переопределяет** `maxWorkers` из `test/jest-e2e.json`, и параллельность не
-  // включилась бы вовсе — 72 набора по ~7 с на старте `AppModule` каждый.
+  // включилась бы вовсе — каждый набор около семи секунд на старте `AppModule`.
   it('прогон идёт параллельным набором и не смягчён ничем', () => {
     const [[, body]] = e2eJobs;
     const step = stepsOf(body).find((s) => /\byarn\s+test:e2e/.test(runOf(s)))!;
@@ -227,7 +231,7 @@ describe('DevOps: e2e на pull request (LEGACY-149)', () => {
     // 🔴 Команда сверяется целиком, а не «начинается с»: чёрный список подстрок
     // здесь не годится в обе стороны. `; exit 0` и `|| true` глотают код
     // возврата, а `--testPathPattern=health`, `-t 'smoke'` и `--onlyChanged`
-    // оставляют начало строки на месте и сводят прогон к одному набору из 72 —
+    // оставляют начало строки на месте и сводят прогон к одному набору из всех —
     // job зелёный, e2e «идут», регрессия проходит.
     expect(run).toMatch(/^yarn test:e2e:parallel --maxWorkers=\d+$/);
     expect(body.some((l) => /^\s*continue-on-error:\s*true/.test(l))).toBe(false);
@@ -302,7 +306,7 @@ describe('DevOps: e2e на pull request (LEGACY-149)', () => {
   // раскладывает воркеров по ним **по кругу**. Воркеров больше баз — два набора
   // пишут в одну базу и портят данные друг другу, причём прогон при этом чаще
   // зелёный, чем красный: данные в тестах уникальны по времени, и совпадают
-  // только места с общей сущностью (10.08.2026 их было три из тогдашних 68 наборов).
+  // только места с общей сущностью (10.08.2026 их было три на весь набор).
   it('баз создаётся столько же, сколько воркеров', () => {
     const [[, body]] = e2eJobs;
     const step = stepsOf(body).find((s) => /\byarn\s+test:e2e/.test(runOf(s)))!;
@@ -332,6 +336,36 @@ describe('DevOps: e2e на pull request (LEGACY-149)', () => {
         if (!defined) offenders.push(`${file}:${index + 1}`);
       });
     }
+    expect(offenders).toEqual([]);
+  });
+
+  // 🔴 `NODE_OPTIONS` из `env:` шага перекрывается присваиванием в начале самой
+  // команды: `test:e2e:parallel` и `test:e2e:serial` начинаются с
+  // `NODE_OPTIONS="--max-old-space-size=8192 --expose-gc"`, и побеждает оно.
+  // До `LEGACY-237` в `deploy.yml` стояли 6144, которые не действовали никогда,
+  // — и читались как настроенный предел памяти. Мёртвая настройка хуже
+  // отсутствующей: по ней принимают решения.
+  it('ни один шаг e2e не задаёт NODE_OPTIONS — своё ставит сам скрипт (LEGACY-237)', () => {
+    const offenders: string[] = [];
+    let stepsSeen = 0;
+
+    for (const file of readdirSync(WORKFLOWS_DIR).filter((f) => /\.ya?ml$/.test(f))) {
+      const lines = readFileSync(join(WORKFLOWS_DIR, file), 'utf8').split(/\r?\n/);
+      if (!lines.some((l) => /^jobs:\s*$/.test(l))) continue;
+      for (const [name, body] of jobs(lines)) {
+        for (const step of stepsOf(body)) {
+          if (!/\byarn\s+test:e2e/.test(runOf(step))) continue;
+          stepsSeen += 1;
+          if (mapUnder(step, 'env').NODE_OPTIONS !== undefined) {
+            offenders.push(`${file} -> job ${name}`);
+          }
+        }
+      }
+    }
+
+    // Без нижней границы проверка зеленела бы на пустом множестве: сломался
+    // разбор — шагов ноль — нарушителей ноль.
+    expect(stepsSeen).toBeGreaterThanOrEqual(2);
     expect(offenders).toEqual([]);
   });
 });

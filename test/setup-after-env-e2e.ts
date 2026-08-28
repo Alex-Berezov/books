@@ -32,13 +32,19 @@ try {
   url.pathname = `/${prefix}${index}`;
   url.searchParams.delete('schema');
 
-  // 🔴 Без потолка на пул параллельный прогон упирается в `max_connections`
-  // Postgres: каждый набор поднимает `AppModule` со своим пулом Prisma, и при
-  // нескольких воркерах их суммарно выходит больше сотни. Падает при этом не
-  // тест, а случайный запрос внутри него — «Too many database connections
-  // opened», — и выглядит это как сломанный код, а не как исчерпанный ресурс.
-  url.searchParams.set('connection_limit', process.env.E2E_CONNECTION_LIMIT || '5');
   process.env.DATABASE_URL = url.toString();
+
+  // 🔴 Без потолка на пул параллельный прогон упирается в `max_connections`
+  // Postgres: каждый набор поднимает `AppModule` со своим пулом, и при
+  // нескольких воркерах их суммарно выходит больше сотни. Падает при этом не
+  // тест, а случайный запрос внутри него — «sorry, too many clients already», —
+  // и выглядит это как сломанный код, а не как исчерпанный ресурс.
+  //
+  // ⚠️ До `LEGACY-237` потолок писался как `connection_limit` в строку
+  // подключения и **не действовал**: это параметр движка Prisma, а пул здесь
+  // создаёт `pg` — он читает строку только ради адреса. Настоящий потолок
+  // задаётся `max` у пула, и `PrismaService` берёт его отсюда.
+  process.env.DATABASE_POOL_MAX = process.env.E2E_CONNECTION_LIMIT || '5';
 } catch (error) {
   throw new Error(
     `e2e: не удалось прочитать раскладку баз (${HANDOFF_FILE}). ` +

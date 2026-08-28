@@ -633,7 +633,8 @@ yarn test:e2e -- tags.e2e-spec.ts
 
 - В репозитории есть провайдер‑независимый скрипт CI: `scripts/ci.sh`. Он выполняется локально командой `yarn ci` или через Makefile `make ci`.
 - Скрипт включает: установку зависимостей, `prisma:generate`, `lint`, `typecheck`, юнит‑тесты и сборку. E2E выключены по умолчанию.
-- Чтобы включить E2E в CI (или локально под управлением CI), задайте переменные окружения: `CI_E2E=1` и `DATABASE_URL` (валидное подключение к Postgres). Тогда будет выполнен `yarn test:e2e:serial`.
+- Переменная `CI_E2E` нужна **только для чужого конвейера** (GitLab или локальный `yarn ci`): задайте `CI_E2E=1` **вместе с** `DATABASE_URL` — валидным подключением к Postgres, — и `scripts/ci.sh` выполнит `yarn test:e2e:serial`. ⚠️ `CI_E2E=1` без непустого `DATABASE_URL` даёт зелёный прогон **без** e2e: скрипт печатает «skipping e2e» и идёт дальше.
+- В GitHub Actions трогать её не надо: с 17.08.2026 e2e на pull request и на push в `main` гоняет отдельный job `e2e` в `.github/workflows/ci.yml` — он поднимает postgres и redis сам и зовёт `yarn test:e2e:parallel --maxWorkers=2`, минуя `CI_E2E` вовсе.
 - Шаблоны конфигов поставляются для обоих провайдеров:
   - GitHub: `.github/workflows/ci.yml` — вызывает `yarn ci`.
   - GitLab: `.gitlab-ci.yml` — stage `ci`, также вызывает `yarn ci`.

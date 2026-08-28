@@ -140,13 +140,17 @@
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/",
+      "/common/testing/"
+    ],
     "coverageDirectory": "../coverage",
     "coverageThreshold": {
       "global": {
-        "statements": 58,
-        "branches": 54,
-        "functions": 55,
-        "lines": 59
+        "statements": 65,
+        "branches": 60,
+        "functions": 63,
+        "lines": 66
       }
     },
     "testEnvironment": "node"
