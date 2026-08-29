@@ -29,6 +29,10 @@ type WriteLog = string[];
 
 interface FakeModel {
   findUnique: jest.Mock;
+  // 🔴 `LEGACY-315`. Второй проход в конце партии читает детей терминов,
+  // сменивших тип, через `findMany`; без него в поддельном клиенте спека падает
+  // не на своём предмете.
+  findMany: jest.Mock;
   // 🔴 `LEGACY-303`. Проверка второго края ребра спрашивает базу об одном
   // несовпадающем ребёнке; без `findFirst` в поддельном клиенте спека падает
   // не на своём предмете.
@@ -58,6 +62,7 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
   const model = (name: string, created: unknown): FakeModel => ({
     findUnique: note(`${name}.findUnique`, null),
     findFirst: note(`${name}.findFirst`, null),
+    findMany: note(`${name}.findMany`, []),
     create: note(`${name}.create`, created),
     update: note(`${name}.update`, created),
   });
@@ -448,11 +453,15 @@ describe('ImportService — обновление термина одной тр�
 
   it('пишет базовую строку, историю базового слага и оба перевода тега одним tx', async () => {
     const log: WriteLog = [];
-    const { service, root, $transaction } = makeService(log);
+    const { service, tx, $transaction } = makeService(log);
 
-    root.tag.findUnique.mockImplementation(() => {
-      log.push('root.tag.findUnique');
-      return Promise.resolve(existingTag);
+    // 🔴 `LEGACY-313`. Ветку выбирает чтение ВНУТРИ транзакции. Без этого мока
+    // тест уходил бы в ветку создания: регрессия именно в ветке обновления
+    // осталась бы непокрытой, а проверка `updated === 0` ниже зеленела бы
+    // и на созданном теге.
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.tag.findUnique');
+      return Promise.resolve(args?.where?.key === 'aestheticism' ? existingTag : null);
     });
 
     const result = await service.importTags([tagDto()]);
@@ -470,11 +479,15 @@ describe('ImportService — обновление термина одной тр�
 
   it('не считает тег обновлённым, если перевод упал на середине', async () => {
     const log: WriteLog = [];
-    const { service, root, tx, $transaction } = makeService(log);
+    const { service, tx, $transaction } = makeService(log);
 
-    root.tag.findUnique.mockImplementation(() => {
-      log.push('root.tag.findUnique');
-      return Promise.resolve(existingTag);
+    // 🔴 `LEGACY-313`. Ветку выбирает чтение ВНУТРИ транзакции. Без этого мока
+    // тест уходил бы в ветку создания: регрессия именно в ветке обновления
+    // осталась бы непокрытой, а проверка `updated === 0` ниже зеленела бы
+    // и на созданном теге.
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.tag.findUnique');
+      return Promise.resolve(args?.where?.key === 'aestheticism' ? existingTag : null);
     });
     tx.tagTranslation.create.mockImplementation(() => {
       log.push('tx.tagTranslation.create');
@@ -868,6 +881,123 @@ describe('ImportService — решение о записи принимаетс�
 });
 
 /**
+ * 🔴 `LEGACY-313`. Тег повторял `LEGACY-304` и `LEGACY-312` целиком: развилка
+ * «создание или обновление» и дефолты брались из чтения на пуле, а счётчик
+ * отчёта — из второго такого же чтения.
+ *
+ * ⚠️ Приём тот же, что в блоке про категории выше: `root.tag.findUnique`
+ * и `tx.tag.findUnique` мокаются **по-разному** и расходятся ровно в том, что
+ * проверяется. Спека на одном клиенте здесь бесполезна — она зеленела и на
+ * чтении с пула.
+ */
+describe('ImportService — решение о записи тега принимается в транзакции (LEGACY-313)', () => {
+  const existingInTx = {
+    id: 'tag-1',
+    key: 'aestheticism',
+    slug: 'aestheticism',
+    indexable: true,
+    isVisible: true,
+    sortOrder: 42,
+    translations: [],
+  };
+
+  it('тег, появившийся между чтением на пуле и транзакцией, обновляется, а не заводится заново', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // Пул: тега нет — то состояние, из которого прежний код уходил в ветку
+    // создания и получал `P2002` по ключу.
+    root.tag.findUnique.mockImplementation(() => {
+      log.push('root.tag.findUnique');
+      return Promise.resolve(null);
+    });
+    // Транзакция: тег уже есть — его завёл встречный импорт.
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.tag.findUnique');
+      return Promise.resolve(args?.where?.key === 'aestheticism' ? existingInTx : null);
+    });
+
+    const result = await service.importTags([tagDto()]);
+
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+    expect(tx.tag.create).not.toHaveBeenCalled();
+    expect(tx.tag.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('дефолты берутся из строки транзакции, а не из чтения на пуле', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // На пуле лежит устаревший `sortOrder`: по нему запись затёрла бы чужую правку.
+    root.tag.findUnique.mockImplementation(() => {
+      log.push('root.tag.findUnique');
+      return Promise.resolve({ ...existingInTx, sortOrder: 0 });
+    });
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.tag.findUnique');
+      return Promise.resolve(args?.where?.key === 'aestheticism' ? existingInTx : null);
+    });
+
+    await service.importTags([tagDto()]);
+
+    expect(tx.tag.update).toHaveBeenCalledTimes(1);
+    expect(tx.tag.update).toHaveBeenCalledWith({
+      where: { key: 'aestheticism' },
+      data: expect.objectContaining({ sortOrder: 42 }),
+    });
+  });
+
+  it('счётчик отчёта считается по транзакции: тег, которого нет нигде, засчитывается созданным', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // Пул врёт в другую сторону: «тег есть». Прежний код по нему засчитал бы
+    // `updated`, хотя транзакция завела новый.
+    root.tag.findUnique.mockImplementation(() => {
+      log.push('root.tag.findUnique');
+      return Promise.resolve(existingInTx);
+    });
+    tx.tag.findUnique.mockImplementation(() => {
+      log.push('tx.tag.findUnique');
+      return Promise.resolve(null);
+    });
+
+    const result = await service.importTags([tagDto()]);
+
+    expect(result).toEqual({ imported: 1, updated: 0, errors: [] });
+    expect(tx.tag.create).toHaveBeenCalledTimes(1);
+    expect(tx.tag.update).not.toHaveBeenCalled();
+  });
+
+  it('список переводов берётся из строки транзакции: перевод, которого в ней нет, заводится, а не обновляется', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // На пуле у тега уже есть английский перевод — по этой строке прежний код
+    // ушёл бы в `tagTranslation.update` по несуществующей строке и получил `P2025`.
+    root.tag.findUnique.mockImplementation(() => {
+      log.push('root.tag.findUnique');
+      return Promise.resolve({
+        ...existingInTx,
+        translations: [
+          { id: 'tt-en', tagId: 'tag-1', language: Language.en, slug: 'aestheticism' },
+        ],
+      });
+    });
+    // В транзакции переводов нет: встречный импорт их ещё не завёл либо откатился.
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.tag.findUnique');
+      return Promise.resolve(args?.where?.key === 'aestheticism' ? existingInTx : null);
+    });
+
+    await service.importTags([tagDto()]);
+
+    expect(tx.tagTranslation.update).not.toHaveBeenCalled();
+    expect(tx.tagTranslation.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
  * 🔴 `LEGACY-308`. Тип пишется безусловно, а проверка родителя стояла под
  * `if (dto.parentKey !== undefined)`: условие зависело от наличия поля в файле
  * импорта, а не от того, меняется ли что-то из пары «родитель, тип».
@@ -963,6 +1093,265 @@ describe('ImportService — смена типа проверяет оба кра
  * ⚠️ Проверять надо оба термина партии, а не только родителя: спека
  * на одном из них зеленеет и на дефекте.
  */
+/**
+ * 🔴 `LEGACY-315`. Исключение по составу партии верно ровно настолько,
+ * насколько партия атомарна, а она не атомарна: транзакция на термин.
+ * Родитель коммитит смену типа, ребёнок следом падает по своей причине —
+ * и в базе остаётся разнотипное ребро, которое ни один путь записи больше
+ * не заведёт, но и не починит.
+ *
+ * ⚠️ Отчёт до правки был честен про упавшего ребёнка и молчал про дерево:
+ * оператор видел «одна ошибка из двух» и не знал, что первая половина оставила
+ * дерево в запрещённом состоянии. Проверять надо именно вторую строку отчёта.
+ */
+describe('ImportService — частично прошедшая партия называет испорченное ребро (LEGACY-315)', () => {
+  const subtreeFile = (): ImportCategoryDto[] =>
+    [
+      {
+        key: 'parent-key',
+        type: CategoryType.collection,
+        translations: { [Language.en]: { name: 'Parent', slug: 'parent' } },
+      },
+      {
+        key: 'child-key',
+        type: CategoryType.collection,
+        parentKey: 'parent-key',
+        translations: { [Language.en]: { name: 'Child', slug: 'child' } },
+      },
+    ] as ImportCategoryDto[];
+
+  const rowsInDb: Record<string, unknown> = {
+    'parent-key': {
+      id: 'cat-parent',
+      key: 'parent-key',
+      type: CategoryType.genre,
+      parentId: null,
+      indexable: true,
+      isVisible: true,
+      sortOrder: 0,
+      translations: [],
+    },
+    'child-key': {
+      id: 'cat-child',
+      key: 'child-key',
+      type: CategoryType.genre,
+      parentId: 'cat-parent',
+      indexable: true,
+      isVisible: true,
+      sortOrder: 0,
+      translations: [],
+    },
+  };
+
+  /** Партия из двух терминов, где транзакция ребёнка падает на переводе. */
+  const runBatchWithFailingChild = async (
+    log: WriteLog,
+    override?: (rootClient: ReturnType<typeof makeService>['root']) => void,
+  ) => {
+    const { service, root, tx } = makeService(log);
+
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(rowsInDb[args?.where?.key ?? ''] ?? null);
+    });
+
+    let parentType: CategoryType = CategoryType.genre;
+    tx.category.update.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.update');
+      if (args?.where?.key === 'parent-key') parentType = CategoryType.collection;
+      return Promise.resolve({ id: 'cat-1' });
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
+      log.push('tx.category.findUnique');
+      const where = args?.where ?? {};
+      if (where.key === 'parent-key')
+        return Promise.resolve({ ...(rowsInDb['parent-key'] as object), type: parentType });
+      if (where.key === 'child-key') return Promise.resolve(rowsInDb['child-key']);
+      if (where.id === 'cat-parent') return Promise.resolve({ parentId: null });
+      return Promise.resolve(null);
+    });
+    // Край «вниз» у родителя пропускает ребёнка: файл переводит его в тот же тип.
+    tx.category.findFirst.mockImplementation(
+      (args: { where?: { parentId?: string; key?: { notIn?: string[] } } }) => {
+        log.push('tx.category.findFirst');
+        const where = args?.where ?? {};
+        if (where.parentId !== 'cat-parent') return Promise.resolve(null);
+        const excluded = where.key?.notIn ?? [];
+        if (excluded.includes('child-key')) return Promise.resolve(null);
+        return Promise.resolve({ id: 'cat-child', key: 'child-key', type: CategoryType.genre });
+      },
+    );
+    // Ребёнок падает после того, как родитель уже закоммитился.
+    tx.categoryTranslation.update.mockImplementation(() => {
+      log.push('tx.categoryTranslation.update');
+      return Promise.reject(new Error('slug conflict'));
+    });
+    tx.categoryTranslation.create.mockImplementation((args: { data?: { categoryId?: string } }) => {
+      log.push('tx.categoryTranslation.create');
+      if (args?.data?.categoryId === 'cat-child') {
+        return Promise.reject(new Error('slug conflict'));
+      }
+      return Promise.resolve({});
+    });
+    // Второй проход спрашивает базу: ребро осталось разнотипным.
+    //
+    // ⚠️ Мок обязан честно исполнять условие отбора. Проход ищет детей
+    // с типом, **не равным** ожидаемому: если отдавать строку на любой аргумент,
+    // спека зеленеет и на возвращённом фильтре в память, из-за которого потолок
+    // выборки съедали бы согласованные дети.
+    root.category.findMany.mockImplementation(
+      (args: {
+        where?: { OR?: Array<{ parentId?: { in?: string[] }; type?: { not?: CategoryType } }> };
+      }) => {
+        log.push('root.category.findMany');
+        const groups = args?.where?.OR ?? [];
+        const matching = groups.some(
+          (g) =>
+            (g.parentId?.in ?? []).includes('cat-parent') && g.type?.not !== CategoryType.genre,
+        );
+        if (!matching) return Promise.resolve([]);
+        return Promise.resolve([
+          {
+            key: 'child-key',
+            type: CategoryType.genre,
+            // Тип родителя приходит из базы, а не из файла.
+            parent: { key: 'parent-key', type: CategoryType.collection },
+          },
+        ]);
+      },
+    );
+
+    override?.(root);
+
+    return { result: await service.importCategories(subtreeFile()), root, tx };
+  };
+
+  it('отчёт называет и упавшего ребёнка, и родителя, оставшегося разнотипным', async () => {
+    const log: WriteLog = [];
+
+    const { result } = await runBatchWithFailingChild(log);
+
+    expect(result.errors.map((e) => e.key)).toEqual(['child-key', 'parent-key']);
+    expect(result.errors[1].message).toContain('Tree left inconsistent');
+    expect(result.errors[1].message).toContain('"child-key"');
+  });
+
+  it('проход спрашивает базу по идентификатору родителя и ничего не пишет', async () => {
+    const log: WriteLog = [];
+
+    const { root } = await runBatchWithFailingChild(log);
+
+    // Запрос идёт по идентификатору из базы, а не по ключам файла: ребёнок,
+    // не назвавший `parentKey`, иначе выпал бы из проверки.
+    expect(root.category.findMany).toHaveBeenCalledTimes(1);
+    expect(root.category.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [{ parentId: { in: ['cat-parent'] }, type: { not: CategoryType.collection } }],
+        },
+        orderBy: { key: 'asc' },
+        take: expect.any(Number),
+      }),
+    );
+    // Проход только читает: ни одной записи через `root.` он не добавляет.
+    expect(writesOf(log).filter((call) => call.startsWith('root.'))).toEqual([]);
+  });
+
+  it('родитель, перетипизированный обратно после партии, ложной строки не даёт', async () => {
+    const log: WriteLog = [];
+    const { result, root } = await runBatchWithFailingChild(log, (rootClient) => {
+      // Между записью и проходом кто-то вернул родителю прежний тип. Ребро
+      // больше не разнотипное, и говорить про него нечего — хотя файл
+      // по-прежнему утверждает, что родитель стал коллекцией.
+      rootClient.category.findMany.mockImplementation(() => {
+        log.push('root.category.findMany');
+        return Promise.resolve([
+          {
+            key: 'child-key',
+            type: CategoryType.genre,
+            parent: { key: 'parent-key', type: CategoryType.genre },
+          },
+        ]);
+      });
+    });
+
+    expect(root.category.findMany).toHaveBeenCalledTimes(1);
+    expect(result.errors.map((e) => e.key)).toEqual(['child-key']);
+  });
+
+  it('упёршись в потолок выборки, проход говорит об этом, а не молчит', async () => {
+    const log: WriteLog = [];
+    // 🔴 `L-015`. Молчание проверки, которая проверила не всё, читается как
+    // «всё в порядке». Потолок берётся из самого вызова, чтобы спека не зависела
+    // от значения константы.
+    const { result } = await runBatchWithFailingChild(log, (rootClient) => {
+      rootClient.category.findMany.mockImplementation((args: { take?: number }) => {
+        log.push('root.category.findMany');
+        const take = args?.take ?? 0;
+        return Promise.resolve(
+          Array.from({ length: take }, (_, i) => ({
+            key: `child-${i}`,
+            type: CategoryType.genre,
+            parent: { key: 'parent-key', type: CategoryType.collection },
+          })),
+        );
+      });
+    });
+
+    const truncated = result.errors.filter((e) => e.key === '(consistency-scan)');
+    expect(truncated).toHaveLength(1);
+    expect(truncated[0].message).toContain('there may be more');
+  });
+
+  it('отказ самого прохода не роняет ручку, но и не выдаёт себя за чистый отчёт', async () => {
+    const log: WriteLog = [];
+    const { result } = await runBatchWithFailingChild(log, (rootClient) => {
+      rootClient.category.findMany.mockImplementation(() => {
+        log.push('root.category.findMany');
+        return Promise.reject(new Error('pool timeout'));
+      });
+    });
+
+    // Отчёт про упавшего ребёнка обязан дойти до оператора: без него он не знает,
+    // что остальные термины уже записаны, и погонит файл заново.
+    expect(result.updated).toBe(1);
+    expect(result.errors.map((e) => e.key)).toEqual(['child-key', '(consistency-scan)']);
+    // 🔴 `L-015`. Молчание здесь совпало бы с отчётом по целому дереву байт в байт.
+    expect(result.errors[1].message).toContain('could not run');
+  });
+
+  it('партия без ошибок второго прохода не делает вовсе', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(rowsInDb[args?.where?.key ?? ''] ?? null);
+    });
+    let parentType: CategoryType = CategoryType.genre;
+    tx.category.update.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.update');
+      if (args?.where?.key === 'parent-key') parentType = CategoryType.collection;
+      return Promise.resolve({ id: 'cat-1' });
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
+      log.push('tx.category.findUnique');
+      const where = args?.where ?? {};
+      if (where.key === 'parent-key')
+        return Promise.resolve({ ...(rowsInDb['parent-key'] as object), type: parentType });
+      if (where.key === 'child-key') return Promise.resolve(rowsInDb['child-key']);
+      if (where.id === 'cat-parent') return Promise.resolve({ parentId: null });
+      return Promise.resolve(null);
+    });
+    tx.category.findFirst.mockResolvedValue(null);
+
+    const result = await service.importCategories(subtreeFile());
+
+    expect(result).toEqual({ imported: 0, updated: 2, errors: [] });
+    expect(root.category.findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe('ImportService — перетипизация поддерева одним файлом', () => {
   const subtreeFile = (): ImportCategoryDto[] =>
     [

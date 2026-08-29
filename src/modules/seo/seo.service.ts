@@ -38,6 +38,34 @@ import { markDegraded } from '../../common/interceptors/degraded-response';
  */
 type TaxonomyPageType = CategoryType;
 
+/**
+ * 🔴 `LEGACY-316`. Типы страниц, чей публичный ответ собирает `buildTermBundle`.
+ * Шире `TaxonomyPageType` ровно на тег: он живёт отдельной моделью и в `CategoryType`
+ * не входит, но страница у него та же по составу.
+ */
+type PublicTermPageType = TaxonomyPageType | 'tag';
+
+/**
+ * Готовые значения, из которых `SeoService.buildTermBundle` собирает публичный ответ
+ * страницы термина. Тип именованный, а не встроенный в сигнатуру: имена полей тогда
+ * живут в одном месте, а не в трёх, и добавленное поле нельзя забыть разобрать.
+ */
+interface TermBundleInput {
+  pageType: PublicTermPageType;
+  effLang: Language;
+  slug: string;
+  name: string;
+  metaTitle: string;
+  metaDescription?: string;
+  canonicalUrl: string;
+  robots: string;
+  seo: Seo | null;
+  /** Слаг перевода по коду языка в нижнем регистре — для hreflang. */
+  slugsMap: Record<string, string>;
+  /** Крошки **между** главной и самим термином. У тега всегда пусто. */
+  trail: Array<{ name: string; url: string }>;
+}
+
 const TAXONOMY_PAGES: Record<
   TaxonomyPageType,
   {
@@ -301,27 +329,112 @@ export class SeoService {
   }
 
   /**
-   * Цепочка категорий для хлебных крошек — от корня к узлу, уже с переводами.
+   * 🔴 `LEGACY-316`. Сборка публичного ответа страницы термина — одна на все
+   * четыре типа, у которых она есть: `category`, `genre`, `collection` и `tag`.
    *
-   * 🔴 `LEGACY-265`. Здесь было четыре одинаковых `while` по `parentId` без
-   * потолка и без множества посещённых — на публичных маршрутах `/seo/resolve`.
-   * Петля `A → B → A` в базе (её оставили прежние версии импорта, см.
-   * `LEGACY-263`) означала не медленный ответ, а запрос, который не вернётся
-   * никогда: окружающий `try { } catch { }` бесконечный цикл не ловит, потому
-   * что исключения нет. Подъём один и тот же для книги, категории, коллекции и
-   * жанра, поэтому и место ему одно.
+   * `LEGACY-309` свела три ветки из четырёх; ветка `tag` осталась четвёртой копией
+   * и уже разошлась с остальными — не отдавала `breadcrumbPath` и писала своё имя
+   * типа тремя отдельными литералами. Ровно тот же приём породил `LEGACY-273`:
+   * литерал берётся из допустимого union, и ни компилятор, ни линт подмены не видят.
    *
-   * Переводы берутся **одним** `findMany` по собранным идентификаторам, а не
-   * запросом на уровень: было по два обращения на уровень, стало одно на
-   * уровень внутри `collectAncestors` плюс один запрос на всю цепочку.
+   * ⚠️ Функция принимает **готовые значения** и ничего не читает из базы. «Где взять
+   * перевод», «как посчитать индексируемость» и «есть ли у типа предки» остаются
+   * у вызывающих: у тега своя модель и три флага индексируемости вместо двух
+   * (`TagTranslation.indexable` существует, у `CategoryTranslation` его нет вовсе),
+   * а дерева у него нет. Втащить это внутрь значило бы вернуть развилку по модели
+   * в общий метод.
    *
-   * `includeSelf` — про ветку книги: её крошки содержат и саму категорию книги,
-   * тогда как страницы категории, коллекции и жанра добавляют себя отдельно,
-   * уже после цепочки предков.
+   * ⚠️ Тип страницы — обычный строковый параметр, а не `CategoryType`: тег в этот
+   * Prisma-энум не входит. Поэтому `TAXONOMY_PAGES` остаётся `Record<CategoryType, ...>`
+   * и сохраняет свою компиляторную гарантию, а текст 404 и раздел в крошках тег
+   * держит у себя. Решение арбитра от 29.08.2026, строка в `decisions-log.md`.
    *
-   * Фолбэк на базовое имя намеренно через `||`, а не `??`: пустая строка
-   * перевода и раньше уходила на `category.name`.
+   * @param trail крошки **между** главной и самим термином. У тега всегда пусто.
    */
+  private buildTermBundle({
+    pageType,
+    effLang,
+    slug,
+    name,
+    metaTitle,
+    metaDescription,
+    canonicalUrl,
+    robots,
+    seo,
+    slugsMap,
+    trail,
+  }: TermBundleInput): Record<string, unknown> {
+    const ogTitle = seo?.ogTitle || metaTitle;
+    const ogDescription = seo?.ogDescription || metaDescription;
+    const ogUrl = seo?.ogUrl || canonicalUrl;
+    const ogImageUrl = seo?.ogImageUrl || undefined;
+    const ogImageAlt = seo?.ogImageAlt || metaTitle;
+    const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+    const breadcrumbItems = [
+      { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+      ...trail,
+      { name, url: canonicalUrl },
+    ];
+    const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+    const collectionSchema = generateCollectionPageSchema(
+      pageType,
+      slug,
+      effLang,
+      name,
+      metaDescription || '',
+      [],
+    );
+
+    return {
+      meta: {
+        title: metaTitle,
+        description: metaDescription,
+        robots,
+        canonicalUrl,
+      },
+      openGraph: {
+        title: ogTitle,
+        description: ogDescription,
+        type: 'website',
+        url: ogUrl,
+        image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+      },
+      twitter: {
+        card: twitterCard,
+        site: seo?.twitterSite || undefined,
+        creator: seo?.twitterCreator || undefined,
+        image: ogImageUrl || undefined,
+      },
+      schema: {
+        '@context': 'https://schema.org',
+        '@graph': [
+          {
+            '@type': 'WebPage',
+            '@id': `${canonicalUrl}#webpage`,
+            url: canonicalUrl,
+            name: metaTitle,
+            description: metaDescription,
+            inLanguage: effLang.toLowerCase(),
+            isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+            breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+          },
+          generateWebSiteSchema(effLang),
+          breadcrumbSchema,
+          collectionSchema,
+        ],
+      },
+      hreflangs: generateHreflangLinks(pageType, slugsMap),
+      // Крошки без главной и без самого термина — ровно то, что раньше собиралось
+      // здесь как `breadcrumbItems.slice(1, -1)`. У тега список всегда пуст:
+      // предков у него не бывает, и пустой массив говорит это явно, а не молчанием.
+      breadcrumbPath: trail.map((item) => ({
+        name: item.name,
+        slug: item.url.split('/').pop() || '',
+      })),
+    };
+  }
+
   /**
    * Публичный резолвер страницы термина таксономии — один на три типа.
    *
@@ -372,13 +485,6 @@ export class SeoService {
       chosen.category.indexable !== false && chosen.autoIndexable !== false,
     );
 
-    const ogTitle = seo?.ogTitle || metaTitle;
-    const ogDescription = seo?.ogDescription || metaDescription;
-    const ogUrl = seo?.ogUrl || canonicalUrl;
-    const ogImageUrl = seo?.ogImageUrl || undefined;
-    const ogImageAlt = seo?.ogImageAlt || metaTitle;
-    const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
-
     // Hreflangs — fetch all translations of this term for complete hreflang set
     const allTranslations = await this.prisma.categoryTranslation.findMany({
       where: { categoryId: chosen.categoryId, category: { type: termType } },
@@ -387,16 +493,13 @@ export class SeoService {
     for (const tr of allTranslations) {
       slugsMap[tr.language.toLowerCase()] = tr.slug;
     }
-    const hreflangLinks = generateHreflangLinks(termType, slugsMap);
 
-    // Breadcrumbs
-    const breadcrumbItems = [
-      { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
-    ];
+    // Крошки между главной и самим термином: раздел плюс предки.
+    const trail: Array<{ name: string; url: string }> = [];
     // Раздел над термином есть только у коллекций: у категорий и жанров
     // страницы-раздела не существует, и подставлять её было бы ссылкой в 404.
     if (page.section) {
-      breadcrumbItems.push({
+      trail.push({
         name: page.section.names[effLang] ?? page.section.names.en,
         url: getCanonicalUrl('static', page.section.slug, effLang),
       });
@@ -409,7 +512,7 @@ export class SeoService {
         ? await this.buildCategoryTrail(chosen.category, effLang, false)
         : [];
       catPath.forEach((parent) => {
-        breadcrumbItems.push({
+        trail.push({
           name: parent.name,
           url: getCanonicalUrl(termType, parent.slug, effLang),
         });
@@ -419,65 +522,45 @@ export class SeoService {
       this.warnDegraded('parent breadcrumbs', termType, chosen.categoryId, error);
     }
 
-    breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
-    const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
-    const collectionSchema = generateCollectionPageSchema(
-      termType,
-      chosen.slug,
+    const bundle = this.buildTermBundle({
+      pageType: termType,
       effLang,
-      chosen.name,
-      metaDescription || '',
-      [],
-    );
-
-    const bundle = {
-      meta: {
-        title: metaTitle,
-        description: metaDescription,
-        robots: robotsStatus,
-        canonicalUrl,
-      },
-      openGraph: {
-        title: ogTitle,
-        description: ogDescription,
-        type: 'website',
-        url: ogUrl,
-        image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
-      },
-      twitter: {
-        card: twitterCard,
-        site: seo?.twitterSite || undefined,
-        creator: seo?.twitterCreator || undefined,
-        image: ogImageUrl || undefined,
-      },
-      schema: {
-        '@context': 'https://schema.org',
-        '@graph': [
-          {
-            '@type': 'WebPage',
-            '@id': `${canonicalUrl}#webpage`,
-            url: canonicalUrl,
-            name: metaTitle,
-            description: metaDescription,
-            inLanguage: effLang.toLowerCase(),
-            isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
-            breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
-          },
-          generateWebSiteSchema(effLang),
-          breadcrumbSchema,
-          collectionSchema,
-        ],
-      },
-      hreflangs: hreflangLinks,
-      breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
-        name: item.name,
-        slug: item.url.split('/').pop() || '',
-      })),
-    };
+      slug: chosen.slug,
+      name: chosen.name,
+      metaTitle,
+      metaDescription,
+      canonicalUrl,
+      robots: robotsStatus,
+      seo,
+      slugsMap,
+      trail,
+    });
 
     return degraded ? markDegraded(bundle) : bundle;
   }
 
+  /**
+   * Цепочка категорий для хлебных крошек — от корня к узлу, уже с переводами.
+   *
+   * 🔴 `LEGACY-265`. Здесь было четыре одинаковых `while` по `parentId` без
+   * потолка и без множества посещённых — на публичных маршрутах `/seo/resolve`.
+   * Петля `A → B → A` в базе (её оставили прежние версии импорта, см.
+   * `LEGACY-263`) означала не медленный ответ, а запрос, который не вернётся
+   * никогда: окружающий `try { } catch { }` бесконечный цикл не ловит, потому
+   * что исключения нет. Подъём один и тот же для книги, категории, коллекции и
+   * жанра, поэтому и место ему одно.
+   *
+   * Переводы берутся **одним** `findMany` по собранным идентификаторам, а не
+   * запросом на уровень: было по два обращения на уровень, стало одно на
+   * уровень внутри `collectAncestors` плюс один запрос на всю цепочку.
+   *
+   * `includeSelf` — про ветку книги: её крошки содержат и саму категорию книги,
+   * тогда как страницы категории, коллекции и жанра добавляют себя отдельно,
+   * уже после цепочки предков.
+   *
+   * Фолбэк на базовое имя намеренно через `||`, а не `??`: пустая строка
+   * перевода и раньше уходила на `category.name`.
+   */
   private async buildCategoryTrail(
     node: { id: string; name: string; slug: string; parentId: string | null; type: string | null },
     effLang: Language,
@@ -1094,6 +1177,14 @@ export class SeoService {
     }
 
     if (t === 'tag') {
+      // 🔴 `LEGACY-316`. Ветка готовит только своё: модель, три флага
+      // индексируемости и свой текст 404. Сам ответ собирает `buildTermBundle` —
+      // тот же, что у трёх типов таксономии. До 29.08.2026 здесь лежала четвёртая
+      // копия сборки, уже разошедшаяся с остальными: `breadcrumbPath` она
+      // не отдавала, а имя типа писала тремя отдельными литералами `'tag'`.
+      // Одно имя типа на всю ветку: второй литерал — это и есть тот приём,
+      // которым `LEGACY-273` подменила тип в соседней ветке незамеченно.
+      const pageType = 'tag' as const;
       const effLang = opts?.pathLang ?? pickEffectiveLanguage();
       const slugVal = opts?.slug || id;
 
@@ -1121,7 +1212,10 @@ export class SeoService {
         : null;
       const metaTitle = seo?.metaTitle || baseMeta.title;
       const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
-      const canonicalUrl = getCanonicalUrl('tag', chosen.slug, effLang);
+      const canonicalUrl = getCanonicalUrl(pageType, chosen.slug, effLang);
+      // ⚠️ Флагов три, а не два, как у таксономии: у `TagTranslation` есть
+      // собственный `indexable`, которого у `CategoryTranslation` нет вовсе.
+      // Это различие держит схема, а не расхождение копий.
       const effectiveIndexable =
         chosen.tag?.indexable !== false &&
         chosen.indexable !== false &&
@@ -1133,78 +1227,30 @@ export class SeoService {
         effectiveIndexable,
       );
 
-      const ogTitle = seo?.ogTitle || metaTitle;
-      const ogDescription = seo?.ogDescription || metaDescription;
-      const ogUrl = seo?.ogUrl || canonicalUrl;
-      const ogImageUrl = seo?.ogImageUrl || undefined;
-      const ogImageAlt = seo?.ogImageAlt || metaTitle;
-      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
-
       // Hreflangs — fetch all translations of this tag for complete hreflang set
       const allTagTranslations = await this.prisma.tagTranslation.findMany({
         where: { tagId: chosen.tagId },
       });
       const slugsMap: Record<string, string> = {};
-      for (const t of allTagTranslations) {
-        slugsMap[t.language.toLowerCase()] = t.slug;
+      for (const tr of allTagTranslations) {
+        slugsMap[tr.language.toLowerCase()] = tr.slug;
       }
-      const hreflangLinks = generateHreflangLinks('tag', slugsMap);
 
-      // Breadcrumbs
-      const breadcrumbItems = [
-        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
-        { name: chosen.name, url: canonicalUrl },
-      ];
-      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
-      const collectionSchema = generateCollectionPageSchema(
-        'tag',
-        chosen.slug,
+      return this.buildTermBundle({
+        pageType,
         effLang,
-        chosen.name,
-        metaDescription || '',
-        [],
-      );
-
-      return {
-        meta: {
-          title: metaTitle,
-          description: metaDescription,
-          robots: robotsStatus,
-          canonicalUrl,
-        },
-        openGraph: {
-          title: ogTitle,
-          description: ogDescription,
-          type: 'website',
-          url: ogUrl,
-          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
-        },
-        twitter: {
-          card: twitterCard,
-          site: seo?.twitterSite || undefined,
-          creator: seo?.twitterCreator || undefined,
-          image: ogImageUrl || undefined,
-        },
-        schema: {
-          '@context': 'https://schema.org',
-          '@graph': [
-            {
-              '@type': 'WebPage',
-              '@id': `${canonicalUrl}#webpage`,
-              url: canonicalUrl,
-              name: metaTitle,
-              description: metaDescription,
-              inLanguage: effLang.toLowerCase(),
-              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
-              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
-            },
-            generateWebSiteSchema(effLang),
-            breadcrumbSchema,
-            collectionSchema,
-          ],
-        },
-        hreflangs: hreflangLinks,
-      };
+        slug: chosen.slug,
+        name: chosen.name,
+        metaTitle,
+        metaDescription,
+        canonicalUrl,
+        robots: robotsStatus,
+        seo,
+        slugsMap,
+        // Предков у тега не бывает: у модели `Tag` нет `parentId`. Пустой список
+        // отдаётся явно, чтобы форма ответа не отличалась от остальных трёх типов.
+        trail: [],
+      });
     }
 
     if (t === 'catalog') {

@@ -45,6 +45,10 @@ describe('LEGACY-262 — импорт таксономий (e2e)', () => {
   const takenCategorySlugRu = `${prefix}-taken-cat-ru`;
   const takenTagSlug = `${prefix}-taken-tag`;
 
+  /** `LEGACY-315`: пара «родитель + ребёнок», где ребёнок обязан упасть. */
+  const retypeParentKey = `${prefix}-retype-parent`;
+  const retypeChildKey = `${prefix}-retype-child`;
+
   const post = (path: string, body: object) =>
     request(httpServerOf(app)).post(path).set('Authorization', `Bearer ${adminToken}`).send(body);
 
@@ -216,6 +220,103 @@ describe('LEGACY-262 — импорт таксономий (e2e)', () => {
 
       const ghost = await prisma.category.findUnique({ where: { key: ghostKey } });
       expect(ghost).toBeNull();
+    });
+  });
+
+  /**
+   * 🔴 `LEGACY-315`. Край ребра «вниз» исключает из проверки детей, которых
+   * эта же партия переводит в тот же новый тип. Исключение верно ровно пока
+   * партия проходит целиком, а она не атомарна: транзакция на термин.
+   *
+   * ⚠️ Юнит-спека этого не докажет: в ней `findMany` — фейк, и форму запроса
+   * (`where: { parentId: { in: [...] } }`, `select`, `take`) не проверяет ничто.
+   * Ровно так пачка `C22` уехала с `pg_advisory_xact_lock` в `SELECT`, зелёная
+   * во всех юнитах. Поэтому проход проверяется на живом Postgres.
+   */
+  describe('POST /import/categories — частично прошедшая партия (LEGACY-315)', () => {
+    it('отчёт называет и упавшего ребёнка, и родителя, оставшегося разнотипным', async () => {
+      // Дерево заведено заранее: оба жанры, ребёнок под родителем.
+      await post('/import/categories', [
+        {
+          key: retypeParentKey,
+          type: 'genre',
+          translations: { en: { name: 'Retype parent', slug: `${prefix}-rp-en` } },
+        },
+        {
+          key: retypeChildKey,
+          type: 'genre',
+          parentKey: retypeParentKey,
+          translations: { en: { name: 'Retype child', slug: `${prefix}-rc-en` } },
+        },
+      ]).expect(201);
+
+      // Тот же файл переводит поддерево в коллекции, но слаг перевода ребёнка
+      // занят чужим термином: транзакция ребёнка упадёт после коммита родителя.
+      const res = await post('/import/categories', [
+        {
+          key: retypeParentKey,
+          type: 'collection',
+          translations: { en: { name: 'Retype parent', slug: `${prefix}-rp-en` } },
+        },
+        {
+          key: retypeChildKey,
+          type: 'collection',
+          parentKey: retypeParentKey,
+          translations: { en: { name: 'Retype child', slug: takenCategorySlug } },
+        },
+      ]).expect(201);
+
+      const result = resultOf(res.body);
+
+      // Ребёнок упал, родитель прошёл.
+      expect(result.errors.map((e) => e.key)).toContain(retypeChildKey);
+      // ⬇ Вот эта строка и есть предмет записи: до правки отчёт про неё молчал.
+      const inconsistent = result.errors.filter((e) => e.key === retypeParentKey);
+      expect(inconsistent).toHaveLength(1);
+      expect(inconsistent[0].message).toContain('Tree left inconsistent');
+      expect(inconsistent[0].message).toContain(retypeChildKey);
+
+      // И база подтверждает: ребро действительно осталось разнотипным.
+      const parent = await prisma.category.findUnique({ where: { key: retypeParentKey } });
+      const child = await prisma.category.findUnique({ where: { key: retypeChildKey } });
+      expect(parent?.type).toBe('collection');
+      expect(child?.type).toBe('genre');
+      expect(child?.parentId).toBe(parent?.id);
+    });
+
+    it('партия, прошедшая целиком, лишних строк в отчёт не добавляет', async () => {
+      const okParent = `${prefix}-ok-parent`;
+      const okChild = `${prefix}-ok-child`;
+
+      await post('/import/categories', [
+        {
+          key: okParent,
+          type: 'genre',
+          translations: { en: { name: 'Ok parent', slug: `${prefix}-op-en` } },
+        },
+        {
+          key: okChild,
+          type: 'genre',
+          parentKey: okParent,
+          translations: { en: { name: 'Ok child', slug: `${prefix}-oc-en` } },
+        },
+      ]).expect(201);
+
+      const res = await post('/import/categories', [
+        {
+          key: okParent,
+          type: 'collection',
+          translations: { en: { name: 'Ok parent', slug: `${prefix}-op-en` } },
+        },
+        {
+          key: okChild,
+          type: 'collection',
+          parentKey: okParent,
+          translations: { en: { name: 'Ok child', slug: `${prefix}-oc-en` } },
+        },
+      ]).expect(201);
+
+      expect(resultOf(res.body)).toMatchObject({ imported: 0, updated: 2, errors: [] });
     });
   });
 

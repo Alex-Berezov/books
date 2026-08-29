@@ -363,3 +363,145 @@ describe('CategoryTreeService.assertChildTypesAllowed', () => {
     });
   });
 });
+/**
+ * 🔴 `LEGACY-315`. Второй проход импорта спрашивает не «можно ли записать»,
+ * а «что уже испорчено»: партия не атомарна, и упавший ребёнок оставляет ребро,
+ * о котором отчёт обязан сказать.
+ *
+ * ⚠️ Проверять надо именно **условие запроса**. Первая редакция брала всех детей
+ * с `take` и отсеивала совпадающих в памяти — потолок съедали согласованные дети,
+ * которых при перетипизации поддерева большинство, и сломанное ребро в выборку
+ * могло не попасть вовсе. Спека на результат такую редакцию пропускала бы.
+ */
+describe('CategoryTreeService.findMismatchedChildren', () => {
+  const prismaWithRows = (rows: unknown[]) => {
+    const findMany = jest.fn().mockResolvedValue(rows);
+    return {
+      prisma: { category: { findMany } } as unknown as PrismaService,
+      findMany,
+    };
+  };
+
+  it('на пустом списке узлов в базу не ходит вовсе', async () => {
+    const { prisma, findMany } = prismaWithRows([]);
+    const service = new CategoryTreeService(prisma);
+
+    await expect(service.findMismatchedChildren([], 100)).resolves.toEqual({
+      edges: [],
+      truncated: false,
+    });
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('несовпадение отбирается условием запроса, а не фильтром в памяти', async () => {
+    const { prisma, findMany } = prismaWithRows([]);
+    const service = new CategoryTreeService(prisma);
+
+    await service.findMismatchedChildren([{ id: 'P', expectedType: CategoryType.collection }], 250);
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        OR: [{ parentId: { in: ['P'] }, type: { not: CategoryType.collection } }],
+      },
+      select: {
+        key: true,
+        type: true,
+        parent: { select: { key: true, type: true } },
+      },
+      orderBy: { key: 'asc' },
+      // На строку больше потолка: иначе «ровно 250» неотличимо от «больше 250».
+      take: 251,
+    });
+  });
+
+  /**
+   * ⚠️ Один файл импорта может переводить разные поддеревья в разные типы.
+   * «Несовпадающий» считается относительно **своего** родителя, и одним
+   * `type: { not: ... }` на всю пачку это не выражается.
+   */
+  it('узлы с разными ожидаемыми типами дают свою группу условия каждый', async () => {
+    const { prisma, findMany } = prismaWithRows([]);
+    const service = new CategoryTreeService(prisma);
+
+    await service.findMismatchedChildren(
+      [
+        { id: 'P1', expectedType: CategoryType.collection },
+        { id: 'P2', expectedType: CategoryType.genre },
+        { id: 'P3', expectedType: CategoryType.collection },
+      ],
+      100,
+    );
+
+    const where = findMany.mock.calls[0][0].where as {
+      OR: Array<{ parentId: { in: string[] }; type: { not: CategoryType } }>;
+    };
+    expect(where.OR).toHaveLength(2);
+    // Узлы одного ожидаемого типа собираются в одну группу, а не в свою каждый.
+    expect(where.OR).toEqual(
+      expect.arrayContaining([
+        { parentId: { in: ['P1', 'P3'] }, type: { not: CategoryType.collection } },
+        { parentId: { in: ['P2'] }, type: { not: CategoryType.genre } },
+      ]),
+    );
+  });
+
+  /**
+   * ⚠️ Условие запроса отбирает по **ожидаемому** типу и только сужает выборку.
+   * Вывод «типы не совпадают» делается по типу родителя из базы — иначе проход
+   * называл бы рёбра, которых уже нет.
+   */
+  it('ребро, где родитель в базе совпал с ребёнком, из ответа выпадает', async () => {
+    const { prisma } = prismaWithRows([
+      {
+        key: 'child',
+        type: CategoryType.genre,
+        // Родителя перетипизировали обратно: ребро больше не разнотипное.
+        parent: { key: 'parent', type: CategoryType.genre },
+      },
+      {
+        key: 'other',
+        type: CategoryType.genre,
+        parent: { key: 'parent2', type: CategoryType.collection },
+      },
+    ]);
+    const service = new CategoryTreeService(prisma);
+
+    const { edges } = await service.findMismatchedChildren(
+      [{ id: 'P', expectedType: CategoryType.collection }],
+      100,
+    );
+
+    expect(edges).toEqual([
+      { key: 'other', type: CategoryType.genre, parent: { key: 'parent2', type: 'collection' } },
+    ]);
+  });
+
+  /**
+   * 🔴 `L-015`. «Строк ровно столько же, сколько потолок» и «строк больше потолка» —
+   * разные ответы, и первый не должен выдавать себя за второй.
+   */
+  it('усечение отличается от полного списка ровно на одну лишнюю строку', async () => {
+    const row = (key: string) => ({
+      key,
+      type: CategoryType.genre,
+      parent: { key: 'parent', type: CategoryType.collection },
+    });
+
+    const full = prismaWithRows([row('a'), row('b')]);
+    const { truncated: notTruncated, edges: fullEdges } = await new CategoryTreeService(
+      full.prisma,
+    ).findMismatchedChildren([{ id: 'P', expectedType: CategoryType.collection }], 2);
+    expect(notTruncated).toBe(false);
+    expect(fullEdges).toHaveLength(2);
+
+    const over = prismaWithRows([row('a'), row('b'), row('c')]);
+    const { truncated, edges } = await new CategoryTreeService(over.prisma).findMismatchedChildren(
+      [{ id: 'P', expectedType: CategoryType.collection }],
+      2,
+    );
+    expect(truncated).toBe(true);
+    // Лишняя строка нужна только для ответа «есть ещё», в отчёт она не идёт.
+    expect(edges).toHaveLength(2);
+  });
+});

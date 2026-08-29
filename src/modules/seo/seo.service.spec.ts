@@ -270,8 +270,13 @@ describe('SeoService (unit)', () => {
    * Отсюда `LEGACY-273` (в ветку `genre` вписали `'collection'`) и три из семи
    * блоков `LEGACY-277`.
    *
+   * 🔴 `LEGACY-316`. Четвёртой копией оставалась ветка `tag`: в `Location`
+   * записи `309` она не входила. Набор расширен с трёх типов до четырёх —
+   * до правки он краснел на теге третьим ожиданием (`breadcrumbPath` не отдавался
+   * вовсе), и это и есть та расходимость, ради которой запись заведена.
+   *
    * ⚠️ Спека на один тип таксономии тут бесполезна по определению: она зеленела
-   * и на разошедшихся копиях. Проверять надо все три одним набором ожиданий.
+   * и на разошедшихся копиях. Проверять надо все четыре одним набором ожиданий.
    */
   describe.each([
     ['category', 'Category translation not found', [] as Array<{ name: string; slug: string }>],
@@ -281,11 +286,14 @@ describe('SeoService (unit)', () => {
       [{ name: 'Collections', slug: 'collections' }] as Array<{ name: string; slug: string }>,
     ],
     ['genre', 'Genre translation not found', [] as Array<{ name: string; slug: string }>],
+    ['tag', 'Tag translation not found', [] as Array<{ name: string; slug: string }>],
   ] as const)(
-    'resolvePublic(%s) — три типа таксономии идут одним кодом (LEGACY-309)',
+    'resolvePublic(%s) — четыре типа термина идут одним кодом (LEGACY-309, LEGACY-316)',
     (termType, notFoundText, expectedPath) => {
       const categoryId = 'tax-uuid-1';
-      const translation = {
+      const tagId = 'tag-uuid-1';
+
+      const categoryTranslation = {
         id: 'tt-en',
         categoryId,
         language: Language.en,
@@ -304,10 +312,43 @@ describe('SeoService (unit)', () => {
         },
       };
 
-      it('канонический адрес строится из типа страницы, а не из литерала соседней ветки', async () => {
+      const tagTranslation = {
+        id: 'tt-en',
+        tagId,
+        language: Language.en,
+        slug: 'the-term',
+        name: 'The Term',
+        description: null,
+        seoId: null,
+        indexable: true,
+        autoIndexable: true,
+        tag: { id: tagId, name: 'The Term', slug: 'the-term', indexable: true },
+      };
+
+      /** Термин есть: два чтения подряд — кандидаты и полный набор переводов. */
+      const seedTerm = () => {
+        if (termType === 'tag') {
+          prisma.tagTranslation.findMany
+            .mockResolvedValueOnce([tagTranslation])
+            .mockResolvedValueOnce([tagTranslation]);
+          return;
+        }
         prisma.categoryTranslation.findMany
-          .mockResolvedValueOnce([translation])
-          .mockResolvedValueOnce([translation]);
+          .mockResolvedValueOnce([categoryTranslation])
+          .mockResolvedValueOnce([categoryTranslation]);
+      };
+
+      /** Термина нет вовсе. */
+      const seedMissing = () => {
+        if (termType === 'tag') {
+          prisma.tagTranslation.findMany.mockResolvedValueOnce([]);
+          return;
+        }
+        prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
+      };
+
+      it('канонический адрес строится из типа страницы, а не из литерала соседней ветки', async () => {
+        seedTerm();
 
         const bundle = await service.resolvePublic(termType, 'the-term', {
           pathLang: Language.en,
@@ -319,7 +360,7 @@ describe('SeoService (unit)', () => {
       });
 
       it('текст 404 называет запрошенный тип термина', async () => {
-        prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
+        seedMissing();
 
         await expect(
           service.resolvePublic(termType, 'missing', { pathLang: Language.en }),
@@ -327,15 +368,41 @@ describe('SeoService (unit)', () => {
       });
 
       it('крошки начинаются с главной, а раздел стоит только у коллекций', async () => {
-        prisma.categoryTranslation.findMany
-          .mockResolvedValueOnce([translation])
-          .mockResolvedValueOnce([translation]);
+        seedTerm();
 
         const bundle = await service.resolvePublic(termType, 'the-term', {
           pathLang: Language.en,
         });
 
         expect(bundle.breadcrumbPath).toEqual(expectedPath);
+      });
+
+      it('hreflang собирается по типу страницы, а не по литералу', async () => {
+        seedTerm();
+
+        const bundle = await service.resolvePublic(termType, 'the-term', {
+          pathLang: Language.en,
+        });
+
+        const links = bundle.hreflangs as Array<{ href: string }>;
+        expect(links.length).toBeGreaterThan(0);
+        for (const link of links) {
+          expect(link.href).toContain(`/${termType}/`);
+        }
+      });
+
+      it('канонический адрес одинаково стоит в meta, openGraph и в @graph', async () => {
+        seedTerm();
+
+        const bundle = await service.resolvePublic(termType, 'the-term', {
+          pathLang: Language.en,
+        });
+
+        const canonical = (bundle.meta as { canonicalUrl: string }).canonicalUrl;
+        expect((bundle.openGraph as { url: string }).url).toBe(canonical);
+        const graph = (bundle.schema as { '@graph': Array<Record<string, unknown>> })['@graph'];
+        expect(graph[0]['@id']).toBe(`${canonical}#webpage`);
+        expect(graph[0].url).toBe(canonical);
       });
     },
   );

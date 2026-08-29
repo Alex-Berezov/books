@@ -210,6 +210,17 @@ describe('Tag Translation Content & SEO (e2e)', () => {
 
     expect(res.body.meta).toBeDefined();
     expect(res.body.meta.title).toBe('Updated Bestseller');
+
+    // 🔴 `LEGACY-316`. Ветка `tag` была четвёртой копией сборки ответа и уже
+    // разошлась с остальными тремя: `breadcrumbPath` она не отдавала вовсе.
+    // У тега предков не бывает, поэтому список пуст — но он есть, и форма
+    // ответа теперь одна на все четыре типа страниц термина.
+    expect(res.body.breadcrumbPath).toEqual([]);
+    expect(res.body.meta.canonicalUrl).toContain(`/en/tag/${enTrans.slug}`);
+    expect(res.body.openGraph.url).toBe(res.body.meta.canonicalUrl);
+    for (const link of res.body.hreflangs as Array<{ href: string }>) {
+      expect(link.href).toContain('/tag/');
+    }
   });
 
   it('should delete tag translation and clean up seo', async () => {

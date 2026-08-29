@@ -1,11 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { CategoryType, Language, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ImportCategoryDto } from './dto/import-category.dto';
 import { ImportTagDto } from './dto/import-tag.dto';
 import { SLUG_REGEX } from '../../shared/validators/slug';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { CATEGORY_TREE_TX_OPTIONS, CategoryTreeService } from '../category/category-tree.service';
+import { CategoryTreeService, MismatchedChildEdge } from '../category/category-tree.service';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 
@@ -45,12 +45,28 @@ export interface ImportResult {
   errors: Array<{ key: string; message: string }>;
 }
 
+/**
+ * Потолок строк для второго прохода `LEGACY-315`. Проход читает детей терминов,
+ * сменивших тип в этой партии, — их единицы; потолок стоит потому, что выборка
+ * целиком собирается в память, а безлимитный `findMany` на тестовых объёмах
+ * неотличим от нормы.
+ */
+const INCONSISTENT_EDGE_SCAN_LIMIT = 1000;
+
+/**
+ * Ключ строки отчёта, которой проход сообщает о собственном усечении. Это не термин,
+ * поэтому и ключ не похож на ключ термина: ключи в импорте — слаг-подобные строки.
+ */
+const INCONSISTENT_EDGE_SCAN_KEY = '(consistency-scan)';
+
 function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
 @Injectable()
 export class ImportService {
+  private readonly logger = new Logger(ImportService.name);
+
   constructor(
     private prisma: PrismaService,
     private slugRedirects: SlugRedirectService,
@@ -90,6 +106,14 @@ export class ImportService {
       result,
     );
 
+    // 🔴 `LEGACY-315`. Термины, у которых тип действительно сменился и чья
+    // транзакция закоммитилась. Край ребра «вниз» проверяется у них в момент
+    // записи, но проверка исключает детей, которых эта же партия переводит
+    // в тот же новый тип (`becomingKeys` ниже). Исключение верно ровно пока
+    // партия проходит целиком, а партия не атомарна: транзакция на термин.
+    // Поэтому в конце партии делается второй проход — `reportInconsistentEdges`.
+    const retyped = new Map<string, ImportCategoryDto['type']>();
+
     for (const item of batch) {
       try {
         // 🔴 `LEGACY-303` + `LEGACY-308`. Край ребра «вниз» сверяется с конечным
@@ -109,11 +133,16 @@ export class ImportService {
         // транзакция, а не по отдельному чтению на пуле: то чтение устаревало
         // ровно так же, как и развилка, которую оно раньше выбирало, и на двух
         // одновременных импортах одного ключа отчёт расходился с базой.
-        const { created } = await this.upsertCategory(item, becomingKeys);
+        const { created, retypedId } = await this.upsertCategory(item, becomingKeys);
         if (created) {
           result.imported++;
         } else {
           result.updated++;
+        }
+        if (retypedId) {
+          // Ключ термина сюда не кладётся: он есть в базе, и брать его отсюда
+          // значило бы назвать родителя по строке файла (см. `findMismatchedChildren`).
+          retyped.set(retypedId, item.type);
         }
       } catch (err: unknown) {
         const prismaErr = err as Prisma.PrismaClientKnownRequestError;
@@ -127,6 +156,8 @@ export class ImportService {
         }
       }
     }
+
+    await this.reportInconsistentEdges(retyped, result);
 
     return result;
   }
@@ -142,15 +173,14 @@ export class ImportService {
       }
 
       try {
-        const wasExisting = await this.prisma.tag.findUnique({
-          where: { key: item.key },
-          select: { id: true },
-        });
-        await this.upsertTag(item);
-        if (wasExisting) {
-          result.updated++;
-        } else {
+        // 🔴 `LEGACY-313`. Счётчик считается по тому, что действительно сделала
+        // транзакция, а не по отдельному чтению на пуле: то чтение устаревало
+        // ровно так же, как и развилка, которую оно раньше дублировало.
+        const { created } = await this.upsertTag(item);
+        if (created) {
           result.imported++;
+        } else {
+          result.updated++;
         }
       } catch (err: unknown) {
         const prismaErr = err as Prisma.PrismaClientKnownRequestError;
@@ -283,6 +313,88 @@ export class ImportService {
   }
 
   /**
+   * 🔴 `LEGACY-315`. Второй проход в конце партии: сверка края ребра «вниз»
+   * с базой, а не с содержимым файла.
+   *
+   * Проверка при записи исключает детей, которых эта же партия переводит в тот же
+   * новый тип (`becomingKeys`, решение арбитра по `LEGACY-303`/`LEGACY-308`).
+   * Исключение верно ровно настолько, насколько партия атомарна, а она не атомарна:
+   * каждый термин пишется своей транзакцией. Родитель коммитит смену типа, ребёнок
+   * следом падает по своей причине — и в базе остаётся разнотипное ребро, которое
+   * ни один путь записи больше не заведёт, но и не починит. Отчёт при этом честен
+   * про упавшего ребёнка и молчит про испорченное дерево.
+   *
+   * ⚠️ Проход **только читает** и запускается только при непустых `errors`
+   * и только по терминам, чей тип действительно сменился. Иначе давно испорченное
+   * ребро (`LEGACY-263`) краснило бы успешную партию, которая его не трогала.
+   *
+   * Решение арбитра от 29.08.2026, строка в `decisions-log.md`.
+   */
+  private async reportInconsistentEdges(
+    retyped: Map<string, ImportCategoryDto['type']>,
+    result: ImportResult,
+  ): Promise<void> {
+    // Партия прошла целиком — исключение по её составу оказалось верным,
+    // и спрашивать базу не о чем.
+    if (result.errors.length === 0 || retyped.size === 0) {
+      return;
+    }
+
+    // ⚠️ Проход диагностический: он ничего не чинит и не пишет. Его собственный
+    // отказ не должен превращать частично прошедшую партию в 500 без тела —
+    // иначе оператор не узнает даже того, что уже записано, и погонит файл заново.
+    let scan: { edges: MismatchedChildEdge[]; truncated: boolean };
+    try {
+      scan = await this.categoryTree.findMismatchedChildren(
+        [...retyped.entries()].map(([id, expectedType]) => ({ id, expectedType })),
+        INCONSISTENT_EDGE_SCAN_LIMIT,
+      );
+    } catch (error) {
+      // 🔴 `L-015`. Отказ проверки — это «я не проверила», а не «всё хорошо».
+      // Молчащий отчёт здесь байт в байт совпал бы с отчётом по целому дереву,
+      // и оператор, починив названный слаг, не узнал бы, что файл надо перегнать.
+      // Строка в `errors` при этом не делает из ответа 500: ручка по-прежнему
+      // отдаёт отчёт, просто честный.
+      this.logger.warn(
+        `Import consistency scan failed after a partial batch; the report may be missing ` +
+          `inconsistent edges. ${getErrorMessage(error)}`,
+      );
+      result.errors.push({
+        key: INCONSISTENT_EDGE_SCAN_KEY,
+        message:
+          `Consistency scan could not run, so inconsistent edges left by the failed terms ` +
+          `are not listed. Fix the reported errors and import the file again.`,
+      });
+      return;
+    }
+
+    // Что считать несовпадением, решает `CategoryTreeService`: здесь только текст
+    // строки отчёта. Тип родителя в ребре — из базы, а не из файла.
+    for (const edge of scan.edges) {
+      result.errors.push({
+        key: edge.parent.key,
+        message:
+          `Tree left inconsistent: child "${edge.key}" of type "${edge.type}" stayed under ` +
+          `"${edge.parent.key}", which is now "${edge.parent.type}". ` +
+          `The child was expected to change type in the same file but its own record failed. ` +
+          `Fix the reported errors and import the file again.`,
+      });
+    }
+
+    // 🔴 `L-015`. Проверка обязана уметь сказать «я проверила не всё». Упёрлись
+    // в потолок — значит рёбер может быть больше, и молчание отчёта здесь читалось
+    // бы как «остальное в порядке».
+    if (scan.truncated) {
+      result.errors.push({
+        key: INCONSISTENT_EDGE_SCAN_KEY,
+        message:
+          `Consistency scan stopped at ${INCONSISTENT_EDGE_SCAN_LIMIT} rows: there may be more ` +
+          `inconsistent edges than listed above. Fix the reported errors and import the file again.`,
+      });
+    }
+  }
+
+  /**
    * Завести или обновить термин таксономии.
    *
    * 🔴 `LEGACY-312`. Развилка «создание или обновление» принимается **внутри**
@@ -306,7 +418,7 @@ export class ImportService {
   private async upsertCategory(
     dto: ImportCategoryDto,
     becomingKeys: string[] = [],
-  ): Promise<{ created: boolean }> {
+  ): Promise<{ created: boolean; retypedId: string | null }> {
     const commonData: Prisma.CategoryCreateInput = {
       type: dto.type,
       name: this.getFirstName(dto.translations),
@@ -340,7 +452,9 @@ export class ImportService {
         for (const [langCode, tr] of Object.entries(dto.translations)) {
           await this.createCategoryTranslation(tx, created.id, langCode as Language, tr);
         }
-        return { created: true };
+        // Только что заведённый термин детей иметь не может, поэтому проверять
+        // у него край ребра «вниз» второму проходу (`LEGACY-315`) не за чем.
+        return { created: true, retypedId: null };
       }
 
       // 🔴 `LEGACY-308`. Тип пишется безусловно, а проверка родителя стояла под
@@ -438,7 +552,12 @@ export class ImportService {
         }
       }
 
-      return { created: false };
+      // 🔴 `LEGACY-315`. Идентификатор возвращается только у термина, который
+      // действительно сменил тип: по нему второй проход в конце партии сверяет
+      // край ребра «вниз» с базой. Термин, тип которого не менялся, разнотипного
+      // ребра не порождает, и включать его в проход значило бы краснить успешную
+      // партию на давно испорченном дереве (`LEGACY-263`).
+      return { created: false, retypedId: typeChanging ? existing.id : null };
     });
   }
 
@@ -508,60 +627,51 @@ export class ImportService {
     return result;
   }
 
-  private async upsertTag(dto: ImportTagDto) {
-    const existing = await this.prisma.tag.findUnique({
-      where: { key: dto.key },
-      include: { translations: true },
-    });
+  /**
+   * Завести или обновить тег.
+   *
+   * 🔴 `LEGACY-313`. Развилка «создание или обновление» принимается **внутри**
+   * транзакции, а не по чтению на пуле, — так же, как это сделано для категорий
+   * (`LEGACY-312`). Оттуда же берутся дефолты `indexable`, `isVisible`, `sortOrder`
+   * и список переводов, по которому ветка обновления решает, создавать перевод
+   * или обновлять.
+   *
+   * ⚠️ **Что перенос даёт и чего не даёт.** Он убирает расхождение клиентов:
+   * решение и запись делает один и тот же клиент, и окно между ними сузилось
+   * с «пул → транзакция» до пары операторов внутри неё. Гонку он **не закрывает**
+   * ни в одном из двух смыслов, и писать иначе нельзя (урок `L-019`):
+   *
+   * 1. Два одновременных импорта одного ключа закрывает **уникальный индекс
+   *    на `Tag.key`**, а не этот перенос: проигравший `create` получает `P2002`
+   *    и строку `Duplicate key` в `errors`. Дерева у тега нет, поэтому
+   *    рекомендательной блокировки, как у категорий (`LEGACY-274`), здесь нет
+   *    и не нужно — единственный инвариант держит база. Решение арбитра
+   *    от 29.08.2026, строка в `decisions-log.md`.
+   * 2. Потерянное обновление осталось: при `read committed` строка тега не заперта
+   *    между `tx.tag.findUnique` и `tx.tag.update`, поэтому `PATCH /tags/:id`,
+   *    закоммитившийся в этом промежутке, будет затёрт значением из снимка
+   *    (`dto.sortOrder ?? existing.sortOrder`). Окно сузилось, но существует —
+   *    запись `LEGACY-318`.
+   *
+   * Возвращает признак того, что тег был создан: счётчики отчёта считаются
+   * по нему, а не по второму чтению на пуле, которое устаревало ровно так же.
+   */
+  private async upsertTag(dto: ImportTagDto): Promise<{ created: boolean }> {
+    // Одна транзакция на весь термин (`LEGACY-257`) и на обе ветки развилки
+    // (`LEGACY-313`): базовая строка, история слагов и все переводы.
+    //
+    // `runInTree`, а не свой `$transaction`: это тот же метод, которым ходит
+    // категория, но без блокировки дерева — ровно случай, ради которого он
+    // заведён. Границы транзакции задаются там одним местом на оба пути.
+    return this.categoryTree.runInTree(async (tx) => {
+      const existing = await tx.tag.findUnique({
+        where: { key: dto.key },
+        include: { translations: true },
+      });
 
-    if (existing) {
-      // Одна транзакция на весь термин (`LEGACY-257`): базовая строка, история
-      // слагов и все переводы. Раньше их было столько, сколько существующих
-      // переводов, плюс запись новых вообще без транзакции.
-      await this.prisma.$transaction(async (tx) => {
-        // Базовый слаг тега приходит явным полем `dto.slug`, а не выводится из порядка
-        // переводов, — поэтому здесь его смена настоящая, и её можно записывать.
-        if (dto.slug && existing.slug !== dto.slug) {
-          await this.slugRedirects.recordBaseSlugChange('tag', existing.slug, dto.slug, tx);
-        }
-        await tx.tag.update({
-          where: { key: dto.key },
-          data: {
-            name: dto.name,
-            slug: dto.slug,
-            indexable: dto.indexable ?? existing.indexable,
-            isVisible: dto.isVisible ?? existing.isVisible,
-            sortOrder: dto.sortOrder ?? existing.sortOrder,
-          },
-        });
-
-        for (const [langCode, tr] of Object.entries(dto.translations)) {
-          const language = langCode as Language;
-          const existingTr = existing.translations.find((t) => t.language === language);
-          if (existingTr) {
-            if (tr.slug && existingTr.slug !== tr.slug) {
-              await this.slugRedirects.record(
-                { entityType: 'tag', language, oldSlug: existingTr.slug, newSlug: tr.slug },
-                tx,
-              );
-            }
-            await tx.tagTranslation.update({
-              where: { tagId_language: { tagId: existing.id, language } },
-              data: {
-                name: tr.name,
-                slug: tr.slug,
-                ...this.buildTagTranslationData(tr),
-              },
-            });
-          } else {
-            await this.createTagTranslation(tx, existing.id, language, tr);
-          }
-        }
-      }, CATEGORY_TREE_TX_OPTIONS);
-    } else {
-      // Тот же рисунок, что у категорий, и та же причина (`LEGACY-131`): тег без
-      // переводов занимает `slug` и `key`, но публичным маршрутам не виден.
-      await this.prisma.$transaction(async (tx) => {
+      if (!existing) {
+        // Тот же рисунок, что у категорий, и та же причина (`LEGACY-131`): тег
+        // без переводов занимает `slug` и `key`, но публичным маршрутам не виден.
         const created = await tx.tag.create({
           data: {
             name: dto.name,
@@ -576,8 +686,52 @@ export class ImportService {
         for (const [langCode, tr] of Object.entries(dto.translations)) {
           await this.createTagTranslation(tx, created.id, langCode as Language, tr);
         }
-      }, CATEGORY_TREE_TX_OPTIONS);
-    }
+        return { created: true };
+      }
+
+      // Базовый слаг тега приходит явным полем `dto.slug`, а не выводится из
+      // порядка переводов, — поэтому здесь его смена настоящая, и её можно записывать.
+      if (dto.slug && existing.slug !== dto.slug) {
+        await this.slugRedirects.recordBaseSlugChange('tag', existing.slug, dto.slug, tx);
+      }
+      await tx.tag.update({
+        where: { key: dto.key },
+        data: {
+          name: dto.name,
+          slug: dto.slug,
+          // Дефолты берутся из строки, перечитанной внутри транзакции
+          // (`LEGACY-313`), а не из чтения на пуле.
+          indexable: dto.indexable ?? existing.indexable,
+          isVisible: dto.isVisible ?? existing.isVisible,
+          sortOrder: dto.sortOrder ?? existing.sortOrder,
+        },
+      });
+
+      for (const [langCode, tr] of Object.entries(dto.translations)) {
+        const language = langCode as Language;
+        const existingTr = existing.translations.find((t) => t.language === language);
+        if (existingTr) {
+          if (tr.slug && existingTr.slug !== tr.slug) {
+            await this.slugRedirects.record(
+              { entityType: 'tag', language, oldSlug: existingTr.slug, newSlug: tr.slug },
+              tx,
+            );
+          }
+          await tx.tagTranslation.update({
+            where: { tagId_language: { tagId: existing.id, language } },
+            data: {
+              name: tr.name,
+              slug: tr.slug,
+              ...this.buildTagTranslationData(tr),
+            },
+          });
+        } else {
+          await this.createTagTranslation(tx, existing.id, language, tr);
+        }
+      }
+
+      return { created: false };
+    });
   }
 
   private async createTagTranslation(
