@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoryTreeService } from '../category/category-tree.service';
 import { Language, Seo } from '@prisma/client';
@@ -36,6 +36,8 @@ interface BookCategoryLink {
 @Injectable()
 export class SeoService {
   private cache = new Map<string, { value: Seo | null; expires: number }>();
+  private readonly logger = new Logger(SeoService.name);
+
   private ttlMs: number;
 
   constructor(
@@ -227,6 +229,29 @@ export class SeoService {
       default:
         return 'Home';
     }
+  }
+
+  /**
+   * 🔴 `LEGACY-277`. Семь блоков `resolvePublic` обёрнуты в `try/catch` потому,
+   * что крошки, жанры, рейтинг и отзывы для страницы необязательны: их отказ
+   * не должен ронять публичный ответ. Но пустой `catch` вокруг обращения
+   * к базе делает отказ базы неотличимым от «данных нет»: маршрут отвечает
+   * 200, `BreadcrumbList` уезжает поисковику обеднённым как факт, и заметить
+   * это больше нечем — ни в логах, ни в Sentry.
+   *
+   * ⚠️ Ответ намеренно остаётся прежним: 200 с неполным JSON-LD. Меняется
+   * только то, что отказ перестаёт быть невидимым.
+   *
+   * Прямого `captureException` здесь нет и он не нужен: глобальный фильтр
+   * (`shared/sentry/sentry.filter.ts`) шлёт 5xx, а здесь исключение поймано.
+   * Маршрут публичный и кэшируемый — поток дублей с него лёг бы поверх того
+   * же отказа базы, уже видимого с других ручек.
+   */
+  private warnDegraded(part: string, pageType: string, id: string, error: unknown): void {
+    const reason = error instanceof Error ? error.message : String(error);
+    this.logger.warn(
+      `SEO ${pageType} "${id}": failed to load ${part}, response degraded (200 with partial data). ${reason}`,
+    );
   }
 
   /**
@@ -537,8 +562,8 @@ export class SeoService {
             });
           });
         }
-      } catch {
-        // Ignore breadcrumb categories errors
+      } catch (error) {
+        this.warnDegraded('breadcrumb categories', 'book', chosen.id, error);
       }
 
       breadcrumbItems.push({ name: chosen.title, url: canonicalUrl });
@@ -557,8 +582,8 @@ export class SeoService {
             bc.category.translations[0];
           if (trans) genresList.push(trans.name);
         }
-      } catch {
-        // ignore errors
+      } catch (error) {
+        this.warnDegraded('genre list', 'book', chosen.id, error);
       }
 
       // Ratings
@@ -574,8 +599,11 @@ export class SeoService {
           const sum = ratings.reduce((acc, r) => acc + r.score, 0);
           ratingAverage = parseFloat((sum / ratingCount).toFixed(2));
         }
-      } catch {
-        // ignore rating errors
+      } catch (error) {
+        // `chosen.id`, а не `chosen.bookId`: под общим префиксом `SEO book "…"`
+        // все четыре блока ветки обязаны называть одну и ту же страницу, иначе
+        // разбор отказа грепом по её идентификатору найдёт три деградации из четырёх.
+        this.warnDegraded('ratings', 'book', chosen.id, error);
       }
 
       // Retrieve published comments for schema.org review
@@ -591,8 +619,8 @@ export class SeoService {
           orderBy: { createdAt: 'desc' },
           include: { user: { select: { name: true } } },
         });
-      } catch {
-        // ignore comment errors
+      } catch (error) {
+        this.warnDegraded('comments', 'book', chosen.id, error);
       }
 
       const bookSchema = generateBookSchema({
@@ -893,8 +921,8 @@ export class SeoService {
             url: getCanonicalUrl('category', p.slug, effLang),
           });
         });
-      } catch {
-        // Ignore parent breadcrumbs errors
+      } catch (error) {
+        this.warnDegraded('parent breadcrumbs', 'category', chosen.categoryId, error);
       }
 
       breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
@@ -970,7 +998,7 @@ export class SeoService {
         throw new NotFoundException('Collection not found');
       }
 
-      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'genre');
+      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'collection');
 
       const baseMeta = generateGenreMeta({
         name: chosen.name,
@@ -1037,8 +1065,8 @@ export class SeoService {
             url: getCanonicalUrl('collection', p.slug, effLang),
           });
         });
-      } catch {
-        // Ignore parent breadcrumbs errors
+      } catch (error) {
+        this.warnDegraded('parent breadcrumbs', 'collection', chosen.categoryId, error);
       }
 
       breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
@@ -1114,7 +1142,7 @@ export class SeoService {
         throw new NotFoundException('Genre translation not found');
       }
 
-      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'collection');
+      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'genre');
 
       const baseMeta = generateGenreMeta({
         name: chosen.name,
@@ -1166,8 +1194,8 @@ export class SeoService {
             url: getCanonicalUrl('genre', p.slug, effLang),
           });
         });
-      } catch {
-        // Ignore parent breadcrumbs errors
+      } catch (error) {
+        this.warnDegraded('parent breadcrumbs', 'genre', chosen.categoryId, error);
       }
 
       breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });

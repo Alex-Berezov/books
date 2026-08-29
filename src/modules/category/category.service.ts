@@ -155,28 +155,79 @@ export class CategoryService {
   }
 
   async create(dto: CreateCategoryDto) {
-    if (dto.parentId) {
-      const parent = await this.prisma.category.findUnique({ where: { id: dto.parentId } });
-      if (!parent) throw new BadRequestException('Parent category not found');
-      // Цикла на создании быть не может — у нового термина ещё нет потомков, —
-      // но правило о типах то же, что на `update` и на импорте, и живёт оно
-      // в одном месте (`LEGACY-264`).
-      this.categoryTree.assertSameType(dto.type, parent.type);
+    const data: Prisma.CategoryCreateInput = {
+      type: dto.type,
+      name: dto.name,
+      slug: dto.slug,
+      key: dto.key || dto.slug,
+      ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+      ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+      ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+      ...(dto.parentId ? { parent: { connect: { id: dto.parentId } } } : {}),
+    };
+
+    // Термин без родителя ребра не пишет: ни блокировать, ни перечитывать нечего,
+    // и заворачивать одиночную запись в транзакцию незачем.
+    if (!dto.parentId) {
+      return this.createCategoryRow(() => this.prisma.category.create({ data }));
     }
+
+    const parentId = dto.parentId;
+    return this.prisma.$transaction(
+      async (tx) => {
+        // 🔴 `LEGACY-274`. `create` — такой же писатель родительского ребра, как
+        // `update`, и до 29.08.2026 он был единственным, кто блокировку не брал:
+        // родитель читался на пуле, а запись шла вовсе без транзакции. Пока это
+        // было так, одновременные `POST /categories {parentId: P}` и
+        // `PATCH /categories/P {type}` записывали разнотипное ребро мимо
+        // блокировки: `create` проверял тип по чтению, устаревшему к моменту записи.
+        //
+        // ⚠️ Закрыт **один** порядок из двух. Если `POST` коммитится первым,
+        // ребро пишется законно, а следующий `PATCH` меняет тип родителя,
+        // не глядя на детей: проверки края ребра «вниз» нет нигде — это
+        // `LEGACY-303`, и сериализация её не заменяет.
+        //
+        // ⚠️ Первым оператором и только при непустом `parentId` — по тем же
+        // двум причинам, что в `update`: транзакция, успевшая взять строку,
+        // встанет здесь во взаимную блокировку, а безусловный вызов
+        // сериализовал бы массовое заведение корневых терминов.
+        await this.categoryTree.lockTree(tx);
+
+        // Родитель перечитывается клиентом записи: строка, прочитанная на пуле,
+        // к этому месту уже могла сменить тип.
+        const parent = await tx.category.findUnique({
+          where: { id: parentId },
+          select: { id: true, type: true },
+        });
+        if (!parent) throw new BadRequestException('Parent category not found');
+        // Цикла на создании быть не может — у нового термина ещё нет потомков, —
+        // но правило о типах то же, что на `update` и на импорте, и живёт оно
+        // в одном месте (`LEGACY-264`).
+        this.categoryTree.assertSameType(dto.type, parent.type);
+
+        return this.createCategoryRow(() => tx.category.create({ data }));
+      },
+      // Те же значения, что у `update` и у импорта: ожидание на блокировке идёт
+      // внутри транзакции, и дефолтные 5000 мс Prisma дали бы `P2028` и 500
+      // вместо задуманного ответа.
+      { timeout: 30_000, maxWait: 10_000 },
+    );
+  }
+
+  /**
+   * Запись строки **самого термина** и только её: `P2002` по ключу таксономии —
+   * это занятый адрес, то есть 400, а не 500.
+   *
+   * ⚠️ Вынесено отдельно потому, что запись идёт из двух мест — с транзакцией
+   * и без неё, — а вторая копия `catch` разошлась бы с первой при первой правке
+   * текста ошибки. Переводы сюда не заводить: у `createTranslation` свой текст
+   * ошибки и свой откат `seo`, и общий обработчик подменил бы сообщение
+   * про занятую пару «язык — слаг» сообщением про слаг термина.
+   */
+  private async createCategoryRow<T>(write: () => Promise<T>): Promise<T> {
     try {
-      return await this.prisma.category.create({
-        data: {
-          type: dto.type,
-          name: dto.name,
-          slug: dto.slug,
-          key: dto.key || dto.slug,
-          ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
-          ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
-          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
-          ...(dto.parentId ? { parent: { connect: { id: dto.parentId } } } : {}),
-        },
-      });
-    } catch (e: any) {
+      return await write();
+    } catch (e: unknown) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Category with same slug already exists');
       }
@@ -211,32 +262,81 @@ export class CategoryService {
       const dup = await this.prisma.category.findFirst({ where: { slug: dto.slug, NOT: { id } } });
       if (dup) throw new BadRequestException('Category with same slug already exists');
     }
-    // Базовый слаг участвует в резолве публичного URL как фолбэк, поэтому его смена
-    // ломает адрес во всех языках сразу (LEGACY-062). Запись — в той же транзакции.
-    const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
-
     return this.prisma.$transaction(
       async (tx) => {
+        // 🔴 `LEGACY-274`. Блокировка — **первым** оператором транзакции, до любого
+        // чтения и любой записи: транзакция, успевшая взять строку категории,
+        // встала бы здесь во взаимную блокировку с чужой. Что она стережёт и
+        // почему не встроена в `assertParentAllowed` — в `CategoryTreeService.lockTree`.
+        //
+        // ⚠️ Условие считается по телу запроса, а не по строке из базы: чтобы
+        // узнать про базу, надо её прочитать, а чтение до блокировки лишает
+        // блокировку смысла. Ни `parentId`, ни `type` в теле — правка дерева
+        // не касается, и брать блокировку не на что.
+        //
+        // 🔴 Безусловный вызов стоил бы ожидания там, где ждать нечего: импорт
+        // держит эту же блокировку на каждый термин (`import.service.ts`,
+        // `TX_OPTIONS` — потолок 30 с), и `PATCH {name}` встал бы на ней
+        // **внутри своей транзакции**, удерживая соединение единственного пула
+        // (`LEGACY-256`); упёршись в потолок — `P2028` и 500 вместо 200.
+        //
+        // ⚠️ Условие «поле пришло», а не «значение изменилось», и это не описка:
+        // узнать фактическое значение можно только чтением, а чтение до
+        // блокировки лишает её смысла. Клиент, шлющий сущность целиком
+        // (админка так и делает — см. блок про `key` выше), приложит `type`
+        // и на переименовании, то есть блокировку всё-таки возьмёт. Дешевле
+        // это не делается без чтения до блокировки; ожидание при этом идёт
+        // на одном термине импорта, а не на всей партии — она обрабатывается
+        // последовательно, транзакцией на термин.
+        const touchesTree = dto.parentId !== undefined || dto.type !== undefined;
+        if (touchesTree) await this.categoryTree.lockTree(tx);
+
+        // 🔴 `LEGACY-274`. Термин перечитывается **внутри** транзакции, и `type`
+        // со `slug` берутся отсюда, а не из до-транзакционного `exists`. Тот
+        // читался на клиенте пула и к этому месту уже устаревал: соседний PATCH,
+        // сменивший тип, давал проверку родителя по старому типу — ровно ту
+        // разнотипную связь, которую стерегут `LEGACY-264` и `LEGACY-005`, — а
+        // запись редиректа уходила с уже не того слага.
+        //
+        // Проверка существования при этом не дублирующая: между чтением на пуле
+        // и этим местом термин мог быть удалён.
+        const current = await tx.category.findUnique({
+          where: { id },
+          select: { id: true, type: true, slug: true, parentId: true },
+        });
+        if (!current) throw new NotFoundException('Category not found');
+
+        // Базовый слаг участвует в резолве публичного URL как фолбэк, поэтому его смена
+        // ломает адрес во всех языках сразу (LEGACY-062). Запись — в той же транзакции.
+        const baseSlugChanged = !!dto.slug && dto.slug !== current.slug;
+        const nextType = dto.type ?? current.type;
+
         // parent validations
         //
         // 🔴 `LEGACY-266`. Чтение родителя и проверка идут **тем же клиентом**,
         // которым делается запись. На клиенте пула между проверкой и `update`
-        // помещалась чужая транзакция: два одновременных PATCH `A → B` и `B → A`
-        // при обоих узлах в корне не видели цикла ни один, обе записи
-        // коммитились, дерево замыкалось — и публичный `/seo/resolve` получал
-        // петлю (`LEGACY-265`). Тот же порядок держит импорт
+        // помещалась чужая транзакция; тот же порядок держит импорт
         // (`import.service.ts`, `updateParentId`).
         //
-        // ⚠️ Гонку двух одновременных PATCH это **не закрывает**: при `read
-        // committed` каждый оператор внутри транзакции берёт свежий снимок и
-        // чужих незакоммиченных строк всё равно не видит, а голые `SELECT`
-        // подъёма никого не блокируют. Полная защита — `SELECT ... FOR UPDATE`
-        // по цепочке предков или ограничение на стороне базы (`LEGACY-274`).
-        // Здесь восстановлен инвариант «проверка ходит клиентом записи», который
-        // держит импорт, — без него ни то, ни другое не построить.
-        if (dto.parentId) {
+        // 🔴 `LEGACY-275`. Условие зависит не от наличия `parentId` в теле запроса,
+        // а от того, меняется ли что-то из пары «родитель, тип». Прежнее
+        // `if (dto.parentId)` пропускало второй путь к той же порче данных:
+        // `PATCH { "type": "category" }` без `parentId` не запускал проверку вовсе,
+        // но тип записывался — и термин оставался ребром под родителем чужого типа,
+        // то есть пропадал из своего дерева и всплывал корнем в чужом.
+        //
+        // ⚠️ Родитель берётся фактический: из тела запроса, когда `parentId` пришёл,
+        // и из базы, когда меняется только тип. `parentId: null` — это отвязка,
+        // проверять там нечего.
+        const parentIdChanging =
+          typeof dto.parentId !== 'undefined' && dto.parentId !== current.parentId;
+        const typeChanging = dto.type !== undefined && dto.type !== current.type;
+        const effectiveParentId =
+          typeof dto.parentId === 'undefined' ? current.parentId : dto.parentId;
+
+        if ((parentIdChanging || typeChanging) && effectiveParentId) {
           const parent = await tx.category.findUnique({
-            where: { id: dto.parentId },
+            where: { id: effectiveParentId },
             select: { id: true, type: true },
           });
           if (!parent) throw new BadRequestException('Parent category not found');
@@ -245,14 +345,14 @@ export class CategoryService {
           // проверок здесь больше нет — расходящиеся комплекты правил о допустимых
           // сочетаниях типов уже разбирались как `LEGACY-005`.
           await this.categoryTree.assertParentAllowed(
-            { id, type: dto.type || exists.type },
+            { id, type: nextType },
             { id: parent.id, type: parent.type },
             tx,
           );
         }
 
         if (baseSlugChanged && dto.slug) {
-          await this.slugRedirects.recordBaseSlugChange('category', exists.slug, dto.slug, tx);
+          await this.slugRedirects.recordBaseSlugChange('category', current.slug, dto.slug, tx);
         }
 
         return tx.category.update({

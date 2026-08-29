@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import { SeoService } from './seo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoryTreeService, CATEGORY_TREE_MAX_DEPTH } from '../category/category-tree.service';
@@ -14,6 +14,7 @@ type PrismaStub = {
   categoryTranslation: { findUnique: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock };
   category: { findUnique: jest.Mock };
   tagTranslation: { findUnique: jest.Mock; findMany: jest.Mock };
+  comment: { findMany: jest.Mock };
 };
 
 const createPrismaStub = (): PrismaStub => ({
@@ -26,6 +27,7 @@ const createPrismaStub = (): PrismaStub => ({
   categoryTranslation: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
   category: { findUnique: jest.fn() },
   tagTranslation: { findUnique: jest.fn(), findMany: jest.fn() },
+  comment: { findMany: jest.fn().mockResolvedValue([]) },
 });
 
 describe('SeoService (unit)', () => {
@@ -36,6 +38,7 @@ describe('SeoService (unit)', () => {
     meta: { canonicalUrl: string; title: string; description?: string | null };
     openGraph: { image?: { url: string; alt?: string }; type?: string };
     twitter: { card: string };
+    breadcrumbPath?: Array<{ name: string; slug: string }>;
     schema?: {
       event?: {
         name: string;
@@ -565,6 +568,239 @@ describe('SeoService (unit)', () => {
       expect(langCodes).toEqual(expect.arrayContaining(['en', 'ru']));
       expect(langCodes).not.toEqual(expect.arrayContaining(['es', 'fr', 'pt']));
       expect(langCodes).toHaveLength(2);
+    });
+  });
+
+  // 🔴 LEGACY-277: семь блоков `resolvePublic` глушили отказ базы пустым
+  // `catch`. Ответ 200 с обеднённым JSON-LD — поведение задуманное и здесь
+  // не меняется; проверяется ровно то, что отказ перестал быть невидимым.
+  // Каждый случай роняет свой вызов Prisma: посадка на один блок ничего
+  // не говорит про остальные шесть.
+  describe('resolvePublic — отказ базы на необязательном блоке не пропадает молча (LEGACY-277)', () => {
+    let warn: jest.SpyInstance;
+
+    const warnedParts = () =>
+      warn.mock.calls.map((call) => String(call[0])).filter((msg) => msg.startsWith('SEO '));
+
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      warn.mockRestore();
+    });
+
+    describe('страница книги', () => {
+      beforeEach(() => {
+        prisma.bookVersion.findFirst.mockResolvedValue(null);
+        prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
+        prisma.bookVersion.findMany.mockResolvedValue([
+          {
+            id: 'v-en',
+            bookId: 'b1',
+            language: 'en',
+            title: 'T EN',
+            author: 'A',
+            description: 'D EN',
+            coverImageUrl: null,
+            seoId: null,
+            slug: 't-en',
+            status: 'published',
+            type: 'text',
+            primaryCategoryId: null,
+          },
+        ]);
+      });
+
+      const resolveBook = () =>
+        service.resolvePublic('book', 'book-slug', {
+          pathLang: Language.en,
+        }) as unknown as Promise<SeoBundle>;
+
+      it('отказ на крошках: ответ 200 без крошек, в логе — след', async () => {
+        prisma.bookCategory.findMany.mockRejectedValueOnce(new Error('db is down'));
+
+        const bundle = await resolveBook();
+
+        expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/t-en');
+        expect(bundle.breadcrumbPath).toEqual([]);
+        expect(warnedParts()).toEqual([
+          expect.stringContaining('failed to load breadcrumb categories'),
+        ]);
+        expect(warnedParts()[0]).toContain('db is down');
+      });
+
+      it('отказ на списке жанров: ответ 200, в логе — след', async () => {
+        prisma.bookCategory.findMany
+          .mockResolvedValueOnce([])
+          .mockRejectedValueOnce(new Error('db is down'));
+
+        const bundle = await resolveBook();
+
+        expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/t-en');
+        expect(warnedParts()).toEqual([expect.stringContaining('failed to load genre list')]);
+      });
+
+      it('отказ на рейтинге: ответ 200, в логе — след', async () => {
+        prisma.bookRating.findMany.mockRejectedValueOnce(new Error('db is down'));
+
+        const bundle = await resolveBook();
+
+        expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/t-en');
+        expect(warnedParts()).toEqual([expect.stringContaining('failed to load ratings')]);
+      });
+
+      it('отказ на отзывах: ответ 200, в логе — след', async () => {
+        prisma.comment.findMany.mockRejectedValueOnce(new Error('db is down'));
+
+        const bundle = await resolveBook();
+
+        expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/t-en');
+        expect(warnedParts()).toEqual([expect.stringContaining('failed to load comments')]);
+      });
+    });
+
+    // Крошки коллекции начинаются со статического раздела «Collections», и он
+    // в `breadcrumbPath` остаётся: проверяется отсутствие предков, а не пустой
+    // список вообще.
+    describe.each([
+      ['category', 'category', []],
+      ['collection', 'collection', [{ name: 'Collections', slug: 'collections' }]],
+      ['genre', 'genre', []],
+    ] as const)('страница %s', (pageType, termType, expectedPath) => {
+      it('отказ на подъёме к предкам: ответ 200 без крошек, в логе — след', async () => {
+        const category = {
+          id: 'cat-child',
+          name: 'Child',
+          slug: 'child',
+          type: termType,
+          // Предок обязателен: без него подъём не делает ни одного запроса
+          // и ронять было бы нечего.
+          parentId: 'cat-parent',
+          indexable: true,
+        };
+        const translation = {
+          id: 'ct-en',
+          categoryId: category.id,
+          language: Language.en,
+          slug: 'child',
+          name: 'Child',
+          description: null,
+          seoId: null,
+          autoIndexable: true,
+          category,
+        };
+        prisma.categoryTranslation.findMany.mockResolvedValue([translation]);
+        prisma.category.findUnique.mockRejectedValue(new Error('db is down'));
+
+        const bundle = (await service.resolvePublic(pageType, 'child', {
+          pathLang: Language.en,
+        })) as unknown as SeoBundle;
+
+        expect(bundle.breadcrumbPath).toEqual(expectedPath);
+        expect(warnedParts()).toEqual([
+          expect.stringContaining('failed to load parent breadcrumbs'),
+        ]);
+        expect(warnedParts()[0]).toContain(`SEO ${pageType} "cat-child"`);
+      });
+    });
+  });
+
+  // 🔴 LEGACY-273: ветки `genre` и `collection` передавали в подбор запасного
+  // перевода чужой тип термина. На прямом попадании в язык дефект не виден
+  // вовсе — `exact` возвращает кандидата и тип не участвует. Он просыпается
+  // ровно на фолбэке, поэтому здесь кандидаты намеренно без запрошенного языка,
+  // а `findFirst` отдаёт перевод только при совпадении `category.type`.
+  describe('resolvePublic — фолбэк подбора перевода таксономии (LEGACY-273)', () => {
+    type TransFindManyArgs = { where?: { OR?: unknown } };
+    type TransFindFirstArgs = { where?: { category?: { type?: string } } };
+
+    const arrangeFallback = (type: 'genre' | 'collection') => {
+      const category = {
+        id: 'cat-1',
+        name: 'Poetry',
+        slug: 'poetry',
+        type,
+        parentId: null,
+        indexable: true,
+      };
+      const enTranslation = {
+        id: 'ct-en',
+        categoryId: category.id,
+        language: Language.en,
+        slug: 'poetry',
+        name: 'Poetry',
+        description: null,
+        seoId: null,
+        autoIndexable: true,
+        category,
+      };
+      const ruTranslation = {
+        id: 'ct-ru',
+        categoryId: category.id,
+        language: Language.ru,
+        slug: 'poeziya',
+        name: 'Поэзия',
+        description: null,
+        seoId: null,
+        autoIndexable: true,
+        category,
+      };
+
+      prisma.categoryTranslation.findMany.mockImplementation((args: TransFindManyArgs) =>
+        Promise.resolve(args?.where?.OR ? [enTranslation] : [enTranslation, ruTranslation]),
+      );
+      // Единственное, что отличает исправленный вызов от дефектного: запасной
+      // запрос отдаёт перевод только под своим типом термина.
+      prisma.categoryTranslation.findFirst.mockImplementation((args: TransFindFirstArgs) =>
+        Promise.resolve(args?.where?.category?.type === type ? ruTranslation : null),
+      );
+    };
+
+    it('страница жанра без перевода среди кандидатов берёт запасной перевод жанра, а не коллекции', async () => {
+      arrangeFallback('genre');
+
+      const result = (await service.resolvePublic('genre', 'poetry', {
+        pathLang: Language.ru,
+      })) as unknown as SeoBundle;
+
+      expect(result.meta.canonicalUrl).toContain('/ru/genre/poeziya');
+      // Ровно один запасной запрос: возврат дефекта «сначала чужой тип, потом
+      // верный для подстраховки» прошёл бы проверку по любому вызову.
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ category: { type: 'genre' } }),
+        }),
+      );
+    });
+
+    it('страница коллекции без перевода среди кандидатов берёт запасной перевод коллекции, а не жанра', async () => {
+      arrangeFallback('collection');
+
+      const result = (await service.resolvePublic('collection', 'poetry', {
+        pathLang: Language.ru,
+      })) as unknown as SeoBundle;
+
+      expect(result.meta.canonicalUrl).toContain('/ru/collection/poeziya');
+      // Ровно один запасной запрос: возврат дефекта «сначала чужой тип, потом
+      // верный для подстраховки» прошёл бы проверку по любому вызову.
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ category: { type: 'collection' } }),
+        }),
+      );
+    });
+
+    it('текст 404 называет тот тип термина, страницу которого запросили', async () => {
+      arrangeFallback('genre');
+      // Перевода нет ни под каким типом — важен текст отказа, а не сам отказ.
+      prisma.categoryTranslation.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.resolvePublic('genre', 'poetry', { pathLang: Language.ru }),
+      ).rejects.toThrow('No genre translation for language ru');
     });
   });
 

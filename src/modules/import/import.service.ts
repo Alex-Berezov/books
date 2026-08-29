@@ -307,6 +307,12 @@ export class ImportService {
       // новых переводов и уже переписанной базовой строкой, а счётчик `updated`
       // при этом не увеличивался — отчёт расходился с базой молча.
       await this.prisma.$transaction(async (tx) => {
+        // 🔴 `LEGACY-274`. Блокировка дерева категорий — **первым** оператором
+        // транзакции, до записи термина: иначе транзакция, уже державшая строку,
+        // встаёт во взаимную блокировку с админским PATCH. Что она стережёт —
+        // в `CategoryTreeService.lockTree`.
+        await this.categoryTree.lockTree(tx);
+
         await tx.category.update({
           where: { key: dto.key },
           data: {
@@ -374,6 +380,12 @@ export class ImportService {
       // но не показывается ни на одной языковой версии сайта: публичные маршруты
       // отбирают по `CategoryTranslation` нужного языка.
       await this.prisma.$transaction(async (tx) => {
+        // 🔴 `LEGACY-274`. Блокировка дерева категорий — **первым** оператором
+        // транзакции, до записи термина: иначе транзакция, уже державшая строку,
+        // встаёт во взаимную блокировку с админским PATCH. Что она стережёт —
+        // в `CategoryTreeService.lockTree`.
+        await this.categoryTree.lockTree(tx);
+
         const created = await tx.category.create({
           data: commonData,
         });

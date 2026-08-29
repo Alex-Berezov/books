@@ -34,6 +34,10 @@ interface FakeModel {
 }
 
 interface FakeClient {
+  // 🔴 `LEGACY-274`. Обе транзакции импорта категорий берут рекомендательную
+  // блокировку дерева первым оператором; без `$queryRaw` в поддельном клиенте
+  // спека падает не на своём предмете.
+  $queryRaw: jest.Mock;
   category: FakeModel;
   categoryTranslation: Pick<FakeModel, 'create' | 'update'>;
   tag: FakeModel;
@@ -54,6 +58,13 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
   });
 
   return {
+    // ⚠️ Метка через двоеточие, а не через точку, намеренно: `delegate-check.mjs`
+    // разбирает вид «клиент, точка, имя» как обращение к делегату Prisma
+    // и печатает заведомо ложную строку — за ней прячется настоящая находка.
+    $queryRaw: jest.fn().mockImplementation(() => {
+      log.push(`${label}:lockTree`);
+      return Promise.resolve([]);
+    }),
     category: model('category', { id: 'cat-1' }),
     categoryTranslation: {
       create: note('categoryTranslation.create', {}),
@@ -131,6 +142,65 @@ const tagDto = (): ImportTagDto =>
       [Language.ru]: { name: 'Эстетизм', slug: 'estetizm' },
     },
   }) as ImportTagDto;
+
+describe('ImportService — блокировка дерева категорий (LEGACY-274)', () => {
+  /**
+   * 🔴 Блокировка обязана быть **первым** оператором транзакции. Транзакция,
+   * успевшая взять строку категории, встанет на ней во взаимную блокировку
+   * с админским `PATCH`, который эту же блокировку уже держит. Проверяется
+   * поэтому порядок, а не факт вызова: `expect(...).toHaveBeenCalled()`
+   * зеленеет и на строке, поставленной в конец.
+   */
+  it('создание термина берёт блокировку до первой записи', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(null);
+    });
+    tx.category.findUnique.mockImplementation(() => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve(null);
+    });
+
+    await service.importCategories([categoryDto()]);
+
+    const inTx = log.filter((call) => call.startsWith('tx.') || call.startsWith('tx:'));
+    expect(inTx[0]).toBe('tx:lockTree');
+  });
+
+  it('обновление термина берёт блокировку до первой записи', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // Термин уже есть — идёт ветка обновления, а не создания.
+    //
+    // ⚠️ `translations` обязателен: `upsertCategory` перебирает его, решая,
+    // создавать перевод или обновлять. Без поля ветка падает на середине,
+    // ошибка глотается общим `catch` импорта, и утверждение о порядке
+    // оказывается верным случайно — сценарий до переводов не доходит.
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve({
+        id: 'cat-1',
+        indexable: true,
+        isVisible: true,
+        sortOrder: 0,
+        translations: [],
+      });
+    });
+    tx.category.findUnique.mockImplementation(() => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve(null);
+    });
+
+    await service.importCategories([categoryDto()]);
+
+    const inTx = log.filter((call) => call.startsWith('tx.') || call.startsWith('tx:'));
+    expect(inTx[0]).toBe('tx:lockTree');
+  });
+});
 
 describe('ImportService — создание термина и переводов одной транзакцией (LEGACY-131)', () => {
   it('пишет категорию, её родителя и переводы только клиентом транзакции', async () => {

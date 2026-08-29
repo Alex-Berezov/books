@@ -12,6 +12,7 @@ interface PrismaStub {
   category: {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
+    create: jest.Mock;
     update: jest.Mock;
     delete: jest.Mock;
     count: jest.Mock;
@@ -44,6 +45,7 @@ const createPrismaStub = (): PrismaStub => ({
   category: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
+    create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
     count: jest.fn(),
@@ -86,10 +88,17 @@ describe('CategoryService', () => {
   it('update rejects cycle in hierarchy', async () => {
     // Graph: A <- C <- B; set parent(A) = B -> cycle
     const parentMap: Record<string, string | null> = { A: null, B: 'C', C: 'A' };
+    // 🔴 Различать чтения надо по **отсутствию** `type`, а не по наличию
+    // `parentId`. Подъём `isDescendant` берёт ровно `{ parentId: true }`,
+    // а все прочие чтения просят и `type`. Прежнее условие «есть `parentId`
+    // в select» поймало и перечитывание термина внутри транзакции
+    // (`LEGACY-274`, select `{ id, type, slug, parentId }`): оно получало
+    // объект без `type`, `assertSameType` падал первым, и тест зеленел,
+    // не дойдя до проверки цикла вовсе.
     prisma.category.findUnique.mockImplementation(
-      (args: { where: { id: string }; select?: { parentId?: boolean } }) => {
+      (args: { where: { id: string }; select?: { parentId?: boolean; type?: boolean } }) => {
         const id: string = args.where.id;
-        if (args.select && 'parentId' in args.select) {
+        if (args.select && !args.select.type) {
           return { parentId: parentMap[id] ?? null };
         }
         return {
@@ -102,8 +111,8 @@ describe('CategoryService', () => {
       },
     );
 
-    await expect(service.update('A', { parentId: 'B' })).rejects.toBeInstanceOf(
-      BadRequestException,
+    await expect(service.update('A', { parentId: 'B' })).rejects.toThrow(
+      'Cycle detected in category hierarchy',
     );
   });
 
@@ -135,7 +144,10 @@ describe('CategoryService', () => {
 
     prisma.category.findUnique = readVia('pool');
     const txUpdate = jest.fn().mockResolvedValue({ id: 'A', parentId: 'B' });
-    const tx = { category: { findUnique: readVia('tx'), update: txUpdate } };
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: { findUnique: readVia('tx'), update: txUpdate },
+    };
     prisma.$transaction = jest
       .fn()
       .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
@@ -147,6 +159,259 @@ describe('CategoryService', () => {
     // Родитель и подъём по предкам — уже внутри транзакции.
     expect(reads.filter((r) => r.startsWith('tx:')).length).toBeGreaterThan(0);
     expect(txUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 `LEGACY-274` + `LEGACY-275` п.3. `create` — второй писатель родительского
+   * ребра, и до 29.08.2026 он читал родителя на пуле и писал вовсе без
+   * транзакции. Пока это было так, блокировка в `update` не стерегла ничего:
+   * одновременные `POST {parentId: P}` и `PATCH P {type}` записывали
+   * разнотипное ребро мимо неё.
+   *
+   * ⚠️ Проверяется порядок, а не факт вызова: блокировка, взятая после чтения
+   * родителя, зеленеет на `toHaveBeenCalled` и не стережёт ничего.
+   */
+  it('создание под родителем берёт блокировку первым оператором и читает родителя через tx (LEGACY-274)', async () => {
+    const order: string[] = [];
+    // На пуле лежит устаревшая строка: по ней тип совпал бы и проверка прошла.
+    prisma.category.findUnique.mockImplementation(() => {
+      order.push('pool-read');
+      return Promise.resolve({ id: 'P', type: 'genre' });
+    });
+    const tx = {
+      $queryRaw: jest.fn(() => {
+        order.push('lock');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findUnique: jest.fn(() => {
+          order.push('tx-read');
+          // В транзакции родитель уже другого типа.
+          return Promise.resolve({ id: 'P', type: 'category' });
+        }),
+        create: jest.fn(() => {
+          order.push('write');
+          return Promise.resolve({ id: 'C' });
+        }),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await expect(
+      service.create({ type: 'genre', name: 'C', slug: 'c', parentId: 'P' } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(order[0]).toBe('lock');
+    expect(order).toContain('tx-read');
+    expect(order).not.toContain('pool-read');
+    expect(order).not.toContain('write');
+  });
+
+  /**
+   * Обратная сторона: корневой термин ребра не пишет, блокировать нечего.
+   * Безусловный вызов сериализовал бы массовое заведение терминов.
+   */
+  it('создание без родителя блокировку не берёт (LEGACY-274)', async () => {
+    const created = jest.fn().mockResolvedValue({ id: 'C' });
+    prisma.category.create = created;
+    prisma.$transaction = jest.fn();
+
+    await service.create({ type: 'genre', name: 'C', slug: 'c' } as never);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(created).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 `LEGACY-275`. Проверка родителя стояла под `if (dto.parentId)`, а `type`
+   * записывался безусловно. `PATCH { type }` без `parentId` не запускал её
+   * вовсе — и термин оставался ребром под родителем чужого типа: из своего
+   * дерева пропадал, в чужом всплывал корнем (`getTree` отбирает по `type`).
+   *
+   * ⚠️ Родитель здесь **не приходит в теле** — он берётся из базы. Спека,
+   * подставляющая `parentId` в DTO, зеленеет и на дефекте.
+   */
+  it('PATCH только с type проверяет фактического родителя из базы (LEGACY-275)', async () => {
+    const rows: Record<
+      string,
+      { id: string; type: string; slug: string; parentId: string | null }
+    > = {
+      A: { id: 'A', type: 'genre', slug: 'a', parentId: 'P' },
+      P: { id: 'P', type: 'genre', slug: 'p', parentId: null },
+    };
+    prisma.category.findUnique.mockImplementation((args: { where: { id: string } }) =>
+      Promise.resolve(rows[args.where.id] ?? null),
+    );
+    const txUpdate = jest.fn();
+    prisma.category.update = txUpdate;
+
+    await expect(service.update('A', { type: 'category' as never })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(txUpdate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Обратная сторона того же условия: PATCH, не трогающий ни родителя, ни тип,
+   * не должен платить подъёмом по дереву. Иначе переименование категории
+   * начинает стоить столько же, сколько смена родителя.
+   */
+  it('PATCH без смены родителя и типа не поднимается по дереву (LEGACY-275)', async () => {
+    const rows: Record<
+      string,
+      { id: string; type: string; slug: string; parentId: string | null }
+    > = {
+      A: { id: 'A', type: 'genre', slug: 'a', parentId: 'P' },
+      P: { id: 'P', type: 'genre', slug: 'p', parentId: null },
+    };
+    const reads: string[] = [];
+    prisma.category.findUnique.mockImplementation((args: { where: { id: string } }) => {
+      reads.push(args.where.id);
+      return Promise.resolve(rows[args.where.id] ?? null);
+    });
+    prisma.category.update = jest.fn().mockResolvedValue(rows.A);
+
+    await service.update('A', { name: 'Renamed' });
+
+    expect(reads.filter((r) => r === 'P')).toEqual([]);
+    expect(prisma.category.update).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 `LEGACY-274`, часть без миграции. `exists` читался на клиенте пула до
+   * транзакции, а `type` для проверки родителя и `slug` для записи редиректа
+   * брались из него. Соседний PATCH, успевший сменить тип, давал проверку
+   * по устаревшему типу — ровно ту разнотипную связь, которую стерегут
+   * `LEGACY-264` и `LEGACY-005`.
+   *
+   * ⚠️ Строка на пуле и строка внутри транзакции здесь намеренно РАЗНЫЕ.
+   * Спека, где они совпадают, зеленеет и на дефекте.
+   */
+  it('решение принимается по строке транзакции, а не по чтению на пуле (LEGACY-274)', async () => {
+    const stale = { id: 'A', type: 'genre', slug: 'a-old', parentId: null, key: 'a' };
+    const fresh = { id: 'A', type: 'category', slug: 'a-new', parentId: null, key: 'a' };
+    const parent = { id: 'P', type: 'genre', slug: 'p', parentId: null, key: 'p' };
+
+    // Пул отдаёт устаревшую строку: по ней тип совпал бы с родителем и проверка прошла.
+    prisma.category.findUnique.mockResolvedValue(stale);
+    prisma.category.findFirst.mockResolvedValue(null);
+
+    const txFindUnique = jest.fn((args: { where: { id: string } }) =>
+      Promise.resolve(args.where.id === 'A' ? fresh : parent),
+    );
+    const txUpdate = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: { findUnique: txFindUnique, update: txUpdate },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    // Тип в теле не приходит: он берётся из строки, и именно из какой — вопрос.
+    await expect(service.update('A', { parentId: 'P' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(txUpdate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Вторая половина того же дефекта: `recordBaseSlugChange` получал прежний
+   * слаг из до-транзакционного `exists`, то есть писал редирект с адреса,
+   * который к моменту записи уже сменился, — и настоящий прежний адрес
+   * оставался без редиректа (`LEGACY-062`).
+   */
+  it('редирект прежнего слага пишется от строки транзакции (LEGACY-274)', async () => {
+    const stale = { id: 'A', type: 'genre', slug: 'a-stale', parentId: null, key: 'a' };
+    const fresh = { id: 'A', type: 'genre', slug: 'a-fresh', parentId: null, key: 'a' };
+    const recordBaseSlugChange = jest.fn().mockResolvedValue(undefined);
+
+    prisma.category.findUnique.mockResolvedValue(stale);
+    prisma.category.findFirst.mockResolvedValue(null);
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: {
+        findUnique: jest.fn().mockResolvedValue(fresh),
+        update: jest.fn().mockResolvedValue(fresh),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    service = new CategoryService(
+      prisma as unknown as PrismaService,
+      {
+        record: jest.fn().mockResolvedValue(undefined),
+        resolve: jest.fn().mockResolvedValue(null),
+        recordBaseSlugChange,
+      } as unknown as SlugRedirectService,
+      new CategoryTreeService(prisma as unknown as PrismaService),
+      indexability as unknown as TaxonomyIndexabilityService,
+    );
+
+    await service.update('A', { slug: 'a-newest' });
+
+    // Один вызов, а не «хотя бы один»: откат, дописавший второй вызов
+    // с устаревшим слагом рядом с верным, оставил бы проверку зелёной.
+    expect(recordBaseSlugChange).toHaveBeenCalledTimes(1);
+    expect(recordBaseSlugChange).toHaveBeenCalledWith('category', 'a-fresh', 'a-newest', tx);
+  });
+
+  /**
+   * 🔴 `LEGACY-274`, гонка. Блокировка обязана быть **первым** оператором
+   * транзакции: транзакция, успевшая взять строку категории, встанет на ней
+   * во взаимную блокировку с чужой. Порядок и проверяется — сам факт вызова
+   * ничего не стоит.
+   */
+  it('транзакция смены родителя берёт блокировку дерева первым оператором (LEGACY-274)', async () => {
+    const order: string[] = [];
+    prisma.category.findUnique.mockResolvedValue({
+      id: 'A',
+      type: 'genre',
+      slug: 'a',
+      parentId: null,
+      key: 'a',
+    });
+    const tx = {
+      $queryRaw: jest.fn(() => {
+        order.push('lock');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findUnique: jest.fn(() => {
+          order.push('read');
+          return Promise.resolve({ id: 'A', type: 'genre', slug: 'a', parentId: null });
+        }),
+        update: jest.fn(() => {
+          order.push('write');
+          return Promise.resolve({ id: 'A' });
+        }),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    // Смена родителя — правка дерева, блокировка обязательна.
+    await service.update('A', { parentId: null });
+
+    expect(order[0]).toBe('lock');
+    expect(order).toContain('write');
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+
+    // 🔴 Обратная сторона: PATCH, не несущий ни `parentId`, ни `type`, дерева
+    // не касается и блокировку брать не должен. Безусловный вызов стоил бы 500
+    // вместо 200 на переименовании во время импорта: тот держит эту же
+    // блокировку до 30 с на термин, а ждущий PATCH удерживает соединение
+    // единственного пула, пока не отдаст `P2028`.
+    order.length = 0;
+    await service.update('A', { name: 'Renamed' });
+
+    expect(order).not.toContain('lock');
+    expect(order).toContain('write');
   });
 
   /**
