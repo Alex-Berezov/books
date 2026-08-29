@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoryTreeService } from '../category/category-tree.service';
-import { Language, Seo } from '@prisma/client';
+import { CategoryType, Language, Seo } from '@prisma/client';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoQueryDto, ResolveSeoType } from './dto/resolve-seo.dto';
 import { getDefaultLanguage, resolveRequestedLanguage } from '../../shared/language/language.util';
@@ -20,6 +20,52 @@ import { generateBookSchema } from './schema/generateBookSchema';
 import { generateBreadcrumbSchema } from './schema/generateBreadcrumbSchema';
 import { generateWebSiteSchema } from './schema/generateWebSiteSchema';
 import { generateCollectionPageSchema } from './schema/generateCollectionPageSchema';
+import { markDegraded } from '../../common/interceptors/degraded-response';
+
+/**
+ * Три типа термина таксономии, у которых своя публичная страница.
+ *
+ * 🔴 `LEGACY-309`. Единственный источник того, чем эти страницы отличаются
+ * друг от друга. Всё, чего здесь нет, у них общее — и общим обязано остаться:
+ * новый тип заводится строкой в этой таблице, а не четвёртой копией ветки
+ * в `resolvePublic`.
+ *
+ * ⚠️ Ключ — Prisma-энум `CategoryType`, а не свой список из трёх литералов.
+ * Обещание «новый тип заводится строкой в таблице» держит тогда компилятор:
+ * четвёртое значение в `schema.prisma` уронит сборку на неполном `Record`.
+ * Свой список молчал бы, и страница нового типа провалилась бы мимо
+ * резолвера в хвост `resolvePublic`.
+ */
+type TaxonomyPageType = CategoryType;
+
+const TAXONOMY_PAGES: Record<
+  TaxonomyPageType,
+  {
+    /** Текст 404: он называет тот тип термина, страницу которого запросили (`LEGACY-273`). */
+    notFound: string;
+    /**
+     * Раздел над термином в хлебных крошках. Есть только у коллекций:
+     * у категорий и жанров страницы-раздела не существует, и крошка вела бы в 404.
+     */
+    section: { slug: string; names: Record<Language, string> } | null;
+  }
+> = {
+  category: { notFound: 'Category translation not found', section: null },
+  collection: {
+    notFound: 'Collection not found',
+    section: {
+      slug: 'collections',
+      names: {
+        en: 'Collections',
+        es: 'Colecciones',
+        fr: 'Collections',
+        pt: 'Coleções',
+        ru: 'Подборки',
+      },
+    },
+  },
+  genre: { notFound: 'Genre translation not found', section: null },
+};
 
 interface CategoryWithParent {
   id: string;
@@ -66,7 +112,7 @@ export class SeoService {
    */
   private async pickTaxonomyTranslation<
     T extends { language: Language; categoryId: string; slug: string },
-  >(candidates: T[], effLang: Language, type: 'category' | 'genre' | 'collection'): Promise<T> {
+  >(candidates: T[], effLang: Language, type: TaxonomyPageType): Promise<T> {
     const exact = candidates.find((c) => c.language === effLang);
     if (exact) return exact;
 
@@ -276,6 +322,162 @@ export class SeoService {
    * Фолбэк на базовое имя намеренно через `||`, а не `??`: пустая строка
    * перевода и раньше уходила на `category.name`.
    */
+  /**
+   * Публичный резолвер страницы термина таксономии — один на три типа.
+   *
+   * 🔴 `LEGACY-309`. Отличий между типами ровно два, и оба здесь — данными,
+   * а не веткой: текст 404 и статическая крошка раздела у коллекций. Всё
+   * остальное — подбор перевода, чтение `Seo`, `detectIndexability`, сбор
+   * hreflang, крошки, `generateCollectionPageSchema` и весь возвращаемый
+   * объект — общее, и тип берётся из аргумента, а не из литерала.
+   */
+  private async resolveTaxonomyPublic(
+    termType: TaxonomyPageType,
+    id: string,
+    effLang: Language,
+    slugVal: string,
+  ): Promise<Record<string, unknown>> {
+    const page = TAXONOMY_PAGES[termType];
+
+    const transCandidates = await this.prisma.categoryTranslation.findMany({
+      where: {
+        OR: [{ slug: slugVal }, { categoryId: id }],
+        category: { type: termType },
+      },
+      include: { category: true },
+    });
+
+    if (transCandidates.length === 0) {
+      throw new NotFoundException(page.notFound);
+    }
+
+    const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, termType);
+
+    const baseMeta = generateGenreMeta({
+      name: chosen.name,
+      description: chosen.description,
+      language: effLang,
+    });
+
+    const seo = chosen.seoId
+      ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
+      : null;
+    const metaTitle = seo?.metaTitle || baseMeta.title;
+    const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
+    const canonicalUrl = getCanonicalUrl(termType, chosen.slug, effLang);
+    const robotsStatus = detectIndexability(
+      'published',
+      canonicalUrl,
+      seo?.robots,
+      chosen.category.indexable !== false && chosen.autoIndexable !== false,
+    );
+
+    const ogTitle = seo?.ogTitle || metaTitle;
+    const ogDescription = seo?.ogDescription || metaDescription;
+    const ogUrl = seo?.ogUrl || canonicalUrl;
+    const ogImageUrl = seo?.ogImageUrl || undefined;
+    const ogImageAlt = seo?.ogImageAlt || metaTitle;
+    const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
+
+    // Hreflangs — fetch all translations of this term for complete hreflang set
+    const allTranslations = await this.prisma.categoryTranslation.findMany({
+      where: { categoryId: chosen.categoryId, category: { type: termType } },
+    });
+    const slugsMap: Record<string, string> = {};
+    for (const tr of allTranslations) {
+      slugsMap[tr.language.toLowerCase()] = tr.slug;
+    }
+    const hreflangLinks = generateHreflangLinks(termType, slugsMap);
+
+    // Breadcrumbs
+    const breadcrumbItems = [
+      { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
+    ];
+    // Раздел над термином есть только у коллекций: у категорий и жанров
+    // страницы-раздела не существует, и подставлять её было бы ссылкой в 404.
+    if (page.section) {
+      breadcrumbItems.push({
+        name: page.section.names[effLang] ?? page.section.names.en,
+        url: getCanonicalUrl('static', page.section.slug, effLang),
+      });
+    }
+
+    // Add parent categories
+    let degraded = false;
+    try {
+      const catPath = chosen.category
+        ? await this.buildCategoryTrail(chosen.category, effLang, false)
+        : [];
+      catPath.forEach((parent) => {
+        breadcrumbItems.push({
+          name: parent.name,
+          url: getCanonicalUrl(termType, parent.slug, effLang),
+        });
+      });
+    } catch (error) {
+      degraded = true;
+      this.warnDegraded('parent breadcrumbs', termType, chosen.categoryId, error);
+    }
+
+    breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
+    const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
+    const collectionSchema = generateCollectionPageSchema(
+      termType,
+      chosen.slug,
+      effLang,
+      chosen.name,
+      metaDescription || '',
+      [],
+    );
+
+    const bundle = {
+      meta: {
+        title: metaTitle,
+        description: metaDescription,
+        robots: robotsStatus,
+        canonicalUrl,
+      },
+      openGraph: {
+        title: ogTitle,
+        description: ogDescription,
+        type: 'website',
+        url: ogUrl,
+        image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
+      },
+      twitter: {
+        card: twitterCard,
+        site: seo?.twitterSite || undefined,
+        creator: seo?.twitterCreator || undefined,
+        image: ogImageUrl || undefined,
+      },
+      schema: {
+        '@context': 'https://schema.org',
+        '@graph': [
+          {
+            '@type': 'WebPage',
+            '@id': `${canonicalUrl}#webpage`,
+            url: canonicalUrl,
+            name: metaTitle,
+            description: metaDescription,
+            inLanguage: effLang.toLowerCase(),
+            isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
+            breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
+          },
+          generateWebSiteSchema(effLang),
+          breadcrumbSchema,
+          collectionSchema,
+        ],
+      },
+      hreflangs: hreflangLinks,
+      breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
+        name: item.name,
+        slug: item.url.split('/').pop() || '',
+      })),
+    };
+
+    return degraded ? markDegraded(bundle) : bundle;
+  }
+
   private async buildCategoryTrail(
     node: { id: string; name: string; slug: string; parentId: string | null; type: string | null },
     effLang: Language,
@@ -429,6 +631,12 @@ export class SeoService {
     }
 
     if (t === 'book') {
+      // 🔴 `LEGACY-305`. Ответ, собранный после отказа базы на необязательном
+      // блоке, помечается служебным символом: `PublicCacheInterceptor` снимет
+      // метку и переведёт такой ответ на короткий кэш. Без этого обеднённая
+      // разметка уезжала на общий кэш и раздавалась час, а `Logger.warn`
+      // показывал один-единственный случай деградации.
+      let degraded = false;
       // Find version by slug or book by slug
       const targetVersion = await this.prisma.bookVersion.findFirst({
         where: { slug: id, status: 'published' },
@@ -563,6 +771,7 @@ export class SeoService {
           });
         }
       } catch (error) {
+        degraded = true;
         this.warnDegraded('breadcrumb categories', 'book', chosen.id, error);
       }
 
@@ -583,6 +792,7 @@ export class SeoService {
           if (trans) genresList.push(trans.name);
         }
       } catch (error) {
+        degraded = true;
         this.warnDegraded('genre list', 'book', chosen.id, error);
       }
 
@@ -590,16 +800,25 @@ export class SeoService {
       let ratingAverage: number | null = null;
       let ratingCount = 0;
       try {
-        const ratings = await this.prisma.bookRating.findMany({
+        // 🔴 `LEGACY-307`. Среднее и количество считает база одним `aggregate`,
+        // а не приложение по всем строкам рейтинга. Прежний `findMany` без
+        // `take` тянул в память столько строк, сколько у книги оценок, ради
+        // двух чисел; на тестовых объёмах это выглядело исправным, а разница
+        // появляется там, где оценок тысячи. Индекс `@@index([bookId])`
+        // запрос покрывает, форма ответа не меняется.
+        const stats = await this.prisma.bookRating.aggregate({
           where: { bookId: chosen.bookId },
-          select: { score: true },
+          _avg: { score: true },
+          _count: { _all: true },
         });
-        ratingCount = ratings.length;
-        if (ratingCount > 0) {
-          const sum = ratings.reduce((acc, r) => acc + r.score, 0);
-          ratingAverage = parseFloat((sum / ratingCount).toFixed(2));
+        ratingCount = stats._count._all;
+        if (ratingCount > 0 && stats._avg.score !== null) {
+          // Округление остаётся на стороне приложения: `AggregateRating`
+          // отдаёт строку с двумя знаками, и менять её форму запись не просит.
+          ratingAverage = parseFloat(stats._avg.score.toFixed(2));
         }
       } catch (error) {
+        degraded = true;
         // `chosen.id`, а не `chosen.bookId`: под общим префиксом `SEO book "…"`
         // все четыре блока ветки обязаны называть одну и ту же страницу, иначе
         // разбор отказа грепом по её идентификатору найдёт три деградации из четырёх.
@@ -620,6 +839,7 @@ export class SeoService {
           include: { user: { select: { name: true } } },
         });
       } catch (error) {
+        degraded = true;
         this.warnDegraded('comments', 'book', chosen.id, error);
       }
 
@@ -645,7 +865,7 @@ export class SeoService {
         })),
       });
 
-      return {
+      const bundle = {
         meta: {
           title: metaTitle,
           description: metaDescription,
@@ -690,6 +910,8 @@ export class SeoService {
           ...(item.type ? { type: item.type } : {}),
         })),
       };
+
+      return degraded ? markDegraded(bundle) : bundle;
     }
 
     if (t === 'page') {
@@ -851,408 +1073,24 @@ export class SeoService {
       return result;
     }
 
-    if (t === 'category') {
-      const effLang = opts?.pathLang ?? pickEffectiveLanguage();
-      const slugVal = opts?.slug || id;
-
-      const transCandidates = await this.prisma.categoryTranslation.findMany({
-        where: {
-          OR: [{ slug: slugVal }, { categoryId: id }],
-          category: { type: 'category' },
-        },
-        include: { category: true },
-      });
-
-      if (transCandidates.length === 0) {
-        throw new NotFoundException('Category translation not found');
-      }
-
-      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'category');
-
-      const baseMeta = generateGenreMeta({
-        name: chosen.name,
-        description: chosen.description,
-        language: effLang,
-      });
-
-      const seo = chosen.seoId
-        ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
-        : null;
-      const metaTitle = seo?.metaTitle || baseMeta.title;
-      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
-      const canonicalUrl = getCanonicalUrl('category', chosen.slug, effLang);
-      const robotsStatus = detectIndexability(
-        'published',
-        canonicalUrl,
-        seo?.robots,
-        chosen.category.indexable !== false && chosen.autoIndexable !== false,
+    // 🔴 `LEGACY-309`. Здесь стояли три ветки — `category`, `collection`
+    // и `genre`, — которые были копиями друг друга: механическая сверка давала
+    // расхождение в 34 строках из 130, остальное совпадало дословно. Имя типа
+    // при этом писалось руками отдельным строковым литералом в каждой копии,
+    // и ни компилятор, ни линт подмены не видели: литерал брался из допустимого
+    // union. Оба дефекта пачки `C22` в этом файле — прямые следствия
+    // (`LEGACY-273`: в ветку `genre` руками вписали `'collection'`; три из семи
+    // блоков `LEGACY-277`: одинаковый пустой `catch`, размноженный по веткам).
+    //
+    // ⚠️ Новый тип таксономии заводится записью в `TAXONOMY_PAGES`, а не
+    // четвёртой копией ветки.
+    if (t === 'category' || t === 'collection' || t === 'genre') {
+      return this.resolveTaxonomyPublic(
+        t,
+        id,
+        opts?.pathLang ?? pickEffectiveLanguage(),
+        opts?.slug || id,
       );
-
-      const ogTitle = seo?.ogTitle || metaTitle;
-      const ogDescription = seo?.ogDescription || metaDescription;
-      const ogUrl = seo?.ogUrl || canonicalUrl;
-      const ogImageUrl = seo?.ogImageUrl || undefined;
-      const ogImageAlt = seo?.ogImageAlt || metaTitle;
-      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
-
-      // Hreflangs — fetch all translations of this category for complete hreflang set
-      const allCategoryTranslations = await this.prisma.categoryTranslation.findMany({
-        where: { categoryId: chosen.categoryId, category: { type: 'category' } },
-      });
-      const slugsMap: Record<string, string> = {};
-      for (const t of allCategoryTranslations) {
-        slugsMap[t.language.toLowerCase()] = t.slug;
-      }
-      const hreflangLinks = generateHreflangLinks('category', slugsMap);
-
-      // Breadcrumbs
-      const breadcrumbItems = [
-        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
-      ];
-
-      // Add parent categories
-      try {
-        const catPath = chosen.category
-          ? await this.buildCategoryTrail(chosen.category, effLang, false)
-          : [];
-        catPath.forEach((p) => {
-          breadcrumbItems.push({
-            name: p.name,
-            url: getCanonicalUrl('category', p.slug, effLang),
-          });
-        });
-      } catch (error) {
-        this.warnDegraded('parent breadcrumbs', 'category', chosen.categoryId, error);
-      }
-
-      breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
-      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
-      const collectionSchema = generateCollectionPageSchema(
-        'category',
-        chosen.slug,
-        effLang,
-        chosen.name,
-        metaDescription || '',
-        [],
-      );
-
-      return {
-        meta: {
-          title: metaTitle,
-          description: metaDescription,
-          robots: robotsStatus,
-          canonicalUrl,
-        },
-        openGraph: {
-          title: ogTitle,
-          description: ogDescription,
-          type: 'website',
-          url: ogUrl,
-          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
-        },
-        twitter: {
-          card: twitterCard,
-          site: seo?.twitterSite || undefined,
-          creator: seo?.twitterCreator || undefined,
-          image: ogImageUrl || undefined,
-        },
-        schema: {
-          '@context': 'https://schema.org',
-          '@graph': [
-            {
-              '@type': 'WebPage',
-              '@id': `${canonicalUrl}#webpage`,
-              url: canonicalUrl,
-              name: metaTitle,
-              description: metaDescription,
-              inLanguage: effLang.toLowerCase(),
-              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
-              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
-            },
-            generateWebSiteSchema(effLang),
-            breadcrumbSchema,
-            collectionSchema,
-          ],
-        },
-        hreflangs: hreflangLinks,
-        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
-          name: item.name,
-          slug: item.url.split('/').pop() || '',
-        })),
-      };
-    }
-
-    if (t === 'collection') {
-      const effLang = opts?.pathLang ?? pickEffectiveLanguage();
-      const slugVal = opts?.slug || id;
-
-      const transCandidates = await this.prisma.categoryTranslation.findMany({
-        where: {
-          OR: [{ slug: slugVal }, { categoryId: id }],
-          category: { type: 'collection' },
-        },
-        include: { category: true },
-      });
-
-      if (transCandidates.length === 0) {
-        throw new NotFoundException('Collection not found');
-      }
-
-      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'collection');
-
-      const baseMeta = generateGenreMeta({
-        name: chosen.name,
-        description: chosen.description,
-        language: effLang,
-      });
-
-      const seo = chosen.seoId
-        ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
-        : null;
-      const metaTitle = seo?.metaTitle || baseMeta.title;
-      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
-      const canonicalUrl = getCanonicalUrl('collection', chosen.slug, effLang);
-      const robotsStatus = detectIndexability(
-        'published',
-        canonicalUrl,
-        seo?.robots,
-        chosen.category.indexable !== false && chosen.autoIndexable !== false,
-      );
-
-      const ogTitle = seo?.ogTitle || metaTitle;
-      const ogDescription = seo?.ogDescription || metaDescription;
-      const ogUrl = seo?.ogUrl || canonicalUrl;
-      const ogImageUrl = seo?.ogImageUrl || undefined;
-      const ogImageAlt = seo?.ogImageAlt || metaTitle;
-      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
-
-      // Hreflangs — fetch all translations of this collection for complete hreflang set
-      const allCollectionTranslations = await this.prisma.categoryTranslation.findMany({
-        where: { categoryId: chosen.categoryId, category: { type: 'collection' } },
-      });
-      const slugsMap: Record<string, string> = {};
-      for (const t of allCollectionTranslations) {
-        slugsMap[t.language.toLowerCase()] = t.slug;
-      }
-      const hreflangLinks = generateHreflangLinks('collection', slugsMap);
-
-      // Breadcrumbs
-      const breadcrumbItems = [
-        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
-        {
-          name:
-            effLang === 'ru'
-              ? 'Подборки'
-              : effLang === 'es'
-                ? 'Colecciones'
-                : effLang === 'pt'
-                  ? 'Coleções'
-                  : effLang === 'fr'
-                    ? 'Collections'
-                    : 'Collections',
-          url: getCanonicalUrl('static', 'collections', effLang),
-        },
-      ];
-
-      // Add parent categories
-      try {
-        const catPath = chosen.category
-          ? await this.buildCategoryTrail(chosen.category, effLang, false)
-          : [];
-        catPath.forEach((p) => {
-          breadcrumbItems.push({
-            name: p.name,
-            url: getCanonicalUrl('collection', p.slug, effLang),
-          });
-        });
-      } catch (error) {
-        this.warnDegraded('parent breadcrumbs', 'collection', chosen.categoryId, error);
-      }
-
-      breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
-      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
-      const collectionSchema = generateCollectionPageSchema(
-        'collection',
-        chosen.slug,
-        effLang,
-        chosen.name,
-        metaDescription || '',
-        [],
-      );
-
-      return {
-        meta: {
-          title: metaTitle,
-          description: metaDescription,
-          robots: robotsStatus,
-          canonicalUrl,
-        },
-        openGraph: {
-          title: ogTitle,
-          description: ogDescription,
-          type: 'website',
-          url: ogUrl,
-          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
-        },
-        twitter: {
-          card: twitterCard,
-          site: seo?.twitterSite || undefined,
-          creator: seo?.twitterCreator || undefined,
-          image: ogImageUrl || undefined,
-        },
-        schema: {
-          '@context': 'https://schema.org',
-          '@graph': [
-            {
-              '@type': 'WebPage',
-              '@id': `${canonicalUrl}#webpage`,
-              url: canonicalUrl,
-              name: metaTitle,
-              description: metaDescription,
-              inLanguage: effLang.toLowerCase(),
-              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
-              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
-            },
-            generateWebSiteSchema(effLang),
-            breadcrumbSchema,
-            collectionSchema,
-          ],
-        },
-        hreflangs: hreflangLinks,
-        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
-          name: item.name,
-          slug: item.url.split('/').pop() || '',
-        })),
-      };
-    }
-
-    if (t === 'genre') {
-      const effLang = opts?.pathLang ?? pickEffectiveLanguage();
-      const slugVal = opts?.slug || id;
-
-      const transCandidates = await this.prisma.categoryTranslation.findMany({
-        where: {
-          OR: [{ slug: slugVal }, { categoryId: id }],
-          category: { type: 'genre' },
-        },
-        include: { category: true },
-      });
-
-      if (transCandidates.length === 0) {
-        throw new NotFoundException('Genre translation not found');
-      }
-
-      const chosen = await this.pickTaxonomyTranslation(transCandidates, effLang, 'genre');
-
-      const baseMeta = generateGenreMeta({
-        name: chosen.name,
-        description: chosen.description,
-        language: effLang,
-      });
-
-      const seo = chosen.seoId
-        ? await this.prisma.seo.findUnique({ where: { id: chosen.seoId } })
-        : null;
-      const metaTitle = seo?.metaTitle || baseMeta.title;
-      const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
-      const canonicalUrl = getCanonicalUrl('genre', chosen.slug, effLang);
-      const robotsStatus = detectIndexability(
-        'published',
-        canonicalUrl,
-        seo?.robots,
-        chosen.category.indexable !== false && chosen.autoIndexable !== false,
-      );
-
-      const ogTitle = seo?.ogTitle || metaTitle;
-      const ogDescription = seo?.ogDescription || metaDescription;
-      const ogUrl = seo?.ogUrl || canonicalUrl;
-      const ogImageUrl = seo?.ogImageUrl || undefined;
-      const ogImageAlt = seo?.ogImageAlt || metaTitle;
-      const twitterCard = seo?.twitterCard || (ogImageUrl ? 'summary_large_image' : 'summary');
-
-      // Hreflangs — fetch all translations of this genre for complete hreflang set
-      const allGenreTranslations = await this.prisma.categoryTranslation.findMany({
-        where: { categoryId: chosen.categoryId, category: { type: 'genre' } },
-      });
-      const slugsMap: Record<string, string> = {};
-      for (const t of allGenreTranslations) {
-        slugsMap[t.language.toLowerCase()] = t.slug;
-      }
-      const hreflangLinks = generateHreflangLinks('genre', slugsMap);
-
-      const breadcrumbItems = [
-        { name: this.getHomeName(effLang), url: getCanonicalUrl('static', '', effLang) },
-      ];
-
-      try {
-        const catPath = chosen.category
-          ? await this.buildCategoryTrail(chosen.category, effLang, false)
-          : [];
-        catPath.forEach((p) => {
-          breadcrumbItems.push({
-            name: p.name,
-            url: getCanonicalUrl('genre', p.slug, effLang),
-          });
-        });
-      } catch (error) {
-        this.warnDegraded('parent breadcrumbs', 'genre', chosen.categoryId, error);
-      }
-
-      breadcrumbItems.push({ name: chosen.name, url: canonicalUrl });
-      const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
-      const collectionSchema = generateCollectionPageSchema(
-        'genre',
-        chosen.slug,
-        effLang,
-        chosen.name,
-        metaDescription || '',
-        [],
-      );
-
-      return {
-        meta: {
-          title: metaTitle,
-          description: metaDescription,
-          robots: robotsStatus,
-          canonicalUrl,
-        },
-        openGraph: {
-          title: ogTitle,
-          description: ogDescription,
-          type: 'website',
-          url: ogUrl,
-          image: ogImageUrl ? { url: ogImageUrl, alt: ogImageAlt } : undefined,
-        },
-        twitter: {
-          card: twitterCard,
-          site: seo?.twitterSite || undefined,
-          creator: seo?.twitterCreator || undefined,
-          image: ogImageUrl || undefined,
-        },
-        schema: {
-          '@context': 'https://schema.org',
-          '@graph': [
-            {
-              '@type': 'WebPage',
-              '@id': `${canonicalUrl}#webpage`,
-              url: canonicalUrl,
-              name: metaTitle,
-              description: metaDescription,
-              inLanguage: effLang.toLowerCase(),
-              isPartOf: { '@id': `${buildAbsoluteUrl('/')}#website` },
-              breadcrumb: { '@id': `${canonicalUrl}#breadcrumb` },
-            },
-            generateWebSiteSchema(effLang),
-            breadcrumbSchema,
-            collectionSchema,
-          ],
-        },
-        hreflangs: hreflangLinks,
-        breadcrumbPath: breadcrumbItems.slice(1, -1).map((item) => ({
-          name: item.name,
-          slug: item.url.split('/').pop() || '',
-        })),
-      };
     }
 
     if (t === 'tag') {

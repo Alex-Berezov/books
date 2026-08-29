@@ -24,6 +24,7 @@ interface PrismaStub {
     create: jest.Mock;
     update: jest.Mock;
     delete: jest.Mock;
+    deleteMany: jest.Mock;
   };
   bookVersion: {
     findUnique: jest.Mock;
@@ -33,6 +34,7 @@ interface PrismaStub {
     findFirst: jest.Mock;
     create: jest.Mock;
     delete: jest.Mock;
+    deleteMany: jest.Mock;
   };
   bookRating: {
     groupBy: jest.Mock;
@@ -57,9 +59,15 @@ const createPrismaStub = (): PrismaStub => ({
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
+    deleteMany: jest.fn(),
   },
   bookVersion: { findUnique: jest.fn(), findMany: jest.fn() },
-  bookCategory: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
+  bookCategory: {
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    delete: jest.fn(),
+    deleteMany: jest.fn(),
+  },
   bookRating: { groupBy: jest.fn() },
 });
 
@@ -212,16 +220,92 @@ describe('CategoryService', () => {
   /**
    * Обратная сторона: корневой термин ребра не пишет, блокировать нечего.
    * Безусловный вызов сериализовал бы массовое заведение терминов.
+   *
+   * ⚠️ Проверяется отсутствие **блокировки**, а не отсутствие транзакции.
+   * С `LEGACY-311` корневой термин тоже пишется транзакцией: проверка
+   * занятости слага и сама запись — это «проверил и записал», и на клиенте
+   * пула между ними помещается чужой `POST`. Прежнее утверждение
+   * `$transaction` не вызывался зеленело бы и на возврате дефекта.
    */
   it('создание без родителя блокировку не берёт (LEGACY-274)', async () => {
-    const created = jest.fn().mockResolvedValue({ id: 'C' });
-    prisma.category.create = created;
-    prisma.$transaction = jest.fn();
+    const order: string[] = [];
+    const tx = {
+      $queryRaw: jest.fn(() => {
+        order.push('lock');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findFirst: jest.fn(() => {
+          order.push('slug-check');
+          return Promise.resolve(null);
+        }),
+        create: jest.fn(() => {
+          order.push('write');
+          return Promise.resolve({ id: 'C' });
+        }),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
 
     await service.create({ type: 'genre', name: 'C', slug: 'c' } as never);
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(created).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['slug-check', 'write']);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 `LEGACY-311`. `update` отвергал занятый слаг, `create` — нет: `POST`
+   * с занятым слагом и свободным ключом проходил с 201 и заводил второй
+   * термин на тот же публичный адрес. Уникальности на `Category.slug` в схеме
+   * нет (`LEGACY-276`), поэтому база такую пару не отвергает — отвергать
+   * должен код, и на обоих путях записи.
+   */
+  it('создание с занятым слагом отвергается, а не заводит второй термин (LEGACY-311)', async () => {
+    const create = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'other' }),
+        create,
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await expect(
+      service.create({ type: 'genre', name: 'C', slug: 'taken' } as never),
+    ).rejects.toThrow('Category with same slug already exists');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Вторая половина `LEGACY-311`: `P2002` сюда может прийти **только по ключу**
+   * — индекс `Category_slug_key` снесён миграцией
+   * `20250830151000_add_taxonomy_translations`. Прежний текст называл слаг,
+   * и оператор менял слаг, получая тот же 400 сколько угодно раз.
+   */
+  it('занятый ключ называется ключом, а не слагом (LEGACY-311)', async () => {
+    const conflict = Object.assign(new Error('unique'), {
+      code: 'P2002',
+      meta: { target: ['key'] },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockRejectedValue(conflict),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await expect(
+      service.create({ type: 'genre', name: 'C', slug: 'c', key: 'taken' } as never),
+    ).rejects.toThrow('Category with same key already exists');
   });
 
   /**
@@ -445,6 +529,152 @@ describe('CategoryService', () => {
     // иначе хлебные крошки рисуют категорию своим же родителем.
     expect(path.map((node) => node.id)).toEqual(['B']);
     expect(calls).toBeLessThanOrEqual(4);
+  });
+
+  /**
+   * 🔴 `LEGACY-303`. Второй край того же ребра, которое стережёт `LEGACY-275`.
+   * `PATCH /categories/P {"type":"category"}` на КОРНЕВОМ жанре с детьми:
+   * `effectiveParentId === null`, проверка родителя не запускается вовсе, тип
+   * записывался, ответ 200 — а в базе оставались рёбра `C(genre) → P(category)`.
+   *
+   * ⚠️ Термин здесь намеренно корневой. Спека на термине с родителем зеленеет
+   * и на дефекте: там 400 приходит от проверки верхнего края.
+   */
+  it('смена типа корневого термина с детьми чужого типа отвергается (LEGACY-303)', async () => {
+    const rows: Record<
+      string,
+      { id: string; type: string; slug: string; parentId: string | null }
+    > = {
+      P: { id: 'P', type: 'genre', slug: 'p', parentId: null },
+    };
+    prisma.category.findUnique.mockImplementation((args: { where: { id: string } }) =>
+      Promise.resolve(rows[args.where.id] ?? null),
+    );
+    // Ребёнок прежнего типа под этим термином.
+    prisma.category.findFirst.mockResolvedValue({ id: 'C', type: 'genre' });
+    prisma.category.update = jest.fn();
+
+    await expect(service.update('P', { type: 'category' as never })).rejects.toThrow(
+      'Child category type mismatch',
+    );
+    expect(prisma.category.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Обратная сторона: смена типа термина БЕЗ детей обязана проходить —
+   * иначе запрет накрыл бы и починку уже испорченного дерева (`LEGACY-263`).
+   */
+  it('смена типа корневого термина без детей проходит (LEGACY-303)', async () => {
+    const rows: Record<
+      string,
+      { id: string; type: string; slug: string; parentId: string | null }
+    > = {
+      P: { id: 'P', type: 'genre', slug: 'p', parentId: null },
+    };
+    prisma.category.findUnique.mockImplementation((args: { where: { id: string } }) =>
+      Promise.resolve(rows[args.where.id] ?? null),
+    );
+    prisma.category.findFirst.mockResolvedValue(null);
+    prisma.category.update = jest.fn().mockResolvedValue({ id: 'P', type: 'category' });
+
+    await expect(service.update('P', { type: 'category' as never })).resolves.toEqual({
+      id: 'P',
+      type: 'category',
+    });
+    expect(prisma.category.update).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 `LEGACY-306`. Три записи шли независимыми `await` на клиенте пула.
+   * Обрыв между второй и третьей оставлял термин без переводов и без связей
+   * с книгами: он не показывался ни на одной языковой версии сайта, но
+   * продолжал занимать `slug` и `key` и попадать в дерево.
+   *
+   * ⚠️ Проверяется КЛИЕНТ каждой записи, а не факт вызова: три `await`
+   * на пуле дают ровно тот же список вызовов, что и три внутри транзакции.
+   */
+  it('удаление пишет только клиентом транзакции и берёт блокировку первой (LEGACY-306)', async () => {
+    const order: string[] = [];
+    const tx = {
+      $queryRaw: jest.fn(() => {
+        order.push('lock');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findUnique: jest.fn(() => {
+          order.push('tx.read');
+          return Promise.resolve({ id: 'A' });
+        }),
+        count: jest.fn(() => {
+          order.push('tx.count');
+          return Promise.resolve(0);
+        }),
+        delete: jest.fn(() => {
+          order.push('tx.category.delete');
+          return Promise.resolve({ id: 'A' });
+        }),
+      },
+      bookCategory: {
+        deleteMany: jest.fn(() => {
+          order.push('tx.bookCategory.deleteMany');
+          return Promise.resolve({ count: 0 });
+        }),
+      },
+      categoryTranslation: {
+        deleteMany: jest.fn(() => {
+          order.push('tx.categoryTranslation.deleteMany');
+          return Promise.resolve({ count: 0 });
+        }),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+    // Записи на пуле обязаны отсутствовать: если хоть одна осталась там,
+    // список ниже её не досчитается.
+    prisma.bookCategory.deleteMany = jest.fn();
+    prisma.categoryTranslation.deleteMany = jest.fn();
+    prisma.category.delete = jest.fn();
+
+    await service.remove('A');
+
+    expect(order).toEqual([
+      'lock',
+      'tx.read',
+      'tx.count',
+      'tx.bookCategory.deleteMany',
+      'tx.categoryTranslation.deleteMany',
+      'tx.category.delete',
+    ]);
+    expect(prisma.bookCategory.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.categoryTranslation.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.category.delete).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Вторая половина `LEGACY-306`: отказ на середине не оставляет термин
+   * половинчатым. Проверяется тем, что до третьей записи дело не доходит
+   * вовсе — откат самой транзакции обеспечивает база, и мок его не показывает.
+   */
+  it('отказ на удалении переводов не доводит дело до удаления термина (LEGACY-306)', async () => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'A' }),
+        count: jest.fn().mockResolvedValue(0),
+        delete: jest.fn(),
+      },
+      bookCategory: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      categoryTranslation: {
+        deleteMany: jest.fn().mockRejectedValue(new Error('db is down')),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await expect(service.remove('A')).rejects.toThrow('db is down');
+    expect(tx.category.delete).not.toHaveBeenCalled();
   });
 
   it('remove rejects when category has children', async () => {

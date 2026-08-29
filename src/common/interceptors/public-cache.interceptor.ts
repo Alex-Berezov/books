@@ -1,8 +1,9 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { Observable } from 'rxjs';
+import { map, type Observable } from 'rxjs';
 import type { Response } from 'express';
 import { NO_PUBLIC_CACHE } from '../decorators/no-public-cache.decorator';
+import { takeDegradedMark } from './degraded-response';
 
 /**
  * `Cache-Control: public` разрешает хранить и раздавать ответ **любому** общему
@@ -43,6 +44,34 @@ export class PublicCacheInterceptor implements NestInterceptor {
     // пакет `vary`, который и так стоит в зависимостях.
     if (isPersonal) response.vary('Authorization');
 
-    return next.handle();
+    return next.handle().pipe(
+      map((value: unknown) => {
+        // 🔴 `LEGACY-305`. Ответ, собранный по неполным данным, и ответ,
+        // собранный по полным, — разные ответы, и кэшировать их одинаково
+        // нельзя. Признак деградации рождается в сервисе, то есть уже после
+        // того, как заголовок поставлен, — поэтому он ставится дважды:
+        // штатное значение до обработчика, короткое поверх него здесь.
+        // Express отдаёт заголовки после завершения конвейера, так что
+        // перезапись успевает.
+        //
+        // `s-maxage=10`, а не `no-store`: деградация случается ровно в момент
+        // отказа базы, и `no-store` снял бы щит общего кэша именно тогда,
+        // когда база уже не тянет. Десять секунд обеднённой разметки против
+        // нынешних 300 + 3600 секунд `stale-while-revalidate` — и есть
+        // содержание записи. Решение арбитра от 29.08.2026.
+        //
+        // Персональный ответ короткий кэш не получает: `private, no-store`
+        // строже, и понижать его нельзя.
+        // ⚠️ Метка снимается **всегда**, а не только на публичном маршруте:
+        // она служебная и дальше интерцептора жить не должна. Персональный
+        // ответ при этом короткий публичный кэш не получает — `private,
+        // no-store` строже, и понижать его нельзя.
+        const wasDegraded = takeDegradedMark(value);
+        if (wasDegraded && !isPersonal) {
+          response.setHeader('Cache-Control', 'public, s-maxage=10');
+        }
+        return value;
+      }),
+    );
   }
 }

@@ -3,6 +3,7 @@ import { SeoService } from './seo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoryTreeService, CATEGORY_TREE_MAX_DEPTH } from '../category/category-tree.service';
 import { Language } from '@prisma/client';
+import { DEGRADED_RESPONSE } from '../../common/interceptors/degraded-response';
 
 type PrismaStub = {
   book: { findUnique: jest.Mock };
@@ -10,7 +11,7 @@ type PrismaStub = {
   page: { findFirst: jest.Mock; findMany: jest.Mock; findUnique: jest.Mock };
   seo: { findUnique: jest.Mock };
   bookCategory: { findMany: jest.Mock };
-  bookRating: { findMany: jest.Mock };
+  bookRating: { findMany: jest.Mock; aggregate: jest.Mock };
   categoryTranslation: { findUnique: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock };
   category: { findUnique: jest.Mock };
   tagTranslation: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -23,7 +24,12 @@ const createPrismaStub = (): PrismaStub => ({
   page: { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
   seo: { findUnique: jest.fn() },
   bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
-  bookRating: { findMany: jest.fn().mockResolvedValue([]) },
+  bookRating: {
+    findMany: jest.fn().mockResolvedValue([]),
+    // 🔴 `LEGACY-307`. Среднее и количество считает база: `findMany` без
+    // потолка тянул в память все строки рейтинга книги ради двух чисел.
+    aggregate: jest.fn().mockResolvedValue({ _avg: { score: null }, _count: { _all: 0 } }),
+  },
   categoryTranslation: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
   category: { findUnique: jest.fn() },
   tagTranslation: { findUnique: jest.fn(), findMany: jest.fn() },
@@ -254,6 +260,85 @@ describe('SeoService (unit)', () => {
       });
     });
   });
+
+  /**
+   * 🔴 `LEGACY-309`. Ветки `category`, `collection` и `genre` были копиями друг
+   * друга: 34 строки различий из 130, остальное совпадало дословно, а имя типа
+   * писалось руками отдельным литералом в каждой копии. Правка любого правила
+   * публичной выдачи таксономии проходила мимо двух копий из трёх, и ни
+   * компилятор, ни линт этого не видели — литерал брался из допустимого union.
+   * Отсюда `LEGACY-273` (в ветку `genre` вписали `'collection'`) и три из семи
+   * блоков `LEGACY-277`.
+   *
+   * ⚠️ Спека на один тип таксономии тут бесполезна по определению: она зеленела
+   * и на разошедшихся копиях. Проверять надо все три одним набором ожиданий.
+   */
+  describe.each([
+    ['category', 'Category translation not found', [] as Array<{ name: string; slug: string }>],
+    [
+      'collection',
+      'Collection not found',
+      [{ name: 'Collections', slug: 'collections' }] as Array<{ name: string; slug: string }>,
+    ],
+    ['genre', 'Genre translation not found', [] as Array<{ name: string; slug: string }>],
+  ] as const)(
+    'resolvePublic(%s) — три типа таксономии идут одним кодом (LEGACY-309)',
+    (termType, notFoundText, expectedPath) => {
+      const categoryId = 'tax-uuid-1';
+      const translation = {
+        id: 'tt-en',
+        categoryId,
+        language: Language.en,
+        slug: 'the-term',
+        name: 'The Term',
+        description: null,
+        seoId: null,
+        autoIndexable: true,
+        category: {
+          id: categoryId,
+          name: 'The Term',
+          slug: 'the-term',
+          type: termType,
+          parentId: null,
+          indexable: true,
+        },
+      };
+
+      it('канонический адрес строится из типа страницы, а не из литерала соседней ветки', async () => {
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([translation])
+          .mockResolvedValueOnce([translation]);
+
+        const bundle = await service.resolvePublic(termType, 'the-term', {
+          pathLang: Language.en,
+        });
+
+        expect((bundle.meta as { canonicalUrl: string }).canonicalUrl).toContain(
+          `/en/${termType}/the-term`,
+        );
+      });
+
+      it('текст 404 называет запрошенный тип термина', async () => {
+        prisma.categoryTranslation.findMany.mockResolvedValueOnce([]);
+
+        await expect(
+          service.resolvePublic(termType, 'missing', { pathLang: Language.en }),
+        ).rejects.toThrow(notFoundText);
+      });
+
+      it('крошки начинаются с главной, а раздел стоит только у коллекций', async () => {
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([translation])
+          .mockResolvedValueOnce([translation]);
+
+        const bundle = await service.resolvePublic(termType, 'the-term', {
+          pathLang: Language.en,
+        });
+
+        expect(bundle.breadcrumbPath).toEqual(expectedPath);
+      });
+    },
+  );
 
   describe('resolvePublic(category) — hreflangs from all translations', () => {
     const categoryId = 'cat-uuid-1';
@@ -630,6 +715,73 @@ describe('SeoService (unit)', () => {
         expect(warnedParts()[0]).toContain('db is down');
       });
 
+      /**
+       * 🔴 `LEGACY-305`. Лог показывал ОДИН случай деградации, а страниц
+       * с обеднённой разметкой поисковик видел столько, сколько их запросят
+       * за час: ответ уезжал на общий кэш с `s-maxage=300` и
+       * `stale-while-revalidate=3600`. Метку снимает `PublicCacheInterceptor`
+       * и переводит такой ответ на короткий кэш.
+       *
+       * ⚠️ Метка — символ, поэтому тело ответа не меняется ни на байт:
+       * это проверяется здесь же, иначе правка тихо стала бы сменой контракта.
+       */
+      it('деградировавший ответ помечен для кэша, а тело не меняется (LEGACY-305)', async () => {
+        prisma.bookCategory.findMany.mockRejectedValueOnce(new Error('db is down'));
+
+        const bundle = await resolveBook();
+
+        expect((bundle as unknown as Record<symbol, unknown>)[DEGRADED_RESPONSE]).toBe(true);
+        const serialised = JSON.parse(JSON.stringify(bundle)) as Record<string, unknown>;
+        expect(Object.keys(serialised)).not.toContain('degraded');
+      });
+
+      it('здоровый ответ метки не несёт (LEGACY-305)', async () => {
+        const bundle = await resolveBook();
+
+        expect((bundle as unknown as Record<symbol, unknown>)[DEGRADED_RESPONSE]).toBeUndefined();
+      });
+
+      /**
+       * 🔴 `LEGACY-307`. Среднее и количество считает база одним `aggregate`,
+       * а не приложение по всем строкам рейтинга: прежний `findMany` без
+       * потолка тянул в память столько строк, сколько у книги оценок.
+       *
+       * ⚠️ Проверяется и форма ответа: `AggregateRating` попадает в схему
+       * только от трёх оценок (`generateBookSchema`), и подмена агрегата
+       * не должна её сдвинуть.
+       */
+      it('рейтинг считается агрегатом, а не выборкой всех оценок (LEGACY-307)', async () => {
+        prisma.bookRating.aggregate.mockResolvedValueOnce({
+          _avg: { score: 4.333333 },
+          _count: { _all: 9 },
+        });
+
+        const bundle = await resolveBook();
+
+        expect(prisma.bookRating.findMany).not.toHaveBeenCalled();
+        expect(prisma.bookRating.aggregate).toHaveBeenCalledWith(
+          expect.objectContaining({ _avg: { score: true }, _count: { _all: true } }),
+        );
+        const graph = (bundle.schema as { '@graph': Array<Record<string, unknown>> })['@graph'];
+        const book = graph.find((node) => node.aggregateRating) as
+          | { aggregateRating: Record<string, string> }
+          | undefined;
+        expect(book?.aggregateRating).toEqual({
+          '@type': 'AggregateRating',
+          ratingValue: '4.33',
+          ratingCount: '9',
+          bestRating: '5',
+          worstRating: '1',
+        });
+      });
+
+      it('книга без оценок отдаётся без AggregateRating (LEGACY-307)', async () => {
+        const bundle = await resolveBook();
+
+        const graph = (bundle.schema as { '@graph': Array<Record<string, unknown>> })['@graph'];
+        expect(graph.some((node) => node.aggregateRating)).toBe(false);
+      });
+
       it('отказ на списке жанров: ответ 200, в логе — след', async () => {
         prisma.bookCategory.findMany
           .mockResolvedValueOnce([])
@@ -642,7 +794,7 @@ describe('SeoService (unit)', () => {
       });
 
       it('отказ на рейтинге: ответ 200, в логе — след', async () => {
-        prisma.bookRating.findMany.mockRejectedValueOnce(new Error('db is down'));
+        prisma.bookRating.aggregate.mockRejectedValueOnce(new Error('db is down'));
 
         const bundle = await resolveBook();
 

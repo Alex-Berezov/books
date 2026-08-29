@@ -2,6 +2,7 @@ import { Reflector } from '@nestjs/core';
 import { of } from 'rxjs';
 import vary from 'vary';
 import { PublicCacheInterceptor } from './public-cache.interceptor';
+import { DEGRADED_RESPONSE, markDegraded } from './degraded-response';
 import type { CallHandler, ExecutionContext } from '@nestjs/common';
 
 type HeaderValue = string | string[] | number;
@@ -92,5 +93,80 @@ describe('PublicCacheInterceptor', () => {
       expect(response.vary).not.toHaveBeenCalled();
       expect(response.headers['Vary']).toBe('Origin');
     });
+  });
+});
+
+/**
+ * 🔴 `LEGACY-305`. Ответ, собранный по неполным данным, и ответ, собранный по
+ * полным, — разные ответы, и кэшировать их одинаково нельзя. Признак деградации
+ * рождается в сервисе, то есть уже после того, как заголовок поставлен.
+ *
+ * ⚠️ Здесь обязательна ПОДПИСКА на результат: `map` без неё не исполняется
+ * вовсе, и спека, только вызывающая `intercept`, зеленеет на любом дефекте.
+ */
+describe('PublicCacheInterceptor — деградировавший ответ', () => {
+  const runWithValue = (isPersonal: boolean, response: ResponseStub, value: unknown) => {
+    const reflector = new Reflector();
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(isPersonal);
+    const handler: CallHandler = { handle: () => of(value) };
+    let emitted: unknown;
+    new PublicCacheInterceptor(reflector)
+      .intercept(createContext(response), handler)
+      .subscribe((v) => {
+        emitted = v;
+      });
+    return emitted;
+  };
+
+  it('помеченный ответ получает короткий кэш вместо пятиминутного', () => {
+    const response = createResponse();
+
+    runWithValue(false, response, markDegraded({ meta: { title: 'x' } }));
+
+    expect(response.headers['Cache-Control']).toBe('public, s-maxage=10');
+  });
+
+  it('обычный ответ остаётся на штатном кэше', () => {
+    const response = createResponse();
+
+    runWithValue(false, response, { meta: { title: 'x' } });
+
+    expect(response.headers['Cache-Control']).toBe(
+      'public, s-maxage=300, stale-while-revalidate=3600',
+    );
+  });
+
+  /**
+   * Метка служебная и дальше интерцептора не живёт: она не должна ни попасть
+   * в тело ответа, ни пережить его.
+   */
+  it('снимает метку с отданного значения', () => {
+    const response = createResponse();
+    const bundle = markDegraded({ meta: { title: 'x' } });
+
+    const emitted = runWithValue(false, response, bundle) as Record<symbol, unknown>;
+
+    expect(emitted[DEGRADED_RESPONSE]).toBeUndefined();
+    // Символ не сериализуется вовсе — тело ответа не меняется ни на байт.
+    expect(JSON.parse(JSON.stringify(emitted))).toEqual({ meta: { title: 'x' } });
+  });
+
+  /**
+   * `private, no-store` строже короткого публичного кэша, и понижать его
+   * деградацией нельзя: маршрут помечен персональным по другой причине.
+   */
+  it('персональный ответ короткий публичный кэш не получает, но метку теряет', () => {
+    const response = createResponse();
+
+    const emitted = runWithValue(true, response, markDegraded({ meta: { title: 'x' } })) as Record<
+      symbol,
+      unknown
+    >;
+
+    expect(response.headers['Cache-Control']).toBe('private, no-store');
+    // ⚠️ Метка снимается и здесь: она служебная, и объект с ней уехал бы
+    // дальше по конвейеру — в логи и в чужие интерцепторы, — а снимать её
+    // было бы уже некому.
+    expect(emitted[DEGRADED_RESPONSE]).toBeUndefined();
   });
 });

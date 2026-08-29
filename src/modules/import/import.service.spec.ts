@@ -29,6 +29,10 @@ type WriteLog = string[];
 
 interface FakeModel {
   findUnique: jest.Mock;
+  // 🔴 `LEGACY-303`. Проверка второго края ребра спрашивает базу об одном
+  // несовпадающем ребёнке; без `findFirst` в поддельном клиенте спека падает
+  // не на своём предмете.
+  findFirst: jest.Mock;
   create: jest.Mock;
   update: jest.Mock;
 }
@@ -53,6 +57,7 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
 
   const model = (name: string, created: unknown): FakeModel => ({
     findUnique: note(`${name}.findUnique`, null),
+    findFirst: note(`${name}.findFirst`, null),
     create: note(`${name}.create`, created),
     update: note(`${name}.update`, created),
   });
@@ -212,13 +217,16 @@ describe('ImportService — создание термина и переводо�
       log.push('root.category.findUnique');
       return Promise.resolve(args?.where?.key === 'classic-literature' ? { id: 'parent-1' } : null);
     });
+    // ⚠️ `LEGACY-312`. Развилка «создание или обновление» решается чтением
+    // ВНУТРИ транзакции, поэтому «термина ещё нет» задаётся здесь, а не на
+    // клиенте пула. Мок, отдающий строку по ключу термина, уводил бы импорт
+    // в ветку обновления, и эта спека проверяла бы не тот путь.
     tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
       log.push('tx.category.findUnique');
       const where = args?.where ?? {};
       if (where.key === 'classic-literature')
         return Promise.resolve({ id: 'parent-1', type: CategoryType.genre });
-      if (where.key === 'victorian-literature')
-        return Promise.resolve({ id: 'cat-1', type: CategoryType.genre });
+      if (where.key === 'victorian-literature') return Promise.resolve(null);
       // Подъём по предкам: у родителя своего родителя нет, цикла нет.
       if (where.id === 'parent-1') return Promise.resolve({ parentId: null });
       return Promise.resolve(null);
@@ -341,6 +349,10 @@ describe('ImportService — обновление термина одной тр�
    */
   const existingCategory = {
     id: 'cat-1',
+    // ⚠️ `type` и `parentId` обязательны: по ним считается `typeChanging`
+    // (`LEGACY-308`) и решается, надо ли проверять фактического родителя.
+    type: CategoryType.genre,
+    parentId: null,
     indexable: true,
     isVisible: true,
     sortOrder: 0,
@@ -375,8 +387,9 @@ describe('ImportService — обновление термина одной тр�
       const where = args?.where ?? {};
       if (where.key === 'classic-literature')
         return Promise.resolve({ id: 'parent-1', type: CategoryType.genre });
-      if (where.key === 'victorian-literature')
-        return Promise.resolve({ id: 'cat-1', type: CategoryType.genre });
+      // 🔴 `LEGACY-304`. Дефолты и список переводов берутся из строки,
+      // прочитанной внутри транзакции. Мок пула эту строку больше не отдаёт.
+      if (where.key === 'victorian-literature') return Promise.resolve(existingCategory);
       if (where.id === 'parent-1') return Promise.resolve({ parentId: null });
       return Promise.resolve(null);
     });
@@ -409,6 +422,13 @@ describe('ImportService — обновление термина одной тр�
     root.category.findUnique.mockImplementation(() => {
       log.push('root.category.findUnique');
       return Promise.resolve(existingCategory);
+    });
+    // 🔴 `LEGACY-304`. Ветку выбирает чтение ВНУТРИ транзакции. Без этого мока
+    // тест уходил бы в ветку создания и дублировал соседний кейс, а регрессия
+    // именно в ветке обновления оставалась бы непокрытой.
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve(args?.where?.key === 'victorian-literature' ? existingCategory : null);
     });
     tx.categoryTranslation.create.mockImplementation(() => {
       log.push('tx.categoryTranslation.create');
@@ -665,9 +685,19 @@ describe('ImportService — родитель из базы проверяетс�
       log.push('tx.category.findUnique');
       const where = args?.where ?? {};
       if (where.key === 'classic-literature')
-        return Promise.resolve({ id: 'cat-classic', type: CategoryType.genre });
+        return Promise.resolve({
+          id: 'cat-classic',
+          type: CategoryType.genre,
+          parentId: null,
+          translations: [],
+        });
       if (where.key === 'victorian-literature')
-        return Promise.resolve({ id: 'cat-victorian', type: parentType });
+        return Promise.resolve({
+          id: 'cat-victorian',
+          type: parentType,
+          parentId: null,
+          translations: [],
+        });
       if (where.id === 'cat-victorian') return Promise.resolve({ parentId: parentParentId });
       if (where.id === 'cat-classic') return Promise.resolve({ parentId: null });
       return Promise.resolve(null);
@@ -768,5 +798,295 @@ describe('ImportService — родитель из базы проверяетс�
       where: { key: 'classic-literature' },
       data: { parentId: 'cat-victorian' },
     });
+  });
+});
+
+/**
+ * Развилка «создание или обновление» и всё, что из неё берётся, принимаются
+ * ВНУТРИ транзакции, под уже взятой блокировкой (`LEGACY-304`, `LEGACY-312`).
+ *
+ * ⚠️ Строка на пуле и строка в транзакции здесь намеренно РАЗНЫЕ. Спека, где
+ * они совпадают, зеленеет и на дефекте: пока обе отдают одно и то же, нельзя
+ * сказать, какую из них прочитал код.
+ */
+describe('ImportService — решение о записи принимается под блокировкой', () => {
+  const existingInTx = {
+    id: 'cat-1',
+    type: CategoryType.genre,
+    parentId: null,
+    indexable: true,
+    isVisible: true,
+    sortOrder: 42,
+    translations: [],
+  };
+
+  it('термин, появившийся между чтением на пуле и транзакцией, обновляется, а не заводится заново (LEGACY-312)', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // Пул: термина нет — ровно то состояние, из которого прежний код уходил
+    // в ветку создания и получал `P2002` по ключу.
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(null);
+    });
+    // Транзакция: термин уже есть — его завёл встречный импорт.
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve(args?.where?.key === 'victorian-literature' ? existingInTx : null);
+    });
+
+    const result = await service.importCategories([categoryDto()]);
+
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+    expect(tx.category.create).not.toHaveBeenCalled();
+    expect(tx.category.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('дефолты берутся из строки транзакции, а не из чтения на пуле (LEGACY-304)', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // На пуле лежит устаревший `sortOrder`: по нему запись затёрла бы чужую правку.
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve({ ...existingInTx, sortOrder: 0 });
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve(args?.where?.key === 'victorian-literature' ? existingInTx : null);
+    });
+
+    await service.importCategories([categoryDto()]);
+
+    expect(tx.category.update).toHaveBeenCalledTimes(1);
+    expect(tx.category.update).toHaveBeenCalledWith({
+      where: { key: 'victorian-literature' },
+      data: expect.objectContaining({ sortOrder: 42 }),
+    });
+  });
+});
+
+/**
+ * 🔴 `LEGACY-308`. Тип пишется безусловно, а проверка родителя стояла под
+ * `if (dto.parentKey !== undefined)`: условие зависело от наличия поля в файле
+ * импорта, а не от того, меняется ли что-то из пары «родитель, тип».
+ *
+ * 🔴 `LEGACY-303`, тот же путь: у термина, сменившего тип, остаются дети
+ * прежнего типа.
+ */
+describe('ImportService — смена типа проверяет оба края ребра', () => {
+  const typedDto = (): ImportCategoryDto =>
+    ({
+      key: 'victorian-literature',
+      // Тип в файле сменился, `parentKey` не назван вовсе.
+      type: CategoryType.collection,
+      translations: {
+        [Language.en]: { name: 'Victorian Literature', slug: 'victorian-literature' },
+      },
+    }) as ImportCategoryDto;
+
+  const existingUnderParent = {
+    id: 'cat-1',
+    type: CategoryType.genre,
+    parentId: 'cat-parent',
+    indexable: true,
+    isVisible: true,
+    sortOrder: 0,
+    translations: [],
+  };
+
+  it('отказывает, когда сменённый тип не совпадает с типом фактического родителя (LEGACY-308)', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(existingUnderParent);
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
+      log.push('tx.category.findUnique');
+      const where = args?.where ?? {};
+      if (where.key === 'victorian-literature') return Promise.resolve(existingUnderParent);
+      // Родитель остался жанром, а термин стал коллекцией.
+      if (where.id === 'cat-parent')
+        return Promise.resolve({ id: 'cat-parent', type: CategoryType.genre });
+      return Promise.resolve(null);
+    });
+
+    const result = await service.importCategories([typedDto()]);
+
+    expect(result.updated).toBe(0);
+    expect(result.errors).toEqual([
+      {
+        key: 'victorian-literature',
+        message: 'Parent category type mismatch: parent and child must have the same type',
+      },
+    ]);
+  });
+
+  it('отказывает, когда у сменившего тип термина остаются дети прежнего типа (LEGACY-303)', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    const rootTerm = { ...existingUnderParent, parentId: null };
+    root.category.findUnique.mockImplementation(() => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(rootTerm);
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.findUnique');
+      return Promise.resolve(args?.where?.key === 'victorian-literature' ? rootTerm : null);
+    });
+    tx.category.findFirst.mockResolvedValue({ id: 'child-1', type: CategoryType.genre });
+
+    const result = await service.importCategories([typedDto()]);
+
+    expect(result.updated).toBe(0);
+    expect(result.errors[0]?.key).toBe('victorian-literature');
+    expect(result.errors[0]?.message).toContain('Child category type mismatch');
+  });
+});
+
+/**
+ * 🔴 Регрессия, внесённая проверками обоих краёв ребра, и её починка.
+ *
+ * Пока край «вниз» сверялся только с базой, файл, переводящий поддерево
+ * в другой тип, не проходил ни в каком порядке: родитель отвергался по
+ * ребёнку прежнего типа, а ребёнок — по родителю, чья запись только что
+ * откатилась. До правки `LEGACY-303` тот же файл давал `updated: 2`.
+ *
+ * Решение арбитра от 29.08.2026: край «вниз» сверяется с конечным состоянием
+ * партии — ребёнок, объявленный в этом же файле с тем же новым типом,
+ * разнотипным ребром не станет.
+ *
+ * ⚠️ Проверять надо оба термина партии, а не только родителя: спека
+ * на одном из них зеленеет и на дефекте.
+ */
+describe('ImportService — перетипизация поддерева одним файлом', () => {
+  const subtreeFile = (): ImportCategoryDto[] =>
+    [
+      {
+        key: 'parent-key',
+        type: CategoryType.collection,
+        translations: { [Language.en]: { name: 'Parent', slug: 'parent' } },
+      },
+      {
+        key: 'child-key',
+        type: CategoryType.collection,
+        parentKey: 'parent-key',
+        translations: { [Language.en]: { name: 'Child', slug: 'child' } },
+      },
+    ] as ImportCategoryDto[];
+
+  it('родитель и ребёнок меняют тип вместе, а не отвергают друг друга', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    // В базе оба ещё жанры, ребёнок висит под родителем.
+    const rowsInDb: Record<string, unknown> = {
+      'parent-key': {
+        id: 'cat-parent',
+        key: 'parent-key',
+        type: CategoryType.genre,
+        parentId: null,
+        indexable: true,
+        isVisible: true,
+        sortOrder: 0,
+        translations: [],
+      },
+      'child-key': {
+        id: 'cat-child',
+        key: 'child-key',
+        type: CategoryType.genre,
+        parentId: 'cat-parent',
+        indexable: true,
+        isVisible: true,
+        sortOrder: 0,
+        translations: [],
+      },
+    };
+
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return Promise.resolve(rowsInDb[args?.where?.key ?? ''] ?? null);
+    });
+
+    // Родитель обрабатывается первым и к моменту записи ребёнка уже коллекция.
+    let parentType: CategoryType = CategoryType.genre;
+    tx.category.update.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.update');
+      if (args?.where?.key === 'parent-key') parentType = CategoryType.collection;
+      return Promise.resolve({ id: 'cat-1' });
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string; id?: string } }) => {
+      log.push('tx.category.findUnique');
+      const where = args?.where ?? {};
+      if (where.key === 'parent-key')
+        return Promise.resolve({ ...(rowsInDb['parent-key'] as object), type: parentType });
+      if (where.key === 'child-key') return Promise.resolve(rowsInDb['child-key']);
+      if (where.id === 'cat-parent') return Promise.resolve({ parentId: null });
+      return Promise.resolve(null);
+    });
+    // ⚠️ Ребёнок прежнего типа в базе ЕСТЬ. Мок обязан честно исполнять
+    // условие `key: { notIn }` — иначе спека зеленеет и на снятом исключении,
+    // то есть не стережёт ничего.
+    tx.category.findFirst.mockImplementation(
+      (args: { where?: { parentId?: string; key?: { notIn?: string[] } } }) => {
+        log.push('tx.category.findFirst');
+        const where = args?.where ?? {};
+        // Дети есть только у родителя; у самого ребёнка их нет.
+        if (where.parentId !== 'cat-parent') return Promise.resolve(null);
+        const excluded = where.key?.notIn ?? [];
+        if (excluded.includes('child-key')) return Promise.resolve(null);
+        return Promise.resolve({
+          id: 'cat-child',
+          key: 'child-key',
+          type: CategoryType.genre,
+        });
+      },
+    );
+
+    const result = await service.importCategories(subtreeFile());
+
+    expect(result.errors).toEqual([]);
+    expect(result.updated).toBe(2);
+  });
+
+  /**
+   * Обратная сторона: ребёнок, которого в файле НЕТ, по-прежнему отвергает
+   * смену типа родителя. Иначе исключение по партии превратилось бы
+   * в снятие проверки.
+   */
+  it('ребёнок вне файла по-прежнему отвергает смену типа родителя', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+
+    const parentRow = {
+      id: 'cat-parent',
+      key: 'parent-key',
+      type: CategoryType.genre,
+      parentId: null,
+      indexable: true,
+      isVisible: true,
+      sortOrder: 0,
+      translations: [],
+    };
+    root.category.findUnique.mockResolvedValue(parentRow);
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) =>
+      Promise.resolve(args?.where?.key === 'parent-key' ? parentRow : null),
+    );
+    tx.category.findFirst.mockResolvedValue({
+      id: 'cat-stranger',
+      key: 'stranger-key',
+      type: CategoryType.genre,
+    });
+
+    const result = await service.importCategories([subtreeFile()[0]]);
+
+    expect(result.updated).toBe(0);
+    expect(result.errors[0]?.message).toContain('Child category type mismatch');
+    // Термин в тексте назван ключом, а не UUID: в файле оператора UUID нет.
+    expect(result.errors[0]?.message).toContain('stranger-key');
   });
 });

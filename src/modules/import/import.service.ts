@@ -5,7 +5,7 @@ import { ImportCategoryDto } from './dto/import-category.dto';
 import { ImportTagDto } from './dto/import-tag.dto';
 import { SLUG_REGEX } from '../../shared/validators/slug';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { CategoryTreeService } from '../category/category-tree.service';
+import { CATEGORY_TREE_TX_OPTIONS, CategoryTreeService } from '../category/category-tree.service';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 
@@ -92,15 +92,28 @@ export class ImportService {
 
     for (const item of batch) {
       try {
-        const wasExisting = await this.prisma.category.findUnique({
-          where: { key: item.key },
-          select: { id: true },
-        });
-        await this.upsertCategory(item);
-        if (wasExisting) {
-          result.updated++;
-        } else {
+        // 🔴 `LEGACY-303` + `LEGACY-308`. Край ребра «вниз» сверяется с конечным
+        // состоянием партии, а не только с базой: ребёнок, которого этот же файл
+        // переводит в тот же новый тип, разнотипным ребром не станет. Без этого
+        // перетипизация поддерева одним файлом невозможна ни в каком порядке —
+        // родитель отвергается по ребёнку, ребёнок по родителю, чья запись
+        // только что откатилась. Решение арбитра от 29.08.2026.
+        //
+        // Список строится по `batch` — то есть уже после `orderByParent`
+        // и без элементов, отбракованных ранее.
+        const becomingKeys = batch
+          .filter((other) => other.type === item.type && other.key !== item.key)
+          .map((other) => other.key);
+
+        // 🔴 `LEGACY-312`. Счётчик считается по тому, что действительно сделала
+        // транзакция, а не по отдельному чтению на пуле: то чтение устаревало
+        // ровно так же, как и развилка, которую оно раньше выбирало, и на двух
+        // одновременных импортах одного ключа отчёт расходился с базой.
+        const { created } = await this.upsertCategory(item, becomingKeys);
+        if (created) {
           result.imported++;
+        } else {
+          result.updated++;
         }
       } catch (err: unknown) {
         const prismaErr = err as Prisma.PrismaClientKnownRequestError;
@@ -270,26 +283,30 @@ export class ImportService {
   }
 
   /**
-   * Границы интерактивной транзакции импорта.
+   * Завести или обновить термин таксономии.
    *
-   * Дефолт Prisma — `timeout: 5000`, `maxWait: 2000`. После `LEGACY-257` термин
-   * пишется одной транзакцией целиком, и у тега со сменившимся базовым слагом и
-   * пятью переводами в ней набирается под четыре десятка операторов: запись
-   * истории слагов — три запроса на язык. Пяти секунд такой цепочке не хватает,
-   * а `P2028` откатывает термин целиком. Числа те же, что у `PersonsService`
-   * и `ContributorsService`, где цепочка такой же длины.
+   * 🔴 `LEGACY-312`. Развилка «создание или обновление» принимается **внутри**
+   * транзакции, после блокировки. До 29.08.2026 она бралась из чтения на пуле:
+   * два одновременных импорта одного ключа оба читали «термина нет», оба уходили
+   * в ветку создания, и вторая запись падала `P2002` по `key` — в отчёте
+   * появлялась ошибка импорта там, где термин существовал и его надо было
+   * обновить.
    *
-   * ⚠️ Транзакция удерживает соединение всё это время, а пул у приложения один
-   * (`LEGACY-256`). Удлинять эти числа без нужды нельзя.
+   * 🔴 `LEGACY-304`. Из той же устаревшей строки брались дефолты `indexable`,
+   * `isVisible`, `sortOrder` и список переводов, по которому ветка обновления
+   * решает, создавать перевод или обновлять. Соседний запрос, сменивший
+   * `sortOrder` между чтением и транзакцией, затирался молча, а отчёт показывал
+   * `updated`, а не конфликт. Правка `LEGACY-274` сделала это в
+   * `CategoryService.update` и не тронула импорт — разошедшиеся половины одного
+   * правила расходятся дальше сами.
+   *
+   * Возвращает признак того, что термин был создан: счётчики отчёта считаются
+   * по нему, а не по второму чтению на пуле, которое устаревало ровно так же.
    */
-  private static readonly TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 };
-
-  private async upsertCategory(dto: ImportCategoryDto) {
-    const existing = await this.prisma.category.findUnique({
-      where: { key: dto.key },
-      include: { translations: true },
-    });
-
+  private async upsertCategory(
+    dto: ImportCategoryDto,
+    becomingKeys: string[] = [],
+  ): Promise<{ created: boolean }> {
     const commonData: Prisma.CategoryCreateInput = {
       type: dto.type,
       name: this.getFirstName(dto.translations),
@@ -300,95 +317,21 @@ export class ImportService {
       sortOrder: dto.sortOrder ?? 0,
     };
 
-    if (existing) {
-      // Обновление термина — тоже одна запись (`LEGACY-257`). До 19.08.2026 здесь
-      // шли независимые `await`, а каждый существующий перевод обновлялся своей
-      // транзакцией: отказ на третьем языке из пяти оставлял термин с частью
-      // новых переводов и уже переписанной базовой строкой, а счётчик `updated`
-      // при этом не увеличивался — отчёт расходился с базой молча.
-      await this.prisma.$transaction(async (tx) => {
-        // 🔴 `LEGACY-274`. Блокировка дерева категорий — **первым** оператором
-        // транзакции, до записи термина: иначе транзакция, уже державшая строку,
-        // встаёт во взаимную блокировку с админским PATCH. Что она стережёт —
-        // в `CategoryTreeService.lockTree`.
-        await this.categoryTree.lockTree(tx);
+    // Обе ветки — одна запись целиком (`LEGACY-131`, `LEGACY-257`), и обе
+    // начинаются с блокировки дерева первым оператором (`LEGACY-274`). Порядок
+    // держит `runInLockedTree`, а не комментарий у места вызова (`LEGACY-310`).
+    return this.categoryTree.runInLockedTree(async (tx) => {
+      const existing = await tx.category.findUnique({
+        where: { key: dto.key },
+        include: { translations: true },
+      });
 
-        await tx.category.update({
-          where: { key: dto.key },
-          data: {
-            type: dto.type,
-            name: this.getFirstName(dto.translations),
-            // 🔴 `slug` намеренно НЕ переписывается при повторном импорте.
-            //
-            // Базовый слаг берётся из `getFirstSlug` — то есть из ПЕРВОГО перевода по
-            // порядку ключей JSON. Значит тот же набор данных с переставленными языками
-            // переименовывал категорию сам по себе, а с историей слагов (LEGACY-062)
-            // это порождало бы ещё и 308 на переименования, которых никто не делал.
-            // Публичный адрес не может зависеть от форматирования файла импорта.
-            // При создании (ветка ниже) слаг по-прежнему выводится оттуда же — там
-            // выбирать не из чего, и прежнего адреса не существует.
-            indexable: dto.indexable ?? existing.indexable,
-            isVisible: dto.isVisible ?? existing.isVisible,
-            sortOrder: dto.sortOrder ?? existing.sortOrder,
-          },
-        });
-
-        if (dto.parentKey !== undefined) {
-          // `|| null`, а не `?? null`: пустая строка — это «родителя нет», как и
-          // в ветке создания (`if (dto.parentKey)`). С `??` она доезжала до
-          // поиска родителя по ключу `""` и после `LEGACY-258` валила весь
-          // термин — один и тот же файл проходил при первом импорте и падал при
-          // повторном.
-          await this.updateParentId(
-            tx,
-            { id: existing.id, type: dto.type },
-            dto.key,
-            dto.parentKey || null,
-          );
-        }
-
-        for (const [langCode, tr] of Object.entries(dto.translations)) {
-          const language = langCode as Language;
-          const existingTr = existing.translations.find((t) => t.language === language);
-          if (existingTr) {
-            // Импорт — такой же путь смены слага, как форма в админке, и до 09.08.2026
-            // он шёл в обход истории: класс считался закрытым для категорий и тегов,
-            // хотя закрыт был только через сервисы (LEGACY-062). Запись в историю
-            // идёт тем же `tx`, что и сама смена, — иначе редирект переживёт откат.
-            if (tr.slug && existingTr.slug !== tr.slug) {
-              await this.slugRedirects.record(
-                { entityType: 'category', language, oldSlug: existingTr.slug, newSlug: tr.slug },
-                tx,
-              );
-            }
-            await tx.categoryTranslation.update({
-              where: { categoryId_language: { categoryId: existing.id, language } },
-              data: {
-                name: tr.name,
-                slug: tr.slug,
-                ...this.buildCategoryTranslationData(tr),
-              },
-            });
-          } else {
-            await this.createCategoryTranslation(tx, existing.id, language, tr);
-          }
-        }
-      }, ImportService.TX_OPTIONS);
-    } else {
-      // Термин и его переводы — одна запись (`LEGACY-131`). Обрыв между ними
-      // оставляет категорию, которая занимает `slug` и `key` и попадает в дерево,
-      // но не показывается ни на одной языковой версии сайта: публичные маршруты
-      // отбирают по `CategoryTranslation` нужного языка.
-      await this.prisma.$transaction(async (tx) => {
-        // 🔴 `LEGACY-274`. Блокировка дерева категорий — **первым** оператором
-        // транзакции, до записи термина: иначе транзакция, уже державшая строку,
-        // встаёт во взаимную блокировку с админским PATCH. Что она стережёт —
-        // в `CategoryTreeService.lockTree`.
-        await this.categoryTree.lockTree(tx);
-
-        const created = await tx.category.create({
-          data: commonData,
-        });
+      if (!existing) {
+        // Термин и его переводы — одна запись (`LEGACY-131`). Обрыв между ними
+        // оставляет категорию, которая занимает `slug` и `key` и попадает в дерево,
+        // но не показывается ни на одной языковой версии сайта: публичные маршруты
+        // отбирают по `CategoryTranslation` нужного языка.
+        const created = await tx.category.create({ data: commonData });
 
         if (dto.parentKey) {
           await this.updateParentId(tx, { id: created.id, type: dto.type }, dto.key, dto.parentKey);
@@ -397,8 +340,128 @@ export class ImportService {
         for (const [langCode, tr] of Object.entries(dto.translations)) {
           await this.createCategoryTranslation(tx, created.id, langCode as Language, tr);
         }
-      }, ImportService.TX_OPTIONS);
+        return { created: true };
+      }
+
+      // 🔴 `LEGACY-308`. Тип пишется безусловно, а проверка родителя стояла под
+      // `if (dto.parentKey !== undefined)` — то есть зависела от наличия поля
+      // в файле импорта, а не от того, меняется ли что-то из пары «родитель,
+      // тип». Термин без `parentKey` в JSON, но со сменённым `type`, записывал
+      // тип и оставался ребром под родителем чужого типа: тот же дефект, что
+      // `LEGACY-275` закрыла в `CategoryService.update`, на втором пути записи.
+      //
+      // Блокировка на этом пути была и раньше, но она сериализует запись,
+      // а проверки, которую она стережёт, здесь не существовало: очередь
+      // к той же порче, а не защита от неё.
+      const typeChanging = existing.type !== dto.type;
+
+      await tx.category.update({
+        where: { key: dto.key },
+        data: {
+          type: dto.type,
+          name: this.getFirstName(dto.translations),
+          // 🔴 `slug` намеренно НЕ переписывается при повторном импорте.
+          //
+          // Базовый слаг берётся из `getFirstSlug` — то есть из ПЕРВОГО перевода по
+          // порядку ключей JSON. Значит тот же набор данных с переставленными языками
+          // переименовывал категорию сам по себе, а с историей слагов (LEGACY-062)
+          // это порождало бы ещё и 308 на переименования, которых никто не делал.
+          // Публичный адрес не может зависеть от форматирования файла импорта.
+          // При создании (ветка выше) слаг по-прежнему выводится оттуда же — там
+          // выбирать не из чего, и прежнего адреса не существует.
+          //
+          // Дефолты берутся из строки, перечитанной внутри транзакции
+          // (`LEGACY-304`), а не из чтения на пуле.
+          indexable: dto.indexable ?? existing.indexable,
+          isVisible: dto.isVisible ?? existing.isVisible,
+          sortOrder: dto.sortOrder ?? existing.sortOrder,
+        },
+      });
+
+      if (dto.parentKey !== undefined) {
+        // `|| null`, а не `?? null`: пустая строка — это «родителя нет», как и
+        // в ветке создания (`if (dto.parentKey)`). С `??` она доезжала до
+        // поиска родителя по ключу `""` и после `LEGACY-258` валила весь
+        // термин — один и тот же файл проходил при первом импорте и падал при
+        // повторном.
+        await this.updateParentId(
+          tx,
+          { id: existing.id, type: dto.type },
+          dto.key,
+          dto.parentKey || null,
+        );
+      } else if (typeChanging && existing.parentId) {
+        // Родитель в файле не назван, но тип меняется: проверять надо
+        // фактического родителя из базы, а не пропускать проверку вовсе.
+        await this.assertExistingParentAllowed(
+          tx,
+          { id: existing.id, type: dto.type },
+          existing.parentId,
+        );
+      }
+
+      // 🔴 `LEGACY-303`, второй край того же ребра: у термина, сменившего тип,
+      // остаются дети прежнего типа. Условие и текст отказа — те же, что
+      // на админском пути: правило живёт в `CategoryTreeService` в одном месте.
+      if (typeChanging) {
+        await this.categoryTree.assertChildTypesAllowed(
+          { id: existing.id, type: dto.type },
+          tx,
+          becomingKeys,
+        );
+      }
+
+      for (const [langCode, tr] of Object.entries(dto.translations)) {
+        const language = langCode as Language;
+        const existingTr = existing.translations.find((t) => t.language === language);
+        if (existingTr) {
+          // Импорт — такой же путь смены слага, как форма в админке, и до 09.08.2026
+          // он шёл в обход истории: класс считался закрытым для категорий и тегов,
+          // хотя закрыт был только через сервисы (LEGACY-062). Запись в историю
+          // идёт тем же `tx`, что и сама смена, — иначе редирект переживёт откат.
+          if (tr.slug && existingTr.slug !== tr.slug) {
+            await this.slugRedirects.record(
+              { entityType: 'category', language, oldSlug: existingTr.slug, newSlug: tr.slug },
+              tx,
+            );
+          }
+          await tx.categoryTranslation.update({
+            where: { categoryId_language: { categoryId: existing.id, language } },
+            data: {
+              name: tr.name,
+              slug: tr.slug,
+              ...this.buildCategoryTranslationData(tr),
+            },
+          });
+        } else {
+          await this.createCategoryTranslation(tx, existing.id, language, tr);
+        }
+      }
+
+      return { created: false };
+    });
+  }
+
+  /**
+   * Допустим ли фактический родитель термина после смены его типа.
+   *
+   * Отдельно от `updateParentId` потому, что писать здесь нечего: ребро уже
+   * стоит, меняется только тип ребёнка. Условие берётся из `CategoryTreeService`
+   * — того же, что стережёт админский путь (`LEGACY-264`, `LEGACY-005`).
+   */
+  private async assertExistingParentAllowed(
+    tx: Prisma.TransactionClient,
+    child: { id: string; type: CategoryType },
+    parentId: string,
+  ): Promise<void> {
+    const parent = await tx.category.findUnique({
+      where: { id: parentId },
+      select: { id: true, type: true },
+    });
+    if (!parent) {
+      throw new BadRequestException(`parent category "${parentId}" not found`);
     }
+    await this.categoryTree.assertParentAllowed(child, parent, tx);
   }
 
   private async createCategoryTranslation(
@@ -494,7 +557,7 @@ export class ImportService {
             await this.createTagTranslation(tx, existing.id, language, tr);
           }
         }
-      }, ImportService.TX_OPTIONS);
+      }, CATEGORY_TREE_TX_OPTIONS);
     } else {
       // Тот же рисунок, что у категорий, и та же причина (`LEGACY-131`): тег без
       // переводов занимает `slug` и `key`, но публичным маршрутам не виден.
@@ -513,7 +576,7 @@ export class ImportService {
         for (const [langCode, tr] of Object.entries(dto.translations)) {
           await this.createTagTranslation(tx, created.id, langCode as Language, tr);
         }
-      }, ImportService.TX_OPTIONS);
+      }, CATEGORY_TREE_TX_OPTIONS);
     }
   }
 

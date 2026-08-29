@@ -24,7 +24,6 @@ describe('Смена родителя категории под гонкой (LE
   let categories: CategoryService;
   let tree: CategoryTreeService;
 
-  const TX = { timeout: 30_000, maxWait: 15_000 } as const;
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   beforeAll(async () => {
@@ -67,18 +66,21 @@ describe('Смена родителя категории под гонкой (LE
     });
     let secondEntered = false;
 
-    const first = prisma.$transaction(async (tx) => {
-      await tree.lockTree(tx);
+    // 🔴 `LEGACY-310`. Транзакция открывается той же точкой входа, что и в продукте:
+    // `lockTree` приватен, и взять блокировку иначе, чем `runInLockedTree`, неоткуда.
+    // Прежде здесь стояла своя `$transaction` со своей копией границ — четвёртой
+    // в репозитории, и с другим `maxWait`, чем у всех писателей дерева.
+    const first = tree.runInLockedTree(async () => {
       await held;
-    }, TX);
+    });
 
     // Даём первой транзакции взять блокировку до старта второй.
     await sleep(500);
 
-    const second = prisma.$transaction(async (tx) => {
-      await tree.lockTree(tx);
+    const second = tree.runInLockedTree(() => {
       secondEntered = true;
-    }, TX);
+      return Promise.resolve();
+    });
 
     try {
       await sleep(1000);

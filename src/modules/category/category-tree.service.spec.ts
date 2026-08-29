@@ -1,5 +1,9 @@
 import { CategoryType } from '@prisma/client';
-import { CategoryTreeService, CATEGORY_TREE_MAX_DEPTH } from './category-tree.service';
+import {
+  CategoryTreeService,
+  CATEGORY_TREE_MAX_DEPTH,
+  CATEGORY_TREE_TX_OPTIONS,
+} from './category-tree.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 
 /**
@@ -207,5 +211,155 @@ describe('CategoryTreeService.assertParentAllowed', () => {
         { id: 'mid', type: CategoryType.genre },
       ),
     ).rejects.toThrow('Cycle detected in category hierarchy');
+  });
+});
+
+/**
+ * 🔴 `LEGACY-310`. До 29.08.2026 три условия блокировки из четырёх держались
+ * прозой в четырёх комментариях у мест вызова: транзакционный клиент, вызов
+ * первым оператором, `xact`-вариант, границы не меньше импортных. Типом было
+ * закрыто одно. Пятый писатель дерева получал верный тип и зелёную сборку
+ * при неверном порядке — и вставал во взаимную блокировку со встречным PATCH.
+ *
+ * ⚠️ Проверяется именно ПОРЯДОК, а не факт вызова: блокировка, взятая после
+ * первого чтения, зеленеет на `toHaveBeenCalled` и не стережёт ничего.
+ */
+describe('CategoryTreeService.runInLockedTree', () => {
+  const makePrisma = (order: string[]) => {
+    const tx = {
+      $queryRaw: jest.fn(() => {
+        order.push('lock');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findUnique: jest.fn(({ where }: { where: { id: string } }) => {
+          void where;
+          order.push('read');
+          return Promise.resolve(null);
+        }),
+      },
+    };
+    const $transaction = jest.fn((run: (client: unknown) => Promise<unknown>) => run(tx));
+    return { prisma: { $transaction } as unknown as PrismaService, tx, $transaction };
+  };
+
+  type LockedClient = ReturnType<typeof makePrisma>['tx'];
+
+  it('тело получает tx уже после блокировки', async () => {
+    const order: string[] = [];
+    const { prisma } = makePrisma(order);
+    const service = new CategoryTreeService(prisma);
+
+    await service.runInLockedTree(async (client) => {
+      await (client as unknown as LockedClient).category.findUnique({ where: { id: 'x' } });
+      return null;
+    });
+
+    expect(order).toEqual(['lock', 'read']);
+  });
+
+  it('границы транзакции берутся из общей константы, а не из вызывающего', async () => {
+    const { prisma, $transaction } = makePrisma([]);
+    const service = new CategoryTreeService(prisma);
+
+    await service.runInLockedTree(() => Promise.resolve(null));
+
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect($transaction).toHaveBeenCalledWith(expect.any(Function), CATEGORY_TREE_TX_OPTIONS);
+  });
+
+  it('runInTree даёт те же границы, но блокировку не берёт', async () => {
+    const order: string[] = [];
+    const { prisma, tx, $transaction } = makePrisma(order);
+    const service = new CategoryTreeService(prisma);
+
+    await service.runInTree(async (client) => {
+      await (client as unknown as LockedClient).category.findUnique({ where: { id: 'x' } });
+      return null;
+    });
+
+    expect(order).toEqual(['read']);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect($transaction).toHaveBeenCalledWith(expect.any(Function), CATEGORY_TREE_TX_OPTIONS);
+  });
+});
+
+/**
+ * 🔴 `LEGACY-303`. Второй край ребра. `assertParentAllowed` смотрит только
+ * вверх и только при непустом родителе, поэтому смена типа корневого термина
+ * с детьми проходила молча, а в базе оставались рёбра `C(genre) → P(category)`.
+ */
+describe('CategoryTreeService.assertChildTypesAllowed', () => {
+  const prismaWithChild = (child: { id: string; type: CategoryType } | null) => {
+    const findFirst = jest.fn().mockResolvedValue(child);
+    return {
+      prisma: { category: { findFirst } } as unknown as PrismaService,
+      findFirst,
+    };
+  };
+
+  it('отвергает смену типа, когда у термина есть ребёнок прежнего типа', async () => {
+    const { prisma } = prismaWithChild({ id: 'child-1', type: CategoryType.genre });
+    const service = new CategoryTreeService(prisma);
+
+    await expect(
+      service.assertChildTypesAllowed({ id: 'P', type: CategoryType.category }),
+    ).rejects.toThrow('Child category type mismatch');
+  });
+
+  it('пропускает термин без детей', async () => {
+    const { prisma } = prismaWithChild(null);
+    const service = new CategoryTreeService(prisma);
+
+    await expect(
+      service.assertChildTypesAllowed({ id: 'P', type: CategoryType.category }),
+    ).resolves.toBeUndefined();
+  });
+
+  /**
+   * ⚠️ Читается один несовпадающий ребёнок, а не все дети: список детей
+   * корневого термина ничем не ограничен, а ответ нужен двоичный.
+   * Спека на `findMany` зеленела бы и на безлимитной выборке.
+   */
+  it('спрашивает базу об одном несовпадающем ребёнке, а не тянет всех детей', async () => {
+    const { prisma, findFirst } = prismaWithChild(null);
+    const service = new CategoryTreeService(prisma);
+
+    await service.assertChildTypesAllowed({ id: 'P', type: CategoryType.category });
+
+    expect(findFirst).toHaveBeenCalledTimes(1);
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { parentId: 'P', type: { not: CategoryType.category } },
+      select: { id: true, key: true, type: true },
+    });
+  });
+
+  /**
+   * 🔴 Ребёнок, которого та же партия импорта переводит в тот же новый тип,
+   * разнотипным ребром не станет — и отвергать по нему нельзя: иначе
+   * перетипизация поддерева одним файлом невозможна ни в каком порядке.
+   * Решение арбитра от 29.08.2026.
+   *
+   * ⚠️ Админский `PATCH` зовёт метод без третьего аргумента, и для него
+   * запрос обязан остаться прежним — это проверяет кейс выше.
+   */
+  it('исключает детей, которых та же партия переводит в новый тип', async () => {
+    const { prisma, findFirst } = prismaWithChild(null);
+    const service = new CategoryTreeService(prisma);
+
+    await service.assertChildTypesAllowed({ id: 'P', type: CategoryType.category }, prisma, [
+      'child-key',
+    ]);
+
+    expect(findFirst).toHaveBeenCalledTimes(1);
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        parentId: 'P',
+        type: { not: CategoryType.category },
+        key: { notIn: ['child-key'] },
+      },
+      select: { id: true, key: true, type: true },
+    });
   });
 });
