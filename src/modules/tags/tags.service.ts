@@ -10,6 +10,7 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
+import { PUBLIC_TAG_BOOKS_MAX_LIMIT } from './tag-books-listing.constants';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 
@@ -311,6 +312,17 @@ export class TagsService {
       tagId = found.id;
       baseTag = found;
     }
+    // Второй рубеж после `PublicTagBooksQueryDto` (`LEGACY-199`), по образцу
+    // `PUBLIC_AUTHORS_MAX_LIMIT`: DTO стережёт только вход через контроллер, а метод
+    // публичный, и второй его зов - из кода, из админского пути, из копии соседнего
+    // маршрута - ушёл бы в `skip`/`take` с чем угодно. Значения по умолчанию
+    // в сигнатуре от этого не спасают: они срабатывают только на `undefined`.
+    const effectiveLimit = Math.min(
+      Math.max(Math.trunc(limit) || 1, 1),
+      PUBLIC_TAG_BOOKS_MAX_LIMIT,
+    );
+    const effectivePage = Math.max(Math.trunc(page) || 1, 1);
+
     const where = {
       status: 'published' as const,
       language: pathLang,
@@ -320,8 +332,8 @@ export class TagsService {
       this.prisma.bookVersion.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
+        skip: (effectivePage - 1) * effectiveLimit,
+        take: effectiveLimit,
         select: {
           ...PUBLIC_BOOK_VERSION_SELECT,
           seo: { select: { metaTitle: true, metaDescription: true } },
@@ -359,7 +371,15 @@ export class TagsService {
       },
       seo: trans?.seo ?? null,
       data,
-      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      // `meta` собирается из **применённых** значений, а не из запрошенных: потребитель
+      // делит `total` на `meta.limit`, и при расхождении получает неверное число страниц,
+      // не узнав об этом.
+      meta: {
+        page: effectivePage,
+        limit: effectiveLimit,
+        total,
+        totalPages: Math.ceil(total / effectiveLimit),
+      },
       availableLanguages,
     };
   }

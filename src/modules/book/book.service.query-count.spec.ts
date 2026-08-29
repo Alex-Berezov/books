@@ -424,19 +424,24 @@ describe('LEGACY-128: сортировка по популярности счи�
     // `$queryRaw` зовётся тегированным шаблоном: первый аргумент - куски
     // литерала, дальше подставляемые значения.
     const pageQuery = prisma.$queryRaw.mock.calls[1] as [string[], ...unknown[]];
-    const sql = pageQuery[0].join('?');
+    // `renderSql`, а не `strings.join`: подзапрос дедупликации приезжает вложенным
+    // `Prisma.sql`, и его текста в кусках литерала внешнего запроса нет.
+    const sql = renderSql(pageQuery as unknown[]);
     expect(sql).toMatch(/LIMIT/);
     expect(sql).toMatch(/OFFSET/);
-    // Порядок при равных рейтингах сохранён дословно (`LEGACY-128`, Rule) -
-    // вместе с перевёрнутым вторым ключом: прежний comparator звался с
-    // переставленными аргументами и давал `publishedAt` по возрастанию с
-    // датой-`null` в начале (`LEGACY-253`). Здесь стережётся именно прежнее
-    // поведение: разворот на `DESC NULLS LAST` сдвинет границы всех страниц.
+    // Второй ключ - `DESC NULLS LAST` (`LEGACY-253`). До 29.08.2026 здесь стояло
+    // `ASC NULLS FIRST`: прежний comparator звался с переставленными аргументами
+    // и давал `publishedAt` по возрастанию с датой-`null` в начале. У книг без
+    // оценок рейтинг общий, и таких большинство, поэтому второй ключ решает
+    // порядок почти всей выдачи - возврат `ASC NULLS FIRST` красит эту спеку.
     // Третий ключ обязателен: без `id ASC` книги с равными рейтингом и датой
     // тасуются между запросами, и одна и та же книга приезжает на двух
     // страницах подряд, а другая пропадает.
-    expect(sql).toMatch(
-      /ORDER BY COALESCE\("avgScore", -1\) DESC, "publishedAt" ASC NULLS FIRST, id ASC/,
+    // Колонки квалифицированы именем CTE не для красоты: без него третий проход
+    // `drift-check` разрешает голый `"publishedAt"` по последней таблице внешнего
+    // запроса - `BookRating`, где такой колонки нет, - и роняет pre-commit.
+    expect(sql.replace(/\s+/g, ' ')).toContain(
+      'ORDER BY COALESCE(ranked."avgScore", -1) DESC, ranked."publishedAt" DESC NULLS LAST, ranked.id ASC',
     );
     // Внутренний порядок `DISTINCT ON` — своя посадка: его подмена вернёт
     // произвольный выбор версии, ради которого `DISTINCT ON` и написан.
@@ -514,5 +519,123 @@ describe('LEGACY-128: сортировка по популярности счи�
     expect(res.items).toEqual([]);
     expect(res.pagination.total).toBe(0);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * `LEGACY-254` и `LEGACY-255`: ветка каталога по дате.
+ *
+ * 🔴 Дефект `254` невозможно предъявить на живой базе: две версии одной книги
+ * на одном языке запрещены `@@unique([bookId, language])`, а язык в фильтре задан
+ * всегда. Поэтому здесь стережётся **устройство запроса**, а не наблюдаемый ответ:
+ * дедупликация обязана стоять во вложенном запросе, до `LIMIT`. Возврат прежнего
+ * `findMany` с `distinct` + `skip` + `take` красит спеку - `$queryRaw` не зовётся вовсе.
+ */
+describe('LEGACY-254/255: ветка каталога по дате', () => {
+  let prisma: PrismaStub;
+  let service: BookService;
+
+  const pageBookIds = Array.from({ length: 12 }, (_, i) => ({ bookId: `b${i}` }));
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    prisma.$queryRaw
+      .mockResolvedValueOnce([{ total: 200 }])
+      .mockResolvedValueOnce(pageBookIds)
+      .mockResolvedValue([]);
+    prisma.bookVersion.findMany.mockResolvedValue(
+      pageBookIds.map(({ bookId }, i) => ({
+        id: `v${i}`,
+        bookId,
+        slug: `book-${i}`,
+        title: `T${i}`,
+        author: 'A',
+        authorId: null,
+        coverImageUrl: '',
+        type: BookType.text,
+        publishedAt: new Date('2026-01-01T00:00:00Z'),
+        _count: { chapters: 1, audioChapters: 0 },
+        categories: [],
+      })),
+    );
+    service = createService(prisma);
+  });
+
+  it('страница не берётся выборкой с distinct после skip/take', async () => {
+    await service.findCards(Language.en, 1, 12);
+
+    const distinctCalls = prisma.bookVersion.findMany.mock.calls.filter(
+      ([args]: [{ distinct?: unknown }]) => !!args?.distinct,
+    );
+    expect(distinctCalls).toHaveLength(0);
+    // Два запроса: счёт и страница. Третий означал бы, что рядом остался прежний путь.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('дедупликация по книге стоит во вложенном запросе, LIMIT и OFFSET — снаружи', async () => {
+    await service.findCards(Language.en, 3, 12);
+
+    const pageCall = prisma.$queryRaw.mock.calls[1] as [string[], ...unknown[]];
+    const sql = renderSql(pageCall as unknown[]);
+
+    // Порядок кусков в тексте и есть предмет проверки: `DISTINCT ON` обязан
+    // закрыться раньше, чем откроется `LIMIT`. Prisma применяет `distinct`
+    // после страницы, и ровно это ловится здесь.
+    const distinctAt = sql.indexOf('SELECT DISTINCT ON (bv."bookId")');
+    const limitAt = sql.indexOf('LIMIT');
+    expect(distinctAt).toBeGreaterThan(-1);
+    expect(limitAt).toBeGreaterThan(distinctAt);
+    expect(sql.slice(distinctAt, limitAt)).toContain(') deduped');
+
+    // Порядок внутри книги — самая свежая версия; порядок страницы — тот же,
+    // что был у прежнего `orderBy`.
+    expect(sql).toContain('ORDER BY bv."bookId", bv."publishedAt" DESC NULLS LAST, bv.id ASC');
+    expect(sql).toContain('ORDER BY deduped."publishedAt" DESC NULLS LAST, deduped.id ASC');
+
+    // Порядок значений важен: `LIMIT ${skip} OFFSET ${limit}` отдаст 24 карточки
+    // с 12-й позиции, и `arrayContaining` этого не заметит.
+    expect(pageCall.slice(-2)).toEqual([12, 24]);
+  });
+
+  it('фильтры доезжают до страницы: язык, статус, тип и поиск', async () => {
+    await service.findCards(Language.en, 1, 12, undefined, 'audio', 'tolstoy');
+
+    const pageCall = prisma.$queryRaw.mock.calls[1] as [string[], ...unknown[]];
+    const sql = renderSql(pageCall as unknown[]);
+    expect(sql).toContain('bv.language = ?::"Language"');
+    expect(sql).toContain(`bv.status = 'published'::"PublicationStatus"`);
+    expect(sql).toContain('EXISTS (SELECT 1 FROM "AudioChapter"');
+    expect(sql).toContain('bv.title ILIKE');
+    // Значение уходит параметром, а не склейкой в текст запроса.
+    expect(sql).not.toContain('tolstoy');
+    const whereSql = pageCall[1] as { values: unknown[] };
+    expect(whereSql.values).toEqual(expect.arrayContaining(['tolstoy']));
+  });
+
+  /**
+   * `LEGACY-255`. `LIMIT/OFFSET` режет страницу после сортировки, поэтому запрос
+   * за страницей вне выдачи стоил ровно столько же, сколько за первой. Ответ
+   * не изменился: пустой список и честный `total`.
+   */
+  it('за страницей вне выдачи в базу за страницей не ходит', async () => {
+    const res = await service.findCards(Language.en, 100, 12);
+
+    // Один запрос - счётный. Второго, за страницей, нет; за карточками тоже не идём.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(prisma.bookVersion.findMany).not.toHaveBeenCalled();
+    expect(res.items).toEqual([]);
+    expect(res.pagination).toEqual({ page: 100, limit: 12, total: 200, totalPages: 17 });
+  });
+
+  it('ветка популярного каталога за страницей вне выдачи тоже не ходит', async () => {
+    prisma.$queryRaw.mockReset();
+    prisma.$queryRaw.mockResolvedValueOnce([{ total: 200 }]);
+
+    const res = await service.findCards(Language.en, 100, 12, 'popular');
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(prisma.bookVersion.findMany).not.toHaveBeenCalled();
+    expect(res.items).toEqual([]);
+    expect(res.pagination).toEqual({ page: 100, limit: 12, total: 200, totalPages: 17 });
   });
 });

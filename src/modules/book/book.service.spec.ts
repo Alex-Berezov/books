@@ -21,6 +21,7 @@ interface PrismaStub {
     groupBy: jest.Mock;
   };
   authorTranslation: { findMany: jest.Mock };
+  $queryRaw: jest.Mock;
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -41,7 +42,27 @@ const createPrismaStub = (): PrismaStub => ({
     groupBy: jest.fn().mockResolvedValue([]),
   },
   authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
+  $queryRaw: jest.fn().mockResolvedValue([]),
 });
+
+/**
+ * Текст запроса из тегированного шаблона: куски литерала плюс подставленные фрагменты
+ * `Prisma.sql` (у них свои `strings`). Значения-параметры остаются знаком вопроса.
+ */
+const renderSql = (call: unknown[]): string => {
+  const [strings, ...values] = call as [string[], ...unknown[]];
+  return strings
+    .map((chunk, i) => {
+      if (i >= values.length) return chunk;
+      const value = values[i] as { strings?: string[] } | null;
+      const rendered =
+        value && typeof value === 'object' && Array.isArray(value.strings)
+          ? value.strings.join('?')
+          : '?';
+      return chunk + rendered;
+    })
+    .join('');
+};
 
 const createGeoBlockRuleServiceStub = (): GeoBlockRuleService =>
   ({
@@ -324,14 +345,19 @@ describe('BookService.getOverview', () => {
       );
     });
 
+    /** Порядок запросов: счёт, страница, дальше карточки. */
+    const mockOneCard = () => {
+      prisma.$queryRaw
+        .mockResolvedValueOnce([{ total: 1 }])
+        .mockResolvedValueOnce([{ bookId: 'b1' }]);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+    };
+
     it('returns paginated compact cards with default sort', async () => {
+      mockOneCard();
       prisma.bookVersion.findMany
-        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
         .mockResolvedValueOnce([mockVersion()])
         .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
-
-      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
-      prisma.bookRating.groupBy.mockResolvedValue([]);
 
       const res = await service.findCards(Language.en);
 
@@ -341,98 +367,179 @@ describe('BookService.getOverview', () => {
       expect(res.pagination.page).toBe(1);
     });
 
+    /**
+     * Фильтр проверяется на **счётном** запросе: набор условий в `findCards` один
+     * на счёт и на страницу, и именно счёт решает, дойдёт ли запрос за страницей
+     * до базы вообще (`skip >= total`). Набор условий страницы стережёт
+     * `book.service.query-count.spec.ts`.
+     */
     it('applies type=audio filter', async () => {
+      mockOneCard();
       prisma.bookVersion.findMany
-        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
         .mockResolvedValueOnce([mockVersion({ audioChapters: 3 })])
         .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
 
-      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
-      prisma.bookRating.groupBy.mockResolvedValue([]);
-
       await service.findCards(Language.en, 1, 24, undefined, 'audio');
 
-      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            language: Language.en,
-            status: 'published',
-            AND: expect.arrayContaining([expect.objectContaining({ audioChapters: { some: {} } })]),
-          }),
-        }),
-      );
+      const countSql = renderSql(prisma.$queryRaw.mock.calls[0] as unknown[]);
+      expect(countSql).toContain('bv.language = ?::"Language"');
+      expect(countSql).toContain(`bv.status = 'published'::"PublicationStatus"`);
+      expect(countSql).toContain('EXISTS (SELECT 1 FROM "AudioChapter"');
+      expect(countSql).not.toContain('"Chapter" ch');
     });
 
     it('applies type=text filter', async () => {
+      mockOneCard();
       prisma.bookVersion.findMany
-        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
         .mockResolvedValueOnce([mockVersion({ chapters: 3 })])
         .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
 
-      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
-      prisma.bookRating.groupBy.mockResolvedValue([]);
-
       await service.findCards(Language.en, 1, 24, undefined, 'text');
 
-      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            AND: expect.arrayContaining([
-              expect.objectContaining({
-                OR: expect.arrayContaining([{ chapters: { some: {} } }, { type: BookType.text }]),
-              }),
-            ]),
-          }),
-        }),
-      );
+      const countSql = renderSql(prisma.$queryRaw.mock.calls[0] as unknown[]);
+      expect(countSql).toContain('EXISTS (SELECT 1 FROM "Chapter"');
+      expect(countSql).toContain(`bv.type = 'text'::"BookType"`);
     });
 
     it('applies q search filter', async () => {
+      mockOneCard();
       prisma.bookVersion.findMany
-        .mockResolvedValueOnce([{ id: 'v1', bookId: 'b1' }])
         .mockResolvedValueOnce([mockVersion({ title: 'Hamlet' })])
         .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
 
-      prisma.bookVersion.groupBy.mockResolvedValue([{ bookId: 'b1' }]);
-      prisma.bookRating.groupBy.mockResolvedValue([]);
-
       await service.findCards(Language.en, 1, 24, undefined, undefined, 'hamlet');
 
-      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            AND: expect.arrayContaining([
-              expect.objectContaining({
-                OR: expect.arrayContaining([
-                  { title: { contains: 'hamlet', mode: 'insensitive' } },
-                  { author: { contains: 'hamlet', mode: 'insensitive' } },
-                ]),
-              }),
-            ]),
-          }),
-        }),
-      );
+      const countCall = prisma.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+      const countSql = renderSql(countCall as unknown[]);
+      expect(countSql).toContain('bv.title ILIKE');
+      expect(countSql).toContain('bv.author ILIKE');
+      // Значение уходит параметром, а не склейкой в текст запроса.
+      expect(countSql).not.toContain('hamlet');
+      const whereSql = countCall[1] as { values: unknown[] };
+      expect(whereSql.values).toEqual(expect.arrayContaining(['hamlet']));
     });
 
     it('returns empty items when no books match', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([{ total: 0 }]);
       prisma.bookVersion.findMany.mockResolvedValue([]);
-      prisma.bookVersion.groupBy.mockResolvedValue([]);
 
       const res = await service.findCards(Language.en, 1, 24, undefined, 'audio');
 
       expect(res.items).toHaveLength(0);
       expect(res.pagination.total).toBe(0);
+      // За страницей пустого каталога в базу не ходим вовсе: только счёт.
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     });
 
     it('enforces max limit of 48', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([{ total: 100 }]).mockResolvedValueOnce([]);
       prisma.bookVersion.findMany.mockResolvedValue([]);
-      prisma.bookVersion.groupBy.mockResolvedValue([]);
 
       await service.findCards(Language.en, 1, 999);
 
-      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 48 }),
+      // Два последних значения тегированного шаблона — `LIMIT` и `OFFSET`.
+      const pageCall = prisma.$queryRaw.mock.calls[1] as unknown[];
+      expect(pageCall.slice(-2)).toEqual([48, 0]);
+    });
+  });
+
+  /**
+   * `LEGACY-253`. Оба блока `findRelated` звали `comparePublishedAtDesc(b, a)` —
+   * с переставленными аргументами. Функция, названная `Desc`, из-за этого
+   * упорядочивала `publishedAt` по возрастанию, а книги без даты ставила
+   * в начало блока.
+   *
+   * 🔴 Блока два, и они независимы: `similarSorted` (подбор по совпадающим категориям)
+   * и `fallbackSorted` (добор до `limit`). Одна спека, покрывающая только второй,
+   * оставляет первый без посадки: возврат перестановки в нём не покрасит ничего.
+   * Поэтому здесь два кейса с разной подготовкой — с категориями и без.
+   */
+  describe('findRelated: порядок при равных рейтингах (LEGACY-253)', () => {
+    let service: BookService;
+    let prisma: PrismaStub;
+
+    const relatedVersion = (bookId: string, publishedAt: Date | null) => ({
+      id: `v-${bookId}`,
+      bookId,
+      slug: bookId,
+      title: bookId,
+      author: 'A',
+      authorId: null,
+      coverImageUrl: '',
+      type: BookType.text,
+      publishedAt,
+      _count: { chapters: 1, audioChapters: 0 },
+      categories: [],
+    });
+
+    /** Порядок нарочно перемешан: правильный ответ не должен совпадать с порядком базы. */
+    const shuffled = () => [
+      relatedVersion('undated', null),
+      relatedVersion('older', new Date('2020-01-01T00:00:00Z')),
+      relatedVersion('newer', new Date('2024-01-01T00:00:00Z')),
+    ];
+
+    beforeEach(() => {
+      prisma = createPrismaStub();
+      service = new BookService(
+        prisma as unknown as PrismaService,
+        createGeoBlockRuleServiceStub(),
+        new RelatedTaxonomyService(prisma as unknown as PrismaService),
+        createSlugRedirectStub(),
+        createModeratorRolesStub(),
       );
+
+      prisma.bookVersion.findFirst
+        .mockResolvedValueOnce({ bookId: 'cur', author: 'A', authorId: null })
+        .mockResolvedValueOnce({ id: 'v-cur' });
+
+      // Оценка у всех трёх одна: весь порядок решает второй ключ.
+      prisma.bookRating.groupBy.mockResolvedValue(
+        ['undated', 'older', 'newer'].map((bookId) => ({
+          bookId,
+          _avg: { score: 4 },
+          _count: { score: 1 },
+        })),
+      );
+    });
+
+    /**
+     * У книги нет категорий, поэтому подбор по совпадению не запускается и весь блок
+     * `similar` собирается запасным набором — это `fallbackSorted`.
+     */
+    it('запасной набор: сначала самая свежая, книга без даты последней', async () => {
+      prisma.bookCategory.findMany.mockResolvedValue([]);
+      // Первый findMany — блок «того же автора», он пуст; второй — запасной набор.
+      prisma.bookVersion.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce(shuffled());
+
+      const res = await service.findRelated('cur-slug', Language.en);
+
+      expect(res.similar.map((card) => card.slug)).toEqual(['newer', 'older', 'undated']);
+      // Без счётчика кейс зелен и на коде, где запасной набор берётся лишним третьим
+      // вызовом, а проверенный второй остаётся мёртвым.
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(2);
+      expect(prisma.bookCategory.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * У книги есть категория, и все три кандидата совпадают с ней ровно один раз:
+     * `matched` у всех равен единице, рейтинг общий — порядок опять решает второй ключ,
+     * но уже в блоке `similarSorted`. Запасной набор при этом не запрашивается вовсе.
+     */
+    it('подбор по категориям: сначала самая свежая, книга без даты последней', async () => {
+      prisma.bookCategory.findMany
+        .mockResolvedValueOnce([{ categoryId: 'c1' }])
+        .mockResolvedValueOnce(
+          shuffled().map((version) => ({ bookVersion: version, categoryId: 'c1' })),
+        );
+      // Оба набора пусты: и «тот же автор», и запасной. Все три карточки блока
+      // `similar` приходят подбором по категориям — значит и порядок в них его.
+      prisma.bookVersion.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+      const res = await service.findRelated('cur-slug', Language.en);
+
+      expect(res.similar.map((card) => card.slug)).toEqual(['newer', 'older', 'undated']);
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(2);
     });
   });
 });

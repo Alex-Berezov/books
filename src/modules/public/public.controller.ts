@@ -43,6 +43,7 @@ import {
   PublicCategoriesQueryDto,
 } from './dto/public-categories-query.dto';
 import { PublicAuthorLettersQueryDto, PublicAuthorsQueryDto } from './dto/public-authors-query.dto';
+import { PublicTagBooksQueryDto } from './dto/public-tag-books-query.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -294,10 +295,15 @@ export class PublicController {
   tagsBySlug(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Param('slug') slug: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query() query: PublicTagBooksQueryDto,
   ) {
-    return this.tags.versionsByTagLangSlug(pathLang, slug, page, limit);
+    // 🔴 `page` и `limit` принимались голым `@Query('page') page?: number` и уходили
+    // в сервис сырыми. Глобальный `ValidationPipe` приводит примитив через `+value`,
+    // поэтому `?page=abc` давал `NaN`, `?page=` — `0`, и оба уезжали в `skip`: маршрут
+    // отвечал 500 на мусор в адресной строке (`LEGACY-199`). Значение по умолчанию
+    // в сигнатуре сервиса от этого не спасает — оно срабатывает только на `undefined`,
+    // а `NaN` для `tsc` такой же `number`, как и всякий другой.
+    return this.tags.versionsByTagLangSlug(pathLang, slug, query.page, query.limit);
   }
 
   // Public tags listing for homepage

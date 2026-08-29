@@ -3,6 +3,17 @@ import { IsOptional, IsInt, Min, Max, IsBoolean, IsString, IsIn } from 'class-va
 import { Type, Transform } from 'class-transformer';
 
 /**
+ * Потолок карточной выдачи. Одно число на три места: `@Max` этой DTO, второй рубеж
+ * `Math.min` в `BookService.findCards` и соседний публичный список книг тега
+ * (`PublicTagBooksQueryDto`). Три литерала `48` на одну политику расходятся при первой же
+ * правке одного из них, и расхождение видно только на живом запросе.
+ */
+export const BOOK_CARDS_MAX_LIMIT = 48;
+
+/** Дефолт витрины. Меняется отдельно от потолка: на нём сидят карточные страницы. */
+export const BOOK_CARDS_DEFAULT_LIMIT = 24;
+
+/**
  * Query DTO for compact books-cards endpoint.
  *
  * `limit` default 24, server-side max 48 — prevents the legacy `limit=100`
@@ -17,18 +28,18 @@ export class BookCardsQueryDto {
   page?: number = 1;
 
   @ApiProperty({
-    description: 'Number of cards per page. Default 24, max 48.',
-    example: 24,
-    default: 24,
+    description: `Number of cards per page. Default ${BOOK_CARDS_DEFAULT_LIMIT}, max ${BOOK_CARDS_MAX_LIMIT}.`,
+    example: BOOK_CARDS_DEFAULT_LIMIT,
+    default: BOOK_CARDS_DEFAULT_LIMIT,
     minimum: 1,
-    maximum: 48,
+    maximum: BOOK_CARDS_MAX_LIMIT,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(48)
-  limit?: number = 24;
+  @Max(BOOK_CARDS_MAX_LIMIT)
+  limit?: number = BOOK_CARDS_DEFAULT_LIMIT;
 
   @ApiProperty({
     description:

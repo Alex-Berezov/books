@@ -8,6 +8,7 @@ import { ModeratorRolesService } from '../../common/roles/moderator-roles.servic
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
+import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { BookType, Language, Category, CategoryTranslation, Prisma } from '@prisma/client';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
@@ -715,7 +716,7 @@ export class BookService {
           b.matched - a.matched ||
           (ratingsMap.get(b.version.bookId)?.avg ?? -1) -
             (ratingsMap.get(a.version.bookId)?.avg ?? -1) ||
-          this.comparePublishedAtDesc(b.version.publishedAt, a.version.publishedAt) ||
+          this.comparePublishedAtDesc(a.version.publishedAt, b.version.publishedAt) ||
           a.version.id.localeCompare(b.version.id),
       )
       .slice(0, effectiveLimit - sameAuthorVersions.length)
@@ -728,7 +729,7 @@ export class BookService {
       .sort(
         (a, b) =>
           (ratingsMap.get(b.bookId)?.avg ?? -1) - (ratingsMap.get(a.bookId)?.avg ?? -1) ||
-          this.comparePublishedAtDesc(b.publishedAt, a.publishedAt) ||
+          this.comparePublishedAtDesc(a.publishedAt, b.publishedAt) ||
           a.id.localeCompare(b.id),
       )
       .slice(0, Math.max(remainingAfterSimilar, 0));
@@ -774,36 +775,68 @@ export class BookService {
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }> {
     const effectivePage = Math.max(page, 1);
-    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
     const skip = (effectivePage - 1) * effectiveLimit;
 
-    // Build where conditions for filters
-    const baseWhere: Prisma.BookVersionWhereInput = {
-      language: lang,
-      status: 'published',
-    };
-
-    const filterConditions: Prisma.BookVersionWhereInput[] = [];
-
+    // Отбор один на весь метод и на обе ветки сортировки. До 29.08.2026 их было два:
+    // объект `Prisma.BookVersionWhereInput` для `total` и `groupBy`, и этот набор для
+    // сырого запроса ветки `popular`. Фильтр, добавленный в один набор и забытый
+    // в другом, отдавал бы список и `total` из разных выборок на одном URL - `totalPages`
+    // насчитывал бы страницы, которых нет. Ни `tsc`, ни линт двух наборов не сличают.
+    const conditions: Prisma.Sql[] = [
+      Prisma.sql`bv.language = ${lang}::"Language"`,
+      Prisma.sql`bv.status = 'published'::"PublicationStatus"`,
+    ];
     if (type === 'audio') {
-      filterConditions.push({ audioChapters: { some: {} } });
+      conditions.push(
+        Prisma.sql`EXISTS (SELECT 1 FROM "AudioChapter" ac WHERE ac."bookVersionId" = bv.id)`,
+      );
     } else if (type === 'text') {
-      filterConditions.push({
-        OR: [{ chapters: { some: {} } }, { type: BookType.text }],
-      });
+      conditions.push(
+        Prisma.sql`(EXISTS (SELECT 1 FROM "Chapter" ch WHERE ch."bookVersionId" = bv.id) OR bv.type = 'text'::"BookType")`,
+      );
     }
-
     if (q) {
-      filterConditions.push({
-        OR: [
-          { title: { contains: q, mode: 'insensitive' } },
-          { author: { contains: q, mode: 'insensitive' } },
-        ],
-      });
+      conditions.push(
+        Prisma.sql`(bv.title ILIKE '%' || ${q} || '%' OR bv.author ILIKE '%' || ${q} || '%')`,
+      );
     }
+    const whereSql = Prisma.join(conditions, ' AND ');
 
-    const where: Prisma.BookVersionWhereInput =
-      filterConditions.length > 0 ? { ...baseWhere, AND: filterConditions } : baseWhere;
+    // Одна книга - одна строка, и это самая свежая её версия: `DISTINCT ON` берёт
+    // первую строку каждой группы в порядке своего `ORDER BY`, поэтому первые
+    // выражения этого `ORDER BY` обязаны совпадать с выражениями `DISTINCT ON`.
+    // Фрагмент общий на обе ветки: разъехавшись, они выбрали бы разные версии одной
+    // книги, и на витрине одна карточка получила бы разные `slug`, заголовок и обложку
+    // в зависимости от сортировки, а `total` при этом совпал бы.
+    const dedupedByBook = Prisma.sql`
+      SELECT DISTINCT ON (bv."bookId") bv."bookId", bv."publishedAt", bv.id
+      FROM "BookVersion" bv
+      WHERE ${whereSql}
+      ORDER BY bv."bookId", bv."publishedAt" DESC NULLS LAST, bv.id ASC
+    `;
+
+    // Счёт книг, а не версий, одной строкой. `::int` обязателен: `COUNT` отдаёт
+    // `BigInt`, и без приведения `Math.ceil(total / limit)` падает в `TypeError`.
+    const totalRows = await this.prisma.$queryRaw<Array<{ total: number }>>`
+      SELECT COUNT(*)::int AS total
+      FROM (
+        SELECT DISTINCT bv."bookId"
+        FROM "BookVersion" bv
+        WHERE ${whereSql}
+      ) matched
+    `;
+    const total = totalRows[0]?.total ?? 0;
+
+    // Страница за пределами выдачи в базу за страницей не ходит (`LEGACY-255`).
+    // `LIMIT/OFFSET` режет страницу **после** сортировки, поэтому `?page=1000000`
+    // стоил ровно столько же, сколько первая страница, а `PublicCacheInterceptor`
+    // ключуется по URL - перебор номеров шёл мимо кэша каждым запросом. Ответ
+    // не меняется: пустой список и честный `total`. `buildCardsResponse` на пустом
+    // наборе в базу тоже не ходит.
+    if (skip >= total) {
+      return this.buildCardsResponse([], lang, effectivePage, effectiveLimit, total);
+    }
 
     if (sort === 'popular') {
       // 🔴 Сортировка по рейтингу считается в базе (`LEGACY-128`). До этого
@@ -813,73 +846,18 @@ export class BookService {
       // размеру каталога, а включался этот режим значением query-параметра,
       // который приходит снаружи.
       //
-      // 🔴 Порядок сохранён дословно, включая перевёрнутый второй ключ.
-      // Прежний код звал `comparePublishedAtDesc(b.publishedAt, a.publishedAt)`
-      // с **переставленными** аргументами, и функция, названная `Desc`, на
-      // деле сортировала `publishedAt` по **возрастанию**, а версии без даты
-      // ставила в начало группы. Отсюда `ASC NULLS FIRST`, а не `DESC NULLS
-      // LAST`, как в ветке `new` и как обещает JSDoc метода. Разворот второго
-      // ключа сдвинул бы границы всех страниц популярного каталога - у книг
-      // без оценок рейтинг общий, и таких на живом каталоге большинство;
-      // читатель увидел бы одни книги дважды, а другие пропустил. Дефект
-      // записан отдельно (`LEGACY-253`) и чинится не здесь.
+      // Второй ключ развёрнут на `DESC NULLS LAST` (`LEGACY-253`). До 29.08.2026 здесь
+      // стояло `ASC NULLS FIRST` - дословный перенос прежнего кода, который звал
+      // `comparePublishedAtDesc(b, a)` с переставленными аргументами: функция, названная
+      // `Desc`, упорядочивала по возрастанию, а книги без даты ставила в начало группы.
+      // Ни JSDoc метода, ни ветка `new` с этим не сходились. Разворот - разовый сдвиг
+      // границ страниц популярного каталога: у книг без оценок рейтинг общий, и таких
+      // большинство, поэтому второй ключ решает порядок почти всей выдачи.
       // Рейтинг по убыванию, книга без оценок после любой оценённой -
       // `COALESCE(..., -1)` вместо прежнего `?? -1`; третий ключ - `id`.
-      //
-      // `DISTINCT ON (bookId)` повторяет прежний `distinct: ['bookId']` и, как и
-      // он, сегодня ничего не отсеивает: `@@unique([bookId, language])` в схеме
-      // не даёт двух версий одной книги на один язык, а язык в фильтре задан
-      // всегда. Оставлен намеренно — снятие уникальности сделало бы выдачу
-      // с повторами книги, и заметно это стало бы только на витрине. Порядок
-      // внутри — самая свежая по `publishedAt`, при равенстве меньшая по `id`.
-      // ⚠️ Условия здесь — близнец `where`, собранного выше для остальных веток
-      // (`baseWhere` + `filterConditions`). Второй фильтр, добавленный туда и не
-      // добавленный сюда, применится к `sort=new` и молча не применится к
-      // `sort=popular`: одна и та же строка запроса отдаст разный список и разный
-      // `total`. Правишь один набор — правь оба, состав условий закреплён спекой.
-      const conditions: Prisma.Sql[] = [
-        Prisma.sql`bv.language = ${lang}::"Language"`,
-        Prisma.sql`bv.status = 'published'::"PublicationStatus"`,
-      ];
-      if (type === 'audio') {
-        conditions.push(
-          Prisma.sql`EXISTS (SELECT 1 FROM "AudioChapter" ac WHERE ac."bookVersionId" = bv.id)`,
-        );
-      } else if (type === 'text') {
-        conditions.push(
-          Prisma.sql`(EXISTS (SELECT 1 FROM "Chapter" ch WHERE ch."bookVersionId" = bv.id) OR bv.type = 'text'::"BookType")`,
-        );
-      }
-      if (q) {
-        conditions.push(
-          Prisma.sql`(bv.title ILIKE '%' || ${q} || '%' OR bv.author ILIKE '%' || ${q} || '%')`,
-        );
-      }
-      const whereSql = Prisma.join(conditions, ' AND ');
-
-      const totalRows = await this.prisma.$queryRaw<Array<{ total: number }>>`
-        SELECT COUNT(*)::int AS total
-        FROM (
-          SELECT DISTINCT bv."bookId"
-          FROM "BookVersion" bv
-          WHERE ${whereSql}
-        ) matched
-      `;
-      const total = totalRows[0]?.total ?? 0;
-
-      if (total === 0) {
-        return {
-          items: [],
-          pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
-        };
-      }
-
       const rows = await this.prisma.$queryRaw<Array<{ bookId: string }>>`
         WITH matched AS (
-          SELECT DISTINCT ON (bv."bookId") bv."bookId", bv."publishedAt", bv.id
-          FROM "BookVersion" bv
-          WHERE ${whereSql}
-          ORDER BY bv."bookId", bv."publishedAt" DESC NULLS LAST, bv.id ASC
+          ${dedupedByBook}
         ),
         ranked AS (
           SELECT m."bookId", m."publishedAt", m.id, AVG(r.score) AS "avgScore"
@@ -887,9 +865,11 @@ export class BookService {
           LEFT JOIN "BookRating" r ON r."bookId" = m."bookId"
           GROUP BY m."bookId", m."publishedAt", m.id
         )
-        SELECT "bookId"
+        SELECT ranked."bookId"
         FROM ranked
-        ORDER BY COALESCE("avgScore", -1) DESC, "publishedAt" ASC NULLS FIRST, id ASC
+        ORDER BY COALESCE(ranked."avgScore", -1) DESC,
+                 ranked."publishedAt" DESC NULLS LAST,
+                 ranked.id ASC
         LIMIT ${effectiveLimit} OFFSET ${skip}
       `;
 
@@ -897,29 +877,26 @@ export class BookService {
       return this.buildCardsResponse(paginatedBookIds, lang, effectivePage, effectiveLimit, total);
     }
 
-    // Default/new sort: order by publishedAt desc, id asc
-    const orderBy: Prisma.BookVersionOrderByWithRelationInput[] = [
-      { publishedAt: { sort: 'desc', nulls: 'last' } },
-      { id: 'asc' },
-    ];
+    // Default/new sort: дедупликация по книге идёт **до** страницы (`LEGACY-254`).
+    // Прежде здесь стоял `findMany` с `distinct: ['bookId']`, `skip` и `take`, а Prisma
+    // применяет `distinct` уже **после** того, как страница отрезана: две версии одной
+    // книги в окне страницы - и карточек меньше, чем обещает `limit`, при верном `total`.
+    // Сегодня этого не видно (`@@unique([bookId, language])` плюс язык всегда в фильтре),
+    // но снятие уникальности или необязательный язык оживили бы дефект в правке,
+    // с этим методом не связанной. Убрать дедупликацию вовсе нельзя:
+    // `buildCardsResponse` раскладывает `bookIds` по `Map`, и повторившийся `bookId`
+    // дал бы **две одинаковые** карточки вместо одной пропавшей.
+    // Порядок страницы - тот же `publishedAt DESC NULLS LAST, id ASC`, что и раньше.
+    const rows = await this.prisma.$queryRaw<Array<{ bookId: string }>>`
+      SELECT deduped."bookId"
+      FROM (
+        ${dedupedByBook}
+      ) deduped
+      ORDER BY deduped."publishedAt" DESC NULLS LAST, deduped.id ASC
+      LIMIT ${effectiveLimit} OFFSET ${skip}
+    `;
 
-    const versions = await this.prisma.bookVersion.findMany({
-      where,
-      select: { id: true, bookId: true },
-      distinct: ['bookId'],
-      skip,
-      take: effectiveLimit,
-      orderBy,
-    });
-
-    const total = (
-      await this.prisma.bookVersion.groupBy({
-        by: ['bookId'],
-        where,
-      })
-    ).length;
-
-    const bookIds = versions.map((v) => v.bookId);
+    const bookIds = rows.map((row) => row.bookId);
     return this.buildCardsResponse(bookIds, lang, effectivePage, effectiveLimit, total);
   }
 
@@ -939,7 +916,7 @@ export class BookService {
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }> {
     const effectivePage = Math.max(page, 1);
-    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
     const skip = (effectivePage - 1) * effectiveLimit;
 
     // Resolve authorId from slug (prefer requested lang, fallback en)
@@ -998,7 +975,7 @@ export class BookService {
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }> {
     const effectivePage = Math.max(page, 1);
-    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
     const skip = (effectivePage - 1) * effectiveLimit;
 
     // Resolve category slug to a stable category ID (prefer translation, fallback base slug)
@@ -1104,7 +1081,7 @@ export class BookService {
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }> {
     const effectivePage = Math.max(page, 1);
-    const effectiveLimit = Math.min(Math.max(limit, 1), 48);
+    const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
     const skip = (effectivePage - 1) * effectiveLimit;
 
     // Resolve tag slug to a stable tag ID (prefer translation, fallback base slug)
@@ -1337,6 +1314,10 @@ export class BookService {
     } as const satisfies Prisma.BookVersionSelect;
   }
 
+  /**
+   * Comparator: newest first, undated last. ⚠️ Звать `(a, b)` — перестановка аргументов
+   * переворачивает и порядок дат, и место записей без даты (`LEGACY-253`).
+   */
   private comparePublishedAtDesc(a: Date | null | undefined, b: Date | null | undefined): number {
     if (!a && !b) return 0;
     if (!a) return 1; // nulls last

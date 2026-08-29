@@ -56,7 +56,7 @@ describe('PublicController (unit)', () => {
 
   it('tagsBySlug: delegates to tags service with path language', async () => {
     tags.versionsByTagLangSlug.mockResolvedValueOnce({ items: [] });
-    const res = await controller.tagsBySlug(PrismaLanguage.pt, 'tag');
+    const res = await controller.tagsBySlug(PrismaLanguage.pt, 'tag', {});
     expect(res).toEqual({ items: [] });
     expect(tags.versionsByTagLangSlug).toHaveBeenCalledWith(
       PrismaLanguage.pt,
@@ -64,6 +64,20 @@ describe('PublicController (unit)', () => {
       undefined,
       undefined,
     );
+  });
+
+  /**
+   * `LEGACY-199`. Разобранные `page`/`limit` обязаны доехать до сервиса: если
+   * контроллер снова начнёт брать их из голого `@Query`, DTO соберётся, проверки
+   * отработают, а в сервис уйдёт сырое значение — и маршрут вернётся к 500.
+   */
+  it('tagsBySlug: разобранные page и limit уходят в сервис', async () => {
+    tags.versionsByTagLangSlug.mockResolvedValueOnce({ items: [] });
+    await controller.tagsBySlug(PrismaLanguage.pt, 'tag', { page: 3, limit: 5 });
+    expect(tags.versionsByTagLangSlug).toHaveBeenCalledWith(PrismaLanguage.pt, 'tag', 3, 5);
+    // Без счётчика спека зелена и на коде, где рядом с разобранным вызовом стоит второй,
+    // с сырыми значениями, - а решает ответ именно он.
+    expect(tags.versionsByTagLangSlug).toHaveBeenCalledTimes(1);
   });
 
   it('authorsList: passes the whole validated query through to listPublic', async () => {

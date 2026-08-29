@@ -9,7 +9,7 @@ interface PrismaStub {
   $queryRaw: jest.Mock;
   tag: { findUnique: jest.Mock; findFirst: jest.Mock; count: jest.Mock; findMany: jest.Mock };
   tagTranslation: { findUnique: jest.Mock; create: jest.Mock };
-  bookVersion: { findMany: jest.Mock; findUnique: jest.Mock };
+  bookVersion: { findMany: jest.Mock; findUnique: jest.Mock; count: jest.Mock };
   bookTag: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock };
   bookRating: { groupBy: jest.Mock };
 }
@@ -19,7 +19,7 @@ const createPrismaStub = (): PrismaStub => ({
   $queryRaw: jest.fn(),
   tag: { findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn(), findMany: jest.fn() },
   tagTranslation: { findUnique: jest.fn(), create: jest.fn() },
-  bookVersion: { findMany: jest.fn(), findUnique: jest.fn() },
+  bookVersion: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn() },
   bookTag: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
   bookRating: { groupBy: jest.fn() },
 });
@@ -195,6 +195,51 @@ describe('TagsService', () => {
       expect(res.data).toEqual([]);
       expect(res.meta).toEqual({ page: 99, limit: 20, total: 42, totalPages: 3 });
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * `LEGACY-199`, второй рубеж. `PublicTagBooksQueryDto` стережёт только вход через
+   * контроллер, а метод публичный: второй его зов - из кода, из админского пути,
+   * из копии соседнего маршрута - ушёл бы в `skip`/`take` с чем угодно. Спека зовёт
+   * сервис **напрямую**, минуя пайп, - именно так, как это сделал бы такой зов.
+   */
+  describe('versionsByTagLangSlug: потолок и номер страницы вторым рубежом', () => {
+    beforeEach(() => {
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        tag: { id: 't1', name: 'Tag', slug: 'tag', isVisible: true },
+        seo: null,
+        description: null,
+      });
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.count.mockResolvedValue(0);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+    });
+
+    const pageArgs = (): { skip: number; take: number } =>
+      prisma.bookVersion.findMany.mock.calls[0][0] as { skip: number; take: number };
+
+    it('limit выше потолка обрезается до потолка', async () => {
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag', 1, 1000);
+
+      expect(pageArgs().take).toBe(48);
+      // `meta` собирается из применённого значения: иначе потребитель поделит `total`
+      // на запрошенный `limit` и насчитает страницы, которых нет.
+      expect(res.meta.limit).toBe(48);
+    });
+
+    it('мусорные значения не уезжают в skip и take', async () => {
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag', Number.NaN, Number.NaN);
+
+      expect(pageArgs()).toEqual(expect.objectContaining({ skip: 0, take: 1 }));
+      expect(res.meta.page).toBe(1);
+      expect(Number.isNaN(res.meta.totalPages)).toBe(false);
+    });
+
+    it('отрицательный номер страницы не даёт отрицательный skip', async () => {
+      await service.versionsByTagLangSlug(Language.en, 'tag', -5, 10);
+
+      expect(pageArgs().skip).toBe(0);
     });
   });
 
