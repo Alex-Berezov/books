@@ -21,6 +21,25 @@ import * as Sentry from '@sentry/node';
 const SENSITIVE_KEY_PATTERN = /password|token|authorization|secret|cookie/i;
 
 /**
+ * Предел глубины обхода в `redactKeys` (`LEGACY-188`). Вход — уровень 1.
+ *
+ * ⚠️ Четыре, а не пять: все наблюдаемые формы мельче (`{ user: { password } }`
+ * и `?filter[token]=` — второй уровень), а меньшая глубина ошибается
+ * в безопасную сторону. Непройденный контейнер заменяется меткой и утечь
+ * не может; теряется только диагностика. Решение арбитра от 30.08.2026.
+ */
+const MAX_REDACT_DEPTH = 4;
+
+/**
+ * Сколько элементов массива уходит в событие целиком (`LEGACY-188`).
+ *
+ * ⚠️ Событие Sentry имеет предел размера и обрезается молча, теряя как раз
+ * хвост. Явный потолок с меткой об усечении отличает «их было больше»
+ * от «столько и было».
+ */
+const MAX_REDACT_ARRAY_ITEMS = 20;
+
+/**
  * Global exception filter that reports 5xx errors to Sentry.
  * 4xx (400/401/403/404/429) are deliberately ignored to reduce noise.
  */
@@ -76,8 +95,8 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
               scope.addBreadcrumb(breadcrumbs[0]);
               scope.addBreadcrumb(breadcrumbs[1]);
               const user = this.getUser(req);
-              if (user?.id) {
-                scope.setUser({ id: String(user.id), email: user.email });
+              if (user?.userId) {
+                scope.setUser({ id: String(user.userId) });
               }
             }
             Sentry.captureException(exception);
@@ -105,19 +124,82 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
    * правилом в `LEGACY-115`, потому что заголовки миновали маску ровно так:
    * поле добавили рядом с уже замаскированным телом и сочли вопрос закрытым.
    *
-   * ⚠️ Проход **поверхностный**: вложенное `{ user: { password } }` он не
-   * чистит. Так было и в исходной маске тела; рекурсия — отдельная правка со
-   * своей ценой (глубина, циклы, размер события), а не «заодно».
+   * ⚠️ Проход **рекурсивный** с 30.08.2026 (`LEGACY-188`): вложенное
+   * `{ user: { password } }` и `{ items: [{ token }] }` чистятся тоже.
+   * До этого проход был по верхнему уровню, и вложенный секрет уезжал
+   * во внешний сервис целиком.
    */
   private redactKeys(value: unknown): unknown {
-    if (!this.isPlainObject(value)) return value;
-    const clone: Record<string, unknown> = { ...value };
-    for (const key of Object.keys(clone)) {
-      if (SENSITIVE_KEY_PATTERN.test(key)) {
-        clone[key] = '[Filtered]';
-      }
+    return this.redactValue(value, 1, new Set<object>());
+  }
+
+  /**
+   * Один узел обхода: `depth` — уровень самого `value`, вход равен 1.
+   *
+   * ⚠️ Предел глубины проверяется **только для контейнеров**. Скаляр на любом
+   * уровне уже прошёл проверку имени в цикле родителя, поэтому обрезать его
+   * незачем — это стоило бы диагностики без выигрыша. Контейнер же обрезается
+   * обязательно: его ключи мы не смотрели и поручиться за них не можем.
+   *
+   * ⚠️ `seen` — множество **текущего пути**, а не всего обхода: объект
+   * добавляется перед спуском и снимается после. Глобальное множество сочло
+   * бы циклом повторную ссылку на один объект из двух соседних ключей
+   * и молча съело бы содержимое второй.
+   */
+  private redactValue(value: unknown, depth: number, seen: Set<object>): unknown {
+    const binary = this.describeBinary(value);
+    if (binary) return binary;
+
+    const container = this.getContainer(value);
+    if (!container) return value;
+    if (depth > MAX_REDACT_DEPTH) return '[MaxDepth]';
+
+    if (seen.has(container)) return '[Circular]';
+    seen.add(container);
+    try {
+      return Array.isArray(container)
+        ? this.redactArray(container, depth, seen)
+        : this.redactObject(container, depth, seen);
+    } finally {
+      seen.delete(container);
+    }
+  }
+
+  /**
+   * ⚠️ Ключ, совпавший с маской, заменяется целиком и **внутрь не заходим**:
+   * так `authorization` с объектным значением остаётся `[Filtered]`, как было
+   * до рекурсии, и ошибка тут в безопасную сторону.
+   *
+   * 🔴 Клон строится через `Object.create(null)`, а не литералом `{}`. `JSON.parse`
+   * заводит `__proto__` обычным собственным ключом, и `Object.keys` его отдаёт;
+   * но присваивание `clone['__proto__']` объекту с обычным прототипом уходит
+   * в сеттер `Object.prototype.__proto__` — собственного ключа не появляется,
+   * значение пропадает, а прототипом клона становится разобранное тело запроса.
+   * Тело без прототипа сеттера не имеет, и присваивание кладёт обычный ключ.
+   * Снятый спред `{ ...value }` этим не страдал, поэтому переход на цикл был
+   * регрессией; найдено ревью 30.08.2026 до коммита.
+   */
+  private redactObject(
+    value: Record<string, unknown>,
+    depth: number,
+    seen: Set<object>,
+  ): Record<string, unknown> {
+    const clone = Object.create(null) as Record<string, unknown>;
+    for (const key of Object.keys(value)) {
+      clone[key] = SENSITIVE_KEY_PATTERN.test(key)
+        ? '[Filtered]'
+        : this.redactValue(value[key], depth + 1, seen);
     }
     return clone;
+  }
+
+  private redactArray(value: unknown[], depth: number, seen: Set<object>): unknown[] {
+    const kept = value
+      .slice(0, MAX_REDACT_ARRAY_ITEMS)
+      .map((item) => this.redactValue(item, depth + 1, seen));
+    const dropped = value.length - MAX_REDACT_ARRAY_ITEMS;
+    if (dropped > 0) kept.push(`[Truncated: ${dropped} more]`);
+    return kept;
   }
 
   /**
@@ -147,6 +229,33 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
     return query ? `${pathPart}?${query}` : pathPart;
   }
 
+  /** Значение, внутрь которого редактор заходит: массив или простой объект. */
+  private getContainer(value: unknown): unknown[] | Record<string, unknown> | undefined {
+    // `Array.isArray` сужает `unknown` до `any[]`, а не до `unknown[]` — приведение
+    // возвращает проверку типов внутрь элементов, а не отключает её.
+    if (Array.isArray(value)) return value as unknown[];
+    return this.isPlainObject(value) ? value : undefined;
+  }
+
+  /**
+   * 🔴 Двоичное тело внутрь редактора не пускается вовсе.
+   *
+   * На `POST /uploads/direct` тело разбирается сырым `express.raw` с любым типом
+   * содержимого, то есть `req.body` там — `Buffer` размером
+   * до `UPLOADS_MAX_AUDIO_MB + 10` (по умолчанию 210 МБ).
+   * `Array.isArray(Buffer)` ложно, а `isPlainObject` истинно, поэтому редактор
+   * разворачивал бы его в объект «ключ на байт» — сотни миллионов ключей, собираемых
+   * внутри обработчика исключения, и потолок `MAX_REDACT_ARRAY_ITEMS` сюда не достаёт.
+   * Проверка стоит **до** `getContainer` и отдаёт только размер: содержимое файла
+   * в событии не нужно, а знать, что тело было двоичным и каким, — нужно.
+   * Найдено ревью 30.08.2026 до коммита.
+   */
+  private describeBinary(value: unknown): string | undefined {
+    if (ArrayBuffer.isView(value)) return `[Binary: ${value.byteLength} bytes]`;
+    if (value instanceof ArrayBuffer) return `[Binary: ${value.byteLength} bytes]`;
+    return undefined;
+  }
+
   private isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
@@ -158,8 +267,27 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
     return typeof p === 'string' ? p : undefined;
   }
 
-  private getUser(req: Request): { id?: string | number; email?: string } | undefined {
-    const r = req as Request & { user?: { id?: string | number; email?: string } };
+  /**
+   * Пользователь запроса для атрибуции события (`LEGACY-187`).
+   *
+   * 🔴 Тип сужен до одного поля намеренно. До 30.08.2026 здесь стояло `id`,
+   * а единственная стратегия (`auth/strategies/jwt.strategy.ts`) кладёт
+   * в запрос `userId` — как и весь остальной код (`roles.guard.ts`,
+   * `rate-limit.guard.ts`, `moderator-roles.service.ts`). Из-за расхождения
+   * ветка `setUser` не срабатывала ни разу, и события уходили без атрибуции
+   * вовсе. Отсутствие `email` в типе — тоже часть правки: вернуть почту
+   * случайным `user.email` в этот вызов теперь нельзя.
+   * Решение арбитра от 30.08.2026.
+   *
+   * 🔴 **Это закрывает канал `setUser`, а не почту вообще.** Второй канал открыт
+   * и живёт в этом же файле: `setContext('request', { body: redactKeys(req.body) })`,
+   * а `SENSITIVE_KEY_PATTERN` слова `email` не содержит — тело `POST /auth/login`,
+   * упавшее в 500, кладёт в событие `{ email: '...', password: '[Filtered]' }`.
+   * Расширение маски выходит за границы `LEGACY-187` (её `Location` — только этот
+   * вызов) и заведено отдельной записью `LEGACY-332`. Не считать вопрос закрытым.
+   */
+  private getUser(req: Request): { userId?: string } | undefined {
+    const r = req as Request & { user?: { userId?: string } };
     return r.user;
   }
 }

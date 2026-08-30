@@ -182,6 +182,152 @@ describe('SentryExceptionFilter (unit)', () => {
     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
   });
 
+  describe('LEGACY-187: атрибуция события идентификатором, но не почтой', () => {
+    it('идентификатор пользователя уходит в событие из `userId`', () => {
+      // Стратегия кладёт в запрос именно `userId` (auth/strategies/jwt.strategy.ts).
+      // До правки фильтр читал `id`, ветка не срабатывала ни разу, и события
+      // уходили без атрибуции вовсе — эта проверка стережёт саму её живость.
+      const req = makeRequest({ user: { userId: 'u-42', email: 'user@example.com' } });
+      filter.catch(new Error('boom'), makeHost(req));
+
+      expect(scope.setUser).toHaveBeenCalledTimes(1);
+      expect(scope.setUser.mock.calls[0][0]).toEqual({ id: 'u-42' });
+    });
+
+    it('почты в объекте пользователя нет', () => {
+      const req = makeRequest({ user: { userId: 'u-42', email: 'user@example.com' } });
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const passed = scope.setUser.mock.calls[0][0] as Record<string, unknown>;
+      expect(Object.keys(passed)).toEqual(['id']);
+      expect(JSON.stringify(passed)).not.toContain('user@example.com');
+    });
+
+    it('без пользователя в запросе `setUser` не зовётся', () => {
+      filter.catch(new Error('boom'), makeHost(makeRequest()));
+
+      expect(scope.setUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('LEGACY-188: маска секретов идёт вглубь', () => {
+    it('маскирует секрет во вложенном объекте', () => {
+      const req = makeRequest({ body: { user: { password: 'nested-plaintext' } } });
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const body = requestContext().body as { user: Record<string, unknown> };
+      expect(body.user.password).toBe('[Filtered]');
+    });
+
+    it('маскирует секрет внутри элемента массива', () => {
+      const req = makeRequest({
+        body: { translations: [{ title: 'ok' }, { accessToken: 'nested-array-token' }] },
+      });
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const body = requestContext().body as { translations: Record<string, unknown>[] };
+      expect(body.translations[0].title).toBe('ok');
+      expect(body.translations[1].accessToken).toBe('[Filtered]');
+    });
+
+    it('массив длиннее потолка усекается с явной меткой', () => {
+      const items = Array.from({ length: 21 }, (_, i) => ({ n: i }));
+      filter.catch(new Error('boom'), makeHost(makeRequest({ body: { items } })));
+
+      const body = requestContext().body as { items: unknown[] };
+      // Двадцать элементов плюс метка: «их было больше» отличимо от «столько и было».
+      expect(body.items).toHaveLength(21);
+      expect(body.items[19]).toEqual({ n: 19 });
+      expect(body.items[20]).toBe('[Truncated: 1 more]');
+    });
+
+    it('контейнер за пределом глубины заменяется меткой, а не разворачивается', () => {
+      // Вход — уровень 1, значит объект на пятом уровне уже за пределом.
+      const req = makeRequest({
+        body: { l2: { l3: { l4: { l5: { password: 'too-deep-plaintext' } } } } },
+      });
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const body = requestContext().body as { l2: { l3: { l4: Record<string, unknown> } } };
+      expect(body.l2.l3.l4.l5).toBe('[MaxDepth]');
+      expect(JSON.stringify(requestContext())).not.toContain('too-deep-plaintext');
+    });
+
+    it('скаляр за пределом глубины остаётся: имя ключа проверено родителем', () => {
+      const req = makeRequest({ body: { l2: { l3: { l4: { l5: 'plain-value' } } } } });
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const body = requestContext().body as { l2: { l3: { l4: Record<string, unknown> } } };
+      expect(body.l2.l3.l4.l5).toBe('plain-value');
+    });
+
+    it('секретный ключ с объектным значением маскируется целиком', () => {
+      const req = makeRequest({
+        body: { authorization: { scheme: 'Bearer', value: 'real-access-token' } },
+      });
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const body = requestContext().body as Record<string, unknown>;
+      expect(body.authorization).toBe('[Filtered]');
+    });
+
+    it('циклическая ссылка не роняет фильтр и не зацикливает обход', () => {
+      const cyclic: Record<string, unknown> = { name: 'root' };
+      cyclic.self = cyclic;
+      filter.catch(new Error('boom'), makeHost(makeRequest({ body: cyclic })));
+
+      const body = requestContext().body as Record<string, unknown>;
+      expect(body.name).toBe('root');
+      expect(body.self).toBe('[Circular]');
+      expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('повторная ссылка на один объект из двух ключей циклом не считается', () => {
+      // Множество посещённых держится по текущему пути, а не по всему обходу:
+      // глобальное съело бы содержимое второго ключа меткой `[Circular]`.
+      const shared = { title: 'shared-node' };
+      filter.catch(new Error('boom'), makeHost(makeRequest({ body: { a: shared, b: shared } })));
+
+      const body = requestContext().body as { a: unknown; b: unknown };
+      expect(body.a).toEqual({ title: 'shared-node' });
+      expect(body.b).toEqual({ title: 'shared-node' });
+    });
+
+    it('ключ `__proto__` из тела остаётся собственным и не подменяет прототип', () => {
+      // `JSON.parse` заводит `__proto__` обычным собственным ключом, и `Object.keys`
+      // его отдаёт. Присваивание в литерал `{}` ушло бы в сеттер `Object.prototype`:
+      // ключ пропал бы, а прототипом клона стало бы разобранное тело запроса.
+      const body = JSON.parse('{"__proto__":{"leakMe":"raw-value"},"other":"y"}') as Record<
+        string,
+        unknown
+      >;
+      filter.catch(new Error('boom'), makeHost(makeRequest({ body })));
+
+      const out = requestContext().body as Record<string, unknown>;
+      expect(Object.keys(out)).toEqual(['__proto__', 'other']);
+      expect(out.other).toBe('y');
+      // Значение не утекло в прототип: наследованного `leakMe` у клона нет.
+      expect((out as { leakMe?: unknown }).leakMe).toBeUndefined();
+    });
+
+    it('двоичное тело отдаётся размером, а не побайтовым разбором', () => {
+      // `POST /uploads/direct` кладёт в `req.body` `Buffer` до 210 МБ. Потолок
+      // на 20 элементов сюда не достаёт: `Array.isArray(Buffer)` ложно.
+      filter.catch(new Error('boom'), makeHost(makeRequest({ body: Buffer.alloc(4096, 7) })));
+
+      expect(requestContext().body).toBe('[Binary: 4096 bytes]');
+    });
+
+    it('двоичное поле внутри тела тоже не разворачивается', () => {
+      const body = { note: 'ok', chunk: new Uint8Array(64) };
+      filter.catch(new Error('boom'), makeHost(makeRequest({ body })));
+
+      const out = requestContext().body as Record<string, unknown>;
+      expect(out.note).toBe('ok');
+      expect(out.chunk).toBe('[Binary: 64 bytes]');
+    });
+  });
+
   it('4xx в Sentry не уходят', () => {
     filter.catch(new HttpException('nope', HttpStatus.BAD_REQUEST), makeHost(makeRequest()));
 
