@@ -357,15 +357,72 @@ save_current_state() {
         current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
     fi
     local current_tag=$(git describe --tags --exact-match 2>/dev/null || echo "no-tag")
-    # docker compose images --format json outputs an array; prefer the 'app' service image
-    local current_image=$(docker compose -f docker-compose.prod.yml images --format json \
-        | jq -r 'map(select(.Service == "app")) | if length>0 then (.[0].Repository + ":" + .[0].Tag) else (.[0].Repository + ":" + .[0].Tag) end' 2>/dev/null || echo "unknown")
     # 🔴 Идентификатор образа, а не его тег. Теги переставляются каждым выкатом
     # (`books-app:prod` — тот самый, который поднимает docker-compose.prod.yml), поэтому
     # откат «на books-app:prod» был бы откатом в никуда. ID неизменен, и именно он —
     # единственная надёжная ручка на то, что работало до этого выката.
-    local current_image_id=$(docker compose -f docker-compose.prod.yml images --format json \
-        | jq -r 'map(select(.Service == "app")) | .[0].ID // ""' 2>/dev/null || echo "")
+    #
+    # 🔴 `LEGACY-325`. Раньше и образ, и его ID доставались разбором
+    # `docker compose images --format json` через `jq 'map(select(.Service == "app"))'`.
+    # На Docker, установленном на боевой машине, объекты этого вывода поля `Service`
+    # не имеют вовсе — там `ContainerName`. Выборка схлопывалась в пустой массив, `.[0].ID`
+    # давал `null`, и `// ""` записывал пустую строку; `image` тем же путём получал `":"`
+    # из `null + ":" + null`. Файл писался молча — перенаправление ошибки и хвост гасили
+    # и разбор, и настоящий отказ, — и обнаружилось это только 30.08.2026, когда откат
+    # понадобился и оказалось, что откатываться не к чему.
+    #
+    # ⚠️ Поэтому источник сменён: идентификатор берётся у самого контейнера службы `app`,
+    # а не из формата вывода, который меняется от версии Docker к версии. `ps -q` понимает
+    # имя службы сам, а `docker inspect --format '{{.Image}}'` отдаёт ровно тот `sha256:...`,
+    # который ниже принимает `docker tag` в откате. Формат `inspect` стабилен и от раскладки
+    # `compose images` не зависит.
+    # ⚠️ `ps -aq`, а не `ps -q`. Остановленный контейнер — не то же самое, что отсутствующий:
+    # упавший после миграции `app` при `-q` выглядел бы как чистая машина, и точка отката
+    # была бы переписана пустой поверх годной. То есть ровно та поломка, ради которой всё
+    # это и чинится, вернулась бы с другой стороны. `docker inspect` у вышедшего контейнера
+    # `.Image` отдаёт, так что брать его есть откуда.
+    #
+    # ⚠️ Присваивание стоит в условии `if !` и объявлено `local` отдельной строкой.
+    # `local x=$(...)` вернул бы статус `local`, а не подстановки, и отказ демона стал бы
+    # неотличим от «контейнера нет» — третий исход снова свернулся бы во второй.
+    local app_container=""
+    local app_containers=""
+    if ! app_containers=$(docker compose -f docker-compose.prod.yml ps -aq app); then
+        log_error "Could not list containers of service 'app' - refusing to overwrite the rollback point"
+        return 1
+    fi
+    app_containers=$(printf '%s\n' "$app_containers" | sed '/^$/d')
+
+    # ⚠️ Строк должно быть не больше одной. `run_migrations` поднимает контейнер той же
+    # службы через `docker compose run --rm`, и переживший прерванный выкат `*-app-run-*`
+    # попадёт в эту же выборку. Порядок строк не определён, поэтому «взять первую» тихо
+    # записало бы образ позапрошлого выката — откат вернул бы не ту версию и промолчал.
+    local app_count=$(printf '%s\n' "$app_containers" | sed '/^$/d' | wc -l | tr -d ' ')
+    if [[ "$app_count" -gt 1 ]]; then
+        log_error "Service 'app' has $app_count containers - cannot tell which one is the rollback point"
+        log_error "Leftover 'docker compose run' container? Remove it and retry: docker compose -f docker-compose.prod.yml ps -a"
+        return 1
+    fi
+    app_container=$(printf '%s\n' "$app_containers" | head -n1)
+
+    local current_image=""
+    local current_image_id=""
+    if [[ -n "$app_container" ]]; then
+        current_image=$(docker inspect --format '{{.Config.Image}}' "$app_container" 2>/dev/null) || current_image=""
+        current_image_id=$(docker inspect --format '{{.Image}}' "$app_container" 2>/dev/null) || current_image_id=""
+    fi
+    [[ -n "$current_image" ]] || current_image="unknown"
+
+    # ⚠️ Тишина здесь и была настоящим дефектом: файл без `image_id` выглядит как файл.
+    # Отсутствие контейнера — законный случай (первый выкат на чистую машину), и валить
+    # его нельзя. А вот контейнер, который есть, но чей образ не читается, — это отказ,
+    # и он обязан быть слышен: следующий откат на таком файле не состоится.
+    if [[ -z "$app_container" ]]; then
+        log_warning "No 'app' container at all - rollback point will be empty (first deploy?)"
+    elif [[ -z "$current_image_id" ]]; then
+        log_error "Could not read image id of container $app_container - rollback will not be possible"
+        return 1
+    fi
 
     cat > "$ROLLBACK_FILE" << EOF
 {
