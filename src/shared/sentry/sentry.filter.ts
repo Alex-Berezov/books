@@ -2,7 +2,35 @@ import { ArgumentsHost, Catch, HttpException, HttpStatus, Logger } from '@nestjs
 import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
 import type { Request } from 'express';
 import * as Sentry from '@sentry/node';
-import { redactKeys, redactUrl } from './redact.util';
+import { redactKeys, redactUrl, type RedactAllowList } from './redact.util';
+import { RIGHTS_ALLOW_LIST } from './rights-allow-list';
+
+/**
+ * Маршруты, у которых контекст события собирается **белым списком**, а не чёрным
+ * (`LEGACY-334`).
+ *
+ * 🔴 Зачем он нужен и почему маски по имени ключа тут не хватает — разобрано
+ * один раз, у `PERSONAL_FILTERED_KEY_PATTERN` в `redact.util.ts`. Здесь только
+ * то, чего там быть не может: как выбирается маршрут.
+ *
+ * ⚠️ Совпадение по `req.path`, а не по `req.route.path`. Первое есть всегда,
+ * второе заполняется только после того, как обработчик сопоставлен, и несёт путь
+ * без префикса контроллера и без глобального `api` — то есть `/claims`, по которому
+ * правовую ручку от чужой не отличить.
+ *
+ * ⚠️ Якорь на префикс контроллера, а не на перечень ручек: новый маршрут внутри
+ * `admin/rights` закрывается сам. Список из пятнадцати путей молча пропустил бы
+ * шестнадцатый — это и есть тот тихий возврат к чёрному списку, из-за которого
+ * решение сначала было принято против белого списка.
+ *
+ * 🔴 Флаг `i` обязателен. Маршрутизация Express регистронезависима по умолчанию
+ * (`case sensitive routing` выключена, в `main.ts` её никто не включает):
+ * `POST /api/Admin/rights/claims` доходит до обработчика и выполняется. Шаблон
+ * без `i` по такому пути не срабатывал, белый список не включался, и проза
+ * встречного уведомления уезжала дословно — чёрный список её не берёт по
+ * определению. Найдено ревью 30.08.2026, проверено запуском.
+ */
+const ALLOW_LIST_PATH_PATTERN = /(^|\/)admin\/rights(\/|$)/i;
 
 /**
  * Global exception filter that reports 5xx errors to Sentry.
@@ -44,17 +72,20 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
             if (req) {
               const { method, path } = req;
               const routePath = this.getRoutePath(req);
-              const safeUrl = redactUrl(req.originalUrl);
+              const allow = this.getAllowList(path);
+              const safeUrl = redactUrl(req.originalUrl, allow);
               scope.setTag('method', method);
               scope.setTag('route', routePath ?? path ?? 'unknown');
               scope.setTag('status_code', String(status));
               scope.setContext('request', {
                 url: `${req.protocol}://${req.get('host')}${safeUrl}`,
                 method,
+                // ⚠️ Заголовки идут **без** белого списка: он собран из имён полей
+                // правовых заявок, и под него не попал бы ни один заголовок вовсе.
                 headers: redactKeys(req.headers),
-                query: redactKeys(req.query),
-                params: redactKeys(req.params),
-                body: redactKeys(req.body),
+                query: redactKeys(req.query, allow),
+                params: redactKeys(req.params, allow),
+                body: redactKeys(req.body, allow),
                 ip: req.ip,
               });
               // Optional lightweight breadcrumbs for request timeline
@@ -85,6 +116,17 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
   private getStatus(exception: unknown): number {
     if (exception instanceof HttpException) return exception.getStatus();
     return HttpStatus.INTERNAL_SERVER_ERROR;
+  }
+
+  /**
+   * Белый список для правовых маршрутов либо его отсутствие (`LEGACY-334`).
+   *
+   * ⚠️ Читается `req.path`, а не `req.route.path`: второй заполняется только
+   * после сопоставления обработчика и несёт путь без префикса контроллера.
+   */
+  private getAllowList(path: string | undefined): RedactAllowList | undefined {
+    if (typeof path !== 'string') return undefined;
+    return ALLOW_LIST_PATH_PATTERN.test(path) ? RIGHTS_ALLOW_LIST : undefined;
   }
 
   private getRoutePath(req: Request): string | undefined {

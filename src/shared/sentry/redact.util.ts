@@ -36,8 +36,34 @@ const SENSITIVE_KEY_PATTERN =
   /password|token|authorization|secret|cookie|credential|signature|jwt|session|apikey|api[-_]key/i;
 
 /**
+ * Имя ключа, приведённое к словам через нижнее подчёркивание (`LEGACY-334`).
+ *
+ * 🔴 Персональные маски сверяются со **словами** ключа, а не с его подстрокой.
+ * `/email/i.test('voicemail')` истинно: ключ `voicemailNumber` отдал бы телефон,
+ * заменённый бессмысленным почтовым хешем. Поля с таким именем в проекте нет —
+ * дефект был латентным, а не состоявшимся, — но разбор «слишком широко или в самый
+ * раз», сделанный для `SENSITIVE_KEY_PATTERN`, для персональной маски не делался
+ * вовсе. Правило `L-008` — про это же.
+ *
+ * ⚠️ `SENSITIVE_KEY_PATTERN` на разбор по словам **не** переводится и работает
+ * по сырому имени: `set-cookie`, `refresh_token` и `api[-_]key` держатся
+ * подстрокой намеренно, и над-совпадение секретной маски ошибается в безопасную
+ * сторону. Решение арбитра от 30.08.2026.
+ *
+ * ⚠️ Череда заглавных разрезается отдельным правилом: `APIEmail` даёт
+ * `api_email`, а не `apiemail`, иначе слово `email` в нём не нашлось бы.
+ */
+function normalizeKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .toLowerCase();
+}
+
+/**
  * Ключи, значения которых уезжают в событие **хешем, а не открытым текстом**
- * (`LEGACY-332`).
+ * (`LEGACY-332`). Сверяется с `normalizeKey`, а не с сырым именем.
  *
  * 🔴 Это не секреты, а персональные данные, и разница определяет обращение.
  * Секрет надо стереть: он не нужен для разбора вовсе. Почта нужна — но не сама,
@@ -47,12 +73,86 @@ const SENSITIVE_KEY_PATTERN =
  * ⚠️ Проверяется **после** `SENSITIVE_KEY_PATTERN`, а не до: `emailConfirmToken`
  * попадает под оба, и это секрет, а не почта, — он должен стираться целиком.
  *
+ * ⚠️ И **до** `PERSONAL_FILTERED_KEY_PATTERN`: `claimantEmail` попадает под обе
+ * персональные маски, и порядок решает, останется ли он хешем. Стёртая почта
+ * заявителя убила бы счёт уникальных пострадавших, ради которого хеш и выбран
+ * (`LEGACY-332`). Решение арбитра от 30.08.2026.
+ *
  * ⚠️ Почему второй канал вообще существовал: `LEGACY-187` закрыл только `setUser`,
  * а тело `POST /auth/login`, упавшего в 500, клало в событие открытую почту рядом
  * с маршрутом и `ip`. На входе пользователь ещё не вошёл, `setUser` пуст, и почта
  * в теле — единственное, что отличает один упавший вход от другого.
  */
-const PERSONAL_KEY_PATTERN = /email/i;
+const PERSONAL_HASHED_KEY_PATTERN = /(^|_)email(_|$)/;
+
+/**
+ * Ключи, значения которых **стираются**: персональные данные, различимость
+ * которых разбору не нужна (`LEGACY-334`). Сверяется с `normalizeKey`.
+ *
+ * 🔴 Хеш здесь был бы хуже маски, а не лучше. Пространство значений телефона
+ * и имени мало, несолёный хеш от них обратим перебором — то есть псевдоанонимизация,
+ * а не анонимизация. Различимость события заявитель и так даёт хешем почты, и второй
+ * различающий признак не нужен вовсе. Решение арбитра от 30.08.2026.
+ *
+ * ⚠️ Слово `claimant` закрывает все шесть персональных полей заявителя DMCA сразу
+ * (`claimantName`, `claimantOrganization`, `claimantPhone`, `claimantAddress`,
+ * `claimantEmail`, `counterNoticeClaimantName`).
+ *
+ * 🔴 Но маской по имени ключа правовая ручка **не закрывается целиком**, и это
+ * стоило одного отменённого решения. В тех же телах лежит обязательная проза
+ * без `@MaxLength` — `counterNoticeTextRu` (`record-counter-notice.dto.ts:7`),
+ * `descriptionRu` и `originalNoticeText` (`create-rights-claim.dto.ts:165,186`),
+ * `responseTextRu` (`record-claim-response.dto.ts:8`). Встречное уведомление DMCA
+ * по своей форме и есть контактный блок отправителя: имя, адрес и телефон в нём
+ * лежат текстом, под именем ключа, которое персональным не назовёшь. По ключу
+ * они не ловятся никогда, по значению не разбираются — поэтому для маршрутов
+ * `admin/rights` включается `RedactAllowList`, и он единственный их закрывает.
+ * Найдено ревью 30.08.2026; решение арбитра того же дня отменило предыдущее.
+ *
+ * ⚠️ Заодно стираются `claimantType`, `claimantIsAuthorized` и `claimantPersonId` —
+ * тип заявителя, флаг полномочий и идентификатор персоны. Это принятая цена,
+ * исключений для них не заводится: список исключений разъедет маску при первом же
+ * новом поле. По той же причине их нет и в белом списке — до него они не доходят.
+ *
+ * ⚠️ Слова `address`, `author`, `birth`, `text` и `description` сюда **не** берутся.
+ * `address` вне `claimant` встречается только литералами JSON-LD в `seo.service.ts`
+ * и в тело запроса не попадает; `text` и `description` совпали бы с двумя десятками
+ * живых ключей (`metaDescription`, `ogDescription`, `attributionTextsRu`,
+ * `requiredAttributionText`) — это тот самый обмен диагностики на несуществующую
+ * утечку, который запись велела не делать. Слово `name` не взято по той же причине,
+ * но точный ключ `name` взят — см. `PERSONAL_EXACT_KEYS`.
+ */
+const PERSONAL_FILTERED_KEY_PATTERN =
+  /(^|_)(claimant|phone|organization|full_?name|first_?name|last_?name|nick_?name)(_|$)/;
+
+/**
+ * Персональные ключи, совпадающие **целиком**, а не словом (`LEGACY-334`).
+ *
+ * 🔴 `name` попало сюда точным ключом, а не словом, и разница здесь решает всё.
+ * Словом оно совпало бы с `file_name`, `agent_name`, `event_name`, `role_name`
+ * и ещё двумя десятками живых ключей — событие о сбое заливки перестало бы
+ * называть файл. Целиком гаснет только голое `name`, а в телах, где оно живое
+ * (рубрика, метка, импорт), рядом всегда лежат `key` и `slug`: личность записи
+ * в событии сохраняется, теряется только подпись.
+ *
+ * ⚠️ Закрывает достижимую утечку, а не гипотетическую: `RegisterDto.name`
+ * (`auth.dto.ts:15`) и `UpdateMeDto.name` (`users.controller.ts:97`) — это имя
+ * живого человека в теле запроса, и упавший в 500 вход клал его в событие рядом
+ * с уже хешированной почтой и `ip`. Ровно сценарий `LEGACY-332`, только именем.
+ * Найдено ревью 30.08.2026; решение арбитра того же дня.
+ */
+const PERSONAL_EXACT_KEYS: ReadonlySet<string> = new Set(['name']);
+
+/**
+ * Белый список имён ключей: всё, чего в нём нет, стирается (`LEGACY-334`).
+ *
+ * 🔴 Чистый параметр редактора. Какие маршруты его получают, решает
+ * `sentry.filter.ts` — здесь про маршруты не знают вовсе, и это намеренно:
+ * редактор вынесен из фильтра 30.08.2026 именно как не читающий состояние.
+ *
+ * ⚠️ Имена сверяются с `normalizeKey`, как и персональные маски.
+ */
+export type RedactAllowList = ReadonlySet<string>;
 
 /**
  * Сколько шестнадцатеричных знаков хеша уходит в событие (`LEGACY-332`).
@@ -90,18 +190,37 @@ function hashPersonalValue(value: string): string {
  * и той же почте два разных значения, то есть двух «людей» вместо одного.
  * Найдено ревью 30.08.2026 до коммита.
  *
- * ⚠️ Порядок проверок обязателен: `emailConfirmToken` попадает под обе маски,
- * и это секрет, а не почта.
+ * ⚠️ Порядок трёх проверок обязателен и задан решением арбитра от 30.08.2026:
+ * секрет → почта → прочее персональное. `emailConfirmToken` попадает под первую
+ * и вторую, и это секрет, а не почта; `claimantEmail` — под вторую и третью,
+ * и это почта, которая должна остаться хешем, а не стереться.
+ *
+ * ⚠️ Персональные маски сверяются с `normalizeKey`, секретная — с сырым именем.
+ * Расхождение намеренное и объяснено у самих констант.
  *
  * ⚠️ Нестроковое значение под персональным ключом (объект, массив, число) — это
  * не почта, а неизвестно что: нормализовать его нечем, а `String(value)` дал бы
  * стабильный хеш от `[object Object]`, то есть ложное «это все один человек».
  * Такое значение стирается.
  */
-function redactByKey(key: string, value: unknown): { handled: true; value: string } | undefined {
+function redactByKey(
+  key: string,
+  value: unknown,
+  allow?: RedactAllowList,
+): { handled: true; value: string } | undefined {
   if (SENSITIVE_KEY_PATTERN.test(key)) return { handled: true, value: '[Filtered]' };
-  if (!PERSONAL_KEY_PATTERN.test(key)) return undefined;
-  return { handled: true, value: redactPersonalValue(value) };
+  const normalized = normalizeKey(key);
+  if (PERSONAL_HASHED_KEY_PATTERN.test(normalized)) {
+    return { handled: true, value: redactPersonalValue(value) };
+  }
+  if (PERSONAL_FILTERED_KEY_PATTERN.test(normalized) || PERSONAL_EXACT_KEYS.has(normalized)) {
+    return { handled: true, value: '[Filtered]' };
+  }
+  // Белый список проверяется **последним**: снять маску с уже совпавшего ключа
+  // он не вправе. Иначе достаточно было бы внести имя в список, чтобы вернуть
+  // наружу почту или секрет.
+  if (allow && !allow.has(normalized)) return { handled: true, value: '[Filtered]' };
+  return undefined;
 }
 
 /**
@@ -148,8 +267,8 @@ const MAX_REDACT_ARRAY_ITEMS = 20;
  * До этого проход был по верхнему уровню, и вложенный секрет уезжал
  * во внешний сервис целиком.
  */
-export function redactKeys(value: unknown): unknown {
-  return redactValue(value, 1, new Set<object>());
+export function redactKeys(value: unknown, allow?: RedactAllowList): unknown {
+  return redactValue(value, 1, new Set<object>(), allow);
 }
 
 /**
@@ -166,8 +285,15 @@ export function redactKeys(value: unknown): unknown {
  *
  * ⚠️ Персональные ключи обрабатываются здесь так же, как в теле (`LEGACY-332`):
  * иначе почта, ушедшая хешем из `body`, уезжала бы открытой из строки запроса.
+ *
+ * ⚠️ Неэкранированный `+` в значении даёт хеш, отличный от хеша того же значения
+ * из тела: `URLSearchParams` применяет разбор формы и читает `+` как пробел.
+ * Это **принято**, а не упущено (решение арбитра от 30.08.2026, `LEGACY-334`):
+ * для строки запроса `+` как пробел — верное поведение, `req.query` через `qs`
+ * делает так же, а правильно закодированный адрес несёт `%2B` и даёт тот же хеш,
+ * что тело. Ручек, принимающих почту в строке запроса, в проекте нет вовсе.
  */
-export function redactUrl(rawUrl: string): string {
+export function redactUrl(rawUrl: string, allow?: RedactAllowList): string {
   const queryStart = rawUrl.indexOf('?');
   if (queryStart === -1) return rawUrl;
 
@@ -178,7 +304,7 @@ export function redactUrl(rawUrl: string): string {
     // в `url` контекста и в хлебной крошке (`LEGACY-189`). Обращение одно.
     const replaced: string[] = [];
     for (const value of params.getAll(key)) {
-      const item = redactByKey(key, value);
+      const item = redactByKey(key, value, allow);
       if (item) replaced.push(item.value);
     }
     if (replaced.length === 0) continue;
@@ -209,9 +335,17 @@ export function redactUrl(rawUrl: string): string {
  * бы циклом повторную ссылку на один объект из двух соседних ключей
  * и молча съело бы содержимое второй.
  */
-function redactValue(value: unknown, depth: number, seen: Set<object>): unknown {
+function redactValue(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  allow?: RedactAllowList,
+): unknown {
   const binary = describeBinary(value);
   if (binary) return binary;
+
+  const exotic = describeExotic(value);
+  if (exotic) return exotic;
 
   const container = getContainer(value);
   if (!container) return value;
@@ -221,8 +355,8 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
   seen.add(container);
   try {
     return Array.isArray(container)
-      ? redactArray(container, depth, seen)
-      : redactObject(container, depth, seen);
+      ? redactArray(container, depth, seen, allow)
+      : redactObject(container, depth, seen, allow);
   } finally {
     seen.delete(container);
   }
@@ -246,19 +380,25 @@ function redactObject(
   value: Record<string, unknown>,
   depth: number,
   seen: Set<object>,
+  allow?: RedactAllowList,
 ): Record<string, unknown> {
   const clone = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(value)) {
-    const replaced = redactByKey(key, value[key]);
-    clone[key] = replaced ? replaced.value : redactValue(value[key], depth + 1, seen);
+    const replaced = redactByKey(key, value[key], allow);
+    clone[key] = replaced ? replaced.value : redactValue(value[key], depth + 1, seen, allow);
   }
   return clone;
 }
 
-function redactArray(value: unknown[], depth: number, seen: Set<object>): unknown[] {
+function redactArray(
+  value: unknown[],
+  depth: number,
+  seen: Set<object>,
+  allow?: RedactAllowList,
+): unknown[] {
   const kept = value
     .slice(0, MAX_REDACT_ARRAY_ITEMS)
-    .map((item) => redactValue(item, depth + 1, seen));
+    .map((item) => redactValue(item, depth + 1, seen, allow));
   const dropped = value.length - MAX_REDACT_ARRAY_ITEMS;
   if (dropped > 0) kept.push(`[Truncated: ${dropped} more]`);
   return kept;
@@ -289,6 +429,78 @@ function describeBinary(value: unknown): string | undefined {
   if (ArrayBuffer.isView(value)) return `[Binary: ${value.byteLength} bytes]`;
   if (value instanceof ArrayBuffer) return `[Binary: ${value.byteLength} bytes]`;
   return undefined;
+}
+
+/**
+ * 🔴 Носитель состояния вне перечислимых собственных ключей внутрь редактора
+ * не пускается — он отдаётся меткой с типом (`LEGACY-335`).
+ *
+ * `Date`, `Map`, `Set`, `RegExp` и `Error` проходят `isPlainObject`: они объекты,
+ * не `null` и не массивы. Данные при этом лежат во внутренних слотах, `Object.keys`
+ * отдаёт пустой список, и `redactObject` клонировал их в `{}` — в событии
+ * не оставалось ни следа того, что там что-то было.
+ *
+ * ⚠️ Проверка по **прототипу**, а не по списку классов, и это главное в записи.
+ * Список классов всегда неполон, и следующий класс так же тихо стал бы `{}`.
+ * Здесь неизвестный не-простой объект получает метку с именем конструктора,
+ * то есть неполнота перестаёт быть тихой.
+ *
+ * ⚠️ `Object.prototype` и `null` — единственные законные прототипы того, что
+ * приходит в контекст события, и **нужны оба**. `req.body` из `express.json`
+ * и `req.headers` из Node несут `Object.prototype`; `req.query` в `express@5`
+ * разбирается `querystring.parse` и приходит **без прототипа вовсе**. Снять
+ * ветку `proto === null` как перестраховку нельзя: строка запроса целиком
+ * превратится в `[Object: unknown]`, и `redactUrl` останется единственным
+ * местом, где она видна. Проверено запуском, а не по памяти.
+ *
+ * ⚠️ Массив сюда не доходит: его отсеивает `isPlainObject`, тот же предикат,
+ * которым `getContainer` решает, заходить ли внутрь. Без этого отсева редактор
+ * перестал бы заходить в массивы вовсе — прототип у них `Array.prototype`.
+ *
+ * ⚠️ Стоит **после** `describeBinary`: `Buffer` тоже не простой объект,
+ * но про него нужен размер, а не имя класса.
+ */
+function describeExotic(value: unknown): string | undefined {
+  // Тот же предикат, что у `getContainer`, и намеренно он же, а не своя копия:
+  // признак «сюда редактор заходит» обязан быть задан в одном месте. Разъехавшись,
+  // эти две ветки дали бы значению одновременно метку и попытку обхода, и обе
+  // вернули бы правдоподобный результат. Найдено ревью 30.08.2026.
+  if (!isPlainObject(value)) return undefined;
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto === null || proto === Object.prototype) return undefined;
+  return `[${describeExoticShape(value)}]`;
+}
+
+/**
+ * ⚠️ Метка несёт тип и размер, но не содержимое. У `Error` берётся только `name`:
+ * `message` и `stack` пишутся кодом свободно и регулярно содержат и почту,
+ * и токен — то есть ровно то, что редактор и убирает.
+ *
+ * ⚠️ Негодная дата отдаётся меткой, а не роняет обход: `toISOString` на ней
+ * бросает `RangeError`, а редактор зовётся внутри обработчика исключения,
+ * где падать нельзя.
+ */
+function describeExoticShape(value: object): string {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? 'Date: Invalid Date' : `Date: ${value.toISOString()}`;
+  }
+  if (value instanceof Map) return `Map: ${value.size} entries`;
+  if (value instanceof Set) return `Set: ${value.size} entries`;
+  if (value instanceof RegExp) return `RegExp: ${value.source}`;
+  if (value instanceof Error) return `Error: ${value.name}`;
+  return `Object: ${describeConstructor(value)}`;
+}
+
+/**
+ * ⚠️ Имя берётся из прототипа, а не из `value.constructor`: собственный ключ
+ * `constructor` в разобранном теле запроса завёл бы в метку строку из запроса.
+ */
+function describeConstructor(value: object): string {
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (typeof proto !== 'object' || proto === null) return 'unknown';
+  const ctor: unknown = (proto as { constructor?: unknown }).constructor;
+  const name: unknown = typeof ctor === 'function' ? (ctor as { name?: unknown }).name : undefined;
+  return typeof name === 'string' && name !== '' ? name : 'unknown';
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

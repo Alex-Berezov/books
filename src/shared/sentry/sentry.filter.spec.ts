@@ -178,6 +178,100 @@ describe('SentryExceptionFilter (unit)', () => {
     });
   });
 
+  describe('LEGACY-334: белый список включается по правовому маршруту', () => {
+    /**
+     * Тело правовой заявки: перечисления и идентификатор рядом с обязательной прозой.
+     * Имена взяты из живых DTO (`create-rights-claim.dto.ts`,
+     * `record-counter-notice.dto.ts`) — фикстура формы, которой ни одна ручка
+     * не принимает, проверяла бы не то.
+     */
+    const claimBody = {
+      claimType: 'COPYRIGHT',
+      status: 'OPEN',
+      bookVersionId: 'bv-1',
+      counterNoticeTextRu: 'Я, Иван Петров, +79991234567, г. Москва, ул. Ленина, 1',
+      descriptionRu: 'произвольный текст заявки',
+    };
+
+    it('на `admin/rights` проза стирается, а перечисленное остаётся', () => {
+      const req = makeRequest({
+        path: '/api/admin/rights/claims',
+        originalUrl: '/api/admin/rights/claims?status=OPEN&q=Иван',
+        body: claimBody,
+      });
+
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const body = requestContext().body as Record<string, unknown>;
+      expect(body.claimType).toBe('COPYRIGHT');
+      expect(body.status).toBe('OPEN');
+      expect(body.bookVersionId).toBe('bv-1');
+      expect(body.counterNoticeTextRu).toBe('[Filtered]');
+      expect(body.descriptionRu).toBe('[Filtered]');
+
+      const everything = JSON.stringify([requestContext(), scope.addBreadcrumb.mock.calls]);
+      expect(everything).not.toContain('Иван');
+      expect(everything).not.toContain('79991234567');
+    });
+
+    it('вложенный правовой маршрут списка тоже получает', () => {
+      // Якорь стоит на префиксе контроллера, а не на перечне ручек: новый
+      // маршрут внутри `admin/rights` закрывается сам.
+      const req = makeRequest({
+        path: '/api/admin/rights/claims/abc/counter-notice',
+        body: claimBody,
+      });
+
+      filter.catch(new Error('boom'), makeHost(req));
+
+      expect((requestContext().body as Record<string, unknown>).counterNoticeTextRu).toBe(
+        '[Filtered]',
+      );
+    });
+
+    it('🔴 маршрут в чужом регистре список не выключает', () => {
+      // Маршрутизация Express регистр не различает (`case sensitive routing`
+      // выключена по умолчанию, в `main.ts` её никто не включает), поэтому
+      // `POST /api/Admin/rights/...` доходит до того же обработчика. Шаблон без
+      // флага `i` по такому пути не срабатывал, белый список выключался целиком,
+      // и проза встречного уведомления уезжала дословно. Проверено запуском
+      // Express 5.1.0: обработчик выполняется, `req.path` несёт присланный регистр.
+      const req = makeRequest({
+        path: '/api/Admin/Rights/claims/abc/counter-notice',
+        body: claimBody,
+      });
+
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const body = requestContext().body as Record<string, unknown>;
+      expect(body.counterNoticeTextRu).toBe('[Filtered]');
+      expect(body.status).toBe('OPEN');
+      expect(JSON.stringify(requestContext())).not.toContain('Иван');
+    });
+
+    it('🔴 на чужом маршруте списка нет: там работает чёрный', () => {
+      // Обратная сторона проверки. Без неё список, включённый на все маршруты
+      // сразу, оставил бы спеку зелёной, а событие — пустым.
+      const req = makeRequest({ path: '/api/books/abc', body: { title: 'Война и мир' } });
+
+      filter.catch(new Error('boom'), makeHost(req));
+
+      expect((requestContext().body as Record<string, unknown>).title).toBe('Война и мир');
+    });
+
+    it('заголовки под белый список не попадают и остаются разбираемыми', () => {
+      // Список собран из имён полей правовой заявки; под него не подошёл бы
+      // ни один заголовок вовсе, и событие потеряло бы их целиком.
+      const req = makeRequest({ path: '/api/admin/rights/claims', body: claimBody });
+
+      filter.catch(new Error('boom'), makeHost(req));
+
+      const headers = requestContext().headers as Record<string, unknown>;
+      expect(headers['user-agent']).toBe('jest');
+      expect(headers.authorization).toBe('[Filtered]');
+    });
+  });
+
   describe('хлебные крошки', () => {
     it('адрес крошки чистится тем же разбором, что и адрес события', () => {
       filter.catch(new Error('boom'), makeHost(makeRequest()));
