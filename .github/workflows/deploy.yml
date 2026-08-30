@@ -784,12 +784,49 @@ jobs:
 
           # Which image actually answers. `unknown` means the running container predates the
           # APP_VERSION plumbing — reported, but not treated as a failed deployment.
-          api_version=$(curl -sf --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness" | jq -r '.version // "unknown"')
+          #
+          # 🔴 Ретраи, а не одна попытка. 30.08.2026 выкат `v1.0.15` покраснел здесь на
+          # исправном проде: `curl -sf` упёрся в свой `--max-time 20` через секунду после
+          # того, как соседний шаг выше получил и `liveness`, и `readiness` со `status: up`,
+          # — контейнеру было тридцать секунд. Тот шаг (`🏥 Health Check`) держит двадцать
+          # попыток, цикл по маршрутам ниже — пять, и оба объясняют почему; проверке версии
+          # тот же вывод не применили.
+          #
+          # 🔴 И главное: пустой ответ — это НЕ «версия не совпала». `jq -r '.version //
+          # "unknown"'` подставляет `unknown` вместо `null` в разобранном JSON, но на пустом
+          # вводе не выводит ничего вовсе, и `api_version` получался пустой строкой. Она
+          # не равна ни `unknown`, ни ожидаемой версии — и уходила в ветку «старый контейнер
+          # всё ещё отвечает», то есть «не смог спросить» подменялось вердиктом о состоянии
+          # прода (урок `L-015`). Дальше по красноте дёргался job отката, который снёс бы
+          # только что выкаченный исправный образ.
+          #
+          # ⚠️ Ослабления здесь нет и быть не должно: недостижимая после всех попыток версия
+          # остаётся красной, просто со своим текстом. Пустой ответ в `unknown` не переводится
+          # и в «пропускаем» не уходит — иначе выкат перестанет отличать «не ответили»
+          # от «выкатилось не то».
+          # ⚠️ Присваивание стоит в условии `if !`, а не глушится хвостом-заглушкой:
+          # `set -e` не срабатывает на команде внутри условия, и неудачная попытка
+          # честно уходит в пустую строку, которую ниже ловит своя красная ветка.
+          # Хвост, отбрасывающий код возврата, здесь был бы именно глушением: оборванный
+          # посреди JSON ответ (`jq` выходит с 5) выглядел бы так же, как успешный.
+          api_version=""
+          for attempt in 1 2 3 4 5; do
+            if ! api_version=$(curl -sf --max-time 20 "https://${{ vars.PRODUCTION_DOMAIN }}/api/health/liveness" | jq -r '.version // "unknown"'); then
+              api_version=""
+            fi
+            [[ -n "$api_version" ]] && break
+            echo "⏳ Version probe - attempt $attempt/5: no answer from /api/health/liveness, retrying..."
+            sleep 10
+          done
 
           echo "🔍 API Version: $api_version"
           echo "🎯 Expected Version: ${{ needs.build.outputs.version }}"
 
-          if [[ "$api_version" == "unknown" ]]; then
+          if [[ -z "$api_version" ]]; then
+            echo "❌ Could not read the running version: /api/health/liveness did not answer in 5 attempts."
+            echo "❌ This says nothing about which image is serving: the version was never read."
+            exit 1
+          elif [[ "$api_version" == "unknown" ]]; then
             echo "⚠️  Running container does not report its version — skipping the version check."
           elif [[ "$api_version" != "${{ needs.build.outputs.version }}" ]]; then
             echo "❌ Deployed version does not match the built one — the old container is still serving."

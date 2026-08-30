@@ -353,4 +353,108 @@ describe('DevOps: дым по маршрутам на выкате', () => {
       expect(route?.guarded).toBe(false);
     }
   });
+  /**
+   * 🔴 Проверка версии обязана уметь отличить «не смог спросить» от «выкатилось
+   * не то». 30.08.2026 она этого не умела: `curl -sf` отвалился по таймауту,
+   * `jq` на пустом вводе не вывел ничего, `api_version` стал пустой строкой —
+   * и она ушла в ветку «старый контейнер всё ещё отвечает». Выкат `v1.0.15`
+   * покраснел на исправном проде, который в тот момент уже отдавал `v1.0.15`,
+   * а следом по `LEGACY-227` дёрнулся job отката (спасло только то, что он
+   * тоже упал — на боевой машине нет `image_id` для отката).
+   *
+   * ⚠️ Набор стережёт именно ретраи и отдельную ветку пустого ответа. Снять их
+   * «за ненадобностью» дешевле всего ровно после удачного выката, когда
+   * симптома не видно, — поэтому проверка живёт здесь, а не в памяти.
+   */
+  describe('шаг Verify Deployment: проверка версии (30.08.2026)', () => {
+    // Границы шага ищет уже существующий `stepRange()` — второй такой поиск
+    // разошёлся бы с первым при первой же правке разбора YAML.
+    //
+    // ⚠️ Комментарии выброшены по той же причине, что и в `verifyLoopLines()`:
+    // добавленная шапка шага сама пять раз упоминает `liveness`, и якорь на URL
+    // ловил бы её, оставаясь зелёным при подмене адреса на `readiness` — а у того
+    // поля `version` нет вовсе, и шаг навсегда ушёл бы в ветку «skipping».
+    const stepText = (): string => {
+      const { start, end } = stepRange();
+      expect(start).toBeGreaterThanOrEqual(0);
+      return LINES.slice(start, end)
+        .filter((line) => !/^\s*#/.test(line))
+        .join('\n');
+    };
+
+    it('версия запрашивается с ретраями, а не одной попыткой', () => {
+      const text = stepText();
+      // Цикл ретраев вокруг запроса версии: одна попытка проверяет тайминг
+      // подмены контейнера, а не то, какой образ отвечает.
+      // ⚠️ Искать просто `for attempt in` нельзя: в этом же шаге ниже стоит
+      // второй такой цикл — по списку админских маршрутов. Проверка ловила бы
+      // его и зеленела бы на снятых ретраях запроса версии (`L-016`). Якорь —
+      // выход из цикла по непустому `api_version`: эта строка есть только там.
+      const loop = text.indexOf('for attempt in');
+      const probe = text.indexOf('api_version=$(curl');
+      const brk = text.indexOf('-n "$api_version" ]] && break');
+      expect(loop).toBeGreaterThanOrEqual(0);
+      expect(probe).toBeGreaterThan(loop);
+      expect(brk).toBeGreaterThan(probe);
+      // ⚠️ Проверяется строка самого запроса, а не любое упоминание `liveness`
+      // в шаге: его же печатают два `echo` с диагностикой, и подмена адреса
+      // на `readiness` осталась бы незамеченной. А у readiness поля `version`
+      // нет вовсе — шаг навсегда ушёл бы в ветку «skipping».
+      const probeLine = text.slice(probe, text.indexOf('\n', probe));
+      expect(probeLine).toContain('/api/health/liveness');
+
+      // ⚠️ Одной структуры цикла мало: `for attempt in 1; do ... done` оставил бы
+      // и цикл, и `break`, и все якоря выше на месте, а ретраев бы не было.
+      // Поэтому проверяется само число попыток.
+      const header = text.slice(loop, text.indexOf('; do', loop));
+      const attempts = header.replace('for attempt in', '').trim().split(/\s+/);
+      expect(attempts.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('пустой ответ — отдельная красная ветка, а не «версия не совпала» и не «пропускаем»', () => {
+      const text = stepText();
+      // Пустая строка обязана иметь свою проверку ДО сравнения с ожидаемой версией.
+      const emptyCheck = text.indexOf('-z "$api_version"');
+      const mismatch = text.indexOf('!= "${{ needs.build.outputs.version }}"');
+      expect(emptyCheck).toBeGreaterThanOrEqual(0);
+      expect(mismatch).toBeGreaterThanOrEqual(0);
+      expect(emptyCheck).toBeLessThan(mismatch);
+      // И она обязана краснеть, а не уходить в «skipping». Сравнивается только
+      // тело этой ветки — до `elif` про `unknown`, где «skipping» законен:
+      // контейнер, не умеющий сообщать версию, выкат валить не должен.
+      const unknownBranch = text.indexOf('== "unknown"');
+      expect(unknownBranch).toBeGreaterThan(emptyCheck);
+      const branch = text.slice(emptyCheck, unknownBranch);
+      expect(branch).toContain('exit 1');
+      expect(branch).not.toContain('skipping');
+    });
+
+    it('расхождение версий по-прежнему краснеет', () => {
+      const text = stepText();
+      const mismatch = text.indexOf('!= "${{ needs.build.outputs.version }}"');
+      expect(mismatch).toBeGreaterThanOrEqual(0);
+      // ⚠️ Срез обрывается на итоговом echo шага, а не тянется до конца: ниже
+      // лежит цикл по админским маршрутам со своим `exit 1`, и проверка до конца
+      // шага зеленела бы на снятом `exit 1` этой ветки (`L-008`). Граница — начало
+      // списка `endpoints=(`, то есть первая строка, которая этой ветке уже не своя.
+      const endpointsList = text.indexOf('endpoints=(');
+      expect(endpointsList).toBeGreaterThan(mismatch);
+      expect(text.slice(mismatch, endpointsList)).toContain('exit 1');
+    });
+
+    it('шаг не ослаблен continue-on-error и не глушит свой код возврата', () => {
+      const text = stepText();
+      expect(text).not.toContain('continue-on-error');
+      // ⚠️ Хвост, отбрасывающий код возврата, в шаге отсутствует вовсе: запрос
+      // версии сидит в условии `if !`, поэтому `set -e` его не убивает, а неудача
+      // честно превращается в пустую строку с отдельной красной веткой.
+      //
+      // И отдельно о причине, которая напрашивается и неверна: `shell:` у шага нет,
+      // значит `pipefail` не включён, и упавший по таймауту `curl` шаг не убивает —
+      // статусом пайпа становится статус `jq`, а он на пустом вводе выходит нулём.
+      // Инцидент 30.08.2026 это и показал: шаг не умер, а дошёл до сравнения
+      // с пустой строкой. Опасен другой случай — оборванный посреди JSON ответ.
+      expect(text).not.toMatch(/exit 1[^\n]*\|\| true/);
+    });
+  });
 });
