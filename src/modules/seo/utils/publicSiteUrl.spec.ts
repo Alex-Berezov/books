@@ -4,8 +4,32 @@ import {
   resolvePublicSiteUrl,
 } from './publicSiteUrl';
 import { buildAbsoluteUrl } from './buildAbsoluteUrl';
-import { getCanonicalUrl } from '../canonical/getCanonicalUrl';
+import { getCanonicalUrl, CanonicalPathType } from '../canonical/getCanonicalUrl';
 import { generateHreflangLinks } from '../hreflang/generateHreflangLinks';
+
+/**
+ * `LEGACY-319`. Раньше здесь лежала одиннадцатая рукописная копия списка видов
+ * пути, и она уже была неполной: `version` в ней отсутствовал, то есть
+ * единственный тип адреса без языкового префикса не проверялся вовсе, а выглядел
+ * набор исчерпывающим.
+ *
+ * ⚠️ Список остаётся выписанным руками намеренно: тип — сущность времени
+ * компиляции, `Object.values` по нему не пройдёшь. Но полноту теперь стережёт
+ * компилятор: `Record<CanonicalPathType, true>` не собирается ни с пропущенным
+ * ключом, ни с лишним. Добавили вид пути в `CanonicalPathType` — набор
+ * покраснеет на сборке, а не промолчит.
+ */
+const ALL_CANONICAL_PATH_TYPES: Record<CanonicalPathType, true> = {
+  book: true,
+  version: true,
+  page: true,
+  author: true,
+  genre: true,
+  category: true,
+  collection: true,
+  tag: true,
+  static: true,
+};
 
 const ORIGINAL_ENV = process.env;
 
@@ -97,7 +121,7 @@ describe('no service host leaks into SEO output (TZ 2.4)', () => {
     expect(buildAbsoluteUrl('/en/tag/fear')).not.toMatch(FORBIDDEN);
   });
 
-  it.each(['book', 'page', 'author', 'genre', 'category', 'collection', 'tag', 'static'] as const)(
+  it.each(Object.keys(ALL_CANONICAL_PATH_TYPES) as CanonicalPathType[])(
     'getCanonicalUrl(%s) uses the public origin',
     (type) => {
       const url = getCanonicalUrl(type, 'slug', 'fr');

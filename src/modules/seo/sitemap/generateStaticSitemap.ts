@@ -1,7 +1,8 @@
-import { getCanonicalUrl } from '../canonical/getCanonicalUrl';
+import { getCanonicalUrl, CanonicalPathType } from '../canonical/getCanonicalUrl';
 
 export interface StaticSitemapItem {
-  type: 'page' | 'static';
+  // `LEGACY-319`: подмножество словаря адресов, а не своя копия литералов.
+  type: Extract<CanonicalPathType, 'page' | 'static'>;
   slug: string;
   language: string;
   lastmod: Date;

@@ -1,20 +1,34 @@
 import { buildAbsoluteUrl } from '../utils/buildAbsoluteUrl';
 import { normalizeUrl } from './normalizeUrl';
 
-export function getCanonicalUrl(
-  type:
-    | 'book'
-    | 'version'
-    | 'page'
-    | 'author'
-    | 'genre'
-    | 'category'
-    | 'collection'
-    | 'tag'
-    | 'static',
-  slug: string,
-  locale?: string,
-): string {
+/**
+ * Вид пути, который умеет собрать канонический адрес.
+ *
+ * `LEGACY-319`. Это **не** тип запроса `/seo/resolve` и не подмножество его типа:
+ * два словаря пересекаются, но ни один не вложен в другой. Здесь есть `author`
+ * и `static`, которых ручка не принимает вовсе; у ручки есть `catalog`, которого
+ * нет здесь. Мост между ними ровно один и он явный -
+ * `generateCollectionPageSchema` отображает `catalog` в `static`.
+ *
+ * 🔴 Добавление `catalog` сюда сменило бы канонический адрес страницы каталога -
+ * это тема владельца, а не правка типов. Решение арбитра от 30.08.2026,
+ * строка в `decisions-log.md`.
+ *
+ * Кому нужно подмножество - берёт его `Exclude`/`Extract` от этого типа,
+ * а не выписывает литералы заново.
+ */
+export type CanonicalPathType =
+  | 'book'
+  | 'version'
+  | 'page'
+  | 'author'
+  | 'genre'
+  | 'category'
+  | 'collection'
+  | 'tag'
+  | 'static';
+
+export function getCanonicalUrl(type: CanonicalPathType, slug: string, locale?: string): string {
   let path = '';
   const lang = locale ? locale.toLowerCase() : '';
 

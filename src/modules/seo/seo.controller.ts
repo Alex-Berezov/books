@@ -21,10 +21,33 @@ import { TaxonomyIndexabilityService } from './indexability/taxonomy-indexabilit
 import { TaxonomyIndexabilitySchedulerService } from './indexability/taxonomy-indexability-scheduler.service';
 import { SystemPagesService } from './system-pages/system-pages.service';
 import { UpdateSeoDto } from './dto/update-seo.dto';
-// no import of ResolveSeoType here to avoid type resolution warnings in validation decorators
+import { ResolveSeoType, ResolveSeoTypeValue } from './dto/resolve-seo.dto';
 import { ApiHeader } from '@nestjs/swagger';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
+
+/**
+ * Единственный список типов страниц, которые принимает `/seo/resolve`.
+ *
+ * `LEGACY-319`. До 30.08.2026 он был выписан руками четырежды: по `@ApiQuery`
+ * и по массиву `allowed` на каждый из двух обработчиков. Копии разъехались -
+ * `@ApiQuery` первого обработчика не знал `collection`, который рантайм
+ * принимал, и OpenAPI отдавал перечисление без него. Ничто этого не ловило:
+ * оба списка - литералы, компилятору сверять нечего.
+ *
+ * Источник - enum `ResolveSeoType`, он же валидирует `ResolveSeoQueryDto`.
+ * `Object.values` берётся и в документацию, и в проверку, поэтому разойтись
+ * им больше негде. Тот же приём уже стоял рядом на `@ApiParam({ enum:
+ * Object.values(Language) })`.
+ *
+ * Словарь видов пути (`CanonicalPathType` в `canonical/getCanonicalUrl.ts`) -
+ * другое понятие: там есть `author` и `static`, которых ручка не принимает,
+ * и нет `catalog`. Объединять их нельзя, см. решение арбитра от 30.08.2026.
+ */
+const RESOLVE_SEO_TYPES = Object.values(ResolveSeoType);
+
+const isResolveSeoType = (val: string): val is ResolveSeoTypeValue =>
+  (RESOLVE_SEO_TYPES as readonly string[]).includes(val);
 
 @ApiTags('seo')
 @Controller()
@@ -122,10 +145,7 @@ export class SeoController {
   @Get('seo/resolve')
   @UseInterceptors(PublicCacheInterceptor)
   @ApiOperation({ summary: 'Resolve SEO bundle (meta/OG/Twitter/canonical) with fallbacks' })
-  @ApiQuery({
-    name: 'type',
-    enum: ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog'],
-  })
+  @ApiQuery({ name: 'type', enum: RESOLVE_SEO_TYPES })
   @ApiQuery({
     name: 'id',
     description: 'Entity identifier or slug (book/page). For version: id only.',
@@ -147,19 +167,7 @@ export class SeoController {
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = [
-      'book',
-      'version',
-      'page',
-      'category',
-      'genre',
-      'tag',
-      'catalog',
-      'collection',
-    ] as const;
-    const isAllowed = (val: string): val is (typeof allowed)[number] =>
-      (allowed as readonly string[]).includes(val);
-    if (!isAllowed(t)) {
+    if (!isResolveSeoType(t)) {
       throw new BadRequestException('Invalid type');
     }
     return this.service.resolvePublic(t, id, { queryLang, acceptLanguage, slug });
@@ -170,10 +178,7 @@ export class SeoController {
   @UseInterceptors(PublicCacheInterceptor)
   @ApiOperation({ summary: 'Resolve SEO bundle (public) for specific language (by path prefix)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
-  @ApiQuery({
-    name: 'type',
-    enum: ['book', 'version', 'page', 'category', 'genre', 'tag', 'catalog', 'collection'],
-  })
+  @ApiQuery({ name: 'type', enum: RESOLVE_SEO_TYPES })
   @ApiQuery({
     name: 'id',
     description: 'Entity identifier or slug (book/page). For version: id only.',
@@ -195,19 +200,7 @@ export class SeoController {
   ): Promise<any> {
     const t = String(typeRaw);
     const id = String(idRaw);
-    const allowed = [
-      'book',
-      'version',
-      'page',
-      'category',
-      'genre',
-      'tag',
-      'catalog',
-      'collection',
-    ] as const;
-    const isAllowed = (val: string): val is (typeof allowed)[number] =>
-      (allowed as readonly string[]).includes(val);
-    if (!isAllowed(t)) {
+    if (!isResolveSeoType(t)) {
       throw new BadRequestException('Invalid type');
     }
     return this.service.resolvePublic(t, id, { pathLang, queryLang, acceptLanguage, slug });

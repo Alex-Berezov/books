@@ -128,7 +128,7 @@ const makeService = (log: WriteLog) => {
     new CategoryTreeService(prisma as unknown as PrismaService),
   );
 
-  return { service, prisma, root, tx, $transaction };
+  return { service, prisma, root, tx, $transaction, slugRedirects };
 };
 
 const categoryDto = (parentKey?: string): ImportCategoryDto =>
@@ -924,27 +924,41 @@ describe('ImportService — решение о записи тега приним
     expect(tx.tag.update).toHaveBeenCalledTimes(1);
   });
 
-  it('дефолты берутся из строки транзакции, а не из чтения на пуле', async () => {
+  /**
+   * ⚠️ Прежде эта проверка стояла на дефолте `sortOrder`: на пуле лежало
+   * устаревшее значение, в транзакции — свежее, и запись обязана была взять
+   * второе. `LEGACY-318` убрала чтение дефолтов вовсе, и вместе с ним ушёл
+   * этот способ различить два клиента. Гарантия `LEGACY-313` при этом
+   * осталась — `existing` по-прежнему читается в транзакции и по-прежнему
+   * решает, писать ли историю базового слага, — поэтому различитель взят
+   * оттуда, а проверка не снята.
+   */
+  it('базовый слаг сверяется со строкой транзакции, а не с чтением на пуле', async () => {
     const log: WriteLog = [];
-    const { service, root, tx } = makeService(log);
+    const { service, root, tx, slugRedirects } = makeService(log);
 
-    // На пуле лежит устаревший `sortOrder`: по нему запись затёрла бы чужую правку.
+    // Пул: слаг уже совпадает с файлом — по нему истории не было бы вовсе.
     root.tag.findUnique.mockImplementation(() => {
       log.push('root.tag.findUnique');
-      return Promise.resolve({ ...existingInTx, sortOrder: 0 });
+      return Promise.resolve(existingInTx);
     });
+    // Транзакция: слаг ещё старый — значит смена настоящая и её надо записать.
     tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
       log.push('tx.tag.findUnique');
-      return Promise.resolve(args?.where?.key === 'aestheticism' ? existingInTx : null);
+      return Promise.resolve(
+        args?.where?.key === 'aestheticism' ? { ...existingInTx, slug: 'old-in-tx' } : null,
+      );
     });
 
     await service.importTags([tagDto()]);
 
-    expect(tx.tag.update).toHaveBeenCalledTimes(1);
-    expect(tx.tag.update).toHaveBeenCalledWith({
-      where: { key: 'aestheticism' },
-      data: expect.objectContaining({ sortOrder: 42 }),
-    });
+    expect(slugRedirects.recordBaseSlugChange).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.recordBaseSlugChange).toHaveBeenCalledWith(
+      'tag',
+      'old-in-tx',
+      'aestheticism',
+      tx,
+    );
   });
 
   it('счётчик отчёта считается по транзакции: тег, которого нет нигде, засчитывается созданным', async () => {
@@ -994,6 +1008,117 @@ describe('ImportService — решение о записи тега приним
 
     expect(tx.tagTranslation.update).not.toHaveBeenCalled();
     expect(tx.tagTranslation.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * 🔴 `LEGACY-318`. Импорт брал дефолты из строки, прочитанной в транзакции:
+ * `indexable: dto.indexable ?? existing.indexable` и так три поля. Файл импорта
+ * их не называет — значит в `UPDATE` уходило значение из снимка, и админский
+ * `PATCH /tags/:id {"isVisible": false}`, закоммитившийся между чтением
+ * и записью, затирался молча: тег снова публичный, в отчёте `updated: 1`,
+ * `errors` пуст.
+ *
+ * ⚠️ Гонку здесь проверяет не параллельный прогон, а **форма запроса**: после
+ * правки столбец не читается вовсе, поэтому затирать нечем, и доказывать надо
+ * именно отсутствие ключа в `data`, а не исход двух транзакций. E2E на живом
+ * Postgres был бы доказательством отсутствия события, а не поведения.
+ *
+ * ⚠️ Проверка `not.toHaveProperty` по одному полю зеленела бы и на опечатке
+ * в имени поля, поэтому рядом стоит положительный случай: переданное значение
+ * обязано доехать. Два теста стерегут две стороны одной правки.
+ */
+describe('ImportService — импорт не переписывает поля, которых нет в файле (LEGACY-318)', () => {
+  const existingInTx = {
+    id: 'tag-1',
+    key: 'aestheticism',
+    slug: 'aestheticism',
+    indexable: false,
+    isVisible: false,
+    sortOrder: 42,
+    translations: [],
+  };
+
+  const seed = (log: WriteLog, root: FakeClient, tx: FakeClient) => {
+    root.tag.findUnique.mockImplementation(() => {
+      log.push('root.tag.findUnique');
+      return Promise.resolve(existingInTx);
+    });
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.tag.findUnique');
+      return Promise.resolve(args?.where?.key === 'aestheticism' ? existingInTx : null);
+    });
+  };
+
+  const dataOfUpdate = (tx: FakeClient): Record<string, unknown> => {
+    const calls = tx.tag.update.mock.calls as Array<[{ data: Record<string, unknown> }]>;
+    expect(calls).toHaveLength(1);
+    return calls[0][0].data;
+  };
+
+  it('поле, не названное в файле, в UPDATE не попадает вовсе', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    // В `tagDto()` нет ни `indexable`, ни `isVisible`, ни `sortOrder`.
+    await service.importTags([tagDto()]);
+
+    const data = dataOfUpdate(tx);
+    expect(data).not.toHaveProperty('indexable');
+    expect(data).not.toHaveProperty('isVisible');
+    expect(data).not.toHaveProperty('sortOrder');
+    // Страховка от «проверено ноль полей»: то, что файл называет, доехать обязано.
+    expect(data).toMatchObject({ name: 'Aestheticism', slug: 'aestheticism' });
+  });
+
+  it('поле, названное в файле, доезжает до UPDATE со своим значением', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    await service.importTags([
+      { ...tagDto(), indexable: true, isVisible: true, sortOrder: 7 } as ImportTagDto,
+    ]);
+
+    expect(dataOfUpdate(tx)).toMatchObject({ indexable: true, isVisible: true, sortOrder: 7 });
+  });
+
+  /**
+   * 🔴 Найдено ревью `books-data` 30.08.2026, до коммита. Строгое `!== undefined`
+   * считало бы переданным и явный `null`: `@IsOptional()` в `ImportTagDto`
+   * пропускает `null` наравне с `undefined`, а `ValidationPipe` объявленное поле
+   * со значением `null` не вырезает. Все три столбца `NOT NULL`, поэтому `null`
+   * в `data` уронил бы Prisma и откатил всю транзакцию термина — вместе
+   * с переводами и редиректом слага. Прежний `dto.X ?? existing.X` такой файл
+   * принимал, и потерять это было бы регрессией, а не закрытием записи.
+   */
+  it('явный null в файле считается «поле не задано», а не значением', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    const result = await service.importTags([
+      { ...tagDto(), isVisible: null, sortOrder: null } as unknown as ImportTagDto,
+    ]);
+
+    const data = dataOfUpdate(tx);
+    expect(data).not.toHaveProperty('isVisible');
+    expect(data).not.toHaveProperty('sortOrder');
+    // Термин обязан пройти целиком: транзакция не откатывается.
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+  });
+
+  it('переданным считается и явный false: он не теряется как «не задано»', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    await service.importTags([{ ...tagDto(), isVisible: false, sortOrder: 0 } as ImportTagDto]);
+
+    const data = dataOfUpdate(tx);
+    expect(data).toMatchObject({ isVisible: false, sortOrder: 0 });
+    expect(data).not.toHaveProperty('indexable');
   });
 });
 

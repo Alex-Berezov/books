@@ -1,12 +1,23 @@
-import { getCanonicalUrl } from '../canonical/getCanonicalUrl';
+import { getCanonicalUrl, CanonicalPathType } from '../canonical/getCanonicalUrl';
 
 export interface CollectionItem {
   name: string;
   url: string;
 }
 
+/**
+ * `LEGACY-319`. Здесь словари ручки и адресов стыкуются, и стык один на весь модуль:
+ * `catalog` - тип страницы, который принимает `/seo/resolve`, но которого нет
+ * в `CanonicalPathType`. Отображение `catalog -> static` ниже сделано руками
+ * намеренно и «упрощению» не подлежит: добавить `catalog` в словарь адресов -
+ * значит сменить канонический адрес страницы каталога.
+ */
+export type CollectionPageType =
+  | Extract<CanonicalPathType, 'category' | 'tag' | 'genre' | 'collection'>
+  | 'catalog';
+
 export function generateCollectionPageSchema(
-  type: 'category' | 'tag' | 'genre' | 'catalog' | 'collection',
+  type: CollectionPageType,
   slug: string,
   language: string,
   name: string,

@@ -278,6 +278,187 @@ describe('SeoService (unit)', () => {
    * ⚠️ Спека на один тип таксономии тут бесполезна по определению: она зеленела
    * и на разошедшихся копиях. Проверять надо все четыре одним набором ожиданий.
    */
+  /**
+   * 🔴 `LEGACY-317`. Сборка публичного ответа лежала в четырёх копиях, а сам
+   * `resolvePublic` был методом на 733 строки. Перед тем как их сводить, форма
+   * ответа каждой из шести веток зафиксирована здесь — иначе рефакторинг
+   * «заодно» добавил бы недостающие поля, а это смена публичного контракта
+   * (решение арбитра от 30.08.2026: публичный ответ не меняется ни на одном
+   * типе).
+   *
+   * ⚠️ Проверяется именно **набор полей верхнего уровня**, а не значения:
+   * отличия веток вычитающие, и стеречь надо ровно их. У `version` нет
+   * `hreflangs` и `breadcrumbPath`, у `page` и `catalog` нет `breadcrumbPath` —
+   * и `endpoints.md:198` описывает это как поведение, а не как недоделку.
+   *
+   * ⚠️ Ожидаемые наборы выписаны здесь руками. Собранные из ответа самого
+   * сервиса, они сверяли бы объект сам с собой (`L-016`) и зеленели бы
+   * на любом изменении формы.
+   */
+  describe('resolvePublic: форма ответа каждой ветки (LEGACY-317)', () => {
+    const TERM_KEYS = ['meta', 'openGraph', 'twitter', 'schema', 'hreflangs', 'breadcrumbPath'];
+
+    const seedVersion = () => {
+      prisma.bookVersion.findUnique.mockResolvedValueOnce({
+        id: 'v1',
+        title: 'Title',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: 'http://img/cover.jpg',
+        seoId: null,
+        status: 'published',
+        type: 'text',
+        language: 'en',
+      });
+    };
+
+    const seedBook = () => {
+      prisma.bookVersion.findFirst.mockResolvedValue(null);
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-en',
+          bookId: 'b1',
+          language: 'en',
+          title: 'T EN',
+          author: 'A',
+          description: 'D EN',
+          coverImageUrl: 'http://img/en.jpg',
+          seoId: null,
+          slug: 't-en',
+          status: 'published',
+          type: 'text',
+        },
+      ]);
+    };
+
+    const seedPage = () => {
+      prisma.page.findMany.mockResolvedValueOnce([{ id: 'p-en', language: 'en', slug: 'about' }]);
+      prisma.page.findUnique.mockResolvedValueOnce({
+        id: 'p-en',
+        slug: 'about',
+        title: 'About',
+        content: 'Content',
+        seoId: null,
+        status: 'published',
+        language: 'en',
+      });
+      prisma.page.findMany.mockResolvedValueOnce([{ id: 'p-en', language: 'en', slug: 'about' }]);
+    };
+
+    const seedTaxonomy = () => {
+      const row = {
+        id: 'tt-en',
+        categoryId: 'tax-1',
+        language: Language.en,
+        slug: 'the-term',
+        name: 'The Term',
+        description: null,
+        seoId: null,
+        autoIndexable: true,
+        category: {
+          id: 'tax-1',
+          name: 'The Term',
+          slug: 'the-term',
+          type: 'genre',
+          parentId: null,
+          indexable: true,
+        },
+      };
+      prisma.categoryTranslation.findMany.mockResolvedValueOnce([row]).mockResolvedValueOnce([row]);
+    };
+
+    const seedTag = () => {
+      const row = {
+        id: 'tt-en',
+        tagId: 'tag-1',
+        language: Language.en,
+        slug: 'the-term',
+        name: 'The Term',
+        description: null,
+        seoId: null,
+        indexable: true,
+        autoIndexable: true,
+        tag: { id: 'tag-1', name: 'The Term', slug: 'the-term', indexable: true },
+      };
+      prisma.tagTranslation.findMany.mockResolvedValueOnce([row]).mockResolvedValueOnce([row]);
+    };
+
+    const CASES = [
+      ['version', 'v1', seedVersion, ['meta', 'openGraph', 'twitter', 'schema']],
+      ['book', 'book-slug', seedBook, TERM_KEYS],
+      ['page', 'about', seedPage, ['meta', 'openGraph', 'twitter', 'schema', 'hreflangs']],
+      ['genre', 'the-term', seedTaxonomy, TERM_KEYS],
+      ['tag', 'the-term', seedTag, TERM_KEYS],
+      [
+        'catalog',
+        'catalog',
+        () => undefined,
+        ['meta', 'openGraph', 'twitter', 'schema', 'hreflangs'],
+      ],
+    ] as const;
+
+    it.each(CASES)(
+      'ветка %s отдаёт ровно свой набор полей верхнего уровня',
+      async (type, id, seed, expectedKeys) => {
+        seed();
+        const bundle = await service.resolvePublic(type, id, { pathLang: 'en' as Language });
+        expect(Object.keys(bundle).sort()).toEqual([...expectedKeys].sort());
+      },
+    );
+
+    it.each(CASES)(
+      'у ветки %s канонический адрес один и тот же в meta, openGraph и @graph',
+      async (type, id, seed) => {
+        seed();
+        const bundle = (await service.resolvePublic(type, id, {
+          pathLang: 'en' as Language,
+        })) as unknown as {
+          meta: { canonicalUrl: string };
+          openGraph: { url: string };
+          schema: { '@graph': Array<{ '@id'?: string }> };
+        };
+
+        const canonical = bundle.meta.canonicalUrl;
+        expect(canonical).toEqual(expect.stringContaining('http'));
+        expect(bundle.openGraph.url).toBe(canonical);
+        expect(bundle.schema['@graph'][0]['@id']).toBe(`${canonical}#webpage`);
+      },
+    );
+  });
+
+  /**
+   * `LEGACY-317`. Название раздела «Каталог» на пяти языках стояло в резолвере
+   * вложенными тернарниками, хотя рядом лежал `getHomeName` с тем же словарём
+   * в `switch`, а `TAXONOMY_PAGES` держал третий такой словарь для подборок.
+   *
+   * ⚠️ Этот набор написан ДО замены лесенки словарём и на её выводе: он
+   * фиксирует ровно те строки, которые ветка отдавала раньше. Иначе «перевели
+   * на словарь» и «заодно поправили перевод» стали бы одной неразличимой
+   * правкой, а меняется здесь публичная разметка хлебных крошек.
+   */
+  describe('resolvePublic(catalog): названия крошек по языкам (LEGACY-317)', () => {
+    it.each([
+      ['en', 'Home', 'Catalog'],
+      ['ru', 'Главная', 'Каталог'],
+      ['es', 'Inicio', 'Catálogo'],
+      ['pt', 'Início', 'Catálogo'],
+      ['fr', 'Accueil', 'Catalogue'],
+    ] as const)('%s: главная — «%s», каталог — «%s»', async (lang, home, catalog) => {
+      const bundle = (await service.resolvePublic('catalog', 'catalog', {
+        pathLang: lang as Language,
+      })) as unknown as {
+        schema: { '@graph': Array<{ itemListElement?: Array<{ name: string }> }> };
+      };
+
+      const crumbs = bundle.schema['@graph']
+        .map((node) => node.itemListElement)
+        .find((items): items is Array<{ name: string }> => Array.isArray(items));
+
+      expect(crumbs?.map((item) => item.name)).toEqual([home, catalog]);
+    });
+  });
+
   describe.each([
     ['category', 'Category translation not found', [] as Array<{ name: string; slug: string }>],
     [

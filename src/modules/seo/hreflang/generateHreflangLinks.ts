@@ -1,4 +1,4 @@
-import { getCanonicalUrl } from '../canonical/getCanonicalUrl';
+import { getCanonicalUrl, CanonicalPathType } from '../canonical/getCanonicalUrl';
 
 export interface HreflangLink {
   rel: 'alternate';
@@ -6,8 +6,15 @@ export interface HreflangLink {
   href: string;
 }
 
+/**
+ * `LEGACY-319`. Список видов пути - `CanonicalPathType` минус `version`:
+ * у версии книги адрес один на все языки (`/versions/:id`), альтернатив нет.
+ * Раньше здесь стояла своя копия литералов, и она уже отличалась от соседней.
+ */
+export type HreflangPathType = Exclude<CanonicalPathType, 'version'>;
+
 export function generateHreflangLinks(
-  type: 'book' | 'page' | 'author' | 'genre' | 'category' | 'collection' | 'tag' | 'static',
+  type: HreflangPathType,
   slugs: Record<string, string>,
 ): HreflangLink[] {
   const links: HreflangLink[] = [];
