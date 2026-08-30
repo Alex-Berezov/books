@@ -176,7 +176,7 @@ src/
     decorators/       — @Roles(), @Language()
     guards/           — JwtAuthGuard, RolesGuard
     pipes/            — LangParamPipe
-    filters/          — SentryExceptionFilter
+    filters/          — RedirectExceptionFilter
     exceptions/       — RedirectException
     security/         — app-security.config
   shared/
