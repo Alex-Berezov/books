@@ -51,3 +51,17 @@ export const isSystemPageKey = (value: string): value is SystemPageKey =>
  * not that the site never met the bar.
  */
 export const SYSTEM_PAGE_LANGUAGES: Language[] = Object.values(Language);
+
+/**
+ * Что стоит в поле `error` отчёта, когда сам запрос не прошёл (`LEGACY-197`).
+ *
+ * 🔴 Раньше туда клеился текст исключения Prisma — с именем модели, именем
+ * колонки и текстом ограничения, — и он уезжал в тело ответа
+ * `GET /admin/seo/system-pages/status` со статусом 200. Выгрузка такого ответа
+ * выносит наружу схему базы целиком.
+ *
+ * ⚠️ Фраза постоянная и не несёт подробностей намеренно: связь ответа
+ * с записью в логе даёт `checkedAt`, который в теле уже есть.
+ */
+export const SYSTEM_PAGES_CHECK_FAILED_RU =
+  'Проверка системных страниц не выполнена: отказ базы данных. Подробности — в журнале сервера.';

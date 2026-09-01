@@ -22,8 +22,10 @@ import {
   isComponentMarkedForRemoval,
 } from './rights-action.constants';
 import {
+  MATERIALIZATION_FAILED_REASON_RU,
   TERRITORY_DECISION_DEFAULT_REASON_RU,
   UNASSESSED_LANGUAGE_STATUS,
+  materializationFailedMessageRu,
   normalizeTerritoryFinalStatus,
 } from './rights-review-import.constants';
 
@@ -274,7 +276,12 @@ export class RightsMaterializationService {
     context: MaterializationContext,
   ): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
-    this.logger.error(`Materialization failed for import ${importId}: ${message}`);
+    // Стек обязателен: с 01.09.2026 это единственный канал, по которому текст
+    // исключения вообще куда-то попадает (`LEGACY-197`).
+    this.logger.error(
+      `Materialization failed for import ${importId}: ${message}`,
+      error instanceof Error ? error.stack : undefined,
+    );
 
     try {
       const importRecord = await this.ri.findUnique({ where: { id: importId } });
@@ -288,7 +295,10 @@ export class RightsMaterializationService {
         type: RightsNotificationType.AGENT_REPORT_MATERIALIZATION_FAILED,
         severity: RightsNotificationSeverity.ERROR,
         titleRu: 'Не удалось построить профиль прав',
-        messageRu: `Отчёт по интейку «${title}» импортирован, но материализация упала: ${message}.`,
+        // Текст исключения сюда не идёт (`LEGACY-197`): это поле лежит в базе
+        // и показывается редактору в каждой выдаче уведомлений. Причина уже
+        // записана в журнал строкой выше, найти её даёт `rightsReviewImportId`.
+        messageRu: materializationFailedMessageRu(title),
         rightsIntakeId: intakeId,
         agentSubmissionId: context.agentSubmissionId ?? null,
         rightsReviewImportId: importId,
@@ -306,7 +316,9 @@ export class RightsMaterializationService {
     if (error instanceof HttpException) return error;
     if (!isReportShapeError(error)) return error;
 
-    const message = error instanceof Error ? error.message : String(error);
+    // Текст исключения здесь уже не нужен: его записал `reportMaterializationFailure`
+    // строкой выше по стеку — единственный вызов этого метода стоит сразу за ним
+    // (`:261-262`). Второй раз он не берётся, чтобы не разъехались формулировки.
     return new UnprocessableEntityException({
       code: 'REPORT_NOT_MATERIALIZABLE',
       message:
@@ -315,7 +327,15 @@ export class RightsMaterializationService {
       messageRu:
         'Отчёт прошёл валидацию, но не раскладывается в модель прав. Нужен исправленный отчёт.',
       importId,
-      reason: message,
+      // 🔴 Поле несёт два разных вида содержимого, и различать их можно только
+      // по типу исключения (`LEGACY-197`). `ReportShapeError` — наш класс,
+      // его единственный бросок (`:112`) собирает текст из имени поля и
+      // `typeof`: это адрес битой записи, по которому оператор её и находит
+      // в отчёте с сорока решениями. У классов Prisma в сообщении текст
+      // драйвера — имена моделей и колонок, — и наружу он не идёт.
+      // Проверять содержимое строки вместо типа нельзя: совпадение по слову
+      // разъедется с первой же формулировкой драйвера.
+      reason: error instanceof ReportShapeError ? error.message : MATERIALIZATION_FAILED_REASON_RU,
     });
   }
 

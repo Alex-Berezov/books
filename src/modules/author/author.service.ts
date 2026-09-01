@@ -1,4 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
@@ -120,6 +128,8 @@ const PUBLISHED_BOOKS_JOIN = Prisma.sql`
 
 @Injectable()
 export class AuthorService {
+  private readonly logger = new Logger(AuthorService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly slugRedirects: SlugRedirectService,
@@ -501,7 +511,7 @@ export class AuthorService {
         },
       });
     } catch (error) {
-      throw new BadRequestException('Failed to create author: ' + (error as Error).message);
+      throw this.internalFailure('Failed to create author', error);
     }
   }
 
@@ -645,7 +655,7 @@ export class AuthorService {
         });
       });
     } catch (error) {
-      throw new BadRequestException('Failed to update author: ' + (error as Error).message);
+      throw this.internalFailure('Failed to update author', error);
     }
   }
 
@@ -762,5 +772,60 @@ export class AuthorService {
         }),
       ),
     };
+  }
+
+  /**
+   * Ответ на неожиданный отказ базы в `create` и `update` (`LEGACY-196`).
+   *
+   * 🔴 Раньше здесь стояло `new BadRequestException('Failed to …: ' + error.message)`,
+   * и это было неверно дважды. Текст драйвера Prisma — с именем модели, именем
+   * колонки и текстом ограничения — уходил клиенту прямо в поле `message`,
+   * мимо сторожа `book.controller.errors.spec.ts`: тот ищет имя поля `details`.
+   * А статус 400 говорил «клиент прислал плохой запрос» про отказ базы, из-за
+   * чего падение вообще не попадало в алерты: `SentryExceptionFilter` шлёт
+   * в Sentry только 5xx.
+   *
+   * ⚠️ Диагностика не теряется в двух местах сразу, и оба обязательны. В лог
+   * идут текст и стек. В `cause` идёт само исходное исключение: без него
+   * `Sentry.captureException` получит фразу-заглушку со стеком этого метода,
+   * и десять разных отказов станут в Sentry одним.
+   *
+   * ⚠️ Проверки данных (занятый слаг, отсутствующий автор) стоят **выше**
+   * `try` и сюда не попадают — их 400 и 404 остаются как были. Пропуск
+   * `HttpException` насквозь страхует от того, что кто-то занесёт такую
+   * проверку внутрь блока.
+   */
+  private internalFailure(message: string, err: unknown): HttpException {
+    if (err instanceof HttpException) return err;
+
+    // 🔴 Нарушенное уникальное ограничение — ошибка ввода, а не сбой сервера,
+    // и 500 здесь был бы той же подменой статуса, ради снятия которой запись
+    // и заводилась (`STYLE_GUIDE.md` §8: `P2002` → 409). Предпроверка слага
+    // выше по методу ловит `@@unique([language, slug])`, но не
+    // `@@unique([authorId, language])`: два перевода одного языка в одном теле
+    // до базы доходят. Текст драйвера наружу не идёт и здесь — только код
+    // и фраза; сам текст остаётся в журнале.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      this.logger.warn(`${message}: unique constraint violated — ${err.message}`);
+      return new ConflictException(
+        'Author translation already exists for one of the requested languages',
+      );
+    }
+
+    // Отказ не-`Error` объектом (например, `Promise.reject({ code: 'P2024' })`)
+    // иначе превращается в `[object Object]` и не оставляет ничего нигде.
+    const cause = err instanceof Error ? err : new Error(AuthorService.describeCause(err));
+    this.logger.error(`${message}: ${cause.message}`, cause.stack);
+    return new HttpException({ message }, HttpStatus.INTERNAL_SERVER_ERROR, { cause });
+  }
+
+  private static describeCause(err: unknown): string {
+    if (typeof err === 'string') return err;
+    try {
+      return JSON.stringify(err) ?? String(err);
+    } catch {
+      // Циклическая ссылка в отброшенном объекте.
+      return String(err);
+    }
   }
 }

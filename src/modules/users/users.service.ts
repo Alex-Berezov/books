@@ -16,6 +16,18 @@ import { ModeratorRolesService } from '../../common/roles/moderator-roles.servic
 import { rolesCache } from '../../common/roles/roles-cache';
 
 /**
+ * Prisma сообщает кодом `P2025`, что строки под запись не нашлось (`LEGACY-194`).
+ *
+ * ⚠️ Проверка через `instanceof`, а не через каст `as Prisma.PrismaClientKnownRequestError`.
+ * Каст утверждает тип, которого у пойманного значения может не быть: отклонить
+ * промис можно чем угодно, и на строке или на голом объекте чтение `.code`
+ * молча даст `undefined`, а сравнение — `false`. Тогда «нет такой связи»
+ * снова уедет наружу как 500, и тест на возврат дефекта этого не покажет.
+ */
+const isRecordNotFound = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+
+/**
  * Проверка существования пользователя читает одно поле (`LEGACY-116`).
  *
  * ⚠️ `ACCOUNT_USER_SELECT` здесь не нужен: методу важно только, есть запись или
@@ -212,7 +224,20 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException('Role not found');
-    await this.prisma.userRole.delete({ where: { userId_roleId: { userId, roleId: role.id } } });
+    try {
+      await this.prisma.userRole.delete({ where: { userId_roleId: { userId, roleId: role.id } } });
+    } catch (error) {
+      // `P2025` — «нечего удалять»: роли у пользователя нет. Ответ 404, как
+      // у двух проверок выше, а не 500 (`LEGACY-194`). Идемпотентности здесь
+      // быть не должно: 200 стёр бы разницу между «роль сняли» и «роли не
+      // было», и повторный отзыв выглядел бы удачным.
+      if (isRecordNotFound(error)) {
+        throw new NotFoundException('Role is not assigned to user');
+      }
+      // Любой другой отказ базы — настоящий сбой, и он обязан остаться 5xx:
+      // `SentryExceptionFilter` шлёт в Sentry только их.
+      throw error;
+    }
     rolesCache.invalidate(userId);
     return { userId, role: role.name };
   }

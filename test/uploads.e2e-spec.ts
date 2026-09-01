@@ -14,7 +14,12 @@ describe('Uploads e2e (local driver)', () => {
     process.env.LOCAL_PUBLIC_BASE_URL = 'http://localhost:5000';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
+    // `transform: true` повторяет боевой `src/main.ts:77-83`. Без него обвязка
+    // e2e ведёт себя иначе, чем прод, и проверка проходит на конфигурации,
+    // которой нигде нет (`LEGACY-193`).
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    );
     await app.init();
 
     // login as admin
@@ -71,5 +76,33 @@ describe('Uploads e2e (local driver)', () => {
       .set('Authorization', `Bearer ${token}`)
       .query({ key: pres.body.key })
       .expect(200);
+  });
+
+  // LEGACY-193. Параметр объявлен как `string`, но при отсутствии приходит
+  // `undefined`, и `key.startsWith('covers/')` падал `TypeError`: клиент видел
+  // 500, а `SentryExceptionFilter` заводил алерт о падении сервера на кривом
+  // запросе. Проверка идёт через HTTP, а не юнитом: сигнатура `key: string`
+  // не даёт вызвать обработчик без аргумента, поэтому проводку пайпа
+  // к маршруту способен подтвердить только настоящий запрос.
+  it('POST /uploads/confirm без key отвечает 400, а не 500', async () => {
+    await request(app.getHttpServer())
+      .post('/uploads/confirm')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(400);
+  });
+
+  it('DELETE /uploads без key отвечает 400, а не 500', async () => {
+    await request(app.getHttpServer())
+      .delete('/uploads')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(400);
+  });
+
+  it('пустой key отбивается так же, как отсутствующий', async () => {
+    await request(app.getHttpServer())
+      .post('/uploads/confirm')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ key: '' })
+      .expect(400);
   });
 });

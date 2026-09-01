@@ -2,6 +2,7 @@ import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common'
 import { Language } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
+  SYSTEM_PAGES_CHECK_FAILED_RU,
   SYSTEM_PAGE_KEYS,
   SYSTEM_PAGE_LANGUAGES,
   type SystemPageKey,
@@ -57,8 +58,10 @@ export class SystemPagesService implements OnApplicationBootstrap {
 
     if (status.error) {
       // A database hiccup during boot must not take the app down, but it must
-      // not read as a pass either.
-      this.logger.error(`System page check could not run: ${status.error}`);
+      // not read as a pass either. Причина уже записана внутри `check()`
+      // вместе со стеком — здесь остаётся только отметка, что старт прошёл
+      // без проверки (`LEGACY-197`).
+      this.logger.error(`System page check did not run at startup (${status.checkedAt})`);
       return;
     }
 
@@ -90,13 +93,21 @@ export class SystemPagesService implements OnApplicationBootstrap {
         select: { systemKey: true, slug: true, language: true, status: true },
       });
     } catch (error) {
+      // Текст исключения остаётся здесь и дальше журнала не идёт (`LEGACY-197`).
+      // Логирование заведено прямо в `catch`, а не в `onApplicationBootstrap`:
+      // раньше единственным каналом диагностики было само поле `error`, и,
+      // убрав из него текст, отказ потеряли бы совсем.
+      this.logger.error(
+        `System page check could not run at ${checkedAt}`,
+        error instanceof Error ? error.stack : String(error),
+      );
       return {
         ok: false,
         checkedAt,
         expectedLanguages: SYSTEM_PAGE_LANGUAGES,
         pages: [],
         problems: [],
-        error: error instanceof Error ? error.message : String(error),
+        error: SYSTEM_PAGES_CHECK_FAILED_RU,
       };
     }
 

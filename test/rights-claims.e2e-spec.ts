@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+import { randomUUID } from 'crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -116,6 +117,54 @@ describe('Rights claims e2e', () => {
         // непройденная проверка тела.
         expect((body.message as string[]).join(' ')).toContain('bookId');
       });
+  });
+
+  // LEGACY-202. Половина модуля была закрыта, а половина нет: `LEGACY-119`
+  // проверила тело и query-фильтры, а параметры пути остались строкой. Битый
+  // `:id` доходил до `requireClaim` и возвращался как 404 «не найдено» — то есть
+  // «претензии нет» и «идентификатор битый» выглядели снаружи одинаково.
+  it('rejects a non-uuid path parameter with 400, not 404', async () => {
+    await request(http())
+      .get('/admin/rights/claims/not-a-uuid')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400);
+  });
+
+  /**
+   * Вложенный идентификатор проверяется своим пайпом: проверка на одном только
+   * `:id` прошла бы и на коде, где `:blockId` голый.
+   *
+   * ⚠️ Тело обязано быть **валидным** (`LiftClaimBlockDto` требует
+   * `liftReasonRu`). С полем не из DTO глобальный `ValidationPipe`
+   * (`whitelist` + `forbidNonWhitelisted`) отдаёт 400 сам, и тест зеленел бы
+   * на коде без пайпа вовсе — то есть ничего бы не сажал.
+   */
+  it('rejects a non-uuid nested path parameter with 400, not 404', async () => {
+    const response = await request(http())
+      .post(`/admin/rights/claims/${randomUUID()}/blocks/not-a-uuid/lift`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ liftReasonRu: 'Проверка формы идентификатора.' })
+      .expect(400);
+
+    // 400 именно от пайпа, а не от разбора тела: `ParseUUIDPipe` отвечает
+    // одной строкой `Validation failed (uuid is expected)` и имени параметра
+    // не называет, тогда как глобальный `ValidationPipe` кладёт в `message`
+    // **массив** сообщений с именами полей. Без этой проверки тест зеленел бы
+    // на любом 400, откуда бы тот ни пришёл.
+    expect(response.body).toMatchObject({ message: 'Validation failed (uuid is expected)' });
+  });
+
+  /**
+   * Обратная половина: с валидным `:blockId` и валидным телом до пайпа
+   * претензия не находится и ответ 404. Без этой пары первый тест зеленеет
+   * на любом 400, откуда бы он ни пришёл.
+   */
+  it('валидные uuid в пути доходят до сервиса и дают 404, а не 400', async () => {
+    await request(http())
+      .post(`/admin/rights/claims/${randomUUID()}/blocks/${randomUUID()}/lift`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ liftReasonRu: 'Проверка формы идентификатора.' })
+      .expect(404);
   });
 
   it('registers a claim that blocks publication with ACTIVE_RIGHTS_CLAIM', async () => {

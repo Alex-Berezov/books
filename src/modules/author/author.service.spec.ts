@@ -1,8 +1,15 @@
 import { AuthorService } from './author.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Language } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { Language, Prisma } from '@prisma/client';
 
 interface PrismaStub {
   author: {
@@ -122,6 +129,105 @@ describe('AuthorService', () => {
 
       await expect(service.create(dto)).rejects.toThrow(BadRequestException);
     });
+
+    /**
+     * `LEGACY-196`. Отказ базы отдавался как **400** с текстом драйвера,
+     * приклеенным к `message`: разведданные о схеме уходили сотруднику,
+     * а падение базы выглядело в мониторинге потоком ошибок валидации
+     * и не поднимало ни одного алерта — `SentryExceptionFilter` шлёт
+     * в Sentry только 5xx.
+     *
+     * ⚠️ Проверяется `toEqual`, а не `toContain`: `toContain` прошёл бы
+     * и на теле, где рядом с фразой лежит лишнее поле с тем же текстом.
+     */
+    it('отказ базы — 500 без текста драйвера, текст в лог и в cause', async () => {
+      const driverText =
+        'Invalid `prisma.author.create()` invocation: column "birth_date" does not exist';
+      const original = new Error(driverText);
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.create.mockRejectedValue(original);
+      const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      const dto = {
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' }],
+      };
+
+      try {
+        await service.create(dto);
+        throw new Error('create was expected to reject');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HttpException);
+        const failure = err as HttpException;
+        expect(failure.getStatus()).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+        expect(failure.getResponse()).toEqual({ message: 'Failed to create author' });
+        expect(JSON.stringify(failure.getResponse())).not.toContain('birth_date');
+        expect(failure.cause).toBe(original);
+      }
+
+      expect(String(logged.mock.calls[0][0])).toContain(driverText);
+      logged.mockRestore();
+    });
+
+    /** Отказ не-`Error` объектом иначе превращается в `[object Object]`. */
+    it('отказ не-Error объектом всё равно оставляет след в логе', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.create.mockRejectedValue({ code: 'P2024' });
+      const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      const dto = {
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' }],
+      };
+
+      await expect(service.create(dto)).rejects.toBeInstanceOf(HttpException);
+      expect(String(logged.mock.calls[0][0])).toContain('P2024');
+      logged.mockRestore();
+    });
+
+    /**
+     * Проверка занятого слага стоит **выше** `try` и обязана остаться 400:
+     * заворачивание её в 500 было бы «починкой», которая ломает контракт.
+     */
+    it('занятый слаг остаётся 400, а не превращается в 500', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue({ id: 'trans1', slug: 'oscar-wilde' });
+
+      const dto = {
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' }],
+      };
+
+      await expect(service.create(dto)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    /**
+     * `P2002` — ошибка ввода, а не сбой сервера. Предпроверка слага выше
+     * по методу ловит `@@unique([language, slug])`, но не
+     * `@@unique([authorId, language])`: два перевода одного языка в одном теле
+     * доходят до базы. 500 здесь был бы той же подменой статуса, ради снятия
+     * которой `LEGACY-196` и заводилась, — только в другую сторону
+     * (`STYLE_GUIDE.md` §8: `P2002` → 409).
+     */
+    it('нарушенное уникальное ограничение — 409, а не 500', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError(
+          'Unique constraint failed on the fields: (`authorId`,`language`)',
+          { code: 'P2002', clientVersion: '7.0.0' },
+        ),
+      );
+
+      const dto = {
+        translations: [
+          { language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' },
+          { language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde-2' },
+        ],
+      };
+
+      const err = await service.create(dto).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      // Текст драйвера не уходит наружу и на этом пути тоже.
+      expect(JSON.stringify((err as ConflictException).getResponse())).not.toContain(
+        'Unique constraint failed',
+      );
+    });
   });
 
   describe('update', () => {
@@ -137,6 +243,40 @@ describe('AuthorService', () => {
 
       const result = await service.update('auth1', dto);
       expect(result).toBeDefined();
+    });
+
+    /**
+     * `LEGACY-196`, вторая точка. `update` заворачивал отказ `$transaction`
+     * в тот же 400 с текстом драйвера. Проверка нужна отдельно от `create`:
+     * это разные блоки `catch`, и починка одного оставила бы второй как был.
+     */
+    it('отказ транзакции — 500 без текста драйвера', async () => {
+      const driverText =
+        'Invalid `prisma.authorTranslation.create()` invocation: Unique constraint failed on the fields: (`slug`)';
+      const original = new Error(driverText);
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.$transaction.mockRejectedValueOnce(original);
+      const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      const dto = {
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'oscar-wilde' }],
+      };
+
+      try {
+        await service.update('auth1', dto);
+        throw new Error('update was expected to reject');
+      } catch (err) {
+        expect(err).toBeInstanceOf(HttpException);
+        const failure = err as HttpException;
+        expect(failure.getStatus()).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+        expect(failure.getResponse()).toEqual({ message: 'Failed to update author' });
+        expect(JSON.stringify(failure.getResponse())).not.toContain('Unique constraint');
+        expect(failure.cause).toBe(original);
+      }
+
+      expect(String(logged.mock.calls[0][0])).toContain(driverText);
+      logged.mockRestore();
     });
 
     it('throws NotFoundException if author does not exist', async () => {

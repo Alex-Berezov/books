@@ -8,9 +8,14 @@ import { RightsNotificationsService } from '../rights-agent/rights-notifications
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   BadRequestException,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import {
+  MATERIALIZATION_FAILED_REASON_RU,
+  materializationFailedMessageRu,
+} from './rights-review-import.constants';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 
@@ -304,6 +309,14 @@ describe('RightsMaterializationService', () => {
         );
       });
 
+      /**
+       * ⚠️ `LEGACY-197`. Утверждение сохранено как было: фикстура здесь —
+       * `PrismaClientValidationError` с текстом `'Argument reasonRu is missing'`,
+       * и слово `reasonRu` в нём совпадает с именем **нашего** поля. То есть
+       * проверка `toContain('reasonRu')` проходит и на фразе-константе, если
+       * та упоминает поле, — она про наличие адреса записи, а не про утечку.
+       * Собственно утечка посажена отдельным `it` ниже.
+       */
       it('reports the import id and the underlying reason in the 422 body', async () => {
         failWith(prismaShapeError());
 
@@ -315,7 +328,56 @@ describe('RightsMaterializationService', () => {
 
         expect(response['code']).toBe('REPORT_NOT_MATERIALIZABLE');
         expect(response['importId']).toBe('import-1');
-        expect(String(response['reason'])).toContain('reasonRu');
+      });
+
+      /**
+       * `LEGACY-197`, место 5. Отказ **драйвера** — единственный вид отказа,
+       * чей текст сюда не идёт: в сообщении Prisma лежат имена моделей
+       * и колонок. Различие только по типу исключения: наш `ReportShapeError`
+       * несёт адрес битой записи и остаётся как был (см. `044:` ниже).
+       */
+      it('не отдаёт текст драйвера Prisma в теле 422', async () => {
+        failWith(prismaShapeError());
+        const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+        const error = await service.materializeFromImport('import-1').catch((e: unknown) => e);
+        const response = (error as UnprocessableEntityException).getResponse() as Record<
+          string,
+          unknown
+        >;
+
+        expect(response['reason']).toBe(MATERIALIZATION_FAILED_REASON_RU);
+        // Проверка по телу целиком, а не по одному полю: иначе текст просто
+        // переедет в соседнее и проверка этого не заметит.
+        expect(JSON.stringify(response)).not.toContain('Argument reasonRu is missing');
+
+        expect(logged.mock.calls.some((c) => String(c[0]).includes('Argument reasonRu'))).toBe(
+          true,
+        );
+        logged.mockRestore();
+      });
+
+      /**
+       * `LEGACY-197`, четвёртое место. `messageRu` уведомления лежит **в базе**
+       * и показывается редактору в каждой выдаче; текст исключения там
+       * переживал перезапуск. Раньше содержимое поля не проверялось вовсе —
+       * тест смотрел только на тип и привязки уведомления.
+       */
+      it('не кладёт текст исключения в messageRu уведомления', async () => {
+        failWith(prismaShapeError());
+
+        await service.materializeFromImport('import-1').catch(() => undefined);
+
+        const written = JSON.stringify(notifications.create.mock.calls);
+        expect(written).not.toContain('Argument reasonRu');
+        // Счётчик обязателен (L-005): второе уведомление в том же пути спека
+        // иначе не различит, и текст мог бы уехать именно в него.
+        expect(notifications.create).toHaveBeenCalledTimes(1);
+        expect(notifications.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messageRu: materializationFailedMessageRu('Test Book'),
+          }),
+        );
       });
 
       it('records a notification for the manual channel', async () => {

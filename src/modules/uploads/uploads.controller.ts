@@ -16,6 +16,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { RequiredStringPipe } from '../../common/pipes/required-string.pipe';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import {
   PresignRequestDto,
@@ -97,7 +98,10 @@ export class UploadsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager, Role.User)
   @Post('confirm')
-  async confirm(@Query('key') key: string, @Req() req: Request): Promise<DirectUploadResponseDto> {
+  async confirm(
+    @Query('key', RequiredStringPipe) key: string,
+    @Req() req: Request,
+  ): Promise<DirectUploadResponseDto> {
     const typedReq = req as Request & { user?: { userId: string; email: string } };
     const userId = typedReq.user?.userId;
     const email = typedReq.user?.email;
@@ -118,7 +122,7 @@ export class UploadsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager, Role.User)
   @Delete()
-  async delete(@Query('key') key: string, @Req() req: Request): Promise<void> {
+  async delete(@Query('key', RequiredStringPipe) key: string, @Req() req: Request): Promise<void> {
     const typedReq = req as Request & { user?: { userId: string; email: string } };
     const userId = typedReq.user?.userId;
     const email = typedReq.user?.email;

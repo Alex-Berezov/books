@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -56,7 +57,7 @@ export class RightsClaimsController {
   @ApiOperation({ summary: 'Get a claim with components, blocks, attachments and audit trail' })
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 200, type: RightsClaimDetailDto })
-  findOne(@Param('id') id: string): Promise<RightsClaimDetailDto> {
+  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<RightsClaimDetailDto> {
     return this.service.findOne(id);
   }
 
@@ -77,7 +78,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 200, type: RightsClaimDetailDto })
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateRightsClaimDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimDetailDto> {
@@ -90,7 +91,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimDetailDto })
   changeStatus(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ChangeRightsClaimStatusDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimDetailDto> {
@@ -103,7 +104,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimDetailDto })
   assign(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AssignRightsClaimDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimDetailDto> {
@@ -116,7 +117,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimDetailDto })
   recordResponse(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RecordClaimResponseDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimDetailDto> {
@@ -129,7 +130,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimDetailDto })
   recordCounterNotice(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RecordCounterNoticeDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimDetailDto> {
@@ -142,7 +143,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimDetailDto })
   resolve(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ResolveRightsClaimDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimDetailDto> {
@@ -155,7 +156,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimDetailDto })
   reopen(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReopenRightsClaimDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimDetailDto> {
@@ -168,7 +169,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: [RightsClaimAccessBlockDto] })
   applyBlock(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApplyClaimBlockDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimAccessBlockDto[]> {
@@ -182,8 +183,8 @@ export class RightsClaimsController {
   @ApiParam({ name: 'blockId' })
   @ApiResponse({ status: 201, type: RightsClaimAccessBlockDto })
   liftBlock(
-    @Param('id') id: string,
-    @Param('blockId') blockId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('blockId', ParseUUIDPipe) blockId: string,
     @Body() dto: LiftClaimBlockDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimAccessBlockDto> {
@@ -196,7 +197,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimComponentDto })
   linkComponent(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: LinkClaimComponentDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimComponentDto> {
@@ -210,8 +211,8 @@ export class RightsClaimsController {
   @ApiParam({ name: 'claimComponentId' })
   @ApiResponse({ status: 200, type: ClaimMutationResultDto })
   unlinkComponent(
-    @Param('id') id: string,
-    @Param('claimComponentId') claimComponentId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('claimComponentId', ParseUUIDPipe) claimComponentId: string,
     @Req() request: { user: { userId: string } },
   ): Promise<ClaimMutationResultDto> {
     return this.service.unlinkComponent(id, claimComponentId, request.user.userId);
@@ -223,7 +224,7 @@ export class RightsClaimsController {
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 201, type: RightsClaimAttachmentDto })
   addAttachment(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateClaimAttachmentDto,
     @Req() request: { user: { userId: string } },
   ): Promise<RightsClaimAttachmentDto> {
@@ -237,8 +238,8 @@ export class RightsClaimsController {
   @ApiParam({ name: 'attachmentId' })
   @ApiResponse({ status: 200, type: ClaimMutationResultDto })
   removeAttachment(
-    @Param('id') id: string,
-    @Param('attachmentId') attachmentId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
     @Req() request: { user: { userId: string } },
   ): Promise<ClaimMutationResultDto> {
     return this.service.removeAttachment(id, attachmentId, request.user.userId);

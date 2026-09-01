@@ -83,6 +83,15 @@ describe('User roles e2e', () => {
       .delete(`/users/${userId}/roles/user`)
       .set('Authorization', `Bearer ${aToken}`)
       .expect(400);
+
+    // LEGACY-194. Роль только что снята, повторный отзыв доходил до `delete`,
+    // Prisma бросала `P2025`, и администратор видел 500 — то есть не мог
+    // понять, сработал ли первый отзыв. Ответ 404, а не 200: идемпотентность
+    // стёрла бы разницу между «роли не было» и «роль сняли».
+    await request(app.getHttpServer())
+      .delete(`/users/${userId}/roles/content_manager`)
+      .set('Authorization', `Bearer ${aToken}`)
+      .expect(404);
   });
 
   it('non-admin forbidden on role management', async () => {

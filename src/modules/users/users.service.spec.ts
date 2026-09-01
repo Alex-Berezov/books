@@ -2,7 +2,7 @@
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RoleName, Language as PrismaLanguage, User } from '@prisma/client';
+import { RoleName, Language as PrismaLanguage, User, Prisma } from '@prisma/client';
 import { ACCOUNT_USER_SELECT } from '../../common/selects/account-user.select';
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
@@ -206,13 +206,62 @@ describe('UsersService (unit)', () => {
     await expect(service.assignRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('revokeRole: user or role not found (and non-existing link delete throws handled by service path)', async () => {
+  it('revokeRole: пользователя или роли нет — 404 обеими проверками', async () => {
     (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
     await expect(service.revokeRole('missing', 'admin')).rejects.toBeInstanceOf(NotFoundException);
 
     (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
     (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce(null);
     await expect(service.revokeRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  /**
+   * `LEGACY-194`. Пользователь и роль существуют, а связи между ними нет:
+   * `delete` доходил до базы, Prisma бросала `P2025`, и наружу это уходило
+   * как 500 — то есть штатная ситуация «роли и так не было» выглядела
+   * падением сервера и заводила алерт в Sentry.
+   *
+   * ⚠️ Отказ ставится настоящим `Prisma.PrismaClientKnownRequestError`, а не
+   * объектом с полем `code`. Проверка в сервисе идёт через `instanceof`, и
+   * подделка прошла бы мимо неё: тест был бы зелёным на несработавшей ветке.
+   */
+  it('revokeRole: связи нет — 404, а не 500', async () => {
+    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
+    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce({ id: 'r1', name: 'admin' });
+    (prismaMock.userRole.delete as jest.Mock).mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Record to delete does not exist.', {
+        code: 'P2025',
+        clientVersion: '7.0.0',
+      }),
+    );
+
+    await expect(service.revokeRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  /**
+   * Обратная половина той же ветки, и без неё первая проходит на `catch`,
+   * который глотает всё подряд: настоящий сбой базы обязан остаться 5xx,
+   * иначе он не долетит до Sentry — фильтр репортит только 5xx.
+   */
+  it('revokeRole: любой другой отказ базы пробрасывается как есть', async () => {
+    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
+    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce({ id: 'r1', name: 'admin' });
+    const failure = new Prisma.PrismaClientKnownRequestError('Timed out fetching a connection.', {
+      code: 'P2024',
+      clientVersion: '7.0.0',
+    });
+    (prismaMock.userRole.delete as jest.Mock).mockRejectedValueOnce(failure);
+
+    await expect(service.revokeRole('u1', 'admin')).rejects.toBe(failure);
+  });
+
+  /** Отказ не-`Error` объектом тоже не должен превращаться в 404. */
+  it('revokeRole: отказ без кода Prisma не маскируется под 404', async () => {
+    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
+    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce({ id: 'r1', name: 'admin' });
+    (prismaMock.userRole.delete as jest.Mock).mockRejectedValueOnce({ code: 'P2025' });
+
+    await expect(service.revokeRole('u1', 'admin')).rejects.not.toBeInstanceOf(NotFoundException);
   });
 
   /**

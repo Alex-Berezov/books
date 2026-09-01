@@ -1,5 +1,11 @@
 import { readdirSync, readFileSync } from 'fs';
 import { join, relative, resolve } from 'path';
+// `stripComments` берётся общим, а не переписывается здесь: копия того же
+// разбора уже лежала в нескольких местах, и это ровно `LEGACY-290`. Локальная
+// копия в этом файле была байт-в-байт той же и снята — иначе новый сторож
+// добавил бы пятую, а правка краевого случая (`//` внутри `'https://...'`)
+// до него бы не дошла.
+import { stripComments } from './controller-decorators';
 
 /**
  * Сторож формы идентификаторов в `rights-claims` (`LEGACY-119`).
@@ -20,17 +26,33 @@ import { join, relative, resolve } from 'path';
  * балансу скобок. Построчный разбор рвал бы блок на `@ApiPropertyOptional({`,
  * и поле с многострочным описанием молча выпадало бы из проверки.
  *
- * ⚠️ **Область — только каталог `dto/`.** Параметры пути контроллера
- * (`@Param('id') id: string`, 17 мест) сюда не входят и uuid-проверки не имеют:
- * см. `LEGACY-202`. Название спеки говорит про поля DTO, а не про модуль целиком.
+ * ⚠️ **Область — оба входа обработчика: поля `dto/` и параметры пути
+ * контроллера** (`LEGACY-202`). До 01.09.2026 сторож смотрел только `dto/`,
+ * и половина модуля была закрыта, а половина нет: `@Param('id') id: string`
+ * в 17 местах пропускал мусор до `findUnique`, откуда клиент получал 404
+ * «не найдено» вместо 400 «неверный формат» и не мог отличить одно от другого.
+ *
+ * ⚠️ **Два входа проверяются разными правилами, и подменять одно другим
+ * нельзя.** У поля DTO валидатор объявляется декоратором `class-validator`
+ * (`@IsUUID()`), у параметра пути — пайпом Nest (`ParseUUIDPipe`), потому что
+ * `class-validator` до скалярного параметра не доходит вовсе: метаданных класса
+ * у него нет.
  */
 
 const DTO_DIR = resolve(__dirname, '../../modules/rights-claims/dto');
 const SRC_ROOT = resolve(__dirname, '../..');
+const CONTROLLER = resolve(__dirname, '../../modules/rights-claims/rights-claims.controller.ts');
 
 /** Ниже этих чисел обход считается сломанным, а не папка — поредевшей. */
 const MIN_DTO_FILES = 13;
 const MIN_ID_FIELDS = 17;
+
+/**
+ * Столько параметров пути было в контроллере на 01.09.2026, когда заводилась
+ * проверка. Порог, а не точное равенство: маршрут добавить можно, а вот пустой
+ * разбор — это сломанная регулярка, и он должен краснеть.
+ */
+const MIN_PATH_PARAMS = 17;
 
 /**
  * Поля, оставленные строкой намеренно, — с причиной у каждого. Пустой список
@@ -49,9 +71,6 @@ const EXPECTED_STRING_IDS = [
 
 /** Любой декоратор `class-validator`: по нему поле отличается от поля DTO ответа. */
 const VALIDATOR = /@Is[A-Z]\w*\(|@Matches\(|@Min\(|@Max\(|@Length\(|@MaxLength\(|@MinLength\(/;
-
-const stripComments = (content: string): string =>
-  content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 
 /**
  * Строка без содержимого литералов: скобки внутри
@@ -154,5 +173,45 @@ describe('rights-claims: поля-идентификаторы DTO валиди�
       .sort();
 
     expect(withoutUuid).toEqual(EXPECTED_STRING_IDS);
+  });
+});
+
+describe('rights-claims: параметры пути контроллера проверяются как uuid', () => {
+  const source = stripComments(readFileSync(CONTROLLER, 'utf8'));
+
+  /**
+   * Каждый `@Param('<имя>')` вместе с тем, что стоит внутри скобок после имени.
+   * Пайп у Nest — второй аргумент декоратора, поэтому его наличие видно прямо
+   * здесь и отдельного разбора сигнатуры не требует.
+   */
+  const params = [...source.matchAll(/@Param\(\s*'([^']+)'\s*([^)]*)\)/g)].map((m) => ({
+    name: m[1],
+    rest: m[2],
+  }));
+
+  it(`находит не меньше ${MIN_PATH_PARAMS} параметров пути`, () => {
+    expect(params.length).toBeGreaterThanOrEqual(MIN_PATH_PARAMS);
+  });
+
+  it('требует ParseUUIDPipe у каждого параметра пути на id', () => {
+    const withoutPipe = params
+      .filter((p) => /^(id|.*[Ii]d)$/.test(p.name))
+      .filter((p) => !/\bParseUUIDPipe\b/.test(p.rest))
+      .map((p) => p.name)
+      .sort();
+
+    expect(withoutPipe).toEqual([]);
+  });
+
+  /**
+   * Пайп, объявленный в списке импортов, но никуда не навешенный, — ровно то
+   * состояние, из которого запись и заводилась. Сверка паритета считает
+   * **разные** величины: разобранные декораторы против сырого счёта в файле.
+   */
+  it('видит все ParseUUIDPipe до единого — разбор декораторов ничего не потерял', () => {
+    const inDecorators = params.filter((p) => /\bParseUUIDPipe\b/.test(p.rest)).length;
+    const rawUsages = (source.match(/@Param\([^)]*\bParseUUIDPipe\b/g) ?? []).length;
+
+    expect(inDecorators).toBe(rawUsages);
   });
 });

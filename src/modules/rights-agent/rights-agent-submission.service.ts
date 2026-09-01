@@ -350,14 +350,23 @@ export class RightsAgentSubmissionService {
         reportJsonSha256: (record['reportJsonSha256'] as string | null) ?? null,
       };
     } catch (error) {
+      // Текст исключения остаётся в журнале и дальше не идёт (`LEGACY-197`):
+      // `rejectionMessageRu` лежит в базе, переживает перезапуск и показывается
+      // редактору, а выгрузка таблицы вынесла бы имена моделей и колонок целиком.
+      // Связь ответа с этой записью даёт `submissionId`, он в теле уже есть.
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Agent import failed for submission ${submissionId}: ${message}`);
+      this.logger.error(
+        `Agent import failed for submission ${submissionId}: ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
       await this.submissionDelegate.update({
         where: { id: submissionId },
         data: {
           status: RightsAgentSubmissionStatus.FAILED,
-          rejectionCode: 'IMPORT_FAILED',
-          rejectionMessageRu: message,
+          // Код брался литералом мимо `AGENT_ERROR_CODES`, и парной фразы
+          // у него не было — теперь он в словаре вместе с обеими фразами.
+          rejectionCode: AGENT_ERROR_CODES.IMPORT_FAILED,
+          rejectionMessageRu: AGENT_ERROR_MESSAGES_RU[AGENT_ERROR_CODES.IMPORT_FAILED],
           processedAt: new Date(),
         },
       });
@@ -473,12 +482,20 @@ export class RightsAgentSubmissionService {
       // WP-6.3: уведомление `AGENT_REPORT_MATERIALIZATION_FAILED` пишет сама материализация —
       // одинаково для агентского и ручного каналов (R9-02). Здесь остаётся только то, что
       // специфично для фазы 17: сабмишен помечается FAILED, а ответ остаётся 200 с диагностикой.
+      // `materializationError` тоже уходит в базу и оттуда в админский ответ
+      // (`toDto`), поэтому текст драйвера заменён фразой из словаря
+      // (`LEGACY-197`). Строку в журнале с этой записью связывает `importId`.
+      // Стек здесь **не** повторяется: причину со стеком уже записала сама
+      // материализация (`rights-materialization.service.ts`,
+      // `reportMaterializationFailure`) по тому же `importId`. Две
+      // многострочные трассы на один отказ удваивают объём ошибок этого пути
+      // и сбивают любой счёт инцидентов по логу.
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Agent materialization failed for import ${importId}: ${message}`);
 
       return {
         materialization: RightsAgentSubmissionMaterialization.FAILED,
-        error: message,
+        error: AGENT_ERROR_MESSAGES_RU[AGENT_ERROR_CODES.MATERIALIZATION_FAILED],
         profileId: null,
       };
     }

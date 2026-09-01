@@ -1,4 +1,4 @@
-import { HttpException } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsMaterializationService } from '../rights-intake/rights-materialization.service';
@@ -6,7 +6,11 @@ import { RightsReviewImportService } from '../rights-intake/rights-review-import
 import { RightsAgentSubmissionService } from './rights-agent-submission.service';
 import { RightsAgentTokenService } from './rights-agent-token.service';
 import { RightsNotificationsService } from './rights-notifications.service';
-import { AGENT_ERROR_CODES } from './rights-agent.constants';
+import {
+  AGENT_ERROR_CODES,
+  AGENT_ERROR_MESSAGES_EN,
+  AGENT_ERROR_MESSAGES_RU,
+} from './rights-agent.constants';
 import {
   RightsAgentSubmissionMaterialization,
   RightsAgentSubmissionStatus,
@@ -294,17 +298,87 @@ describe('RightsAgentSubmissionService', () => {
     expect(tokens.registerSuccess).not.toHaveBeenCalled();
   });
 
+  /**
+   * ⚠️ `LEGACY-197`. Прежнее утверждение было
+   * `objectContaining({ materializationError: 'materialization boom' })`,
+   * то есть спека **закрепляла утечку**: текст исключения оседал в колонке
+   * `RightsAgentSubmission.materializationError`, переживал перезапуск
+   * и уезжал в админский ответ через `toDto`. Утверждение не снято,
+   * а развёрнуто: текста драйвера в поле нет, поле равно фразе из словаря,
+   * а сам текст ушёл в журнал. Фикстура (`'materialization boom'`) та же.
+   */
   it('keeps the import when materialization throws and still answers 200', async () => {
     materialization.materializeFromImport.mockRejectedValue(new Error('materialization boom'));
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     const result = await service.submit(context, dto, meta);
 
     expect(result.status).toBe('VALIDATED');
     expect(result.materialization).toBe(RightsAgentSubmissionMaterialization.FAILED);
+    // Счётчик обязателен (L-005): `toHaveBeenCalledWith` засчитывает совпадение
+    // по **любому** вызову, и второй `update` того же сабмишена, переписывающий
+    // поле, оставил бы спеку зелёной — а в базе лежало бы значение последнего.
+    expect(prisma.rightsAgentSubmission.update).toHaveBeenCalledTimes(1);
     expect(prisma.rightsAgentSubmission.update).toHaveBeenCalledWith({
       where: { id: 'submission-1' },
-      data: expect.objectContaining({ materializationError: 'materialization boom' }),
+      data: expect.objectContaining({
+        materializationError: AGENT_ERROR_MESSAGES_RU[AGENT_ERROR_CODES.MATERIALIZATION_FAILED],
+      }),
     });
+
+    const written = prisma.rightsAgentSubmission.update.mock.calls
+      .map((call) => JSON.stringify(call))
+      .join(' ');
+    expect(written).not.toContain('materialization boom');
+
+    // Диагностика не потеряна — иначе замена текста фразой была бы её потерей.
+    expect(logged.mock.calls.some((call) => String(call[0]).includes('materialization boom'))).toBe(
+      true,
+    );
+    logged.mockRestore();
+  });
+
+  /**
+   * `LEGACY-197`, вторая точка того же модуля, и до 01.09.2026 не покрытая
+   * ничем. Импорт отчёта падает: текст исключения писался в
+   * `RightsAgentSubmission.rejectionMessageRu` — то есть **в базу**, откуда
+   * он показывается редактору и уходит в любую выгрузку таблицы. Заодно
+   * `rejectionCode` брался литералом мимо `AGENT_ERROR_CODES`, и парной
+   * фразы у него не было вовсе.
+   */
+  it('не кладёт текст исключения в rejectionMessageRu, когда импорт упал', async () => {
+    reviewImports.create.mockRejectedValue(new Error('import boom: column "report_json" is null'));
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await expect(service.submit(context, dto, meta)).rejects.toThrow('import boom');
+
+    const written = prisma.rightsAgentSubmission.update.mock.calls
+      .map((call) => JSON.stringify(call))
+      .join(' ');
+    expect(written).not.toContain('report_json');
+    expect(prisma.rightsAgentSubmission.update).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsAgentSubmission.update).toHaveBeenCalledWith({
+      where: { id: 'submission-1' },
+      data: expect.objectContaining({
+        rejectionCode: AGENT_ERROR_CODES.IMPORT_FAILED,
+        rejectionMessageRu: AGENT_ERROR_MESSAGES_RU[AGENT_ERROR_CODES.IMPORT_FAILED],
+      }),
+    });
+
+    expect(logged.mock.calls.some((call) => String(call[0]).includes('report_json'))).toBe(true);
+    logged.mockRestore();
+  });
+
+  /**
+   * Код без парной фразы собирался бы, только если словари перестали быть
+   * `Record<AgentErrorCode, string>`. Проверка дешёвая и краснеет ровно на том,
+   * из-за чего `IMPORT_FAILED` и разошёлся со словарём.
+   */
+  it('у каждого кода отказа есть фраза на обоих языках', () => {
+    for (const code of Object.values(AGENT_ERROR_CODES)) {
+      expect(AGENT_ERROR_MESSAGES_RU[code]).toBeTruthy();
+      expect(AGENT_ERROR_MESSAGES_EN[code]).toBeTruthy();
+    }
   });
 
   // WP-6.3 (R9-02): уведомление о сбое пишет сама материализация — одинаково для обоих

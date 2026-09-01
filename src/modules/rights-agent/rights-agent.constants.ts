@@ -50,6 +50,15 @@ export const AGENT_ERROR_CODES = {
   AGENT_TOKEN_ALREADY_REVOKED: 'AGENT_TOKEN_ALREADY_REVOKED',
   AGENT_SUBMISSION_NOT_FOUND: 'AGENT_SUBMISSION_NOT_FOUND',
   NOTIFICATION_NOT_FOUND: 'NOTIFICATION_NOT_FOUND',
+  /**
+   * Отчёт принят и проверен, но разложить его по таблицам не удалось
+   * (`LEGACY-197`). До 01.09.2026 это значение писалось в `rejectionCode`
+   * строковым литералом мимо словаря, и парной фразы у него не было вовсе —
+   * в `rejectionMessageRu` вместо неё оседал текст исключения Prisma.
+   */
+  IMPORT_FAILED: 'IMPORT_FAILED',
+  /** Материализация отчёта в профиль прав отказала (`LEGACY-197`). */
+  MATERIALIZATION_FAILED: 'MATERIALIZATION_FAILED',
 } as const;
 
 export type AgentErrorCode = (typeof AGENT_ERROR_CODES)[keyof typeof AGENT_ERROR_CODES];
@@ -78,6 +87,10 @@ export const AGENT_ERROR_MESSAGES_RU: Record<AgentErrorCode, string> = {
   AGENT_TOKEN_ALREADY_REVOKED: 'Токен уже отозван.',
   AGENT_SUBMISSION_NOT_FOUND: 'Отправка агента не найдена.',
   NOTIFICATION_NOT_FOUND: 'Уведомление не найдено.',
+  IMPORT_FAILED:
+    'Отчёт не удалось импортировать из-за внутренней ошибки. Подробности — в журнале сервера.',
+  MATERIALIZATION_FAILED:
+    'Отчёт импортирован, но профиль прав по нему не построен из-за внутренней ошибки. Подробности — в журнале сервера.',
 };
 
 /** English messages returned alongside the machine-readable error codes. */
@@ -103,4 +116,8 @@ export const AGENT_ERROR_MESSAGES_EN: Record<AgentErrorCode, string> = {
   AGENT_TOKEN_ALREADY_REVOKED: 'Upload token is already revoked.',
   AGENT_SUBMISSION_NOT_FOUND: 'Agent submission was not found.',
   NOTIFICATION_NOT_FOUND: 'Notification was not found.',
+  IMPORT_FAILED:
+    'The report could not be imported because of an internal error. See the server log.',
+  MATERIALIZATION_FAILED:
+    'The report was imported, but the rights profile could not be built because of an internal error. See the server log.',
 };

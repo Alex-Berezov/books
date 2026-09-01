@@ -1,7 +1,11 @@
 import { Logger } from '@nestjs/common';
 import { Language } from '@prisma/client';
 import { SystemPagesService } from './system-pages.service';
-import { SYSTEM_PAGE_KEYS, SYSTEM_PAGE_LANGUAGES } from './system-pages.constants';
+import {
+  SYSTEM_PAGES_CHECK_FAILED_RU,
+  SYSTEM_PAGE_KEYS,
+  SYSTEM_PAGE_LANGUAGES,
+} from './system-pages.constants';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 type Row = { systemKey: string | null; slug: string; language: Language; status: string };
@@ -108,13 +112,27 @@ describe('SystemPagesService', () => {
 
   /**
    * "Could not check" is not "fine" — the same rule the live SEO audit follows.
+   *
+   * ⚠️ `LEGACY-197`. Прежнее утверждение было `expect(status.error).toContain('db down')`,
+   * то есть спека **закрепляла утечку**: текст исключения Prisma уезжал в тело
+   * ответа 200. Утверждение не снято, а развёрнуто: текста драйвера в поле нет,
+   * поле равно именованной константе, а сам текст ушёл в журнал со стеком.
+   * Фикстура (`new Error('db down')`) та же.
    */
   it('does not report a pass when the query itself failed', async () => {
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
     const status = await new SystemPagesService(prismaWith(new Error('db down'))).check();
 
     expect(status.ok).toBe(false);
-    expect(status.error).toContain('db down');
+    expect(status.error).not.toContain('db down');
+    expect(status.error).toBe(SYSTEM_PAGES_CHECK_FAILED_RU);
     expect(status.problems).toHaveLength(0);
+
+    // Диагностика не потеряна: раньше поле `error` было её единственным каналом.
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(String(logged.mock.calls[0][1])).toContain('db down');
+    logged.mockRestore();
   });
 
   it('logs every unresolved page at startup instead of failing silently', async () => {
@@ -134,7 +152,14 @@ describe('SystemPagesService', () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
-    expect(error).toHaveBeenCalledTimes(1);
+    // Две записи, и обе нужны: причина со стеком пишется внутри `check()`
+    // (`LEGACY-197`), отметка «старт прошёл без проверки» — здесь.
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(String(error.mock.calls[0][1])).toContain('db down');
+    expect(String(error.mock.calls[1][0])).toContain('did not run at startup');
+    // Текст драйвера не дублируется в строке про старт — иначе он снова
+    // расползётся по каналам, из которых его только что убрали.
+    expect(String(error.mock.calls[1][0])).not.toContain('db down');
     error.mockRestore();
   });
 });
