@@ -1626,8 +1626,10 @@ describe('PublicationGateService', () => {
    * даёт только реальная языковая оценка.
    */
   describe('language rights coverage', () => {
-    const editionRightsFindMany = () =>
-      (prisma as unknown as Record<string, { findMany: jest.Mock }>)['editionRights'].findMany;
+    // Мок задаётся вызовом, а не ссылкой на метод: `unbound-method` запрещает выносить
+    // `prisma.editionRights.findMany` в переменную, отвязывая его от своего объекта.
+    const arrangeEditionRights = (records: Array<Record<string, unknown>>) =>
+      (prisma.editionRights.findMany as jest.Mock).mockResolvedValue(records);
 
     const arrangeVersion = (language: string) => {
       (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ ...baseVersion, language });
@@ -1638,7 +1640,7 @@ describe('PublicationGateService', () => {
 
     /** Интейк на en/ru/fr: агент оценил en и ru, на fr материализация положила заглушку. */
     const partiallyAssessedProfile = () => {
-      editionRightsFindMany().mockResolvedValue([
+      arrangeEditionRights([
         { languageCode: 'en', status: 'ALLOWED' },
         { languageCode: 'ru', status: 'ALLOWED' },
         { languageCode: 'fr', status: 'NOT_TARGETED' },
@@ -1673,7 +1675,7 @@ describe('PublicationGateService', () => {
 
     it('blocks a version whose language has no EditionRights row at all', async () => {
       arrangeVersion('fr');
-      editionRightsFindMany().mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+      arrangeEditionRights([{ languageCode: 'en', status: 'ALLOWED' }]);
 
       const result = await service.checkVersionCanPublish('v1');
 
@@ -1696,7 +1698,7 @@ describe('PublicationGateService', () => {
     // Кейс По: интейк ровно на те языки, которые агент оценил, — нового блокера нет.
     it('adds no blocker to a single-language clearance that covers the version', async () => {
       arrangeVersion('en');
-      editionRightsFindMany().mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+      arrangeEditionRights([{ languageCode: 'en', status: 'ALLOWED' }]);
 
       const result = await service.checkVersionCanPublish('v1');
 
@@ -1716,9 +1718,9 @@ describe('PublicationGateService', () => {
         publicationGate: 'BLOCK',
       });
       (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma as unknown as Record<string, { findMany: jest.Mock }>)[
-        'editionRights'
-      ].findMany.mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+      (prisma.editionRights.findMany as jest.Mock).mockResolvedValue([
+        { languageCode: 'en', status: 'ALLOWED' },
+      ]);
       mockRightsLawyerReviewService.evaluateVersionLawyerReview.mockResolvedValue(
         noLawyerReview(lawyer),
       );
@@ -1809,9 +1811,9 @@ describe('PublicationGateService', () => {
       (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
       (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
       (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma as unknown as Record<string, { findMany: jest.Mock }>)[
-        'editionRights'
-      ].findMany.mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]);
+      (prisma.editionRights.findMany as jest.Mock).mockResolvedValue([
+        { languageCode: 'en', status: 'ALLOWED' },
+      ]);
     };
 
     it.each([

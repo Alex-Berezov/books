@@ -22,28 +22,6 @@ import { RightsClearanceResolverService } from '../rights-clearance/rights-clear
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 
-interface VersionWithGeoBlock {
-  id: string;
-  bookId: string;
-  language: string | null;
-  description: string | null;
-  coverImageUrl: string | null;
-  rightsProfileId: string | null;
-  approvedRightsReviewId: string | null;
-  rightsStatus: string | null;
-  rightsGeoBlockRequired: boolean;
-  rightsGeoBlockConfigured: boolean;
-  rightsGeoBlockVerifiedAt: Date | null;
-  rightsContentHash: string | null;
-  rightsRecheckRequired: boolean;
-  rightsLicenseAttributionTextRu: string | null;
-  book: {
-    id: string;
-    currentRightsProfileId: string | null;
-    approvedRightsReviewId: string | null;
-  };
-}
-
 /** Scopes that close a market as a whole; every other scope closes only a part of the content. */
 const FULL_BLOCK_SCOPES: GeoBlockScope[] = [
   GeoBlockScope.ENTIRE_BOOK,
@@ -63,21 +41,11 @@ export class PublicationGateService {
     private readonly clearanceResolver: RightsClearanceResolverService,
   ) {}
 
-  /**
-   * `prisma generate` локально запрещён, поэтому модель читается тем же приёмом, что и в
-   * `rights-profile.service.ts`: делегат берётся с клиента по имени.
-   */
-  private get editionRights() {
-    return (this.prisma as unknown as Record<string, unknown>)['editionRights'] as {
-      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
-    };
-  }
-
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
     const blockingReasons: PublicationGateReasonDto[] = [];
     const warnings: PublicationGateReasonDto[] = [];
 
-    const rawVersion = await this.prisma.bookVersion.findUnique({
+    const version = await this.prisma.bookVersion.findUnique({
       where: { id: versionId },
       include: {
         book: {
@@ -90,11 +58,9 @@ export class PublicationGateService {
       },
     });
 
-    if (!rawVersion) {
+    if (!version) {
       throw new NotFoundException('BookVersion not found');
     }
-
-    const version = rawVersion as unknown as VersionWithGeoBlock;
     const book = version.book;
 
     // WP-2: everything below that asks "what does the clearance say" asks the resolver, not the
@@ -863,18 +829,14 @@ export class PublicationGateService {
    * материализации на целевой язык без оценки (WP-G.5), покрытием она не является.
    */
   private async loadAssessedLanguageCodes(rightsProfileId: string): Promise<string[]> {
-    const records = await this.editionRights.findMany({
+    const records = await this.prisma.editionRights.findMany({
       where: { sourceEdition: { rightsProfileId } },
       select: { languageCode: true, status: true },
     });
 
     return records
-      .filter((record) => record['status'] !== UNASSESSED_LANGUAGE_STATUS)
-      .map((record) =>
-        typeof record['languageCode'] === 'string'
-          ? record['languageCode'].trim().toLowerCase()
-          : '',
-      )
+      .filter((record) => record.status !== UNASSESSED_LANGUAGE_STATUS)
+      .map((record) => record.languageCode.trim().toLowerCase())
       .filter((languageCode) => languageCode !== '');
   }
 
