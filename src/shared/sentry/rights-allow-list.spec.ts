@@ -38,12 +38,17 @@ describe('RIGHTS_ALLOW_LIST', () => {
     // арбитра от 30.08.2026. Здесь ловится не всякая ошибка отбора, а самая частая:
     // имя, по которому видно, что внутри проза.
     //
-    // ⚠️ `source_text_type` — законное исключение и единственное: это перечисление
-    // вида текста-источника, а не текст. Исключение названо поимённо, чтобы список
-    // исключений нельзя было расширить молча.
+    // ⚠️ Исключения названы поимённо, чтобы список нельзя было расширить молча.
+    // `source_text_type` — перечисление вида текста-источника, а не текст.
+    // `reason` — перечисление `RightsRecheckReason` (`list-recheck-tasks.dto.ts:24-27`,
+    // `create-recheck-task.dto.ts:19-20`), внесено 01.09.2026 по сторожу полноты
+    // (`LEGACY-338`). Прозаический сосед у него отдельный и в список не идёт:
+    // `reason_ru` из девяти DTO — свободный текст.
+    const ENUM_EXCEPTIONS = new Set(['source_text_type', 'reason']);
+
     const prose = keys.filter(
       (key) =>
-        key !== 'source_text_type' &&
+        !ENUM_EXCEPTIONS.has(key) &&
         /(^|_)(q|text|texts|description|descriptions|notes|note|reason|title|comment)(_|$)/.test(
           key,
         ),

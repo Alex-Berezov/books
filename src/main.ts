@@ -12,6 +12,7 @@ import { configureSecurity } from './common/security/app-security.config';
 import * as Sentry from '@sentry/node';
 import { HttpAdapterHost } from '@nestjs/core';
 import { SentryExceptionFilter } from './shared/sentry/sentry.filter';
+import { SENTRY_MAX_VALUE_LENGTH, sentryBeforeSend } from './shared/sentry/before-send';
 import { RedirectExceptionFilter } from './common/filters/redirect-exception.filter';
 import { robotsHeaderMiddleware } from './common/middleware/robots-header.middleware';
 import { assertJwtSecrets } from './common/config/jwt-secrets';
@@ -58,6 +59,13 @@ async function bootstrap() {
       integrations: [],
       // disable autoSessionTracking — the API does not use browser sessions
       autoSessionTracking: false,
+      // LEGACY-336: the only client hook every event passes through. The filter
+      // calls captureException with the raw error, and a Prisma validation
+      // message is the rendered call together with the whole `data` object.
+      beforeSend: sentryBeforeSend,
+      // LEGACY-336: raised well above our own 512-char cap so the SDK never
+      // truncates mid-email before beforeSend runs. See before-send.ts.
+      maxValueLength: SENTRY_MAX_VALUE_LENGTH,
     });
     const httpAdapterHost = app.get(HttpAdapterHost);
     app.useGlobalFilters(redirectFilter, new SentryExceptionFilter(httpAdapterHost, true));

@@ -53,7 +53,7 @@ const SENSITIVE_KEY_PATTERN =
  * ⚠️ Череда заглавных разрезается отдельным правилом: `APIEmail` даёт
  * `api_email`, а не `apiemail`, иначе слово `email` в нём не нашлось бы.
  */
-function normalizeKey(key: string): string {
+export function normalizeKey(key: string): string {
   return key
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
@@ -237,6 +237,72 @@ function redactPersonalValue(value: unknown): string {
 }
 
 /**
+ * Потолок длины одной строки в событии (`LEGACY-336`).
+ *
+ * 🔴 До 01.09.2026 потолка не было вовсе: обязательная проза правовой заявки
+ * без `@MaxLength` (`counterNoticeTextRu`, `descriptionRu`, `originalNoticeText`,
+ * `responseTextRu`) уезжала в событие целиком, если ключ не гасился.
+ *
+ * ⚠️ 512, а не 250 SDK: `maxValueLength` клиента режет только `event.message`,
+ * `exception.value` и `request.url` (`@sentry/core/utils/prepareEvent.js:144-154`),
+ * до значений внутри `contexts` он не доходит. Здесь потолок вдвое мягче,
+ * потому что режется уже разобранное поле, а не всё сообщение сразу.
+ */
+export const MAX_FREE_TEXT_LENGTH = 512;
+
+/**
+ * Адрес почты внутри произвольного текста (`LEGACY-336`).
+ *
+ * ⚠️ Форма нарочно широкая: ошибка в сторону лишнего хеша стоит одного
+ * нечитаемого токена в диагностике, ошибка в другую сторону стоит утечки.
+ * Так же выбрана и `SENSITIVE_KEY_PATTERN`. Версия вида `pkg@1.2.beta`
+ * под неё попадёт — это принятая цена (решение арбитра от 01.09.2026).
+ *
+ * 🔴 **Квантификаторы ограничены, и это про цену прохода, а не про строгость.**
+ * Первая форма писалась как `[A-Za-z0-9.-]+\.`, где точка входит в класс перед
+ * литеральной точкой: на входе без завершающего домена движок перебирает хвост
+ * заново с каждой стартовой позиции, то есть даёт квадратичный откат. Тело
+ * `POST /api/comments` потолка длины не имеет (`create-comment.dto.ts:43-46`),
+ * а `express.json` пускает мегабайт — строка из полумиллиона знаков с одной
+ * собакой посередине укладывала единственный поток Node на любом 5xx.
+ * Здесь домен разобран на метки: точка **только** литеральная, внутри метки
+ * её нет, неоднозначного разбиения не возникает вовсе. Найдено ревью 01.09.2026.
+ */
+const EMAIL_VALUE_PATTERN = /[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9-]{1,63}\.){1,8}[A-Za-z]{2,24}/g;
+
+/**
+ * Разбор строки **по значению**, а не по имени ключа (`LEGACY-336`, `LEGACY-337`).
+ *
+ * До 01.09.2026 обращение со значением выбиралось только по имени ключа
+ * (`redactByKey`), и там, где имя ни с чем не совпало или имени нет вовсе —
+ * элемент массива, значение под безопасным ключом, поисковый `q`, — строка
+ * уезжала как есть. Решение арбитра от 01.09.2026.
+ *
+ * ⚠️ Заменяется **только совпадение**, а не вся строка: «что искали, когда
+ * упало» — главный признак разбора, и стирание его убило бы. Поэтому `q`
+ * и не внесён ни в одну маску по имени: тот же параметр несёт номер заявки,
+ * слаг и произвольный текст.
+ *
+ * ⚠️ Хеш берётся тот же, что и по ключу (`hashPersonalValue`): иначе одна
+ * и та же почта из `claimantEmail` и из прозы дала бы в событии двух разных
+ * «людей», то есть ровно ту ошибку счёта, ради которой хеш выбран вместо маски.
+ *
+ * 🔴 Порядок обязателен: сначала хеш, потом потолок. Наоборот адрес,
+ * попавший на границу усечения, разрезался бы пополам и первая половина
+ * уехала бы открытой.
+ */
+export function redactFreeText(value: string): string {
+  // Ранний выход: собаки нет — разбирать нечего, и регулярка не запускается
+  // вовсе. Это подавляющее большинство строк любого события.
+  const hashed = value.includes('@')
+    ? value.replace(EMAIL_VALUE_PATTERN, (match) => hashPersonalValue(match))
+    : value;
+  if (hashed.length <= MAX_FREE_TEXT_LENGTH) return hashed;
+  const dropped = hashed.length - MAX_FREE_TEXT_LENGTH;
+  return `${hashed.slice(0, MAX_FREE_TEXT_LENGTH)}[Truncated: ${dropped} more chars]`;
+}
+
+/**
  * Предел глубины обхода в `redactKeys` (`LEGACY-188`). Вход — уровень 1.
  *
  * ⚠️ Четыре, а не пять: все наблюдаемые формы мельче (`{ user: { password } }`
@@ -303,11 +369,26 @@ export function redactUrl(rawUrl: string, allow?: RedactAllowList): string {
     // `?email=` в адресе — та же почта, что и в теле, и уезжает она дважды:
     // в `url` контекста и в хлебной крошке (`LEGACY-189`). Обращение одно.
     const replaced: string[] = [];
+    let changed = false;
     for (const value of params.getAll(key)) {
       const item = redactByKey(key, value, allow);
-      if (item) replaced.push(item.value);
+      if (item) {
+        replaced.push(item.value);
+        changed = true;
+        continue;
+      }
+      // Значение, которое не опознал разбор по имени, осматривается по
+      // содержимому (`LEGACY-336`, `LEGACY-337`). Без этого почта, поданная
+      // поисковым `q`, уезжала бы открытой и в `url` контекста, и в крошке:
+      // маска на `q` запрещена — тот же параметр несёт номер заявки и слаг.
+      const scanned = redactFreeText(value);
+      replaced.push(scanned);
+      if (scanned !== value) changed = true;
     }
-    if (replaced.length === 0) continue;
+    // 🔴 Ничего не изменилось — параметр не переписывается вовсе. Иначе
+    // `delete` + `append` унесли бы его в хвост строки запроса, и адрес
+    // события перестал бы совпадать с настоящим при нулевой правке.
+    if (!changed) continue;
 
     // 🔴 Каждое вхождение обрабатывается своим значением, а не первым на все.
     // `params.set` заменяет все вхождения разом: на `?email=a&email=b` вторая
@@ -348,7 +429,11 @@ function redactValue(
   if (exotic) return exotic;
 
   const container = getContainer(value);
-  if (!container) return value;
+  // 🔴 Единственная точка, через которую проходит **каждый** лист обхода:
+  // элемент массива, значение под ключом, не совпавшим ни с одной маской,
+  // и скаляр, поданный в `redactKeys` напрямую. До 01.09.2026 строка отсюда
+  // возвращалась нетронутой, и разбора по значению не было нигде (`LEGACY-336`).
+  if (!container) return typeof value === 'string' ? redactFreeText(value) : value;
   if (depth > MAX_REDACT_DEPTH) return '[MaxDepth]';
 
   if (seen.has(container)) return '[Circular]';

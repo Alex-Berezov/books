@@ -245,10 +245,17 @@ describe('redactKeys', () => {
     it('собственный ключ `constructor` в простом объекте разбирается как обычный', () => {
       // `JSON.parse` заводит `constructor` обычным собственным ключом; простой
       // объект до меток не доходит вовсе и обходится по ключам.
+      //
+      // ⚠️ С 01.09.2026 значение вдобавок осматривается по содержимому
+      // (`LEGACY-336`), поэтому почта внутри уходит хешем. Проверка от этого
+      // не слабеет: ключ `constructor` по-прежнему обычный, а объект
+      // по-прежнему разобран по ключам, а не подменён меткой.
       const body = JSON.parse('{"constructor":"user@example.com"}') as Record<string, unknown>;
       const out = asObject(redactKeys({ nested: body }));
 
-      expect(out.nested).toEqual({ constructor: 'user@example.com' });
+      expect(out.nested).toEqual({
+        constructor: expect.stringMatching(/^\[Hashed: [0-9a-f]{12}\]$/),
+      });
     });
 
     it('двоичное значение остаётся размером, а не именем класса', () => {
@@ -708,5 +715,142 @@ describe('LEGACY-334: белый список ключей', () => {
     expect(out).toContain('status=OPEN');
     expect(out).toContain('q=%5BFiltered%5D');
     expect(decodeURIComponent(out)).not.toContain('Иван');
+  });
+});
+
+describe('LEGACY-336: обращение выбирается не только по имени ключа', () => {
+  const EMAIL = 'ceo@example.com';
+
+  function hashOf(value: string): string {
+    const out = redactKeys({ email: value }) as Record<string, unknown>;
+    return out.email as string;
+  }
+
+  describe('🔴 три места, где имя ключа не помогает', () => {
+    it('почта элементом массива уходит хешем, а не открытой строкой', () => {
+      // `notifyList` не совпал ни с секретной маской, ни с двумя персональными;
+      // обход спускался в массив и возвращал строку нетронутой.
+      const out = redactKeys({ notifyList: [EMAIL] }) as Record<string, unknown>;
+
+      expect(out.notifyList).toEqual([hashOf(EMAIL)]);
+      expect(JSON.stringify(out)).not.toContain('ceo@example.com');
+    });
+
+    it('почта под ключом, не совпавшим ни с одной маской, уходит хешем', () => {
+      const out = redactKeys({ contactLine: `Пишите на ${EMAIL}` }) as Record<string, unknown>;
+
+      expect(out.contactLine).toBe(`Пишите на ${hashOf(EMAIL)}`);
+    });
+
+    it('почта значением параметра адреса уходит хешем', () => {
+      // Ключ `q` в маску не внесён намеренно: тот же параметр несёт номер
+      // заявки и слаг. Закрывает его разбор по значению (`LEGACY-337`).
+      const out = redactUrl(`/api/users?q=${EMAIL}`);
+
+      expect(out).not.toContain('ceo@example.com');
+      expect(out).not.toContain('ceo%40example.com');
+      expect(out).toMatch(/^\/api\/users\?q=%5BHashed%3A\+[0-9a-f]{12}%5D$/);
+    });
+  });
+
+  describe('заменяется только совпадение, а не вся строка', () => {
+    it('текст вокруг адреса сохраняется — иначе теряется признак разбора', () => {
+      const out = redactKeys({ q: `заявка 12345 от ${EMAIL} срочно` }) as Record<string, unknown>;
+
+      expect(out.q).toBe(`заявка 12345 от ${hashOf(EMAIL)} срочно`);
+    });
+
+    it('строка без адреса не меняется вовсе', () => {
+      const out = redactKeys({ q: 'Война и мир' }) as Record<string, unknown>;
+
+      expect(out.q).toBe('Война и мир');
+    });
+
+    it('два разных адреса в одной строке дают два разных хеша', () => {
+      const out = redactKeys({ note: `a@x.com и b@y.com` }) as Record<string, unknown>;
+
+      expect(out.note).toBe(`${hashOf('a@x.com')} и ${hashOf('b@y.com')}`);
+      expect(hashOf('a@x.com')).not.toBe(hashOf('b@y.com'));
+    });
+  });
+
+  describe('🔴 хеш из текста совпадает с хешем из ключа', () => {
+    it('одна почта не даёт двух разных «людей» в одном событии', () => {
+      // Разойдись эти два хеша — счёт уникальных пострадавших, ради которого
+      // хеш и выбран вместо маски, стал бы вдвое завышенным.
+      const byKey = redactKeys({ claimantEmail: EMAIL }) as Record<string, unknown>;
+      const byValue = redactKeys({ freeText: EMAIL }) as Record<string, unknown>;
+
+      expect(byValue.freeText).toBe(byKey.claimantEmail);
+    });
+
+    it('регистр и пробелы по краям на хеш из текста не влияют', () => {
+      const out = redactKeys({ line: ' CEO@Example.COM ' }) as Record<string, unknown>;
+
+      expect(out.line).toBe(` ${hashOf(EMAIL)} `);
+    });
+  });
+
+  describe('потолок длины строки', () => {
+    it('строка ровно по потолку метки не получает', () => {
+      const out = redactKeys({ prose: 'я'.repeat(512) }) as Record<string, unknown>;
+
+      expect(out.prose).toBe('я'.repeat(512));
+    });
+
+    it('строка длиннее потолка усекается с явной меткой', () => {
+      const out = redactKeys({ prose: 'я'.repeat(600) }) as Record<string, unknown>;
+
+      expect(out.prose).toBe(`${'я'.repeat(512)}[Truncated: 88 more chars]`);
+    });
+
+    it('🔴 адрес на границе усечения не разрезается пополам', () => {
+      // Хеш ставится **до** потолка. В обратном порядке адрес, попавший
+      // на границу, разрезался бы, и его первая половина уехала бы открытой
+      // прямо перед меткой усечения.
+      const out = redactKeys({ prose: `${'я'.repeat(505)}${EMAIL}` }) as Record<string, unknown>;
+
+      expect(out.prose as string).not.toContain('ceo@');
+      expect(out.prose as string).not.toContain('example.com');
+      expect(out.prose as string).toContain('[Truncated: ');
+    });
+
+    it('сама метка хеша попасть под нож потолка может, и это принятая цена', () => {
+      // Потолок режет по числу знаков и метку не бережёт: `[Hashed: abc…]`
+      // на границе даёт обрубок `[Hashed`. Утечки в этом нет — открытого
+      // текста в обрубке не бывает, — а бережный рез стоил бы разбора
+      // границ меток ради косметики.
+      const out = redactKeys({ prose: `${'я'.repeat(505)}${EMAIL}` }) as Record<string, unknown>;
+
+      expect(out.prose as string).toContain('[Hashed');
+      expect(out.prose as string).not.toMatch(/\[Hashed: [0-9a-f]{12}\]/);
+    });
+  });
+
+  describe('чего разбор по значению не трогает', () => {
+    it('нестроковый лист остаётся собой', () => {
+      const out = redactKeys({ count: 42, ok: true, nothing: null }) as Record<string, unknown>;
+
+      expect(out.count).toBe(42);
+      expect(out.ok).toBe(true);
+      expect(out.nothing).toBeNull();
+    });
+
+    it('метки обхода разбору не подвергаются', () => {
+      const out = redactKeys({ when: new Date('2026-09-01T00:00:00.000Z') }) as Record<
+        string,
+        unknown
+      >;
+
+      expect(out.when).toBe('[Date: 2026-09-01T00:00:00.000Z]');
+    });
+
+    it('порядок параметров адреса без правок сохраняется', () => {
+      // Значение, которое разбор не изменил, не переписывается: иначе
+      // `delete` + `append` унесли бы параметр в хвост строки запроса.
+      const out = redactUrl('/api/books?page=2&limit=20&sort=title');
+
+      expect(out).toBe('/api/books?page=2&limit=20&sort=title');
+    });
   });
 });

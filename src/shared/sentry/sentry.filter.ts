@@ -3,34 +3,7 @@ import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
 import type { Request } from 'express';
 import * as Sentry from '@sentry/node';
 import { redactKeys, redactUrl, type RedactAllowList } from './redact.util';
-import { RIGHTS_ALLOW_LIST } from './rights-allow-list';
-
-/**
- * Маршруты, у которых контекст события собирается **белым списком**, а не чёрным
- * (`LEGACY-334`).
- *
- * 🔴 Зачем он нужен и почему маски по имени ключа тут не хватает — разобрано
- * один раз, у `PERSONAL_FILTERED_KEY_PATTERN` в `redact.util.ts`. Здесь только
- * то, чего там быть не может: как выбирается маршрут.
- *
- * ⚠️ Совпадение по `req.path`, а не по `req.route.path`. Первое есть всегда,
- * второе заполняется только после того, как обработчик сопоставлен, и несёт путь
- * без префикса контроллера и без глобального `api` — то есть `/claims`, по которому
- * правовую ручку от чужой не отличить.
- *
- * ⚠️ Якорь на префикс контроллера, а не на перечень ручек: новый маршрут внутри
- * `admin/rights` закрывается сам. Список из пятнадцати путей молча пропустил бы
- * шестнадцатый — это и есть тот тихий возврат к чёрному списку, из-за которого
- * решение сначала было принято против белого списка.
- *
- * 🔴 Флаг `i` обязателен. Маршрутизация Express регистронезависима по умолчанию
- * (`case sensitive routing` выключена, в `main.ts` её никто не включает):
- * `POST /api/Admin/rights/claims` доходит до обработчика и выполняется. Шаблон
- * без `i` по такому пути не срабатывал, белый список не включался, и проза
- * встречного уведомления уезжала дословно — чёрный список её не берёт по
- * определению. Найдено ревью 30.08.2026, проверено запуском.
- */
-const ALLOW_LIST_PATH_PATTERN = /(^|\/)admin\/rights(\/|$)/i;
+import { ALLOW_LIST_PATH_PATTERN, RIGHTS_ALLOW_LIST } from './rights-allow-list';
 
 /**
  * Global exception filter that reports 5xx errors to Sentry.
