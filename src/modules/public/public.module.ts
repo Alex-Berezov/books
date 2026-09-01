@@ -1,32 +1,20 @@
 import { Module } from '@nestjs/common';
 import { PublicController } from './public.controller';
-import { BookService } from '../book/book.service';
-import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
-import { PagesService } from '../pages/pages.service';
-import { LanguageResolverGuard } from '../../common/guards/language-resolver.guard';
-import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
-import { CategoryService } from '../category/category.service';
-import { TagsService } from '../tags/tags.service';
-import { AuthorService } from '../author/author.service';
+import { AuthorModule } from '../author/author.module';
+import { BookModule } from '../book/book.module';
+import { CategoryModule } from '../category/category.module';
 import { GeoBlockModule } from '../geo-block/geo-block.module';
-import { CategoryTreeModule } from '../category/category-tree.module';
+import { PagesModule } from '../pages/pages.module';
+import { TagsModule } from '../tags/tags.module';
 
 @Module({
-  // ⚠️ `CategoryTreeModule` здесь не по своей воле: `PublicModule` объявляет
-  // собственный экземпляр `CategoryService` (`LEGACY-260`), а тот с 20.08.2026
-  // зависит от подъёма по дереву (`LEGACY-263`). Уйдёт дубль провайдера —
-  // уйдёт и эта строка.
-  imports: [GeoBlockModule, CategoryTreeModule],
+  // Сервисы берутся из модулей-владельцев, а не объявляются заново (`LEGACY-260`): собственный
+  // провайдер дал бы публичным маршрутам свой экземпляр, отдельный от экземпляра родного модуля.
+  // `GeoBlockModule` — за `GeoIpCountryService`, который контроллер инжектит напрямую.
+  imports: [AuthorModule, BookModule, CategoryModule, GeoBlockModule, PagesModule, TagsModule],
+  // `providers` пуст намеренно: `LanguageResolverGuard` раздаётся глобально
+  // (`app.module.ts`, `APP_GUARD`), `LangParamPipe` Nest поднимает сам по классу в параметре,
+  // и пять соседних модулей зовут обоих без единой строки здесь (`LEGACY-259`).
   controllers: [PublicController],
-  providers: [
-    BookService,
-    RelatedTaxonomyService,
-    PagesService,
-    CategoryService,
-    TagsService,
-    AuthorService,
-    LanguageResolverGuard,
-    LangParamPipe,
-  ],
 })
 export class PublicModule {}

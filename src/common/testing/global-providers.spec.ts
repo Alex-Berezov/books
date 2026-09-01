@@ -6,6 +6,7 @@ import { relative, resolve } from 'path';
 import { declaresOwnInstance, listModuleFiles, metadataElements } from './module-metadata';
 import { BookModule } from '../../modules/book/book.module';
 import { BookService } from '../../modules/book/book.service';
+import { CategoryModule } from '../../modules/category/category.module';
 import { CategoryService } from '../../modules/category/category.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PublicModule } from '../../modules/public/public.module';
@@ -119,13 +120,16 @@ describe('провайдеры глобальных модулей объявл�
         SlugRedirectModule,
         ModeratorRolesModule,
         BookModule,
+        CategoryModule,
         PublicModule,
       ],
     }).compile();
 
     const prisma = moduleRef.get(PrismaService);
     const inBook = moduleRef.select(BookModule).get(BookService, { strict: true });
-    const inPublic = moduleRef.select(PublicModule).get(CategoryService, { strict: true });
+    // `CategoryService` берётся из своего модуля: с 01.09.2026 `PublicModule` его не объявляет,
+    // а импортирует владельца (`LEGACY-260`), и `strict: true` в чужом модуле его уже не найдёт.
+    const inCategory = moduleRef.select(CategoryModule).get(CategoryService, { strict: true });
 
     // Поле приватно только для компилятора: тест смотрит именно на то, что
     // инжектор положил в сервис, — идентичность провайдера в контейнере вторым
@@ -138,7 +142,7 @@ describe('провайдеры глобальных модулей объявл�
     const clients = new Set<unknown>([
       prisma,
       (inBook as unknown as { prisma: PrismaService }).prisma,
-      (inPublic as unknown as { prisma: PrismaService }).prisma,
+      (inCategory as unknown as { prisma: PrismaService }).prisma,
     ]);
 
     expect(clients.size).toBe(1);

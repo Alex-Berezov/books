@@ -1,13 +1,13 @@
 import { Module } from '@nestjs/common';
-import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { BookService } from './book.service';
 import { BookController } from './book.controller';
 import { GeoBlockModule } from '../geo-block/geo-block.module';
+import { RelatedTaxonomyModule } from '../seo/related-taxonomy/related-taxonomy.module';
 
 @Module({
-  imports: [GeoBlockModule],
+  imports: [GeoBlockModule, RelatedTaxonomyModule],
   controllers: [BookController],
-  providers: [BookService, RelatedTaxonomyService],
+  providers: [BookService],
   exports: [BookService],
 })
 export class BookModule {}
