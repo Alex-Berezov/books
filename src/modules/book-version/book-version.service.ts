@@ -1231,33 +1231,11 @@ export class BookVersionService {
     });
   }
 
-  private bvcModelOf(client: Prisma.TransactionClient | PrismaService) {
-    return (client as unknown as Record<string, unknown>)['bookVersionContributor'] as {
-      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
-      findFirst: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      updateMany: (args: Record<string, unknown>) => Promise<{ count: number }>;
-      delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      count: (args: Record<string, unknown>) => Promise<number>;
-    };
-  }
-
-  private get bvcModel() {
-    return this.bvcModelOf(this.prisma);
-  }
-
-  private get personModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['person'] as {
-      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-    };
-  }
-
   public async getVersionContributors(versionId: string) {
     const version = await this.prisma.bookVersion.findUnique({ where: { id: versionId } });
     if (!version) throw new NotFoundException(`BookVersion with ID "${versionId}" not found`);
 
-    return this.bvcModel.findMany({
+    return this.prisma.bookVersionContributor.findMany({
       where: { bookVersionId: versionId },
       orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
       include: {
@@ -1270,13 +1248,13 @@ export class BookVersionService {
     const version = await this.prisma.bookVersion.findUnique({ where: { id: versionId } });
     if (!version) throw new NotFoundException(`BookVersion with ID "${versionId}" not found`);
 
-    const person = await this.personModel.findUnique({ where: { id: dto.personId } });
+    const person = await this.prisma.person.findUnique({ where: { id: dto.personId } });
     if (!person) throw new NotFoundException(`Person with ID "${dto.personId}" not found`);
 
     // WP-8.1: участник входит в content hash, поэтому смена состава участников проверяется
     // на устаревание клиренса в той же транзакции, что и сама запись.
     return this.prisma.$transaction(async (tx) => {
-      const created = await this.bvcModelOf(tx).create({
+      const created = await tx.bookVersionContributor.create({
         data: {
           bookVersionId: versionId,
           personId: dto.personId,
@@ -1311,7 +1289,7 @@ export class BookVersionService {
     contributorId: string,
     dto: UpdateBookVersionContributorDto,
   ) {
-    const existing = await this.bvcModel.findFirst({
+    const existing = await this.prisma.bookVersionContributor.findFirst({
       where: { id: contributorId, bookVersionId: versionId },
     });
     if (!existing) {
@@ -1321,7 +1299,7 @@ export class BookVersionService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const updated = await this.bvcModelOf(tx).update({
+      const updated = await tx.bookVersionContributor.update({
         where: { id: contributorId },
         data: {
           ...(dto.role !== undefined ? { role: dto.role } : {}),
@@ -1355,7 +1333,7 @@ export class BookVersionService {
   }
 
   public async removeVersionContributor(versionId: string, contributorId: string) {
-    const existing = await this.bvcModel.findFirst({
+    const existing = await this.prisma.bookVersionContributor.findFirst({
       where: { id: contributorId, bookVersionId: versionId },
     });
     if (!existing) {
@@ -1365,7 +1343,7 @@ export class BookVersionService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await this.bvcModelOf(tx).delete({
+      await tx.bookVersionContributor.delete({
         where: { id: contributorId },
       });
 
@@ -1379,8 +1357,8 @@ export class BookVersionService {
     });
 
     let warning: string | undefined = undefined;
-    if (existing['role'] === ContributorRole.AUTHOR && existing['isPrimary']) {
-      const remainingAuthors = await this.bvcModel.count({
+    if (existing.role === ContributorRole.AUTHOR && existing.isPrimary) {
+      const remainingAuthors = await this.prisma.bookVersionContributor.count({
         where: { bookVersionId: versionId, role: ContributorRole.AUTHOR },
       });
       if (remainingAuthors === 0) {
@@ -1401,7 +1379,7 @@ export class BookVersionService {
 
     await Promise.all(
       dto.contributorIds.map((id, index) =>
-        this.bvcModel.updateMany({
+        this.prisma.bookVersionContributor.updateMany({
           where: { id, bookVersionId: versionId },
           data: { displayOrder: index },
         }),
