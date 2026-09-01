@@ -5,7 +5,10 @@ import { PrismaService } from './prisma.service';
  * приходится его, а не строку подключения: смысл проверки в том, что до
  * драйвера дошло именно число.
  */
-type ProbedPool = { options: { max?: number }; end: () => Promise<void> };
+type ProbedPool = {
+  options: { max?: number; connectionTimeoutMillis?: number };
+  end: () => Promise<void>;
+};
 
 /**
  * `LEGACY-237`. Потолок на пул объявлялся параметром `connection_limit`
@@ -71,5 +74,64 @@ describe('LEGACY-237 — размер пула задан и приходит и
     process.env.DATABASE_POOL_MAX = '0';
     service = new PrismaService();
     expect(poolOf(service).options.max).toBe(10);
+  });
+});
+
+/**
+ * `LEGACY-256`. Пул создавался без `connectionTimeoutMillis`, то есть с умолчанием `pg` — ноль,
+ * «ждать бесконечно». После сведения всех клиентов к одному (`LEGACY-130`) это значит, что
+ * `max`+1-й одновременный запрос висит до тех пор, пока соединение не отпустят, и проба
+ * готовности висит вместе с ним: `HealthService.readiness` ходит тем же клиентом и стоит
+ * в той же очереди. Наружу это выглядит как пропавший `/health`, а не как отказ базы.
+ *
+ * Умолчание — 15 секунд, решением арбитра от 01.09.2026: три места объявляют `maxWait: 10_000`
+ * для интерактивной транзакции, и меньший потолок делал бы этот бюджет недостижимым.
+ *
+ * ⚠️ Проверяется то, что дошло до `pg`, а не наличие переменной в окружении: смысл записи
+ * в том, чтобы у пула был конечный потолок ожидания при любом значении переменной.
+ */
+describe('LEGACY-256 — ожидание свободного соединения конечно', () => {
+  const poolOf = (service: PrismaService): ProbedPool =>
+    (service as unknown as { pool: ProbedPool }).pool;
+
+  let service: PrismaService | undefined;
+  const savedTimeout = process.env.DATABASE_POOL_TIMEOUT_MS;
+  const savedUrl = process.env.DATABASE_URL;
+
+  beforeEach(() => {
+    process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/pool_probe';
+  });
+
+  afterEach(async () => {
+    if (service) await poolOf(service).end();
+    service = undefined;
+    if (savedTimeout === undefined) delete process.env.DATABASE_POOL_TIMEOUT_MS;
+    else process.env.DATABASE_POOL_TIMEOUT_MS = savedTimeout;
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  });
+
+  it('берёт ожидание из DATABASE_POOL_TIMEOUT_MS', () => {
+    process.env.DATABASE_POOL_TIMEOUT_MS = '1500';
+    service = new PrismaService();
+    expect(poolOf(service).options.connectionTimeoutMillis).toBe(1500);
+  });
+
+  it('без переменной ждёт пятнадцать секунд, а не бесконечно', () => {
+    delete process.env.DATABASE_POOL_TIMEOUT_MS;
+    service = new PrismaService();
+    expect(poolOf(service).options.connectionTimeoutMillis).toBe(15000);
+  });
+
+  it('мусор в переменной не возвращает бесконечное ожидание', () => {
+    process.env.DATABASE_POOL_TIMEOUT_MS = 'подольше';
+    service = new PrismaService();
+    expect(poolOf(service).options.connectionTimeoutMillis).toBe(15000);
+  });
+
+  it('ноль не считается «ждать сколько угодно»', () => {
+    process.env.DATABASE_POOL_TIMEOUT_MS = '0';
+    service = new PrismaService();
+    expect(poolOf(service).options.connectionTimeoutMillis).toBe(15000);
   });
 });
