@@ -40,6 +40,11 @@ describe('LEGACY-262 — импорт таксономий (e2e)', () => {
   const tagKey = `${prefix}-tag`;
   const tagGhostKey = `${prefix}-tag-ghost`;
 
+  /** `LEGACY-323`: смешанная партия — негодный элемент рядом с годным. */
+  const badTagKey = `${prefix}-bad-tag`;
+  const goodTagKey = `${prefix}-good-tag`;
+  const extraFieldKey = `${prefix}-extra-field`;
+
   /** Слаги, занятые заранее: на них налетает импорт. */
   const takenCategorySlug = `${prefix}-taken-cat`;
   const takenCategorySlugRu = `${prefix}-taken-cat-ru`;
@@ -368,6 +373,70 @@ describe('LEGACY-262 — импорт таксономий (e2e)', () => {
 
       const ghost = await prisma.tag.findUnique({ where: { key: tagGhostKey } });
       expect(ghost).toBeNull();
+    });
+  });
+  /**
+   * 🔴 `LEGACY-323`. Глобальный `ValidationPipe` на этих маршрутах не запускал
+   * ни одного валидатора: metatype параметра `@Body() dto: T[]` равен `Array`,
+   * и пайп выходил сразу. Слаг любой формы доезжал до записи, а оператор видел
+   * 201 и пустые `errors` — и следом ломались публичные адреса, которые из этого
+   * слага строятся.
+   *
+   * ⚠️ Проверяется именно **на живом HTTP**, а не юнитом: юнит зовёт сервис
+   * напрямую и мимо пайпа, то есть про пайп он не доказывает ничего. Здесь пайп
+   * настоящий (`:72-74`) — и ровно на нём прежде всё и проваливалось.
+   *
+   * ⚠️ Партия смешанная нарочно. Ручка устроена как частичный успех
+   * (`LEGACY-315`): годный сосед обязан записаться, а не пропасть вместе
+   * с негодным. Отказ всей партии четырёхсотым — это другое поведение, и его
+   * здесь быть не должно.
+   */
+  describe('POST /import/* — тело партии проверяется поэлементно (LEGACY-323)', () => {
+    it('негодный слаг назван в errors, а годный сосед той же партии записан', async () => {
+      const res = await post('/import/tags', [
+        {
+          key: badTagKey,
+          name: 'Broken tag',
+          slug: 'Не Слаг!',
+          translations: { en: { name: 'Broken tag', slug: `${prefix}-bad-en` } },
+        },
+        {
+          key: goodTagKey,
+          name: 'Good tag',
+          slug: `${prefix}-good-base`,
+          translations: { en: { name: 'Good tag', slug: `${prefix}-good-en` } },
+        },
+      ]).expect(201);
+
+      const result = resultOf(res.body);
+      expect(result.imported).toBe(1);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].key).toBe(badTagKey);
+
+      expect(await prisma.tag.findUnique({ where: { key: badTagKey } })).toBeNull();
+      expect(await prisma.tag.findUnique({ where: { key: goodTagKey } })).not.toBeNull();
+    });
+
+    it('лишнее поле в элементе отвергается, а не уезжает в запись', async () => {
+      const res = await post('/import/categories', [
+        {
+          key: extraFieldKey,
+          type: 'genre',
+          somethingElse: 1,
+          translations: { en: { name: 'Extra field', slug: `${prefix}-extra-en` } },
+        },
+      ]).expect(201);
+
+      const result = resultOf(res.body);
+      expect(result.imported).toBe(0);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].key).toBe(extraFieldKey);
+
+      expect(await prisma.category.findUnique({ where: { key: extraFieldKey } })).toBeNull();
+    });
+
+    it('тело, которое вовсе не массив, отвергается четырёхсотым, а не пятисотым', async () => {
+      await post('/import/tags', { tags: [] }).expect(400);
     });
   });
 });

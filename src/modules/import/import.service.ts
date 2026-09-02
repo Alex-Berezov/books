@@ -1,11 +1,14 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { CategoryType, Language, Prisma } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { ValidationError, validateSync } from 'class-validator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ImportCategoryDto } from './dto/import-category.dto';
 import { ImportTagDto } from './dto/import-tag.dto';
 import { SLUG_REGEX } from '../../shared/validators/slug';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CategoryTreeService, MismatchedChildEdge } from '../category/category-tree.service';
+import { TagLockService } from '../tags/tag-lock.service';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 
@@ -59,8 +62,44 @@ const INCONSISTENT_EDGE_SCAN_LIMIT = 1000;
  */
 const INCONSISTENT_EDGE_SCAN_KEY = '(consistency-scan)';
 
+/**
+ * 🔴 `LEGACY-323`. Опции повторяют глобальный `ValidationPipe` (`src/main.ts:77-83`)
+ * дословно: на этих двух маршрутах он не запускает ни одного валидатора вовсе —
+ * metatype параметра `@Body() dto: T[]` равен `Array`, а `Array` стоит в списке
+ * типов, которые пайп пропускает без проверки. Значит все декораторы
+ * `ImportCategoryDto` и `ImportTagDto` мертвы: слаг любой формы, число вместо
+ * строки, отрицательный `sortOrder` и лишние поля доезжают до записи.
+ *
+ * ⚠️ `enableImplicitConversion` не задан и здесь — иначе строка `"7"` молча
+ * становилась бы числом, и правила входа разошлись бы с остальными ручками.
+ */
+const IMPORT_VALIDATOR_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
+
+/**
+ * Ключ строки отчёта для элемента, у которого собственный `key` негоден или
+ * отсутствует, — назвать его ключом термина нечем. Форма та же, что
+ * у `INCONSISTENT_EDGE_SCAN_KEY`: это не термин, и ключ не похож на ключ термина
+ * (ключи в импорте — слаг-подобные строки). Номер — позиция в присланной партии,
+ * считая с нуля: только по ней оператор найдёт строку в своём файле.
+ */
+const importItemKey = (index: number): string => `(item ${index})`;
+
 function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Нарушения `class-validator` — деревом: у вложенных объектов свои `children`.
+ * Отчёт импорта плоский (`Array<{key, message}>`), поэтому дерево разворачивается
+ * в одну строку с путём до поля. Сегодня вложенности нет ни у одного DTO импорта
+ * (`translations` объявлено одним `@IsObject()`), но обход написан общим: иначе
+ * добавленный позже `@ValidateNested` молча потерял бы половину сообщений.
+ */
+function flattenValidationErrors(errors: ValidationError[], prefix = ''): string[] {
+  return errors.flatMap((err) => [
+    ...Object.values(err.constraints ?? {}).map((message) => `${prefix}${message}`),
+    ...flattenValidationErrors(err.children ?? [], `${prefix}${err.property}.`),
+  ]);
 }
 
 @Injectable()
@@ -71,19 +110,21 @@ export class ImportService {
     private prisma: PrismaService,
     private slugRedirects: SlugRedirectService,
     private readonly categoryTree: CategoryTreeService,
+    private readonly tagLock: TagLockService,
   ) {}
 
   async importCategories(items: ImportCategoryDto[]): Promise<ImportResult> {
     const result: ImportResult = { imported: 0, updated: 0, errors: [] };
+    const checked = this.validateItems(ImportCategoryDto, items, result);
 
-    for (const item of items) {
+    for (const item of checked) {
       const langError = this.validateTranslations(item.translations);
       if (langError) {
         result.errors.push({ key: item.key, message: langError });
       }
     }
 
-    const validItems = items.filter((item) => !result.errors.find((e) => e.key === item.key));
+    const validItems = checked.filter((item) => !result.errors.find((e) => e.key === item.key));
 
     const allKeys = new Set(validItems.map((i) => i.key));
     for (const item of validItems) {
@@ -151,6 +192,20 @@ export class ImportService {
             key: item.key,
             message: `Duplicate key "${item.key}" or slug conflict`,
           });
+        } else if (prismaErr.code === 'P2025') {
+          // 🔴 `LEGACY-320` + `LEGACY-131`. Та же ветка, что у тега, и по тому же
+          // поводу: правило запрещает держать эти два метода разными.
+          //
+          // Достижимо и здесь, хотя `upsertCategory` держит блокировку дерева:
+          // `CategoryService.deleteTranslation` ходит голой `$transaction`
+          // **без** `runInLockedTree`, то есть блокировка его не останавливает,
+          // и `tx.categoryTranslation.update` получает `P2025` при живом термине.
+          result.errors.push({
+            key: item.key,
+            message:
+              `Category "${item.key}" or one of its translations was removed ` +
+              `while it was being imported; run the import again`,
+          });
         } else {
           result.errors.push({ key: item.key, message: getErrorMessage(err) });
         }
@@ -164,8 +219,9 @@ export class ImportService {
 
   async importTags(items: ImportTagDto[]): Promise<ImportResult> {
     const result: ImportResult = { imported: 0, updated: 0, errors: [] };
+    const checked = this.validateItems(ImportTagDto, items, result);
 
-    for (const item of items) {
+    for (const item of checked) {
       const langError = this.validateTranslations(item.translations);
       if (langError) {
         result.errors.push({ key: item.key, message: langError });
@@ -188,6 +244,26 @@ export class ImportService {
           result.errors.push({
             key: item.key,
             message: `Duplicate key "${item.key}" or slug conflict`,
+          });
+        } else if (prismaErr.code === 'P2025') {
+          // 🔴 `LEGACY-320`. Отдельная строка, а не общий `Duplicate key` и не
+          // сырой текст Prisma. `P2025` здесь означает одно: строку удалили между
+          // тем, как её увидел этот импорт, и тем, как он в неё написал. Отказ
+          // законный, и оператору надо сказать именно это, а не «ошибка данных
+          // в файле»: файл в порядке, повторный запуск пройдёт.
+          //
+          // ⚠️ Причин две, и сообщение называет обе. `P2025` бросает и
+          // `tx.tag.update` (тег снёс `DELETE /tags/:id`), и `tx.tagTranslation.update`
+          // (перевод снёс `DELETE /tags/:id/translations/:language`). Ни та ручка,
+          // ни другая замка строки не берут: `TagsService.remove` ходит вообще
+          // без транзакции (`LEGACY-360`), ручки переводов адресуются парой
+          // `(tagId, language)`. Назвать одну причину значило бы отправить
+          // оператора проверять тег, который на месте.
+          result.errors.push({
+            key: item.key,
+            message:
+              `Tag "${item.key}" or one of its translations was removed ` +
+              `while it was being imported; run the import again`,
           });
         } else {
           result.errors.push({ key: item.key, message: getErrorMessage(err) });
@@ -289,6 +365,68 @@ export class ImportService {
     }
 
     return ordered;
+  }
+
+  /**
+   * 🔴 `LEGACY-323`. Проверка входа — **поэлементная**, а не на всю партию.
+   *
+   * Ручки импорта устроены как частичный успех: негодный элемент называется
+   * строкой в `errors`, остальные записываются, ответ — 201 (`LEGACY-315`,
+   * решение арбитра от 29.08.2026). `ParseArrayPipe` и обёртка-DTO отвергли бы
+   * **всю** партию четырёхсотым: файл в тысячу терминов с одной битой строкой
+   * перестал бы импортироваться вовсе, а оператор получил бы список нарушений
+   * без ключа термина. Поэтому правила входа остаются в `dto/**` декораторами,
+   * а здесь живёт только их применение — ровно как у `validateTranslations`.
+   * Решение арбитра от 03.09.2026.
+   *
+   * ⚠️ Единственный вход, отвечающий 400, — тело, которое вовсе не массив:
+   * отчёта по элементам в этом случае не существует. Прежде на нём был 500 —
+   * `for...of` по объекту бросал `TypeError` мимо любого `catch`.
+   */
+  private validateItems<T extends object>(
+    cls: new () => T,
+    items: unknown,
+    result: ImportResult,
+  ): T[] {
+    if (!Array.isArray(items)) {
+      throw new BadRequestException('Request body must be a JSON array of items');
+    }
+
+    const valid: T[] = [];
+    items.forEach((raw: unknown, index: number) => {
+      // 🔴 Элемент, который не объект, отбраковывается **до** `validateSync`.
+      // `plainToInstance` на `null`, числе или строке возвращает то же значение
+      // без изменений, а `validateSync` разыменовывает у него `constructor` —
+      // и `[null, {годный тег}]` роняет всю партию `TypeError` мимо любого
+      // `catch`, то есть ровно тем отказом «всё или ничего», ради отмены
+      // которого `ParseArrayPipe` и был отклонён. Массив здесь тоже не объект:
+      // элемент партии — термин, а не вложенная партия.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        result.errors.push({
+          key: importItemKey(index),
+          message: 'Item must be a JSON object',
+        });
+        return;
+      }
+
+      const instance = plainToInstance(cls, raw);
+      const errors = validateSync(instance, IMPORT_VALIDATOR_OPTIONS);
+      if (errors.length === 0) {
+        valid.push(instance);
+        return;
+      }
+
+      // Ключ берётся из сырого элемента, а не из экземпляра: `whitelist` мог
+      // его уже вырезать, а негодный `key` — ровно тот случай, ради которого
+      // нужен запасной ключ строки отчёта.
+      const rawKey = (raw as { key?: unknown } | null)?.key;
+      result.errors.push({
+        key: typeof rawKey === 'string' && rawKey.length > 0 ? rawKey : importItemKey(index),
+        message: flattenValidationErrors(errors).join('; '),
+      });
+    });
+
+    return valid;
   }
 
   private validateTranslations(translations: Record<string, TranslationInput>): string | null {
@@ -484,11 +622,32 @@ export class ImportService {
           // При создании (ветка выше) слаг по-прежнему выводится оттуда же — там
           // выбирать не из чего, и прежнего адреса не существует.
           //
-          // Дефолты берутся из строки, перечитанной внутри транзакции
-          // (`LEGACY-304`), а не из чтения на пуле.
-          indexable: dto.indexable ?? existing.indexable,
-          isVisible: dto.isVisible ?? existing.isVisible,
-          sortOrder: dto.sortOrder ?? existing.sortOrder,
+          // 🔴 `LEGACY-322`. Поле, которого нет в файле импорта, не попадает
+          // в `data` вовсе — прежде здесь стояло `dto.X ?? existing.X`, то есть
+          // в `UPDATE` уходило значение столбца, прочитанное выше в этой же
+          // транзакции. Админский `PATCH /categories/:id {"isVisible": false}`,
+          // закоммитившийся между чтением и записью, затирался значением
+          // из снимка: категория молча возвращалась на витрину при `updated: 1`
+          // и пустых `errors`. Ровно тот же дефект `LEGACY-318` закрыла у тега
+          // (`upsertTag` ниже), и правило `LEGACY-131` запрещает держать эти два
+          // метода разными: второй остаётся образцом для копирования.
+          //
+          // Вне гонки результат тот же: «оставить как было» и «не трогать» дают
+          // одно значение, потому что «как было» и лежит в столбце. Все три
+          // столбца `Category` — `NOT NULL` с дефолтами (`prisma/schema.prisma`),
+          // как и у `Tag`, поэтому приём переносится дословно.
+          //
+          // ⚠️ Сравнение нестрогое (`!= null`), и это не небрежность.
+          // `@IsOptional()` в `ImportCategoryDto` пропускает и `undefined`,
+          // и `null`, а объявленное поле со значением `null` не вырезается —
+          // значит `{"isVisible": null}` в файле доедет сюда как `null`. Строгое
+          // `!== undefined` отправило бы `null` в Prisma и уронило бы всю
+          // транзакцию термина: ни базовая строка, ни переводы, ни проверки
+          // дерева не записались бы. Прежний `dto.X ?? existing.X` такой файл
+          // принимал, и терять это нельзя.
+          ...(dto.indexable != null ? { indexable: dto.indexable } : {}),
+          ...(dto.isVisible != null ? { isVisible: dto.isVisible } : {}),
+          ...(dto.sortOrder != null ? { sortOrder: dto.sortOrder } : {}),
         },
       });
 
@@ -649,13 +808,20 @@ export class ImportService {
    *    от 29.08.2026, строка в `decisions-log.md`.
    * 2. `LEGACY-318`. Потерянное обновление `indexable`, `isVisible`, `sortOrder`
    *    устранено: значения столбцов больше не читаются и не переписываются,
-   *    в `data` попадает только то, что названо в файле импорта. Строка при этом
-   *    по-прежнему не заперта, и закрыто здесь не запиранием, а снятием чтения —
-   *    устаревать стало нечему.
+   *    в `data` попадает только то, что названо в файле импорта. Закрыто здесь
+   *    не запиранием, а снятием чтения — устаревать стало нечему.
+   * 3. `LEGACY-320`, с 03.09.2026. Остальные решения по снимку закрыты
+   *    **запиранием строки**: `runInLockedTag` ниже берёт `SELECT ... FOR UPDATE`
+   *    первым оператором транзакции. Это закрывает запись редиректа базового
+   *    слага (`existing.slug`) и `P2025` от удаления самого тега.
    *
-   *    Гонка по `existing.slug` (запись редиректа базового слага ниже),
-   *    по `existing.translations` (развилка «создать или обновить перевод»)
-   *    и `P2025` при удалении строки в окне остаются открытыми — `LEGACY-320`.
+   *    ⚠️ **Развилку по `existing.translations` замок закрывает не от всех.**
+   *    Он адресуется строкой `Tag`, а конфликтуют строки `TagTranslation`,
+   *    и админские ручки переводов (`POST/PATCH/DELETE /tags/:id/translations`,
+   *    `tags.controller.ts:153,162,176`) его не берут вовсе. Против встречного
+   *    импорта того же ключа развилка защищена, против этих трёх ручек — нет:
+   *    остаток заведён записью `LEGACY-360`. Не читать этот блок как «гонка
+   *    закрыта целиком».
    *
    * Возвращает признак того, что тег был создан: счётчики отчёта считаются
    * по нему, а не по второму чтению на пуле, которое устаревало ровно так же.
@@ -664,10 +830,23 @@ export class ImportService {
     // Одна транзакция на весь термин (`LEGACY-257`) и на обе ветки развилки
     // (`LEGACY-313`): базовая строка, история слагов и все переводы.
     //
-    // `runInTree`, а не свой `$transaction`: это тот же метод, которым ходит
-    // категория, но без блокировки дерева — ровно случай, ради которого он
-    // заведён. Границы транзакции задаются там одним местом на оба пути.
-    return this.categoryTree.runInTree(async (tx) => {
+    // 🔴 `LEGACY-320`. Строка тега запирается **первым** оператором транзакции,
+    // а не просто читается в ней. Читать в транзакции было мало: снимок ниже
+    // решает, писать ли историю базового слага, — и админский
+    // `PATCH /tags/:id {"slug": ...}`, закоммитившийся в окне, оставлял редирект
+    // со слага, которого больше нет. Наблюдалось это снаружи: битой цепочкой
+    // редиректов при `updated: 1` и пустых `errors`.
+    //
+    // ⚠️ Развилка «создать или обновить перевод» ниже этим замком закрыта
+    // только от встречного импорта: `UpdateTagDto` полей перевода не имеет
+    // вовсе, а те, кто их пишет, — `POST/PATCH/DELETE /tags/:id/translations` —
+    // замка не берут. См. блок 3 в шапке метода и `LEGACY-360`.
+    //
+    // Замок берётся `TagLockService`, а не `runInTree`: границы те же
+    // (30 с / 10 с), но условие «первым оператором» держит конструкция, а не
+    // комментарий (`LEGACY-310`). Запирается одна строка, а не все теги —
+    // общая очередь поставила бы админку за партией импорта целиком.
+    return this.tagLock.runInLockedTag({ key: dto.key }, async (tx) => {
       const existing = await tx.tag.findUnique({
         where: { key: dto.key },
         include: { translations: true },

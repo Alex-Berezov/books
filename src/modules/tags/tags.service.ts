@@ -13,12 +13,14 @@ import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { PUBLIC_TAG_BOOKS_MAX_LIMIT } from './tag-books-listing.constants';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
+import { TagLockService } from './tag-lock.service';
 
 @Injectable()
 export class TagsService {
   constructor(
     private prisma: PrismaService,
     private readonly slugRedirects: SlugRedirectService,
+    private readonly tagLock: TagLockService,
     @Optional()
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
@@ -140,23 +142,38 @@ export class TagsService {
     });
   }
 
+  /**
+   * 🔴 `LEGACY-320`. Строка тега запирается первым оператором транзакции,
+   * и **всё** решается уже под замком: прежде `exists` читался на клиенте пула,
+   * а по нему считались и проверка неизменяемости `key`, и решение писать
+   * историю базового слага. Между тем чтением и записью помещался встречный
+   * импорт того же ключа — и редирект уходил со слага, которого в базе уже нет.
+   *
+   * ⚠️ Границы транзакции — явные (`TAG_TX_OPTIONS`), а не дефолтные. Голая
+   * `$transaction` даёт дедлайн 5 секунд, и писатель, дождавшийся своей очереди
+   * на замке, отдал бы `P2028` и 500 вместо ответа (`L-020`).
+   *
+   * ⚠️ Проверка существования не переехала «заодно»: она обязана быть внутри —
+   * между чтением на пуле и записью термин мог быть удалён, и тогда `update`
+   * падал `P2025` вместо 404.
+   */
   async update(id: string, dto: UpdateTagDto) {
-    const exists = await this.prisma.tag.findUnique({ where: { id } });
-    if (!exists) throw new NotFoundException('Tag not found');
+    return this.tagLock.runInLockedTag({ id }, async (tx) => {
+      const exists = await tx.tag.findUnique({ where: { id } });
+      if (!exists) throw new NotFoundException('Tag not found');
 
-    // См. `CategoryService.update`: `key` — единственный неизменяемый ключ
-    // термина, по нему связывает JSON-импорт, и уехавший ключ даёт не ошибку, а
-    // дубликат. Совпадающее значение пропускается: админка шлёт его в каждом PATCH.
-    if (dto.key !== undefined && dto.key !== exists.key) {
-      throw new BadRequestException(
-        `Tag key is immutable: it is the only stable identifier of the term. ` +
-          `Attempted to change "${exists.key}" to "${dto.key}".`,
-      );
-    }
-    // См. категории: базовый слаг — фолбэк резолва, его смена ломает все языки.
-    const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
+      // См. `CategoryService.update`: `key` — единственный неизменяемый ключ
+      // термина, по нему связывает JSON-импорт, и уехавший ключ даёт не ошибку, а
+      // дубликат. Совпадающее значение пропускается: админка шлёт его в каждом PATCH.
+      if (dto.key !== undefined && dto.key !== exists.key) {
+        throw new BadRequestException(
+          `Tag key is immutable: it is the only stable identifier of the term. ` +
+            `Attempted to change "${exists.key}" to "${dto.key}".`,
+        );
+      }
+      // См. категории: базовый слаг — фолбэк резолва, его смена ломает все языки.
+      const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
 
-    return this.prisma.$transaction(async (tx) => {
       if (baseSlugChanged && dto.slug) {
         await this.slugRedirects.recordBaseSlugChange('tag', exists.slug, dto.slug, tx);
       }

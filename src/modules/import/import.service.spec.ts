@@ -1,5 +1,7 @@
+import { BadRequestException } from '@nestjs/common';
 import { CategoryType, Language } from '@prisma/client';
 import { CategoryTreeService } from '../category/category-tree.service';
+import { TagLockService } from '../tags/tag-lock.service';
 import { ImportService } from './import.service';
 import type { ImportCategoryDto } from './dto/import-category.dto';
 import type { ImportTagDto } from './dto/import-tag.dto';
@@ -71,8 +73,14 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
     // ⚠️ Метка через двоеточие, а не через точку, намеренно: `delegate-check.mjs`
     // разбирает вид «клиент, точка, имя» как обращение к делегату Prisma
     // и печатает заведомо ложную строку — за ней прячется настоящая находка.
-    $queryRaw: jest.fn().mockImplementation(() => {
-      log.push(`${label}:lockTree`);
+    // ⚠️ Метка берётся из текста запроса, а не пишется одной строкой на все:
+    // с 03.09.2026 сырым SQL в этих путях идут ДВА разных замка — блокировка
+    // дерева категорий (`pg_advisory_xact_lock`) и замок строки тега
+    // (`FOR UPDATE`). Общая метка сделала бы спеку, проверяющую порядок
+    // операторов на теге, зелёной и на блокировке дерева.
+    $queryRaw: jest.fn().mockImplementation((parts?: { raw?: readonly string[] }) => {
+      const sql = (parts?.raw ?? []).join(' ');
+      log.push(`${label}:${sql.includes('FOR UPDATE') ? 'lockTagRow' : 'lockTree'}`);
       return Promise.resolve([]);
     }),
     category: model('category', { id: 'cat-1' }),
@@ -126,6 +134,7 @@ const makeService = (log: WriteLog) => {
     prisma as unknown as PrismaService,
     slugRedirects as unknown as SlugRedirectService,
     new CategoryTreeService(prisma as unknown as PrismaService),
+    new TagLockService(prisma as unknown as PrismaService),
   );
 
   return { service, prisma, root, tx, $transaction, slugRedirects };
@@ -856,27 +865,51 @@ describe('ImportService — решение о записи принимаетс�
     expect(tx.category.update).toHaveBeenCalledTimes(1);
   });
 
-  it('дефолты берутся из строки транзакции, а не из чтения на пуле (LEGACY-304)', async () => {
+  /**
+   * ⚠️ Прежде эта проверка стояла на дефолте `sortOrder`: на пуле лежало
+   * устаревшее значение, в транзакции — свежее, и запись обязана была взять
+   * второе. `LEGACY-322` убрала чтение дефолтов вовсе, и вместе с ним ушёл этот
+   * способ различить два клиента. Гарантия `LEGACY-304` при этом осталась —
+   * `existing` по-прежнему читается в транзакции и по-прежнему решает, сменился
+   * ли тип, — поэтому различитель взят оттуда, а проверка не снята. Тот же ход
+   * и по той же причине сделан у тега при закрытии `LEGACY-318`
+   * (блок `LEGACY-313`, «базовый слаг сверяется со строкой транзакции»).
+   */
+  it('смена типа считается по строке транзакции, а не по чтению на пуле (LEGACY-304)', async () => {
     const log: WriteLog = [];
     const { service, root, tx } = makeService(log);
 
-    // На пуле лежит устаревший `sortOrder`: по нему запись затёрла бы чужую правку.
+    // Пул: тип уже такой же, как в файле, — по нему смены типа нет вовсе
+    // и край ребра «вниз» никто бы не проверил.
     root.category.findUnique.mockImplementation(() => {
       log.push('root.category.findUnique');
-      return Promise.resolve({ ...existingInTx, sortOrder: 0 });
+      return Promise.resolve({ ...existingInTx, type: CategoryType.genre });
     });
+    // Транзакция: тип ещё прежний — значит смена настоящая, и проверка детей
+    // обязана состояться.
     tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
       log.push('tx.category.findUnique');
-      return Promise.resolve(args?.where?.key === 'victorian-literature' ? existingInTx : null);
+      return Promise.resolve(
+        args?.where?.key === 'victorian-literature'
+          ? { ...existingInTx, type: CategoryType.category }
+          : null,
+      );
     });
 
     await service.importCategories([categoryDto()]);
 
     expect(tx.category.update).toHaveBeenCalledTimes(1);
-    expect(tx.category.update).toHaveBeenCalledWith({
-      where: { key: 'victorian-literature' },
-      data: expect.objectContaining({ sortOrder: 42 }),
-    });
+    // `assertChildTypesAllowed` спрашивает базу об одном несовпадающем ребёнке
+    // и запускается только при сменившемся типе (`category-tree.service.ts:335`).
+    expect(tx.category.findFirst).toHaveBeenCalledTimes(1);
+    expect(tx.category.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          parentId: 'cat-1',
+          type: { not: CategoryType.genre },
+        }),
+      }),
+    );
   });
 });
 
@@ -1115,6 +1148,424 @@ describe('ImportService — импорт не переписывает поля,
     seed(log, root, tx);
 
     await service.importTags([{ ...tagDto(), isVisible: false, sortOrder: 0 } as ImportTagDto]);
+
+    const data = dataOfUpdate(tx);
+    expect(data).toMatchObject({ isVisible: false, sortOrder: 0 });
+    expect(data).not.toHaveProperty('indexable');
+  });
+});
+
+/**
+ * 🔴 `LEGACY-320`, третий пункт. Отказ `P2025` из транзакции термина означает,
+ * что строку удалили между тем, как её увидел этот импорт, и тем, как он в неё
+ * написал. Замок строки тега такое не закрывает и закрыть не может:
+ * `TagsService.remove` ходит вообще без транзакции, а переводы адресуются парой
+ * `(tagId, language)` и запираются не строкой `Tag` (`LEGACY-360`).
+ *
+ * ⚠️ Проверяется **диагноз**, а не факт строки в отчёте. Прежде `P2025` уходил
+ * общей веткой и печатался сырым текстом Prisma: оператор читал сообщение про
+ * неизвестную запись и шёл искать ошибку в своём файле, которой там нет.
+ * Совет «запусти заново» здесь верен, а прежний диагноз — нет.
+ *
+ * ⚠️ Рядом стоит `P2002`: две ветки одного `catch` обязаны остаться разными.
+ * Проверка одной из них зеленела бы и на схлопывании обеих в общий текст.
+ */
+describe('ImportService — отказ по удалённой в окне строке назван своей причиной (LEGACY-320)', () => {
+  const prismaError = (code: string) => {
+    const err = new Error(`Prisma error ${code}`) as Error & { code: string };
+    err.code = code;
+    return err;
+  };
+
+  const seedExisting = (log: WriteLog, root: FakeClient, tx: FakeClient) => {
+    const existing = {
+      id: 'tag-1',
+      key: 'aestheticism',
+      slug: 'aestheticism',
+      indexable: true,
+      isVisible: true,
+      sortOrder: 0,
+      translations: [],
+    };
+    const answer = (args: { where?: { key?: string } }) =>
+      Promise.resolve(args?.where?.key === 'aestheticism' ? existing : null);
+    root.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.tag.findUnique');
+      return answer(args);
+    });
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.tag.findUnique');
+      return answer(args);
+    });
+  };
+
+  it('P2025 говорит про удаление в окне импорта, а не печатает сырой текст Prisma', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedExisting(log, root, tx);
+    tx.tag.update.mockImplementation(() => Promise.reject(prismaError('P2025')));
+
+    const result = await service.importTags([tagDto()]);
+
+    expect(result).toMatchObject({ imported: 0, updated: 0 });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].key).toBe('aestheticism');
+    expect(result.errors[0].message).toContain('was removed while it was being imported');
+    // Диагноз обязан называть обе причины: `P2025` бросает и `tx.tag.update`,
+    // и `tx.tagTranslation.update`. Названная одна отправила бы оператора
+    // проверять тег, который на месте.
+    expect(result.errors[0].message).toContain('translations');
+    expect(result.errors[0].message).not.toContain('Prisma error');
+  });
+
+  it('P2002 остаётся своей веткой и своим текстом', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedExisting(log, root, tx);
+    tx.tag.update.mockImplementation(() => Promise.reject(prismaError('P2002')));
+
+    const result = await service.importTags([tagDto()]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].message).toContain('Duplicate key');
+    expect(result.errors[0].message).not.toContain('was removed');
+  });
+
+  /**
+   * ⚠️ `LEGACY-131`: категории и теги правятся вместе, иначе второй метод
+   * остаётся образцом для копирования. Здесь случай достижим не вопреки
+   * блокировке дерева, а мимо неё: `CategoryService.deleteTranslation` идёт
+   * голой `$transaction` **без** `runInLockedTree`, поэтому `P2025`
+   * на `tx.categoryTranslation.update` возможен при живом термине.
+   */
+  it('у категории P2025 назван так же, а не сырым текстом Prisma', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    const existing = {
+      id: 'cat-1',
+      key: 'victorian-literature',
+      type: CategoryType.genre,
+      slug: 'victorian-literature',
+      parentId: null,
+      indexable: true,
+      isVisible: true,
+      sortOrder: 0,
+      translations: [],
+    };
+    const answer = (args: { where?: { key?: string } }) =>
+      Promise.resolve(args?.where?.key === existing.key ? existing : null);
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return answer(args);
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.findUnique');
+      return answer(args);
+    });
+    tx.category.update.mockImplementation(() => Promise.reject(prismaError('P2025')));
+
+    const result = await service.importCategories([categoryDto()]);
+
+    expect(result).toMatchObject({ imported: 0, updated: 0 });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].key).toBe('victorian-literature');
+    expect(result.errors[0].message).toContain('was removed while it was being imported');
+    expect(result.errors[0].message).toContain('translations');
+    expect(result.errors[0].message).not.toContain('Prisma error');
+  });
+
+  it('прочие отказы по-прежнему уходят своим текстом, а не подводятся под P2025', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedExisting(log, root, tx);
+    tx.tag.update.mockImplementation(() => Promise.reject(new Error('connection reset')));
+
+    const result = await service.importTags([tagDto()]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].message).toBe('connection reset');
+  });
+});
+
+/**
+ * 🔴 `LEGACY-323`. Глобальный `ValidationPipe` на маршрутах импорта не запускал
+ * ни одного валидатора: metatype параметра `@Body() dto: T[]` равен `Array`,
+ * а `Array` стоит в списке типов, которые пайп пропускает без проверки. Все
+ * декораторы `ImportTagDto` и `ImportCategoryDto` были мертвы — слаг любой
+ * формы, число вместо строки, отрицательный `sortOrder` и лишние поля доезжали
+ * до записи, а оператор получал 201 и `errors: []`.
+ *
+ * ⚠️ Проверка **поэлементная**, а не на всю партию, и это не деталь реализации:
+ * ручки импорта устроены как частичный успех (`LEGACY-315`), и `ParseArrayPipe`
+ * отверг бы четырёхсотым файл в тысячу терминов из-за одной битой строки.
+ * Решение арбитра от 03.09.2026. Поэтому ниже всюду проверяется пара «негодный
+ * назван в `errors` — годный записан», а не один только отказ.
+ */
+describe('ImportService — тело партии проверяется поэлементно (LEGACY-323)', () => {
+  const seedEmpty = (log: WriteLog, root: FakeClient, tx: FakeClient) => {
+    const empty = (label: 'root' | 'tx', model: 'category' | 'tag') =>
+      jest.fn().mockImplementation(() => {
+        log.push(`${label}.${model}.findUnique`);
+        return Promise.resolve(null);
+      });
+    root.category.findUnique = empty('root', 'category');
+    tx.category.findUnique = empty('tx', 'category');
+    root.tag.findUnique = empty('root', 'tag');
+    tx.tag.findUnique = empty('tx', 'tag');
+  };
+
+  it('негодный слаг тега назван в errors, а годный сосед импортируется', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([
+      { ...tagDto(), key: 'broken', slug: 'Не Слаг!' } as ImportTagDto,
+      { ...tagDto(), key: 'fine', slug: 'fine' } as ImportTagDto,
+    ]);
+
+    expect(result.imported).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].key).toBe('broken');
+    expect(result.errors[0].message).not.toHaveLength(0);
+    expect(tx.tag.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('отрицательный sortOrder не доезжает до записи', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([
+      { ...tagDto(), sortOrder: -1 } as unknown as ImportTagDto,
+    ]);
+
+    expect(result).toMatchObject({ imported: 0, updated: 0 });
+    expect(result.errors).toHaveLength(1);
+    expect(tx.tag.create).not.toHaveBeenCalled();
+  });
+
+  it('лишнее поле в элементе отвергается, а не уезжает дальше в объекте', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importCategories([
+      { ...categoryDto(), somethingElse: 1 } as unknown as ImportCategoryDto,
+    ]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].key).toBe('victorian-literature');
+    expect(tx.category.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ Ключ строки отчёта у элемента с негодным `key` брать неоткуда: назвать
+   * его ключом термина значило бы напечатать в отчёте то самое значение,
+   * которое отвергнуто. Поэтому ключ служебный, с позицией в присланной партии —
+   * только по ней оператор найдёт строку в своём файле.
+   */
+  it('элемент без годного ключа назван позицией в партии, а не пустой строкой', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const broken = { ...tagDto() } as Partial<ImportTagDto>;
+    delete broken.key;
+
+    const result = await service.importTags([
+      { ...tagDto(), key: 'fine' } as ImportTagDto,
+      broken as ImportTagDto,
+    ]);
+
+    expect(result.imported).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].key).toBe('(item 1)');
+  });
+
+  /**
+   * ⚠️ Единственный вход, отвечающий 400: отчёта по элементам тут не существует.
+   * Прежде здесь был 500 — `for...of` по объекту бросает `TypeError` мимо любого
+   * `catch` ручки.
+   */
+  it('тело, которое вовсе не массив, отвергается четырёхсотым, а не роняет ручку', async () => {
+    const log: WriteLog = [];
+    const { service } = makeService(log);
+
+    await expect(
+      service.importTags({ tags: [] } as unknown as ImportTagDto[]),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.importCategories(null as unknown as ImportCategoryDto[]),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  /**
+   * ⚠️ Страховка от «проверено ноль правил»: годная партия обязана пройти
+   * насквозь. Без этого теста любая ошибка в опциях валидатора — например
+   * `forbidNonWhitelisted` на объекте с необъявленным полем перевода —
+   * зеленела бы, отвергая вообще всё.
+   */
+  /**
+   * 🔴 Найдено ревью 03.09.2026, до коммита, — дефект внесла сама правка.
+   * `plainToInstance` на `null`, числе или строке возвращает то же значение
+   * без изменений, а `validateSync` разыменовывает у него `constructor`.
+   * Партия `[null, {годный тег}]` роняла ручку `TypeError` мимо всякого
+   * `catch` — то есть отказом «всё или ничего», ради отмены которого
+   * `ParseArrayPipe` и был отклонён.
+   */
+  it('элемент, который не объект, называется строкой в errors, а не роняет партию', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([
+      null as unknown as ImportTagDto,
+      { ...tagDto(), key: 'fine' } as ImportTagDto,
+      42 as unknown as ImportTagDto,
+      ['nested'] as unknown as ImportTagDto,
+    ]);
+
+    expect(result.imported).toBe(1);
+    expect(result.errors.map((e) => e.key)).toEqual(['(item 0)', '(item 2)', '(item 3)']);
+    expect(tx.tag.create).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * ⚠️ Партия из одного негодного элемента обязана пройти так же: ручка
+   * отвечает 201 с отчётом, а не 500. Отдельным тестом потому, что первый
+   * зеленел бы и на «упало после годного соседа».
+   */
+  it('партия из одного null проходит целиком и отдаёт отчёт, а не отказ', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    await expect(service.importCategories([null as unknown as ImportCategoryDto])).resolves.toEqual(
+      {
+        imported: 0,
+        updated: 0,
+        errors: [{ key: '(item 0)', message: 'Item must be a JSON object' }],
+      },
+    );
+  });
+
+  it('годная партия проходит целиком и ни одной строки в errors не даёт', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const tags = await service.importTags([tagDto()]);
+    const categories = await service.importCategories([categoryDto()]);
+
+    expect(tags).toEqual({ imported: 1, updated: 0, errors: [] });
+    expect(categories).toEqual({ imported: 1, updated: 0, errors: [] });
+  });
+});
+
+/**
+ * 🔴 `LEGACY-322`. Тот же дефект, что `LEGACY-318` закрыла у тега, оставался
+ * в соседнем методе того же файла: `upsertCategory` писал
+ * `indexable: dto.indexable ?? existing.indexable` и так три поля. Файл импорта
+ * их не называет — значит в `UPDATE` уходило значение из снимка, и админский
+ * `PATCH /categories/:id {"isVisible": false}`, закоммитившийся между чтением
+ * и записью, затирался молча: категория снова на витрине, в отчёте `updated: 1`,
+ * `errors` пуст.
+ *
+ * ⚠️ Проверяется **форма запроса**, а не исход двух транзакций: после правки
+ * столбец не читается вовсе, поэтому затирать нечем. Доказывать надо отсутствие
+ * ключа в `data`. Рядом стоит положительный случай — иначе `not.toHaveProperty`
+ * зеленел бы и на опечатке в имени поля.
+ *
+ * ⚠️ Сравнение нестрогое (`!= null`), как у тега: `@IsOptional()` пропускает
+ * `null` наравне с `undefined`, все три столбца `Category` — `NOT NULL`,
+ * и строгое `!== undefined` отправило бы `null` в Prisma и уронило бы всю
+ * транзакцию термина вместе с переводами.
+ */
+describe('ImportService — импорт категории не переписывает поля, которых нет в файле (LEGACY-322)', () => {
+  const existingInTx = {
+    id: 'cat-1',
+    key: 'victorian-literature',
+    type: CategoryType.genre,
+    slug: 'victorian-literature',
+    parentId: null,
+    indexable: false,
+    isVisible: false,
+    sortOrder: 42,
+    translations: [],
+  };
+
+  const seed = (log: WriteLog, root: FakeClient, tx: FakeClient) => {
+    const answer = (args: { where?: { key?: string } }) =>
+      Promise.resolve(args?.where?.key === existingInTx.key ? existingInTx : null);
+    root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('root.category.findUnique');
+      return answer(args);
+    });
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
+      log.push('tx.category.findUnique');
+      return answer(args);
+    });
+  };
+
+  const dataOfUpdate = (tx: FakeClient): Record<string, unknown> => {
+    const calls = tx.category.update.mock.calls as Array<[{ data: Record<string, unknown> }]>;
+    expect(calls).toHaveLength(1);
+    return calls[0][0].data;
+  };
+
+  it('поле, не названное в файле, в UPDATE не попадает вовсе', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    // В `categoryDto()` нет ни `indexable`, ни `isVisible`, ни `sortOrder`.
+    await service.importCategories([categoryDto()]);
+
+    const data = dataOfUpdate(tx);
+    expect(data).not.toHaveProperty('indexable');
+    expect(data).not.toHaveProperty('isVisible');
+    expect(data).not.toHaveProperty('sortOrder');
+    // Страховка от «проверено ноль полей»: то, что файл называет, доехать обязано.
+    expect(data).toMatchObject({ type: CategoryType.genre, name: 'Victorian Literature' });
+  });
+
+  it('поле, названное в файле, доезжает до UPDATE со своим значением', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    await service.importCategories([
+      { ...categoryDto(), indexable: true, isVisible: true, sortOrder: 7 } as ImportCategoryDto,
+    ]);
+
+    expect(dataOfUpdate(tx)).toMatchObject({ indexable: true, isVisible: true, sortOrder: 7 });
+  });
+
+  it('явный null в файле считается «поле не задано», а не значением', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    const result = await service.importCategories([
+      { ...categoryDto(), isVisible: null, sortOrder: null } as unknown as ImportCategoryDto,
+    ]);
+
+    const data = dataOfUpdate(tx);
+    expect(data).not.toHaveProperty('isVisible');
+    expect(data).not.toHaveProperty('sortOrder');
+    // Термин обязан пройти целиком: транзакция не откатывается.
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+  });
+
+  it('переданным считается и явный false: он не теряется как «не задано»', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seed(log, root, tx);
+
+    await service.importCategories([
+      { ...categoryDto(), isVisible: false, sortOrder: 0 } as ImportCategoryDto,
+    ]);
 
     const data = dataOfUpdate(tx);
     expect(data).toMatchObject({ isVisible: false, sortOrder: 0 });

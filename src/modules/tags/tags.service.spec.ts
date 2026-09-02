@@ -1,4 +1,5 @@
 import { TagsService } from './tags.service';
+import { TagLockService } from './tag-lock.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
@@ -41,6 +42,7 @@ describe('TagsService', () => {
         record: jest.fn().mockResolvedValue(undefined),
         resolve: jest.fn().mockResolvedValue(null),
       } as unknown as SlugRedirectService,
+      new TagLockService(prisma as unknown as PrismaService),
       indexability as unknown as TaxonomyIndexabilityService,
     );
   });

@@ -1,5 +1,6 @@
 import { Language } from '@prisma/client';
 import { CategoryTreeService } from '../../category/category-tree.service';
+import { TagLockService } from '../../tags/tag-lock.service';
 import { CategoryService } from '../../category/category.service';
 import { TagsService } from '../../tags/tags.service';
 import { SlugRedirectService } from '../../slug-redirect/slug-redirect.service';
@@ -93,7 +94,8 @@ describe('indexability contract: autoIndexable reaches the client', () => {
       slugRedirectStub(),
       new CategoryTreeService(categoryPrisma),
     );
-    tags = new TagsService(prismaStub(), slugRedirectStub());
+    const tagPrisma = prismaStub();
+    tags = new TagsService(tagPrisma, slugRedirectStub(), new TagLockService(tagPrisma));
   });
 
   it.each(TRANSLATION_KEYS)(
