@@ -113,13 +113,23 @@ export interface PublicAuthorsListMeta {
  * Связь автора с опубликованными книгами — одной формулой на все запросы.
  *
  * 🔴 Формула хрупкая и неочевидная, поэтому существует ровно один её экземпляр.
- * Строгая FK `BookVersion.authorId` в проде NULL у всех опубликованных версий,
- * и фактический источник истины — совпадение по имени внутри своего языка
- * (в ru-версии книги автор записан как «Сунь-цзы», сверять его с английским
- * «Sun Tzu» бессмысленно). Три места считают по ней: счётчик книг, публичный
- * список и ручка букв. Разъедься они — счётчик на карточке, число под буквой
- * и `noindex` на странице автора начали бы отвечать по-разному, и заметить это
- * можно было бы только глазами.
+ * Обе половины `OR` рабочие, и убирать нельзя ни одну. FK `BookVersion.authorId`
+ * заполнен бэкфилом от 09.08.2026 (`prisma/migrations/20260809120000_backfill_book_version_author_id`),
+ * но только там, где сопоставление имени с переводом было однозначным; всё
+ * остальное — и всякая версия, заведённая мимо связи, — держится на совпадении
+ * имени внутри своего языка (в ru-версии книги автор записан как «Сунь-цзы»,
+ * сверять его с английским «Sun Tzu» бессмысленно).
+ *
+ * Три места считают по ней: счётчик книг, публичный список и ручка букв.
+ * Разъедься они — счётчик на карточке, число под буквой и `noindex` на странице
+ * автора начали бы отвечать по-разному, и заметить это можно было бы только
+ * глазами.
+ *
+ * ⚠️ Обе половины `OR` обязаны быть индексированы, иначе планировщик соединяет
+ * таблицы по одному `language` и отбрасывает `OR` фильтром соединения —
+ * на 25 000 переводов это 19 996 000 отброшенных строк и секунда на запрос
+ * (`LEGACY-272`, миграция `20260902090000_authors_hub_join_indexes`). Добавляя
+ * сюда третью половину, добавь и индекс под неё.
  */
 const PUBLISHED_BOOKS_JOIN = Prisma.sql`
   ON bv.language = t.language
@@ -138,10 +148,11 @@ export class AuthorService {
   /**
    * Сколько **опубликованных книг** у каждого из авторов — батчем.
    *
-   * 🔴 Считать по внешнему ключу `BookVersion.authorId`, как было до 09.08.2026,
-   * нельзя: в проде он NULL у всех опубликованных версий, и `_count.bookVersions`
-   * давал ноль **всем десяти** авторам, включая тех, чьи книги лежат в каталоге.
-   * Фактическая связь держится на строковом поле `BookVersion.author`.
+   * 🔴 Считать по одному внешнему ключу `BookVersion.authorId` нельзя. До
+   * 09.08.2026 он был NULL у всех опубликованных версий, и `_count.bookVersions`
+   * давал ноль **всем десяти** авторам, включая тех, чьи книги лежат в каталоге;
+   * бэкфил той же даты заполнил его лишь там, где имя сопоставилось однозначно.
+   * Для остального связь по-прежнему держится на строковом `BookVersion.author`.
    *
    * Поэтому здесь тот же fallback, что уже работает поштучно в
    * `getPublicBySlug`: `authorId` **или** совпадение имени. Имя при этом
@@ -172,6 +183,33 @@ export class AuthorService {
     `;
 
     return new Map(rows.map((r) => [r.authorId, r.booksCount]));
+  }
+
+  /**
+   * Средние оценки книг одним запросом вместо запроса на книгу (`LEGACY-216`).
+   *
+   * Ключ карты - `bookId`, а не идентификатор версии: оценка ставится книге,
+   * и все её языковые версии делят одну.
+   *
+   * Снятия дублей здесь нет намеренно. Единственный вызывающий, `getPublicBySlug`,
+   * берёт версии одного языка, а `@@unique([bookId, language])` на `BookVersion`
+   * не даёт двум строкам одного языка нести один `bookId`. Дедупликация была бы
+   * веткой, в которую нельзя попасть, и тестом, который её не проверяет: набор
+   * с повтором `bookId` этот запрос вернуть не может.
+   *
+   * Пустой список отсекается до похода в базу: `groupBy` с `in: []` вернул бы
+   * пустой ответ той же ценой, а страница автора без книг - обычный случай.
+   */
+  private async getAverageRatingsForBooks(bookIds: string[]): Promise<Map<string, number | null>> {
+    if (bookIds.length === 0) return new Map();
+
+    const groups = await this.prisma.bookRating.groupBy({
+      by: ['bookId'],
+      where: { bookId: { in: bookIds } },
+      _avg: { score: true },
+    });
+
+    return new Map(groups.map((g) => [g.bookId, g._avg.score ?? null]));
   }
 
   /**
@@ -728,6 +766,8 @@ export class AuthorService {
       orderBy: { publishedAt: 'desc' },
     });
 
+    const ratings = await this.getAverageRatingsForBooks(bookVersions.map((bv) => bv.bookId));
+
     return {
       id: author.id,
       slug: translation.slug,
@@ -742,35 +782,27 @@ export class AuthorService {
       faq,
       seo: translation.seo,
       similarAuthors,
-      books: await Promise.all(
-        bookVersions.map(async (bv) => {
-          const agg = await this.prisma.bookRating.aggregate({
-            where: { bookId: bv.bookId },
-            _avg: { score: true },
-          });
-          return {
-            id: bv.id,
-            bookId: bv.bookId,
-            slug: bv.slug || bv.book.slug,
-            title: bv.title,
-            author: bv.author,
+      books: bookVersions.map((bv) => ({
+        id: bv.id,
+        bookId: bv.bookId,
+        slug: bv.slug || bv.book.slug,
+        title: bv.title,
+        author: bv.author,
+        coverImageUrl: bv.coverImageUrl,
+        coverUrl: bv.coverImageUrl,
+        type: bv.type,
+        isFree: bv.isFree,
+        rating: ratings.get(bv.bookId) ?? null,
+        versions: [
+          {
+            language: bv.language,
+            status: bv.status,
+            type: bv.type,
             coverImageUrl: bv.coverImageUrl,
             coverUrl: bv.coverImageUrl,
-            type: bv.type,
-            isFree: bv.isFree,
-            rating: agg._avg.score ?? null,
-            versions: [
-              {
-                language: bv.language,
-                status: bv.status,
-                type: bv.type,
-                coverImageUrl: bv.coverImageUrl,
-                coverUrl: bv.coverImageUrl,
-              },
-            ],
-          };
-        }),
-      ),
+          },
+        ],
+      })),
     };
   }
 

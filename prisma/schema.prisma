@@ -177,6 +177,15 @@ model BookVersion {
   @@index([rightsGeoBlockVerifiedByUserId])
   @@index([rightsLicenseCoverageStatus])
   @@index([rightsClaimBlockActive])
+  // LEGACY-272. Строковая половина связи автора с книгами
+  // (`bv.author = t.name`) в `PUBLISHED_BOOKS_JOIN`. Без индекса планировщик
+  // соединяет две таблицы по одному `language` и отбрасывает `OR` фильтром
+  // соединения: на 25 000 переводов и 20 000 версий это 19 996 000
+  // отброшенных строк и около секунды на каждый из трёх запросов хаба.
+  // С индексом `OR` раскладывается в `BitmapOr` двух индексных обходов
+  // (второй - существующий `authorId`), и переписывать запрос в `UNION`,
+  // как предполагал пункт 3 записи, не требуется.
+  @@index([author, language, status])
 }
 
 model BookSummary {
@@ -621,6 +630,11 @@ model AuthorTranslation {
 
   @@unique([authorId, language])
   @@unique([language, slug])
+  // LEGACY-272. Внешняя сторона того же join'а плюс порядок публичного списка.
+  // Сам по себе связь не ускоряет (`total` и буквы остаются на секунде), но
+  // даёт `ORDER BY t.name` уже отсортированный вход: страница хаба падает
+  // с 36 мс до 0,4 мс на том же объёме.
+  @@index([language, name])
 }
 
 // =====================

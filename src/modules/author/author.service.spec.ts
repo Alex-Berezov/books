@@ -36,6 +36,7 @@ interface PrismaStub {
   };
   bookRating: {
     aggregate: jest.Mock;
+    groupBy: jest.Mock;
   };
   $transaction: jest.Mock;
   $queryRaw: jest.Mock;
@@ -67,6 +68,7 @@ const createPrismaStub = (): PrismaStub => {
     },
     bookRating: {
       aggregate: jest.fn(),
+      groupBy: jest.fn().mockResolvedValue([]),
     },
     $transaction: jest.fn(),
     $queryRaw: jest.fn(),
@@ -339,12 +341,13 @@ describe('AuthorService', () => {
         },
       ]);
 
-      prisma.bookRating.aggregate.mockResolvedValue({ _avg: { score: null } });
+      prisma.bookRating.groupBy.mockResolvedValue([{ bookId: 'b1', _avg: { score: 4.5 } }]);
 
       const result = await service.getPublicBySlug('oscar-wilde', Language.en);
       expect(result.name).toBe('Oscar Wilde');
       expect(result.books).toHaveLength(1);
       expect(result.books[0].title).toBe('The Picture of Dorian Gray');
+      expect(result.books[0].rating).toBe(4.5);
     });
 
     it('throws NotFoundException if no translation is found by slug', async () => {
@@ -353,6 +356,76 @@ describe('AuthorService', () => {
       await expect(service.getPublicBySlug('oscar-wilde', Language.en)).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    /**
+     * `LEGACY-216`. Проверяется **число запросов**, а не форма ответа: до правки
+     * страница уходила в базу по разу на каждую книгу автора, и ни один кейс
+     * этого не видел - ответ был правильным при любом числе походов.
+     *
+     * Образец - `book/book.service.query-count.spec.ts`, где тот же приём
+     * посажен на `findAll`.
+     */
+    describe('число запросов за рейтингами (LEGACY-216)', () => {
+      const twentyVersions = Array.from({ length: 20 }, (_, i) => ({
+        id: `v${i}`,
+        bookId: `b${i}`,
+        slug: `book-${i}`,
+        title: `Book ${i}`,
+        author: 'Oscar Wilde',
+        coverImageUrl: 'cover.jpg',
+        type: 'text',
+        isFree: true,
+        language: Language.en,
+        status: 'published',
+        book: { id: `b${i}`, slug: `book-${i}` },
+      }));
+
+      beforeEach(() => {
+        prisma.authorTranslation.findFirst.mockResolvedValue({
+          id: 'trans1',
+          authorId: 'auth1',
+          slug: 'oscar-wilde',
+          language: Language.en,
+          name: 'Oscar Wilde',
+          biography: 'Bio text',
+          quotes: [],
+          faq: [],
+          similarSlugs: [],
+          author: { id: 'auth1', birthDate: null, deathDate: null },
+        });
+      });
+
+      it('на двадцати книгах не зовёт bookRating.aggregate ни разу, а groupBy - ровно один', async () => {
+        prisma.bookVersion.findMany.mockResolvedValue(twentyVersions);
+        prisma.bookRating.groupBy.mockResolvedValue([]);
+
+        await service.getPublicBySlug('oscar-wilde', Language.en);
+
+        expect(prisma.bookRating.aggregate).toHaveBeenCalledTimes(0);
+        expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(1);
+      });
+
+      it('групповой запрос спрашивает идентификаторы всех книг автора', async () => {
+        prisma.bookVersion.findMany.mockResolvedValue(twentyVersions);
+        prisma.bookRating.groupBy.mockResolvedValue([]);
+
+        await service.getPublicBySlug('oscar-wilde', Language.en);
+
+        const [args] = prisma.bookRating.groupBy.mock.calls[0] as [
+          { where: { bookId: { in: string[] } } },
+        ];
+        expect(args.where.bookId.in).toEqual(twentyVersions.map((v) => v.bookId));
+      });
+
+      it('у автора без книг в базу за рейтингами не ходит вовсе', async () => {
+        prisma.bookVersion.findMany.mockResolvedValue([]);
+
+        const result = await service.getPublicBySlug('oscar-wilde', Language.en);
+
+        expect(result.books).toEqual([]);
+        expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(0);
+      });
     });
   });
 

@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthorService } from './author.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
@@ -21,6 +21,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('authors')
+@ApiBearerAuth()
 @Controller()
 export class AuthorController {
   constructor(private readonly service: AuthorService) {}
@@ -45,14 +46,19 @@ export class AuthorController {
     };
   }
 
+  /**
+   * Запасные значения тут не нужны и раньше были мёртвым кодом (`LEGACY-217`):
+   * глобальный `ValidationPipe` поднят с `transform: true` (`main.ts:77-83`),
+   * то есть экземпляр `PaginationDto` со своими умолчаниями 1 и 10 приезжает
+   * сюда уже собранным. Прежние `1` и `20` в этой строке читались как контракт
+   * ручки и им не были: наружу всё это время уходила страница в десять записей.
+   */
   @Get('admin/authors')
   @ApiOperation({ summary: 'List authors for admin' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  list(@Query() pagination?: PaginationDto) {
-    const page = pagination?.page ? Number(pagination.page) : 1;
-    const limit = pagination?.limit ? Number(pagination.limit) : 20;
-    return this.service.list(page, limit);
+  list(@Query() pagination: PaginationDto) {
+    return this.service.list(pagination.page, pagination.limit);
   }
 
   @Post('admin/authors')

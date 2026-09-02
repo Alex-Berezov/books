@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { httpServerOf } from './http-server';
+import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 
 /**
  * `LEGACY-201`. `GET /admin/authors` и `GET /admin/authors/check-slug` отвечали
@@ -91,6 +92,38 @@ describe('Admin authors routing (e2e)', () => {
       // значением — «больше нуля» пропустило бы дефолт в тысячу строк.
       expect(body.meta.limit).toBe(10);
       expect(body.data.length).toBeLessThanOrEqual(10);
+    });
+
+    /**
+     * `LEGACY-217`. Потолок стоит в общем `PaginationDto`, поэтому проверяется
+     * не «сервис вернул мало строк», а **отказ валидации**: до правки
+     * `?limit=100000` проходил насквозь и уезжал в `take` Prisma как есть.
+     *
+     * Границы строятся от `PAGINATION_MAX_LIMIT`, а не от литералов: сдвиг
+     * потолка не должен красить кейс, который от него не зависит. Пара
+     * «потолок + 1 отбивается» и «ровно потолок проходит» взята намеренно -
+     * первый кейс без второго краснел бы и от потолка, съехавшего вниз.
+     */
+    it('отбивает limit за потолком, а не уносит его в запрос', async () => {
+      await request(http())
+        .get('/admin/authors?limit=100000')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+
+      await request(http())
+        .get(`/admin/authors?limit=${PAGINATION_MAX_LIMIT + 1}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it('пропускает limit ровно на потолке', async () => {
+      const response = await request(http())
+        .get(`/admin/authors?limit=${PAGINATION_MAX_LIMIT}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      const body = response.body as { meta: { limit: number } };
+      expect(body.meta.limit).toBe(PAGINATION_MAX_LIMIT);
     });
 
     it('без токена отвечает 401 от гварда, а не 404 от чужого маршрута', async () => {
