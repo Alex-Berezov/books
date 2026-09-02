@@ -1,4 +1,3 @@
-import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -24,7 +23,7 @@ import { ImportService } from '../src/modules/import/import.service';
  * админка и импорт, а не то, что умеет Postgres.
  */
 describe('LEGACY-320 — строка тега запирается на путях, где снимок решает (e2e)', () => {
-  let app: INestApplication;
+  let moduleRef: TestingModule;
   let prisma: PrismaService;
   let tags: TagsService;
   let tagLock: TagLockService;
@@ -35,8 +34,29 @@ describe('LEGACY-320 — строка тега запирается на пут�
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  /**
+   * ⚠️ HTTP-приложение здесь **не поднимается**: спека ходит в сервисы напрямую,
+   * ни одного запроса через supertest в ней нет. `moduleRef.init()` запускает те же
+   * `onModuleInit` и `onApplicationBootstrap`, что и `app.init()` (без первого
+   * `PrismaService` не подключается), но не создаёт объект сервера и не регистрирует
+   * маршруты, гварды и middleware.
+   *
+   * ⚠️ Экономия ограничена **слоем маршрутизации**, и это не «набор больше
+   * не поднимает AppModule»: `compile()` по-прежнему создаёт все провайдеры,
+   * а это и есть основная часть тех самых секунд на набор из комментария
+   * к `maxWorkers` в `test/jest-e2e.json`. Сколько именно снимает отказ
+   * от HTTP-слоя, здесь не измерялось.
+   *
+   * ⚠️ Порядок обязателен: сервисы достаются **до** `init()`. Отказ любого
+   * `onModuleInit` (недоступный Redis у очередей, планировщики) иначе оставил бы
+   * `prisma` неприсвоенным, `afterAll` упал бы на нём первой же строкой,
+   * и `moduleRef.close()` не позвался бы вовсе — соединения этого набора висели бы
+   * до конца прогона. На выкате наборы идут двумя воркерами
+   * (`deploy.yml:319` — `--maxWorkers=2`), у каждого свой пул и своя база,
+   * и лишний висящий пул упирает прогон в `max_connections` (`LEGACY-237`).
+   */
   beforeAll(async () => {
-    const moduleRef: TestingModule = await Test.createTestingModule({
+    moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
@@ -45,14 +65,23 @@ describe('LEGACY-320 — строка тега запирается на пут�
     tagLock = moduleRef.get(TagLockService);
     imports = moduleRef.get(ImportService);
 
-    app = moduleRef.createNestApplication();
-    await app.init();
+    await moduleRef.init();
   });
 
+  /**
+   * ⚠️ Уборка в `try/finally`: её отказ не должен съедать `close()`. Незакрытый
+   * пул виден не как красный тест, а как `sorry, too many clients already`
+   * в случайном соседнем наборе.
+   */
   afterAll(async () => {
-    await prisma.tagTranslation.deleteMany({ where: { tag: { key: { startsWith: prefix } } } });
-    await prisma.tag.deleteMany({ where: { key: { startsWith: prefix } } });
-    await app?.close();
+    try {
+      await prisma?.tagTranslation.deleteMany({
+        where: { tag: { key: { startsWith: prefix } } },
+      });
+      await prisma?.tag.deleteMany({ where: { key: { startsWith: prefix } } });
+    } finally {
+      await moduleRef?.close();
+    }
   });
 
   const makeTag = async (suffix: string) =>
