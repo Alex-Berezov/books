@@ -181,6 +181,15 @@ Swagger отдаётся по `/docs-json`, не по `/api/docs-json`.
   Считать её доверенной нельзя.
 - **E2E поднимает базу `e2e_<метка времени>`,** поэтому `.env.test` обязан смотреть на localhost.
   Прогон на чужой базе - это прогон по продовым данным.
+- 🔴 **У `prisma/seed.ts` с 02.09.2026 три потребителя, а не один** (`LEGACY-294`). Кроме шаблонной
+  базы e2e (`test/setup-e2e.ts`) и `books_test` в `deploy.yml`, его зовёт **конвейер соседнего
+  репозитория**: `books-front/.github/workflows/ci.yml` выполняет `prisma db seed` внутри
+  контейнера из `ghcr.io/alex-berezov/books:latest`, чтобы набор playwright шёл не по пустой базе.
+  Сократишь сид «за ненадобностью» - красным ответит не свой репозиторий, а чужой.
+  Отсюда же два требования к образу, без которых сид в контейнере не запускается вовсе:
+  `tsconfig.json` в runner-стадии и `/app/node_modules/.bin` в `PATH` (CLI prisma зовёт `ts-node`
+  через execa без shell и с `preferLocal: false`, то есть ищет его только в `PATH`). Держит это
+  `src/devops/dockerfiles.spec.ts`.
 
 ## Подагенты
 
