@@ -198,6 +198,46 @@ execute() {
     fi
 }
 
+# Запись файла состояния на машине — через `execute`, а не голым перенаправлением.
+#
+# 🔴 `LEGACY-327`. Точка отката и запись состояния выката были единственными мутациями,
+# шедшими мимо `execute`: обычный `cat > "$FILE" << EOF`. Значит `--dry-run`, запущенный
+# на боевой машине «посмотреть, что будет», **действительно перезаписывал** боевой файл.
+# Опасен не файл, а порядок: сухой прогон ПОСЛЕ неудачного выката, но ДО отката затирал
+# точку возврата на сломанный образ, который в этот момент и работает.
+#
+# 🔴 Функция общая, а не приём, скопированный дважды. Мест таких два, и первый разбор
+# нашёл только одно из них — ровно тот случай, ради которого заведено правило `LEGACY-329`:
+# правка, снимающая приём в одном месте файла, обязана грепнуть файл целиком. Общая функция
+# делает следующую правку приёма одноместной.
+#
+# ⚠️ Тело передаётся через base64. Прямая подстановка JSON в строку для `eval` ломается
+# на кавычках внутри него, а `execute` именно `eval`-ит свой аргумент; base64 в одинарных
+# кавычках безопасен при любом содержимом. `tr -d` вместо `-w0`: последний есть у GNU
+# coreutils, но не у busybox.
+write_state_file() {
+    local target="$1"
+    local payload="$2"
+    local encoded
+
+    # 🔴 «Не смог закодировать» — свой отказ, а не тихий успех. Подстановка команды
+    # выбрасывает код возврата: не окажись `base64` или `tr` в `PATH` пользователя
+    # `deploy` (`check_environment` их не проверяет), `encoded` вышел бы пустым,
+    # `printf '%s' '' | base64 -d > "$target"` вернул бы 0, файл обнулился, а рядом
+    # напечаталось бы «State saved for rollback». Это ровно тот инцидент 30.08.2026,
+    # ради которого файл и чинили: точка отката, которая выглядит как точка отката.
+    if ! encoded=$(printf '%s\n' "$payload" | base64 | tr -d '\n'); then
+        log_error "Could not encode payload for $target - refusing to write it"
+        return 1
+    fi
+    if [[ -z "$encoded" ]]; then
+        log_error "Encoded payload for $target is empty - refusing to overwrite the file"
+        return 1
+    fi
+
+    execute "printf '%s' '$encoded' | base64 -d > \"$target\""
+}
+
 # Environment checks
 check_environment() {
     log "Checking environment..."
@@ -424,7 +464,19 @@ save_current_state() {
         return 1
     fi
 
-    cat > "$ROLLBACK_FILE" << EOF
+    # 🔴 `LEGACY-327`. Запись идёт через `execute`, а не голым `cat >`. Весь остальной
+    # скрипт мутирует машину только так, и запись точки отката была единственным
+    # исключением: `./deploy_production.sh --dry-run`, запущенный на боевой машине
+    # «посмотреть, что будет», **действительно перезаписывал** `.rollback_info`.
+    # Опасен не файл, а порядок: сухой прогон ПОСЛЕ неудачного выката, но ДО отката
+    # затирал точку возврата на сломанный образ, который в этот момент и работает.
+    #
+    # ⚠️ Тело собирается в переменную и передаётся через base64. Прямая подстановка
+    # JSON в строку для `eval` ломается на кавычках внутри него, а `execute` именно
+    # `eval`-ит свой аргумент. base64 в одинарных кавычках безопасен при любом теле.
+    # `tr -d` вместо `-w0`: последний есть у GNU coreutils, но не у busybox.
+    local rollback_payload
+    rollback_payload=$(cat << EOF
 {
     "timestamp": "$(date -Iseconds)",
     "commit": "$current_commit",
@@ -435,7 +487,9 @@ save_current_state() {
     "deployment_user": "$(whoami)"
 }
 EOF
-    
+)
+    write_state_file "$ROLLBACK_FILE" "$rollback_payload"
+
     log_success "State saved for rollback"
 }
 
@@ -721,7 +775,12 @@ save_deployment_state() {
     local commit=$(git rev-parse HEAD)
     local tag=$(git describe --tags --exact-match 2>/dev/null || echo "no-tag")
     
-    cat > "$STATE_FILE" << EOF
+    # 🔴 `LEGACY-327`, второе место. Ревью 02.09.2026 показало, что запись точки отката
+    # была не единственной мутацией мимо `execute`: этот файл писался тем же приёмом
+    # и на сухом прогоне тоже — `save_deployment_state` зовётся из `main` после
+    # `verify_deployment`. Приём тот же, что выше.
+    local state_payload
+    state_payload=$(cat << EOF
 {
     "timestamp": "$(date -Iseconds)",
     "image_tag": "$IMAGE_TAG",
@@ -734,7 +793,9 @@ save_deployment_state() {
     "checks_passed": true
 }
 EOF
-    
+)
+    write_state_file "$STATE_FILE" "$state_payload"
+
     log_success "Deployment state saved"
 }
 
@@ -771,6 +832,23 @@ perform_rollback() {
 
     log_info "Rolling back to image: $rollback_image_id"
 
+    # 🔴 `LEGACY-328`. Наличие образа проверяется ЗДЕСЬ, до `update_code`, а не перед
+    # `docker tag` ниже. Порядок и есть содержание правки: `update_code` переводит рабочее
+    # дерево на предыдущую ревизию, и отказ, случившийся после него, оставляет машину
+    # с деревом от одной ревизии и контейнером от другой — состояние, которое никто
+    # не откатывает обратно. Отсутствующий образ дороже не сам по себе, а этим следом.
+    #
+    # ⚠️ Образ может исчезнуть штатно: `cleanup_old_images` держит только последние
+    # (см. `keep_images` в `cleanup_old_images`), плюс ручной `docker image prune`
+    # никто не запрещает.
+    # То есть ветка живая, а не теоретическая.
+    if ! docker image inspect "$rollback_image_id" > /dev/null 2>&1; then
+        log_error "Image $rollback_image_id from $ROLLBACK_FILE is not on this machine anymore."
+        log_error "Nothing was changed: the working tree is still on the current revision."
+        log_error "Do not improvise: see books-app-docs/backend/guides/migration-failure-runbook.md"
+        exit 1
+    fi
+
     # Рабочее дерево переводится на предыдущую ревизию только чтобы `docker-compose.prod.yml`
     # и `configs/**` соответствовали поднимаемому образу. Если ревизия неизвестна, откат
     # всё равно делается: образ важнее, а расхождение конфигов лечится следующим выкатом.
@@ -800,9 +878,19 @@ perform_rollback() {
 # Cleaning up old images
 cleanup_old_images() {
     log "Cleaning up old Docker images..."
-    
-    # Keep only the latest 3 images
-    execute "docker images books-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.CreatedAt}}' | tail -n +2 | sort -k3 -r | tail -n +4 | awk '{print \$1\":\"\$2}' | xargs -r docker rmi || true"
+
+    # 🔴 `LEGACY-328`. Было три. Три покрывают сценарий «откатиться сразу» и не покрывают
+    # откат через несколько выкатов: точка отката в `.rollback_info` живёт до следующего
+    # выката, а образ, на который она показывает, уборка успевает снести. Пять — тот же
+    # запас, только на день работы, а не на час; место на диске за это платится один раз.
+    # Проверку существования образа это не заменяет, она стоит в `perform_rollback`.
+    local keep_images=5
+    # ⚠️ Отказ уборки выкат не валит — образ может быть занят работающим контейнером,
+    # и это законно. Но глушить код возврата хвостом нельзя: тогда «занят» неотличимо
+    # от «команда сломалась». Отказ разбирается веткой и попадает в лог.
+    if ! execute "docker images books-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.CreatedAt}}' | tail -n +2 | sort -k3 -r | tail -n +$((keep_images + 1)) | awk '{print \$1\":\"\$2}' | xargs -r docker rmi"; then
+        log_warning "Some old images could not be removed (still in use?) - continuing"
+    fi
     
     # Remove dangling/unused images
     execute "docker image prune -f"

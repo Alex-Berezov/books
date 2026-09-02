@@ -185,6 +185,47 @@ describe('scripts/deploy_production.sh: точка отката (LEGACY-325)', (
   });
 
   /**
+   * 🔴 `LEGACY-327`. Запись точки отката шла голым `cat > "$ROLLBACK_FILE"` мимо
+   * `execute`, то есть `./deploy_production.sh --dry-run` на боевой машине
+   * **действительно перезаписывал** файл. Опасен не файл, а порядок: сухой прогон
+   * после неудачного выката, но до отката затирал точку возврата на сломанный образ,
+   * который в этот момент и работает.
+   *
+   * ⚠️ Мест таких два, а не одно, как утверждала запись: ревью 02.09.2026 нашло второе
+   * в `save_deployment_state`. Проверяются оба, иначе починка одного оставила бы
+   * второе живым при закрытой записи.
+   */
+  it('обе точки состояния пишутся общей функцией, а не голым перенаправлением', () => {
+    for (const fn of ['save_current_state', 'save_deployment_state']) {
+      const body = functionBody(fn);
+      // Страховка от «проверено ноль строк»: разбор функции обязан что-то вернуть.
+      expect(body.length).toBeGreaterThan(200);
+
+      // Голого `cat > "$FILE"` быть не должно ни в одной из них.
+      expect(body).not.toMatch(/cat\s*>\s*"\$(ROLLBACK|STATE)_FILE"/);
+      expect(body).toMatch(/write_state_file "\$(ROLLBACK|STATE)_FILE"/);
+    }
+  });
+
+  /**
+   * 🔴 Запись одна на обе точки, а не приём, скопированный дважды. Первый разбор
+   * `LEGACY-327` нашёл только одно из двух мест — ровно тот случай, ради которого
+   * заведено правило `LEGACY-329`. Проверяется и то, что сама запись идёт через
+   * `execute` (иначе сухой прогон снова затрёт боевой файл), и то, что тело
+   * кодируется: `execute` `eval`-ит свой аргумент, и кавычки внутри JSON сломали бы
+   * прямую подстановку — «починка» без base64 выглядела бы рабочей на теле без кавычек.
+   */
+  it('общая запись состояния идёт через execute и кодирует тело', () => {
+    const helper = functionBody('write_state_file');
+    expect(helper.length).toBeGreaterThan(80);
+
+    expect(helper).toMatch(/base64/);
+    const writeLine = helper.split('\n').find((line) => />\s*\\?"\$target/.test(line));
+    expect(writeLine).toBeDefined();
+    expect(writeLine?.trimStart().startsWith('execute ')).toBe(true);
+  });
+
+  /**
    * Откат читает то же поле, что пишет `save_current_state`. Пара разъедется молча:
    * запись останется, чтение начнёт брать другое имя, и обнаружится это опять же
    * в момент, когда откат понадобился.
@@ -194,5 +235,83 @@ describe('scripts/deploy_production.sh: точка отката (LEGACY-325)', (
     expect(rollback.length).toBeGreaterThan(100);
     expect(rollback).toContain("jq -r '.image_id");
     expect(rollback).toMatch(/docker tag \$rollback_image_id/);
+  });
+
+  /**
+   * 🔴 `LEGACY-328`. Существование образа проверяется ДО `update_code`, а не перед
+   * `docker tag`. Порядок и есть содержание правки: `update_code` переводит рабочее
+   * дерево на предыдущую ревизию, и отказ после него оставляет машину с деревом от одной
+   * ревизии и контейнером от другой — состояние, которое никто не откатывает обратно.
+   *
+   * Проверяется именно взаимный порядок строк, а не наличие проверки: перенос её вниз
+   * вернул бы дефект целиком, оставив все прочие утверждения зелёными.
+   */
+  it('наличие образа проверяется до смены рабочего дерева', () => {
+    const rollback = functionBody('perform_rollback');
+
+    const guard = rollback.indexOf('docker image inspect "$rollback_image_id"');
+    // -1 означает, что проверки существования образа нет вовсе.
+    expect(guard).toBeGreaterThanOrEqual(0);
+
+    const updateCode = rollback.indexOf('update_code');
+    expect(updateCode).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(updateCode);
+
+    const tag = rollback.indexOf('docker tag');
+    expect(guard).toBeLessThan(tag);
+
+    // Отказ обязан быть отказом, а не предупреждением: откатываться некуда.
+    const branch = rollback.slice(guard, rollback.slice(guard).search(/\n\s*fi\b/) + guard);
+    expect(branch).toContain('log_error');
+    expect(branch).toMatch(/exit 1/);
+  });
+
+  /**
+   * ⚠️ Уборка держит больше трёх образов. Три покрывали только «откатиться сразу»:
+   * точка отката живёт до следующего выката, а образ, на который она показывает,
+   * уборка успевала снести за пару выкатов.
+   */
+  it('уборка образов оставляет запас больше трёх', () => {
+    const cleanup = functionBody('cleanup_old_images');
+    const keep = /keep_images=(\d+)/.exec(cleanup);
+
+    expect(keep).not.toBeNull();
+    expect(Number(keep![1])).toBeGreaterThan(3);
+
+    // 🔴 И значение обязано доезжать до самой команды. Проверка одного объявления —
+    // половина отката: вернуть литерал `tail -n +4` при живой переменной можно, не тронув
+    // строку `keep_images=5`, и уборка снова держала бы три образа при зелёной спеке.
+    expect(cleanup).toMatch(/tail -n \+\$\(\(keep_images \+ 1\)\)/);
+    expect(cleanup).not.toMatch(/tail -n \+\d+ \| awk/);
+  });
+
+  /**
+   * 🔴 «Не смог закодировать» — свой отказ, а не тихий успех. Подстановка команды
+   * выбрасывает код возврата: пропади `base64` или `tr` из `PATH`, тело вышло бы пустым,
+   * запись пустой строки вернула бы 0, файл обнулился, а рядом напечаталось бы
+   * «State saved for rollback» — то есть точка отката, которая выглядит как точка отката.
+   * Ровно этот класс отказа и стоил инцидента 30.08.2026 (`LEGACY-325`).
+   */
+  it('пустое или несобранное тело — отказ, а не запись пустого файла', () => {
+    const helper = functionBody('write_state_file');
+
+    const encode = helper.indexOf('if ! encoded=');
+    expect(encode).toBeGreaterThanOrEqual(0);
+
+    const empty = helper.indexOf('-z "$encoded"');
+    expect(empty).toBeGreaterThanOrEqual(0);
+
+    // Обе ветки обязаны отказывать, а не предупреждать.
+    for (const at of [encode, empty]) {
+      const endOfIf = helper.slice(at).search(/\n\s*fi\b/);
+      expect(endOfIf).toBeGreaterThan(0);
+      const branch = helper.slice(at, at + endOfIf);
+      expect(branch).toContain('log_error');
+      expect(branch).toMatch(/return 1/);
+    }
+
+    // И обе стоят до самой записи.
+    const write = helper.indexOf('execute ');
+    expect(Math.max(encode, empty)).toBeLessThan(write);
   });
 });
