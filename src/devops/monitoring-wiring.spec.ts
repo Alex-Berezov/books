@@ -353,9 +353,16 @@ describe('DevOps: monitoring config wiring', () => {
     // Строка переписана целиком, а не ослаблена до `toContain`: смысл проверки в том,
     // что условие выката читается человеком при каждой правке, и любое новое слагаемое
     // обязано пройти через этот тест.
+    //
+    // 🔴 03.09.2026, `LEGACY-364`. Добавлено слагаемое про `needs.e2e.result`, и это
+    // не косметика: e2e переехали из job'а `test` отдельным job'ом `e2e`, а `!cancelled()`
+    // в начале условия **снимает** неявный гейт «все зависимости зелены» — с ним job
+    // запускается и при упавшей зависимости. То есть одного `needs: [..., e2e, ...]`
+    // мало: без этой скобки красный набор перестал бы останавливать прод, а выглядело бы
+    // это как исправная зависимость. Сравнение по-прежнему на равенство целиком.
     it('выкат требует пройденных тестов, пропуск — только по галке', () => {
       expect(jobCondition('deploy')).toBe(
-        "${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.ci_gate.result == 'success' || needs.ci_gate.result == 'skipped') }}",
+        "${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.e2e.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.ci_gate.result == 'success' || needs.ci_gate.result == 'skipped') }}",
       );
     });
 

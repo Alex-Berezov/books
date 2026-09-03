@@ -136,7 +136,24 @@ const enclosingScope = (lines: string[], index: number): string[] => {
 /** Образы сервисов job'а `test` в `deploy.yml` — эталон для `ci.yml`. */
 const deployServiceImages = (): Record<string, string> => {
   const lines = readFileSync(join(WORKFLOWS_DIR, 'deploy.yml'), 'utf8').split(/\r?\n/);
-  const start = lines.findIndex((l) => /^ {4}services:\s*$/.test(l));
+
+  // 🔴 `LEGACY-364`. Якорь — job, который **гоняет e2e**, а не первый `services:`
+  // в файле. До 03.09.2026 это было одно и то же: e2e шли в job'е `test`, и его
+  // блок был первым. С переездом набора отдельным job'ом первым остался блок
+  // job'а `test`, который e2e больше не гоняет, — и сверка образов начала
+  // сравнивать `ci.yml` с чужими сервисами, оставаясь зелёной при любом
+  // расхождении на настоящем пути выката.
+  const e2eStart = lines.findIndex((line, index) => {
+    const name = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    if (!name) return false;
+    return blockAt(lines, index).some((l) => /^\s+run:\s*yarn\s+test:e2e/.test(l));
+  });
+  expect(e2eStart).toBeGreaterThan(-1);
+
+  const e2eBody = blockAt(lines, e2eStart);
+  const startInBody = e2eBody.findIndex((l) => /^ {4}services:\s*$/.test(l));
+  expect(startInBody).toBeGreaterThan(-1);
+  const start = lines.indexOf(e2eBody[startInBody], e2eStart);
   expect(start).toBeGreaterThan(-1);
   const images: Record<string, string> = {};
   let current: string | null = null;
@@ -218,6 +235,110 @@ describe('DevOps: e2e на pull request (LEGACY-149)', () => {
 
   it('ровно один job гоняет e2e', () => {
     expect(e2eJobs.map(([name]) => name)).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 `LEGACY-364`. E2E выката обязаны идти **своим** job'ом, а не хвостом
+   * того, что перед этим прогнало покрытие по всем юнитам.
+   *
+   * До 03.09.2026 они стояли в `deploy.yml` двумя шагами сразу после
+   * `yarn test:cov`. Раннер к моменту e2e был занят своим же прогоном, набор
+   * `test/seed-dataset.e2e-spec.ts` шёл втрое дольше обычного и не укладывался
+   * в бюджет хука `afterAll`. Ни один тест при этом не падал — падал набор
+   * целиком, то есть выкат вставал на шуме: так сгорели теги `v1.0.27`
+   * и `v1.0.28`, а прод остался на предыдущей версии.
+   *
+   * ⚠️ Проверяется не «есть job с именем e2e»: имя ничего не держит.
+   * Проверяется соседство — в том job'е, где идёт `yarn test:e2e`, не должно
+   * быть шага с `yarn test:cov`, — и то, что этот job стоит в `needs` выката.
+   * Без второй половины «починка» свелась бы к тому, что e2e уехали в свой job
+   * и перестали блокировать прод вовсе, то есть краснота ушла бы вместе
+   * с проверкой.
+   */
+  it('в deploy.yml e2e идут отдельным job от покрытия, и выкат его ждёт', () => {
+    const deployLines = readFileSync(join(WORKFLOWS_DIR, 'deploy.yml'), 'utf8').split(/\r?\n/);
+    const deployJobs = jobs(deployLines);
+
+    const e2eEntries = [...deployJobs.entries()].filter(([, body]) =>
+      stepsOf(body).some((step) => /\byarn\s+test:e2e/.test(runOf(step))),
+    );
+    expect(e2eEntries).toHaveLength(1);
+
+    const [e2eName, e2eBody] = e2eEntries[0];
+
+    // Соседство с покрытием — это и есть дефект. Ищется по команде, а не
+    // по названию шага: название переписывается свободно, команда — нет.
+    expect(stepsOf(e2eBody).some((step) => /\byarn\s+test:cov\b/.test(runOf(step)))).toBe(false);
+
+    // Покрытие при этом обязано остаться где-то в этом же воркфлоу: выкат идёт
+    // по тегу `v*`, где `ci.yml` не запускается вовсе (`LEGACY-207`, `LEGACY-209`).
+    const covJobs = [...deployJobs.entries()].filter(([, body]) =>
+      stepsOf(body).some((step) => /\byarn\s+test:cov\b/.test(runOf(step))),
+    );
+    expect(covJobs).toHaveLength(1);
+    expect(covJobs[0][0]).not.toBe(e2eName);
+
+    // 🔴 Вторая половина: job с e2e стоит в `needs` выката. Иначе прод уезжает,
+    // не дождавшись набора, и краснота уходит вместе с проверкой.
+    const deployBody = deployJobs.get('deploy');
+    expect(deployBody).toBeDefined();
+    const needs = deployBody!.find((line) => /^\s+needs:\s*\[/.test(line));
+    expect(needs).toBeDefined();
+    expect(needs!).toMatch(new RegExp(`\\b${e2eName}\\b`));
+
+    // 🔴 Третья половина, и без неё две первые ничего не держат: у `deploy`
+    // стоит `if:` с `!cancelled()`, а он **снимает** неявный гейт «все
+    // зависимости зелены» — job запускается и при упавшей зависимости.
+    // Значит результат e2e обязан быть назван в условии явно, иначе красный
+    // набор перестаёт останавливать прод, а выглядит это как исправный `needs`.
+    const deployIf = deployBody!.find((line) => /^\s+if:\s/.test(line));
+    expect(deployIf).toBeDefined();
+    expect(deployIf!).toMatch(new RegExp(`needs\\.${e2eName}\\.result == 'success'`));
+  });
+
+  /**
+   * 🔴 `LEGACY-364`. Те же инварианты «прогон может покраснеть», что и для `ci.yml`,
+   * но для job'а на **пути выката**. Все кейсы вокруг считаются от `CI_LINES`,
+   * то есть проверяют только `ci.yml`; job в `deploy.yml` ими не покрыт вовсе,
+   * а с 03.09.2026 он отдельный и потому расходится с близнецом самостоятельно.
+   *
+   * ⚠️ Особенно важен запрет `if:` на **любом** уровне job'а. `if: github.event_name
+   * == 'push'` на шаге `🧪 E2E Tests` даёт зелёный пустой job на ручном запуске:
+   * `needs.e2e.result == 'success'` при этом истинно, и выкат уходит на прод
+   * без единого набора e2e. Близнец в `ci.yml` от того же хода закрыт явно,
+   * а этот до 03.09.2026 не был закрыт ничем.
+   */
+  it('job выката с e2e держит те же инварианты, что и job слияния', () => {
+    const deployLines = readFileSync(join(WORKFLOWS_DIR, 'deploy.yml'), 'utf8').split(/\r?\n/);
+    const entries = [...jobs(deployLines).entries()].filter(([, body]) =>
+      stepsOf(body).some((step) => /\byarn\s+test:e2e/.test(runOf(step))),
+    );
+    expect(entries).toHaveLength(1);
+    const [, body] = entries[0];
+
+    const step = stepsOf(body).find((s) => /\byarn\s+test:e2e/.test(runOf(s)))!;
+    const run = runOf(step);
+
+    // Команда целиком, а не «начинается с»: `--testPathPattern=health`, `-t 'smoke'`
+    // и `--onlyChanged` оставляют начало строки на месте и сводят прогон к одному
+    // набору из всех — job зелёный, e2e «идут», регрессия проходит.
+    expect(run).toMatch(/^yarn test:e2e:parallel --maxWorkers=\d+$/);
+    expect(body.some((l) => /^\s*continue-on-error:\s*true/.test(l))).toBe(false);
+    expect(body.filter((l) => /^\s+if:/.test(l))).toEqual([]);
+
+    // Баз создаётся ровно столько, сколько воркеров: иначе два набора пишут
+    // в одну базу и портят данные друг другу, а прогон чаще зелёный, чем красный.
+    const maxWorkers = /--maxWorkers=(\d+)/.exec(run);
+    expect(maxWorkers).not.toBeNull();
+    expect(mapUnder(step, 'env').E2E_WORKERS).toBe(maxWorkers![1]);
+
+    // Без баз шаг красен всегда, и «починка» сведётся к его удалению.
+    const services = body.filter((l) => /^ {6}(postgres|redis):\s*$/.test(l));
+    expect(services).toHaveLength(2);
+    expect(body.filter((l) => /--health-cmd/.test(l))).toHaveLength(2);
+
+    // Адрес ведёт в поднятый сервис, а не мимо него.
+    expect(mapUnder(step, 'env').DATABASE_URL).toMatch(/@localhost:5432\//);
   });
 
   // Прогон именно `test:e2e:parallel`, а не `:serial`: `--runInBand` в последнем

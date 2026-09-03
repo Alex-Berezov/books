@@ -130,6 +130,12 @@ jobs:
     # в `main` — триггер снят, `LEGACY-241`.)
     if: ${{ github.event.inputs.skip_tests != 'true' }}
 
+    # ⚠️ С 03.09.2026 (`LEGACY-364`) оба шага, которые пользовались базой, уехали
+    # в job `e2e`, и `DATABASE_URL` в этом job'е больше не задаётся нигде: юниты
+    # в базу не ходят. Сервисы **оставлены намеренно** и снимаются отдельно —
+    # снятие поднимает вопрос «а не ходит ли туда хоть один юнит», а ответ на него
+    # проверяется только красным прогоном на теге, то есть ценой ещё одного
+    # сгоревшего выката. Не читать этот блок как «`test:cov` работает с базой».
     services:
       postgres:
         image: postgres:14
@@ -294,6 +300,100 @@ jobs:
         env:
           NODE_ENV: test
 
+  # =====================================================
+  # E2E TESTS
+  # =====================================================
+
+  # 🔴 `LEGACY-364`. Отдельный job, а не два шага в конце `test`.
+  #
+  # До 03.09.2026 e2e шли тем же job'ом сразу после `yarn test:cov` по 2569
+  # юнитам с покрытием. Раннер к моменту e2e был занят своим же прогоном, набор
+  # `test/seed-dataset.e2e-spec.ts` шёл втрое дольше обычного (46-48 с против
+  # 17.7 с) и не укладывался в бюджет хука `afterAll`, где стоит один
+  # `await app.close()`. Ни один тест при этом не падал — падал набор целиком,
+  # то есть выкат вставал на шуме. Так сгорели два тега подряд: `v1.0.27`
+  # и `v1.0.28`.
+  #
+  # ⚠️ Тот же самый прогон той же самой командой в `ci.yml:178` — отдельным
+  # job'ом на чистом раннере — на тех же коммитах зелёный. Разница была ровно
+  # в соседстве с `test:cov`, и здесь она снимается тем же способом.
+  #
+  # ⚠️ Шаг `🔧 Setup Test Database` переехал сюда **без изменений**. Он
+  # избыточен (`test/setup-e2e.ts` сам создаёт базы-шаблоны, а
+  # `test/setup-after-env-e2e.ts` уводит каждый воркер в свою копию, так что
+  # `books_test` не читает ни один из них) — но снятие шага конвейера
+  # запрещено, и решается оно отдельно, а не попутно с починкой
+  # (решение арбитра от 03.09.2026, строка в `decisions-log.md`).
+  #
+  # ⚠️ Сервисы подняты свои: без базы и Redis шаг красен всегда, и «починка»
+  # свелась бы к его удалению. Health-check обязателен — без него шаги стартуют
+  # раньше, чем postgres принимает подключения.
+  e2e:
+    name: 🧪 E2E Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    # 🔴 `if:` у этого job'а нет намеренно (решение арбитра от 03.09.2026).
+    # Условие — это ровно тот способ, которым job тихо становится зелёным
+    # и пустым, а проверка при этом «есть». Пропуск e2e на ручном запуске
+    # разрешает `if:` job'а `deploy` ниже, и там он виден рядом с остальными
+    # разрешениями, а не спрятан здесь.
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: books_test
+        # `max_connections` здесь не поднять (`services` не принимает команду
+        # контейнера), поэтому расход подключений ограничен со стороны клиента —
+        # `DATABASE_POOL_MAX` выставляет `test/setup-after-env-e2e.ts`, 5 на воркер
+        # (`LEGACY-237`).
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: 🔧 Install Dependencies
+        run: |
+          yarn --frozen-lockfile
+          yarn prisma generate
+
+      # Ключ отличается от кэша job'а `test`: тот греется юнитами, этот —
+      # наборами e2e, и общий ключ давал бы гонку двух параллельных job'ов
+      # за одну запись.
+      - name: ♻️ Cache Jest transform
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jest_rs
+          key: jest-e2e-deploy-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            jest-e2e-deploy-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-
+            jest-e2e-deploy-${{ runner.os }}-
+
       - name: 🔧 Setup Test Database
         run: |
           yarn prisma migrate deploy
@@ -304,7 +404,7 @@ jobs:
 
       # `--no-cache` убран (был добавлен 23.07.2026 вместе с подъёмом лимита
       # памяти — причина в коммите не записана, а транспиляция всех наборов заново
-      # стоит минуты). Кэш ts-jest живёт между прогонами через actions/cache ниже;
+      # стоит минуты). Кэш ts-jest живёт между прогонами через actions/cache выше;
       # лимит памяти остаётся, так что прежняя защита от OOM не тронута.
       # 🔴 `test:e2e:serial` содержит `--runInBand`, который **переопределяет**
       # `maxWorkers` из конфига: с ним параллельность из `jest-e2e.json` не
@@ -537,16 +637,26 @@ jobs:
     name: 🚀 Deploy to Production
     runs-on: ubuntu-22.04
     timeout-minutes: 30
-    # Ждёт троих: тесты больше не блокируют сборку, но по-прежнему блокируют выкат,
-    # а `ci_gate` держит требование зелёного `ci.yml` на самом коммите тега.
-    needs: [test, build, ci_gate]
+    # Ждёт четверых: тесты больше не блокируют сборку, но по-прежнему блокируют
+    # выкат, а `ci_gate` держит требование зелёного `ci.yml` на самом коммите тега.
+    # 🔴 `e2e` в списке с 03.09.2026 (`LEGACY-364`): набор переехал из job'а `test`
+    # отдельным job'ом, и без него здесь выкат уходил бы на прод, не дождавшись e2e
+    # вовсе — то есть починка красноты обернулась бы снятием проверки с пути выката.
+    needs: [test, e2e, build, ci_gate]
     # LEGACY-222. `skip_tests == 'true'`, а не сам вход: строка `'false'` истинна, и выкат
     # считал пропуск проверок разрешённым на каждом ручном запуске. Теперь пропуск проходит
     # только по осознанно поставленной галке, а на push и теге требуется `test == 'success'`.
     # `ci_gate` на ручном запуске пропускается, и `skipped` здесь — разрешение, а не отказ;
     # `failure` и `cancelled` останавливают выкат. Перечислены допустимые значения, а не
     # исключены недопустимые: новое состояние job'ы должно ошибаться в безопасную сторону.
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.ci_gate.result == 'success' || needs.ci_gate.result == 'skipped') }}
+    #
+    # 🔴 `needs.e2e.result` перечислен **явно**, и это не дублирование `needs`.
+    # `!cancelled()` снимает неявный гейт «все зависимости зелены»: с ним job
+    # запускается и при упавшей зависимости. То есть без этой скобки перенос
+    # e2e отдельным job'ом (`LEGACY-364`) снял бы набор с пути выката целиком —
+    # красные e2e перестали бы останавливать прод, а выглядело бы это как
+    # починка красноты.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.e2e.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.ci_gate.result == 'success' || needs.ci_gate.result == 'skipped') }}
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://${{ vars.PRODUCTION_DOMAIN }}
@@ -954,10 +1064,10 @@ jobs:
     name: 📢 Notifications
     runs-on: ubuntu-22.04
     timeout-minutes: 10
-    # `test` в списке намеренно: `deploy` зависит от него (`needs: [test, build]`),
-    # и при красных тестах получает `skipped`. Без `test` здесь сообщение называло
-    # бы стадией «выкат», а сломаны были бы тесты — человек шёл бы смотреть не туда.
-    needs: [test, build, deploy]
+    # `test` и `e2e` в списке намеренно: `deploy` зависит от обоих, и при красных
+    # тестах получает `skipped`. Без них здесь сообщение называло бы стадией «выкат»,
+    # а сломаны были бы тесты — человек шёл бы смотреть не туда.
+    needs: [test, e2e, build, deploy]
     if: always()
 
     steps:
@@ -1051,11 +1161,15 @@ jobs:
       # и свободный ввод `workflow_dispatch` вида `x" "$(...)` исполнился бы прямо здесь,
       # в шаге с токеном в окружении.
       - name: 🚨 Notify Failure
-        if: ${{ !cancelled() && (needs.test.result == 'failure' || needs.build.result != 'success' || needs.deploy.result != 'success') }}
+        # 🔴 `needs.e2e.result` добавлен 03.09.2026 вместе с переездом набора
+        # (`LEGACY-364`): без него отказ e2e не поднимал уведомление вовсе, если
+        # `deploy` при этом получал `skipped`, — выкат вставал молча.
+        if: ${{ !cancelled() && (needs.test.result == 'failure' || needs.e2e.result == 'failure' || needs.build.result != 'success' || needs.deploy.result != 'success') }}
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
           TEST_RESULT: ${{ needs.test.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           VERSION: ${{ needs.build.outputs.version }}
@@ -1067,6 +1181,12 @@ jobs:
           # остальные после неё получают `skipped` и о причине ничего не говорят.
           if [[ "${TEST_RESULT}" == "failure" ]]; then
             STAGE="проверки (${TEST_RESULT})"
+          # 🔴 `LEGACY-364`. Отдельная стадия, а не молчание: с переездом набора
+          # отдельным job'ом упавшие e2e оставляют `deploy` в `skipped`, и без этой
+          # ветки сообщение называло бы стадией «выкат» - человек шёл бы смотреть
+          # логи выката, которого не было.
+          elif [[ "${E2E_RESULT}" == "failure" ]]; then
+            STAGE="e2e (${E2E_RESULT})"
           elif [[ "${BUILD_RESULT}" != "success" ]]; then
             STAGE="сборка (${BUILD_RESULT})"
           else
