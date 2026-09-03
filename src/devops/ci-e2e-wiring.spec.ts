@@ -169,6 +169,23 @@ const deployServiceImages = (): Record<string, string> => {
   return images;
 };
 
+/**
+ * Тело job'а из `deploy.yml`, который действительно гоняет e2e. Якорь — команда,
+ * а не имя job'а: имя переписывается свободно, `yarn test:e2e` — нет.
+ *
+ * ⚠️ Отдельная функция, потому что этот якорь уже правили: до 03.09.2026
+ * `deployServiceImages()` брала первый `services:` в файле, и с переездом набора
+ * отдельным job'ом сверка образов начала смотреть на чужой job, оставаясь зелёной.
+ */
+const deployE2eJob = (): string[] => {
+  const lines = readFileSync(join(WORKFLOWS_DIR, 'deploy.yml'), 'utf8').split(/\r?\n/);
+  const entries = [...jobs(lines).entries()].filter(([, body]) =>
+    stepsOf(body).some((step) => /\byarn\s+test:e2e/.test(runOf(step))),
+  );
+  expect(entries).toHaveLength(1);
+  return entries[0][1];
+};
+
 const JOBS = jobs();
 /** Job, который действительно зовёт e2e. Он же — предмет всей спеки. */
 const e2eJobs = [...JOBS.entries()].filter(([, body]) =>
@@ -339,6 +356,55 @@ describe('DevOps: e2e на pull request (LEGACY-149)', () => {
 
     // Адрес ведёт в поднятый сервис, а не мимо него.
     expect(mapUnder(step, 'env').DATABASE_URL).toMatch(/@localhost:5432\//);
+  });
+
+  /**
+   * 🔴 `LEGACY-364`, решение арбитра от 03.09.2026. Шаг подготовки базы
+   * в job'е выката остаётся насовсем, и стережёт его этот кейс.
+   *
+   * Шаг избыточен: `test/setup-e2e.ts` сам создаёт шаблонную базу и копирует
+   * её каждому воркеру, `test/setup-after-env-e2e.ts` уводит воркера в свою
+   * копию — содержимое `books_test` не читает никто. Но снятие шага конвейера
+   * запрещено полностью, а цена ошибки в оценке «мёртвости» — красный выкат
+   * на теге против десятков секунд прогона.
+   *
+   * ⚠️ Без этого кейса решение держалось одним комментарием: семь строк шага (`sed -n '403,409p' .github/workflows/deploy.yml`)
+   * снимаются, `lint`, `typecheck` и `test` остаются зелёными, `commit-gate.js`
+   * пропускает (под `W01`-`W08` они не подпадают), тег уезжает без шага,
+   * а комментарий рядом начинает лгать.
+   */
+  it('job выката с e2e держит шаг подготовки базы', () => {
+    const body = deployE2eJob();
+
+    // Ищется по командам, а не по имени шага: имя переписывается свободно,
+    // команды — нет.
+    const setup = stepsOf(body).find((step) => /\bprisma\s+migrate\s+deploy\b/.test(runOf(step)));
+    expect(setup).toBeDefined();
+
+    // Команда сверяется целиком, а не вхождением подстроки: хвост, глушащий код
+    // возврата (`; exit 0` и его родня из `W01`-`W08`), оставляет обе команды
+    // на месте и превращает шаг в декорацию.
+    expect(runOf(setup!)).toBe('yarn prisma migrate deploy\nyarn prisma db seed');
+
+    // Учётные данные сверяются с поднятым сервисом, а не с литералом: смена
+    // пароля или имени базы в одном месте из двух оставляет `yarn test` зелёным
+    // и краснеет шестиминутным прогоном на теге.
+    const services = blockAt(
+      body,
+      body.findIndex((l) => /^ {4}services:\s*$/.test(l)),
+    );
+    const postgresAt = services.findIndex((l) => /^ {6}postgres:\s*$/.test(l));
+    expect(postgresAt).toBeGreaterThan(-1);
+    const postgres = mapUnder(blockAt(services, postgresAt), 'env');
+
+    const env = mapUnder(setup!, 'env');
+    expect(env.DATABASE_URL).toBeDefined();
+    const url = new URL(env.DATABASE_URL);
+    expect(url.username).toBe(postgres.POSTGRES_USER);
+    expect(url.password).toBe(postgres.POSTGRES_PASSWORD);
+    expect(url.pathname).toBe(`/${postgres.POSTGRES_DB}`);
+    expect(url.port).toBe('5432');
+    expect(env.NODE_ENV).toBe('test');
   });
 
   // Прогон именно `test:e2e:parallel`, а не `:serial`: `--runInBand` в последнем
