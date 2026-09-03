@@ -1,10 +1,27 @@
-import { execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import request from 'supertest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+
+/**
+ * 🔴 `LEGACY-364`. Сид зовётся **асинхронно**, и это не стилистика.
+ *
+ * `execSync` блокирует цикл событий на всё время сида — на CI это десятки секунд.
+ * Пока цикл стоит, соединения ioredis не обслуживаются: сервер рвёт молчащие,
+ * а клиент уходит в переподключение. У связи BullMQ стоит `maxRetriesPerRequest: null`
+ * (обязателен для блокирующих операций), поэтому команды на переподключающейся связи
+ * ждут **вечно** — и `connection.quit()` в `QueueModule.onModuleDestroy` уже не
+ * возвращается. Отсюда `Exceeded timeout of 30000 ms for a hook` в `afterAll` при
+ * всех зелёных тестах и живые `TCPSocketWrap` с таймерами ioredis в логе сторожа.
+ *
+ * Локально отказ не воспроизводится: сид по быстрой машине укладывается в секунды,
+ * и связи переживают паузу. Отсюда и разница «локально зелено, на CI красно».
+ */
+const runSeed = promisify(exec);
 
 /**
  * Что штатный сид (`prisma/seed.ts`) действительно кладёт в пустую базу.
@@ -172,10 +189,10 @@ describe('Seeded dataset (e2e)', () => {
       select: { updatedAt: true },
     });
 
-    // ⚠️ `timeout` обязателен: `execSync` блокирует цикл событий, и заявленный ниже
-    // таймаут jest на него не действует — зависший сид повесил бы воркер до лимита job.
-    execSync('npx prisma db seed', {
-      stdio: 'pipe',
+    // ⚠️ `timeout` остаётся: зависший сид иначе висел бы до лимита job'а. Теперь
+    // он работает вместе с таймаутом теста (180 с ниже), а не вместо него —
+    // асинхронный вызов цикл событий не держит.
+    await runSeed('npx prisma db seed', {
       env: { ...process.env },
       timeout: 120_000,
     });

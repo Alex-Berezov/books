@@ -1,4 +1,5 @@
-import { Module, Provider, OnModuleDestroy, Inject, Optional } from '@nestjs/common';
+import { Module, Provider, OnModuleDestroy, Inject, Optional, Logger } from '@nestjs/common';
+import { closeWithin } from '../../shared/shutdown/graceful-close';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BackgroundJobsRegistryModule } from '../background-jobs/background-jobs-registry.module';
 import {
@@ -145,19 +146,35 @@ export class QueueModule implements OnModuleDestroy {
     @Optional() @Inject(REDIS_CONNECTION) private readonly connection?: IORedis,
   ) {}
 
+  private readonly logger = new Logger(QueueModule.name);
+
+  /**
+   * 🔴 `LEGACY-364`. Закрытие обязано **завершаться**, а не только быть вежливым.
+   *
+   * Прежняя версия шла четырьмя голыми `await` подряд. Отказ любого из первых трёх
+   * не давал дойти до связи, а `quit()` на переподключающейся связи не возвращается
+   * вовсе: это команда, а у связи BullMQ стоит `maxRetriesPerRequest: null`
+   * (обязателен для блокирующих операций), поэтому команды ждут восстановления вечно.
+   *
+   * ⚠️ Ограничены **все** закрытия, а не только `quit()`. `Worker` дублирует связь
+   * для блокирующих операций (`shared: false`) и в `close()` делает `quit()` уже
+   * по дублю — то есть тот же тупик наступал бы раньше, чем дело дойдёт до связи
+   * модуля, и защита одного `quit()` не спасала. Причина ограничения — в
+   * `shared/shutdown/graceful-close.ts`.
+   *
+   * `disconnect()` зовётся всегда: он рвёт сокет немедленно и снимает таймеры
+   * переподключения, тогда как `quit()` ждёт ответа сервера.
+   */
   async onModuleDestroy() {
-    // Graceful shutdown: close worker, queue, events, and Redis connection
-    if (this.worker) {
-      await this.worker.close();
-    }
-    if (this.queueEvents) {
-      await this.queueEvents.close();
-    }
-    if (this.queue) {
-      await this.queue.close();
-    }
-    if (this.connection) {
-      await this.connection.quit();
-    }
+    await closeWithin(this.logger, 'demo worker', () => this.worker?.close());
+    await closeWithin(this.logger, 'demo queue events', () => this.queueEvents?.close());
+    await closeWithin(this.logger, 'demo queue', () => this.queue?.close());
+
+    const connection = this.connection;
+    if (!connection) return;
+
+    await closeWithin(this.logger, 'redis quit', () => connection.quit());
+    // Идемпотентен и синхронен: повторный вызов после успешного `quit()` безвреден.
+    connection.disconnect();
   }
 }

@@ -1,4 +1,5 @@
-import { Module, Provider, OnModuleDestroy, Inject, Optional } from '@nestjs/common';
+import { Module, Provider, OnModuleDestroy, Inject, Optional, Logger } from '@nestjs/common';
+import { closeWithin } from '../../shared/shutdown/graceful-close';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Queue, QueueOptions, Worker, WorkerOptions } from 'bullmq';
 import IORedis from 'ioredis';
@@ -187,20 +188,24 @@ export class MediaJobsModule implements OnModuleDestroy {
     @Optional() @Inject(MEDIA_CLEANUP_WORKER) private readonly cleanupWorker?: Worker,
   ) {}
 
+  private readonly shutdownLogger = new Logger(MediaJobsModule.name);
+
+  /**
+   * 🔴 `LEGACY-364`, тот же класс, что и в `QueueModule`. Прежняя версия глушила
+   * отказ через `catch { /* ignore *\/ }`, но глушение ловит **отказ**, а не
+   * **зависание**: `Worker.close()` дублирует связь для блокирующих операций и
+   * делает по дублю `quit()`, который на переподключающейся связи не возвращается
+   * никогда (`maxRetriesPerRequest: null` обязателен для BullMQ). Один такой
+   * воркер вешал всё выключение приложения.
+   *
+   * Связь здесь не закрывается намеренно: она общая и принадлежит `QueueModule`.
+   */
   async onModuleDestroy() {
-    for (const resource of [this.probeWorker, this.cleanupWorker]) {
-      try {
-        if (resource) await resource.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    for (const resource of [this.probeQueue, this.cleanupQueue]) {
-      try {
-        if (resource) await resource.close();
-      } catch {
-        /* ignore */
-      }
-    }
+    await closeWithin(this.shutdownLogger, 'media probe worker', () => this.probeWorker?.close());
+    await closeWithin(this.shutdownLogger, 'media cleanup worker', () =>
+      this.cleanupWorker?.close(),
+    );
+    await closeWithin(this.shutdownLogger, 'media probe queue', () => this.probeQueue?.close());
+    await closeWithin(this.shutdownLogger, 'media cleanup queue', () => this.cleanupQueue?.close());
   }
 }
