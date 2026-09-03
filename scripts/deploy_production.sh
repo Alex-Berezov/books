@@ -103,8 +103,11 @@ EXAMPLES:
     # Deploy skipping backup
     ./scripts/deploy_production.sh --version main --no-backup
     
-    # Deploy from CI (Git already updated, pull image)
-    ./scripts/deploy_production.sh --image-tag main-abc1234 --skip-git-update --pull
+    # Deploy from CI (Git already updated, pull image).
+    # --pull requires --registry: without it the image name has no registry prefix
+    # and Docker looks for it in Docker Hub (LEGACY-358).
+    ./scripts/deploy_production.sh --image-tag main-abc1234 --skip-git-update \
+        --registry ghcr.io/alex-berezov/books --pull
     
     # Rollback to previous version
     ./scripts/deploy_production.sh --rollback
@@ -184,6 +187,18 @@ fi
 # Parameter validation
 if [[ "$ROLLBACK" == false && -z "$IMAGE_TAG" ]]; then
     log_error "Image tag not specified. Use --image-tag, --version or --rollback"
+    echo "Use --help for usage information"
+    exit 1
+fi
+
+# 🔴 `LEGACY-358`. Без `--registry` имя образа собирается как `books-app:$IMAGE_TAG` —
+# Docker ищет его в Docker Hub и падает `pull access denied`. Отказ стоит ЗДЕСЬ, рядом
+# с разбором аргументов, а не в `build_image`: тот зовётся четвёртым, после `create_backup`
+# и `save_current_state`, то есть к моменту падения дамп снят, а точка отката уже переписана
+# на работающий сейчас (возможно, сломанный) контейнер — и следующий `--rollback` поднял бы
+# его же, отчитавшись успехом. Проверка аргументов машину не трогает вовсе.
+if [[ "$PULL_IMAGE" == true && "$REGISTRY" == "localhost" ]]; then
+    log_error "--pull requires --registry (e.g. --registry ghcr.io/<owner>/<repo>) - the default 'localhost' cannot be pulled from."
     echo "Use --help for usage information"
     exit 1
 fi
@@ -396,7 +411,26 @@ save_current_state() {
     if [[ -z "$current_commit" ]]; then
         current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
     fi
-    local current_tag=$(git describe --tags --exact-match 2>/dev/null || echo "no-tag")
+    # 🔴 `LEGACY-357`. Тег снимается с **той ревизии, что записана выше**, а не с рабочего
+    # дерева. Голый `git describe --tags --exact-match` на пути CI описывает уже выкатываемую
+    # ревизию: шаг `🚀 Deploy to Server` делает `git checkout --detach --force <github.sha>`
+    # ДО запуска скрипта (`deploy.yml`), а триггер выката — push тега `v*`. То есть поле `tag`
+    # несло ту же версию, что и `image_tag`, — ровно ту, ОТ которой откатываются. Для `commit`
+    # это уже было исправлено `DEPLOY_PREVIOUS_SHA`, для `tag` — нет.
+    #
+    # ⚠️ Описывается только та ревизия, чья «прежность» доказана: либо её назвал вызывающий
+    # (`DEPLOY_PREVIOUS_SHA`), либо дерево ещё не двигали (`--skip-git-update` не задан,
+    # `update_code` идёт после нас). В остальных случаях `current_commit` пришёл из
+    # `git rev-parse HEAD` уже после чужого чекаута и указывает на выкатываемую ревизию —
+    # тега с неё снимать нельзя, честнее оставить `no-tag` и откатиться на короткий sha.
+    local current_tag="no-tag"
+    if [[ -n "${DEPLOY_PREVIOUS_SHA:-}" || "$SKIP_GIT_UPDATE" == false ]]; then
+        if [[ -n "$current_commit" && "$current_commit" != "unknown" ]]; then
+            current_tag=$(git describe --tags --exact-match "$current_commit" 2>/dev/null || echo "no-tag")
+        fi
+    else
+        log_warning "Previous revision was not provided and the tree may already be moved - saving rollback point without a version tag"
+    fi
     # 🔴 Идентификатор образа, а не его тег. Теги переставляются каждым выкатом
     # (`books-app:prod` — тот самый, который поднимает docker-compose.prod.yml), поэтому
     # откат «на books-app:prod» был бы откатом в никуда. ID неизменен, и именно он —
@@ -479,6 +513,7 @@ save_current_state() {
     rollback_payload=$(cat << EOF
 {
     "timestamp": "$(date -Iseconds)",
+    "format": 2,
     "commit": "$current_commit",
     "tag": "$current_tag",
     "image": "$current_image",
@@ -521,11 +556,25 @@ update_code() {
     elif git rev-parse --verify "$VERSION" &>/dev/null; then
     log_info "Switching to commit: $VERSION"
         execute "git checkout $VERSION"
+    elif [[ "$DRY_RUN" == true ]]; then
+        # `LEGACY-359`. В сухом прогоне `git fetch` выше только напечатан, поэтому только что
+        # опубликованного тега в локальной копии ещё нет — и отказ здесь говорил бы о сухом
+        # режиме, а не о машине. Предпросмотр выката валиться на этом не должен.
+    log_warning "[DRY-RUN] Version not found locally: $VERSION (git fetch was printed, not executed)"
     else
     log_error "Version not found: $VERSION"
         exit 1
     fi
     
+    # `LEGACY-359`, второй след. `execute` в DRY-RUN только печатает `git checkout`,
+    # а не выполняет его, поэтому `git rev-parse HEAD` ниже безусловно возвращал
+    # прежний (не изменившийся) коммит — сухой прогон отчитывался «Code updated to
+    # commit: <HEAD>», хотя дерево осталось на месте, а не на целевой ревизии.
+    if [[ "$DRY_RUN" == true ]]; then
+    log_info "[DRY-RUN] Would update code to target revision: $VERSION"
+        return 0
+    fi
+
     local new_commit=$(git rev-parse HEAD)
     log_success "Code updated to commit: $new_commit"
 }
@@ -645,22 +694,29 @@ deploy_services() {
     # Starting new services / updating existing ones (avoids downtime and container conflicts)
     execute "docker compose -f docker-compose.prod.yml up -d"
     
+    # `LEGACY-359`. Проверка здоровья пропускается ЦЕЛИКОМ, вместе с ожиданием, а не
+    # заглушкой внутри цикла. Раньше ветка DRY-RUN стояла в теле цикла и делала `break`:
+    # код ниже — `log_error "Service not healthy..."` и `return 1` — не знает, что вышли
+    # мы по DRY-RUN, а не по исчерпанным попыткам, и отчитывался о провале всегда. Отсюда
+    # красный `--rollback --dry-run` 02.09.2026 на исправном проде. Выход стоит выше
+    # `sleep 15`: сухой прогон не ждёт запуска того, чего не запускал.
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[DRY-RUN] Waiting for services and health check skipped"
+        return 0
+    fi
+
     # Waiting for readiness
     log "Waiting for services to become ready..."
-    
+
     # Initial delay for application startup and first health check
     log_info "Waiting 15 seconds for application startup..."
     sleep 15
-    
+
     local max_attempts=60  # Increased from 30 to 60 attempts (maximum 5 minutes)
     local attempt=0
-    
+
     while [[ $attempt -lt $max_attempts ]]; do
-        if [[ "$DRY_RUN" == true ]]; then
-            log_info "[DRY-RUN] Service health check"
-            break
-        fi
-        
+
     # Checking Docker healthcheck status of the 'app' container.
     # The status read must never abort the deployment: under `set -o pipefail` a hiccup in
     # `docker compose ps` or `jq` would otherwise kill the wait instead of retrying it.
@@ -862,6 +918,35 @@ perform_rollback() {
     log_warning "Previous revision unknown - rolling back the image only"
     fi
 
+    # `LEGACY-357`. `--rollback` идёт без `--image-tag`, `IMAGE_TAG` пуст, и
+    # `deploy_services` ниже экспортирует его как есть в `APP_VERSION` — прод после
+    # отката отвечает `version: "unknown"`, хотя откатывается на известный образ.
+    # `.rollback_info.tag` — это git-тег, снятый в `save_current_state` ДО текущего
+    # выката, то есть версия, к которой откат и возвращает; `.image_tag` в том же
+    # файле — версия, которая этот выкат СОЗДАЛА (та, от которой откатываемся), и для
+    # `APP_VERSION` не годится.
+    #
+    # ⚠️ И даже прочитанный `.tag` берётся не на веру: файлы, записанные до этой правки,
+    # несут в нём выкатываемую (то есть сломанную) версию, и подставить её значило бы
+    # отвечать `version` от той сборки, от которой откатились. Это хуже прежнего `unknown`:
+    # шаг `📊 Verify Deployment` сверяет ровно это поле и позеленел бы на неподнявшемся
+    # контейнере (`LEGACY-326`). Отличает такой файл поле `format`, а не сходство значений:
+    # «`.tag` равен `.image_tag`» бывает и законно — при повторном выкате того же тега.
+    local rollback_format=$(jq -r '.format // 0' "$ROLLBACK_FILE" 2>/dev/null)
+    local rollback_tag=$(jq -r '.tag // ""' "$ROLLBACK_FILE" 2>/dev/null)
+    if [[ ! "$rollback_format" =~ ^[0-9]+$ ]] || (( rollback_format < 2 )); then
+        log_warning "Rollback point predates versioned rollback info (format '$rollback_format') - its tag is not trusted"
+        rollback_tag=""
+    fi
+    if [[ -n "$rollback_tag" && "$rollback_tag" != "null" && "$rollback_tag" != "no-tag" ]]; then
+        IMAGE_TAG="$rollback_tag"
+    elif [[ -n "$rollback_version" && "$rollback_version" != "null" && "$rollback_version" != "unknown" ]]; then
+        IMAGE_TAG="rolled-back-to-${rollback_version:0:7}"
+    else
+        IMAGE_TAG="rolled-back-unknown"
+    fi
+    log_info "Rollback will report version: $IMAGE_TAG"
+
     execute "docker tag $rollback_image_id books-app:prod"
     execute "docker tag $rollback_image_id books-app:latest"
 
@@ -902,7 +987,17 @@ cleanup_old_images() {
 send_notification() {
     local status=$1
     local message=$2
-    
+
+    # `LEGACY-359`, третий пункт записи. Сухой прогон уведомлений не шлёт вовсе.
+    # До правки `--rollback --dry-run` слал `ERROR` при исправном проде; закрыть это
+    # одним лишь зелёным кодом возврата значило бы заменить ложную тревогу ложным
+    # успехом — тот же журнал, то же «прод отчитался», только теперь про удавшийся
+    # откат, которого не было. Пометка обязана быть видна и в логе.
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[DRY-RUN] Notification suppressed: $status - $message"
+        return 0
+    fi
+
     log_info "Notification: $status - $message"
     
     # Possible future integrations:

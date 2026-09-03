@@ -315,3 +315,252 @@ describe('scripts/deploy_production.sh: точка отката (LEGACY-325)', (
     expect(Math.max(encode, empty)).toBeLessThan(write);
   });
 });
+
+/**
+ * Версия, которую прод сообщает о себе после отката (`LEGACY-357`).
+ *
+ * `--rollback` идёт без `--image-tag`, поэтому `IMAGE_TAG` пуст, `deploy_services`
+ * экспортирует его как есть, а `docker-compose.prod.yml` подставляет умолчание
+ * `APP_VERSION: ${APP_VERSION:-unknown}`. Наблюдалось живьём 02.09.2026: до отката
+ * `/api/health/liveness` отдавал `v1.0.26`, сразу после успешного отката — `unknown`.
+ *
+ * 🔴 Ошибиться здесь дороже, чем не чинить вовсе. Поле `.tag` точки отката до правки
+ * писалось `git describe` по рабочему дереву, а на пути CI дерево к этому моменту уже
+ * переведено на выкатываемую ревизию (`deploy.yml`, `git checkout --detach --force`
+ * перед вызовом скрипта с `--skip-git-update`). Значит `.tag` нёс версию, ОТ которой
+ * откатываются, и подстановка её в `APP_VERSION` заменила бы честное `unknown`
+ * правдоподобной ложью: шаг `Verify Deployment` сверяет ровно это поле и промолчал бы
+ * на неподнявшемся контейнере (`LEGACY-326`).
+ */
+describe('scripts/deploy_production.sh: версия после отката (LEGACY-357)', () => {
+  it('тег точки отката снимается с сохранённой ревизии, а не с рабочего дерева', () => {
+    const body = functionBody('save_current_state');
+
+    // Ревизия у `save_current_state` своя (`DEPLOY_PREVIOUS_SHA`), и тег обязан
+    // описывать именно её. Голый `git describe --tags --exact-match` без аргумента —
+    // это возврат дефекта: на пути CI он опишет выкатываемую ревизию.
+    expect(body).toContain('git describe --tags --exact-match "$current_commit"');
+    expect(body).not.toMatch(/git describe --tags --exact-match 2>/);
+  });
+
+  it('откат берёт версию из точки отката и подставляет её до подъёма сервисов', () => {
+    const rollback = functionBody('perform_rollback');
+
+    const readTag = rollback.indexOf("jq -r '.tag");
+    expect(readTag).toBeGreaterThanOrEqual(0);
+
+    const setTag = rollback.indexOf('IMAGE_TAG="$rollback_tag"');
+    expect(setTag).toBeGreaterThan(readTag);
+
+    // Подстановка обязана случиться ДО `deploy_services` — именно он экспортирует
+    // `APP_VERSION` в окружение поднимаемых контейнеров.
+    const deployCall = rollback.lastIndexOf('deploy_services');
+    expect(deployCall).toBeGreaterThan(setTag);
+  });
+
+  /**
+   * 🔴 Второй рубеж под тот же дефект: файл, записанный старой версией скрипта, несёт
+   * в `.tag` выкатываемую версию. Отличать такой файл сходством `.tag` и `.image_tag`
+   * нельзя — совпадение бывает и законным, при повторном выкате того же тега; отличает
+   * его поле `format`, которое старая версия не писала вовсе.
+   */
+  it('тег из файла старого формата не подставляется', () => {
+    const save = functionBody('save_current_state');
+    expect(save).toContain('"format": 2');
+
+    const rollback = functionBody('perform_rollback');
+    expect(rollback).toContain("jq -r '.format");
+
+    const check = rollback.indexOf('rollback_format < 2');
+    expect(check).toBeGreaterThanOrEqual(0);
+
+    const endOfIf = rollback.slice(check).search(/\n\s*fi\b/);
+    expect(endOfIf).toBeGreaterThan(0);
+    const branch = rollback.slice(check, check + endOfIf);
+    expect(branch).toContain('log_warning');
+    expect(branch).toContain('rollback_tag=""');
+
+    // Сброс обязан стоять до подстановки, иначе он ничего не решает.
+    expect(check).toBeLessThan(rollback.indexOf('IMAGE_TAG="$rollback_tag"'));
+
+    // 🔴 И сходство значений сторожем быть не должно: законный повторный выкат того же
+    // тега писал бы `.tag` == `.image_tag`, и версия терялась бы на ровном месте.
+    expect(rollback).not.toContain('rolled_away_tag');
+  });
+
+  /**
+   * ⚠️ Тег снимается только с ревизии, чья «прежность» доказана: её назвал вызывающий
+   * (`DEPLOY_PREVIOUS_SHA`) либо дерево ещё не двигали. Иначе `current_commit` пришёл
+   * из `git rev-parse HEAD` после чужого чекаута и указывает на выкатываемую ревизию.
+   */
+  it('тег не снимается с ревизии, которая может оказаться выкатываемой', () => {
+    const save = functionBody('save_current_state');
+
+    const guard = save.indexOf('-n "${DEPLOY_PREVIOUS_SHA:-}" || "$SKIP_GIT_UPDATE" == false');
+    expect(guard).toBeGreaterThanOrEqual(0);
+
+    const describe = save.indexOf('git describe --tags --exact-match "$current_commit"');
+    expect(describe).toBeGreaterThan(guard);
+  });
+
+  it('без годного тега версия всё равно называется, а не остаётся пустой', () => {
+    const rollback = functionBody('perform_rollback');
+    expect(rollback).toContain('rolled-back-to-${rollback_version:0:7}');
+    expect(rollback).toContain('rolled-back-unknown');
+  });
+
+  it('deploy_services экспортирует APP_VERSION до подъёма контейнеров', () => {
+    const deploy = functionBody('deploy_services');
+
+    const exportLine = deploy.indexOf('export APP_VERSION="$IMAGE_TAG"');
+    expect(exportLine).toBeGreaterThanOrEqual(0);
+
+    // 🔴 Порядок, а не наличие строки. `docker compose up -d` читает окружение в момент
+    // запуска: экспорт, съехавший ниже него, оставит контейнер без `APP_VERSION`, и
+    // `/api/health/liveness` снова начнёт отвечать `unknown` при зелёной проверке на текст.
+    const composeUp = deploy.indexOf('docker compose -f docker-compose.prod.yml up -d');
+    expect(composeUp).toBeGreaterThan(exportLine);
+  });
+});
+
+/**
+ * Ручной путь «поставить на прод конкретную версию» (`LEGACY-358`).
+ *
+ * `--pull` без `--registry` собирает имя как `books-app:$IMAGE_TAG` — Docker ищет его
+ * в Docker Hub и падает `pull access denied`. Дорог не сам отказ, а его место: `build_image`
+ * идёт четвёртым, после `create_backup` и `save_current_state`, то есть к моменту падения
+ * дамп снят, а точка отката переписана на работающий сейчас (возможно, сломанный) контейнер.
+ */
+describe('scripts/deploy_production.sh: --pull без реестра (LEGACY-358)', () => {
+  /** Текст скрипта вне функций: блок разбора и проверки аргументов. */
+  const topLevel = (): string => {
+    const start = LINES.findIndex((line) => line.startsWith('while [[ $# -gt 0 ]]'));
+    const end = LINES.findIndex((line) => line.startsWith('execute()'));
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return LINES.slice(start, end)
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
+  };
+
+  it('отказ стоит в проверке аргументов, до любой мутации машины', () => {
+    const head = topLevel();
+
+    const guard = head.indexOf('"$PULL_IMAGE" == true && "$REGISTRY" == "localhost"');
+    expect(guard).toBeGreaterThanOrEqual(0);
+
+    const endOfIf = head.slice(guard).search(/\n\s*fi\b/);
+    expect(endOfIf).toBeGreaterThan(0);
+    const branch = head.slice(guard, guard + endOfIf);
+    expect(branch).toContain('log_error');
+    expect(branch).toMatch(/exit 1/);
+  });
+
+  /**
+   * 🔴 Перенос проверки внутрь `build_image` возвращает половину дефекта: отказ снова
+   * случится после `create_backup` и `save_current_state`. Проверка на отсутствие —
+   * это и есть сторож переноса.
+   */
+  it('проверка не переехала обратно в build_image', () => {
+    const build = functionBody('build_image');
+    expect(build).not.toContain('--pull requires --registry');
+  });
+});
+
+/**
+ * Сухой прогон (`LEGACY-359`).
+ *
+ * `--rollback --dry-run` на исправном проде 02.09.2026 всегда падал: ветка DRY-RUN стояла
+ * в теле цикла ожидания и делала `break`, а код после цикла безусловно писал
+ * «Service not healthy» и `return 1`. Плюс ложный `Notification: ERROR` и `update_code`,
+ * отчитывающийся о «обновлении» до реального неизменившегося `HEAD`.
+ */
+describe('scripts/deploy_production.sh: сухой прогон (LEGACY-359)', () => {
+  it('проверка здоровья пропускается целиком, до ожидания и цикла', () => {
+    const deploy = functionBody('deploy_services');
+
+    const dryRunCheck = deploy.indexOf('"$DRY_RUN" == true');
+    expect(dryRunCheck).toBeGreaterThanOrEqual(0);
+
+    const endOfIf = deploy.slice(dryRunCheck).search(/\n\s*fi\b/);
+    expect(endOfIf).toBeGreaterThan(0);
+    const branch = deploy.slice(dryRunCheck, dryRunCheck + endOfIf);
+    expect(branch).toMatch(/return 0/);
+    expect(branch).not.toContain('break');
+
+    // Выход стоит до `sleep 15` и до цикла: сухой прогон не ждёт запуска того,
+    // чего не запускал, и не проваливается по исчерпанным попыткам.
+    const sleepCall = deploy.indexOf('sleep 15');
+    expect(sleepCall).toBeGreaterThan(dryRunCheck + endOfIf);
+    const whileLoop = deploy.indexOf('while [[ $attempt -lt $max_attempts ]]');
+    expect(whileLoop).toBeGreaterThan(dryRunCheck + endOfIf);
+  });
+
+  it('живой путь по-прежнему ждёт здоровья циклом, а не выходит успехом', () => {
+    const deploy = functionBody('deploy_services');
+
+    // 🔴 Страховка от «починки», снимающей ожидание целиком: цикл, его потолок
+    // и отказ после исчерпанных попыток обязаны остаться на месте.
+    expect(deploy).toMatch(/max_attempts=60/);
+    expect(deploy).toMatch(/while \[\[ \$attempt -lt \$max_attempts \]\]/);
+    expect(deploy).toContain('log_error "Service not healthy after $max_attempts attempts"');
+  });
+
+  /**
+   * ⚠️ `git fetch` в сухом прогоне только печатается, поэтому только что опубликованного
+   * тега в локальной копии нет — и `exit 1` здесь говорил бы о сухом режиме, а не о машине.
+   */
+  it('ненайденная ревизия в сухом прогоне не валит предпросмотр', () => {
+    const update = functionBody('update_code');
+
+    const dryBranch = update.indexOf('elif [[ "$DRY_RUN" == true ]]');
+    expect(dryBranch).toBeGreaterThan(0);
+
+    const hardFail = update.indexOf('log_error "Version not found');
+    expect(hardFail).toBeGreaterThan(dryBranch);
+
+    const branch = update.slice(dryBranch, hardFail);
+    expect(branch).toContain('log_warning');
+    expect(branch).not.toMatch(/exit 1/);
+  });
+
+  it('update_code сообщает целевую ревизию, а не реальный HEAD', () => {
+    const update = functionBody('update_code');
+
+    // ⚠️ Якорь на текст самой ветки, а не на `"$DRY_RUN" == true`: таких проверок
+    // в функции две (вторая — про ненайденную локально ревизию), и `indexOf`
+    // молча брал бы первую, проверяя не ту ветку.
+    const dryRunReport = update.indexOf('[DRY-RUN] Would update code to target revision');
+    expect(dryRunReport).toBeGreaterThan(0);
+
+    const realCommit = update.indexOf('git rev-parse HEAD)');
+    expect(realCommit).toBeGreaterThan(dryRunReport);
+
+    const endOfIf = update.slice(dryRunReport).search(/\n\s*fi\b/);
+    expect(endOfIf).toBeGreaterThan(0);
+    const branch = update.slice(dryRunReport, dryRunReport + endOfIf);
+    expect(branch).toContain('$VERSION');
+    expect(branch).toMatch(/return 0/);
+  });
+
+  /**
+   * 🔴 Ложная тревога, заменённая ложным успехом, — тот же дефект. Сухой прогон отката
+   * без этой ветки печатал бы «Notification: SUCCESS - Rollback completed successfully»
+   * там, где никакого отката не было.
+   */
+  it('уведомления в сухом прогоне не уходят и помечены', () => {
+    const notify = functionBody('send_notification');
+
+    const dryRunCheck = notify.indexOf('"$DRY_RUN" == true');
+    expect(dryRunCheck).toBeGreaterThanOrEqual(0);
+
+    const realSend = notify.indexOf('log_info "Notification: $status');
+    expect(realSend).toBeGreaterThan(dryRunCheck);
+
+    const endOfIf = notify.slice(dryRunCheck).search(/\n\s*fi\b/);
+    expect(endOfIf).toBeGreaterThan(0);
+    const branch = notify.slice(dryRunCheck, dryRunCheck + endOfIf);
+    expect(branch).toContain('[DRY-RUN]');
+    expect(branch).toMatch(/return 0/);
+  });
+});
