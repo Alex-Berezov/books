@@ -39,8 +39,10 @@ describe('PublicModule', () => {
   let moduleRef: TestingModule | undefined;
 
   afterEach(async () => {
-    // Контейнер закрывается ровно один раз: `PrismaService.onModuleDestroy` зовёт `pool.end()`,
-    // а второй такой вызов у `pg` — исключение, а не пустая операция.
+    // Контейнер закрывается ровно один раз. С 03.09.2026 (`LEGACY-364`)
+    // `PrismaService.onModuleDestroy` идемпотентен и второй вызов переживает,
+    // но полагаться на это здесь незачем: у `pg` голый `pool.end()` дважды —
+    // по-прежнему исключение, а не пустая операция.
     const opened = moduleRef;
     moduleRef = undefined;
     if (opened) await opened.close();

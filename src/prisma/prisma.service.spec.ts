@@ -11,6 +11,15 @@ type ProbedPool = {
 };
 
 /**
+ * Пул сервиса — поле приватное, и добраться до него можно только приведением,
+ * то есть с выключенной проверкой типов. Поэтому доступ здесь **один на файл**:
+ * переименование поля компилятор не поймает ни в одной копии, и пропущенная
+ * копия покраснела бы в чужом блоке, а не в том, который сломали.
+ */
+const poolOf = (service: PrismaService): ProbedPool =>
+  (service as unknown as { pool: ProbedPool }).pool;
+
+/**
  * `LEGACY-237`. Потолок на пул объявлялся параметром `connection_limit`
  * в строке подключения и не действовал: это параметр движка Prisma, а клиент
  * собран на драйверном адаптере — пул создаёт `pg`, и строку подключения он
@@ -29,9 +38,6 @@ type ProbedPool = {
  * написано всё правильно, читать её было некому.
  */
 describe('LEGACY-237 — размер пула задан и приходит из окружения', () => {
-  const poolOf = (service: PrismaService): ProbedPool =>
-    (service as unknown as { pool: ProbedPool }).pool;
-
   let service: PrismaService | undefined;
   const savedMax = process.env.DATABASE_POOL_MAX;
   const savedUrl = process.env.DATABASE_URL;
@@ -92,9 +98,6 @@ describe('LEGACY-237 — размер пула задан и приходит и
  * в том, чтобы у пула был конечный потолок ожидания при любом значении переменной.
  */
 describe('LEGACY-256 — ожидание свободного соединения конечно', () => {
-  const poolOf = (service: PrismaService): ProbedPool =>
-    (service as unknown as { pool: ProbedPool }).pool;
-
   let service: PrismaService | undefined;
   const savedTimeout = process.env.DATABASE_POOL_TIMEOUT_MS;
   const savedUrl = process.env.DATABASE_URL;
@@ -134,5 +137,79 @@ describe('LEGACY-256 — ожидание свободного соединен�
     process.env.DATABASE_POOL_TIMEOUT_MS = '0';
     service = new PrismaService();
     expect(poolOf(service).options.connectionTimeoutMillis).toBe(15000);
+  });
+});
+
+/**
+ * 🔴 `LEGACY-364`. Сервис закрывают дважды: явным `close()` контейнера и
+ * повторным вызовом того же хука. Без флага второй вызов отвергает промис `pg`
+ * («Called end on pool more than once»), и набор краснел бы по этой ошибке.
+ */
+describe('LEGACY-364 — закрытие пула идемпотентно', () => {
+  const savedUrl = process.env.DATABASE_URL;
+
+  let service: PrismaService | undefined;
+
+  beforeEach(() => {
+    process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/pool_probe';
+  });
+
+  // Пул закрывается здесь, а не в теле кейса: упавший `expect` до закрытия
+  // не доходит, и jest поверх красного прогона повис бы на живом дескрипторе.
+  afterEach(async () => {
+    // Пул мог быть уже закрыт самим кейсом — второй `end()` у `pg` отвергает промис.
+    if (service)
+      await poolOf(service)
+        .end()
+        .catch(() => undefined);
+    service = undefined;
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  });
+
+  it('второй вызов onModuleDestroy не бросает и не трогает пул заново', async () => {
+    service = new PrismaService();
+    const end = jest.spyOn(poolOf(service), 'end');
+    // `$disconnect` ходит в базу, которой в юнит-прогоне нет: проверяется
+    // порядок закрытия, а не соединение.
+    const disconnect = jest
+      .spyOn(service, '$disconnect')
+      .mockResolvedValue(undefined as unknown as void);
+
+    await service.onModuleDestroy();
+    await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * ⚠️ Именно этот кейс держит порядок «флаг до ожидания». Перенос
+   * `this.closed = true` под `await` последовательный кейс выше не краснит:
+   * первый вызов там успевает закрыть пул раньше второго.
+   */
+  it('два одновременных закрытия дают ровно одно закрытие пула', async () => {
+    service = new PrismaService();
+    const end = jest.spyOn(poolOf(service), 'end');
+    jest.spyOn(service, '$disconnect').mockResolvedValue(undefined as unknown as void);
+
+    await Promise.all([service.onModuleDestroy(), service.onModuleDestroy()]);
+
+    expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * ⚠️ Отказ `$disconnect()` не должен оставлять пул открытым: повторный вызов
+   * вышел бы по флагу молча, и соединения жили бы до смерти процесса — при двух
+   * воркерах e2e это «sorry, too many clients already».
+   */
+  it('пул закрывается даже при отказе $disconnect', async () => {
+    service = new PrismaService();
+    const end = jest.spyOn(poolOf(service), 'end');
+    jest.spyOn(service, '$disconnect').mockRejectedValue(new Error('связь потеряна'));
+
+    await expect(service.onModuleDestroy()).rejects.toThrow('связь потеряна');
+
+    expect(end).toHaveBeenCalledTimes(1);
   });
 });

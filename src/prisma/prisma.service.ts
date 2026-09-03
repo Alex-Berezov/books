@@ -53,6 +53,9 @@ const positiveIntOr = (raw: string | undefined, fallback: number): number => {
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private pool: Pool;
 
+  /** Закрытие уже прошло: см. `onModuleDestroy`, там же причина. */
+  private closed = false;
+
   constructor() {
     const connectionString = process.env.DATABASE_URL;
     const pool = new Pool({
@@ -76,8 +79,27 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
     await this.$connect();
   }
+
+  /**
+   * 🔴 `LEGACY-364`. Закрытие идемпотентно: `pg.Pool.end()` при втором вызове
+   * отвергает промис («Called end on pool more than once»), а закрыть сервис
+   * дважды законно — контейнер Nest в тестах закрывают и явно, и повторно
+   * через `TestingModule.close()`.
+   *
+   * ⚠️ Флаг ставится **до** ожидания, а не после: два параллельных закрытия
+   * иначе оба прошли бы проверку и оба дошли бы до `pool.end()`.
+   *
+   * ⚠️ `pool.end()` стоит в `finally`: отказ `$disconnect()` иначе оставлял бы
+   * пул открытым навсегда — повторный вызов вышел бы по флагу молча, и в e2e
+   * при двух воркерах это тот самый «sorry, too many clients already».
+   */
   async onModuleDestroy() {
-    await this.$disconnect();
-    await this.pool.end();
+    if (this.closed) return;
+    this.closed = true;
+    try {
+      await this.$disconnect();
+    } finally {
+      await this.pool.end();
+    }
   }
 }
