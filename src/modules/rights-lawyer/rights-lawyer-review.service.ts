@@ -804,7 +804,12 @@ export class RightsLawyerReviewService {
       throw lawyerError(HttpStatus.CONFLICT, LAWYER_ERROR_CODES.LAWYER_REVIEW_ALREADY_CLOSED);
     }
 
-    await this.createCondition(this.getDatabase(), id, dto, userId);
+    // LEGACY-036: `createCondition` пишет условие и событие одним клиентом, но корневой клиент
+    // транзакцией не является — передача `this.getDatabase()` выглядела транзакционной и не была
+    // ею. Условие блокирует публикацию, поэтому оно и запись о нём ложатся вместе.
+    await this.getDatabase().$transaction(async (tx) => {
+      await this.createCondition(tx, id, dto, userId);
+    });
     return this.getById(id);
   }
 

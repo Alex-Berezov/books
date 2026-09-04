@@ -113,6 +113,20 @@ export const DRAFT_FILL_WINDOW_OPENED_REASON_CODE = 'DRAFT_FILL_WINDOW_OPENED';
 export const SOURCE_FILE_FIRST_UPLOAD_REASON_CODE = 'SOURCE_FILE_FIRST_UPLOAD';
 
 /**
+ * Границы транзакций этого сервиса. Циклов внутри них нет: пометка соседних версий вынесена
+ * за транзакцию решением арбитра от 04.09.2026 (`decisions-log.md`), самая большая транзакция —
+ * `markSelf` с четырьмя записями, остальные пишут по две. Запас против дефолтов Prisma
+ * (5000/2000 мс) взят у соседа с тем же контуром — `contributors.service.ts`
+ * (`{ timeout: 30_000, maxWait: 10_000 }`) — и снижать его незачем: он про ожидание
+ * соединения в пуле, а не про объём записи.
+ *
+ * ⚠️ Возврат фан-аута под `inTransaction` оживит дедлок 40P01, ради снятия которого решение
+ * и принималось (`LEGACY-368`).
+ */
+const CONTENT_HASH_TRANSACTION_TIMEOUT_MS = 30_000;
+const CONTENT_HASH_TRANSACTION_MAX_WAIT_MS = 10_000;
+
+/**
  * Порядок участников в выдаче БД не определён, а хеш обязан быть от него независим:
  * иначе клиренс «протухал» бы от любого пересчёта.
  */
@@ -136,6 +150,25 @@ export const RIGHTS_RELEVANT_PERSON_FIELDS = [
 @Injectable()
 export class RightsContentHashService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * LEGACY-036: слепок контента и событие о нём обязаны лечь вместе (ADR-009). Вызывающий,
+   * пришедший со своей транзакцией, остаётся в ней; вызывающий без транзакции получает свою.
+   *
+   * Прежде здесь везде стоял `const client = tx ?? this.prisma`, и во втором случае мутация
+   * с событием шли двумя независимыми `await`: отказ между ними оставлял версию с новым
+   * baseline и без записи о том, откуда он взялся.
+   */
+  private async inTransaction<T>(
+    tx: Prisma.TransactionClient | undefined,
+    work: (client: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    if (tx) return work(tx);
+    return this.prisma.$transaction((innerTx) => work(innerTx), {
+      timeout: CONTENT_HASH_TRANSACTION_TIMEOUT_MS,
+      maxWait: CONTENT_HASH_TRANSACTION_MAX_WAIT_MS,
+    });
+  }
 
   async computeVersionHash(
     versionId: string,
@@ -458,52 +491,53 @@ export class RightsContentHashService {
     tx?: Prisma.TransactionClient,
   ): Promise<RightsContentHashComputationDto> {
     const computation = await this.computeVersionHash(versionId, tx);
-    const client = tx ?? this.prisma;
 
-    // WP-D.1: окно наполнения открывается только здесь и только для версии, заведённой
-    // черновиком. Версия, созданная сразу опубликованной, окна не получает вовсе — иначе
-    // последующий `unpublish` открыл бы его задним числом.
-    const versionState = await client.bookVersion.findUnique({
-      where: { id: versionId },
-      select: { status: true, publishedAt: true },
+    return this.inTransaction(tx, async (client) => {
+      // WP-D.1: окно наполнения открывается только здесь и только для версии, заведённой
+      // черновиком. Версия, созданная сразу опубликованной, окна не получает вовсе — иначе
+      // последующий `unpublish` открыл бы его задним числом.
+      const versionState = await client.bookVersion.findUnique({
+        where: { id: versionId },
+        select: { status: true, publishedAt: true },
+      });
+      const opensDraftFillWindow = versionState?.status === 'draft' && !versionState.publishedAt;
+
+      await client.bookVersion.update({
+        where: { id: versionId },
+        data: {
+          rightsContentHash: computation.hash,
+          rightsContentHashAlgorithmVersion: computation.algorithmVersion,
+          rightsContentHashInput: JSON.parse(
+            JSON.stringify(computation.input),
+          ) as Prisma.InputJsonValue,
+          rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
+          rightsRecheckRequired: false,
+          rightsStaleDetectedAt: null,
+          rightsStaleReasonCode: null,
+          rightsStaleReasonRu: null,
+        },
+      });
+
+      await client.rightsContentHashEvent.create({
+        data: {
+          bookVersionId: versionId,
+          rightsProfileId: computation.rightsProfileId,
+          rightsReviewId: computation.approvedRightsReviewId,
+          trigger: triggerDbValue(trigger) as never,
+          previousHash: null,
+          currentHash: computation.hash,
+          hashAlgorithmVersion: computation.algorithmVersion,
+          staleMarked: false,
+          reasonCode: opensDraftFillWindow ? DRAFT_FILL_WINDOW_OPENED_REASON_CODE : null,
+          reasonRu: opensDraftFillWindow
+            ? 'Версия заведена черновиком: открыто окно наполнения, до первой публикации правка текста переснимает baseline'
+            : null,
+          createdByUserId: userId ?? null,
+        },
+      });
+
+      return computation;
     });
-    const opensDraftFillWindow = versionState?.status === 'draft' && !versionState.publishedAt;
-
-    await client.bookVersion.update({
-      where: { id: versionId },
-      data: {
-        rightsContentHash: computation.hash,
-        rightsContentHashAlgorithmVersion: computation.algorithmVersion,
-        rightsContentHashInput: JSON.parse(
-          JSON.stringify(computation.input),
-        ) as Prisma.InputJsonValue,
-        rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
-        rightsRecheckRequired: false,
-        rightsStaleDetectedAt: null,
-        rightsStaleReasonCode: null,
-        rightsStaleReasonRu: null,
-      },
-    });
-
-    await client.rightsContentHashEvent.create({
-      data: {
-        bookVersionId: versionId,
-        rightsProfileId: computation.rightsProfileId,
-        rightsReviewId: computation.approvedRightsReviewId,
-        trigger: triggerDbValue(trigger) as never,
-        previousHash: null,
-        currentHash: computation.hash,
-        hashAlgorithmVersion: computation.algorithmVersion,
-        staleMarked: false,
-        reasonCode: opensDraftFillWindow ? DRAFT_FILL_WINDOW_OPENED_REASON_CODE : null,
-        reasonRu: opensDraftFillWindow
-          ? 'Версия заведена черновиком: открыто окно наполнения, до первой публикации правка текста переснимает baseline'
-          : null,
-        createdByUserId: userId ?? null,
-      },
-    });
-
-    return computation;
   }
 
   async checkVersionStaleness(
@@ -551,12 +585,15 @@ export class RightsContentHashService {
       version.rightsContentHashAlgorithmVersion !== computation.algorithmVersion
     ) {
       if (persist) {
-        await this.rebaselineForAlgorithmChange(
-          versionId,
-          computation,
-          baselineHash,
-          userId,
-          client,
+        // LEGACY-036: пересъёмка меняет baseline и пишет о ней событие — вместе или никак.
+        await this.inTransaction(tx, (writeClient) =>
+          this.rebaselineForAlgorithmChange(
+            versionId,
+            computation,
+            baselineHash,
+            userId,
+            writeClient,
+          ),
         );
       }
 
@@ -587,13 +624,15 @@ export class RightsContentHashService {
         (await this.isDraftFillWindowOpen(versionId, version.status, version.publishedAt, client));
 
       if (insideDraftFillWindow) {
-        await this.rebaselineWithinDraftFillWindow(
-          versionId,
-          computation,
-          baselineHash,
-          trigger,
-          userId,
-          client,
+        await this.inTransaction(tx, (writeClient) =>
+          this.rebaselineWithinDraftFillWindow(
+            versionId,
+            computation,
+            baselineHash,
+            trigger,
+            userId,
+            writeClient,
+          ),
         );
 
         return {
@@ -610,13 +649,16 @@ export class RightsContentHashService {
         };
       }
 
+      // LEGACY-036: сюда передавался `client`, то есть корневой клиент, когда своей транзакции
+      // не было. `markVersionAndClearanceStale` видел непустой `tx` и свою транзакцию не открывал
+      // вовсе — три записи (версия, клиренс, событие) шли врозь. Передаётся сам `tx`.
       await this.markVersionAndClearanceStale(
         versionId,
         trigger,
         computation.hash,
         baselineHash,
         userId,
-        client,
+        tx,
       );
     }
 
@@ -797,33 +839,36 @@ export class RightsContentHashService {
 
     const computation = await this.computeVersionHash(versionId, tx);
 
-    await client.bookVersion.update({
-      where: { id: versionId },
-      data: {
-        rightsContentHash: computation.hash,
-        rightsContentHashAlgorithmVersion: computation.algorithmVersion,
-        rightsContentHashInput: JSON.parse(
-          JSON.stringify(computation.input),
-        ) as Prisma.InputJsonValue,
-        rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
-      },
-    });
+    // LEGACY-036: фиксация слепка и событие о закрытии окна ложатся вместе.
+    await this.inTransaction(tx, async (writeClient) => {
+      await writeClient.bookVersion.update({
+        where: { id: versionId },
+        data: {
+          rightsContentHash: computation.hash,
+          rightsContentHashAlgorithmVersion: computation.algorithmVersion,
+          rightsContentHashInput: JSON.parse(
+            JSON.stringify(computation.input),
+          ) as Prisma.InputJsonValue,
+          rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
+        },
+      });
 
-    await client.rightsContentHashEvent.create({
-      data: {
-        bookVersionId: versionId,
-        rightsProfileId: computation.rightsProfileId,
-        rightsReviewId: computation.approvedRightsReviewId,
-        trigger: 'MANUAL_HASH_CHECK' as never,
-        previousHash: version.rightsContentHash,
-        currentHash: computation.hash,
-        hashAlgorithmVersion: computation.algorithmVersion,
-        staleMarked: false,
-        reasonCode: DRAFT_FILL_WINDOW_CLOSED_REASON_CODE,
-        reasonRu:
-          'Публикация версии: слепок контента зафиксирован окончательно, окно наполнения черновика закрыто',
-        createdByUserId: userId ?? null,
-      },
+      await writeClient.rightsContentHashEvent.create({
+        data: {
+          bookVersionId: versionId,
+          rightsProfileId: computation.rightsProfileId,
+          rightsReviewId: computation.approvedRightsReviewId,
+          trigger: 'MANUAL_HASH_CHECK' as never,
+          previousHash: version.rightsContentHash,
+          currentHash: computation.hash,
+          hashAlgorithmVersion: computation.algorithmVersion,
+          staleMarked: false,
+          reasonCode: DRAFT_FILL_WINDOW_CLOSED_REASON_CODE,
+          reasonRu:
+            'Публикация версии: слепок контента зафиксирован окончательно, окно наполнения черновика закрыто',
+          createdByUserId: userId ?? null,
+        },
+      });
     });
   }
 
@@ -866,32 +911,37 @@ export class RightsContentHashService {
 
       const computation = await this.computeVersionHash(version.id, tx);
 
-      await client.bookVersion.update({
-        where: { id: version.id },
-        data: {
-          rightsContentHash: computation.hash,
-          rightsContentHashAlgorithmVersion: computation.algorithmVersion,
-          rightsContentHashInput: JSON.parse(
-            JSON.stringify(computation.input),
-          ) as Prisma.InputJsonValue,
-          rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
-        },
-      });
+      // LEGACY-036: транзакция на версию, а не на весь цикл: пересъёмка профиля идёт по всем
+      // версиям и устроена как частичный успех, а одна транзакция на цикл держала бы строки
+      // всех версий профиля до конца обхода.
+      await this.inTransaction(tx, async (writeClient) => {
+        await writeClient.bookVersion.update({
+          where: { id: version.id },
+          data: {
+            rightsContentHash: computation.hash,
+            rightsContentHashAlgorithmVersion: computation.algorithmVersion,
+            rightsContentHashInput: JSON.parse(
+              JSON.stringify(computation.input),
+            ) as Prisma.InputJsonValue,
+            rightsContentHashCalculatedAt: new Date(computation.calculatedAt),
+          },
+        });
 
-      await client.rightsContentHashEvent.create({
-        data: {
-          bookVersionId: version.id,
-          rightsProfileId: computation.rightsProfileId,
-          rightsReviewId: computation.approvedRightsReviewId,
-          trigger: triggerDbValue(trigger) as never,
-          previousHash: version.rightsContentHash,
-          currentHash: computation.hash,
-          hashAlgorithmVersion: computation.algorithmVersion,
-          staleMarked: false,
-          reasonCode,
-          reasonRu,
-          createdByUserId: userId ?? null,
-        },
+        await writeClient.rightsContentHashEvent.create({
+          data: {
+            bookVersionId: version.id,
+            rightsProfileId: computation.rightsProfileId,
+            rightsReviewId: computation.approvedRightsReviewId,
+            trigger: triggerDbValue(trigger) as never,
+            previousHash: version.rightsContentHash,
+            currentHash: computation.hash,
+            hashAlgorithmVersion: computation.algorithmVersion,
+            staleMarked: false,
+            reasonCode,
+            reasonRu,
+            createdByUserId: userId ?? null,
+          },
+        });
       });
     }
   }
@@ -928,8 +978,13 @@ export class RightsContentHashService {
       rightsStaleReasonRu: reasonRu,
     };
 
-    const doMark = async (client: Prisma.TransactionClient): Promise<void> => {
-      // Update BookVersion
+    // LEGACY-036, решение арбитра от 04.09.2026 (`decisions-log.md`): в транзакции лежит
+    // аудит-пара — своя версия, статусы клиренса и событие. Пометка родственных версий
+    // (`SHARED_CLEARANCE_STALE`) вынесена за транзакцию и идёт после её коммита: держа чужие
+    // строки версий, новая транзакция путей без своего `tx` брала их крест-накрест со встречной
+    // правкой главы. Дедлок `tx`-против-`tx` этим не закрыт — он состояние `main` и живёт
+    // записью техдолга; `orderBy` ниже окно сужает, но по `L-019` закрытием не считается.
+    const markSelf = async (client: Prisma.TransactionClient): Promise<void> => {
       await client.bookVersion.update({
         where: { id: versionId },
         data: {
@@ -938,7 +993,6 @@ export class RightsContentHashService {
         },
       });
 
-      // Update RightsReview status to STALE if review exists
       if (version.approvedRightsReviewId) {
         await client.rightsReview.update({
           where: { id: version.approvedRightsReviewId },
@@ -949,32 +1003,8 @@ export class RightsContentHashService {
             staleReasonRu: reasonRu,
           },
         });
-
-        // Mark ALL related versions as stale (shared clearance became invalid)
-        const relatedVersions = await client.bookVersion.findMany({
-          where: {
-            approvedRightsReviewId: version.approvedRightsReviewId,
-            id: { not: versionId },
-            rightsStaleDetectedAt: null,
-          },
-          select: { id: true },
-        });
-
-        for (const relatedVersion of relatedVersions) {
-          await client.bookVersion.update({
-            where: { id: relatedVersion.id },
-            data: {
-              rightsRecheckRequired: true,
-              rightsStaleDetectedAt: now,
-              rightsStaleReasonCode: 'SHARED_CLEARANCE_STALE',
-              rightsStaleReasonRu:
-                'Изменение контента в другой версии той же проверки прав. Требуется повторная проверка.',
-            },
-          });
-        }
       }
 
-      // Update RightsProfile status to STALE if profile exists
       if (version.rightsProfileId) {
         await client.rightsProfile.update({
           where: { id: version.rightsProfileId },
@@ -985,32 +1015,8 @@ export class RightsContentHashService {
             staleReasonRu: reasonRu,
           },
         });
-
-        // Mark ALL related versions as stale (shared clearance became invalid)
-        const relatedVersions = await client.bookVersion.findMany({
-          where: {
-            rightsProfileId: version.rightsProfileId,
-            id: { not: versionId },
-            rightsStaleDetectedAt: null,
-          },
-          select: { id: true },
-        });
-
-        for (const relatedVersion of relatedVersions) {
-          await client.bookVersion.update({
-            where: { id: relatedVersion.id },
-            data: {
-              rightsRecheckRequired: true,
-              rightsStaleDetectedAt: now,
-              rightsStaleReasonCode: 'SHARED_CLEARANCE_STALE',
-              rightsStaleReasonRu:
-                'Изменение контента в другой версии того же профиля прав. Требуется повторная проверка.',
-            },
-          });
-        }
       }
 
-      // Create audit event
       await client.rightsContentHashEvent.create({
         data: {
           bookVersionId: versionId,
@@ -1028,10 +1034,48 @@ export class RightsContentHashService {
       });
     };
 
-    if (tx) {
-      await doMark(tx);
-    } else {
-      await this.prisma.$transaction((innerTx) => doMark(innerTx));
+    await this.inTransaction(tx, markSelf);
+
+    // Клиренс общий, поэтому его протухание переносится на соседние версии. Своей транзакции
+    // этот обход не открывает: у вызывающего со своим `tx` он остаётся внутри неё, как и был,
+    // а на путях без `tx` идёт по строке — прежним поведением до LEGACY-036.
+    const fanOutClient = tx ?? this.prisma;
+
+    const markRelated = async (
+      where: Prisma.BookVersionWhereInput,
+      reasonRuText: string,
+    ): Promise<void> => {
+      const relatedVersions = await fanOutClient.bookVersion.findMany({
+        where: { ...where, id: { not: versionId }, rightsStaleDetectedAt: null },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      });
+
+      for (const relatedVersion of relatedVersions) {
+        await fanOutClient.bookVersion.update({
+          where: { id: relatedVersion.id },
+          data: {
+            rightsRecheckRequired: true,
+            rightsStaleDetectedAt: now,
+            rightsStaleReasonCode: 'SHARED_CLEARANCE_STALE',
+            rightsStaleReasonRu: reasonRuText,
+          },
+        });
+      }
+    };
+
+    if (version.approvedRightsReviewId) {
+      await markRelated(
+        { approvedRightsReviewId: version.approvedRightsReviewId },
+        'Изменение контента в другой версии той же проверки прав. Требуется повторная проверка.',
+      );
+    }
+
+    if (version.rightsProfileId) {
+      await markRelated(
+        { rightsProfileId: version.rightsProfileId },
+        'Изменение контента в другой версии того же профиля прав. Требуется повторная проверка.',
+      );
     }
   }
 

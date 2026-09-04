@@ -41,6 +41,12 @@ describe('RightsContentHashService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // LEGACY-036: парные записи (слепок + событие) идут транзакцией. Здесь она сведена
+    // к вызову коллбэка тем же двойником — атомарность проверяет отдельный describe ниже,
+    // где транзакционный клиент буферизует записи и откатывает их при отказе.
+    mockPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
+      cb(mockPrisma),
+    );
     mockPrisma.rightsContentHashEvent.findFirst.mockResolvedValue(null);
     mockPrisma.mediaAsset.findFirst.mockResolvedValue(null);
     mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
@@ -1568,5 +1574,341 @@ describe('RightsContentHashService', () => {
       expect(result).toEqual([]);
       expect(checkVersionStaleness).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * LEGACY-036. Слепок контента и событие о нём — пара: по событию восстанавливается, откуда взялся
+ * baseline и почему клиренс ушёл в `STALE`. До этой правки пара писалась двумя независимыми
+ * `await` на корневом клиенте всякий раз, когда вызывающий не передал свою транзакцию. Правка глав
+ * и метаданных версии сюда **не** относится: `chapter.service.ts`, `audio-chapter.service.ts`
+ * и `book-version.service.ts` свой `tx` передают. Без транзакции идут три пути, все три —
+ * из `rights-files.service.ts` и админской ручки: ручная проверка хеша
+ * (`book-version.controller.ts`), первая загрузка файла источника
+ * (`rebaselineForRightsProfile`) и замена уже известной суммы файла
+ * (`checkStalenessForRightsProfile` → `checkVersionStaleness` по всем версиям профиля).
+ *
+ * Двойник ниже имитирует транзакцию: запись через tx-клиент попадает в «БД» только после
+ * успешного завершения коллбэка, поэтому тесты проверяют атомарность, а не форму вызова.
+ */
+describe('RightsContentHashService — атомарность аудита (LEGACY-036)', () => {
+  interface Write {
+    model: string;
+    data: Record<string, unknown>;
+    /** Каким клиентом сделана запись: `tx` — транзакционным, `root` — корневым. */
+    via: 'tx' | 'root';
+  }
+
+  const computation = {
+    versionId: 'version-1',
+    rightsProfileId: 'profile-1',
+    approvedRightsReviewId: 'review-1',
+    hash: 'new-hash',
+    algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+    calculatedAt: '2026-07-28T00:00:00.000Z',
+    input: { version: {} },
+  };
+
+  const draftVersion = {
+    id: 'version-1',
+    bookId: 'book-1',
+    status: 'draft',
+    publishedAt: null,
+    rightsProfileId: 'profile-1',
+    approvedRightsReviewId: 'review-1',
+    rightsContentHash: 'old-hash',
+    rightsContentHashAlgorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+    rightsRecheckRequired: false,
+    rightsStaleDetectedAt: null,
+    rightsStaleReasonCode: null,
+    rightsStaleReasonRu: null,
+  };
+
+  const createDouble = (
+    options: {
+      version?: Record<string, unknown>;
+      onEventCreate?: () => void;
+      onRelatedUpdate?: () => void;
+      windowOpenedEvent?: boolean;
+    } = {},
+  ) => {
+    const committed: Write[] = [];
+    const version = options.version ?? draftVersion;
+
+    // `immediate` — признак корневого клиента: его запись видна снаружи сразу, без коммита
+    // транзакции. Транзакционный клиент пишет в свой буфер, и тот переносится в `committed`
+    // только после успешного завершения коллбэка.
+    const clientFor = (buffer: Write[], immediate = false) => {
+      const push = (write: Omit<Write, 'via'>) => {
+        const entry: Write = { ...write, via: immediate ? 'root' : 'tx' };
+        buffer.push(entry);
+        if (immediate) committed.push(entry);
+      };
+
+      return {
+        bookVersion: {
+          findUnique: jest.fn().mockResolvedValue(version),
+          findFirst: jest.fn().mockResolvedValue(null),
+          // Соседняя версия того же клиренса: её помечает фан-аут, вынесенный за транзакцию.
+          findMany: jest.fn().mockResolvedValue([{ ...version, id: 'version-2' }]),
+          update: jest.fn((args: { data: Record<string, unknown> }) => {
+            if (args.data.rightsStaleReasonCode === 'SHARED_CLEARANCE_STALE') {
+              options.onRelatedUpdate?.();
+            }
+            push({ model: 'bookVersion.update', data: args.data });
+            return Promise.resolve(version);
+          }),
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        rightsReview: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'review-1' }),
+          update: jest.fn((args: { data: Record<string, unknown> }) => {
+            push({ model: 'rightsReview.update', data: args.data });
+            return Promise.resolve({ id: 'review-1' });
+          }),
+        },
+        rightsProfile: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'profile-1' }),
+          update: jest.fn((args: { data: Record<string, unknown> }) => {
+            push({ model: 'rightsProfile.update', data: args.data });
+            return Promise.resolve({ id: 'profile-1' });
+          }),
+        },
+        rightsContentHashEvent: {
+          // Отметка открытого окна наполнения: её читает `isDraftFillWindowOpen` двумя запросами —
+          // сперва ищет событие закрытия окна, потом событие открытия. Двойник обязан различать их
+          // по `reasonCode`, иначе окно всегда оказывается закрытым.
+          findFirst: jest.fn((args: { where: { reasonCode?: string } }) =>
+            Promise.resolve(
+              options.windowOpenedEvent && args.where.reasonCode === 'DRAFT_FILL_WINDOW_OPENED'
+                ? { id: 'event-0' }
+                : null,
+            ),
+          ),
+          create: jest.fn((args: { data: Record<string, unknown> }) => {
+            options.onEventCreate?.();
+            push({ model: 'rightsContentHashEvent.create', data: args.data });
+            return Promise.resolve({ id: 'event-1' });
+          }),
+        },
+        mediaAsset: { findFirst: jest.fn().mockResolvedValue(null) },
+        bookVersionContributor: { findMany: jest.fn().mockResolvedValue([]) },
+        rightsProfileContributor: { findMany: jest.fn().mockResolvedValue([]) },
+      };
+    };
+
+    // Запись корневым клиентом видна снаружи сразу — она и есть дефект, который ловят эти тесты.
+    const outsideTransaction: Write[] = [];
+    const base = clientFor(outsideTransaction, true);
+
+    const client = {
+      ...base,
+      $transaction: async <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => {
+        const pending: Write[] = [];
+        const result = await callback(clientFor(pending));
+        committed.push(...pending);
+        return result;
+      },
+    };
+
+    return { committed, outsideTransaction, client, clientFor };
+  };
+
+  const buildService = (client: unknown): RightsContentHashService => {
+    const service = new RightsContentHashService(client as PrismaService);
+    jest.spyOn(service, 'computeVersionHash').mockResolvedValue(computation);
+    return service;
+  };
+
+  const failingJournal = () => () => {
+    throw new Error('journal write failed');
+  };
+
+  it('initializeVersionBaseline: отказ журнала не оставляет версию со слепком без записи о нём', async () => {
+    const double = createDouble({ onEventCreate: failingJournal() });
+
+    await expect(
+      buildService(double.client).initializeVersionBaseline(
+        'version-1',
+        'INITIAL_VERSION_SNAPSHOT',
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('checkVersionStaleness: отказ журнала откатывает пометку версии и клиренса', async () => {
+    const double = createDouble({
+      version: { ...draftVersion, status: 'published', publishedAt: new Date('2026-07-01') },
+      onEventCreate: failingJournal(),
+    });
+
+    await expect(
+      buildService(double.client).checkVersionStaleness(
+        'version-1',
+        'CHAPTER_UPDATED',
+        'user-42',
+        true,
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  /**
+   * Решение арбитра от 04.09.2026: в транзакции лежит аудит-пара, пометка родственных версий
+   * (`SHARED_CLEARANCE_STALE`) идёт после её коммита. Тест смотрит на **происхождение клиента**
+   * каждой записи, а не на её наличие: без этого возврат дефекта (запись аудита корневым
+   * клиентом) остаётся зелёным — записи те же, меняется только клиент.
+   */
+  it('checkVersionStaleness: аудит-пара пишется транзакцией, соседние версии — после неё', async () => {
+    const double = createDouble({
+      version: { ...draftVersion, status: 'published', publishedAt: new Date('2026-07-01') },
+    });
+
+    await buildService(double.client).checkVersionStaleness(
+      'version-1',
+      'CHAPTER_UPDATED',
+      'user-42',
+      true,
+    );
+
+    const via = (model: string) =>
+      double.committed.filter((write) => write.model === model).map((write) => write.via);
+
+    expect(via('rightsContentHashEvent.create')).toEqual(['tx']);
+    expect(via('rightsReview.update')).toEqual(['tx']);
+    expect(via('rightsProfile.update')).toEqual(['tx']);
+
+    // Своя версия — внутри транзакции; всё, что помечено `SHARED_CLEARANCE_STALE`, — вне её.
+    const versionWrites = double.committed.filter((write) => write.model === 'bookVersion.update');
+    const ownVersion = versionWrites.filter(
+      (write) => write.data.rightsStaleReasonCode !== 'SHARED_CLEARANCE_STALE',
+    );
+    const relatedVersions = versionWrites.filter(
+      (write) => write.data.rightsStaleReasonCode === 'SHARED_CLEARANCE_STALE',
+    );
+
+    expect(ownVersion.map((write) => write.via)).toEqual(['tx']);
+    expect(relatedVersions.length).toBeGreaterThan(0);
+    expect(relatedVersions.every((write) => write.via === 'root')).toBe(true);
+  });
+
+  /**
+   * Ветка `if (tx) return work(tx)` в `inTransaction` — единственное, что удерживает эти методы
+   * внутри чужой транзакции. Без неё `markSelf` пошёл бы вторым соединением и встал на строке
+   * `BookVersion`, которую держит вызывающий, до самого `timeout` — 500 через 30 секунд,
+   * а десять таких запросов выбирают пул целиком.
+   */
+  it('вызывающий со своей транзакцией не получает второй: записи идут его клиентом', async () => {
+    const double = createDouble({
+      version: { ...draftVersion, status: 'published', publishedAt: new Date('2026-07-01') },
+    });
+    const openedTransactions = jest.spyOn(double.client, '$transaction');
+
+    const callerWrites: Write[] = [];
+    const callerTx = double.clientFor(callerWrites);
+
+    await buildService(double.client).checkVersionStaleness(
+      'version-1',
+      'CHAPTER_UPDATED',
+      'user-42',
+      true,
+      callerTx as unknown as Parameters<RightsContentHashService['checkVersionStaleness']>[4],
+    );
+
+    expect(openedTransactions).not.toHaveBeenCalled();
+    expect(callerWrites.map((write) => write.model)).toEqual(
+      expect.arrayContaining([
+        'bookVersion.update',
+        'rightsReview.update',
+        'rightsContentHashEvent.create',
+      ]),
+    );
+    // Ни одна запись не ушла мимо клиента вызывающего.
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('отказ на пометке соседней версии не откатывает уже записанное событие аудита', async () => {
+    const double = createDouble({
+      version: { ...draftVersion, status: 'published', publishedAt: new Date('2026-07-01') },
+      onRelatedUpdate: () => {
+        throw new Error('related version update failed');
+      },
+    });
+
+    await expect(
+      buildService(double.client).checkVersionStaleness(
+        'version-1',
+        'CHAPTER_UPDATED',
+        'user-42',
+        true,
+      ),
+    ).rejects.toThrow('related version update failed');
+
+    const events = double.committed.filter(
+      (write) => write.model === 'rightsContentHashEvent.create',
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].via).toBe('tx');
+  });
+
+  it('checkVersionStaleness: отказ журнала откатывает пересъёмку при смене версии алгоритма', async () => {
+    const double = createDouble({
+      version: { ...draftVersion, rightsContentHashAlgorithmVersion: 'v0' },
+      onEventCreate: failingJournal(),
+    });
+
+    await expect(
+      buildService(double.client).checkVersionStaleness(
+        'version-1',
+        'MANUAL_HASH_CHECK',
+        'user-42',
+        true,
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('checkVersionStaleness: отказ журнала откатывает пересъёмку в окне наполнения черновика', async () => {
+    const double = createDouble({ windowOpenedEvent: true, onEventCreate: failingJournal() });
+
+    await expect(
+      buildService(double.client).checkVersionStaleness(
+        'version-1',
+        'CHAPTER_UPDATED',
+        'user-42',
+        true,
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('finalizeBaselineOnPublish: отказ журнала откатывает фиксацию слепка', async () => {
+    const double = createDouble({ onEventCreate: failingJournal() });
+
+    await expect(
+      buildService(double.client).finalizeBaselineOnPublish('version-1', 'user-42'),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
+  });
+
+  it('rebaselineForRightsProfile: отказ журнала откатывает пересъёмку версии профиля', async () => {
+    const double = createDouble({ windowOpenedEvent: true, onEventCreate: failingJournal() });
+
+    await expect(
+      buildService(double.client).rebaselineForRightsProfile(
+        'profile-1',
+        'SOURCE_EDITION_CHANGED',
+        'SOURCE_FILE_FIRST_UPLOAD',
+        'Первая загрузка файла источника',
+        'user-42',
+      ),
+    ).rejects.toThrow('journal write failed');
+
+    expect(double.committed).toHaveLength(0);
   });
 });

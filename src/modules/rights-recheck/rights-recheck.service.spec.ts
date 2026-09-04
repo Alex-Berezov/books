@@ -226,6 +226,69 @@ describe('RightsRecheckService', () => {
       );
     });
 
+    /**
+     * LEGACY-036. Перенос срока существующей задачи шёл клиентом `tx ?? this.getDatabase()`,
+     * и своей транзакции не открывал ни один из шести вызывающих `ensureTask` — то есть срок
+     * и запись о его переносе всегда писались двумя независимыми `await`. Ветка создания задачи
+     * ниже транзакцию открывала, эта — нет.
+     *
+     * Двойник фиксирует записи транзакции только после успеха коллбэка: запись мимо транзакции
+     * считается закоммиченной сразу, и тест краснеет.
+     */
+    it('перенос срока: отказ журнала откатывает и сам перенос', async () => {
+      const existing = task({ dueAt: addDays(NOW, 30) });
+      const committed: string[] = [];
+
+      const clientFor = (buffer: string[]): Stub =>
+        ({
+          ...stub,
+          rightsRecheckTask: {
+            ...stub.rightsRecheckTask,
+            findFirst: jest.fn().mockResolvedValue(existing),
+            update: jest.fn(() => {
+              buffer.push('task.update');
+              return Promise.resolve(existing);
+            }),
+          },
+          rightsRecheckEvent: {
+            ...stub.rightsRecheckEvent,
+            create: jest.fn(() => {
+              throw new Error('journal write failed');
+            }),
+          },
+        }) as unknown as Stub;
+
+      const root = clientFor(committed);
+      const client = {
+        ...root,
+        $transaction: async <T>(callback: (tx: Stub) => Promise<T>): Promise<T> => {
+          const pending: string[] = [];
+          const result = await callback(clientFor(pending));
+          committed.push(...pending);
+          return result;
+        },
+      };
+
+      const atomicService = new RightsRecheckService(
+        client as unknown as PrismaService,
+        notifications as unknown as RightsNotificationsService,
+        configWith(),
+      );
+
+      await expect(
+        atomicService.ensureTask({
+          reason: RightsRecheckReason.SCHEDULED_DUE,
+          source: RightsRecheckTriggerSource.SCHEDULER,
+          rightsProfileId: 'profile-1',
+          dueAt: addDays(NOW, 3),
+          titleRu: 'Плановая перепроверка прав',
+          descriptionRu: 'Описание',
+        }),
+      ).rejects.toThrow('journal write failed');
+
+      expect(committed).toHaveLength(0);
+    });
+
     it('deduplicates version-scoped reasons by bookVersionId', async () => {
       await service.ensureTask({
         reason: RightsRecheckReason.CONTENT_CHANGED,

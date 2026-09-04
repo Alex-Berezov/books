@@ -653,6 +653,65 @@ describe('RightsLawyerReviewService', () => {
         response: { code: 'LAWYER_CONDITION_NOT_FOUND', statusCode: 404 },
       });
     });
+
+    /**
+     * LEGACY-036. `addCondition` звал `createCondition(this.getDatabase(), ...)`: параметр
+     * назывался `tx`, а приходил корневой клиент — условие и событие о нём писались двумя
+     * независимыми `await`. Условие блокирует публикацию, поэтому запись о нём обязана лечь
+     * той же транзакцией.
+     *
+     * Двойник ниже фиксирует записи транзакции в «БД» только после успеха коллбэка: запись
+     * мимо транзакции считается закоммиченной сразу и тест краснеет.
+     */
+    it('addCondition: отказ журнала не оставляет условие без записи о нём', async () => {
+      const committed: string[] = [];
+
+      const clientFor = (buffer: string[]) => ({
+        ...prisma,
+        rightsLawyerReviewCondition: {
+          ...conditionDelegate(),
+          create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+            buffer.push('condition.create');
+            return Promise.resolve({ id: 'cond-1', ...data });
+          }),
+        },
+        rightsLawyerReviewEvent: {
+          ...eventDelegate(),
+          create: jest.fn(() => {
+            throw new Error('journal write failed');
+          }),
+        },
+      });
+
+      const root = clientFor(committed);
+      const client = {
+        ...root,
+        $transaction: async <T>(callback: (tx: unknown) => Promise<T>): Promise<T> => {
+          const pending: string[] = [];
+          const result = await callback(clientFor(pending));
+          committed.push(...pending);
+          return result;
+        },
+      };
+
+      const atomicService = new RightsLawyerReviewService(
+        client as unknown as PrismaService,
+        notifications as unknown as RightsNotificationsService,
+        lawyers,
+        risk,
+        { get: jest.fn() } as unknown as ConfigService,
+      );
+
+      await expect(
+        atomicService.addCondition(
+          'lr-1',
+          { code: 'GEO_BLOCK_US', textRu: 'Заблокировать США' },
+          'user-1',
+        ),
+      ).rejects.toThrow('journal write failed');
+
+      expect(committed).toHaveLength(0);
+    });
   });
 
   describe('withdraw and reopen', () => {

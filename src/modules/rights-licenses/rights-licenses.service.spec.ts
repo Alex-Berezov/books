@@ -68,6 +68,7 @@ const validDto = (overrides: Partial<CreateRightsLicenseDto> = {}): CreateRights
 });
 
 interface PrismaStub {
+  $transaction: jest.Mock;
   rightsLicense: Record<string, jest.Mock>;
   rightsLicenseLink: Record<string, jest.Mock>;
   rightsLicenseEvent: Record<string, jest.Mock>;
@@ -78,31 +79,42 @@ interface PrismaStub {
   territoryDecision: Record<string, jest.Mock>;
 }
 
-const createPrismaStub = (): PrismaStub => ({
-  rightsLicense: {
-    findMany: jest.fn().mockResolvedValue([]),
-    findFirst: jest.fn().mockResolvedValue(null),
-    findUnique: jest.fn().mockResolvedValue(null),
-    create: jest.fn(),
-    update: jest.fn(),
-    count: jest.fn().mockResolvedValue(0),
-  },
-  rightsLicenseLink: {
-    findMany: jest.fn().mockResolvedValue([]),
-    findFirst: jest.fn().mockResolvedValue(null),
-    create: jest.fn(),
-    delete: jest.fn(),
-  },
-  rightsLicenseEvent: {
-    findMany: jest.fn().mockResolvedValue([]),
-    create: jest.fn().mockResolvedValue({}),
-  },
-  rightsProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'profile-1' }) },
-  bookVersion: { findUnique: jest.fn().mockResolvedValue(null) },
-  mediaAsset: { findUnique: jest.fn().mockResolvedValue(null) },
-  rightsComponent: { findMany: jest.fn().mockResolvedValue([]) },
-  territoryDecision: { findMany: jest.fn().mockResolvedValue([]) },
-});
+const createPrismaStub = (): PrismaStub => {
+  const stub: PrismaStub = {
+    // LEGACY-036: мутации лицензии идут транзакцией. Здесь она сведена к вызову коллбэка —
+    // атомарность проверяется отдельным двойником ниже, который откатывает буфер записей.
+    $transaction: jest.fn(),
+    rightsLicense: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
+    rightsLicenseLink: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+      delete: jest.fn(),
+    },
+    rightsLicenseEvent: {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({}),
+    },
+    rightsProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'profile-1' }) },
+    bookVersion: { findUnique: jest.fn().mockResolvedValue(null) },
+    mediaAsset: { findUnique: jest.fn().mockResolvedValue(null) },
+    rightsComponent: { findMany: jest.fn().mockResolvedValue([]) },
+    territoryDecision: { findMany: jest.fn().mockResolvedValue([]) },
+  } as unknown as PrismaStub;
+
+  stub.$transaction.mockImplementation((callback: (tx: unknown) => Promise<unknown>) =>
+    callback(stub),
+  );
+
+  return stub;
+};
 
 describe('RightsLicensesService', () => {
   let service: RightsLicensesService;
@@ -317,10 +329,13 @@ describe('RightsLicensesService', () => {
    * отвязка обязана оставить событие, по которому связь восстанавливается, и записать его
    * в той же транзакции, что и удаление.
    *
-   * Двойник ниже имитирует транзакцию: запись через tx-клиент попадает в «БД» только после
+   * LEGACY-036 распространил то же требование на остальные четыре мутации лицензии
+   * (`create`, `update`, `revoke`, `link`), поэтому двойник здесь общий на весь блок.
+   *
+   * Двойник имитирует транзакцию: запись через tx-клиент попадает в «БД» только после
    * успешного завершения коллбэка, поэтому тест на откат проверяет атомарность, а не вызов.
    */
-  describe('unlink — след отвязки лицензии (WP-10.1)', () => {
+  describe('атомарность аудита лицензий (WP-10.1, LEGACY-036)', () => {
     interface Write {
       model: string;
       data: Record<string, unknown>;
@@ -352,14 +367,23 @@ describe('RightsLicensesService', () => {
           findUnique: jest.fn().mockResolvedValue(makeRecord()),
           findMany: jest.fn().mockResolvedValue([]),
           findFirst: jest.fn().mockResolvedValue(null),
-          create: jest.fn(),
-          update: jest.fn(),
+          create: jest.fn((args: { data: Record<string, unknown> }) => {
+            buffer.push({ model: 'rightsLicense.create', data: args.data });
+            return Promise.resolve(makeRecord(args.data as Partial<RightsLicenseRecord>));
+          }),
+          update: jest.fn((args: { data: Record<string, unknown> }) => {
+            buffer.push({ model: 'rightsLicense.update', data: args.data });
+            return Promise.resolve(makeRecord(args.data as Partial<RightsLicenseRecord>));
+          }),
           count: jest.fn().mockResolvedValue(0),
         },
         rightsLicenseLink: {
           findMany: jest.fn().mockResolvedValue([]),
           findFirst: jest.fn().mockResolvedValue(linkRow),
-          create: jest.fn(),
+          create: jest.fn((args: { data: Record<string, unknown> }) => {
+            buffer.push({ model: 'rightsLicenseLink.create', data: args.data });
+            return Promise.resolve({ ...linkRow, ...args.data });
+          }),
           delete: jest.fn((args: { where: { id: string } }) => {
             buffer.push({ model: 'rightsLicenseLink.delete', data: args.where });
             return Promise.resolve(linkRow);
@@ -438,6 +462,64 @@ describe('RightsLicensesService', () => {
 
       await expect(
         buildService(double.client).unlink('lic-1', 'link-1', 'user-42'),
+      ).rejects.toThrow('journal write failed');
+
+      expect(double.committed).toHaveLength(0);
+    });
+
+    /**
+     * LEGACY-036: до этой правки только `unlink` писал событие в транзакции. Остальные четыре
+     * мутации звали `recordEvent` отдельным `await` после мутации, и отказ между ними оставлял
+     * юридическое состояние без строки в журнале — то, что запрещает ADR-009.
+     */
+    const failingJournal = () => () => {
+      throw new Error('journal write failed');
+    };
+
+    it('create: отказ журнала не оставляет лицензию без записи о её появлении', async () => {
+      const double = createDouble(failingJournal());
+
+      await expect(buildService(double.client).create(validDto(), 'user-42')).rejects.toThrow(
+        'journal write failed',
+      );
+
+      expect(double.committed).toHaveLength(0);
+    });
+
+    it('update: отказ журнала откатывает и смену условий лицензии', async () => {
+      const double = createDouble(failingJournal());
+
+      await expect(
+        buildService(double.client).update('lic-1', { notesRu: 'Новая заметка' }, 'user-42'),
+      ).rejects.toThrow('journal write failed');
+
+      expect(double.committed).toHaveLength(0);
+    });
+
+    it('revoke: отказ журнала откатывает и сам отзыв лицензии', async () => {
+      const double = createDouble(failingJournal());
+
+      await expect(
+        buildService(double.client).revoke(
+          'lic-1',
+          { reasonRu: 'Отозвана правообладателем' },
+          'user-42',
+        ),
+      ).rejects.toThrow('journal write failed');
+
+      expect(double.committed).toHaveLength(0);
+    });
+
+    it('link: отказ журнала не оставляет покрытие без записи о нём', async () => {
+      const double = createDouble(failingJournal());
+      double.client.rightsLicenseLink.findFirst = jest.fn().mockResolvedValue(null);
+
+      await expect(
+        buildService(double.client).link(
+          'lic-1',
+          { linkType: RightsLicenseLinkType.RIGHTS_PROFILE, rightsProfileId: 'profile-1' },
+          'user-42',
+        ),
       ).rejects.toThrow('journal write failed');
 
       expect(double.committed).toHaveLength(0);

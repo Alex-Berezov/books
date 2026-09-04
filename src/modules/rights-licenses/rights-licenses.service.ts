@@ -207,20 +207,30 @@ export class RightsLicensesService {
   async create(dto: CreateRightsLicenseDto, userId: string): Promise<RightsLicenseDetailDto> {
     await this.validatePayload(dto, null);
 
-    const license = await this.licenseDelegate.create({
-      data: { ...this.buildWriteData(dto), createdByUserId: userId },
-    });
-
-    await this.recordEvent(license.id, RightsLicenseEventType.CREATED, {
-      currentStatus: license.status,
-      userId,
-    });
-    if (license.status === RightsLicenseStatus.ACTIVE) {
-      await this.recordEvent(license.id, RightsLicenseEventType.ACTIVATED, {
-        currentStatus: license.status,
-        userId,
+    // LEGACY-036: лицензия и запись о её появлении обязаны лечь вместе. До этого отказ между
+    // двумя `await` оставлял юридическое состояние без строки в журнале — то, что запрещает ADR-009.
+    const license = await this.database.$transaction(async (tx) => {
+      const created = await tx.rightsLicense.create({
+        data: { ...this.buildWriteData(dto), createdByUserId: userId },
       });
-    }
+
+      await this.recordEvent(
+        created.id,
+        RightsLicenseEventType.CREATED,
+        { currentStatus: created.status, userId },
+        tx.rightsLicenseEvent,
+      );
+      if (created.status === RightsLicenseStatus.ACTIVE) {
+        await this.recordEvent(
+          created.id,
+          RightsLicenseEventType.ACTIVATED,
+          { currentStatus: created.status, userId },
+          tx.rightsLicenseEvent,
+        );
+      }
+
+      return created;
+    });
 
     return this.buildDetail(license);
   }
@@ -242,26 +252,33 @@ export class RightsLicensesService {
 
     await this.validatePayload(dto, existing);
 
-    const updated = await this.licenseDelegate.update({
-      where: { id },
-      data: this.buildWriteData(dto),
-    });
-
-    await this.recordEvent(id, RightsLicenseEventType.UPDATED, {
-      previousStatus: existing.status,
-      currentStatus: updated.status,
-      userId,
-    });
-    if (
-      updated.status === RightsLicenseStatus.ACTIVE &&
-      existing.status !== RightsLicenseStatus.ACTIVE
-    ) {
-      await this.recordEvent(id, RightsLicenseEventType.ACTIVATED, {
-        previousStatus: existing.status,
-        currentStatus: updated.status,
-        userId,
+    // LEGACY-036: смена условий лицензии и запись о ней — одна транзакция.
+    const updated = await this.database.$transaction(async (tx) => {
+      const next = await tx.rightsLicense.update({
+        where: { id },
+        data: this.buildWriteData(dto),
       });
-    }
+
+      await this.recordEvent(
+        id,
+        RightsLicenseEventType.UPDATED,
+        { previousStatus: existing.status, currentStatus: next.status, userId },
+        tx.rightsLicenseEvent,
+      );
+      if (
+        next.status === RightsLicenseStatus.ACTIVE &&
+        existing.status !== RightsLicenseStatus.ACTIVE
+      ) {
+        await this.recordEvent(
+          id,
+          RightsLicenseEventType.ACTIVATED,
+          { previousStatus: existing.status, currentStatus: next.status, userId },
+          tx.rightsLicenseEvent,
+        );
+      }
+
+      return next;
+    });
 
     return this.buildDetail(updated);
   }
@@ -284,22 +301,33 @@ export class RightsLicensesService {
       );
     }
 
-    const updated = await this.licenseDelegate.update({
-      where: { id },
-      data: {
-        status: RightsLicenseStatus.REVOKED,
-        revokedAt: new Date(),
-        revokedByUserId: userId,
-        revocationReasonRu: dto.reasonRu,
-      },
-    });
+    // LEGACY-036: отзыв без записи о причине оставляет лицензию в состоянии, которое нечем
+    // объяснить, — статус REVOKED и его обоснование ложатся одной транзакцией.
+    const updated = await this.database.$transaction(async (tx) => {
+      const revoked = await tx.rightsLicense.update({
+        where: { id },
+        data: {
+          status: RightsLicenseStatus.REVOKED,
+          revokedAt: new Date(),
+          revokedByUserId: userId,
+          revocationReasonRu: dto.reasonRu,
+        },
+      });
 
-    await this.recordEvent(id, RightsLicenseEventType.REVOKED, {
-      previousStatus: existing.status,
-      currentStatus: RightsLicenseStatus.REVOKED,
-      notesRu: dto.reasonRu,
-      userId,
-      payload: existing.revocable ? undefined : { wasIrrevocable: true },
+      await this.recordEvent(
+        id,
+        RightsLicenseEventType.REVOKED,
+        {
+          previousStatus: existing.status,
+          currentStatus: RightsLicenseStatus.REVOKED,
+          notesRu: dto.reasonRu,
+          userId,
+          payload: existing.revocable ? undefined : { wasIrrevocable: true },
+        },
+        tx.rightsLicenseEvent,
+      );
+
+      return revoked;
     });
 
     return this.buildDetail(updated, warnings);
@@ -331,23 +359,34 @@ export class RightsLicensesService {
     });
     if (existing) return this.mapLink(existing);
 
-    const created = await this.linkDelegate.create({
-      data: {
-        rightsLicenseId: licenseId,
-        linkType: dto.linkType,
-        [targetField]: targetId,
-        coversCountryCodes: dto.coversCountryCodes
-          ? dto.coversCountryCodes.map((code) => code.toUpperCase())
-          : undefined,
-        notesRu: dto.notesRu,
-        createdByUserId: userId,
-      },
-    });
+    // LEGACY-036: покрытие лицензией и запись о его появлении ложатся вместе — так же,
+    // как снятие покрытия в `unlink`.
+    const created = await this.database.$transaction(async (tx) => {
+      const link = await tx.rightsLicenseLink.create({
+        data: {
+          rightsLicenseId: licenseId,
+          linkType: dto.linkType,
+          [targetField]: targetId,
+          coversCountryCodes: dto.coversCountryCodes
+            ? dto.coversCountryCodes.map((code) => code.toUpperCase())
+            : undefined,
+          notesRu: dto.notesRu,
+          createdByUserId: userId,
+        },
+      });
 
-    await this.recordEvent(licenseId, RightsLicenseEventType.LINKED, {
-      currentStatus: license.status,
-      userId,
-      payload: { linkType: dto.linkType, targetId },
+      await this.recordEvent(
+        licenseId,
+        RightsLicenseEventType.LINKED,
+        {
+          currentStatus: license.status,
+          userId,
+          payload: { linkType: dto.linkType, targetId },
+        },
+        tx.rightsLicenseEvent,
+      );
+
+      return link;
     });
 
     return this.mapLink(created);
@@ -366,8 +405,8 @@ export class RightsLicensesService {
     // потребовав взамен неудаляемое событие в той же транзакции. Раньше удаление и запись
     // события были двумя независимыми `await`: отказ между ними стирал единственное
     // доказательство того, что покрытие лицензией существовало.
-    await this.database.$transaction(async (transaction) => {
-      await transaction.rightsLicenseLink.delete({ where: { id: linkId } });
+    await this.database.$transaction(async (tx) => {
+      await tx.rightsLicenseLink.delete({ where: { id: linkId } });
       await this.recordEvent(
         licenseId,
         RightsLicenseEventType.UNLINKED,
@@ -376,7 +415,7 @@ export class RightsLicensesService {
           userId,
           payload: this.buildUnlinkPayload(link),
         },
-        transaction.rightsLicenseEvent,
+        tx.rightsLicenseEvent,
       );
     });
 
@@ -610,7 +649,10 @@ export class RightsLicensesService {
       userId?: string;
       payload?: Record<string, unknown>;
     },
-    eventDelegate: RightsLicenseEventDelegate = this.eventDelegate,
+    // LEGACY-036: умолчания у этого параметра нет намеренно. С умолчанием `= this.eventDelegate`
+    // вызов внутри `$transaction`, забывший делегат, компилировался молча и писал событие
+    // корневым клиентом — «клиент выглядит транзакционным, а не является им».
+    eventDelegate: RightsLicenseEventDelegate,
   ): Promise<void> {
     await eventDelegate.create({
       data: {

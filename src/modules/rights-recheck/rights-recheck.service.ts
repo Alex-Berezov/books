@@ -190,18 +190,28 @@ export class RightsRecheckService {
     if (existing) {
       // A newer trigger with an earlier deadline pulls the existing task forward.
       if (input.dueAt.getTime() < existing.dueAt.getTime()) {
-        const moved = await database.rightsRecheckTask.update({
-          where: { id: existing.id },
-          data: { dueAt: input.dueAt },
-        });
-        await this.recordEvent(database, existing.id, {
-          eventType: RightsRecheckEventType.DUE_DATE_CHANGED,
-          messageRu: `Срок задачи перенесён на ${input.dueAt.toISOString()}.`,
-          payload: {
-            previousDueAt: existing.dueAt.toISOString(),
-            dueAt: input.dueAt.toISOString(),
-          },
-        });
+        // LEGACY-036: без своего `tx` здесь работал корневой клиент, и перенос срока с записью
+        // о нём шли двумя независимыми `await` — ни один из вызывающих `ensureTask` транзакции
+        // не передаёт. Ветка создания задачи ниже такую транзакцию открывает, эта — не открывала.
+        const moveDueDate = async (
+          client: RecheckDatabaseClient,
+        ): Promise<RightsRecheckTaskRecord> => {
+          const moved = await client.rightsRecheckTask.update({
+            where: { id: existing.id },
+            data: { dueAt: input.dueAt },
+          });
+          await this.recordEvent(client, existing.id, {
+            eventType: RightsRecheckEventType.DUE_DATE_CHANGED,
+            messageRu: `Срок задачи перенесён на ${input.dueAt.toISOString()}.`,
+            payload: {
+              previousDueAt: existing.dueAt.toISOString(),
+              dueAt: input.dueAt.toISOString(),
+            },
+          });
+          return moved;
+        };
+
+        const moved = tx ? await moveDueDate(tx) : await database.$transaction(moveDueDate);
         return { task: moved, created: false };
       }
       return { task: existing, created: false };
