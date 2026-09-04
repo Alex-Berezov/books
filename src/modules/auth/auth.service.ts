@@ -11,9 +11,49 @@ import {
 import { LoginDto, RegisterDto, RefreshDto, SocialLoginDto } from './dto/auth.dto';
 import { SocialIdentityService } from './providers/social-identity.service';
 import type { SocialIdentity } from './providers/social-identity.service';
-import { User, Language as PrismaLanguage, RoleName } from '@prisma/client';
+import { Prisma, User, Language as PrismaLanguage, RoleName } from '@prisma/client';
+import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
 
-type PublicUser = Omit<User, 'passwordHash'>;
+/**
+ * Пользователь в ответах входа и регистрации.
+ *
+ * ⚠️ Выводится из белого списка, а не из `Omit<User, 'passwordHash'>` (`LEGACY-116`,
+ * `LEGACY-190`). Разница видна на следующей колонке в схеме: `Omit` пропустил бы её
+ * в этот тип сам, а `tsc` попросил бы заполнить её в `publicUser` — и колонка уехала бы
+ * в тело ответа входа, хотя `ACCOUNT_USER_SELECT` её не отдаёт. С белым списком новое
+ * поле не появляется в ответе, пока его не впишут в список руками.
+ */
+type PublicUser = AccountUser;
+
+/**
+ * Единственное чтение пользователя, которому argon2-хеш нужен по существу (`LEGACY-190`).
+ *
+ * 🔴 `passwordHash: true` во всём файле стоит **только здесь**. Это не обещание автора:
+ * спека разбирает исходник этого файла деревом и считает обращения, просящие хеш, — блок
+ * «инвариант по исходнику сервиса» в `auth.service.spec.ts`. Чтение, добавленное завтра
+ * без `select`, краснит прогон, даже если его не вызвал ни один тест.
+ *
+ * ⚠️ Охрана точная, а не сплошная, и границы у неё две. Первая: `select` требуется
+ * у читающих методов по белому списку — у `deleteMany` и `updateMany` этого поля нет
+ * в типах вовсе, и требование к ним было бы неисполнимо. Вторая: обращение через
+ * промежуточную переменную (`const users = this.prisma.user`) разбор не видит.
+ * Владелец перед `.user` при этом не проверяется — `tx.user.*` внутри транзакции
+ * под охраной наравне с `this.prisma.user.*`.
+ *
+ * Остальные десять обращений читают белым списком
+ * `ACCOUNT_USER_SELECT` или одним `id`: до правки все одиннадцать шли без `select` вовсе,
+ * то есть хеш лежал в памяти и в объекте, который дальше уходил в `publicUser` и в ответ.
+ * Наружу он не попадал по единственной причине — `publicUser` перечисляет поля руками;
+ * одна невнимательная правка вида `return { ...user, roles }` отправила бы его в тело
+ * ответа входа, в логи фронта и в кэш. Ни типы, ни линт, ни тесты этого не ловили.
+ *
+ * `login` читает хеш, чтобы сверить пароль (`argon2.verify`), и в ответ он не идёт:
+ * ответ собирает всё тот же `publicUser`.
+ */
+const LOGIN_USER_SELECT = {
+  ...ACCOUNT_USER_SELECT,
+  passwordHash: true,
+} satisfies Prisma.UserSelect;
 
 type AuthSession = {
   user: PublicUser & { roles: RoleName[] };
@@ -57,7 +97,10 @@ export class AuthService {
         create: { name: RoleName.content_manager },
       }),
     ]);
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      select: { id: true },
+    });
     if (existing) throw new ConflictException('Email already in use');
 
     const passwordHash = await argon2.hash(dto.password);
@@ -69,6 +112,7 @@ export class AuthService {
         name: dto.name,
         languagePreference: dto.languagePreference ?? PrismaLanguage.en,
       },
+      select: ACCOUNT_USER_SELECT,
     });
 
     // Assign default 'user' role and optionally elevated roles from env lists
@@ -113,7 +157,11 @@ export class AuthService {
 
     const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles);
-    await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLogin: new Date() },
+      select: { id: true },
+    });
 
     // Include roles in register response
     return { user: { ...this.publicUser(user), roles }, ...tokens };
@@ -164,10 +212,18 @@ export class AuthService {
       },
     });
 
-    let user = link ? await this.prisma.user.findUnique({ where: { id: link.userId } }) : null;
+    let user: AccountUser | null = link
+      ? await this.prisma.user.findUnique({
+          where: { id: link.userId },
+          select: ACCOUNT_USER_SELECT,
+        })
+      : null;
 
     if (!user) {
-      const byEmail = await this.prisma.user.findUnique({ where: { email } });
+      const byEmail = await this.prisma.user.findUnique({
+        where: { email },
+        select: ACCOUNT_USER_SELECT,
+      });
 
       if (byEmail && !identity.emailVerified) {
         // Провайдер подтвердил, что владелец токена — это он сам, но не то, что
@@ -208,12 +264,20 @@ export class AuthService {
     if (!user.name && identity.name) updateData.name = identity.name;
     if (!user.avatarUrl && identity.avatarUrl) updateData.avatarUrl = identity.avatarUrl;
     if (Object.keys(updateData).length > 0) {
-      user = await this.prisma.user.update({ where: { id: user.id }, data: updateData });
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: updateData,
+        select: ACCOUNT_USER_SELECT,
+      });
     }
 
     const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles);
-    await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLogin: new Date() },
+      select: { id: true },
+    });
 
     return { user: { ...this.publicUser(user), roles }, ...tokens };
   }
@@ -222,7 +286,7 @@ export class AuthService {
     email: string,
     identity: SocialIdentity,
     languagePreference?: PrismaLanguage,
-  ): Promise<User> {
+  ): Promise<AccountUser> {
     const user = await this.prisma.user.create({
       data: {
         email,
@@ -230,6 +294,7 @@ export class AuthService {
         avatarUrl: identity.avatarUrl,
         languagePreference: languagePreference ?? PrismaLanguage.en,
       },
+      select: ACCOUNT_USER_SELECT,
     });
 
     // Baseline role only. Elevated roles are never granted from an e-mail
@@ -273,7 +338,10 @@ export class AuthService {
     accessToken: string;
     refreshToken: string;
   }> {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      select: LOGIN_USER_SELECT,
+    });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     if (!user.passwordHash) throw new UnauthorizedException('Invalid credentials');
@@ -283,7 +351,11 @@ export class AuthService {
 
     const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles);
-    await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLogin: new Date() },
+      select: { id: true },
+    });
 
     // Include roles in login response
     return { user: { ...this.publicUser(user), roles }, ...tokens };
@@ -294,7 +366,10 @@ export class AuthService {
       secret: this.secret(JWT_REFRESH_SECRET_ENV),
     });
 
-    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: ACCOUNT_USER_SELECT,
+    });
     if (!user) throw new UnauthorizedException('User not found');
 
     const roles = await this.computeRoles(user);
@@ -325,7 +400,7 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  private publicUser(user: User): PublicUser {
+  private publicUser(user: AccountUser): PublicUser {
     return {
       id: user.id,
       email: user.email,
@@ -350,7 +425,7 @@ export class AuthService {
    * request. The lists now only bootstrap the first administrator through
    * {@link register}, which writes the role into `UserRole`.
    */
-  private async computeRoles(user: User): Promise<RoleName[]> {
+  private async computeRoles(user: Pick<User, 'id'>): Promise<RoleName[]> {
     const dbLinks = await this.prisma.userRole.findMany({
       where: { userId: user.id },
       include: { role: true },

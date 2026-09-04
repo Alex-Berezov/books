@@ -1,14 +1,28 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { GeoBlockScope } from '@prisma/client';
 import { IsBoolean, IsEnum, IsOptional, IsString, Matches } from 'class-validator';
 
-export enum GeoBlockScope {
-  ENTIRE_BOOK = 'ENTIRE_BOOK',
-  LANGUAGE_EDITION = 'LANGUAGE_EDITION',
-  TEXT_READER = 'TEXT_READER',
-  DOWNLOADS = 'DOWNLOADS',
-  AUDIO = 'AUDIO',
-  SPECIFIC_ASSET = 'SPECIFIC_ASSET',
-}
+/**
+ * Источник **типа** — `enum GeoBlockScope` в `schema.prisma` (`LEGACY-204`).
+ *
+ * 🔴 Раньше здесь стояла вторая рукописная копия тех же шести значений, а третья
+ * (`ClaimBlockScope`) — в `rights-claims/rights-claim-interface.ts`; переход между ними шёл
+ * двойным кастом `as unknown as`, то есть без сверки наборов вовсе. Разошлись бы копии —
+ * `scopeCovers` перестал бы сопоставлять значение, и блокировка по правовой претензии
+ * не сработала бы молча, в пользу открытого доступа.
+ *
+ * Сгенерированный клиент отдаёт это перечисление плоским const-объектом, поэтому `@IsEnum`
+ * и `@ApiProperty({ enum })` читают его так же, как читали TS-enum. Реэкспорт под тем же
+ * именем оставляет семь внешних потребителей этого файла нетронутыми.
+ *
+ * ⚠️ Единственным местом, где перечислены эти шесть значений, файл схемы при этом
+ * **не стал**: те же значения выписаны строками в `rights-intake/rights-review-import
+ * .validator.ts`, в JSON-схеме отчёта `rights-review-schema-1.0.ts` и в
+ * `rights-claims/rights-claim.constants.ts`, а на фронте — в рукописной схеме API.
+ * Со схемой их не сверяет ничто, и седьмое значение придётся вписывать туда руками.
+ * Границы `LEGACY-204` покрывали три копии самого типа, эти списки в них не входили.
+ */
+export { GeoBlockScope };
 
 export class CheckGeoBlockAccessDto {
   @ApiProperty({ example: 'GB', pattern: '^[A-Za-z]{2}$' })

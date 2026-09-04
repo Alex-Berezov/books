@@ -1,3 +1,5 @@
+import { GeoBlockScope } from '@prisma/client';
+
 export enum RightsClaimType {
   DMCA_TAKEDOWN = 'DMCA_TAKEDOWN',
   COPYRIGHT_INFRINGEMENT = 'COPYRIGHT_INFRINGEMENT',
@@ -108,17 +110,18 @@ export enum RightsClaimEventType {
 }
 
 /**
- * Access-block scopes reuse the Phase 12 `GeoBlockScope` enum. Declared locally because
- * the generated Prisma client is not regenerated in this repository.
+ * Access-block scopes reuse the Phase 12 `GeoBlockScope` enum — и теперь **буквально** его,
+ * а не рукописную копию тех же значений (`LEGACY-204`).
+ *
+ * 🔴 Прежнее обоснование копии («the generated Prisma client is not regenerated in this
+ * repository») устарело: клиент сгенерирован и знает `GeoBlockScope`. Пока копий было две,
+ * переход между ними шёл двойным кастом в `geo-block-rule.service.ts`, и расхождение наборов
+ * прошло бы молча — `scopeCovers` не сопоставил бы новое значение ни с чем, то есть отказ
+ * случился бы в пользу открытого доступа. Имя `ClaimBlockScope` сохранено как алиас: его
+ * читают сервисы претензий, их DTO и спеки.
  */
-export enum ClaimBlockScope {
-  ENTIRE_BOOK = 'ENTIRE_BOOK',
-  LANGUAGE_EDITION = 'LANGUAGE_EDITION',
-  TEXT_READER = 'TEXT_READER',
-  DOWNLOADS = 'DOWNLOADS',
-  AUDIO = 'AUDIO',
-  SPECIFIC_ASSET = 'SPECIFIC_ASSET',
-}
+export const ClaimBlockScope = GeoBlockScope;
+export type ClaimBlockScope = GeoBlockScope;
 
 /** Row shape of the RightsClaim table as returned by the Prisma delegate. */
 export interface RightsClaimRecord {

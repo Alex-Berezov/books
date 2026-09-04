@@ -14,7 +14,6 @@ import {
   CLAIM_ACCESS_BLOCK_MESSAGE_RU,
   CLAIM_ACCESS_BLOCK_REASON_CODE,
 } from '../rights-claims/rights-claim.constants';
-import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import {
   GeoAccessCheckResultDto,
@@ -228,7 +227,7 @@ export class GeoBlockRuleService {
       bookId: input.bookId,
       bookVersionId: input.bookVersionId,
       countryCode: input.countryCode,
-      scope: input.scope as unknown as ClaimBlockScope,
+      scope: input.scope,
     });
     if (claimResult.blocked) {
       return {
@@ -465,8 +464,16 @@ export class GeoBlockRuleService {
   }
 
   /**
-   * The response enum and the schema enum carry the same members, and the lookup keeps that
-   * agreement checked by the compiler: a member added to the schema alone stops compiling here.
+   * ⚠️ Сверять здесь больше нечего, и это осознанно (`LEGACY-204`).
+   *
+   * Раньше ответное перечисление было рукописной копией схемного, а этот поиск держал их
+   * согласие проверяемым компилятором. Копия снята — оба имени указывают на один и тот же
+   * `GeoBlockScope` сгенерированного клиента, так что отображение стало тождественным
+   * и значение, добавленное в схему, доезжает сюда молча.
+   *
+   * 🔴 Сторожем расхождения схемы с самой базой этот метод не был никогда: значение,
+   * заведённое в Postgres-enum мимо `schema.prisma`, давало здесь `undefined` и роняло
+   * ключ `scope` из ответа. Это стережёт `yarn drift-check`, и только он.
    */
   private toDtoScope(scope: GeoBlockRule['scope']): GeoBlockScope {
     return GeoBlockScope[scope];
