@@ -1,6 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PersonRecord, PersonType } from './person-interface';
+
+/**
+ * `LEGACY-347`: имя не найдено в отчёте — это форма отчёта, а не отказ базы.
+ * Вызывающий обязан ловить именно этот класс и не трогать больше ничего:
+ * отказ драйвера обязан всплыть наружу как есть.
+ */
+export class PersonIdentityMissingError extends Error {}
+
+type PersonDatabaseClient = PrismaService | Prisma.TransactionClient;
 
 export interface ContributorInput {
   displayName: string;
@@ -25,8 +35,8 @@ export class PersonResolverService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  private get personModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['person'] as {
+  private personModel(client: PersonDatabaseClient) {
+    return (client as unknown as Record<string, unknown>)['person'] as {
       findFirst: (args: Record<string, unknown>) => Promise<PersonRecord | null>;
       findMany: (args: Record<string, unknown>) => Promise<PersonRecord[]>;
       create: (args: Record<string, unknown>) => Promise<PersonRecord>;
@@ -34,56 +44,67 @@ export class PersonResolverService {
     };
   }
 
-  public async resolveOrCreatePerson(input: ContributorInput): Promise<PersonRecord> {
+  /**
+   * `tx` — клиент чужой транзакции (`LEGACY-347`). Не передан — идёт по своему
+   * `this.prisma`, как раньше; передан — обязан использоваться целиком, второе
+   * соединение из того же пула здесь не открывается.
+   */
+  public async resolveOrCreatePerson(
+    input: ContributorInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<PersonRecord> {
+    const client = tx ?? this.prisma;
     const canonicalName = (input.canonicalName || input.displayName || '').trim();
     if (!canonicalName) {
-      throw new Error('Canonical or display name is required for person resolution');
+      throw new PersonIdentityMissingError(
+        'Canonical or display name is required for person resolution',
+      );
     }
 
     // 1. Search by wikidataId
     if (input.wikidataId?.trim()) {
-      const person = await this.personModel.findFirst({
+      const person = await this.personModel(client).findFirst({
         where: { wikidataId: input.wikidataId.trim() },
       });
       if (person) {
-        return this.updateSafeEmptyFields(person, input);
+        return this.updateSafeEmptyFields(person, input, client);
       }
     }
 
     // 2. Search by viafId
     if (input.viafId?.trim()) {
-      const person = await this.personModel.findFirst({
+      const person = await this.personModel(client).findFirst({
         where: { viafId: input.viafId.trim() },
       });
       if (person) {
-        return this.updateSafeEmptyFields(person, input);
+        return this.updateSafeEmptyFields(person, input, client);
       }
     }
 
     // 3. Search by isni
     if (input.isni?.trim()) {
-      const person = await this.personModel.findFirst({
+      const person = await this.personModel(client).findFirst({
         where: { isni: input.isni.trim() },
       });
       if (person) {
-        return this.updateSafeEmptyFields(person, input);
+        return this.updateSafeEmptyFields(person, input, client);
       }
     }
 
     // 4. Search by gutenbergAgentId
     if (input.gutenbergAgentId?.trim()) {
-      const person = await this.personModel.findFirst({
+      const person = await this.personModel(client).findFirst({
         where: { gutenbergAgentId: input.gutenbergAgentId.trim() },
       });
       if (person) {
-        return this.updateSafeEmptyFields(person, input);
+        return this.updateSafeEmptyFields(person, input, client);
       }
     }
 
     // 5. Search by normalized name + birth/death year
     const normalizedName = canonicalName.toLowerCase();
     const candidates =
-      (await this.personModel.findMany({
+      (await this.personModel(client).findMany({
         where: {
           canonicalName: {
             equals: canonicalName,
@@ -106,11 +127,11 @@ export class PersonResolverService {
     });
 
     if (matchedPerson) {
-      return this.updateSafeEmptyFields(matchedPerson, input);
+      return this.updateSafeEmptyFields(matchedPerson, input, client);
     }
 
     // 6. If no match found, create new Person
-    return this.personModel.create({
+    return this.personModel(client).create({
       data: {
         type: input.type || 'NATURAL_PERSON',
         canonicalName,
@@ -132,6 +153,7 @@ export class PersonResolverService {
   private async updateSafeEmptyFields(
     person: PersonRecord,
     input: ContributorInput,
+    client: PersonDatabaseClient,
   ): Promise<PersonRecord> {
     const dataToUpdate: Record<string, unknown> = {};
 
@@ -158,7 +180,7 @@ export class PersonResolverService {
       return person;
     }
 
-    const updated = await this.personModel.update({
+    const updated = await this.personModel(client).update({
       where: { id: person.id },
       data: dataToUpdate,
     });

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PersonResolverService } from './person-resolver.service';
+import { PersonIdentityMissingError, PersonResolverService } from './person-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PersonType } from './person-interface';
 
@@ -139,5 +139,84 @@ describe('PersonResolverService', () => {
       data: { wikidataId: 'Q999' },
     });
     expect(result.viafId).toBe('ORIGINAL_VIAF');
+  });
+
+  /**
+   * `LEGACY-347`: имя отсутствует — это форма отчёта
+   * (`PersonIdentityMissingError`), а не отказ базы; вызывающий обязан ловить
+   * именно этот класс.
+   */
+  it('throws PersonIdentityMissingError when neither canonicalName nor displayName is usable', async () => {
+    await expect(service.resolveOrCreatePerson({ displayName: '   ' })).rejects.toBeInstanceOf(
+      PersonIdentityMissingError,
+    );
+    expect(prismaMock.person.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.person.findMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-347`: `tx` передан — обязан использоваться целиком, второе
+   * соединение из `this.prisma` здесь открываться не должно.
+   */
+  it('reads and writes through the passed tx client instead of this.prisma', async () => {
+    const txMock = {
+      person: {
+        findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValueOnce([]),
+        create: jest.fn().mockResolvedValueOnce({ id: 'p-tx', canonicalName: 'Tx Author' }),
+        update: jest.fn(),
+      },
+    };
+
+    const result = await service.resolveOrCreatePerson(
+      { displayName: 'Tx Author' },
+      txMock as never,
+    );
+
+    expect(result.id).toBe('p-tx');
+    expect(txMock.person.findMany).toHaveBeenCalled();
+    expect(txMock.person.create).toHaveBeenCalled();
+    expect(prismaMock.person.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.person.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.person.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-347` (ревью): предыдущий тест на `tx` проходит только ветку
+   * «совпадений нет → create». Ветка «человек уже найден → updateSafeEmptyFields»
+   * гоняет отдельный делегат `client.person.update` — если один из пяти
+   * вызовов `updateSafeEmptyFields` в `resolveOrCreatePerson` тихо заменят
+   * на `this.prisma`, эта ветка останется непроверенной без отдельного кейса.
+   */
+  it('reads and updates an existing person through the passed tx client, not this.prisma', async () => {
+    const existingPerson = {
+      id: 'p-tx-existing',
+      canonicalName: 'Tx Existing',
+      viafId: '12345',
+    };
+    const txMock = {
+      person: {
+        findFirst: jest.fn().mockResolvedValueOnce(existingPerson),
+        findMany: jest.fn(),
+        create: jest.fn(),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }) => Promise.resolve({ ...existingPerson, ...data })),
+      },
+    };
+
+    const result = await service.resolveOrCreatePerson(
+      { displayName: 'Tx Existing', viafId: '12345', birthYear: 1900 },
+      txMock as never,
+    );
+
+    expect(txMock.person.findFirst).toHaveBeenCalledWith({ where: { viafId: '12345' } });
+    expect(txMock.person.update).toHaveBeenCalledWith({
+      where: { id: 'p-tx-existing' },
+      data: { birthYear: 1900 },
+    });
+    expect(result.birthYear).toBe(1900);
+    expect(prismaMock.person.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.person.update).not.toHaveBeenCalled();
   });
 });

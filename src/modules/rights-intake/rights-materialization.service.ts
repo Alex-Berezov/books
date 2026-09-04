@@ -29,7 +29,10 @@ import {
   normalizeTerritoryFinalStatus,
 } from './rights-review-import.constants';
 
-import { PersonResolverService } from '../persons/person-resolver.service';
+import {
+  PersonIdentityMissingError,
+  PersonResolverService,
+} from '../persons/person-resolver.service';
 import { ContributorRole } from '../persons/person-interface';
 import {
   RightsNotificationSeverity,
@@ -51,10 +54,21 @@ const isUniqueConstraintViolation = (error: unknown): boolean =>
  */
 class ReportShapeError extends Error {}
 
+/**
+ * `LEGACY-343`: границу проводить по коду драйвера, а не по классу целиком.
+ * `PrismaClientKnownRequestError` несёт и форму отчёта (нарушенный констрейнт),
+ * и инфраструктуру (таймаут пула, конфликт записи) — прежняя проверка
+ * `instanceof` считала форму отчёта на обоих сразу, и таймаут пула (`P2024`)
+ * уезжал как 422 «нужен исправленный отчёт», а `SentryExceptionFilter` репортит
+ * только 5xx — алерт не поднимался вовсе.
+ */
+const REPORT_SHAPE_PRISMA_CODES = new Set(['P2002', 'P2003', 'P2025']);
+
 const isReportShapeError = (error: unknown): boolean =>
   error instanceof ReportShapeError ||
   error instanceof Prisma.PrismaClientValidationError ||
-  error instanceof Prisma.PrismaClientKnownRequestError;
+  (error instanceof Prisma.PrismaClientKnownRequestError &&
+    REPORT_SHAPE_PRISMA_CODES.has(error.code));
 
 /**
  * Код страны — идентичность строки, а не её описание.
@@ -1509,26 +1523,39 @@ export class RightsMaterializationService {
     return `${identity}|${input.role}|${rightsComponentId ?? ''}`;
   }
 
+  /**
+   * `LEGACY-347`: `tx` протаскивается в `resolveOrCreatePerson`, чтобы персона
+   * писалась тем же соединением, что и материализация, — второе соединение
+   * на занятом пуле (`LEGACY-256`) отклонялось бы по таймауту прямо здесь.
+   * `catch` ловит только «имени нет в отчёте» (`PersonIdentityMissingError`) —
+   * это форма отчёта, участник пишется без персоны. Отказ драйвера пробрасывается
+   * наружу и попадает в `toDiagnosticError`/`isReportShapeError` как обычно.
+   */
   private async resolveContributorPersonId(
     input: NormalizedContributorInput,
+    tx: Prisma.TransactionClient,
   ): Promise<string | null> {
     try {
-      const person = await this.personResolverService.resolveOrCreatePerson({
-        displayName: input.displayName,
-        canonicalName: input.canonicalName,
-        birthYear: input.birthYear,
-        deathYear: input.deathYear,
-        nationalityCountryCode: input.nationalityCountryCode,
-        publicDomainFromYear: input.publicDomainFromYear,
-        wikidataId: input.wikidataId,
-        viafId: input.viafId,
-        isni: input.isni,
-        gutenbergAgentId: input.gutenbergAgentId,
-        notesRu: input.notesRu,
-      });
+      const person = await this.personResolverService.resolveOrCreatePerson(
+        {
+          displayName: input.displayName,
+          canonicalName: input.canonicalName,
+          birthYear: input.birthYear,
+          deathYear: input.deathYear,
+          nationalityCountryCode: input.nationalityCountryCode,
+          publicDomainFromYear: input.publicDomainFromYear,
+          wikidataId: input.wikidataId,
+          viafId: input.viafId,
+          isni: input.isni,
+          gutenbergAgentId: input.gutenbergAgentId,
+          notesRu: input.notesRu,
+        },
+        tx,
+      );
       return person.id;
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof PersonIdentityMissingError) return null;
+      throw error;
     }
   }
 
@@ -1553,7 +1580,7 @@ export class RightsMaterializationService {
       input: NormalizedContributorInput,
       rightsComponentId: string | null,
     ): Promise<MaterializedContributor | null> => {
-      const personId = await this.resolveContributorPersonId(input);
+      const personId = await this.resolveContributorPersonId(input, tx);
       const dedupKey = this.contributorDedupKey(personId, input, rightsComponentId);
       if (createdDedupKeys.has(dedupKey)) {
         return null;

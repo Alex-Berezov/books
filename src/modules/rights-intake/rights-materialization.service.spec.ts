@@ -3,7 +3,10 @@ import { ComponentTerritoryAggregationService } from './component-territory-aggr
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
-import { PersonResolverService } from '../persons/person-resolver.service';
+import {
+  PersonIdentityMissingError,
+  PersonResolverService,
+} from '../persons/person-resolver.service';
 import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -413,6 +416,59 @@ describe('RightsMaterializationService', () => {
 
         await expect(service.materializeFromImport('import-1')).rejects.toBe(infrastructureError);
         expect(notifications.create).toHaveBeenCalled();
+      });
+
+      /**
+       * `LEGACY-343`: `P2024` — таймаут получения соединения из пула, отказ
+       * инфраструктуры, а не формы отчёта. Прежняя проверка `instanceof
+       * Prisma.PrismaClientKnownRequestError` без разбора кода превращала его
+       * в 422 «нужен исправленный отчёт», и `SentryExceptionFilter` (репортит
+       * только 5xx) не поднимал алерт.
+       */
+      it('P2024 (pool connection timeout) stays a bare 500, not a report-shape 422', async () => {
+        const poolTimeout = new Prisma.PrismaClientKnownRequestError(
+          'Timed out fetching a connection',
+          {
+            code: 'P2024',
+            clientVersion: 'test',
+          },
+        );
+        failWith(poolTimeout);
+
+        await expect(service.materializeFromImport('import-1')).rejects.toBe(poolTimeout);
+      });
+
+      /**
+       * `LEGACY-343`: неизвестный код драйвера трактуется как инфраструктура —
+       * 500 виден в Sentry, 422 нет.
+       */
+      it('an unlisted Prisma driver code stays a bare 500', async () => {
+        const unknownCode = new Prisma.PrismaClientKnownRequestError('Something else broke', {
+          code: 'P1017',
+          clientVersion: 'test',
+        });
+        failWith(unknownCode);
+
+        await expect(service.materializeFromImport('import-1')).rejects.toBe(unknownCode);
+      });
+
+      /**
+       * `LEGACY-343`: `P2002` (нарушение уникальности) остаётся формой отчёта —
+       * границу проводить по коду, не снимая её у известных «формы отчёта».
+       */
+      it('P2002 (unique constraint) still turns into a report-shape 422', async () => {
+        const uniqueViolation = new Prisma.PrismaClientKnownRequestError(
+          'Unique constraint failed',
+          {
+            code: 'P2002',
+            clientVersion: 'test',
+          },
+        );
+        failWith(uniqueViolation);
+
+        await expect(service.materializeFromImport('import-1')).rejects.toThrow(
+          UnprocessableEntityException,
+        );
       });
 
       it('does not let a failing notification mask the original error', async () => {
@@ -1632,6 +1688,86 @@ describe('RightsMaterializationService', () => {
 
       expect(rpc().create).not.toHaveBeenCalled();
       expect(rpc().update).not.toHaveBeenCalled();
+    });
+
+    /**
+     * `LEGACY-347`: персона обязана писаться клиентом чужой транзакции
+     * (`tx`), а не вторым соединением `this.prisma` — иначе на занятом пуле
+     * (`LEGACY-256`) второе соединение отклоняется по таймауту.
+     */
+    it('resolves the contributor person through the materialization tx, not a second connection', async () => {
+      const reportJson = makeValidReportJson();
+      const sourceAssessment = reportJson.sourceAssessment as Record<string, unknown>;
+      sourceAssessment['contributors'] = [{ displayName: 'Mark Twain', role: 'AUTHOR' }];
+      setupContributorScenario(reportJson);
+      // `setupTransaction()` заводит `tx` тем же объектом, что и `prisma` — а
+      // значит проверка `toHaveBeenCalledWith(..., prisma)` не отличила бы `tx`
+      // от `this.prisma`, попади в код такая подмена (ревью нашло это как
+      // слабость посадки). `txClient` — отдельный объект, делегирующий все
+      // модели `prisma` через прототип: функционально то же самое, но другой
+      // по идентичности, поэтому подмену `tx` → `this.prisma` тест ловит.
+      const txClient = Object.create(prisma) as typeof prisma;
+      prisma.$transaction.mockImplementationOnce((fn: (tx: Record<string, unknown>) => unknown) =>
+        fn(txClient as unknown as Record<string, unknown>),
+      );
+
+      await service.materializeFromImport('import-1');
+
+      expect(personResolver.resolveOrCreatePerson).toHaveBeenCalledWith(
+        expect.objectContaining({ displayName: 'Mark Twain' }),
+        txClient,
+      );
+      expect(personResolver.resolveOrCreatePerson).not.toHaveBeenCalledWith(
+        expect.anything(),
+        prisma,
+      );
+    });
+
+    /**
+     * `LEGACY-347`: отказ драйвера при разрешении персоны обязан всплыть
+     * наружу, а не превратиться в `personId: null` — иначе связь участника
+     * пишется без персоны и ручка отвечает успехом на сломанном профиле.
+     */
+    it('propagates a driver failure from person resolution instead of writing a null personId', async () => {
+      const reportJson = makeValidReportJson();
+      const sourceAssessment = reportJson.sourceAssessment as Record<string, unknown>;
+      sourceAssessment['contributors'] = [{ displayName: 'Mark Twain', role: 'AUTHOR' }];
+      setupBasicMocks({ reportJson });
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      const driverError = new Prisma.PrismaClientKnownRequestError(
+        'Timed out fetching a connection',
+        {
+          code: 'P2024',
+          clientVersion: 'test',
+        },
+      );
+      personResolver.resolveOrCreatePerson.mockRejectedValue(driverError);
+
+      await expect(service.materializeFromImport('import-1')).rejects.toBe(driverError);
+      expect(rpc().create).not.toHaveBeenCalled();
+    });
+
+    /**
+     * `LEGACY-347`: имени в отчёте нет — это форма отчёта
+     * (`PersonIdentityMissingError`), не отказ базы. Единственный случай,
+     * где `personId` остаётся `null`.
+     */
+    it('writes the contributor without a personId only when the report has no usable name', async () => {
+      const reportJson = makeValidReportJson();
+      const sourceAssessment = reportJson.sourceAssessment as Record<string, unknown>;
+      sourceAssessment['contributors'] = [{ displayName: 'Mark Twain', role: 'AUTHOR' }];
+      setupContributorScenario(reportJson);
+      personResolver.resolveOrCreatePerson.mockRejectedValue(
+        new PersonIdentityMissingError('Canonical or display name is required'),
+      );
+
+      await service.materializeFromImport('import-1');
+
+      expect(createdContributorData()[0]).toEqual(expect.objectContaining({ personId: null }));
     });
   });
 

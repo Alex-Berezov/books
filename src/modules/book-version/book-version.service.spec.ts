@@ -78,8 +78,10 @@ interface PrismaStub {
   };
   bookVersionContributor: {
     findFirst: jest.Mock;
+    findMany: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
     delete: jest.Mock;
     count: jest.Mock;
   };
@@ -148,8 +150,10 @@ const createPrismaStub = (): PrismaStub => {
     },
     bookVersionContributor: {
       findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(1),
     },
@@ -1975,6 +1979,107 @@ describe('BookVersionService', () => {
 
       expect(prisma.bookVersionContributor.delete).toHaveBeenCalled();
       expectStalenessChecked();
+    });
+  });
+
+  /**
+   * `LEGACY-349`: перестановка шла N независимыми `updateMany` на общем
+   * клиенте — отказ на середине списка оставлял часть `displayOrder` новыми,
+   * часть старыми, и повторить операцию было нельзя: исходного порядка
+   * уже не было.
+   */
+  describe('reorderVersionContributors', () => {
+    beforeEach(() => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        id: 'v1',
+      } as unknown as BookVersionWithSeo);
+    });
+
+    it('updates displayOrder for every id inside one transaction, in order', async () => {
+      const transactionSpy = jest.spyOn(prisma, '$transaction');
+
+      await service.reorderVersionContributors('v1', {
+        contributorIds: ['bvc-1', 'bvc-2'],
+      } as never);
+
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersionContributor.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: 'bvc-1', bookVersionId: 'v1' },
+        data: { displayOrder: 0 },
+      });
+      expect(prisma.bookVersionContributor.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: 'bvc-2', bookVersionId: 'v1' },
+        data: { displayOrder: 1 },
+      });
+    });
+
+    /**
+     * `LEGACY-349` (ревью): строки блокируются в порядке `id`, а не в порядке
+     * из тела запроса — иначе два одновременных вызова с противоположным
+     * порядком одних и тех же id берут блокировки крест-накрест и ловят
+     * дедлок (`40P01`/`P2034`). `displayOrder` при этом обязан остаться
+     * позицией в исходном списке, а не съехать на позицию после сортировки.
+     */
+    it('locks rows in id order regardless of the requested order, but keeps displayOrder as requested', async () => {
+      await service.reorderVersionContributors('v1', {
+        contributorIds: ['bvc-3', 'bvc-1', 'bvc-2'],
+      } as never);
+
+      expect(prisma.bookVersionContributor.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: 'bvc-1', bookVersionId: 'v1' },
+        data: { displayOrder: 1 },
+      });
+      expect(prisma.bookVersionContributor.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: 'bvc-2', bookVersionId: 'v1' },
+        data: { displayOrder: 2 },
+      });
+      expect(prisma.bookVersionContributor.updateMany).toHaveBeenNthCalledWith(3, {
+        where: { id: 'bvc-3', bookVersionId: 'v1' },
+        data: { displayOrder: 0 },
+      });
+    });
+
+    /**
+     * `LEGACY-349` (ревью): `prisma.$transaction` в стенде отдаёт колбэку тот
+     * же самый объект `prisma`, поэтому предыдущие тесты не отличают запись
+     * через `tx` от записи через `this.prisma` напрямую - оба указывают на
+     * один и тот же мок. Здесь транзакция подменена на отдельный клиент,
+     * чтобы доказать: пишет именно он, а не `this.prisma`.
+     */
+    it('writes through the transaction client, not this.prisma directly', async () => {
+      const txUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+      const txClient = { bookVersionContributor: { updateMany: txUpdateMany } };
+      jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementationOnce((fn: (tx: unknown) => unknown) => Promise.resolve(fn(txClient)));
+
+      await service.reorderVersionContributors('v1', {
+        contributorIds: ['bvc-1'],
+      } as never);
+
+      expect(txUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'bvc-1', bookVersionId: 'v1' },
+        data: { displayOrder: 0 },
+      });
+      expect(prisma.bookVersionContributor.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects the whole reorder and never reads contributors back when a middle update fails', async () => {
+      const dbError = new Error('db down');
+      prisma.bookVersionContributor.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockRejectedValueOnce(dbError);
+
+      await expect(
+        service.reorderVersionContributors('v1', {
+          contributorIds: ['bvc-1', 'bvc-2', 'bvc-3'],
+        } as never),
+      ).rejects.toBe(dbError);
+
+      // Один клиент транзакции держит вызовы последовательными: третий id
+      // не тронут вовсе, а не «отправлен параллельно и просто не дождались».
+      expect(prisma.bookVersionContributor.updateMany).toHaveBeenCalledTimes(2);
+      expect(prisma.bookVersionContributor.findMany).not.toHaveBeenCalled();
     });
   });
 });

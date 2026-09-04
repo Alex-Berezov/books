@@ -1377,13 +1377,34 @@ export class BookVersionService {
     const version = await this.prisma.bookVersion.findUnique({ where: { id: versionId } });
     if (!version) throw new NotFoundException(`BookVersion with ID "${versionId}" not found`);
 
-    await Promise.all(
-      dto.contributorIds.map((id, index) =>
-        this.prisma.bookVersionContributor.updateMany({
-          where: { id, bookVersionId: versionId },
-          data: { displayOrder: index },
-        }),
-      ),
+    // `LEGACY-349`: одна транзакция на всю перестановку, через `tx` — `this.prisma`
+    // внутри блока ушёл бы по другому соединению и не откатился бы вместе с
+    // остальными обновлениями при отказе на середине списка.
+    //
+    // Порядок блокировки строк — по `id`, а не по позиции в `dto.contributorIds`
+    // (L-019/L-020, ревью): два одновременных вызова с противоположным порядком
+    // одних и тех же id иначе берут блокировки крест-накрест и ловят дедлок.
+    // `displayOrder` при этом остаётся позицией в исходном списке — сортировка
+    // только для порядка блокировки, значение не переставляется.
+    const withDisplayOrder = dto.contributorIds
+      .map((id, index) => ({ id, index }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const { id, index } of withDisplayOrder) {
+          await tx.bookVersionContributor.updateMany({
+            where: { id, bookVersionId: versionId },
+            data: { displayOrder: index },
+          });
+        }
+      },
+      // L-020: многошаговый обход внутри `$transaction` получает свой дедлайн явно -
+      // дефолт Prisma (`timeout: 5000`, `maxWait: 2000`) рассчитан на пару операторов,
+      // а не на список произвольной длины. Значение - как у соседей с тем же приёмом
+      // (`category-tree.service.ts`, `contributors.service.ts`, `persons.service.ts`,
+      // `tags/tag-lock.service.ts`).
+      { timeout: 30_000, maxWait: 10_000 },
     );
 
     return this.getVersionContributors(versionId);
