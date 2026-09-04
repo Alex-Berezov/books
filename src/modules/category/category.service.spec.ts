@@ -755,6 +755,37 @@ describe('CategoryService', () => {
     expect(res.data).toHaveLength(1);
     expect(res.data[0].versions[0].language).toBe(Language.es);
     expect(res.category.translation).toBeNull();
+    // `LEGACY-351`: агрегат средней оценки ограничен книгами **этой страницы**
+    // (после фильтра по языку — только `b1`), а не всей таблицей `BookRating`.
+    // `toHaveBeenCalledTimes(1)` — не только «был вызов с таким where», но и что
+    // второго, более широкого вызова (например, без where) в этом пути не было.
+    expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(1);
+    expect(prisma.bookRating.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookId: { in: ['b1'] } } }),
+    );
+  });
+
+  it('LEGACY-351: getByLangSlugWithBooks ограничивает groupBy книгами своей страницы', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      category: { id: 'cat1', name: 'Cat', slug: 'cat' },
+      seo: null,
+      description: null,
+    });
+    (prisma as any).book = {
+      findMany: jest.fn().mockResolvedValue([
+        { id: 'b1', slug: 'b1', versions: [] },
+        { id: 'b2', slug: 'b2', versions: [] },
+      ]),
+    };
+    prisma.bookVersion.findMany.mockResolvedValue([]);
+    prisma.bookRating.groupBy.mockResolvedValue([]);
+
+    await service.getByLangSlugWithBooks(Language.en, 'cat');
+
+    expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(1);
+    expect(prisma.bookRating.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookId: { in: ['b1', 'b2'] } } }),
+    );
   });
 
   it('list exposes per-translation indexability (source of truth for the sitemap)', async () => {

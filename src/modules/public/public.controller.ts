@@ -44,6 +44,8 @@ import {
 } from './dto/public-categories-query.dto';
 import { PublicAuthorLettersQueryDto, PublicAuthorsQueryDto } from './dto/public-authors-query.dto';
 import { PublicTagBooksQueryDto } from './dto/public-tag-books-query.dto';
+import { PublicTagsQueryDto } from './dto/public-tags-query.dto';
+import { PaginationDto } from '../../shared/dto/pagination.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -110,25 +112,23 @@ export class PublicController {
   @Get('books')
   @ApiOperation({ summary: 'Public books list with language prefix' })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  findAll(
-    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
+  findAll(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Query() query: PaginationDto) {
     // Публичная витрина видит только опубликованное (`LEGACY-093`). Раньше
     // фильтра не было ни здесь, ни в сервисе, и правило «только published»
     // существовало **тремя копиями на клиенте**: в каталоге, в карте сайта и в
     // мапперах карточек. Сервер его не соблюдал — каждый потребитель
     // договаривался сам.
-    return this.books.findAll(
-      {
-        page: page ? Number(page) : undefined,
-        limit: limit ? Number(limit) : undefined,
-      },
-      { publishedOnly: true },
-    );
+    //
+    // 🔴 `page`/`limit` раньше принимались голым `@Query('page') page?: number` и
+    // шли в сервис через идиому `page ? Number(page) : N`, которая не отличает `0`
+    // от отсутствия значения и молча подставляет дефолт на любой мусор (`LEGACY-298`).
+    //
+    // `PaginationDto` — тот же класс, что уже стоит на административном зеркале
+    // (`GET /books`, `book.controller.ts`), а не отдельная копия: дефолты (`page=1`,
+    // `limit=10`) и потолок совпадают дословно, и заводить своё DTO ради этого было
+    // бы четвёртой копией того же класса, который закрывала `LEGACY-353` (найдено
+    // ревью архитектуры).
+    return this.books.findAll({ page: query.page, limit: query.limit }, { publishedOnly: true });
   }
 
   // Related books (compact BookCard) for a book page: same-author + similar-by-category
@@ -310,14 +310,14 @@ export class PublicController {
   @Get('tags')
   @ApiOperation({ summary: 'Public tags listing for homepage' })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Tags per page. Default 50.' })
   tagsList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query() query: PublicTagsQueryDto,
   ) {
-    return this.tags.list(page ? Number(page) : 1, limit ? Number(limit) : 50, undefined, pathLang);
+    // 🔴 `page`/`limit` раньше принимались голым `@Query('page') page?: number` и шли
+    // в сервис через идиому `page ? Number(page) : N`, которая не отличает `0` от
+    // отсутствия значения и молча подставляет дефолт на любой мусор (`LEGACY-298`).
+    return this.tags.list(query.page, query.limit, undefined, pathLang);
   }
 
   // Compact paginated book cards for a tag

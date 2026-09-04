@@ -1,0 +1,27 @@
+-- LEGACY-300: индекс под фильтр (language, status) и порядок DISTINCT ON /
+-- ORDER BY публичной витрины (`BookService.findCards`, обе ветки).
+--
+-- Порядок колонок и NULLS LAST обязаны дословно совпадать с
+-- `ORDER BY bv."bookId", bv."publishedAt" DESC NULLS LAST, bv.id` внутри
+-- `dedupedByBook` (book.service.ts) — иначе Postgres не может отдать строки
+-- уже в нужном порядке и вставляет отдельный шаг сортировки. Prisma DSL не
+-- выражает `NULLS LAST` в `@@index`, поэтому эта миграция написана рукой,
+-- а не сгенерирована `prisma migrate dev`.
+--
+-- Замер на локальной синтетике (300k книг, ~54k опубликованных версий на
+-- язык) в `tasks/2026-09-04-h4-public-listing-limits.md`: без индекса план
+-- сортирует всю подходящую выборку языка (external merge, диск) — 208 мс на
+-- обычной странице; с индексом Postgres читает уже упорядоченные строки
+-- (`Index Only Scan`, 0 обращений к куче) и внутренний шаг сортировки
+-- пропадает целиком — 45 мс на той же странице. Замер без доп. фильтров
+-- (`type`/`q` у `getBookCards` уходят в `EXISTS`/`ILIKE` по другим таблицам
+-- и колонкам вне этого индекса — там `Index Only Scan` не выйдет, обращения
+-- к куче вернутся, выигрыш ограничится снятием внутреннего `Sort`).
+--
+-- `IF NOT EXISTS`: локальные базы в проекте уже расходились с каталогом
+-- миграций через ручной DDL/`db push` (разобрано в task-файле выше) - если
+-- индекс с этим именем на целевой базе уже есть, `CREATE INDEX` без этой
+-- оговорки уронит `migrate deploy` кодом 42P07 и заблокирует все
+-- последующие миграции до ручного `migrate resolve`.
+CREATE INDEX IF NOT EXISTS "bookversion_lang_status_bookid_publishedat_idx"
+  ON "BookVersion"("language", "status", "bookId", "publishedAt" DESC NULLS LAST, "id");

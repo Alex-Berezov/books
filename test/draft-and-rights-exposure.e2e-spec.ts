@@ -8,6 +8,7 @@ import { RightsContentHashService } from '../src/modules/rights-intake/rights-co
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { markBookRightsFreshForTests } from './helpers/rights-fresh';
 import { httpServerOf } from './http-server';
+import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 
 /**
  * `LEGACY-090` / `LEGACY-091`. Публичные маршруты книг и таксономий отдавали
@@ -446,7 +447,11 @@ describe('Draft and rights exposure (e2e)', () => {
      * который их перечисляет.
      */
     it('total публичного списка согласован с выдачей', async () => {
-      const page = await request(http()).get('/en/books?limit=1000').expect(200);
+      // `LEGACY-298`: маршрут зажат `PAGINATION_MAX_LIMIT`, `?limit=1000` теперь
+      // отбивается 400. Тестовый каталог этого набора укладывается в потолок,
+      // поэтому равенство `total === data.length` продолжает проверяться на
+      // единственной странице.
+      const page = await request(http()).get(`/en/books?limit=${PAGINATION_MAX_LIMIT}`).expect(200);
       const body = page.body as { data: unknown[]; meta: { total: number } };
 
       expect(body.meta.total).toBe(body.data.length);

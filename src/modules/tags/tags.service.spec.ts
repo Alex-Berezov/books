@@ -214,7 +214,10 @@ describe('TagsService', () => {
         description: null,
       });
       prisma.bookVersion.findMany.mockResolvedValue([]);
-      prisma.bookVersion.count.mockResolvedValue(0);
+      // Достаточно большой, чтобы страница не попала под короткий выход
+      // `skip >= total` (`LEGACY-301`) — эти кейсы про потолок и клампинг
+      // page/limit, а не про сам короткий выход, у него свои тесты ниже.
+      prisma.bookVersion.count.mockResolvedValue(1000);
       prisma.bookRating.groupBy.mockResolvedValue([]);
     });
 
@@ -242,6 +245,54 @@ describe('TagsService', () => {
       await service.versionsByTagLangSlug(Language.en, 'tag', -5, 10);
 
       expect(pageArgs().skip).toBe(0);
+    });
+  });
+
+  /**
+   * `LEGACY-301`. `page`, ведущий за пределы выдачи тега, заставлял базу
+   * отсортировать всю выборку и отбросить её целиком: `LIMIT/OFFSET` режет
+   * страницу **после** сортировки, поэтому стоимость с ростом `page` не падала.
+   * Образец короткого выхода — `BookService.findCards` (`LEGACY-255`).
+   */
+  describe('versionsByTagLangSlug: короткий выход за пределами выдачи (LEGACY-301)', () => {
+    beforeEach(() => {
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        tag: { id: 't1', name: 'Tag', slug: 'tag', isVisible: true },
+        seo: null,
+        description: null,
+      });
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+    });
+
+    it('страница за total не ходит в базу за строками — только считает total', async () => {
+      prisma.bookVersion.count.mockResolvedValue(5);
+      // Единственный оставшийся зов `findMany` — независимый от страницы запрос
+      // `availableLanguages`; если бы страничный запрос всё же ушёл, он вернул
+      // бы этот же массив и тест остался бы зелёным по случайности, поэтому
+      // проверяется именно число вызовов, а не форма ответа.
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag', 4, 2);
+
+      expect(prisma.bookVersion.count).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ skip: expect.any(Number), take: expect.any(Number) }),
+      );
+      expect(res.data).toEqual([]);
+      expect(res.meta).toEqual({ page: 4, limit: 2, total: 5, totalPages: 3 });
+    });
+
+    it('страница внутри выдачи по-прежнему идёт в базу за строками', async () => {
+      prisma.bookVersion.count.mockResolvedValue(5);
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+
+      await service.versionsByTagLangSlug(Language.en, 'tag', 1, 2);
+
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(2);
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 0, take: 2 }),
+      );
     });
   });
 

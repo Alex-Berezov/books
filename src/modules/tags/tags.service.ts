@@ -345,19 +345,26 @@ export class TagsService {
       language: pathLang,
       tags: { some: { tagId } },
     };
-    const [versions, total] = await Promise.all([
-      this.prisma.bookVersion.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (effectivePage - 1) * effectiveLimit,
-        take: effectiveLimit,
-        select: {
-          ...PUBLIC_BOOK_VERSION_SELECT,
-          seo: { select: { metaTitle: true, metaDescription: true } },
-        },
-      }),
-      this.prisma.bookVersion.count({ where }),
-    ]);
+    const skip = (effectivePage - 1) * effectiveLimit;
+    // `total` считается до страницы (`LEGACY-301`), по образцу `BookService.findCards`:
+    // `?page=1000000` заставлял базу отсортировать всю выдачу тега и отбросить её
+    // целиком — `LIMIT/OFFSET` режет страницу после сортировки, поэтому стоимость
+    // не падала с ростом `page`. Страница за пределами выдачи в базу за ней не идёт,
+    // ответ не меняется: пустой список и честный `total`.
+    const total = await this.prisma.bookVersion.count({ where });
+    const versions =
+      skip >= total
+        ? []
+        : await this.prisma.bookVersion.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip,
+            take: effectiveLimit,
+            select: {
+              ...PUBLIC_BOOK_VERSION_SELECT,
+              seo: { select: { metaTitle: true, metaDescription: true } },
+            },
+          });
     const availableLanguages: Language[] = Array.from(
       new Set(
         (

@@ -562,8 +562,12 @@ export class CategoryService {
       ? books.filter((b) => b.versions.some((v) => v.language === effective))
       : books;
 
+    // `where` ограничивает агрегат книгами этой страницы (`LEGACY-351`): без него
+    // запрос считал среднюю оценку по всей таблице `BookRating`, а страница брала
+    // из ответа только свою горстку значений.
     const ratings = await this.prisma.bookRating.groupBy({
       by: ['bookId'],
+      where: { bookId: { in: filteredBooks.map((b) => b.id) } },
       _avg: { score: true },
     });
     const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));
@@ -666,8 +670,12 @@ export class CategoryService {
       ),
     );
 
+    // `where` ограничивает агрегат книгами этой страницы (`LEGACY-351`): без него
+    // запрос считал среднюю оценку по всей таблице `BookRating`, а страница брала
+    // из ответа только свою горстку значений.
     const ratings = await this.prisma.bookRating.groupBy({
       by: ['bookId'],
+      where: { bookId: { in: books.map((b) => b.id) } },
       _avg: { score: true },
     });
     const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));

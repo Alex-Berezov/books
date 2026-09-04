@@ -166,6 +166,15 @@ model BookVersion {
   @@unique([bookId, language])
   @@unique([language, slug])
   @@index([bookId, language, type, isFree], name: "book_language_type_isFree_idx")
+  // LEGACY-300. Замер `EXPLAIN (ANALYZE, BUFFERS)` на локальной синтетике (300k книг,
+  // ~54k опубликованных версий на язык) в `tasks/2026-09-04-h4-public-listing-limits.md`:
+  // публичная витрина (`BookService.findCards`, обе ветки) отбирает страницу через
+  // `DISTINCT ON (bv."bookId") ... ORDER BY bv."bookId", bv."publishedAt" DESC NULLS LAST, bv.id`
+  // — порядок колонок здесь и `sort`/`nulls` в миграции обязаны совпадать с этим `ORDER BY`
+  // дословно, иначе Postgres не сможет отдать `Index Only Scan` без досортировки и выигрыш
+  // пропадёт. Prisma DSL не выражает `NULLS LAST` — миграция дописана рукой
+  // (`prisma/migrations/20260904100000_add_book_version_lang_status_bookid_publishedat_idx/migration.sql`).
+  @@index([language, status, bookId, publishedAt(sort: Desc), id], name: "bookversion_lang_status_bookid_publishedat_idx")
   @@index([previewMediaId])
   @@index([primaryCategoryId])
   @@index([authorId])

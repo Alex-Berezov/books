@@ -1,13 +1,11 @@
 import {
   Body,
   Controller,
-  DefaultValuePipe,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
-  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -37,6 +35,7 @@ import { UpdateCategoryTranslationDto } from './dto/update-category-translation.
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
 import { PaginatedCategoriesResponse } from './dto/category-response.dto';
+import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
 
 @ApiTags('categories')
 @Controller()
@@ -83,21 +82,11 @@ export class CategoryController {
   @Get('categories')
   @ApiOperation({ summary: 'List categories (optionally filtered by type)' })
   @ApiResponse({ status: 200, type: PaginatedCategoriesResponse })
-  @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiQuery({
-    name: 'type',
-    required: false,
-    enum: CategoryType,
-    description: 'Filter by category type',
-  })
-  async list(
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number = 1,
-    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
-    @Query('type') type?: CategoryType,
-    @Query('lang') lang?: Language,
-  ): Promise<PaginatedCategoriesResponse> {
-    return this.service.list(page, limit, type, lang);
+  async list(@Query() query: ListCategoriesQueryDto): Promise<PaginatedCategoriesResponse> {
+    // 🔴 `page`/`limit` раньше шли голым `ParseIntPipe` без верхней границы вовсе:
+    // `?limit=100000` проходил приведение типа и уезжал в `take` Prisma как есть
+    // (`LEGACY-298`, схлопнута сюда `LEGACY-353`).
+    return this.service.list(query.page, query.limit, query.type, query.lang);
   }
 
   @Get('categories/tree')
