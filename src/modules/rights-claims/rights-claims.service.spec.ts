@@ -1,15 +1,14 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { RightsClaim, RightsClaimAccessBlock } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClaimComponentType } from './dto/link-claim-component.dto';
 import { CreateRightsClaimDto } from './dto/create-rights-claim.dto';
 import { RightsClaimsService } from './rights-claims.service';
 import {
   ClaimBlockScope,
-  RightsClaimAccessBlockRecord,
   RightsClaimAttachmentType,
   RightsClaimBlockStatus,
   RightsClaimEventType,
-  RightsClaimRecord,
   RightsClaimResolution,
   RightsClaimSeverity,
   RightsClaimStatus,
@@ -20,7 +19,7 @@ import {
 
 const NOW = new Date('2026-07-28T12:00:00.000Z');
 
-const createClaim = (overrides: Partial<RightsClaimRecord> = {}): RightsClaimRecord => ({
+const createClaim = (overrides: Partial<RightsClaim> = {}): RightsClaim => ({
   id: 'claim-1',
   claimNumber: 'CLM-2026-000001',
   claimType: RightsClaimType.DMCA_TAKEDOWN,
@@ -77,9 +76,7 @@ const createClaim = (overrides: Partial<RightsClaimRecord> = {}): RightsClaimRec
   ...overrides,
 });
 
-const createBlock = (
-  overrides: Partial<RightsClaimAccessBlockRecord> = {},
-): RightsClaimAccessBlockRecord => ({
+const createBlock = (overrides: Partial<RightsClaimAccessBlock> = {}): RightsClaimAccessBlock => ({
   id: 'block-1',
   rightsClaimId: 'claim-1',
   bookId: 'book-1',
@@ -129,7 +126,7 @@ const createPrismaStub = (): PrismaStub => {
       update: jest
         .fn()
         .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-          createClaim(data as Partial<RightsClaimRecord>),
+          createClaim(data as Partial<RightsClaim>),
         ),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       count: jest.fn().mockResolvedValue(0),
@@ -669,11 +666,11 @@ describe('RightsClaimsService — атомарность аудита (WP-10.2)'
           count: jest.fn().mockResolvedValue(0),
           create: jest.fn((args: { data: Record<string, unknown> }) => {
             buffer.push({ model: 'rightsClaim.create', data: args.data });
-            return Promise.resolve(createClaim(args.data as Partial<RightsClaimRecord>));
+            return Promise.resolve(createClaim(args.data as Partial<RightsClaim>));
           }),
           update: jest.fn((args: { data: Record<string, unknown> }) => {
             buffer.push({ model: 'rightsClaim.update', data: args.data });
-            return Promise.resolve(createClaim(args.data as Partial<RightsClaimRecord>));
+            return Promise.resolve(createClaim(args.data as Partial<RightsClaim>));
           }),
           updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         },

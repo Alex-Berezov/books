@@ -4,6 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  Prisma,
+  RightsClaim,
+  RightsClaimAccessBlock,
+  RightsClaimAttachment,
+  RightsClaimComponent,
+  RightsClaimEvent,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApplyClaimBlockDto } from './dto/apply-claim-block.dto';
 import { AssignRightsClaimDto } from './dto/assign-rights-claim.dto';
@@ -41,19 +49,8 @@ import {
 } from './rights-claim.constants';
 import {
   ClaimBlockScope,
-  ClaimBookVersionDelegate,
-  RightsClaimAccessBlockDelegate,
-  RightsClaimAccessBlockRecord,
-  RightsClaimAttachmentDelegate,
-  RightsClaimAttachmentRecord,
   RightsClaimBlockStatus,
-  RightsClaimComponentDelegate,
-  RightsClaimComponentRecord,
-  RightsClaimDelegate,
-  RightsClaimEventDelegate,
-  RightsClaimEventRecord,
   RightsClaimEventType,
-  RightsClaimRecord,
   RightsClaimResolution,
   RightsClaimSeverity,
   RightsClaimStatus,
@@ -66,22 +63,11 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CLAIM_NUMBER_MAX_ATTEMPTS = 5;
 
-/** The subset of the Prisma client the claims module reaches through dynamic delegates. */
-export interface ClaimDatabaseClient {
-  rightsClaim: RightsClaimDelegate;
-  rightsClaimComponent: RightsClaimComponentDelegate;
-  rightsClaimAccessBlock: RightsClaimAccessBlockDelegate;
-  rightsClaimAttachment: RightsClaimAttachmentDelegate;
-  rightsClaimEvent: RightsClaimEventDelegate;
-  bookVersion: ClaimBookVersionDelegate;
-  $transaction<T>(callback: (client: ClaimDatabaseClient) => Promise<T>): Promise<T>;
-}
-
 interface RecordEventOptions {
   previousStatus?: RightsClaimStatus | null;
   currentStatus?: RightsClaimStatus | null;
   notesRu?: string | null;
-  payload?: Record<string, unknown>;
+  payload?: Prisma.InputJsonValue;
   userId?: string | null;
 }
 
@@ -110,30 +96,6 @@ const failNotFound: (code: string, messageRu: string) => never = (code, messageR
 export class RightsClaimsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private getDatabase(): ClaimDatabaseClient {
-    return this.prisma as unknown as ClaimDatabaseClient;
-  }
-
-  private get claimDelegate(): RightsClaimDelegate {
-    return this.getDatabase().rightsClaim;
-  }
-
-  private get componentDelegate(): RightsClaimComponentDelegate {
-    return this.getDatabase().rightsClaimComponent;
-  }
-
-  private get blockDelegate(): RightsClaimAccessBlockDelegate {
-    return this.getDatabase().rightsClaimAccessBlock;
-  }
-
-  private get attachmentDelegate(): RightsClaimAttachmentDelegate {
-    return this.getDatabase().rightsClaimAttachment;
-  }
-
-  private get eventDelegate(): RightsClaimEventDelegate {
-    return this.getDatabase().rightsClaimEvent;
-  }
-
   // ---------------------------------------------------------------------------
   // Queries
   // ---------------------------------------------------------------------------
@@ -142,7 +104,7 @@ export class RightsClaimsService {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.RightsClaimWhereInput = {};
     if (query.status) where.status = query.status;
     if (query.claimType) where.claimType = query.claimType;
     if (query.severity) where.severity = query.severity;
@@ -158,7 +120,7 @@ export class RightsClaimsService {
     }
     if (query.openOnly) where.status = { in: [...OPEN_CLAIM_STATUSES] };
     if (query.q) {
-      const contains = { contains: query.q, mode: 'insensitive' };
+      const contains: Prisma.StringFilter = { contains: query.q, mode: 'insensitive' };
       where.OR = [
         { claimNumber: contains },
         { claimantName: contains },
@@ -170,13 +132,16 @@ export class RightsClaimsService {
       ];
     }
     if (query.receivedFrom || query.receivedTo) {
-      const range: Record<string, Date> = {};
+      const range: Prisma.DateTimeFilter = {};
       if (query.receivedFrom) range.gte = new Date(query.receivedFrom);
       if (query.receivedTo) range.lte = new Date(query.receivedTo);
       where.receivedAt = range;
     }
 
-    const claims = await this.claimDelegate.findMany({ where, orderBy: { receivedAt: 'desc' } });
+    const claims = await this.prisma.rightsClaim.findMany({
+      where,
+      orderBy: { receivedAt: 'desc' },
+    });
     const blocksByClaim = await this.loadBlocksByClaim(claims.map((claim) => claim.id));
 
     const filtered = this.applyInMemoryFilters(claims, blocksByClaim, query);
@@ -198,10 +163,10 @@ export class RightsClaimsService {
    * delegates, so these predicates run after the query and before paging.
    */
   private applyInMemoryFilters(
-    claims: RightsClaimRecord[],
-    blocksByClaim: Map<string, RightsClaimAccessBlockRecord[]>,
+    claims: RightsClaim[],
+    blocksByClaim: Map<string, RightsClaimAccessBlock[]>,
     query: QueryRightsClaimsDto,
-  ): RightsClaimRecord[] {
+  ): RightsClaim[] {
     const now = new Date();
     let result = claims;
 
@@ -237,7 +202,7 @@ export class RightsClaimsService {
   }
 
   /** Severity desc, then deadline asc with nulls last, then most recently received first. */
-  private sortClaims(claims: RightsClaimRecord[]): RightsClaimRecord[] {
+  private sortClaims(claims: RightsClaim[]): RightsClaim[] {
     return [...claims].sort((left, right) => {
       const severity =
         (CLAIM_SEVERITY_RANK[right.severity] ?? 0) - (CLAIM_SEVERITY_RANK[left.severity] ?? 0);
@@ -260,7 +225,7 @@ export class RightsClaimsService {
 
   async listForVersion(versionId: string): Promise<RightsClaimListResponseDto> {
     const version = await this.requireVersion(versionId);
-    const claims = await this.claimDelegate.findMany({
+    const claims = await this.prisma.rightsClaim.findMany({
       where: {
         OR: [{ bookVersionId: versionId }, { bookId: version.bookId, bookVersionId: null }],
       },
@@ -270,14 +235,14 @@ export class RightsClaimsService {
   }
 
   async listForBook(bookId: string): Promise<RightsClaimListResponseDto> {
-    const claims = await this.claimDelegate.findMany({
+    const claims = await this.prisma.rightsClaim.findMany({
       where: { bookId },
       orderBy: { receivedAt: 'desc' },
     });
     return this.asListResponse(claims);
   }
 
-  private async asListResponse(claims: RightsClaimRecord[]): Promise<RightsClaimListResponseDto> {
+  private async asListResponse(claims: RightsClaim[]): Promise<RightsClaimListResponseDto> {
     const blocksByClaim = await this.loadBlocksByClaim(claims.map((claim) => claim.id));
     const items = this.sortClaims(claims).map((claim) =>
       this.mapSummary(claim, blocksByClaim.get(claim.id) ?? []),
@@ -298,8 +263,16 @@ export class RightsClaimsService {
     this.validatePayload(dto, null);
 
     const receivedAt = dto.receivedAt ? new Date(dto.receivedAt) : new Date();
-    const data: Record<string, unknown> = {
+    // The three columns `RightsClaim` requires besides `claimNumber` are written here explicitly
+    // rather than left to the conditional builder: `buildWriteData` returns a partial by nature,
+    // so only spelling them out lets the compiler see the create payload as complete. Nothing is
+    // cast - a rename in the schema, a missing required column or an update operator smuggled
+    // into `assign` all fail `yarn typecheck` at this literal.
+    const data: Omit<Prisma.RightsClaimUncheckedCreateInput, 'claimNumber'> = {
       ...this.buildWriteData(dto),
+      claimType: dto.claimType,
+      claimantName: dto.claimantName,
+      descriptionRu: dto.descriptionRu,
       bookId: resolvedBookId,
       receivedAt,
       createdByUserId: userId,
@@ -319,20 +292,20 @@ export class RightsClaimsService {
    * целиком, поэтому повторить номер внутри той же транзакции невозможно.
    */
   private async createWithClaimNumber(
-    data: Record<string, unknown>,
+    data: Omit<Prisma.RightsClaimUncheckedCreateInput, 'claimNumber'>,
     year: number,
     userId: string,
-  ): Promise<RightsClaimRecord> {
+  ): Promise<RightsClaim> {
     const prefix = `CLM-${year}-`;
-    const database = this.getDatabase();
-    const existingCount = await this.claimDelegate.count({
+
+    const existingCount = await this.prisma.rightsClaim.count({
       where: { claimNumber: { startsWith: prefix } },
     });
 
     for (let attempt = 0; attempt < CLAIM_NUMBER_MAX_ATTEMPTS; attempt += 1) {
       const claimNumber = `${prefix}${String(existingCount + 1 + attempt).padStart(6, '0')}`;
       try {
-        return await database.$transaction(async (transaction) => {
+        return await this.prisma.$transaction(async (transaction) => {
           const claim = await transaction.rightsClaim.create({ data: { ...data, claimNumber } });
           await this.recordEvent(transaction, claim.id, RightsClaimEventType.CREATED, {
             currentStatus: claim.status,
@@ -372,7 +345,7 @@ export class RightsClaimsService {
     await this.resolveClaimTargets(dto);
     this.validatePayload(dto, existing);
 
-    const updated = await this.getDatabase().$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const claim = await transaction.rightsClaim.update({
         where: { id },
         data: this.buildWriteData(dto),
@@ -411,11 +384,11 @@ export class RightsClaimsService {
     const existing = await this.requireClaim(id);
     this.assertTransitionAllowed(existing.status, dto.status);
 
-    const data: Record<string, unknown> = { status: dto.status };
+    const data: Prisma.RightsClaimUncheckedUpdateInput = { status: dto.status };
     if (dto.status === RightsClaimStatus.CLOSED) data.closedAt = new Date();
     if (dto.status === RightsClaimStatus.ESCALATED_TO_LAWYER) data.requiresLawyerReview = true;
 
-    const updated = await this.getDatabase().$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const claim = await transaction.rightsClaim.update({ where: { id }, data });
 
       await this.recordEvent(transaction, id, RightsClaimEventType.STATUS_CHANGED, {
@@ -456,7 +429,7 @@ export class RightsClaimsService {
       }
     }
 
-    const updated = await this.getDatabase().$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const claim = await transaction.rightsClaim.update({
         where: { id },
         data: { assignedToUserId: dto.assignedToUserId ?? null },
@@ -488,7 +461,7 @@ export class RightsClaimsService {
       fail('RESPONSE_TEXT_REQUIRED', 'Текст ответа заявителю обязателен.');
     }
 
-    const updated = await this.getDatabase().$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const claim = await transaction.rightsClaim.update({
         where: { id },
         data: {
@@ -524,7 +497,7 @@ export class RightsClaimsService {
       fail('COUNTER_NOTICE_TEXT_REQUIRED', 'Текст встречного уведомления обязателен.');
     }
 
-    const data: Record<string, unknown> = {
+    const data: Prisma.RightsClaimUncheckedUpdateInput = {
       counterNoticeTextRu: dto.counterNoticeTextRu,
       counterNoticeClaimantName: dto.counterNoticeClaimantName ?? existing.claimantName,
       counterNoticeReceivedAt: dto.counterNoticeReceivedAt
@@ -538,7 +511,7 @@ export class RightsClaimsService {
     );
     if (movesToCounterNotice) data.status = RightsClaimStatus.COUNTER_NOTICE_FILED;
 
-    const updated = await this.getDatabase().$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const claim = await transaction.rightsClaim.update({ where: { id }, data });
 
       await this.recordEvent(transaction, id, RightsClaimEventType.COUNTER_NOTICE_RECORDED, {
@@ -585,9 +558,8 @@ export class RightsClaimsService {
     this.assertTransitionAllowed(existing.status, finalStatus);
 
     const resolvedAt = new Date();
-    const database = this.getDatabase();
 
-    const updated = await database.$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const claim = await transaction.rightsClaim.update({
         where: { id },
         data: {
@@ -637,7 +609,7 @@ export class RightsClaimsService {
       fail('REOPEN_REASON_REQUIRED', 'Причина переоткрытия обязательна.');
     }
 
-    const updated = await this.getDatabase().$transaction(async (transaction) => {
+    const updated = await this.prisma.$transaction(async (transaction) => {
       const claim = await transaction.rightsClaim.update({
         where: { id },
         data: {
@@ -704,10 +676,9 @@ export class RightsClaimsService {
     }
 
     const targets: Array<string | null> = countryCodes.length > 0 ? countryCodes : [null];
-    const database = this.getDatabase();
 
-    const blocks = await database.$transaction(async (transaction) => {
-      const created: RightsClaimAccessBlockRecord[] = [];
+    const blocks = await this.prisma.$transaction(async (transaction) => {
+      const created: RightsClaimAccessBlock[] = [];
 
       for (const countryCode of targets) {
         // NULL country codes compare as distinct in PostgreSQL, so deduplication is done here
@@ -779,7 +750,7 @@ export class RightsClaimsService {
   ): Promise<RightsClaimAccessBlockDto> {
     const claim = await this.requireClaim(id);
 
-    const block = await this.blockDelegate.findFirst({
+    const block = await this.prisma.rightsClaimAccessBlock.findFirst({
       where: { id: blockId, rightsClaimId: id },
     });
     if (!block) {
@@ -794,8 +765,7 @@ export class RightsClaimsService {
       fail('LIFT_REASON_REQUIRED', 'Причина снятия блокировки обязательна.');
     }
 
-    const database = this.getDatabase();
-    const lifted = await database.$transaction(async (transaction) => {
+    const lifted = await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.rightsClaimAccessBlock.update({
         where: { id: blockId },
         data: {
@@ -826,13 +796,13 @@ export class RightsClaimsService {
 
   /** Lifts every still-active block of a claim. Used by `resolve({ liftActiveBlocks: true })`. */
   private async liftAllActiveBlocks(
-    database: ClaimDatabaseClient,
+    tx: Prisma.TransactionClient,
     claimId: string,
     reasonRu: string,
     userId: string,
     currentStatus: RightsClaimStatus,
   ): Promise<void> {
-    const blocks = await database.rightsClaimAccessBlock.findMany({
+    const blocks = await tx.rightsClaimAccessBlock.findMany({
       where: { rightsClaimId: claimId, status: RightsClaimBlockStatus.ACTIVE },
     });
     if (blocks.length === 0) return;
@@ -841,7 +811,7 @@ export class RightsClaimsService {
     const versionIds: string[] = [];
 
     for (const block of blocks) {
-      await database.rightsClaimAccessBlock.update({
+      await tx.rightsClaimAccessBlock.update({
         where: { id: block.id },
         data: {
           status: RightsClaimBlockStatus.LIFTED,
@@ -850,20 +820,20 @@ export class RightsClaimsService {
           liftReasonRu: reasonRu,
         },
       });
-      await this.recordEvent(database, claimId, RightsClaimEventType.BLOCK_LIFTED, {
+      await this.recordEvent(tx, claimId, RightsClaimEventType.BLOCK_LIFTED, {
         currentStatus,
         notesRu: reasonRu,
         userId,
         payload: { blockId: block.id, scope: block.scope, countryCode: block.countryCode },
       });
-      versionIds.push(...(await this.versionIdsForBlock(database, block)));
+      versionIds.push(...(await this.versionIdsForBlock(tx, block)));
     }
 
-    await this.recomputeVersionClaimFlags(database, versionIds);
+    await this.recomputeVersionClaimFlags(tx, versionIds);
   }
 
   private async resolveBlockTarget(
-    claim: RightsClaimRecord,
+    claim: RightsClaim,
     dto: ApplyClaimBlockDto,
   ): Promise<BlockTarget> {
     if (dto.scope === ClaimBlockScope.ENTIRE_BOOK) {
@@ -878,7 +848,7 @@ export class RightsClaimsService {
       if (!book) {
         failNotFound('CLAIM_TARGET_NOT_FOUND', 'Книга для блокировки не найдена.');
       }
-      const versions = await this.getDatabase().bookVersion.findMany({
+      const versions = await this.prisma.bookVersion.findMany({
         where: { bookId },
         select: { id: true, bookId: true, status: true },
       });
@@ -900,7 +870,7 @@ export class RightsClaimsService {
       fail('BLOCK_SCOPE_REQUIRES_VERSION', 'Для блокировки требуется указать версию книги.');
     }
 
-    const version = await this.getDatabase().bookVersion.findUnique({
+    const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
       select: { id: true, bookId: true, status: true },
     });
@@ -916,24 +886,24 @@ export class RightsClaimsService {
   }
 
   private async unpublishTargetVersions(
-    database: ClaimDatabaseClient,
+    tx: Prisma.TransactionClient,
     claimId: string,
     target: BlockTarget,
     userId: string,
     currentStatus: RightsClaimStatus,
   ): Promise<void> {
-    const versions = await database.bookVersion.findMany({
+    const versions = await tx.bookVersion.findMany({
       where: { id: { in: target.versionIdsToRecompute } },
       select: { id: true, bookId: true, status: true },
     });
 
     for (const version of versions) {
       if (version.status !== 'published') continue;
-      await database.bookVersion.update({
+      await tx.bookVersion.update({
         where: { id: version.id },
         data: { status: 'draft' },
       });
-      await this.recordEvent(database, claimId, RightsClaimEventType.VERSION_UNPUBLISHED, {
+      await this.recordEvent(tx, claimId, RightsClaimEventType.VERSION_UNPUBLISHED, {
         currentStatus,
         userId,
         payload: { bookVersionId: version.id },
@@ -946,8 +916,8 @@ export class RightsClaimsService {
    * workflow status always matches what the public site actually serves.
    */
   private async advanceStatusAfterBlock(
-    database: ClaimDatabaseClient,
-    claim: RightsClaimRecord,
+    tx: Prisma.TransactionClient,
+    claim: RightsClaim,
     scope: ClaimBlockScope,
     countryCodes: string[],
     userId: string,
@@ -969,8 +939,8 @@ export class RightsClaimsService {
 
     if (!this.isTransitionAllowed(claim.status, nextStatus)) return;
 
-    await database.rightsClaim.update({ where: { id: claim.id }, data: { status: nextStatus } });
-    await this.recordEvent(database, claim.id, RightsClaimEventType.STATUS_CHANGED, {
+    await tx.rightsClaim.update({ where: { id: claim.id }, data: { status: nextStatus } });
+    await this.recordEvent(tx, claim.id, RightsClaimEventType.STATUS_CHANGED, {
       previousStatus: claim.status,
       currentStatus: nextStatus,
       userId,
@@ -983,20 +953,20 @@ export class RightsClaimsService {
    * runtime enforcement always re-checks `RightsClaimAccessBlock`.
    */
   private async recomputeVersionClaimFlags(
-    database: ClaimDatabaseClient,
+    tx: Prisma.TransactionClient,
     versionIds: string[],
   ): Promise<void> {
     const unique = Array.from(new Set(versionIds));
     if (unique.length === 0) return;
 
-    const versions = await database.bookVersion.findMany({
+    const versions = await tx.bookVersion.findMany({
       where: { id: { in: unique } },
       select: { id: true, bookId: true, status: true },
     });
     const now = new Date();
 
     for (const version of versions) {
-      const blocks = await database.rightsClaimAccessBlock.findMany({
+      const blocks = await tx.rightsClaimAccessBlock.findMany({
         where: {
           status: RightsClaimBlockStatus.ACTIVE,
           OR: [
@@ -1011,7 +981,7 @@ export class RightsClaimsService {
           ? new Date(Math.min(...active.map((block) => block.appliedAt.getTime())))
           : null;
 
-      await database.bookVersion.update({
+      await tx.bookVersion.update({
         where: { id: version.id },
         data: {
           rightsClaimBlockActive: active.length > 0,
@@ -1022,12 +992,12 @@ export class RightsClaimsService {
   }
 
   private async versionIdsForBlock(
-    database: ClaimDatabaseClient,
-    block: RightsClaimAccessBlockRecord,
+    tx: Prisma.TransactionClient,
+    block: RightsClaimAccessBlock,
   ): Promise<string[]> {
     if (block.bookVersionId) return [block.bookVersionId];
     if (!block.bookId) return [];
-    const versions = await database.bookVersion.findMany({
+    const versions = await tx.bookVersion.findMany({
       where: { bookId: block.bookId },
       select: { id: true, bookId: true, status: true },
     });
@@ -1068,7 +1038,7 @@ export class RightsClaimsService {
       }
     }
 
-    const created = await this.getDatabase().$transaction(async (transaction) => {
+    const created = await this.prisma.$transaction(async (transaction) => {
       const component = await transaction.rightsClaimComponent.create({
         data: {
           rightsClaimId: id,
@@ -1102,7 +1072,7 @@ export class RightsClaimsService {
   ): Promise<ClaimMutationResultDto> {
     const claim = await this.requireClaim(id);
 
-    const link = await this.componentDelegate.findFirst({
+    const link = await this.prisma.rightsClaimComponent.findFirst({
       where: { id: claimComponentId, rightsClaimId: id },
     });
     if (!link) {
@@ -1113,7 +1083,7 @@ export class RightsClaimsService {
     // потребовав взамен неудаляемое событие в той же транзакции. В payload идёт снимок связи
     // целиком: раньше писался только `claimComponentId`, поэтому какой компонент был затронут
     // претензией, восстанавливалось лишь корреляцией с более ранним `COMPONENT_LINKED`.
-    await this.getDatabase().$transaction(async (transaction) => {
+    await this.prisma.$transaction(async (transaction) => {
       await transaction.rightsClaimComponent.delete({ where: { id: claimComponentId } });
       await this.recordEvent(transaction, id, RightsClaimEventType.COMPONENT_UNLINKED, {
         currentStatus: claim.status,
@@ -1164,7 +1134,7 @@ export class RightsClaimsService {
       }
     }
 
-    const created = await this.getDatabase().$transaction(async (transaction) => {
+    const created = await this.prisma.$transaction(async (transaction) => {
       const attachment = await transaction.rightsClaimAttachment.create({
         data: {
           rightsClaimId: id,
@@ -1202,14 +1172,14 @@ export class RightsClaimsService {
   ): Promise<ClaimMutationResultDto> {
     const claim = await this.requireClaim(id);
 
-    const attachment = await this.attachmentDelegate.findFirst({
+    const attachment = await this.prisma.rightsClaimAttachment.findFirst({
       where: { id: attachmentId, rightsClaimId: id },
     });
     if (!attachment || attachment.isDeleted) {
       failNotFound('CLAIM_TARGET_NOT_FOUND', 'Вложение не найдено.');
     }
 
-    await this.getDatabase().$transaction(async (transaction) => {
+    await this.prisma.$transaction(async (transaction) => {
       await transaction.rightsClaimAttachment.update({
         where: { id: attachmentId },
         data: { isDeleted: true, removedAt: new Date(), removedByUserId: userId },
@@ -1233,7 +1203,7 @@ export class RightsClaimsService {
     const now = new Date();
 
     // Claims filed against the book as a whole affect every one of its versions.
-    const claims = await this.claimDelegate.findMany({
+    const claims = await this.prisma.rightsClaim.findMany({
       where: {
         OR: [{ bookVersionId: versionId }, { bookId: version.bookId, bookVersionId: null }],
       },
@@ -1302,7 +1272,7 @@ export class RightsClaimsService {
     const activeBlocks =
       claimIds.length > 0
         ? this.activeBlocks(
-            await this.blockDelegate.findMany({
+            await this.prisma.rightsClaimAccessBlock.findMany({
               where: {
                 rightsClaimId: { in: claimIds },
                 status: RightsClaimBlockStatus.ACTIVE,
@@ -1409,13 +1379,13 @@ export class RightsClaimsService {
     };
   }
 
-  private describeClaims(claims: RightsClaimRecord[]): string {
+  private describeClaims(claims: RightsClaim[]): string {
     const first = claims[0];
     const suffix = claims.length > 1 ? ` и ещё ${claims.length - 1}` : '';
     return `${first.claimNumber} (${first.claimType})${suffix}`;
   }
 
-  private worstSeverity(claims: RightsClaimRecord[]): RightsClaimSeverity | null {
+  private worstSeverity(claims: RightsClaim[]): RightsClaimSeverity | null {
     let worst: RightsClaimSeverity | null = null;
     for (const claim of claims) {
       const rank = CLAIM_SEVERITY_RANK[claim.severity] ?? 0;
@@ -1429,10 +1399,7 @@ export class RightsClaimsService {
   // Validation
   // ---------------------------------------------------------------------------
 
-  private validatePayload(
-    dto: Partial<CreateRightsClaimDto>,
-    existing: RightsClaimRecord | null,
-  ): void {
+  private validatePayload(dto: Partial<CreateRightsClaimDto>, existing: RightsClaim | null): void {
     const claimantName = dto.claimantName ?? existing?.claimantName;
     if (!claimantName || claimantName.trim().length === 0) {
       fail('CLAIMANT_NAME_REQUIRED', 'Имя заявителя обязательно.');
@@ -1493,7 +1460,7 @@ export class RightsClaimsService {
     let bookId = dto.bookId ?? null;
 
     if (dto.bookVersionId) {
-      const version = await this.getDatabase().bookVersion.findUnique({
+      const version = await this.prisma.bookVersion.findUnique({
         where: { id: dto.bookVersionId },
         select: { id: true, bookId: true, status: true },
       });
@@ -1546,7 +1513,7 @@ export class RightsClaimsService {
     }
 
     if (dto.parentClaimId) {
-      const parent = await this.claimDelegate.findUnique({ where: { id: dto.parentClaimId } });
+      const parent = await this.prisma.rightsClaim.findUnique({ where: { id: dto.parentClaimId } });
       if (!parent) failNotFound('PARENT_CLAIM_NOT_FOUND', 'Родительская претензия не найдена.');
     }
 
@@ -1568,20 +1535,20 @@ export class RightsClaimsService {
     return (ALLOWED_STATUS_TRANSITIONS[from] ?? []).includes(to);
   }
 
-  private assertClaimOpen(claim: RightsClaimRecord): void {
+  private assertClaimOpen(claim: RightsClaim): void {
     if (!isOpenClaimStatus(claim.status)) {
       fail('CLAIM_NOT_OPEN', `Претензия закрыта (статус ${claim.status}).`);
     }
   }
 
-  private async requireClaim(id: string): Promise<RightsClaimRecord> {
-    const claim = await this.claimDelegate.findUnique({ where: { id } });
+  private async requireClaim(id: string): Promise<RightsClaim> {
+    const claim = await this.prisma.rightsClaim.findUnique({ where: { id } });
     if (!claim) throw new NotFoundException('RightsClaim not found');
     return claim;
   }
 
   private async requireVersion(versionId: string): Promise<{ id: string; bookId: string }> {
-    const version = await this.getDatabase().bookVersion.findUnique({
+    const version = await this.prisma.bookVersion.findUnique({
       where: { id: versionId },
       select: { id: true, bookId: true, status: true },
     });
@@ -1608,9 +1575,20 @@ export class RightsClaimsService {
   // Persistence helpers
   // ---------------------------------------------------------------------------
 
-  private buildWriteData(dto: Partial<CreateRightsClaimDto>): Record<string, unknown> {
-    const data: Record<string, unknown> = {};
-    const assign = (key: string, value: unknown): void => {
+  /**
+   * Returns plain column values, not update operators: `Partial<…UncheckedCreateInput>` fits both
+   * `create` (where a scalar is what the column wants) and `update` (where `T` is one arm of
+   * `T | XFieldUpdateOperationsInput`), so neither call site needs a cast. An operator object
+   * smuggled into `assign` fails here, at the line that introduces it.
+   */
+  private buildWriteData(
+    dto: Partial<CreateRightsClaimDto>,
+  ): Partial<Prisma.RightsClaimUncheckedCreateInput> {
+    const data: Partial<Prisma.RightsClaimUncheckedCreateInput> = {};
+    const assign = <K extends keyof Prisma.RightsClaimUncheckedCreateInput>(
+      key: K,
+      value: Prisma.RightsClaimUncheckedCreateInput[K] | undefined,
+    ): void => {
       if (value !== undefined) data[key] = value;
     };
 
@@ -1660,12 +1638,12 @@ export class RightsClaimsService {
   }
 
   private async recordEvent(
-    database: ClaimDatabaseClient,
+    tx: Prisma.TransactionClient,
     rightsClaimId: string,
     eventType: RightsClaimEventType,
     options: RecordEventOptions,
   ): Promise<void> {
-    await database.rightsClaimEvent.create({
+    await tx.rightsClaimEvent.create({
       data: {
         rightsClaimId,
         eventType,
@@ -1680,11 +1658,11 @@ export class RightsClaimsService {
 
   private async loadBlocksByClaim(
     claimIds: string[],
-  ): Promise<Map<string, RightsClaimAccessBlockRecord[]>> {
-    const grouped = new Map<string, RightsClaimAccessBlockRecord[]>();
+  ): Promise<Map<string, RightsClaimAccessBlock[]>> {
+    const grouped = new Map<string, RightsClaimAccessBlock[]>();
     if (claimIds.length === 0) return grouped;
 
-    const blocks = await this.blockDelegate.findMany({
+    const blocks = await this.prisma.rightsClaimAccessBlock.findMany({
       where: { rightsClaimId: { in: claimIds } },
       orderBy: { appliedAt: 'desc' },
     });
@@ -1696,10 +1674,7 @@ export class RightsClaimsService {
     return grouped;
   }
 
-  private activeBlocks(
-    blocks: RightsClaimAccessBlockRecord[],
-    at: Date,
-  ): RightsClaimAccessBlockRecord[] {
+  private activeBlocks(blocks: RightsClaimAccessBlock[], at: Date): RightsClaimAccessBlock[] {
     return blocks.filter(
       (block) =>
         block.status === RightsClaimBlockStatus.ACTIVE &&
@@ -1717,8 +1692,8 @@ export class RightsClaimsService {
   // ---------------------------------------------------------------------------
 
   mapSummary(
-    claim: RightsClaimRecord,
-    blocks: RightsClaimAccessBlockRecord[],
+    claim: RightsClaim,
+    blocks: RightsClaimAccessBlock[],
     at: Date = new Date(),
   ): RightsClaimSummaryDto {
     const active = this.activeBlocks(blocks, at);
@@ -1768,21 +1743,21 @@ export class RightsClaimsService {
     };
   }
 
-  private async buildDetail(claim: RightsClaimRecord): Promise<RightsClaimDetailDto> {
+  private async buildDetail(claim: RightsClaim): Promise<RightsClaimDetailDto> {
     const [components, blocks, attachments, events] = await Promise.all([
-      this.componentDelegate.findMany({
+      this.prisma.rightsClaimComponent.findMany({
         where: { rightsClaimId: claim.id },
         orderBy: { createdAt: 'asc' },
       }),
-      this.blockDelegate.findMany({
+      this.prisma.rightsClaimAccessBlock.findMany({
         where: { rightsClaimId: claim.id },
         orderBy: { appliedAt: 'desc' },
       }),
-      this.attachmentDelegate.findMany({
+      this.prisma.rightsClaimAttachment.findMany({
         where: { rightsClaimId: claim.id, isDeleted: false },
         orderBy: { createdAt: 'asc' },
       }),
-      this.eventDelegate.findMany({
+      this.prisma.rightsClaimEvent.findMany({
         where: { rightsClaimId: claim.id },
         orderBy: { createdAt: 'desc' },
       }),
@@ -1820,7 +1795,7 @@ export class RightsClaimsService {
     };
   }
 
-  private mapComponent(component: RightsClaimComponentRecord): RightsClaimComponentDto {
+  private mapComponent(component: RightsClaimComponent): RightsClaimComponentDto {
     return {
       id: component.id,
       rightsClaimId: component.rightsClaimId,
@@ -1833,7 +1808,7 @@ export class RightsClaimsService {
   }
 
   private mapBlock(
-    block: RightsClaimAccessBlockRecord,
+    block: RightsClaimAccessBlock,
     at: Date = new Date(),
   ): RightsClaimAccessBlockDto {
     const expired =
@@ -1861,7 +1836,7 @@ export class RightsClaimsService {
     };
   }
 
-  private mapAttachment(attachment: RightsClaimAttachmentRecord): RightsClaimAttachmentDto {
+  private mapAttachment(attachment: RightsClaimAttachment): RightsClaimAttachmentDto {
     return {
       id: attachment.id,
       rightsClaimId: attachment.rightsClaimId,
@@ -1880,7 +1855,7 @@ export class RightsClaimsService {
     };
   }
 
-  private mapEvent(event: RightsClaimEventRecord): RightsClaimEventDto {
+  private mapEvent(event: RightsClaimEvent): RightsClaimEventDto {
     return {
       id: event.id,
       eventType: event.eventType,

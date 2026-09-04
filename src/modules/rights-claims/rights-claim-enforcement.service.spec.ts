@@ -1,16 +1,11 @@
+import { RightsClaimAccessBlock } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsClaimEnforcementService } from './rights-claim-enforcement.service';
-import {
-  ClaimBlockScope,
-  RightsClaimAccessBlockRecord,
-  RightsClaimBlockStatus,
-} from './rights-claim-interface';
+import { ClaimBlockScope, RightsClaimBlockStatus } from './rights-claim-interface';
 
 const now = new Date('2026-07-28T12:00:00.000Z');
 
-const createBlock = (
-  overrides: Partial<RightsClaimAccessBlockRecord> = {},
-): RightsClaimAccessBlockRecord => ({
+const createBlock = (overrides: Partial<RightsClaimAccessBlock> = {}): RightsClaimAccessBlock => ({
   id: 'block-1',
   rightsClaimId: 'claim-1',
   bookId: 'book-1',

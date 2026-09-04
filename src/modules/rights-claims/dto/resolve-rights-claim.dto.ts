@@ -25,7 +25,9 @@ export class ResolveRightsClaimDto {
   })
   @IsOptional()
   @IsIn([RightsClaimStatus.RESOLVED_VALID, RightsClaimStatus.RESOLVED_INVALID])
-  finalStatus?: RightsClaimStatus.RESOLVED_VALID | RightsClaimStatus.RESOLVED_INVALID;
+  finalStatus?:
+    | (typeof RightsClaimStatus)['RESOLVED_VALID']
+    | (typeof RightsClaimStatus)['RESOLVED_INVALID'];
 }
 
 export class ReopenRightsClaimDto {
