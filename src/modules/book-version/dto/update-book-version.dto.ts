@@ -7,6 +7,7 @@ import {
   IsString,
   IsUrl,
   IsUUID,
+  MaxLength,
   MinLength,
   ValidateIf,
   IsInt,
@@ -36,6 +37,7 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @ApiPropertyOptional({ example: 'J.K. Rowling' })
   @IsOptional()
   @IsString()
+  @MaxLength(500, { message: 'Author must be at most 500 characters long' })
   author?: string;
 
   /**

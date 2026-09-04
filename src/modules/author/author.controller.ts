@@ -11,11 +11,11 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthorService } from './author.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
-import { PaginationDto } from '../../shared/dto/pagination.dto';
+import { ListAuthorsQueryDto } from './dto/list-authors-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -57,8 +57,8 @@ export class AuthorController {
   @ApiOperation({ summary: 'List authors for admin' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  list(@Query() pagination: PaginationDto) {
-    return this.service.list(pagination.page, pagination.limit);
+  list(@Query() pagination: ListAuthorsQueryDto) {
+    return this.service.list(pagination.page, pagination.limit, undefined, pagination.q);
   }
 
   @Post('admin/authors')
@@ -67,6 +67,21 @@ export class AuthorController {
   @Roles(Role.Admin, Role.ContentManager)
   create(@Body() dto: CreateAuthorDto) {
     return this.service.create(dto);
+  }
+
+  /**
+   * `check-slug` объявлен раньше как литеральный маршрут (`LEGACY-352`): без
+   * этого порядка запрос на слаг ушёл бы сюда с `id: 'check-slug'`.
+   */
+  @Get('admin/authors/:id')
+  @ApiOperation({ summary: 'Get author by id' })
+  @ApiParam({ name: 'id', description: 'Author id' })
+  @ApiResponse({ status: 200, description: 'Author, same shape as a list item' })
+  @ApiResponse({ status: 404, description: 'Author not found' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  findOne(@Param('id') id: string) {
+    return this.service.findOne(id);
   }
 
   @Put('admin/authors/:id')

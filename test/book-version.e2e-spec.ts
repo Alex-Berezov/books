@@ -239,4 +239,56 @@ describe('BookVersions e2e', () => {
       })
       .expect(400);
   });
+
+  /**
+   * `LEGACY-354`: `@@index([author, language, status])` упирается в потолок
+   * размера ключа btree (~2704 байт) — без ограничения на входе слишком
+   * длинное значение падало ошибкой драйвера (500), а не валидацией (400).
+   */
+  it('отбивает слишком длинного author валидацией (400), а не драйвером (500)', async () => {
+    const slug = `book-${Date.now()}-4`;
+    const bookWithRights = await createBookWithRights(prisma, slug);
+    createdBookSlugs.push(slug);
+    const tooLongAuthor = 'A'.repeat(501);
+
+    await request(http())
+      .post(`/books/${bookWithRights.book.id}/versions`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        language: Language.en,
+        title: 'Title EN',
+        author: tooLongAuthor,
+        description: 'Desc',
+        coverImageUrl: 'https://example.com/cover.jpg',
+        type: BookType.text,
+        isFree: true,
+      })
+      .expect(400);
+
+    const created = await request(http())
+      .post(`/books/${bookWithRights.book.id}/versions`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        language: Language.en,
+        title: 'Title EN',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: 'https://example.com/cover.jpg',
+        type: BookType.text,
+        isFree: true,
+      })
+      .expect(201);
+    const createdVersion: BookVersionResponse = created.body as BookVersionResponse;
+
+    await request(http())
+      .patch(`/versions/${createdVersion.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ author: tooLongAuthor })
+      .expect(400);
+
+    await request(http())
+      .delete(`/versions/${createdVersion.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(204);
+  });
 });

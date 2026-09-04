@@ -136,6 +136,45 @@ describe('Admin authors routing (e2e)', () => {
         .set('Authorization', `Bearer ${readerToken}`)
         .expect(403);
     });
+
+    // `LEGACY-352`: выпадающий список авторов в форме книги переведён с
+    // клиентского фильтра по одной странице на серверный поиск `q`.
+    it('фильтрует по имени переводом через q, а не отдаёт всех', async () => {
+      const marker = `Findable-${Date.now()}`;
+      const created = await request(http())
+        .post('/admin/authors')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          translations: [{ language: 'en', name: marker, slug: `findable-${Date.now()}` }],
+        })
+        .expect(201);
+      const authorId = (created.body as { id: string }).id;
+
+      try {
+        const response = await request(http())
+          .get('/admin/authors')
+          .query({ q: marker.toLowerCase(), limit: PAGINATION_MAX_LIMIT })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+
+        const body = response.body as { data: Array<{ id: string }> };
+        expect(body.data.some((a) => a.id === authorId)).toBe(true);
+
+        const miss = await request(http())
+          .get('/admin/authors')
+          .query({ q: `no-such-author-${Date.now()}` })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+
+        const missBody = miss.body as { data: Array<{ id: string }> };
+        expect(missBody.data.some((a) => a.id === authorId)).toBe(false);
+      } finally {
+        await request(http())
+          .delete(`/admin/authors/${authorId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(204);
+      }
+    });
   });
 
   describe('GET /admin/authors/check-slug', () => {
@@ -204,6 +243,69 @@ describe('Admin authors routing (e2e)', () => {
         .query({ slug: 'anything' })
         .set('Authorization', `Bearer ${readerToken}`)
         .expect(403);
+    });
+  });
+
+  // `LEGACY-352`: одиночное чтение вместо поиска автора в первой странице
+  // списка — за сотым автором (потолок `LEGACY-217`) страница правки его
+  // не находила. `check-slug` объявлен литеральным маршрутом раньше `:id`
+  // (см. блок выше) — набор ниже проверяет и то, что порядок не сломан.
+  describe('GET /admin/authors/:id', () => {
+    it('отдаёт автора одиночным чтением, а не поиском по списку', async () => {
+      const slug = `single-read-author-${Date.now()}`;
+      const created = await request(http())
+        .post('/admin/authors')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          translations: [{ language: 'en', name: 'Single Read Author', slug }],
+        })
+        .expect(201);
+      const authorId = (created.body as { id: string }).id;
+
+      try {
+        const response = await request(http())
+          .get(`/admin/authors/${authorId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+
+        expect(response.body).toMatchObject({ id: authorId, slug });
+      } finally {
+        await request(http())
+          .delete(`/admin/authors/${authorId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(204);
+      }
+    });
+
+    it('404 на несуществующем id, а не на любом отказе', async () => {
+      await request(http())
+        .get('/admin/authors/00000000-0000-0000-0000-000000000000')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(404);
+    });
+
+    it('без токена отвечает 401 от гварда, а не 404 от чужого маршрута', async () => {
+      await request(http()).get('/admin/authors/00000000-0000-0000-0000-000000000000').expect(401);
+    });
+
+    it('аутентифицированному без роли отвечает 403', async () => {
+      await request(http())
+        .get('/admin/authors/00000000-0000-0000-0000-000000000000')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(403);
+    });
+
+    // `check-slug` — двухсегментный литеральный путь под тем же префиксом.
+    // Заведи `:id` выше него в контроллере — и этот запрос уехал бы сюда
+    // с `id: 'check-slug'` вместо настоящего обработчика (см. шапку файла).
+    it('не перехватывает check-slug — тот отвечает своей формой, а не поиском по id', async () => {
+      const response = await request(http())
+        .get('/admin/authors/check-slug')
+        .query({ slug: `still-literal-${Date.now()}` })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(response.body).toEqual({ exists: false });
     });
   });
 

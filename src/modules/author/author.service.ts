@@ -39,6 +39,20 @@ import {
 } from './author-index.util';
 
 /**
+ * `%` и `_` в запросе пользователя — это символы, а не подстановки: поиск «100%»
+ * иначе совпал бы со всеми именами разом. Обратная косая — escape-символ `LIKE`
+ * в Postgres по умолчанию, поэтому экранируется и она сама.
+ *
+ * Одно место на оба поиска — административный (`list`, объектный фильтр Prisma
+ * `contains`) и публичный (`buildPublicAuthorConditions`, сырой `Prisma.sql`
+ * с явным `ESCAPE`). Слои SQL у них разные, а правило экранирования одно, и
+ * поправленное в одном месте из двух оно разошлось бы молча.
+ */
+function escapeLikeWildcards(term: string): string {
+  return term.replace(/([\\%_])/g, '\\$1');
+}
+
+/**
  * Первая буква имени, посчитанная в SQL: сняли краевые пробелы, свернули
  * диакритику, взяли первый символ, подняли в верхний регистр. То же, что делает
  * `indexLetterOf`, — кроме последнего шага, «буква это или `#`», который остаётся
@@ -218,11 +232,65 @@ export class AuthorService {
    * вела бы в 404 (soft-404 закрыт 05.08.2026). Админский список ходит без
    * языка и видит всех.
    */
-  async list(page = 1, limit = 20, lang?: Language) {
+  /**
+   * Форма элемента админской выдачи автора — одна на список и на одиночное чтение.
+   *
+   * 🔴 Одним методом, а не двумя копиями: `GET /admin/authors/:id` обещает
+   * в Swagger «ту же форму, что элемент списка», и держать это обещание должен
+   * код, а не дисциплина. Разъедься копии — админский список показал бы новое
+   * поле, а страница правки отдала бы по нему `undefined`, причём `tsc`
+   * промолчал бы: обе стороны читает один рукописный тип `Author` на фронте.
+   *
+   * @param lang С языком берётся перевод на него (он гарантированно есть — список
+   * по нему и отфильтрован). Без языка это админская выдача, там прежний порядок:
+   * английский, иначе первый попавшийся.
+   */
+  private toAuthorItem(
+    // Тип с `seo` внутри перевода, а не просто `translations: true`: оба
+    // вызывающих читают его с `include: { seo: true }`, и на узком типе снятие
+    // этого `include` у любого из них прошло бы мимо `tsc` — то есть страховка,
+    // ради которой метод и заведён, не сработала бы.
+    author: Prisma.AuthorGetPayload<{ include: { translations: { include: { seo: true } } } }>,
+    booksCount: number,
+    lang?: Language,
+  ) {
+    const mainTrans = lang
+      ? author.translations.find((t) => t.language === lang)
+      : author.translations.find((t) => t.language === 'en') || author.translations[0];
+
+    return {
+      id: author.id,
+      slug: mainTrans?.slug || '',
+      name: mainTrans?.name || '',
+      birthDate: author.birthDate,
+      deathDate: author.deathDate,
+      wikidataUrl: mainTrans?.wikidataUrl || null,
+      wikipediaUrl: mainTrans?.wikipediaUrl || null,
+      photoUrl: mainTrans?.photoUrl || null,
+      translations: author.translations,
+      booksCount,
+    };
+  }
+
+  async list(page = 1, limit = 20, lang?: Language, search?: string) {
     const skip = (page - 1) * limit;
-    const where: Prisma.AuthorWhereInput | undefined = lang
-      ? { translations: { some: { language: lang } } }
-      : undefined;
+
+    // Язык и имя идут одним `some`, а не двумя: раздельными условиями автор
+    // с русским именем попал бы в выдачу с `lang=en` — совпасть они могли бы
+    // в разных переводах.
+    const translationWhere: Prisma.AuthorTranslationWhereInput = {};
+    if (lang) translationWhere.language = lang;
+
+    const term = search?.trim();
+    if (term) {
+      const escaped = escapeLikeWildcards(term);
+      translationWhere.name = { contains: escaped, mode: 'insensitive' };
+    }
+
+    const where: Prisma.AuthorWhereInput | undefined =
+      Object.keys(translationWhere).length > 0
+        ? { translations: { some: translationWhere } }
+        : undefined;
 
     const [total, items] = await this.prisma.$transaction([
       this.prisma.author.count({ where }),
@@ -245,27 +313,7 @@ export class AuthorService {
     );
 
     return {
-      data: items.map((item) => {
-        // С языком — перевод на него (он гарантированно есть, список по нему и
-        // отфильтрован). Без языка это админская выдача, там прежний порядок:
-        // английский, иначе первый попавшийся.
-        const mainTrans = lang
-          ? item.translations.find((t) => t.language === lang)
-          : item.translations.find((t) => t.language === 'en') || item.translations[0];
-
-        return {
-          id: item.id,
-          slug: mainTrans?.slug || '',
-          name: mainTrans?.name || '',
-          birthDate: item.birthDate,
-          deathDate: item.deathDate,
-          wikidataUrl: mainTrans?.wikidataUrl || null,
-          wikipediaUrl: mainTrans?.wikipediaUrl || null,
-          photoUrl: mainTrans?.photoUrl || null,
-          translations: item.translations,
-          booksCount: booksCounts.get(item.id) ?? 0,
-        };
-      }),
+      data: items.map((item) => this.toAuthorItem(item, booksCounts.get(item.id) ?? 0, lang)),
       meta: {
         page,
         limit,
@@ -273,6 +321,24 @@ export class AuthorService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Одиночное чтение для админки (`LEGACY-352`). Экран правки автора раньше искал
+   * запись в первой странице `list()` — за сотым автором (потолок `LEGACY-217`)
+   * поиск молча переставал находить существующую запись.
+   */
+  async findOne(id: string) {
+    const author = await this.prisma.author.findUnique({
+      where: { id },
+      include: { translations: { include: { seo: true } } },
+    });
+    if (!author) {
+      throw new NotFoundException(`Author with ID '${id}' not found`);
+    }
+
+    const booksCounts = await this.countPublishedBooksByAuthor([author.id]);
+    return this.toAuthorItem(author, booksCounts.get(author.id) ?? 0);
   }
 
   /**
@@ -481,7 +547,7 @@ export class AuthorService {
     if (term) {
       // `%` и `_` в запросе пользователя — это символы, а не подстановки:
       // поиск «100%» иначе совпал бы со всеми именами разом.
-      const escaped = term.replace(/([\\%_])/g, '\\$1');
+      const escaped = escapeLikeWildcards(term);
       conditions.push(Prisma.sql`t.name ILIKE ${`%${escaped}%`} ESCAPE '\\'`);
     }
 

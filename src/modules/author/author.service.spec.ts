@@ -446,6 +446,138 @@ describe('AuthorService', () => {
       expect(res.meta).toEqual({ page: 99, limit: 20, total: 42, totalPages: 3 });
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
+
+    // LEGACY-352: сервер отвечает за поиск, а не за фильтрацию клиентом.
+    // Условие проверяется у ОБОИХ запросов: перенос `where` только на `count`
+    // оставил бы `meta.total: 0` рядом с полной страницей случайных авторов.
+    it('filters by translation name (case-insensitive) when search is given', async () => {
+      prisma.$transaction.mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+      prisma.author.count.mockResolvedValue(0);
+      prisma.author.findMany.mockResolvedValue([]);
+
+      const res = await service.list(1, 20, undefined, 'tolstoy');
+
+      const expectedWhere = {
+        translations: { some: { name: { contains: 'tolstoy', mode: 'insensitive' } } },
+      };
+      expect(prisma.author.count).toHaveBeenCalledTimes(1);
+      expect(prisma.author.count).toHaveBeenCalledWith({ where: expectedWhere });
+      expect(prisma.author.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.author.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+      expect(res.data).toEqual([]);
+    });
+
+    // `%` и `_` — символы запроса, а не подстановки: без экранирования
+    // `?q=%` вернул бы первую сотню авторов вместо пустого списка.
+    it('escapes LIKE wildcards and trims the term', async () => {
+      prisma.$transaction.mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+      prisma.author.count.mockResolvedValue(0);
+      prisma.author.findMany.mockResolvedValue([]);
+
+      await service.list(1, 20, undefined, '  100%_  ');
+
+      const expectedWhere = {
+        translations: {
+          some: { name: { contains: '100\\%\\_', mode: 'insensitive' } },
+        },
+      };
+      expect(prisma.author.count).toHaveBeenCalledTimes(1);
+      expect(prisma.author.count).toHaveBeenCalledWith({ where: expectedWhere });
+      // Страницу собирает `findMany`, и сырой терм именно в нём дал бы
+      // `meta.total: 0` рядом с полной страницей случайных авторов.
+      expect(prisma.author.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.author.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+    });
+
+    // Пустой и пробельный запрос — это «без отбора», а не «совпадение со всем».
+    it('ignores a blank search instead of matching everything', async () => {
+      prisma.$transaction.mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+      prisma.author.count.mockResolvedValue(0);
+      prisma.author.findMany.mockResolvedValue([]);
+
+      await service.list(1, 20, undefined, '   ');
+
+      expect(prisma.author.count).toHaveBeenCalledTimes(1);
+      expect(prisma.author.count).toHaveBeenCalledWith({ where: undefined });
+      expect(prisma.author.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.author.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: undefined }),
+      );
+    });
+
+    // Язык и имя — один `some`, иначе они могут совпасть в РАЗНЫХ переводах,
+    // и автор с русским именем попадёт в выдачу с `lang=en`.
+    it('puts lang and search into one translation condition, not two', async () => {
+      prisma.$transaction.mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+      prisma.author.count.mockResolvedValue(0);
+      prisma.author.findMany.mockResolvedValue([]);
+
+      await service.list(1, 20, Language.en, 'tolstoy');
+
+      const expectedWhere = {
+        translations: {
+          some: {
+            language: Language.en,
+            name: { contains: 'tolstoy', mode: 'insensitive' },
+          },
+        },
+      };
+      expect(prisma.author.count).toHaveBeenCalledTimes(1);
+      expect(prisma.author.count).toHaveBeenCalledWith({ where: expectedWhere });
+      expect(prisma.author.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.author.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+    });
+  });
+
+  describe('findOne', () => {
+    // LEGACY-352: страница правки автора раньше искала запись в первой
+    // странице `list()` и не находила авторов за сотым — одиночное чтение
+    // снимает поиск целиком.
+    it('throws NotFoundException when the author does not exist', async () => {
+      prisma.author.findUnique.mockResolvedValue(null);
+
+      await expect(service.findOne('missing')).rejects.toThrow(NotFoundException);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('returns the author shaped like a list() item', async () => {
+      prisma.author.findUnique.mockResolvedValue({
+        id: 'auth1',
+        birthDate: null,
+        deathDate: null,
+        translations: [
+          {
+            language: 'en',
+            slug: 'jane-doe',
+            name: 'Jane Doe',
+            wikidataUrl: null,
+            wikipediaUrl: null,
+            photoUrl: null,
+          },
+        ],
+      });
+      prisma.$queryRaw.mockResolvedValue([{ authorId: 'auth1', booksCount: 3 }]);
+
+      const res = await service.findOne('auth1');
+
+      expect(res).toMatchObject({
+        id: 'auth1',
+        slug: 'jane-doe',
+        name: 'Jane Doe',
+        booksCount: 3,
+      });
+      expect(prisma.author.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.author.findUnique).toHaveBeenCalledWith({
+        where: { id: 'auth1' },
+        include: { translations: { include: { seo: true } } },
+      });
+    });
   });
 
   describe('listPublic', () => {

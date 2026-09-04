@@ -6,6 +6,7 @@ import {
   IsString,
   IsUrl,
   IsUUID,
+  MaxLength,
   MinLength,
   IsInt,
   Min,
@@ -36,6 +37,7 @@ export class CreateBookVersionDto {
 
   @ApiProperty({ description: 'Автор', example: 'J.K. Rowling' })
   @IsString()
+  @MaxLength(500, { message: 'Author must be at most 500 characters long' })
   author!: string;
 
   /**
