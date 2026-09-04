@@ -310,6 +310,98 @@ describe('Personal data leaks (e2e)', () => {
       expect(body).not.toContain('Reply under hidden parent');
       expect(body).toContain('Reply under visible parent');
     });
+
+    /**
+     * `LEGACY-212`. Третья сторона той же видимости: скрыт СОБСТВЕННЫЙ корень
+     * автора. Запись остаётся у него на странице с признаком `isHidden`, но
+     * ветка ответов третьих лиц уходит — публично скрытый корень прячет её
+     * целиком, и отдавать её автору значило бы повторить `LEGACY-210` зеркально.
+     */
+    it('под собственным скрытым корнем нет ни ответов, ни личностей ответивших', async () => {
+      const root = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({ bookVersionId: versionId, text: 'My own hidden root text' })
+        .expect(201);
+
+      await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({
+          parentId: (root.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'Stranger reply under my hidden root',
+        })
+        .expect(201);
+
+      // Свой ответ под своим же скрытым корнем: отдельным элементом активности
+      // он не придёт (его выбрасывает фильтр по скрытому родителю), значит
+      // единственное место, где автор его видит, — эта ветка. Обнуление ветки
+      // целиком отняло бы у него собственный текст молча.
+      await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({
+          parentId: (root.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'My own reply under my hidden root',
+        })
+        .expect(201);
+
+      // Положительный контроль: вторая ветка автора остаётся нетронутой,
+      // иначе тест не отличит «ответы обнулены у скрытой записи» от «ответов
+      // не пришло вовсе».
+      const visibleRoot = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({ bookVersionId: versionId, text: 'My own visible root text' })
+        .expect(201);
+
+      await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({
+          parentId: (visibleRoot.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'Stranger reply under my visible root',
+        })
+        .expect(201);
+
+      await request(http())
+        .patch(`/comments/${(root.body as { id: string }).id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ isHidden: true })
+        .expect(200);
+
+      const activities = await request(http())
+        .get('/users/me/activities')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(200);
+
+      const items = activities.body as {
+        id: string;
+        text: string;
+        isHidden: boolean;
+        replies: { id: string }[];
+      }[];
+      const hidden = items.find((i) => i.text === 'My own hidden root text');
+      const visible = items.find((i) => i.text === 'My own visible root text');
+
+      // Свой текст автору виден, и признак скрытия при нём: молчаливое
+      // исчезновение записи неотличимо от пропажи данных.
+      expect(hidden).toBeDefined();
+      expect(hidden?.isHidden).toBe(true);
+      // Ветка сужена до собственных ответов: свой остался, чужой ушёл.
+      expect(hidden?.replies.length).toBe(1);
+
+      expect(visible?.isHidden).toBe(false);
+      expect(visible?.replies.length).toBe(1);
+
+      const body = JSON.stringify(activities.body);
+      expect(body).not.toContain('Stranger reply under my hidden root');
+      expect(body).toContain('My own reply under my hidden root');
+      expect(body).toContain('Stranger reply under my visible root');
+    });
   });
 
   describe('LEGACY-088 — чужой прогресс чтения', () => {

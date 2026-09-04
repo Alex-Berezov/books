@@ -660,6 +660,110 @@ describe('UsersService (unit)', () => {
 
       expect(res.map((r) => r.id)).toEqual(['c2']);
     });
+
+    // Посадка LEGACY-212. Три утверждения, и они закрывают разные половины решения
+    // арбитра от 04.09.2026 (вариант B).
+    //
+    // 🔴 Первое — про `where`: `isHidden: false` туда добавлять НЕЛЬЗЯ. Соблазн
+    // сделать «как с isDeleted» велик, поэтому равенство точное: запись автора,
+    // скрытая модератором, обязана остаться в его активности, иначе модерация
+    // неотличима от пропажи данных.
+    it('не убирает собственную скрытую запись из выборки (LEGACY-212)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      await service.getActivities('u1');
+
+      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
+      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+        where: Record<string, unknown>;
+      };
+
+      expect(args.where).toEqual({ userId: 'u1', isDeleted: false });
+    });
+
+    // Второе и третье — про форму ответа: признак скрытия уходит наружу, а ветка
+    // ответов третьих лиц под скрытым корнем — нет. Публично скрытый корень прячет
+    // всю ветку, и отдавать её автору значило бы повторить LEGACY-210 зеркально.
+    // Поправка арбитра от 04.09.2026: под скрытым корнем остаются СВОИ ответы
+    // автора, уходят только чужие. Ни один другой тест этот вход не подаёт —
+    // всюду ветка состоит из чужих ответов, и подмена фильтра на пустой массив
+    // прошла бы незамеченной.
+    it('под скрытым корнем оставляет свой ответ и убирает чужой (LEGACY-212)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([
+        {
+          id: 'c1',
+          text: 'mine',
+          isHidden: true,
+          createdAt: new Date(),
+          parentId: null,
+          parent: null,
+          bookVersion: null,
+          chapter: null,
+          audioChapter: null,
+          children: [
+            { id: 'own', text: 'my reply', createdAt: new Date(), user: { id: 'u1' } },
+            { id: 'foreign', text: 'their reply', createdAt: new Date(), user: { id: 'u2' } },
+          ],
+        },
+      ]);
+
+      const res = await service.getActivities('u1');
+
+      expect(res[0].replies.map((r) => r.id)).toEqual(['own']);
+    });
+
+    it('у скрытой записи отдаёт флаг, а чужие ответы убирает (LEGACY-212)', async () => {
+      const base = {
+        text: 'mine',
+        createdAt: new Date(),
+        parentId: null,
+        parent: null,
+        bookVersion: null,
+        chapter: null,
+        audioChapter: null,
+        children: [
+          { id: 'r1', text: 'reply', createdAt: new Date(), user: { id: 'u2', nickname: 'nick' } },
+        ],
+      };
+      prismaMock.comment.findMany.mockResolvedValueOnce([
+        { ...base, id: 'c1', isHidden: true },
+        { ...base, id: 'c2', isHidden: false },
+      ]);
+
+      const res = await service.getActivities('u1');
+
+      expect(res.map((r) => r.id)).toEqual(['c1', 'c2']);
+      expect(res[0].isHidden).toBe(true);
+      expect(res[0].replies).toEqual([]);
+    });
+
+    it('у обычной записи флаг false, а replies на месте (LEGACY-212)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([
+        {
+          id: 'c1',
+          text: 'mine',
+          isHidden: false,
+          createdAt: new Date(),
+          parentId: null,
+          parent: null,
+          bookVersion: null,
+          chapter: null,
+          audioChapter: null,
+          children: [
+            {
+              id: 'r1',
+              text: 'reply',
+              createdAt: new Date(),
+              user: { id: 'u2', nickname: 'nick' },
+            },
+          ],
+        },
+      ]);
+
+      const res = await service.getActivities('u1');
+
+      expect(res[0].isHidden).toBe(false);
+      expect(res[0].replies.map((r) => r.id)).toEqual(['r1']);
+    });
   });
 
   // Посадка LEGACY-116: чтения пользователя сужены белым списком, и хеш пароля

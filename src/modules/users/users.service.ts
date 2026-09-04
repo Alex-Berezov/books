@@ -564,9 +564,31 @@ export class UsersService {
         bookVersion = comment.audioChapter.bookVersion;
       }
 
+      // Скрытый модератором СОБСТВЕННЫЙ корень остаётся в выдаче (`isHidden`
+      // в верхний `where` не добавляется) — иначе модерация неотличима от
+      // пропажи данных, и автор не узнаёт, что его запись скрыли (`LEGACY-212`,
+      // решение арбитра 04.09.2026). Наружу уходит только сам признак: ни
+      // причина скрытия, ни имя модератора здесь не отдаются.
+      //
+      // 🔴 А вот ветка под таким корнем сужается до собственных ответов автора.
+      // Ответы третьих лиц сами по себе не скрыты, но публично ветки нет вовсе:
+      // скрыт корень — не видно ничего (`comments.service.ts:56-63`). Отдавая их
+      // автору, мы повторяли бы `LEGACY-210` зеркально — там модератор скрывал
+      // ответ, здесь корень, а утекают в обоих случаях `id`, `name`, `nickname`
+      // и `avatarUrl` ответивших.
+      //
+      // ⚠️ Именно фильтр по автору, а не пустой массив (поправка арбитра
+      // от 04.09.2026). Свой ответ под своим же скрытым корнем не приходит
+      // и отдельным элементом активности — его выбрасывает фильтр ниже
+      // по `parent.isHidden`, — так что обнуление отнимало бы у автора его
+      // собственный текст молча, ровно как отвергнутый вариант «убрать
+      // скрытую запись из выдачи совсем».
+      const isHidden = comment.isHidden;
+
       return {
         id: comment.id,
         text: comment.text,
+        isHidden,
         createdAt: comment.createdAt,
         parentId: comment.parentId,
         bookVersion: bookVersion
@@ -586,7 +608,10 @@ export class UsersService {
               user: comment.parent.user,
             }
           : null,
-        replies: comment.children.map((child) => ({
+        replies: (isHidden
+          ? comment.children.filter((child) => child.user.id === userId)
+          : comment.children
+        ).map((child) => ({
           id: child.id,
           text: child.text,
           createdAt: child.createdAt,
