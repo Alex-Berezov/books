@@ -320,6 +320,98 @@ describe('DevOps: monitoring config wiring', () => {
     });
   });
 
+  /**
+   * 🔴 Цена закрытия `LEGACY-231`. `or vector(0)` у числителя долей ошибок делает
+   * из «ряда нет» уверенный **ноль** — а «ряда нет» бывает не только потому, что
+   * ошибок не случилось. Переименуй или сними метку `status_code` в коде метрик,
+   * и селектор `{status_code=~"5.."}` перестанет совпадать с чем угодно, тогда как
+   * знаменатель (без фильтра по меткам) продолжит считаться: доля навсегда встанет
+   * на `0%`, `HighErrorRate` не сработает ни разу, а панели покажут здоровую
+   * систему, у которой каждый запрос отвечает 500.
+   *
+   * До правки этот случай был виден как «No data» — и правка ровно эту видимость
+   * и убирает. Поэтому связь «имя метрики и метки в коде ↔ селекторы в правилах»
+   * с этого момента держится спекой, а не совпадением: `promtool` подставляет ряды
+   * сам и про код метрик не знает ничего, `tsc` и `eslint` не читают YAML вовсе.
+   */
+  describe('LEGACY-231: селекторы правил совпадают с метрикой в коде', () => {
+    const metricsSource = readFileSync(
+      join(root, 'src', 'modules', 'metrics', 'metrics.service.ts'),
+      'utf8',
+    );
+    const recordingRules = readFileSync(join(root, 'configs', 'recording_rules.yml'), 'utf8');
+    const alertRules = readFileSync(join(root, 'configs', 'alert_rules.yml'), 'utf8');
+
+    it('гистограмма запросов объявлена в коде под тем именем, которое читают правила', () => {
+      // Имя объявляется без суффикса, а правила читают производный ряд `_count`,
+      // который prom-client публикует сам. Проверяются обе стороны: снятие метрики
+      // из кода и переименование ряда в правилах ловятся одним кейсом.
+      expect(metricsSource).toContain("name: 'http_request_duration_seconds'");
+      expect(recordingRules).toContain('http_request_duration_seconds_count');
+    });
+
+    it('каждая запись books_app:*, которую читают алерты, объявлена в recording_rules.yml', () => {
+      // ⚠️ `alert_rules.yml` сырую метрику не читает вовсе — он читает предвычисленные
+      // записи. Поэтому цепочка «код метрик → recording_rules.yml → alert_rules.yml»
+      // рвётся в двух местах, и второе разрывается молча: `promtool check rules`
+      // разбирает каждый файл сам по себе и про несуществующую запись не знает,
+      // а выражение поверх неё навсегда пусто — алерт не сработает ни разу
+      // (так снимали `BooksAppHealthProbeDown`, `LEGACY-220`).
+      const recordLines: string[] = recordingRules.match(/^\s*- record:\s*(\S+)\s*$/gm) ?? [];
+      const declared = new Set(
+        recordLines.map((line) => line.replace(/^\s*- record:\s*/, '').trim()),
+      );
+      expect(declared.size).toBeGreaterThanOrEqual(7);
+
+      const used = new Set(alertRules.match(/books_app:[\w:]+/g) ?? []);
+      expect(used.size).toBeGreaterThan(0);
+
+      const missing = [...used].filter((name) => !declared.has(name));
+      expect(missing).toEqual([]);
+    });
+
+    it('метка status_code, по которой фильтруются доли ошибок, объявлена в labelNames', () => {
+      // Селекторы в правилах написаны по этой метке; в коде она перечислена дважды —
+      // в типе и в `labelNames`, — и обе записи обязаны остаться на месте.
+      expect(metricsSource).toMatch(/labelNames\s*=\s*\[[^\]]*'status_code'[^\]]*\]/);
+      expect(metricsSource).toMatch(/type HttpLabel[^;]*'status_code'/);
+
+      const selectors = recordingRules.match(/status_code=~"[^"]+"/g) ?? [];
+      // Ниже двух сломан разбор, а не файл поредел: доля всех ошибок (`4..|5..`)
+      // и доля серверных (`5..`).
+      expect(selectors.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('каждая доля ошибок обёрнута or vector(0) по числителю и не обёрнута по знаменателю', () => {
+      // Обе половины инварианта в одном кейсе намеренно: по отдельности каждая
+      // допускает состояние, ради запрета которого написана другая. Числитель без
+      // обёртки — исходный `LEGACY-231` (пусто вместо нуля); знаменатель с обёрткой —
+      // `vector(0) / vector(0)`, то есть `NaN`-образец на панели вместо честной
+      // пустоты при полном отсутствии трафика.
+      const ratios =
+        recordingRules.match(/- record: books_app:http_\w*error_ratio:rate5m[\s\S]*?\* 100/g) ?? [];
+      expect(ratios.length).toBe(2);
+
+      for (const ratio of ratios) {
+        const numerator = ratio.match(
+          /\(sum\(rate\(http_request_duration_seconds_count\{status_code=~"[^"]+"\}\[5m\]\)\) or vector\(0\)\)/,
+        );
+        expect({ ratio: ratio.slice(0, 60), wrapped: numerator !== null }).toEqual({
+          ratio: ratio.slice(0, 60),
+          wrapped: true,
+        });
+
+        const denominator = ratio.match(
+          /^\s*sum\(rate\(http_request_duration_seconds_count\[5m\]\)\)\s*$/m,
+        );
+        expect({ ratio: ratio.slice(0, 60), bare: denominator !== null }).toEqual({
+          ratio: ratio.slice(0, 60),
+          bare: true,
+        });
+      }
+    });
+  });
+
   describe('LEGACY-222: булев вход workflow_dispatch — строка', () => {
     const workflowsDir = join(root, '.github', 'workflows');
 

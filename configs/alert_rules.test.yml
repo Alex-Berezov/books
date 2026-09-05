@@ -156,6 +156,69 @@ tests:
         alertname: HighErrorRate
         exp_alerts: []
 
+  # 🔴 LEGACY-231. Спокойный час: трафик идёт, ошибок нет ни одной. Обе доли обязаны
+  # СУЩЕСТВОВАТЬ и быть равны нулю — а не отсутствовать.
+  #
+  # Отсутствие ряда и ноль в Prometheus — разные вещи, и на алертах эта разница не
+  # видна: пустой вектор порога не превышает, `HighErrorRate` молчит одинаково в обоих
+  # случаях. Видна она на дашбордах, где «No data» неотличимо от «сбор метрик отвалился».
+  # Поэтому кейс проверяет саму запись через `promql_expr_test`, а не поведение алерта:
+  # `alert_rule_test` с `exp_alerts: []` здесь был бы зелёным и до правки.
+  #
+  # Входной ряд — только двухсотые: ряда с `status_code=~"5.."` не существует вовсе,
+  # ровно как `prom-client` и ведёт себя до первой ошибки такого вида. Без `or vector(0)`
+  # у числителя оба выражения дают пустой результат, и `exp_samples` с одним образцом
+  # не совпадает — кейс краснеет.
+  - interval: 1m
+    name: traffic without errors — both ratios are zero, not absent (LEGACY-231)
+    input_series:
+      - series: 'http_request_duration_seconds_count{status_code="200", method="GET", route="/api/x"}'
+        values: '0+60x30'
+    promql_expr_test:
+      # ⚠️ `labels` — имя записи, а не `'{}'`: результат recording rule несёт
+      # `__name__`, и пустой набор меток с ним не совпадает. Первая редакция кейса
+      # на этом краснела при верном конфиге (`exp: {} 0E+00` против
+      # `got: {__name__="books_app:..."} 0E+00`).
+      - expr: books_app:http_server_error_ratio:rate5m
+        eval_time: 20m
+        exp_samples:
+          - labels: 'books_app:http_server_error_ratio:rate5m'
+            value: 0
+      - expr: books_app:http_error_ratio:rate5m
+        eval_time: 20m
+        exp_samples:
+          - labels: 'books_app:http_error_ratio:rate5m'
+            value: 0
+    # И обратная сторона: нулевая доля не будит. Без этой строки можно было бы
+    # «починить» пустоту чем угодно, вплоть до подстановки единицы.
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HighErrorRate
+        exp_alerts: []
+
+  # ⚠️ Трафика нет вовсе — доли действительно нет, и это НЕ дефект: `or vector(0)`
+  # стоит только у числителя. Кейс держит границу правки `LEGACY-231`: обёрнутый
+  # «для симметрии» знаменатель дал бы `vector(0) / vector(0)`, то есть **`NaN`** —
+  # валидный образец, который уедет на панель вместо честной пустоты. Именно `NaN`,
+  # а не `+Inf`: числитель — подмножество знаменателя по тем же рядам, поэтому
+  # «ненулевое делить на ноль» тут структурно невозможно.
+  #
+  # ⚠️ `node_textfile_scrape_error` в вычислении доли не участвует и взят только
+  # затем, чтобы кейс имел хоть какой-то вход: значение имеет ровно одно —
+  # отсутствие рядов `http_request_duration_seconds_count`.
+  - interval: 1m
+    name: no traffic at all — ratio stays absent, not NaN (LEGACY-231)
+    input_series:
+      - series: 'node_textfile_scrape_error'
+        values: '0x30'
+    promql_expr_test:
+      - expr: books_app:http_server_error_ratio:rate5m
+        eval_time: 20m
+        exp_samples: []
+      - expr: books_app:http_error_ratio:rate5m
+        eval_time: 20m
+        exp_samples: []
+
   # Битый `.prom` в каталоге коллектора.
   - interval: 1m
     name: broken textfile collector
