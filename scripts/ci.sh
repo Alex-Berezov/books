@@ -61,6 +61,15 @@ step "Schema/migration drift + raw SQL identifiers"
 yarn drift-check:self-test
 yarn drift-check
 
+# LEGACY-045. The delegate-interface + cast pattern (ADR-011) hides a bad model name from tsc —
+# the exact way Phase 14 broke in production. `scripts/delegate-check.mjs` existed since
+# 04.08.2026 but was never wired in: its first version was noisy enough (field names read as
+# delegates, real models reported as dead) that a red/green verdict did not track reality. Self-
+# test first, same reasoning as drift-check above.
+step "Prisma delegate access vs schema.prisma"
+yarn delegate-check:self-test
+yarn delegate-check
+
 # ADR-018. Релиз несёт всё, что слито с прошлого тега (LEGACY-241), а `prisma migrate deploy`
 # не оборачивает пачку в транзакцию: отказ на пятой миграции из семи оставляет четыре
 # применёнными. Пережить это можно ровно пока предыдущий образ работает на новой схеме —
