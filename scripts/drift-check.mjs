@@ -21,6 +21,7 @@ import {
   readdirSync,
   writeFileSync,
   existsSync,
+  rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -87,8 +88,13 @@ function parseSchema(text) {
 
   // pass 2: classify model fields into columns
   const modelCols = new Map();
+  // column -> enum name, for columns whose type is one of the enums collected in pass 1.
+  // LEGACY-252: this is the map the third pass (raw SQL) needs to tell an enum-typed column
+  // from any other, so a string literal compared against it can be checked against real values.
+  const colEnumTypes = new Map();
   for (const [name, fieldLines] of models) {
     const cols = new Set();
+    const enumCols = new Map();
     let table = name;
     for (const line of fieldLines) {
       if (line.startsWith('@@')) {
@@ -119,11 +125,14 @@ function parseSchema(text) {
       )
         continue;
       const mapped = /@map\(\s*"([^"]+)"\s*\)/.exec(line);
-      cols.add(mapped ? mapped[1] : field);
+      const col = mapped ? mapped[1] : field;
+      cols.add(col);
+      if (isEnum && !isList) enumCols.set(col, base);
     }
     modelCols.set(table, cols);
+    colEnumTypes.set(table, enumCols);
   }
-  return { models: modelCols, enums };
+  return { models: modelCols, enums, colEnumTypes };
 }
 
 /* ---------------- parse migrations ---------------- */
@@ -505,9 +514,12 @@ function checkRepo(repo, options) {
 //                 which is exactly how a checker teaches people to ignore its output (LEGACY-045).
 //   not read    — `test/**`. Its `$queryRawUnsafe` calls build SQL as strings, and fixtures there
 //                 fail loudly in the e2e run rather than silently in production.
-//   not checked — the VALUES of enums: `bv.status = 'published'` is a string literal, and this
-//                 pass drops literals before it starts. Renaming an enum value therefore stays
-//                 invisible to all three passes — see LEGACY-252.
+//   checked     — the VALUES compared against an enum-typed column: `bv.status = 'published'`
+//                 and `bv.status IN ('published', 'draft')`. Resolved the same way as an
+//                 identifier — through the alias this file's queries bind — then the literal is
+//                 checked against the enum's current values via `parseSchema`'s column->enum map
+//                 (LEGACY-252, see `checkEnumLiterals` below). A literal compared against a
+//                 non-enum column is left alone: this is not a general string-literal check.
 //
 // 🔴 Two rules shape the design, and three rounds of review were spent learning both.
 //
@@ -1423,11 +1435,162 @@ function validateRefs(file, refs, fileRefs, schema) {
   return { drift, unresolved };
 }
 
+// Comments removed, string literals left untouched — the opposite trade-off from
+// `stripSqlLiterals`. That pass exists to keep literal content from being misread as an
+// identifier; this one exists to read the content, so it cannot blank it. Newlines are kept in
+// both branches so a match's line number is still `startLine + count of '\n' before it`.
+function stripSqlCommentsKeepLiterals(sql) {
+  let out = '';
+  let i = 0;
+  const keepNewlines = (from, to) => {
+    for (let k = from; k < to; k++) if (sql[k] === '\n') out += '\n';
+  };
+  while (i < sql.length) {
+    const c = sql[i];
+    const n = sql[i + 1];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < sql.length && sql[j] !== '"') j++;
+      out += sql.slice(i, Math.min(j + 1, sql.length));
+      i = j + 1;
+      continue;
+    }
+    if (c === '-' && n === '-') {
+      const from = i;
+      while (i < sql.length && sql[i] !== '\n') i++;
+      keepNewlines(from, i);
+      continue;
+    }
+    if (c === '/' && n === '*') {
+      const from = i;
+      i += 2;
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+      i += 2;
+      keepNewlines(from, Math.min(i, sql.length));
+      continue;
+    }
+    if (c === "'") {
+      const from = i;
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === "'" && sql[i + 1] === "'") {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === "'") {
+          i++;
+          break;
+        }
+        i++;
+      }
+      out += sql.slice(from, Math.min(i, sql.length));
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+const IDENT = '(?:[A-Za-z_]\\w*|"[^"]+")';
+const LIT = "'(?:[^']|'')*'";
+// `alias.column = 'value'` or `"Table"."column" = 'value'` — an optional qualifier, then `=`.
+const ENUM_EQ_RE = new RegExp(`(?:(${IDENT})\\s*\\.\\s*)?(${IDENT})\\s*=\\s*(${LIT})`, 'g');
+// `alias.column IN ('a', 'b')` / `NOT IN (...)` — same qualifier, a literal list instead of one.
+const ENUM_IN_RE = new RegExp(
+  `(?:(${IDENT})\\s*\\.\\s*)?(${IDENT})\\s+(?:NOT\\s+)?IN\\s*\\(\\s*(${LIT}(?:\\s*,\\s*${LIT})*)\\s*\\)`,
+  'gi',
+);
+const unquoteIdent = (s) => (s.startsWith('"') ? s.slice(1, -1) : s);
+const unquoteLit = (s) => s.slice(1, -1).replace(/''/g, "'");
+
+// Every table THIS query's own FROM/JOIN names; the file's tables for a fragment that names
+// none of its own — the same fallback `validateRefs` computes as `tablesOfQuery`.
+function queryTables(refs, fileRefs, schema, isFragment) {
+  const known = refs.tables.map((t) => t.name).filter((n) => schema.models.has(n));
+  if (known.length) return known;
+  if (isFragment) return [...fileRefs.tables].filter((n) => schema.models.has(n));
+  return [];
+}
+
+// Resolves `alias` to the table(s) it can mean in THIS query, or in the file for a fragment —
+// the same ladder `validateRefs` walks for `refs.qualified`, `EXCLUDED` included. Returns null
+// when the alias is a CTE/subquery (no schema columns to check) or is not bound anywhere this
+// pass can see: both cases are already reported, or deliberately not, by the identifier pass
+// above, and are silently skipped here rather than reported a second time under a different
+// heading.
+function tablesForAlias(alias, refs, fileRefs, schema, isFragment) {
+  if (alias.toLowerCase() === PSEUDO_RELATION) return queryTables(refs, fileRefs, schema, isFragment);
+  if (refs.aliases.has(alias)) return [...refs.aliases.get(alias)].filter((t) => schema.models.has(t));
+  if (refs.derived.has(alias)) return null;
+  if (schema.models.has(alias)) return [alias];
+  if (isFragment) {
+    if (fileRefs.aliases.has(alias)) {
+      return [...fileRefs.aliases.get(alias)].filter((t) => schema.models.has(t));
+    }
+    if (fileRefs.derived.has(alias)) return null;
+  }
+  return null;
+}
+
+// LEGACY-252: a literal compared against an enum-typed column, checked against that enum's
+// current values. Independent of collectRefs on purpose — it needs the literal text, which the
+// identifier pass above deliberately drops, and reusing the alias/table resolution above is
+// enough without re-tokenizing the template a second time.
+function checkEnumLiterals(file, tpl, refs, fileRefs, schema) {
+  const drift = [];
+  const isFragment = !refs.isStatement;
+  const text = stripSqlCommentsKeepLiterals(tpl.text);
+  const lineAt = (index) => tpl.line + (text.slice(0, index).match(/\n/g) || []).length;
+
+  const checkOne = (aliasRaw, columnRaw, literals, index, shape) => {
+    const column = unquoteIdent(columnRaw);
+    const tables = aliasRaw
+      ? tablesForAlias(unquoteIdent(aliasRaw), refs, fileRefs, schema, isFragment)
+      : queryTables(refs, fileRefs, schema, isFragment);
+    if (!tables || !tables.length) return;
+    // An alias ambiguous between tables (a UNION reusing the same letter, or a fragment whose
+    // alias is bound to two tables across the file) is accepted the same way the identifier pass
+    // accepts it: the value only has to be valid in ONE of the candidates, not every one of them
+    // — a candidate this column is not an enum on at all imposes no constraint at all.
+    const enumNames = new Set();
+    for (const table of tables) {
+      const enumName = (schema.colEnumTypes.get(table) || new Map()).get(column);
+      if (enumName) enumNames.add(enumName);
+    }
+    if (!enumNames.size) return; // not an enum column on any candidate — out of scope
+    const ref = aliasRaw ? `${aliasRaw}.${columnRaw}` : columnRaw;
+    for (const lit of literals) {
+      const value = unquoteLit(lit);
+      const okSomewhere = [...enumNames].some((e) => (schema.enums.get(e) || new Set()).has(value));
+      if (!okSomewhere) {
+        const names = [...enumNames].sort().join('/');
+        drift.push(
+          `${file}:${lineAt(index)}  ${ref} ${shape(value)} — no value "${value}" in "${names}"`,
+        );
+      }
+    }
+  };
+
+  ENUM_EQ_RE.lastIndex = 0;
+  let m;
+  while ((m = ENUM_EQ_RE.exec(text))) {
+    checkOne(m[1], m[2], [m[3]], m.index, (value) => `= '${value}'`);
+  }
+  ENUM_IN_RE.lastIndex = 0;
+  while ((m = ENUM_IN_RE.exec(text))) {
+    const literals = m[3].match(new RegExp(LIT, 'g')) || [];
+    checkOne(m[1], m[2], literals, m.index, (value) => `IN (…, '${value}', …)`);
+  }
+  return drift;
+}
+
 function checkRawSql(repo, schema) {
   const problems = [];
   const out = [];
   const drift = [];
   const unresolved = [];
+  const enumDrift = [];
   let files = 0;
   let templates = 0;
   let identifiers = 0;
@@ -1458,15 +1621,16 @@ function checkRawSql(repo, schema) {
       unresolved.push(`${file}:${bad.line}  ${bad.text} — the tag does not parse, template not read`);
     }
 
-    const perTemplate = found.map((tpl) => collectRefs(tpl.text, tpl.line));
+    const perTemplate = found.map((tpl) => ({ tpl, refs: collectRefs(tpl.text, tpl.line) }));
     templates += found.length;
-    const fileRefs = mergeRefs(perTemplate);
-    for (const refs of perTemplate) {
+    const fileRefs = mergeRefs(perTemplate.map((p) => p.refs));
+    for (const { tpl, refs } of perTemplate) {
       identifiers +=
         refs.tables.length + refs.casts.length + refs.qualified.length + refs.bare.length;
       const verdict = validateRefs(file, refs, fileRefs, schema);
       drift.push(...verdict.drift);
       unresolved.push(...verdict.unresolved);
+      enumDrift.push(...checkEnumLiterals(file, tpl, refs, fileRefs, schema));
     }
   }
 
@@ -1487,6 +1651,12 @@ function checkRawSql(repo, schema) {
     problems.push('raw SQL identifiers');
     out.push(`## RAW SQL IDENTIFIERS ABSENT FROM SCHEMA (${drift.length})`);
     drift.forEach((d) => out.push(`  - ${d}`));
+    out.push('');
+  }
+  if (enumDrift.length) {
+    problems.push('raw SQL enum values');
+    out.push(`## RAW SQL ENUM VALUES ABSENT FROM SCHEMA (${enumDrift.length})`);
+    enumDrift.forEach((d) => out.push(`  - ${d}`));
     out.push('');
   }
   if (unresolved.length) {
@@ -1604,6 +1774,14 @@ export class FixtureCteService {
 }
 `;
 
+// A mutation that misses its anchor silently returns the fixture unchanged, and the case that
+// used it passes for having tested nothing (review found this against the three LEGACY-252
+// cases below). `mustReplace` turns that into a thrown error instead of a quiet no-op.
+function mustReplace(s, from, to) {
+  if (!s.includes(from)) throw new Error(`fixture mutation anchor not found: ${JSON.stringify(from)}`);
+  return s.replace(from, to);
+}
+
 const SELF_TEST_CASES = [
   {
     name: 'baseline: schema and migrations agree',
@@ -1680,6 +1858,83 @@ END $$;`,
     name: 'raw SQL: cast to a type that is not an enum of the schema',
     source: (s) => s.replace('::"Status"', '::"Statuz"'),
     expect: ['raw SQL identifiers'],
+  },
+  {
+    // LEGACY-252: `b.status = 'DRAFT'` inside the fixture's `Prisma.sql` fragment is exactly the
+    // shape that stayed invisible to all three passes before this case existed — schema and
+    // migration agree with each other (both renamed together), the fragment did not.
+    name: 'raw SQL: enum value renamed in schema and migration, the literal left behind',
+    schema: (s) => mustReplace(s, '  DRAFT\n', '  OLD_DRAFT\n'),
+    extraMigration: `ALTER TYPE "Status" RENAME VALUE 'DRAFT' TO 'OLD_DRAFT';`,
+    expect: ['raw SQL enum values'],
+    expectReport: `b.status = 'DRAFT' — no value "DRAFT" in "Status"`,
+  },
+  {
+    // Same defect, `IN (...)` shape instead of `=` — the other form LEGACY-252 named explicitly.
+    // The report must say `IN (...)`, not the `=` wording of the case above: a message naming a
+    // form the source does not contain sends whoever reads it looking for text that is not there.
+    name: 'raw SQL: enum value inside IN (...) that the enum no longer has',
+    schema: (s) => mustReplace(s, '  DRAFT\n', '  OLD_DRAFT\n'),
+    extraMigration: `ALTER TYPE "Status" RENAME VALUE 'DRAFT' TO 'OLD_DRAFT';`,
+    source: (s) => mustReplace(s, `b.status = 'DRAFT'::"Status"`, `b.status IN ('DRAFT', 'PUBLISHED')`),
+    expect: ['raw SQL enum values'],
+    expectReport: `b.status IN (…, 'DRAFT', …) — no value "DRAFT" in "Status"`,
+  },
+  {
+    // The gate this whole record is about: a literal compared against a plain string column must
+    // stay silent. Flagging every literal, enum-typed or not, is the false positive LEGACY-252
+    // warned against.
+    name: 'raw SQL: a literal compared against a non-enum column is left alone',
+    source: (s) => mustReplace(s, `b.status = 'DRAFT'::"Status"`, `b."title" = 'Some Title'`),
+    expect: [],
+  },
+  {
+    // The identifier pass accepts EXCLUDED.column against the query's own target table
+    // (`PSEUDO_RELATION`); the enum check has to resolve the same alias the same way, or an
+    // enum comparison inside an upsert's DO UPDATE SET stays unchecked — the exact class of miss
+    // this whole record is about, just reached through a different alias.
+    name: 'raw SQL: EXCLUDED resolves to the query target table for enum checking too',
+    source: (s) =>
+      mustReplace(
+        s,
+        'await this.prisma.$queryRaw`SELECT 1`;',
+        `await this.prisma.$executeRaw\`
+      INSERT INTO "Book" ("id", "title", "status") VALUES ('x', 'y', 'DRAFT')
+      ON CONFLICT ("id") DO UPDATE SET "status" = EXCLUDED."status"
+      WHERE EXCLUDED."status" = 'GONE'
+    \`;`,
+      ),
+    expect: ['raw SQL enum values'],
+    expectReport: `EXCLUDED."status" = 'GONE' — no value "GONE" in "Status"`,
+  },
+  {
+    // The bug review found: the same alias letter bound to two different tables in one file (one
+    // query names "Book", another names "Chapter") must accept a value valid on EITHER table's
+    // enum when a fragment shares that letter — the same mercy the identifier pass already gives
+    // a column name valid in either. Requiring every candidate table's enum to agree turned this
+    // into a false positive on correct SQL: `DRAFT` is a real `Status` value (Book), and used to
+    // be rejected anyway because `Chapter.status` is a *different* enum that does not have it.
+    name: 'raw SQL: an alias shared between two tables accepts a value valid on either',
+    schema: (s) =>
+      mustReplace(
+        s,
+        'model Chapter {\n  id     String @id',
+        'model Chapter {\n  id     String @id\n  status ChapterState @default(OPEN)',
+      ) + '\nenum ChapterState {\n  OPEN\n  CLOSED\n}\n',
+    extraMigration: `CREATE TYPE "ChapterState" AS ENUM ('OPEN', 'CLOSED');
+ALTER TABLE "Chapter" ADD COLUMN "status" "ChapterState" NOT NULL DEFAULT 'OPEN';`,
+    source: () => `
+import { Prisma } from '@prisma/client';
+
+export class ZprobeAmbiguousAlias {
+  async a() {
+    await this.prisma.$queryRaw\`SELECT b."id" FROM "Book" b\`;
+    await this.prisma.$queryRaw\`SELECT b."id" FROM "Chapter" b\`;
+    await this.prisma.$queryRaw\`SELECT 1 WHERE \${Prisma.sql\`b.status = 'DRAFT'\`}\`;
+  }
+}
+`,
+    expect: [],
   },
   {
     name: 'raw SQL: bare quoted identifier no referenced table has',
@@ -2380,10 +2635,34 @@ function buildFixture(caseDef) {
   return root;
 }
 
+// LEGACY-251 regression guard: every case above can report the right verdict and still leak its
+// fixture — the case assertions never looked at the filesystem. This counts `drift-check-*`
+// directories in the OS temp dir before and after the run, independently of any case's outcome.
+// Deliberately does not swallow a read failure into 0: "could not look" and "nothing leaked" are
+// different facts, and folding them together is the exact mistake this guard exists to avoid.
+function countDriftCheckDirs() {
+  return readdirSync(tmpdir()).filter((d) => d.startsWith('drift-check-')).length;
+}
+
 function runSelfTest() {
   let failed = 0;
+  const dirsBefore = countDriftCheckDirs();
   for (const caseDef of SELF_TEST_CASES) {
-    const { problems, out } = checkRepo(buildFixture(caseDef));
+    let root, problems, out;
+    try {
+      // `buildFixture` writes files before there is anything to clean up on failure — LEGACY-251
+      // was first found as an ENOSPC thrown from inside it, on a case that never reached a
+      // verdict. Both calls sit inside the same try for exactly that reason.
+      root = buildFixture(caseDef);
+      ({ problems, out } = checkRepo(root));
+    } catch (err) {
+      // A case that throws never reaches the pass/fail branch below, so without this the
+      // fixture would leak the same as it did before LEGACY-251 — silently, on every failure.
+      console.log(`  FAIL ${caseDef.name}\n         threw: ${err.message}`);
+      if (root) console.log(`         fixture left for inspection: ${root}`);
+      failed++;
+      continue;
+    }
     // Some cases are about WHAT the report says — a line number, a wording — not only about
     // which kind of problem was raised. A kind alone stays green on a report pointing at the
     // wrong line, and the line is most of what this pass is for.
@@ -2393,15 +2672,30 @@ function runSelfTest() {
     const actual = [...problems].sort().join(', ') || '(none)';
     if (expected === actual && reportOk) {
       console.log(`  ok   ${caseDef.name}`);
+      // Only a passing case is removed: a red one is left in place on purpose (LEGACY-251) —
+      // it is the only way to see what the fixture actually looked like when it went wrong.
+      rmSync(root, { recursive: true, force: true });
     } else {
       failed++;
       console.log(
         `  FAIL ${caseDef.name}\n         expected: ${expected}\n         actual:   ${actual}`,
       );
       if (!reportOk) console.log(`         report is missing: ${caseDef.expectReport}`);
+      console.log(`         fixture left for inspection: ${root}`);
     }
   }
   console.log('');
+  // Only counted as a leak when every case's own verdict was right: a case left on disk on
+  // purpose after a real mismatch is diagnostic, not the defect LEGACY-251 was about.
+  if (failed === 0) {
+    const leaked = countDriftCheckDirs() - dirsBefore;
+    if (leaked > 0) {
+      failed++;
+      console.log(
+        `FAIL  self-test cleanup: ${leaked} drift-check-* fixture(s) left behind in ${tmpdir()}`,
+      );
+    }
+  }
   if (failed) {
     console.log(`RESULT: self-test failed (${failed}/${SELF_TEST_CASES.length} cases)`);
     return 1;
@@ -2430,6 +2724,10 @@ if (problems.length) {
   if (problems.includes('raw SQL identifiers')) {
     console.log('Raw SQL names tables or columns that schema.prisma does not have.');
     console.log('Renaming a column by hand leaves those templates behind — see LEGACY-123.');
+  }
+  if (problems.includes('raw SQL enum values')) {
+    console.log('Raw SQL compares an enum-typed column against a value the enum no longer has.');
+    console.log('Renaming an enum value by hand leaves those literals behind — see LEGACY-252.');
   }
   if (problems.includes('unresolved raw SQL')) {
     console.log('Some raw SQL could not be read at all — see the section above for what and where.');
