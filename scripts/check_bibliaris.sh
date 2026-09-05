@@ -73,10 +73,21 @@ check_ports() {
 # Check HTTP availability
 check_http() {
     log "Checking HTTP availability..."
-    
+
     # Check HTTP (should redirect to HTTPS)
-    http_response=$(curl -s -o /dev/null -w "%{http_code}" -L http://$DOMAIN/api/health/liveness 2>/dev/null || echo "000")
-    
+    #
+    # LEGACY-233: curl с -w '%{http_code}' печатает "000" САМ на отказе соединения,
+    # поэтому `|| echo "000"` дописывал вторую "000" к уже напечатанной, и переменная
+    # становилась "000000" - строкой, не совпадающей ни с одним ожиданием.
+    #
+    # `set +e`/`set -e` здесь несущие, а не косметика: под `set -euo pipefail` (шапка
+    # файла) присваивание `x=$(curl ...)` без хвоста `||` завершает скрипт на первом
+    # же отказе соединения - молча, до печати диагностики и до остальных проверок.
+    # Тот же приём стоит в deploy.yml (шаг Verify Deployment).
+    set +e
+    http_response=$(curl -s -o /dev/null -w "%{http_code}" -L http://$DOMAIN/api/health/liveness 2>/dev/null)
+    set -e
+
     if [[ "$http_response" == "200" ]]; then
         log_success "HTTP availability: $http_response"
     else
@@ -87,19 +98,23 @@ check_http() {
 # Check HTTPS availability
 check_https() {
     log "Checking HTTPS availability..."
-    
+
     # Check HTTPS health endpoint
-    https_response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN/api/health/liveness 2>/dev/null || echo "000")
-    
+    set +e
+    https_response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN/api/health/liveness 2>/dev/null)
+    set -e
+
     if [[ "$https_response" == "200" ]]; then
         log_success "HTTPS API is working: $https_response"
     else
         log_error "HTTPS API unavailable: $https_response"
         return 1
     fi
-    
+
     # Check main page
-    main_response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN/ 2>/dev/null || echo "000")
+    set +e
+    main_response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN/ 2>/dev/null)
+    set -e
     log "Main page: $main_response"
     
     return 0
@@ -135,7 +150,9 @@ check_endpoints() {
     )
     
     for endpoint in "${endpoints[@]}"; do
-        response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN$endpoint 2>/dev/null || echo "000")
+        set +e
+        response=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN$endpoint 2>/dev/null)
+        set -e
         if [[ "$response" == "200" ]]; then
             log_success "$endpoint: $response"
         else
@@ -147,10 +164,19 @@ check_endpoints() {
 # Check response time
 check_performance() {
     log "Checking performance..."
-    
-    response_time=$(curl -o /dev/null -s -w "%{time_total}s" https://$DOMAIN/api/health/liveness 2>/dev/null || echo "timeout")
-    
-    if [[ "$response_time" != "timeout" ]]; then
+
+    # LEGACY-233, то же место другим write-out: curl печатает `%{time_total}` и при
+    # отказе (время до обрыва), поэтому `|| echo "timeout"` давал склейку вида
+    # `1.006494stimeout` - условие `!= "timeout"` истинно, и ветка предупреждения
+    # была недостижима вовсе: отказ печатался строкой успеха. У времени, в отличие
+    # от кода ответа, нет значения-маркера отказа, поэтому исход берётся из кода
+    # возврата curl, а не из его вывода.
+    set +e
+    response_time=$(curl -o /dev/null -s -w "%{time_total}s" https://$DOMAIN/api/health/liveness 2>/dev/null)
+    curl_status=$?
+    set -e
+
+    if [[ $curl_status -eq 0 ]]; then
         log "API response time: $response_time"
     else
         log_warning "Timeout while checking response time"
