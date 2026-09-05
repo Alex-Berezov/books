@@ -1709,13 +1709,13 @@ describe('BookVersionService', () => {
           {
             countryCode: 'MX',
             accessPolicy: 'REVIEW_REQUIRED',
-            finalStatus: 'UNCERTAIN',
+            finalStatus: 'PENDING_REVIEW',
             geoBlockRequired: false,
           },
           {
             countryCode: 'BR',
             accessPolicy: 'REVIEW_REQUIRED',
-            finalStatus: 'PENDING',
+            finalStatus: 'NOT_CHECKED',
             geoBlockRequired: false,
           },
         ],

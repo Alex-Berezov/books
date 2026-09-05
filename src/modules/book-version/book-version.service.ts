@@ -593,12 +593,19 @@ export class BookVersionService {
     const licenseRequiredCountriesCount = territoryDecisions.filter(
       (t) => t['finalStatus'] === 'LICENSE_REQUIRED',
     ).length;
+    // Статусов ровно два, и третьего быть не может: `finalStatus` - колонка enum
+    // `TerritoryRightsStatus` (`schema.prisma`), а «ожидающих» значений в нём только
+    // `PENDING_REVIEW` и `NOT_CHECKED`. До 05.09.2026 здесь стояли ещё `UNCERTAIN`
+    // и `PENDING` - их в enum нет вовсе, то есть две ветки были мертвы, а фикстура
+    // спеки подставляла именно их и выдавала мёртвый код за покрытый (LEGACY-109).
+    //
+    // ⚠️ `classifyTerritoryDecisions` (`rights-clearance.util.ts`) считает ожидающие
+    // страны **шире**: там к этим же двум статусам добавлен `accessPolicy ===
+    // 'REVIEW_REQUIRED'`. Это не эталон для дашборда: пара `REVIEW_REQUIRED` +
+    // `ALLOWED_AFTER_CHANGES` законна, и сведение счётов записало бы решённую страну
+    // в ожидающие. Совпадают только два дизъюнкта, а не определение целиком.
     const pendingCountriesCount = territoryDecisions.filter(
-      (t) =>
-        t['finalStatus'] === 'PENDING_REVIEW' ||
-        t['finalStatus'] === 'NOT_CHECKED' ||
-        t['finalStatus'] === 'UNCERTAIN' ||
-        t['finalStatus'] === 'PENDING',
+      (t) => t['finalStatus'] === 'PENDING_REVIEW' || t['finalStatus'] === 'NOT_CHECKED',
     ).length;
     const geoBlockRequiredCount = territoryDecisions.filter((t) => t['geoBlockRequired']).length;
     const unresolvedBlockingActionsCount = actions.filter(
