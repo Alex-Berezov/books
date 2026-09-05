@@ -68,6 +68,7 @@ export class BookController {
     status: 400,
     description: 'Invalid slug format',
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkSlug(@Query() query: CheckBookSlugQueryDto): Promise<CheckBookSlugResponseDto> {
@@ -101,6 +102,7 @@ export class BookController {
   @Post()
   @ApiOperation({ summary: 'Create new book (DISABLED - use rights intake workflow)' })
   @ApiResponse({ status: 400, description: 'Books must be created from an approved rights intake' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create() {
@@ -256,6 +258,7 @@ export class BookController {
   @ApiResponse({ status: 200, description: 'Book successfully updated' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async update(@Param('id') id: string, @Body() updateBookDto: UpdateBookDto) {
@@ -273,6 +276,7 @@ export class BookController {
   @ApiResponse({ status: 200, description: 'Book successfully deleted' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async remove(@Param('id') id: string) {

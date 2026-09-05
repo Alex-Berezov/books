@@ -33,13 +33,14 @@ import { LicenseCoverageResultDto } from '../rights-licenses/dto/rights-license-
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsClaimListResponseDto } from '../rights-claims/dto/rights-claim-response.dto';
 import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiHeader,
   ApiOperation,
   ApiParam,
   ApiQuery,
   ApiResponse,
   ApiTags,
-  ApiBody,
-  ApiHeader,
 } from '@nestjs/swagger';
 import { Language, BookType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -211,6 +212,7 @@ export class BookVersionController {
       },
     },
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(@Param('bookId') bookId: string, @Body() dto: CreateBookVersionDto) {
@@ -223,6 +225,7 @@ export class BookVersionController {
   @ApiParam({ name: 'bookId' })
   @ApiBody({ type: CreateBookVersionDto })
   @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   createAdmin(
@@ -243,6 +246,7 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Admin: list versions for a book (includes drafts)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiParam({ name: 'bookId' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   listAdmin(
@@ -339,6 +343,7 @@ export class BookVersionController {
     description: 'Возвращает версию в любом статусе (draft, published). Требует авторизации.',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({
@@ -385,6 +390,7 @@ export class BookVersionController {
       'Возвращает агрегированный дашборд авторских прав: статус заявки, профиль прав, геоблокировку, проверки и историю.',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({
@@ -403,6 +409,7 @@ export class BookVersionController {
       'Возвращает покрытие лицензиями рынков со статусом LICENSE_REQUIRED: по странам, блокеры и предупреждения.',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({ status: 200, type: LicenseCoverageResultDto })
@@ -417,6 +424,7 @@ export class BookVersionController {
       'Возвращает претензии, поданные на эту версию, и претензии на книгу целиком (без bookVersionId).',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({ status: 200, type: RightsClaimListResponseDto })
@@ -429,6 +437,7 @@ export class BookVersionController {
     summary: 'Admin: List rights claims for a book across all versions',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({ status: 200, type: RightsClaimListResponseDto })
@@ -451,6 +460,7 @@ export class BookVersionController {
       },
     },
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({
@@ -493,6 +503,7 @@ export class BookVersionController {
   @Delete('versions/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete version by id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {
@@ -501,6 +512,7 @@ export class BookVersionController {
 
   @Patch('versions/:id/publish')
   @ApiOperation({ summary: 'Publish version' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({
@@ -542,6 +554,7 @@ export class BookVersionController {
 
   @Patch('versions/:id/unpublish')
   @ApiOperation({ summary: 'Unpublish version (set draft)' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiResponse({
@@ -588,6 +601,7 @@ export class BookVersionController {
       'Возвращает структурированный результат проверки publication gate: может ли версия быть опубликована, и если нет — причины блокировки.',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkPublicationGate(@Param('id') id: string): Promise<PublicationGateResultDto> {
@@ -603,6 +617,7 @@ export class BookVersionController {
   })
   @ApiParam({ name: 'id' })
   @ApiBody({ type: UpdateRightsGeoBlockDto })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async updateRightsGeoBlock(
@@ -624,6 +639,7 @@ export class BookVersionController {
       'Вычисляет текущий content hash версии без изменения состояния. Возвращает результат сравнения с baseline.',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async getRightsContentHash(@Param('id') id: string): Promise<RightsContentHashCheckDto> {
@@ -642,6 +658,7 @@ export class BookVersionController {
       'Вычисляет текущий content hash, сравнивает с baseline. Если есть расхождение, фиксирует stale.',
   })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkRightsContentHash(@Param('id') id: string): Promise<RightsContentHashCheckDto> {
@@ -652,6 +669,7 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Get list of contributors for a book version' })
   @ApiResponse({ status: 200, type: [BookVersionContributorResponseDto] })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async getVersionContributors(@Param('id') id: string) {
@@ -662,6 +680,7 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Add a contributor to a book version' })
   @ApiResponse({ status: 201, type: BookVersionContributorResponseDto })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async addVersionContributor(
@@ -676,6 +695,7 @@ export class BookVersionController {
   @ApiResponse({ status: 200, type: BookVersionContributorResponseDto })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'contributorId' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async updateVersionContributor(
@@ -690,6 +710,7 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Remove a contributor from a book version' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'contributorId' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async removeVersionContributor(
@@ -703,6 +724,7 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Reorder contributors for a book version' })
   @ApiResponse({ status: 200, type: [BookVersionContributorResponseDto] })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async reorderVersionContributors(

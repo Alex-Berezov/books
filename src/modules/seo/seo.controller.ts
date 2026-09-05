@@ -12,7 +12,15 @@ import {
   Headers,
 } from '@nestjs/common';
 import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
-import { ApiOperation, ApiParam, ApiTags, ApiResponse, ApiBody, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -60,6 +68,7 @@ export class SeoController {
   ) {}
 
   @Post('admin/seo/taxonomy-indexability/recompute')
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({
@@ -87,6 +96,7 @@ export class SeoController {
   }
 
   @Get('admin/seo/taxonomy-indexability/status')
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({
@@ -100,6 +110,7 @@ export class SeoController {
   }
 
   @Get('admin/seo/system-pages/status')
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({
@@ -136,6 +147,7 @@ export class SeoController {
       },
     },
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   upsert(@Param('bookVersionId') bookVersionId: string, @Body() dto: UpdateSeoDto) {

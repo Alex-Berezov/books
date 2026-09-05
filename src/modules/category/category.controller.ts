@@ -13,6 +13,7 @@ import {
   Headers,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiHeader,
   ApiOkResponse,
   ApiOperation,
@@ -57,6 +58,7 @@ export class CategoryController {
     status: 400,
     description: 'Invalid slug format',
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckCategorySlugResponseDto> {
@@ -126,6 +128,7 @@ export class CategoryController {
 
   @Post('categories')
   @ApiOperation({ summary: 'Create category' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(@Body() dto: CreateCategoryDto) {
@@ -135,6 +138,7 @@ export class CategoryController {
   @Patch('categories/:id')
   @ApiOperation({ summary: 'Update category' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateCategoryDto) {
@@ -145,6 +149,7 @@ export class CategoryController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete category' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {
@@ -182,6 +187,7 @@ export class CategoryController {
   @Get('categories/:id/translations')
   @ApiOperation({ summary: 'List category translations (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   listTranslations(@Param('id') id: string) {
@@ -191,6 +197,7 @@ export class CategoryController {
   @Post('categories/:id/translations')
   @ApiOperation({ summary: 'Create category translation (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   createTranslation(@Param('id') id: string, @Body() dto: CreateCategoryTranslationDto) {
@@ -201,6 +208,7 @@ export class CategoryController {
   @ApiOperation({ summary: 'Update category translation (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   updateTranslation(
@@ -216,6 +224,7 @@ export class CategoryController {
   @ApiOperation({ summary: 'Delete category translation (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   deleteTranslation(@Param('id') id: string, @Param('language') language: Language) {
@@ -225,6 +234,7 @@ export class CategoryController {
   @Post('versions/:id/categories')
   @ApiOperation({ summary: 'Attach category to a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   attach(@Param('id') versionId: string, @Body() dto: AttachCategoryDto) {
@@ -236,6 +246,7 @@ export class CategoryController {
   @ApiOperation({ summary: 'Detach category from a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })
   @ApiParam({ name: 'categoryId', description: 'Category id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   detach(@Param('id') versionId: string, @Param('categoryId') categoryId: string) {

@@ -9,6 +9,8 @@ import { Language as PrismaLanguage, RoleName, Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UserActivityDto } from './dto/user-activity.dto';
+import type { UsersStaffFilter } from './dto/list-users-query.dto';
 import { STAFF_ROLE_NAMES } from './users.constants';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
@@ -277,7 +279,10 @@ export class UsersService {
     page: number;
     limit: number;
     q?: string;
-    staff?: 'only' | 'exclude';
+    // Третья копия союза `'only' | 'exclude'` жила здесь: значение, дописанное
+    // в `USERS_STAFF_FILTERS`, документ и контроллер приняли бы, а сигнатура —
+    // нет, и оно молча ушло бы в ветку «ни то, ни другое» (`LEGACY-204`).
+    staff?: UsersStaffFilter;
   }): Promise<{
     items: (PublicUser & { roles: RoleName[] })[];
     total: number;
@@ -478,7 +483,13 @@ export class UsersService {
     };
   }
 
-  async getActivities(userId: string) {
+  /**
+   * ⚠️ Возвращаемый тип объявлен намеренно, а не выведен: `UserActivityDto` —
+   * единственный источник формы этого ответа, и он же стоит в `@ApiOkResponse`
+   * маршрута. Пока тип выводился из литерала, добавленное поле в OpenAPI
+   * не попадало (`LEGACY-133`, дополнение от 04.09.2026).
+   */
+  async getActivities(userId: string): Promise<UserActivityDto[]> {
     const comments = await this.prisma.comment.findMany({
       where: { userId, isDeleted: false },
       include: {

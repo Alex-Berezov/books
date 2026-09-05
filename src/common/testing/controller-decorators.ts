@@ -21,12 +21,25 @@ export { stripComments };
 
 export const SRC_ROOT = resolve(__dirname, '../..');
 
-export const listControllerFiles = (dir: string = SRC_ROOT): string[] =>
+/**
+ * Все файлы под `dir`, которые проходят `keep`. Обход один на всех сторожей:
+ * восьмая рукописная копия `readdirSync(dir, { withFileTypes: true })` — это
+ * восемь мест, где каталог исключают по одному, а расходятся они молча
+ * (`LEGACY-290`).
+ */
+export const listFiles = (dir: string, keep: (posixPath: string) => boolean): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) return listControllerFiles(full);
-    return entry.isFile() && entry.name.endsWith('.controller.ts') ? [full] : [];
+    if (entry.isDirectory()) return listFiles(full, keep);
+    return entry.isFile() && keep(full.replace(/\\/g, '/')) ? [full] : [];
   });
+
+export const listControllerFiles = (dir: string = SRC_ROOT): string[] =>
+  listFiles(dir, (path) => path.endsWith('.controller.ts'));
+
+/** Файлы DTO по всему `src`, а не только под `src/modules` (`LEGACY-133`). */
+export const listDtoFiles = (dir: string = SRC_ROOT): string[] =>
+  listFiles(dir, (path) => path.includes('/dto/') && path.endsWith('.dto.ts'));
 
 export const readController = (file: string): string => readFileSync(file, 'utf8');
 
@@ -146,7 +159,35 @@ export type ControllerRoute = {
   path: string;
   /** Строка, к которой относился блок декораторов, — для внятного отказа. */
   ownerLine: string;
+  /**
+   * Стоит ли на маршруте `@ApiBearerAuth()` — на самом методе или на его классе
+   * (`LEGACY-132`). Складывается так же, как гварды: декоратор класса действует
+   * на все его методы.
+   */
+  bearerAuth: boolean;
 };
+
+/**
+ * Есть ли в блоке настоящий `@ApiBearerAuth(...)`.
+ *
+ * ⚠️ Со скобкой в шаблоне, а не подстрокой `@ApiBearerAuth`: строка импорта
+ * `import { ApiBearerAuth } from '@nestjs/swagger'` в блок декораторов не
+ * попадает, но упоминание в тексте — попадёт.
+ *
+ * 🔴 Поиск идёт по строке, из которой вырезаны литералы и комментарии, — теми
+ * же `stripLiterals`, что считают баланс скобок. По сырому тексту сторож
+ * обманывался дважды: `// @ApiBearerAuth()` в комментарии над методом и
+ * буквальная подстрока внутри `@ApiOperation({ description: '...' })` того же
+ * маршрута сходили за настоящий декоратор. Это тот же класс ошибки, из-за
+ * которого текстовый сторож `LEGACY-190` был заменён разбором через компилятор
+ * (`L-008`, правило «разбор кода регулярками»); здесь он закрыт вырезанием
+ * литералов, потому что блок декораторов уже разобран по балансу скобок.
+ */
+const hasApiBearerAuth = (text: string): boolean =>
+  stripComments(text)
+    .split(/\r?\n/)
+    .map(stripLiterals)
+    .some((line) => /@ApiBearerAuth\s*\(/.test(line));
 
 /** `Get` -> `/@Get\s*\(/`. Экранирование обычное, одним местом на оба вызова. */
 const decoratorOpening = (decorator: string): RegExp => new RegExp(`@${decorator}\\s*\\(`);
@@ -203,6 +244,7 @@ export const collectRoutes = (
 
     const base = firstStringArg(classBlock.text, 'Controller');
     const classGuarded = guardsInclude(classBlock.text, guard);
+    const classBearerAuth = hasApiBearerAuth(classBlock.text);
 
     for (const block of blocks) {
       if (block === classBlock) continue;
@@ -214,6 +256,7 @@ export const collectRoutes = (
           verb,
           path: joinPath(base, firstStringArg(block.text, decorator)),
           ownerLine: block.ownerLine,
+          bearerAuth: classBearerAuth || hasApiBearerAuth(block.text),
         };
         if (classGuarded || guardsInclude(block.text, guard)) closed.push(route);
         else open.push(route);

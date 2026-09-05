@@ -29,6 +29,7 @@ export class BookSummaryController {
   @Put('versions/:bookVersionId/summary')
   @ApiOperation({ summary: 'Create or update summary for a version (upsert)' })
   @ApiParam({ name: 'bookVersionId' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   upsert(@Param('bookVersionId') bookVersionId: string, @Body() dto: UpdateBookSummaryDto) {

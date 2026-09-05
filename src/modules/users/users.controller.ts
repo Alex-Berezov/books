@@ -10,107 +10,23 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-  ApiParam,
-  ApiQuery,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags, ApiParam } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { IsIn, IsOptional, IsString, IsUrl, MinLength, Matches } from 'class-validator';
-import { Language as PrismaLanguage, RoleName } from '@prisma/client';
+import { RoleName } from '@prisma/client';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import {
-  IsInt,
-  IsOptional as IsOptionalCls,
-  IsString as IsStringCls,
-  Min,
-  Max,
-} from 'class-validator';
-import { Type } from 'class-transformer';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { PublicUserDto, PublicUserWithRolesDto } from './dto/public-user.dto';
+import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { PagedUsersDto } from './dto/paged-users.dto';
+import { UpdateMeDto } from './dto/update-me.dto';
+import { UserActivityDto } from './dto/user-activity.dto';
 
 interface RequestUser {
   userId: string;
   email: string;
-}
-
-class PublicUserDto {
-  id!: string;
-  email!: string;
-  name?: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
-  nickname?: string | null;
-  isActive?: boolean;
-  avatarUrl?: string | null;
-  languagePreference!: string;
-  createdAt!: Date;
-  lastLogin?: Date | null;
-  roles!: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
-}
-
-class ListUsersQueryDto {
-  // 🔴 Глобальный `ValidationPipe` создан без `enableImplicitConversion`, поэтому
-  // в проекте конвертация поштучная: числовое поле query-DTO без `@Type(() => Number)`
-  // получает из строки запроса строку, `@IsInt` отвергает её, и маршрут отвечает 400
-  // на **любое** значение параметра. Образец — `src/shared/dto/pagination.dto.ts`.
-  @IsOptionalCls()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number = 1;
-
-  @IsOptionalCls()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number = 20;
-
-  @IsOptionalCls()
-  @IsStringCls()
-  q?: string;
-
-  // 'only' — only staff (admin|content_manager); 'exclude' — exclude staff
-  @IsOptionalCls()
-  @IsStringCls()
-  staff?: 'only' | 'exclude';
-}
-
-class PagedUsersDto {
-  items!: PublicUserDto[];
-  total!: number;
-  page!: number;
-  limit!: number;
-}
-
-class UpdateMeDto {
-  @IsOptional()
-  @IsString()
-  @MinLength(2)
-  name?: string;
-
-  @IsOptional()
-  @IsString()
-  @Matches(/^[a-zA-Z0-9_]+$/, {
-    message: 'Nickname must contain only letters, numbers, and underscores',
-  })
-  @MinLength(3)
-  nickname?: string;
-
-  @IsOptional()
-  @IsUrl()
-  avatarUrl?: string;
-
-  @IsOptional()
-  @IsIn(Object.values(PrismaLanguage))
-  languagePreference?: PrismaLanguage;
 }
 
 @ApiTags('users')
@@ -121,30 +37,24 @@ export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   @ApiOperation({ summary: 'Get current user profile' })
-  @ApiOkResponse({ type: PublicUserDto })
+  @ApiOkResponse({ type: PublicUserWithRolesDto })
   @Get('me')
   me(@Req() req: { user: RequestUser }) {
     return this.users.me(req.user.userId);
   }
 
   @ApiOperation({ summary: 'Get current user activities (comments & replies)' })
+  @ApiOkResponse({ type: UserActivityDto, isArray: true })
   @Get('me/activities')
-  meActivities(@Req() req: { user: RequestUser }) {
+  meActivities(@Req() req: { user: RequestUser }): Promise<UserActivityDto[]> {
     return this.users.getActivities(req.user.userId);
   }
 
+  // Параметры описаны в `ListUsersQueryDto`: явного блока `@ApiQuery` здесь нет
+  // намеренно. Nest собирает параметры и из декораторов, и из типа `@Query()`,
+  // и два описания одного параметра — это два источника формы, из кода
+  // неразличимые (`LEGACY-133`; найдено ревью в этом заходе).
   @ApiOperation({ summary: 'List users (admin only)' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiQuery({ name: 'q', required: false, type: String, description: 'Search by email or name' })
-  @ApiQuery({
-    name: 'staff',
-    required: false,
-    type: String,
-    description:
-      "Filter staff: 'only' to show only admins/content managers; 'exclude' to hide them",
-    enum: ['only', 'exclude'],
-  })
   @ApiOkResponse({ type: PagedUsersDto })
   @Roles(Role.Admin)
   @Get()
@@ -171,8 +81,12 @@ export class UsersController {
     return this.users.updateMe(req.user.userId, dto);
   }
 
+  // ⚠️ С ролями: `UsersService.getById` объявлен `Promise<PublicUser>`, но телом
+  // делегирует в `me()` (`users.service.ts:72-74`), а тот роли кладёт. Объявленный
+  // тип их только прячет от компилятора — из ответа они не исчезают
+  // (найдено ревью в этом заходе).
   @ApiOperation({ summary: 'Get user by id (admin only)' })
-  @ApiOkResponse({ type: PublicUserDto })
+  @ApiOkResponse({ type: PublicUserWithRolesDto })
   @Roles(Role.Admin)
   @Get(':id')
   getById(@Param('id') id: string) {
@@ -213,7 +127,7 @@ export class UsersController {
   }
 
   @ApiOperation({ summary: 'Create user (admin only)' })
-  @ApiOkResponse({ type: PublicUserDto })
+  @ApiOkResponse({ type: PublicUserWithRolesDto })
   @Roles(Role.Admin)
   @Post()
   create(@Body() dto: CreateUserDto) {
@@ -221,7 +135,7 @@ export class UsersController {
   }
 
   @ApiOperation({ summary: 'Update user (admin only)' })
-  @ApiOkResponse({ type: PublicUserDto })
+  @ApiOkResponse({ type: PublicUserWithRolesDto })
   @Roles(Role.Admin)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateUserDto) {

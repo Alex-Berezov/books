@@ -12,7 +12,15 @@ import {
   UseGuards,
   Headers,
 } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiHeader,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { PagesService } from './pages.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
@@ -56,6 +64,7 @@ export class PagesController {
     status: 400,
     description: 'Invalid slug format',
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckPageSlugResponseDto> {
@@ -109,6 +118,7 @@ export class PagesController {
     description: 'List of page groups',
     type: PaginatedPageGroupsResponse,
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async findAllGrouped(@Query() query: PaginationDto) {
@@ -133,6 +143,7 @@ export class PagesController {
   @ApiOperation({ summary: 'Get page by ID (admin): any status' })
   @ApiParam({ name: 'id', description: 'Page UUID' })
   @ApiResponse({ status: 200, type: PageResponse })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   findById(@Param('id') id: string) {
@@ -152,6 +163,7 @@ export class PagesController {
     description: 'Takes precedence over path language',
   })
   @ApiResponse({ status: 200, type: PaginatedPagesResponse })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   adminList(
@@ -177,6 +189,7 @@ export class PagesController {
     description: 'Takes precedence over the path language',
   })
   @ApiResponse({ status: 201, type: PageResponse })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(
@@ -195,6 +208,7 @@ export class PagesController {
   @ApiOperation({ summary: 'Update page (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   update(
@@ -210,6 +224,7 @@ export class PagesController {
   @ApiOperation({ summary: 'Delete page (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
@@ -220,6 +235,7 @@ export class PagesController {
   @ApiOperation({ summary: 'Publish page' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   publish(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
@@ -230,6 +246,7 @@ export class PagesController {
   @ApiOperation({ summary: 'Unpublish page' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   unpublish(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
@@ -243,6 +260,7 @@ export class PagesController {
     description: 'List of pages in the group',
     type: [PageResponse],
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async findByGroup(@Param('groupId') groupId: string) {

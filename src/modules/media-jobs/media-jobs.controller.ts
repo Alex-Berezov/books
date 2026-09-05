@@ -1,5 +1,5 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -7,6 +7,7 @@ import { MediaProbeService } from './media-probe.service';
 import { MediaCleanupService } from './media-cleanup.service';
 
 @ApiTags('media-jobs')
+@ApiBearerAuth()
 @Controller('admin/media')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin)

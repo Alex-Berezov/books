@@ -11,7 +11,14 @@ import {
   UseGuards,
   Headers,
 } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AudioChapterService } from './audio-chapter.service';
 import { CreateAudioChapterDto } from './dto/create-audio-chapter.dto';
 import { UpdateAudioChapterDto } from './dto/update-audio-chapter.dto';
@@ -66,6 +73,7 @@ export class AudioChapterController {
     required: false,
     schema: { type: 'integer', minimum: 1, maximum: 100 },
   })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   listAdmin(@Param('bookVersionId') bookVersionId: string, @Query() pagination?: PaginationDto) {
@@ -79,6 +87,7 @@ export class AudioChapterController {
   @ApiParam({ name: 'bookVersionId' })
   @ApiResponse({ status: 201, description: 'Created' })
   @ApiResponse({ status: 409, description: 'Audio chapter number already exists' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(@Param('bookVersionId') bookVersionId: string, @Body() dto: CreateAudioChapterDto) {
@@ -88,6 +97,7 @@ export class AudioChapterController {
   @Post('versions/:bookVersionId/audio-chapters/reorder')
   @ApiOperation({ summary: 'Reorder audio chapters atomically by id list (1-based numbering)' })
   @ApiParam({ name: 'bookVersionId' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   reorder(@Param('bookVersionId') bookVersionId: string, @Body() dto: ReorderAudioChaptersDto) {
@@ -104,6 +114,7 @@ export class AudioChapterController {
   @Get('admin/audio-chapters/:id')
   @ApiOperation({ summary: 'Admin: get audio chapter by id (any status)' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   getAdmin(@Param('id') id: string) {
@@ -113,6 +124,7 @@ export class AudioChapterController {
   @Patch('audio-chapters/:id')
   @ApiOperation({ summary: 'Update audio chapter by id' })
   @ApiResponse({ status: 409, description: 'Audio chapter number already exists' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateAudioChapterDto) {
@@ -122,6 +134,7 @@ export class AudioChapterController {
   @Delete('audio-chapters/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete audio chapter by id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {

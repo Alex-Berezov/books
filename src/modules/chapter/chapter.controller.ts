@@ -10,7 +10,14 @@ import {
   Post,
   Headers,
 } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ChapterService } from './chapter.service';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
@@ -60,6 +67,7 @@ export class ChapterController {
   @ApiParam({ name: 'bookVersionId' })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   listAdmin(
@@ -76,6 +84,7 @@ export class ChapterController {
   @ApiOperation({ summary: 'Create chapter for a book version' })
   @ApiParam({ name: 'bookVersionId' })
   @ApiResponse({ status: 201, description: 'Created' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(@Param('bookVersionId') bookVersionId: string, @Body() dto: CreateChapterDto) {
@@ -91,6 +100,7 @@ export class ChapterController {
 
   @Patch('chapters/:id')
   @ApiOperation({ summary: 'Update chapter by id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateChapterDto) {
@@ -100,6 +110,7 @@ export class ChapterController {
   @Delete('chapters/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete chapter by id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {

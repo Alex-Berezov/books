@@ -3,22 +3,7 @@ import { ApiOperation, ApiTags, ApiOkResponse, ApiCreatedResponse } from '@nestj
 import { AuthRateLimitGuard } from '../../common/guards/auth-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshDto, RegisterDto, SocialLoginDto } from './dto/auth.dto';
-
-class AuthUserResponse {
-  id!: string;
-  email!: string;
-  name?: string | null;
-  avatarUrl?: string | null;
-  languagePreference!: string;
-  createdAt!: Date;
-  lastLogin?: Date | null;
-}
-
-class AuthResponse {
-  user!: AuthUserResponse;
-  accessToken!: string;
-  refreshToken!: string;
-}
+import { AuthResponse, AuthTokensResponse } from './dto/auth-response.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -50,7 +35,7 @@ export class AuthController {
   }
 
   @ApiOperation({ summary: 'Refresh tokens' })
-  @ApiOkResponse({ type: AuthResponse })
+  @ApiOkResponse({ type: AuthTokensResponse })
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
   refresh(@Body() dto: RefreshDto) {

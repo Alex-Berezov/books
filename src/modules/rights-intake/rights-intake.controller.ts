@@ -33,6 +33,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('rights-intakes')
+@ApiBearerAuth()
 @Controller('admin/rights/intakes')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager)
@@ -106,7 +107,6 @@ export class RightsIntakeController {
   }
 
   @Post(':intakeId/reviews/:reviewId/approve')
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Approve a rights review (human approval)' })
   async approveReview(
     @Param('intakeId') intakeId: string,
@@ -118,7 +118,6 @@ export class RightsIntakeController {
   }
 
   @Post(':intakeId/reviews/:reviewId/reject')
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Reject a rights review (human rejection)' })
   async rejectReview(
     @Param('intakeId') intakeId: string,
@@ -130,7 +129,6 @@ export class RightsIntakeController {
   }
 
   @Get(':intakeId/approvals')
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all approvals for a rights intake' })
   async getApprovalsByIntake(
     @Param('intakeId') intakeId: string,
@@ -139,7 +137,6 @@ export class RightsIntakeController {
   }
 
   @Post(':id/create-book')
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Create book from approved rights clearance' })
   async createBookFromClearance(
     @Param('id') id: string,

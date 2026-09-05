@@ -3,22 +3,37 @@ import { IsOptional, IsInt, IsString, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ValidationIssueDto } from './rights-review-import-validation.dto';
 
-export class RightsReviewImportListItemDto {
+/**
+ * Поля, общие для списка и карточки импорта.
+ *
+ * 🔴 Выделены 05.09.2026: до этого карточка наследовала **элемент списка**,
+ * то есть обещала `validationErrorsCount` и `validationWarningsCount`, которых
+ * `RightsReviewImportService.getById` (`rights-review-import.service.ts:259-297`)
+ * не собирает вовсе — он отдаёт вместо них сами массивы. Пока DTO не был
+ * привязан ни к одному маршруту, расхождение не проверялось ничем; на живом
+ * маршруте оно означало бы `undefined` в счётчике ошибок, то есть импорт
+ * с ошибками валидации выглядел бы чистым (найдено ревью, `LEGACY-133`).
+ */
+export class RightsReviewImportBaseDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsIntakeId!: string;
   @ApiProperty() schemaVersion!: string | null;
   @ApiProperty() importStatus!: string;
   @ApiProperty() isCurrent!: boolean;
   @ApiProperty() sourceFileName!: string | null;
-  @ApiProperty() validationErrorsCount!: number;
-  @ApiProperty() validationWarningsCount!: number;
   @ApiProperty() importedByUserId!: string | null;
   @ApiProperty() supersededAt!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
 
-export class RightsReviewImportDetailDto extends RightsReviewImportListItemDto {
+/** Элемент списка: счётчики считает только `listByIntake` (`:229-230`). */
+export class RightsReviewImportListItemDto extends RightsReviewImportBaseDto {
+  @ApiProperty() validationErrorsCount!: number;
+  @ApiProperty() validationWarningsCount!: number;
+}
+
+export class RightsReviewImportDetailDto extends RightsReviewImportBaseDto {
   @ApiProperty() reportJson!: unknown;
   @ApiProperty() reportMarkdown!: string | null;
   @ApiProperty() rawAgentOutput!: string | null;
@@ -70,8 +85,10 @@ export class ListRightsReviewImportsRequestDto {
 }
 
 export class RightsReviewImportsListResponseDto {
+  @ApiProperty({ type: [RightsReviewImportListItemDto] })
   items!: RightsReviewImportListItemDto[];
-  total!: number;
-  page!: number;
-  limit!: number;
+
+  @ApiProperty() total!: number;
+  @ApiProperty() page!: number;
+  @ApiProperty() limit!: number;
 }

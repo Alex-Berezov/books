@@ -12,7 +12,15 @@ import {
   UseGuards,
   Headers,
 } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiParam, ApiQuery, ApiTags, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiHeader,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { TagsService } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -45,6 +53,7 @@ export class TagsController {
   })
   @ApiResponse({ status: 200, description: 'Slug check result', type: CheckTagSlugResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid slug format' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkSlug(@Query() query: CheckTagSlugQueryDto): Promise<CheckTagSlugResponseDto> {
@@ -80,6 +89,7 @@ export class TagsController {
 
   @Post('tags')
   @ApiOperation({ summary: 'Create tag' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(@Body() dto: CreateTagDto) {
@@ -89,6 +99,7 @@ export class TagsController {
   @Patch('tags/:id')
   @ApiOperation({ summary: 'Update tag' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateTagDto) {
@@ -99,6 +110,7 @@ export class TagsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tag' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {
@@ -123,6 +135,7 @@ export class TagsController {
   @Post('versions/:id/tags')
   @ApiOperation({ summary: 'Attach tag to a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   attach(@Param('id') versionId: string, @Body() dto: AttachTagDto) {
@@ -134,6 +147,7 @@ export class TagsController {
   @ApiOperation({ summary: 'Detach tag from a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })
   @ApiParam({ name: 'tagId', description: 'Tag id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   detach(@Param('id') versionId: string, @Param('tagId') tagId: string) {
@@ -144,6 +158,7 @@ export class TagsController {
   @Get('tags/:id/translations')
   @ApiOperation({ summary: 'List tag translations (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   listTranslations(@Param('id') id: string) {
@@ -153,6 +168,7 @@ export class TagsController {
   @Post('tags/:id/translations')
   @ApiOperation({ summary: 'Create tag translation (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   createTranslation(@Param('id') id: string, @Body() dto: CreateTagTranslationDto) {
@@ -163,6 +179,7 @@ export class TagsController {
   @ApiOperation({ summary: 'Update tag translation (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   updateTranslation(
@@ -178,6 +195,7 @@ export class TagsController {
   @ApiOperation({ summary: 'Delete tag translation (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   deleteTranslation(@Param('id') id: string, @Param('language') language: Language) {
