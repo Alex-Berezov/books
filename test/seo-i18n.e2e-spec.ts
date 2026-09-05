@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, PublicationStatus } from '@prisma/client';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('SEO resolve i18n (/:lang prefix) (e2e)', () => {
   let app: INestApplication;
@@ -28,7 +29,7 @@ describe('SEO resolve i18n (/:lang prefix) (e2e)', () => {
 
   it('prefers path language for book SEO resolve and prefixes canonical with /:lang', async () => {
     const slug = `seo-i18n-${Date.now()}`;
-    const book = await prisma.book.create({ data: { slug } });
+    const book = await createBookFixture(prisma, slug);
 
     // Create EN and ES versions, only ES with SEO
     await prisma.bookVersion.create({

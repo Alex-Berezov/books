@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 //
 
@@ -27,7 +28,7 @@ describe('Comments e2e', () => {
 
     process.env.ADMIN_EMAILS = 'admin@example.com';
 
-    const book = await prisma.book.create({ data: { slug: `book-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

@@ -1,4 +1,5 @@
 import { PrismaClient, Language } from '@prisma/client';
+import { createBookFixture } from './book-fixture';
 
 const DEFAULT_RIGHTS_TARGET_LANGUAGES: Language[] = [
   Language.en,
@@ -119,15 +120,15 @@ export async function createBookWithRights(
     },
   });
 
-  // Create Book with rights linkage
-  const book = await prisma.book.create({
-    data: {
-      slug,
-      rightsIntakeId: intake.id,
-      currentRightsProfileId: profile.id,
-      approvedRightsReviewId: review.id,
-      rightsCreatedAt: new Date(),
-    },
+  // Create Book with rights linkage.
+  // Запись в `Book` идёт через единственную точку шортката (`LEGACY-039`): сама связка прав
+  // здесь настоящая, но путь создания книги по-прежнему обходит клиренс, и обход обязан быть
+  // виден в одном месте, а не расползаться по фикстурам.
+  const book = await createBookFixture(prisma, slug, {
+    rightsIntakeId: intake.id,
+    currentRightsProfileId: profile.id,
+    approvedRightsReviewId: review.id,
+    rightsCreatedAt: new Date(),
   });
 
   return {

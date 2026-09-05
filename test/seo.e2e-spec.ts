@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('Seo e2e', () => {
   let app: INestApplication;
@@ -25,7 +26,7 @@ describe('Seo e2e', () => {
     );
     await app.init();
 
-    const book = await prisma.book.create({ data: { slug: `book-seo-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-seo-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
@@ -148,7 +149,7 @@ describe('Seo e2e', () => {
     expect(r1.body.meta.canonicalUrl).toContain('/versions/');
 
     // Create a book with no SEO and resolve by slug (fallback to version data if any)
-    const book = await prisma.book.create({ data: { slug: `book-seo-resolve-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-seo-resolve-${Date.now()}`);
     const bv = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

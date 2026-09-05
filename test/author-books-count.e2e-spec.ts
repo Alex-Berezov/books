@@ -5,6 +5,7 @@ import { Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * `tasks/authors-indexability/TASK.md` §2.
@@ -66,7 +67,7 @@ describe('Authors: books count (e2e)', () => {
     });
     emptyId = empty.id;
 
-    const book = await prisma.book.create({ data: { slug: `${prefix}-book` } });
+    const book = await createBookFixture(prisma, `${prefix}-book`);
     bookId = book.id;
 
     const version = {
@@ -188,7 +189,7 @@ describe('Authors: books count (e2e)', () => {
    * Мутация «убрать сверку языка» проходила зелёной.
    */
   it('does not count a version from another language', async () => {
-    const otherBook = await prisma.book.create({ data: { slug: `${prefix}-ru-only-book` } });
+    const otherBook = await createBookFixture(prisma, `${prefix}-ru-only-book`);
     await prisma.bookVersion.create({
       data: {
         bookId: otherBook.id,

@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('Chapters e2e', () => {
   let app: INestApplication;
@@ -30,7 +31,7 @@ describe('Chapters e2e', () => {
     await app.init();
 
     // Create a book and version to attach chapters to
-    const book = await prisma.book.create({ data: { slug: `book-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-${Date.now()}`);
     bookId = book.id;
     const version = await prisma.bookVersion.create({
       data: {

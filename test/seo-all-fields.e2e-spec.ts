@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * E2E test to verify ALL 8 SEO fields mentioned in BACKEND_SEO_FIELDS_NOT_SAVED.md
@@ -29,7 +30,7 @@ describe('SEO All Fields E2E (BACKEND_SEO_FIELDS_NOT_SAVED.md)', () => {
     await app.init();
 
     // Create test book version
-    const book = await prisma.book.create({ data: { slug: `test-seo-fields-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `test-seo-fields-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

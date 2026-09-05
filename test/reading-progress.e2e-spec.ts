@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('ReadingProgress e2e', () => {
   let app: INestApplication;
@@ -24,7 +25,7 @@ describe('ReadingProgress e2e', () => {
     await app.init();
 
     // Seed: book with text chapters and audio chapters in separate versions
-    const book = await prisma.book.create({ data: { slug: `rp-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `rp-${Date.now()}`);
     const textVersion = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

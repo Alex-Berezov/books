@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { MediaProbeService } from '../src/modules/media-jobs/media-probe.service';
 import { MediaCleanupService } from '../src/modules/media-jobs/media-cleanup.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('Media jobs e2e', () => {
   let app: INestApplication;
@@ -153,7 +154,7 @@ describe('Media jobs e2e', () => {
         createdAt: new Date(Date.now() - 10 * 86400 * 1000),
       },
     });
-    const book = await prisma.book.create({ data: { slug: `book-refs-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-refs-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
@@ -199,7 +200,7 @@ describe('Media jobs e2e', () => {
       },
     });
 
-    const book = await prisma.book.create({ data: { slug: `book-cover-058-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-cover-058-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

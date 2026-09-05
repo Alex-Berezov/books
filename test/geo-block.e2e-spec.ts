@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 interface GeoBlockRuleCreateDelegate {
   create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
@@ -35,7 +36,7 @@ describe('GeoIP market blocking e2e', () => {
     );
     await app.init();
 
-    const book = await prisma.book.create({ data: { slug: `geo-block-e2e-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `geo-block-e2e-${Date.now()}`);
     const previewMedia = await prisma.mediaAsset.create({
       data: {
         key: `geo-block-preview-${Date.now()}.mp3`,

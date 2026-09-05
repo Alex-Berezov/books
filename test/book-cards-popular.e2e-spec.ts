@@ -4,6 +4,7 @@ import request from 'supertest';
 import { BookType, Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * `LEGACY-128`. Ветка `?sort=popular` в `GET /:lang/books/cards` считалась
@@ -51,7 +52,7 @@ describe('Book cards: popular sort (LEGACY-128) e2e', () => {
     type: BookType,
     publishedAt: Date,
   ): Promise<{ bookId: string; versionId: string }> => {
-    const book = await prisma.book.create({ data: { slug: `${marker}-${suffix}` } });
+    const book = await createBookFixture(prisma, `${marker}-${suffix}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

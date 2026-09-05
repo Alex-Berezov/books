@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../src/modules/seo/indexability/taxonomy-indexability.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * A planted control input for the nightly sweep.
@@ -30,9 +31,7 @@ describe('Taxonomy indexability recompute — planted control input', () => {
   // single book cannot hold eight English versions.
   const makePublishedVersions = async (count: number, categoryId: string) => {
     for (let i = 0; i < count; i += 1) {
-      const book = await prisma.book.create({
-        data: { slug: `ctrl-book-${categoryId}-${i}-${stamp}` },
-      });
+      const book = await createBookFixture(prisma, `ctrl-book-${categoryId}-${i}-${stamp}`);
       const version = await prisma.bookVersion.create({
         data: {
           bookId: book.id,

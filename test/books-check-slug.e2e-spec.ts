@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('Books: Check Slug (e2e)', () => {
   let app: INestApplication;
@@ -105,11 +106,7 @@ describe('Books: Check Slug (e2e)', () => {
 
     it('should return exists: true and suggest alternative for taken slug', async () => {
       // Create a book with slug
-      await prisma.book.create({
-        data: {
-          slug: 'test-book-existing',
-        },
-      });
+      await createBookFixture(prisma, 'test-book-existing');
 
       const response = await request(http())
         .get('/books/check-slug')
@@ -129,11 +126,7 @@ describe('Books: Check Slug (e2e)', () => {
 
     it('should exclude current book when excludeId provided', async () => {
       // Create a book
-      const book = await prisma.book.create({
-        data: {
-          slug: 'test-book-for-edit',
-        },
-      });
+      const book = await createBookFixture(prisma, 'test-book-for-edit');
 
       // Check same slug with excludeId - should be available
       const response = await request(http())
@@ -169,17 +162,9 @@ describe('Books: Check Slug (e2e)', () => {
 
     it('should suggest incremental suffixes when multiple exist', async () => {
       // Create books with suffixes
-      const book1 = await prisma.book.create({
-        data: {
-          slug: 'incremental-book',
-        },
-      });
+      const book1 = await createBookFixture(prisma, 'incremental-book');
 
-      const book2 = await prisma.book.create({
-        data: {
-          slug: 'incremental-book-2',
-        },
-      });
+      const book2 = await createBookFixture(prisma, 'incremental-book-2');
 
       // Check - should suggest -3
       const response = await request(http())

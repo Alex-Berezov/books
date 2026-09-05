@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, PublicationStatus } from '@prisma/client';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('Multisite i18n routing (/:lang) (e2e)', () => {
   let app: INestApplication;
@@ -28,7 +29,7 @@ describe('Multisite i18n routing (/:lang) (e2e)', () => {
 
   it('prefers path language over query and Accept-Language for book overview', async () => {
     const slug = `i18n-book-${Date.now()}`;
-    const book = await prisma.book.create({ data: { slug } });
+    const book = await createBookFixture(prisma, slug);
 
     // Create two published versions EN and ES
     await prisma.bookVersion.create({

@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * 🔴 Сторож `LEGACY-170`. Списки `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` — не
@@ -69,7 +70,7 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
     envToken = await tokenFor(envEmail);
     const ownerToken = await tokenFor(ownerEmail);
 
-    const book = await prisma.book.create({ data: { slug: `legacy170-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `legacy170-${Date.now()}`);
     bookId = book.id;
     const version = await prisma.bookVersion.create({
       data: {

@@ -7,6 +7,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType, RightsPublicationGate } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('BookVersion Publication Gate (e2e)', () => {
   let app: INestApplication;
@@ -105,7 +106,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
   // version without rights cannot publish
   it('version without rights cannot publish', async () => {
     const noRightsSlug = `no-rights-${Date.now()}`;
-    const noRightsBook = await prisma.book.create({ data: { slug: noRightsSlug } });
+    const noRightsBook = await createBookFixture(prisma, noRightsSlug);
     createdSlugs.push(noRightsSlug);
 
     // Cannot even create a version for a book without an intake

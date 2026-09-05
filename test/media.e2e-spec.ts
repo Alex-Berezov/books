@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 // Smoke e2e for Media library: confirm -> list -> delete
 // NOTE: This suite is skipped by default until DB migrations with MediaAsset are applied locally.
@@ -100,7 +101,7 @@ describe('Media e2e', () => {
       .expect(201);
     const mediaId = confirmRes.body.id as string;
 
-    const book = await prisma.book.create({ data: { slug: `book-media-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-media-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

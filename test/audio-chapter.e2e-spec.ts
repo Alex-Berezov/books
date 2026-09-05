@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('AudioChapters e2e', () => {
   let app: INestApplication;
@@ -25,7 +26,7 @@ describe('AudioChapters e2e', () => {
     );
     await app.init();
 
-    const book = await prisma.book.create({ data: { slug: `book-audio-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-audio-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
@@ -189,7 +190,7 @@ describe('AudioChapters e2e', () => {
 
   it('reorders audio chapters atomically', async () => {
     // Create a fresh version with 3 chapters for deterministic reorder
-    const book = await prisma.book.create({ data: { slug: `book-audio-reorder-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-audio-reorder-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
@@ -234,7 +235,7 @@ describe('AudioChapters e2e', () => {
   });
 
   it('admin endpoint returns chapters for draft versions; public list returns 404', async () => {
-    const book = await prisma.book.create({ data: { slug: `book-audio-draft-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-audio-draft-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

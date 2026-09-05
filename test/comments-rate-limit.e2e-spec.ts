@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('Comments rate limit e2e', () => {
   let app: INestApplication;
@@ -25,7 +26,7 @@ describe('Comments rate limit e2e', () => {
     );
     await app.init();
 
-    const book = await prisma.book.create({ data: { slug: `book-rl-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-rl-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,

@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 describe('BookVersion preview e2e', () => {
   let app: INestApplication;
@@ -45,7 +46,7 @@ describe('BookVersion preview e2e', () => {
   });
 
   it('GET /versions/:id/preview returns 404 when no preview set', async () => {
-    const book = await prisma.book.create({ data: { slug: `book-prev-none-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-prev-none-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
@@ -65,7 +66,7 @@ describe('BookVersion preview e2e', () => {
   });
 
   it('PATCH admin rejects non-audio previewMediaId; accepts audio; GET /preview returns metadata', async () => {
-    const book = await prisma.book.create({ data: { slug: `book-prev-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-prev-${Date.now()}`);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
@@ -118,7 +119,7 @@ describe('BookVersion preview e2e', () => {
   });
 
   it('FK SET NULL: deleting previewMedia clears previewMediaId', async () => {
-    const book = await prisma.book.create({ data: { slug: `book-fk-${Date.now()}` } });
+    const book = await createBookFixture(prisma, `book-fk-${Date.now()}`);
     const audio = await prisma.mediaAsset.create({
       data: {
         key: `audio-fk-${Date.now()}.mp3`,

@@ -4,6 +4,7 @@ import request from 'supertest';
 import { BookType, Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * `LEGACY-199`. `GET /:lang/tags/:slug/books` принимал `page` и `limit` голым
@@ -45,7 +46,7 @@ describe('Tag books query validation (LEGACY-199) e2e', () => {
       data: { tagId, language: Language.en, name: marker, slug },
     });
 
-    const book = await prisma.book.create({ data: { slug: `${marker}-book` } });
+    const book = await createBookFixture(prisma, `${marker}-book`);
     bookId = book.id;
     const version = await prisma.bookVersion.create({
       data: {

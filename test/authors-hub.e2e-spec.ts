@@ -5,6 +5,7 @@ import { Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * Хаб авторов через настоящий HTTP-слой и настоящий Postgres.
@@ -96,9 +97,9 @@ describe('Authors hub (e2e)', () => {
     });
 
     // Связь только строкой — ровно как в проде, где FK у опубликованных версий NULL.
-    const textBook = await prisma.book.create({ data: { slug: `${prefix}-text` } });
+    const textBook = await createBookFixture(prisma, `${prefix}-text`);
     textBookId = textBook.id;
-    const audioBook = await prisma.book.create({ data: { slug: `${prefix}-audio` } });
+    const audioBook = await createBookFixture(prisma, `${prefix}-audio`);
     audioBookId = audioBook.id;
 
     const version = {

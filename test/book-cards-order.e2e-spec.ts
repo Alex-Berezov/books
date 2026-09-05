@@ -4,6 +4,7 @@ import request from 'supertest';
 import { BookType, Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * Порядок выдачи `GET /:lang/books/cards` на настоящем Postgres.
@@ -47,7 +48,7 @@ describe('Book cards: sort order (LEGACY-253, LEGACY-254) e2e', () => {
   }
 
   const seedBook = async (suffix: string, publishedAt: Date | null): Promise<string> => {
-    const book = await prisma.book.create({ data: { slug: `${marker}-${suffix}` } });
+    const book = await createBookFixture(prisma, `${marker}-${suffix}`);
     await prisma.bookVersion.create({
       data: {
         bookId: book.id,
