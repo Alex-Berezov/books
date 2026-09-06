@@ -1,6 +1,31 @@
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 
 /**
+ * Заголовки ответа, которые браузер отдаёт коду страницы.
+ *
+ * 🔴 Список один на обе ветки ниже (`origin: '*'` и явные источники) намеренно.
+ * Ветка с подстановочным источником работает в разработке, и заголовок, забытый
+ * в ней, даёт отказ, который воспроизводится только локально — или наоборот,
+ * только в проде.
+ *
+ * 🔴 `Date` и `Age` здесь не для красоты: браузер отдаёт коду только
+ * safelisted-заголовки, а `Date` в этот список не входит. Фронт снимает по ним
+ * расхождение часов клиента и сервера (`books-front/lib/http.ts`,
+ * `recordClockSkew`) — без него слияние прогресса чтения сравнивает часы
+ * браузера с часами базы напрямую, и телефон с неточным временем выигрывает
+ * каждое слияние устаревшей записью (`LEGACY-270`). `Age` идёт парой: ответ из
+ * кэша Cloudflare несёт `Date` момента первичного ответа, и без `Age` отличить
+ * его от свежего нечем.
+ */
+export const CORS_EXPOSED_HEADERS = [
+  'X-RateLimit-Limit',
+  'X-RateLimit-Remaining',
+  'X-RateLimit-Reset',
+  'Date',
+  'Age',
+];
+
+/**
  * CORS Configuration for the API
  *
  * Configures Cross-Origin Resource Sharing for interaction with frontend applications.
@@ -32,6 +57,7 @@ export function getCorsConfig(): CorsOptions {
       credentials: false, // credentials do not work with a wildcard origin
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Language', 'Accept-Language'],
+      exposedHeaders: CORS_EXPOSED_HEADERS,
     };
   }
 
@@ -63,7 +89,7 @@ export function getCorsConfig(): CorsOptions {
       'Origin',
       'X-Requested-With',
     ],
-    exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    exposedHeaders: CORS_EXPOSED_HEADERS,
     maxAge: 86400, // 24 hours - cache preflight requests
   };
 }
