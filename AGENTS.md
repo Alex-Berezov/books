@@ -31,7 +31,7 @@
 
 - Run the backend server locally
 - Touch anything pointing at production: `docker-compose.prod.yml`, `--profile prod`, `ssh`/`docker`/`psql` on the VPS, `prisma migrate deploy` bypassing the pipeline
-- Run `docker run`, `docker exec`, `docker cp`, `docker container`, `docker create`, `docker start` or bare `docker-compose` — still denied in `.claude/settings.json`. A mounted volume reads `.env` around `Read(./.env)`, and `db-guard.js` does not look inside a container image
+- Run `docker run`, `docker exec`, `docker cp`, `docker container`, `docker create`, `docker start` or bare `docker-compose` — still denied in `books/.claude/settings.json` (that one does live inside the repository, unlike the hooks and rules in `D:/newDev/.claude/`). A mounted volume reads `.env` around `Read(./.env)`, and `db-guard.js` does not look inside a container image
 - Apply a **destructive** migration (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, narrowing a type with data loss). Write it, do not run it: `git revert` will not bring the rows back. It waits for the owner, and no release tag is cut in that pass
 
 **What changed on 25.08.2026** (ТЗ `tasks/2026-08-25-avtonomnyy-harness.md`, раздел 8): the local
@@ -56,9 +56,11 @@ a human in the loop.
 ### Local e2e
 
 ```bash
+cd D:/newDev/books                     # every command in this block is relative to the repo root
 docker compose up -d postgres redis   # once per session; user starts it if not running
 # Требует REDIS_PASSWORD в `.env` — без переменной redis не поднимется (LEGACY-071)
-yarn test:e2e                          # ~6–8 min, 46 suites (sentry self-skips)
+yarn test:e2e                          # all test/**/*.e2e-spec.ts (sentry self-skips); count via `find test -name "*.e2e-spec.ts" | wc -l`
+# Duration scales with that count and is not quoted here: measure it on your own machine once.
 ```
 
 `test/setup-e2e.ts` creates a **fresh database `e2e_<timestamp>`** per run, applies all migrations with `prisma migrate deploy`, seeds it, and `teardown-e2e.ts` drops it afterwards. Nothing persists between runs.
@@ -111,7 +113,7 @@ to catch before a commit, a hook must now catch instead.
 **Correct workflow:**
 
 1. Complete the task and land a test that goes red if the defect comes back
-2. Run `/qa` with the full reviewer set, then `node .claude/hooks/gates.js` with no `--repo`
+2. Run `/qa` with the full reviewer set, then `node D:/newDev/.claude/hooks/gates.js` with no `--repo`
 3. Update the documents, then commit each touched repository separately, conventional commits,
    naming the record ids in the message
 4. Push to `main`, then watch the run: `gh run list --limit 3`
