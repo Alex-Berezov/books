@@ -9,9 +9,11 @@
 **Bibliaris Backend** — NestJS + Prisma + PostgreSQL API backend for classic literature audiobook platform.
 
 - **Location:** `D:\newDev\books`
-- **Stack:** NestJS, TypeScript, Prisma ORM, PostgreSQL, Docker
+- **Stack:** NestJS 11 on TypeScript 5.7, Prisma 7 through `@prisma/adapter-pg` over `pg.Pool`,
+  PostgreSQL 14, Redis 7 with BullMQ, Docker
 - **Base API URL:** `https://api.bibliaris.com/api`
-- **Package Manager:** Yarn (NOT npm/pnpm)
+- **Package Manager:** Yarn 1 (NOT npm/pnpm); tests — jest; base branch — `main`
+- **Neighbours:** `../books-front`, `../books-app-docs`; reach them with `git -C <path>`, never `cd`
 
 ---
 
@@ -27,31 +29,12 @@
 - Run e2e against the local test DB: `yarn test:e2e` (see below)
 - Start/stop the local test services: `docker compose up -d postgres redis`, `docker compose ps`, `docker compose stop postgres redis`
 
-**What you STILL CANNOT do:**
-
-- Run the backend server locally
-- Touch anything pointing at production: `docker-compose.prod.yml`, `--profile prod`, `ssh`/`docker`/`psql` on the VPS, `prisma migrate deploy` bypassing the pipeline
-- Run `docker run`, `docker exec`, `docker cp`, `docker container`, `docker create`, `docker start` or bare `docker-compose` — still denied in `books/.claude/settings.json` (that one does live inside the repository, unlike the hooks and rules in `D:/newDev/.claude/`). A mounted volume reads `.env` around `Read(./.env)`, and `db-guard.js` does not look inside a container image
-- Apply a **destructive** migration (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, narrowing a type with data loss). Write it, do not run it: `git revert` will not bring the rows back. It waits for the owner, and no release tag is cut in that pass
-
-**What changed on 25.08.2026** (ТЗ `tasks/2026-08-25-avtonomnyy-harness.md`, раздел 8): the local
-database is open. `yarn prisma:migrate`, `yarn prisma:seed`, `yarn prisma:studio`, `yarn db:*`,
-`npx prisma …` and `psql` against `localhost` are **allowed** — you write a migration, apply it
-locally, verify it, and ship it by tag through the pipeline. The line between the local database
-and production is no longer a `deny` list by command name but the hook
-`D:/newDev/.claude/hooks/db-guard.js`, which reads the connection string and sees the utility
-through `docker exec`, `docker run`, `npx`, `yarn` and a shell wrapper.
-
-⚠️ **Name the target in the command itself.** The guard is a whitelist: a command whose database
-is not visible gets refused, because the address would come from `.env`, which the guard does not
-read. Bare `yarn prisma:migrate` will not pass;
-`DATABASE_URL="postgresql://...@localhost:5432/..." yarn prisma:migrate` will. "I cannot see where
-it goes" is not "it goes locally" — that distinction is the whole point of replacing the `deny`
-list with a hook.
-
-Commit, push and release are allowed too, in the order `/auto` sets. `commit-gate.js` refuses a
-commit without a `/qa` mark and green gates **for the current diff**, so the order holds without
-a human in the loop.
+**What you STILL CANNOT do:** run the backend server locally, and touch anything pointing at
+production. The exact list — what is denied outright, where the line between the local database
+and production is drawn, and what a destructive migration means for the release tag — is a rule,
+not an environment fact, and lives in `books/CLAUDE.md` §«Жёсткие запреты» п.2. Do not restate
+it here: the copy that used to stand in this spot is how the two files drifted apart
+(`LEGACY-168`).
 
 ### Local e2e
 
@@ -68,7 +51,7 @@ yarn test:e2e                          # all test/**/*.e2e-spec.ts (sentry self-
 Two consequences worth using:
 
 - **A hand-written migration is now testable before the VPS.** A full e2e run replays all migrations onto an empty database, so a broken one fails locally. `yarn drift-check` compares names only — the e2e run is what catches bad types, constraints and FK targets.
-- **A failing trace test can be shown to fail.** The fix protocol (`books-app-docs/tasks/fixes/PLAN.md` §1) requires a test that fails before the change; without a database that was impossible for anything touching rights.
+- **A failing trace test can be shown to fail.** The landing rule (`books-app-docs/ai-context/tech-debt-autopilot.md`, «Посадка на каждую правку») requires a test that goes red when the defect comes back; without a database that was impossible for anything touching rights. The old address for that protocol — books-app-docs/tasks/fixes/PLAN.md, written here without backticks because it no longer resolves — has not existed for a long time: `tasks/` holds `authors-hub.md` and `relaxation/`, and the fixes stage was archived as `books-app-docs/history/rights-clearance-fixes.md` (`LEGACY-169`).
 
 ⚠️ **`.env.test` must point at localhost.** The harness runs `CREATE DATABASE` / `DROP DATABASE` against whatever `DATABASE_URL` it finds there. Never edit that file to point anywhere else, and never run e2e if you cannot confirm it is local.
 
@@ -76,55 +59,35 @@ Two consequences worth using:
 
 ## Code Style & Strict Quality Rules
 
-- Backend STYLE_GUIDE: `D:\newDev\books\STYLE_GUIDE.md`
-- **MANDATORY STYLE GUIDE CHECK**: Before reporting completion, the agent MUST review all modified/new code against `STYLE_GUIDE.md` (early throws, DTO structure, swagger decorators, controller/service split, naming conventions).
-- **CRITICAL: NEVER IGNORE LINT ERRORS OR WARNINGS.**
-- `any` types (`@typescript-eslint/no-explicit-any`) are STRICTLY FORBIDDEN.
-- All DTOs must have class-validator and Swagger decorators.
+Where the conventions live: `books/STYLE_GUIDE.md` — early throws, DTO structure, swagger
+decorators, the controller/service split, naming. Shape, not procedure:
+
+- All DTOs carry class-validator and Swagger decorators.
 - Controllers handle HTTP routing; business logic belongs in Services.
+- `any` is unwanted — but note that **nothing catches it here**:
+  `@typescript-eslint/no-explicit-any` is switched OFF in `eslint.config.mjs` and
+  `noImplicitAny` is off in `tsconfig.json`. Writing «STRICTLY FORBIDDEN» in this file did not
+  make it so for six months; the type is written by hand or it is not written at all
+  (`books/CLAUDE.md` §«Специфика проекта»).
+
+When to run what, and the requirement of zero warnings in the files you touched, live in
+`books/CLAUDE.md` §«Команды» — not here.
 
 ---
 
-## Mandatory Validation Workflow & Post-Task Checklist
+## Executable rules live in `CLAUDE.md`
 
-**MANDATORY after every backend change:**
+This file describes the environment: stack, layout, the local test database, where things are.
+**The rules an agent must execute — quality gates, commit and push order, the hard prohibitions —
+live in `books/CLAUDE.md`.** That file is what the harness loads automatically; this one is not.
+The owner's four topics (secrets; production infrastructure and the live database by hand; public
+addresses; the legal semantics of book rights) live one level up, in `D:/newDev/CLAUDE.md`
+§«Что остаётся за владельцем» — they are the same for all three repositories, so no repository
+keeps its own copy.
 
-1. **Code Style Check**: Verify all changes against `D:\newDev\books\STYLE_GUIDE.md`. Explicitly state in the response: _"всё соответствует кодстайлу (STYLE_GUIDE.md)"_.
-2. **Docs Update Check**: Check if documentation in `books-app-docs` needs updating (API endpoints, DTOs, data model, etc.). If no update is required, explicitly state: _"документация не требует обновления"_.
-3. **Quality Gates**: Run automated checks:
-
-```bash
-cd D:\newDev\books
-yarn lint
-yarn typecheck
-yarn test
-```
-
-The AI agent MUST run `yarn lint`, `yarn typecheck`, and `yarn test` and ensure 0 errors and 0 warnings in modified files before reporting task completion to the user!
-
----
-
-## Git Workflow
-
-**Commit and push are allowed, in the order `/auto` sets.** Changed 25.08.2026 (ТЗ
-`tasks/2026-08-25-avtonomnyy-harness.md`). The owner no longer reads diffs; what a human used
-to catch before a commit, a hook must now catch instead.
-
-**Correct workflow:**
-
-1. Complete the task and land a test that goes red if the defect comes back
-2. Run `/qa` with the full reviewer set, then `node D:/newDev/.claude/hooks/gates.js` with no `--repo`
-3. Update the documents, then commit each touched repository separately, conventional commits,
-   naming the record ids in the message
-4. Push to `main`, then watch the run: `gh run list --limit 3`
-
-**What holds the order is `D:/newDev/.claude/hooks/commit-gate.js`, not willpower.** It refuses
-a commit with no `/qa` mark and no green gates **for the current diff**, a commit carrying
-`--no-verify` or `--force`, build artefacts or freshly added secrets in the diff, a weakening
-of a check in the added lines, or a message that is not conventional commits. Fix the cause
-the refusal names; do not look for a way around it.
-
-The only place you still stop and ask is the owner's four closed topics: secrets;
-production infrastructure and the live database by hand, destructive migrations included;
-public addresses; the legal semantics of book rights. Everything else you decide yourself
-or through the `arbiter` subagent.
+The copy that stood here until 07.09.2026 had drifted (`LEGACY-168`): it prescribed running
+`yarn lint`, `yarn typecheck` and `yarn test` by hand and then **saying** the phrases «всё
+соответствует кодстайлу» and «документация не требует обновления». Both are ritual in place of
+output. What actually decides is the real output of `node D:/newDev/.claude/hooks/gates.js`,
+checked against the diff by `D:/newDev/.claude/hooks/report-honesty.js`, which does not let a
+claim of green checks through without a recorded run.

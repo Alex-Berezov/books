@@ -1,16 +1,14 @@
 # Bibliaris. Бэкенд
 
-## Стек и структура
+## Структура
 
-NestJS 11 на TypeScript 5.7, Prisma 7 через адаптер `@prisma/adapter-pg` поверх `pg.Pool`, PostgreSQL 14,
-Redis 7 с BullMQ. Пакетный менеджер - yarn 1, тесты - jest, базовая ветка - `main`.
+Стек, версии и соседние репозитории описаны в `AGENTS.md` (раздел «Project Overview») - здесь
+они не повторяются: разошедшиеся копии одних и тех же правил и есть `LEGACY-168`.
+
 Код разложен так: `src/modules` - доменные модули (модуль = `<имя>.module.ts` + `.controller.ts` +
 `.service.ts` + папка `dto/`), `src/common` - обвязка запроса (guards, interceptors, pipes, decorators,
 selects), `src/shared` - переиспользуемое (prisma, validators, sentry), `test` - только e2e-спеки,
 юнит-спеки лежат рядом с исходником. Репозиториев нет: `PrismaService` инжектится прямо в сервис.
-
-Соседние репозитории лежат рядом: `../books-front` (фронт) и `../books-app-docs` (документация).
-Работать с ними через `git -C <путь>`, не переходя каталогом.
 
 ## Прод-доступ
 
@@ -32,22 +30,22 @@ cd /opt/books/app/src            # каталог репозитория на с
 
 Документы с пометкой «секцией» больше 10 КБ - сначала `grep -nE "^## " <файл>`, потом `Read` с `offset`.
 
-| Тип задачи                                  | Что открыть                                                                                                                                                                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Стиль кода и рабочие правила (любая задача) | `AGENTS.md`, `STYLE_GUIDE.md`, `../books-app-docs/ai-context/agent-rules.md`                                                                                                                                             |
-| Новый эндпоинт или DTO                      | `src/modules/<модуль>/<модуль>.controller.ts`, `<модуль>.service.ts`, `dto/`, `../books-app-docs/ai-context/api-contracts.md` (секцией)                                                                                  |
-| Схема базы и миграция                       | `prisma/schema.prisma`, `prisma/migrations/<последний каталог>/migration.sql`, `scripts/drift-check.mjs`, `../books-app-docs/ai-context/database-schema.md` (секцией)                                                    |
-| Публичная выдача книг                       | `src/common/selects/public-book.select.ts`, `src/modules/public/public.controller.ts`, `src/modules/book/book.service.ts`                                                                                                |
-| Права, клиренс, публикация                  | `src/modules/rights-clearance/`, `src/modules/book-version/publication-gate.service.ts`, `../books-app-docs/ai-context/rights-clearance.md` (секцией), `ai-context/adr/ADR-008-publication-gate-server-side-additive.md` |
-| Аутентификация и роли                       | `src/modules/auth/`, `src/common/guards/`, `src/common/roles/moderator-roles.service.ts`, `../books-app-docs/ai-context/auth-and-permissions.md` (секцией)                                                               |
-| Кэш публичных ответов                       | `src/common/interceptors/public-cache.interceptor.ts`, `src/common/decorators/no-public-cache.decorator.ts`                                                                                                              |
-| Языки и переводы                            | `src/common/pipes/lang-param.pipe.ts`, `src/common/decorators/language.decorator.ts`, `../books-app-docs/ai-context/translation-rules.md`                                                                                |
-| Гео-ограничения                             | `src/modules/geo-block/geo-block-rule.service.ts`, `src/modules/geo-block/geo-ip-country.service.ts`, `.env.example`                                                                                                     |
-| Фоновые механизмы и очереди                 | `src/modules/background-jobs/`, `../books-app-docs/ai-context/background-jobs-audit.md`                                                                                                                                  |
-| E2E и прогон миграций                       | `test/jest-e2e.json`, `test/setup-e2e.ts`, `docker-compose.yml`, `.env.test.example`                                                                                                                                     |
-| Перед рефакторингом чужого кода             | `../books-app-docs/ai-context/legacy-warnings.md` (секцией, в шапке индекс LEGACY), `D:/newDev/.claude/qa-index.md` (полные записи - точечно из `qa-lessons.md`)                                                         |
-| Автономный разбор техдолга                  | `../books-app-docs/ai-context/tech-debt-autopilot.md` целиком, `../books-app-docs/ai-context/tech-debt-journal.md`                                                                                                       |
-| Что считается сделанным                     | `../books-app-docs/ai-context/definition-of-done.md`, `../books-app-docs/ai-context/quality-gates.md`                                                                                                                    |
+| Тип задачи                      | Что открыть                                                                                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Стиль кода (любая задача)       | `STYLE_GUIDE.md`, `../books-app-docs/ai-context/agent-rules.md`; окружение и раскладка - `AGENTS.md`, исполняемые правила - этот файл                                                                                    |
+| Новый эндпоинт или DTO          | `src/modules/<модуль>/<модуль>.controller.ts`, `<модуль>.service.ts`, `dto/`, `../books-app-docs/ai-context/api-contracts.md` (секцией)                                                                                  |
+| Схема базы и миграция           | `prisma/schema.prisma`, `prisma/migrations/<последний каталог>/migration.sql`, `scripts/drift-check.mjs`, `../books-app-docs/ai-context/database-schema.md` (секцией)                                                    |
+| Публичная выдача книг           | `src/common/selects/public-book.select.ts`, `src/modules/public/public.controller.ts`, `src/modules/book/book.service.ts`                                                                                                |
+| Права, клиренс, публикация      | `src/modules/rights-clearance/`, `src/modules/book-version/publication-gate.service.ts`, `../books-app-docs/ai-context/rights-clearance.md` (секцией), `ai-context/adr/ADR-008-publication-gate-server-side-additive.md` |
+| Аутентификация и роли           | `src/modules/auth/`, `src/common/guards/`, `src/common/roles/moderator-roles.service.ts`, `../books-app-docs/ai-context/auth-and-permissions.md` (секцией)                                                               |
+| Кэш публичных ответов           | `src/common/interceptors/public-cache.interceptor.ts`, `src/common/decorators/no-public-cache.decorator.ts`                                                                                                              |
+| Языки и переводы                | `src/common/pipes/lang-param.pipe.ts`, `src/common/decorators/language.decorator.ts`, `../books-app-docs/ai-context/translation-rules.md`                                                                                |
+| Гео-ограничения                 | `src/modules/geo-block/geo-block-rule.service.ts`, `src/modules/geo-block/geo-ip-country.service.ts`, `.env.example`                                                                                                     |
+| Фоновые механизмы и очереди     | `src/modules/background-jobs/`, `../books-app-docs/ai-context/background-jobs-audit.md`                                                                                                                                  |
+| E2E и прогон миграций           | `test/jest-e2e.json`, `test/setup-e2e.ts`, `docker-compose.yml`, `.env.test.example`                                                                                                                                     |
+| Перед рефакторингом чужого кода | `../books-app-docs/ai-context/legacy-warnings.md` (секцией, в шапке индекс LEGACY), `D:/newDev/.claude/qa-index.md` (полные записи - точечно из `qa-lessons.md`)                                                         |
+| Автономный разбор техдолга      | `../books-app-docs/ai-context/tech-debt-autopilot.md` целиком, `../books-app-docs/ai-context/tech-debt-journal.md`                                                                                                       |
+| Что считается сделанным         | `../books-app-docs/ai-context/definition-of-done.md`, `../books-app-docs/ai-context/quality-gates.md`                                                                                                                    |
 
 ## Жёсткие запреты
 
@@ -71,11 +69,18 @@ cd /opt/books/app/src            # каталог репозитория на с
    по имени команды, и видит утилиту сквозь `docker exec` и `docker run`.
 
    Остаются запрещены: `ssh`, `docker` и `psql` **на сервере**, `prisma migrate deploy` в обход
-   конвейера, любые вызовы с `docker-compose.prod.yml` и `docker-compose.monitoring.yml`,
-   а также `docker run`, `docker exec`, `docker cp`, `docker container`, `docker create`,
-   `docker start` и голый `docker-compose` - их страж не покрывает: смонтированный том читает
-   `.env` в обход `Read(./.env)`. Точный список - `deny` в `books/.claude/settings.json` (этот
-   файл лежит внутри репозитория, в отличие от хуков и правил выше).
+   конвейера, вызовы с продовым и мониторинговым compose-файлом, а также `docker run`,
+   `docker exec`, `docker cp`, `docker container`, `docker create`, `docker start` и голый
+   `docker-compose` - их страж не покрывает: смонтированный том читает `.env` в обход
+   `Read(./.env)`. Точный список - `deny` в `books/.claude/settings.json` (этот файл лежит внутри
+   репозитория, в отличие от хуков и правил выше).
+
+   ⚠️ Шаблоны `deny` **префиксные**, и это уже́ смысл, а не формальность: запрет записан как
+   `docker compose -f docker-compose.prod.yml:*`, то есть продовый файл должен идти сразу после
+   первого `-f`. Форма `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`
+   под шаблон не подпадает и была бы разрешена машиной. Запрет здесь шире шаблона намеренно:
+   правило запрещает **любое** обращение к продовому и мониторинговому compose-файлу, каким бы
+   ни был порядок ключей. Не подпало под `deny` - всё равно нельзя.
 
    **Разрушительная миграция** (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, сужение типа с потерей
    значений, обратное снятие `NOT NULL`) пишется, но не выкатывается: её применяет владелец.
@@ -84,8 +89,9 @@ cd /opt/books/app/src            # каталог репозитория на с
 3. **Не читать `.env` и `.env.*`** - там боевые ключи. Отдельно: `.env.test` и `.env.monitoring`
    лежат в корне и не закрыты `.gitignore`, в коммит они попасть не должны.
 4. **Не менять защищённые файлы.** Полный список - в `D:/newDev/.claude/hooks/rules.books.json`,
-   разделы `protected` и `createOnly`; каталога `books/.claude/hooks/` не существует - список
-   живёт в родительской папке, дублировать его здесь незачем, он один и обновляется там.
+   разделы `protected` и `createOnly`; каталога books/.claude/hooks/ не существует вовсе (потому
+   и написан без кавычек - путь в кавычках гард `check-doc-paths.mjs` считает живым адресом),
+   список живёт в родительской папке, дублировать его здесь незачем, он один и обновляется там.
    Понадобилось разово - строка в `D:/newDev/.claude/unlock.txt` **с именем репозитория**
    (`books/prisma/migrations/migration_lock.toml`, а не голый путь: файл общий на три
    репозитория, и голая форма снимает защиту сразу во всех) и объяснение в ответе.
@@ -126,6 +132,13 @@ cd /opt/books/app/src            # каталог репозитория на с
 | `yarn test:e2e`        | тяжёлая       | только под изменения контроллеров и миграций; нужен поднятый `docker compose` с postgres и redis |
 | `yarn build`           | тяжёлая       | в самом конце и только под правки `nest-cli.json`, `tsconfig*.json`, `package.json`              |
 | `yarn ci`              | полный набор  | руками почти никогда, это то, что гоняет CI                                                      |
+
+**Ноль ошибок и ноль предупреждений в тех файлах, которые правил.** `yarn lint`
+(`package.json`) объявлен без `--max-warnings`, а `@typescript-eslint/no-floating-promises`
+и `@typescript-eslint/no-unsafe-argument` заведены в `eslint.config.mjs` уровнем `warn` —
+то есть предупреждение настоящее, а код возврата нулевой, и ни гейт, ни `report-honesty.js`
+его не увидят. Смотреть глазами вывод линта по своим файлам, а не только его код возврата.
+Требование переехало сюда 07.09.2026 из `AGENTS.md` (`LEGACY-168`).
 
 **`yarn lint` запускается с `--fix` и правит файлы на месте.** После него перечитай всё, что успел
 изменить сам: иначе следующая правка ляжет поверх устаревшего содержимого. По той же причине
@@ -232,10 +245,17 @@ Swagger отдаётся по `/docs-json`, не по `/api/docs-json`.
 ## Обвязка контроля качества
 
 На запись файлов стоят хуки: `protect-files.js` (запрет на защищённые пути), `scope.js` (правки
-держатся в зоне задачи), `standards.js` (правила из `D:/newDev/.claude/hooks/rules.books.json`
-по добавленным строкам).
+держатся в зоне задачи), `standards.js` (правила по добавленным строкам - свои из
+`D:/newDev/.claude/hooks/rules.books.json` плюс общие `W01`-`W05` про ослабление конвейера
+из `rules.common.json`; складывает их `rulesFor` в `hooks/lib.js`).
+На команды - `db-guard.js` (боевая база против локальной по строке подключения) и
+`commit-gate.js` (порядок коммита: отметка `/qa`, зелёные гейты по текущему диффу, отсутствие
+`--no-verify`, `--force`, мусора и ослаблений, conventional commits).
 На остановку - `diff-boundaries.js` (лишние файлы и незакрытые парные правки),
-`qa-lock.js` (после порога правок работу не закрыть без `/qa`), `answer-length.js` (объём ответа).
+`qa-lock.js` (после порога правок работу не закрыть без `/qa`), `answer-length.js` (объём ответа)
+и `report-honesty.js` (слова о зелёных проверках сверяются с записью настоящего прогона).
+Отметку прогона по текущему диффу ведёт `diff-hash.js`, прогон гейтов - `gates.js`,
+выкат по тегу - `release.js`.
 Команда `/qa` собирает дифф, гоняет ревьюеров по принадлежности диффа (полный набор - четыре
 на каждый задетый репозиторий кода плюс `architecture`; точный состав -
 `D:/newDev/.claude/commands/qa.md`,
