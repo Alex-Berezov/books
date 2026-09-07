@@ -15,7 +15,8 @@ import { join, resolve } from 'node:path';
  *
  * Отдельная ловушка: пути в `.eslintignore` были устаревшими. Он исключал
  * `libs/api-client/types.ts` (туда пишет `yarn openapi:types`, в гите такого файла нет)
- * и `libs/api-client/api-schema.json` (не существует), а линтовался
+ * и `libs/api-client/api-schema.json` (на день правки не существовал; заведён 07.09.2026
+ * снапшотом контракта, `LEGACY-016`), а линтовался
  * `libs/api-client/src/types.ts`. Буквальный перенос строк ничего бы не ускорил — отсюда
  * ожидание на оба пути сразу.
  *

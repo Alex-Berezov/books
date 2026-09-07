@@ -45,6 +45,7 @@
     "db:import-categories": "ts-node prisma/scripts/import-categories.ts",
     "prepare": "husky || exit 0",
     "ci": "bash scripts/ci.sh",
+    "openapi:snapshot": "bash -c 'UPDATE_OPENAPI_SNAPSHOT=1 jest src/common/testing/openapi-snapshot.spec.ts'",
     "openapi:schema": "node scripts/generate-openapi-schema.js",
     "openapi:schema:prod": "node scripts/generate-openapi-schema.js https://api.bibliaris.com/docs-json",
     "openapi:types": "openapi-typescript ${OPENAPI_URL:-http://localhost:5000/docs-json} -o libs/api-client/types.ts",
@@ -149,10 +150,10 @@
     "coverageDirectory": "../coverage",
     "coverageThreshold": {
       "global": {
-        "statements": 65,
+        "statements": 66,
         "branches": 60,
         "functions": 63,
-        "lines": 66
+        "lines": 67
       }
     },
     "testEnvironment": "node"

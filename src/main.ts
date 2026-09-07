@@ -3,11 +3,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import type { Application as ExpressApp } from 'express';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { CreateBookDto } from './modules/book/dto/create-book.dto';
-import { UpdateBookDto } from './modules/book/dto/update-book.dto';
-import { CreateBookVersionDto } from './modules/book-version/dto/create-book-version.dto';
-import { UpdateBookVersionDto } from './modules/book-version/dto/update-book-version.dto';
+import { SwaggerModule } from '@nestjs/swagger';
+import { buildOpenApiDocument } from './config/openapi.config';
 import { configureSecurity } from './common/security/app-security.config';
 import * as Sentry from '@sentry/node';
 import { HttpAdapterHost } from '@nestjs/core';
@@ -84,27 +81,7 @@ async function bootstrap() {
 
   // Set up Swagger documentation - ALWAYS ENABLED
   console.log('Setting up Swagger documentation...');
-  const config = new DocumentBuilder()
-    .setTitle('Books App API')
-    .setDescription(
-      [
-        'API for the Books application',
-        '',
-        'How to publish a book version:',
-        '1) POST /api/books/{bookId}/versions — create a version (draft by default).',
-        '2) Optionally PATCH /api/versions/{id} — edit fields or SEO.',
-        '3) PATCH /api/versions/{id}/publish — publish the version (status=published).',
-        '4) To hide again — PATCH /api/versions/{id}/unpublish (status=draft).',
-      ].join('\n'),
-    )
-    .setVersion('1.0')
-    .addBearerAuth()
-    .addServer('http://localhost:5000', 'Local')
-    .addServer('https://api.bibliaris.com', 'Production')
-    .build();
-  const document = SwaggerModule.createDocument(app, config, {
-    extraModels: [CreateBookDto, UpdateBookDto, CreateBookVersionDto, UpdateBookVersionDto],
-  });
+  const document = buildOpenApiDocument(app);
   SwaggerModule.setup('docs', app, document, {
     jsonDocumentUrl: 'docs-json',
     swaggerOptions: { persistAuthorization: true },

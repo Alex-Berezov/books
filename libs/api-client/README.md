@@ -5,7 +5,11 @@ Auto-generated TypeScript types from backend API OpenAPI specification.
 ## 📦 What's Inside
 
 - `types.ts` - TypeScript types for all API endpoints (auto-generated)
-- `api-schema.json` - OpenAPI JSON schema (optional, for caching)
+- `api-schema.json` - OpenAPI JSON schema. Committed since 07.09.2026 (`LEGACY-016`): it is the
+  contract snapshot checked by `src/common/testing/openapi-snapshot.spec.ts` on every unit run, so
+  a change of routes, parameters or response fields shows up in the diff of this file. Regenerate
+  it with `yarn openapi:snapshot` after an intentional contract change - not with
+  `yarn openapi:schema`, which downloads whatever a running server currently serves.
 - `.gitignore` - excludes generated files from Git (if configured)
 
 ## 🚀 Frontend Usage
@@ -21,9 +25,13 @@ yarn openapi:types
 # Option B: Generate from production API
 yarn openapi:types:prod
 
-# Option C: Download schema first, then generate types
-yarn openapi:schema        # or yarn openapi:schema:prod
+# Option C: generate types from the committed contract snapshot
 yarn openapi:types:from-schema
+
+# ⚠️ `yarn openapi:schema` / `openapi:schema:prod` OVERWRITE that snapshot with whatever a running
+# server currently serves, which makes the contract guard compare the code against a deployment
+# instead of against the repository. Run them only when you deliberately want that file replaced,
+# and restore it with `yarn openapi:snapshot` afterwards.
 ```
 
 ### 2. Copy to Frontend Project

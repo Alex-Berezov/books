@@ -227,7 +227,7 @@ const joinPath = (base: string, sub: string): string => {
  * «таких нет» от «разбор сломался и молча ничего не нашёл».
  */
 export const collectRoutes = (
-  guard: string,
+  guard?: string,
 ): { closed: ControllerRoute[]; open: ControllerRoute[]; skipped: string[] } => {
   const closed: ControllerRoute[] = [];
   const open: ControllerRoute[] = [];
@@ -243,7 +243,8 @@ export const collectRoutes = (
     }
 
     const base = firstStringArg(classBlock.text, 'Controller');
-    const classGuarded = guardsInclude(classBlock.text, guard);
+    // Гвард не назван — закрытых нет, весь список приходит в `open`.
+    const classGuarded = guard !== undefined && guardsInclude(classBlock.text, guard);
     const classBearerAuth = hasApiBearerAuth(classBlock.text);
 
     for (const block of blocks) {
@@ -258,11 +259,25 @@ export const collectRoutes = (
           ownerLine: block.ownerLine,
           bearerAuth: classBearerAuth || hasApiBearerAuth(block.text),
         };
-        if (classGuarded || guardsInclude(block.text, guard)) closed.push(route);
+        if (classGuarded || (guard !== undefined && guardsInclude(block.text, guard)))
+          closed.push(route);
         else open.push(route);
       }
     }
   }
 
   return { closed, open, skipped };
+};
+
+/**
+ * Все маршруты репозитория одним списком — вход для сторожей, которым гварды
+ * безразличны (`LEGACY-024`: пути e2e-спек против объявленных маршрутов).
+ *
+ * ⚠️ `skipped` возвращается наружу так же, как у `collectRoutes`: контроллер без
+ * блока декораторов у класса в список не попадает, и сторож обязан отличать
+ * «такого маршрута нет» от «файл не разобран».
+ */
+export const allRoutes = (): { routes: ControllerRoute[]; skipped: string[] } => {
+  const { closed, open, skipped } = collectRoutes();
+  return { routes: [...closed, ...open], skipped };
 };

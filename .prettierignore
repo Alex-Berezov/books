@@ -1,0 +1,6 @@
+# Снапшот контракта OpenAPI (`LEGACY-016`): его форму задаёт writer сторожа
+# `src/common/testing/openapi-snapshot.spec.ts` (`yarn openapi:snapshot`).
+# Без этой строки `lint-staged` переформатирует файл при коммите, а следующая
+# пересборка снапшота вернёт исходную форму — дифф на 25 тысяч строк вместо
+# настоящей смены контракта.
+libs/api-client/api-schema.json
