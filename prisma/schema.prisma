@@ -396,6 +396,17 @@ model Category {
   @@index([parentId])
 }
 
+/// ⚠️ На этой модели есть ограничение, которого нет в схеме: частичный уникальный индекс
+/// `BookCategory_bookVersionId_isPrimary_key` — `ON ("bookVersionId") WHERE "isPrimary" = true`
+/// (миграция `20260908120000_legacy_004_005_...`, LEGACY-005). Prisma предикат `WHERE`
+/// в `@@unique` не выражает, а `scripts/drift-check.mjs` индексы не сверяет вовсе — то есть
+/// снятие индекса не заметит ни один гейт, кроме детектора `DROP INDEX`
+/// в `scripts/check-migration-compat.mjs`. Индекс не снимать.
+/// Выразить его как `@@unique([bookVersionId, isPrimary])` нельзя: это другое ограничение
+/// (пара, а не «одна главная категория на версию»), и Prisma сгенерирует индекс с тем же
+/// именем — `migrate deploy` упадёт на `42P07` и заблокирует остаток пачки.
+/// `isPrimary` на 08.09.2026 не пишется в `true` нигде в `src`; главную категорию версии
+/// держит `BookVersion.primaryCategoryId`, её и читают breadcrumb и SEO.
 model BookCategory {
   id            String      @id @default(uuid())
   bookVersionId String
@@ -662,11 +673,6 @@ enum BookType {
   text
   audio
   referral
-}
-
-enum LikeTarget {
-  comment
-  bookVersion
 }
 
 enum CategoryType {
