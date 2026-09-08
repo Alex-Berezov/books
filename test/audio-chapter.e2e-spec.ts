@@ -37,6 +37,9 @@ describe('AudioChapters e2e', () => {
         coverImageUrl: 'https://example.com/c.jpg',
         type: 'audio',
         isFree: true,
+        // LEGACY-267: схема больше не даёт `published` умолчанием — набор проверяет
+        // публичный доступ к аудио-главам, статус нужен явно.
+        status: 'published',
       },
     });
     versionId = version.id;

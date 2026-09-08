@@ -37,6 +37,9 @@ describe('BookSummary e2e', () => {
         coverImageUrl: 'https://example.com/c.jpg',
         type: 'text',
         isFree: true,
+        // LEGACY-267: схема больше не даёт `published` умолчанием — набор проверяет
+        // анонимный доступ к саммари опубликованной версии, статус нужен явно.
+        status: 'published',
       },
     });
     versionId = version.id;

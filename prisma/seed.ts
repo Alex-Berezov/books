@@ -314,6 +314,9 @@ async function main() {
             coverImageUrl: 'https://example.com/harry.jpg',
             type: BookType.text,
             isFree: true,
+            // LEGACY-267: схема больше не даёт `published` умолчанием — сидовые версии
+            // остаются публичными только если это прописано явно.
+            status: 'published',
             rightsProfileId: profile.id,
             approvedRightsReviewId: review.id,
             rightsStatus: 'APPROVED',
@@ -404,6 +407,9 @@ async function main() {
             coverImageUrl: 'https://example.com/harry.jpg',
             type: BookType.text,
             isFree: true,
+            // LEGACY-267: схема больше не даёт `published` умолчанием — сидовые версии
+            // остаются публичными только если это прописано явно.
+            status: 'published',
             rightsProfileId: profile.id,
             approvedRightsReviewId: review.id,
             rightsStatus: 'APPROVED',

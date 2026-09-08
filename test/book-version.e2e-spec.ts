@@ -19,6 +19,7 @@ interface BookVersionResponse {
   type: string;
   isFree: boolean;
   referralUrl?: string | null;
+  status: string;
   createdAt: string;
   updatedAt: string;
   seoId?: number | null;
@@ -87,6 +88,11 @@ describe('BookVersions e2e', () => {
       .expect(201);
     const created: BookVersionResponse = createRes.body as BookVersionResponse;
     const versionId = created.id;
+
+    // LEGACY-267: умолчание схемы `@default(published)` было противоположно продуктовому
+    // правилу; ответ создания — единственная посадка, которая заметит, если новый путь
+    // создания версии перестанет ставить `status: 'draft'` явно и откатится на умолчание.
+    expect(created.status).toBe('draft');
 
     // Public must not see draft
     const listDraftHidden = await request(http()).get(`/books/${bookId}/versions`).expect(200);
@@ -206,6 +212,35 @@ describe('BookVersions e2e', () => {
       .delete(`/versions/${created.id}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(204);
+  });
+
+  /**
+   * LEGACY-267: посадка выше (`created.status === 'draft'`) проверяет только явную строку
+   * `status: 'draft'` в `BookVersionService.create`, а не умолчание схемы — сервис никогда
+   * не полагается на него. Эта проверка вставляет строку в обход сервиса, тем же клиентом
+   * Prisma, что и приложение, не указывая `status` вовсе: только так виден настоящий эффект
+   * `@default(draft)`/`ALTER COLUMN "status" SET DEFAULT 'draft'` на свежей базе e2e-прогона.
+   */
+  it('BookVersion.status defaults to draft at the schema level, not just in the service (LEGACY-267)', async () => {
+    const slug = `book-${Date.now()}-default-status`;
+    const bookWithRights = await createBookWithRights(prisma, slug);
+    createdBookSlugs.push(slug);
+
+    const rawVersion = await prisma.bookVersion.create({
+      data: {
+        bookId: bookWithRights.book.id,
+        language: Language.fr,
+        title: 'Schema default check',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: 'https://example.com/cover.jpg',
+        type: BookType.text,
+        isFree: true,
+        // status intentionally omitted — this is exactly what LEGACY-267 guards against.
+      },
+    });
+
+    expect(rawVersion.status).toBe('draft');
   });
 
   it('enforces uniqueness (bookId, language)', async () => {

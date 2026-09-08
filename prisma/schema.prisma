@@ -63,7 +63,7 @@ model BookVersion {
   referralUrl     String?
   slug            String?
   // Publication
-  status          PublicationStatus @default(published)
+  status          PublicationStatus @default(draft)
   publishedAt     DateTime?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt

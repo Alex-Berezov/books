@@ -758,8 +758,9 @@ describe('BookVersionService', () => {
       .calls[0][0] as Prisma.BookVersionCreateArgs;
     expect(createArgs.data.description).toBe('');
     expect(createArgs.data.coverImageUrl).toBe('');
-    // В схеме у `status` стоит `@default(published)`: без явного черновика пустая оболочка
-    // попала бы в публичную выдачу сразу, минуя гейт.
+    // LEGACY-267: до 08.09.2026 в схеме у `status` стоял `@default(published)`, и без явного
+    // черновика пустая оболочка попала бы в публичную выдачу сразу, минуя гейт. Умолчание
+    // схемы починено, но полагаться на него по-прежнему нельзя — отсюда явный `status: 'draft'`.
     expect(createArgs.data.status).toBe('draft');
   });
 
