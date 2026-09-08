@@ -55,19 +55,14 @@ const MIN_ID_FIELDS = 17;
 const MIN_PATH_PARAMS = 17;
 
 /**
- * Поля, оставленные строкой намеренно, — с причиной у каждого. Пустой список
- * здесь был бы честнее, но неверен: `uuid` у `RightsProfile` и `RightsIntake` —
- * только дефолт схемы, колонка текстовая, а идентификатор задаётся снаружи
- * (`prisma/seed.ts:99,117`, `test/helpers/book-with-rights.ts:40-41`). Пока
- * не проверено, что лежит в боевой базе, ужесточение отбило бы запрос по
- * идентификатору, который в базе валиден. Снимать записи отсюда — только вместе
- * с проверкой данных, см. `LEGACY-200`.
+ * Поля, оставленные строкой намеренно, — с причиной у каждого. `LEGACY-200`
+ * закрыта 08.09.2026: фикстуры (`prisma/seed.ts`, `test/helpers/book-with-rights.ts`)
+ * больше не задают `id` `RightsProfile`/`RightsIntake` литералом, три поля ниже
+ * переведены на `@IsUUID()`. Пустой список — честное текущее состояние, а не
+ * временная заглушка: новая запись сюда добавляется только с той же причиной,
+ * что вела предыдущую (внешний код задаёт `id` не-uuid значением).
  */
-const EXPECTED_STRING_IDS = [
-  'modules/rights-claims/dto/create-rights-claim.dto.ts → rightsIntakeId',
-  'modules/rights-claims/dto/create-rights-claim.dto.ts → rightsProfileId',
-  'modules/rights-claims/dto/query-rights-claims.dto.ts → rightsProfileId',
-];
+const EXPECTED_STRING_IDS: string[] = [];
 
 /** Любой декоратор `class-validator`: по нему поле отличается от поля DTO ответа. */
 const VALIDATOR = /@Is[A-Z]\w*\(|@Matches\(|@Min\(|@Max\(|@Length\(|@MaxLength\(|@MinLength\(/;

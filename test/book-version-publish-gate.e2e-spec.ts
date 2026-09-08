@@ -311,7 +311,10 @@ describe('BookVersion Publication Gate (e2e)', () => {
         })
         .expect(201);
 
-      return { rights, bookSlug, versionId: createRes.body.id as string };
+      // Слаг наружу не отдаётся намеренно (`LEGACY-200`): пока он был в возврате,
+      // из него выводились id правовых записей — ровно то, что эта правка убрала.
+      // Уборкой занимается `createdSlugs` выше.
+      return { rights, versionId: createRes.body.id as string };
     };
 
     const gateOf = async (id: string) =>
@@ -321,11 +324,10 @@ describe('BookVersion Publication Gate (e2e)', () => {
         .expect(200);
 
     it('blocks a version left on the review the intake no longer points at', async () => {
-      const {
-        rights,
-        bookSlug,
-        versionId: driftVersionId,
-      } = await arrangePublishedVersion('review-drift', Language.en);
+      const { rights, versionId: driftVersionId } = await arrangePublishedVersion(
+        'review-drift',
+        Language.en,
+      );
 
       expect((await gateOf(driftVersionId)).body.canPublish).toBe(true);
 
@@ -333,7 +335,6 @@ describe('BookVersion Publication Gate (e2e)', () => {
       // Book or BookVersion — that is exactly the gap WP-2 closes.
       const newerImport = await prisma.rightsReviewImport.create({
         data: {
-          id: `test-import2-${bookSlug}`,
           rightsIntakeId: rights.intake.id,
           importStatus: 'VALIDATED',
           isCurrent: true,
@@ -342,7 +343,6 @@ describe('BookVersion Publication Gate (e2e)', () => {
       });
       const newerReview = await prisma.rightsReview.create({
         data: {
-          id: `test-review2-${bookSlug}`,
           rightsProfileId: rights.profile.id,
           rightsReviewImportId: newerImport.id,
           status: 'HUMAN_APPROVED',
@@ -378,11 +378,10 @@ describe('BookVersion Publication Gate (e2e)', () => {
     });
 
     it('requires geo-block for a market only the new clearance closed', async () => {
-      const {
-        rights,
-        bookSlug,
-        versionId: driftVersionId,
-      } = await arrangePublishedVersion('market-drift', Language.es);
+      const { rights, versionId: driftVersionId } = await arrangePublishedVersion(
+        'market-drift',
+        Language.es,
+      );
 
       expect((await gateOf(driftVersionId)).body.canPublish).toBe(true);
 
@@ -393,7 +392,6 @@ describe('BookVersion Publication Gate (e2e)', () => {
       });
       const newerProfile = await prisma.rightsProfile.create({
         data: {
-          id: `test-profile2-${bookSlug}`,
           rightsIntakeId: rights.intake.id,
           status: 'APPROVED',
           isCurrent: true,

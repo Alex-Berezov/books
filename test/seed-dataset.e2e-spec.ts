@@ -184,6 +184,28 @@ describe('Seeded dataset (e2e)', () => {
     });
     expect(before.length).toBeGreaterThan(0);
 
+    // 🔴 `LEGACY-200`. С 08.09.2026 цепочка прав не имеет литеральных `id`, и опорой
+    // идемпотентности стали ссылки самой книги, а не фиксированный ключ `upsert`.
+    // У четырёх правовых моделей нет ни одного уникального ограничения, поэтому
+    // регрессия в условии переиспользования не упадёт на базе — она **молча**
+    // заведёт вторую цепочку, осиротив первую. Ловится только счётом строк.
+    const rightsBefore = await prisma.book.findUnique({
+      where: { slug: 'harry-potter' },
+      select: {
+        rightsIntakeId: true,
+        currentRightsProfileId: true,
+        approvedRightsReviewId: true,
+      },
+    });
+    expect(rightsBefore?.rightsIntakeId).toBeDefined();
+    expect(rightsBefore?.currentRightsProfileId).toBeDefined();
+    expect(rightsBefore?.approvedRightsReviewId).toBeDefined();
+
+    const intakesBefore = await prisma.rightsIntake.count();
+    const profilesBefore = await prisma.rightsProfile.count();
+    const reviewsBefore = await prisma.rightsReview.count();
+    const importsBefore = await prisma.rightsReviewImport.count();
+
     const stampBefore = await prisma.bookVersion.findFirst({
       where: { book: { slug: 'harry-potter' }, language: 'en' },
       select: { updatedAt: true },
@@ -231,5 +253,25 @@ describe('Seeded dataset (e2e)', () => {
       select: { language: true },
     });
     expect(carrier?.language).toBe('en');
+
+    // 🔴 `LEGACY-200`. Проверяются обе половины: цепочка та же самая (ссылки книги
+    // не переехали на новые строки) и новых строк не появилось вовсе. Одного счётчика
+    // мало — сид мог бы создать новую цепочку и перевесить книгу на неё, оставив
+    // старую висеть; одних ссылок мало — они остались бы прежними и в случае, когда
+    // рядом заведена вторая, никем не используемая цепочка.
+    const rightsAfter = await prisma.book.findUnique({
+      where: { slug: 'harry-potter' },
+      select: {
+        rightsIntakeId: true,
+        currentRightsProfileId: true,
+        approvedRightsReviewId: true,
+      },
+    });
+    expect(rightsAfter).toEqual(rightsBefore);
+
+    expect(await prisma.rightsIntake.count()).toBe(intakesBefore);
+    expect(await prisma.rightsProfile.count()).toBe(profilesBefore);
+    expect(await prisma.rightsReview.count()).toBe(reviewsBefore);
+    expect(await prisma.rightsReviewImport.count()).toBe(importsBefore);
   }, 180_000);
 });

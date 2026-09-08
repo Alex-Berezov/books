@@ -15,6 +15,15 @@ const prisma = new PrismaClient({ adapter });
  */
 const SEED_AUTHOR_ID = 'seed-author-jk-rowling';
 
+/**
+ * Слаг демо-книги. С `LEGACY-200` это ещё и ключ идемпотентности всей правовой
+ * цепочки: у `RightsIntake`/`RightsProfile`/`RightsReview`/`RightsReviewImport`
+ * своих фиксированных id больше нет, и найти уже заведённые строки можно только
+ * по ссылкам этой книги. Литерал в трёх местах разъехался бы молча: чтение нашло бы
+ * не ту книгу, а `upsert` завёл бы вторую цепочку.
+ */
+const SEED_BOOK_SLUG = 'harry-potter';
+
 const AUTHOR_TRANSLATIONS = [
   { language: Language.en, slug: 'j-k-rowling', name: 'J.K. Rowling' },
   { language: Language.ru, slug: 'dzhoan-rouling', name: 'Джоан Роулинг' },
@@ -149,88 +158,146 @@ async function main() {
     }
   }
 
-  // Seed Book with Version via Rights Intake Workflow
-  // Create Rights Intake
-  const intake = await prisma.rightsIntake.upsert({
-    where: { id: 'seed-intake-harry-potter' },
-    update: {},
-    create: {
-      id: 'seed-intake-harry-potter',
-      candidateTitle: "Harry Potter and the Philosopher's Stone",
-      candidateAuthor: 'J.K. Rowling',
-      originalLanguage: 'en',
-      originalTitle: "Harry Potter and the Philosopher's Stone",
-      workflowStatus: 'APPROVED',
-      targetLanguages: ['en', 'es', 'fr', 'pt', 'ru'],
-      targetCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
-      plannedContentTypes: ['text', 'audio'],
-      approvedReviewId: 'seed-review-harry-potter',
-    },
-  });
+  // Seed Book with Version via Rights Intake Workflow.
+  //
+  // LEGACY-200: `RightsIntake`/`RightsProfile`/`RightsReview`/`RightsReviewImport` больше не
+  // получают `id` литералом - `@default(uuid())` в схеме реален, только если ничто в коде
+  // не подставляет своё значение. Идемпотентность сида (повторный прогон поверх той же базы)
+  // держится не на фиксированном id этих четырёх записей, а на `Book.slug`: если книга с этим
+  // слагом уже привязана к цепочке прав, цепочка переиспользуется по ссылкам из самой книги,
+  // а не создаётся заново.
+  // ⚠️ Цепочка заводится одной транзакцией по той же причине, что и блок версий ниже.
+  // Прежняя форма на `upsert` с фиксированными id самолечилась: обрыв посередине
+  // чинился следующим прогоном, потому что ключ был известен заранее. Теперь ключа нет,
+  // и оборванная на середине цепочка (Ctrl+C, `P1017`, OOM контейнера на шаге сида
+  // в конвейере фронта - `LEGACY-294`) осталась бы без книги, а значит недостижимой
+  // навсегда: следующий прогон её не найдёт и заведёт вторую.
+  const { intake, profile, review } = await prisma.$transaction(
+    async (tx) => {
+      const existingBook = await tx.book.findUnique({
+        where: { slug: SEED_BOOK_SLUG },
+        select: {
+          rightsIntakeId: true,
+          currentRightsProfileId: true,
+          approvedRightsReviewId: true,
+        },
+      });
 
-  // Create Rights Profile
-  const profile = await prisma.rightsProfile.upsert({
-    where: { id: 'seed-profile-harry-potter' },
-    update: {},
-    create: {
-      id: 'seed-profile-harry-potter',
-      rightsIntakeId: intake.id,
-      status: 'APPROVED',
-      isCurrent: true,
-      overallStatus: 'PUBLISHABLE',
-      publicationGate: 'ALLOW',
-      confidence: 'HIGH',
-      summaryRu: 'Public domain work - author died in 1946',
-      conclusionRu: 'Approved for publication',
-    },
-  });
+      // 🔴 Переиспользуется **каждая ссылка по отдельности**, а не тройка целиком.
+      // Условие «все три на месте, иначе создаём заново» строило новую цепочку из-за
+      // одной недостающей строки, а живые оставляло висеть без владельца. Прежний
+      // `upsert` по фиксированному id чинил ровно недостающую запись - это поведение
+      // и восстановлено. `findUnique` вместо доверия ссылке обязателен: колонки
+      // `Book.currentRightsProfileId` и `approvedRightsReviewId` внешнего ключа
+      // не несут, и ссылка переживает удаление строки, на которую указывает.
+      const intake =
+        (existingBook?.rightsIntakeId
+          ? await tx.rightsIntake.findUnique({
+              where: { id: existingBook.rightsIntakeId },
+              select: { id: true },
+            })
+          : null) ??
+        (await tx.rightsIntake.create({
+          data: {
+            candidateTitle: "Harry Potter and the Philosopher's Stone",
+            candidateAuthor: 'J.K. Rowling',
+            originalLanguage: 'en',
+            originalTitle: "Harry Potter and the Philosopher's Stone",
+            workflowStatus: 'APPROVED',
+            targetLanguages: ['en', 'es', 'fr', 'pt', 'ru'],
+            targetCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
+            plannedContentTypes: ['text', 'audio'],
+          },
+          select: { id: true },
+        }));
 
-  // Create Rights Review Import
-  await prisma.rightsReviewImport.upsert({
-    where: { id: 'seed-import-harry-potter' },
-    update: {},
-    create: {
-      id: 'seed-import-harry-potter',
-      rightsIntakeId: intake.id,
-      importStatus: 'VALIDATED',
-      isCurrent: true,
-      reportJson: { source: 'seed' },
-    },
-  });
+      const profile =
+        (existingBook?.currentRightsProfileId
+          ? await tx.rightsProfile.findUnique({
+              where: { id: existingBook.currentRightsProfileId },
+              select: { id: true },
+            })
+          : null) ??
+        (await tx.rightsProfile.create({
+          data: {
+            rightsIntakeId: intake.id,
+            status: 'APPROVED',
+            isCurrent: true,
+            overallStatus: 'PUBLISHABLE',
+            publicationGate: 'ALLOW',
+            confidence: 'HIGH',
+            summaryRu: 'Public domain work - author died in 1946',
+            conclusionRu: 'Approved for publication',
+          },
+          select: { id: true },
+        }));
 
-  // Create Rights Review
-  await prisma.rightsReview.upsert({
-    where: { id: 'seed-review-harry-potter' },
-    update: {},
-    create: {
-      id: 'seed-review-harry-potter',
-      rightsProfileId: profile.id,
-      rightsReviewImportId: 'seed-import-harry-potter',
-      status: 'HUMAN_APPROVED',
-      reviewerType: 'HUMAN',
-      overallStatus: 'PUBLISHABLE',
-      publicationGate: 'ALLOW',
-      confidence: 'HIGH',
-      summaryRu: 'Public domain work',
-      conclusionRu: 'Approved',
-      approvedAt: new Date(),
+      // Импорт заводится только вместе с ревью: он существует ради него одного
+      // (`RightsReview.rightsReviewImportId` объявлен `@unique`), и отдельной ссылки
+      // на импорт у книги нет - искать его при живом ревью незачем.
+      const review =
+        (existingBook?.approvedRightsReviewId
+          ? await tx.rightsReview.findUnique({
+              where: { id: existingBook.approvedRightsReviewId },
+              select: { id: true },
+            })
+          : null) ??
+        (await (async () => {
+          const createdImport = await tx.rightsReviewImport.create({
+            data: {
+              rightsIntakeId: intake.id,
+              importStatus: 'VALIDATED',
+              isCurrent: true,
+              reportJson: { source: 'seed' },
+            },
+            select: { id: true },
+          });
+
+          return tx.rightsReview.create({
+            data: {
+              rightsProfileId: profile.id,
+              rightsReviewImportId: createdImport.id,
+              status: 'HUMAN_APPROVED',
+              reviewerType: 'HUMAN',
+              overallStatus: 'PUBLISHABLE',
+              publicationGate: 'ALLOW',
+              confidence: 'HIGH',
+              summaryRu: 'Public domain work',
+              conclusionRu: 'Approved',
+              approvedAt: new Date(),
+            },
+            select: { id: true },
+          });
+        })());
+
+      // Разрыв цикла: `RightsIntake.approvedReviewId` указывает на ревью, которого
+      // в момент создания самого intake ещё не существует. Ставится безусловно —
+      // при переиспользованном intake и заново созданном ревью ссылка иначе осталась бы
+      // на удалённой строке.
+      await tx.rightsIntake.update({
+        where: { id: intake.id },
+        data: { approvedReviewId: review.id },
+      });
+
+      return { intake, profile, review };
     },
-  });
+    { timeout: 30_000, maxWait: 15_000 },
+  );
 
   // Create Book with rights linkage
   const book = await prisma.book.upsert({
-    where: { slug: 'harry-potter' },
+    where: { slug: SEED_BOOK_SLUG },
     update: {
       rightsIntakeId: intake.id,
       currentRightsProfileId: profile.id,
-      approvedRightsReviewId: 'seed-review-harry-potter',
+      approvedRightsReviewId: review.id,
       rightsCreatedAt: new Date(),
     },
     create: {
-      slug: 'harry-potter',
+      slug: SEED_BOOK_SLUG,
       rightsIntakeId: intake.id,
       currentRightsProfileId: profile.id,
-      approvedRightsReviewId: 'seed-review-harry-potter',
+      approvedRightsReviewId: review.id,
       rightsCreatedAt: new Date(),
       versions: {
         create: [
@@ -248,7 +315,7 @@ async function main() {
             type: BookType.text,
             isFree: true,
             rightsProfileId: profile.id,
-            approvedRightsReviewId: 'seed-review-harry-potter',
+            approvedRightsReviewId: review.id,
             rightsStatus: 'APPROVED',
             rightsAllowedCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
             rightsBlockedCountryCodes: [],
@@ -311,12 +378,20 @@ async function main() {
         // Правка заголовка в таблице выглядела бы сделанной при неизменных данных.
         await tx.bookVersion.upsert({
           where: { bookId_language: { bookId: book.id, language: v.language } },
+          // ⚠️ Правовые ссылки обновляются вместе с содержимым (`LEGACY-200`). Пока
+          // цепочка имела фиксированные id, пересозданная запись получала прежний id
+          // и снимок версии оставался верным сам собой. Теперь пересозданное ревью
+          // или профиль получают новый id, и версия, оставленная на прежнем снимке,
+          // даёт `RIGHTS_REVIEW_SNAPSHOT_OUTDATED`: `canPublish: false` у гейта
+          // и 400 на `PATCH /versions/:id/publish` при сохранном на вид сиде.
           update: {
             authorId: author.id,
             author: v.author,
             title: v.title,
             slug: v.slug,
             description: v.description,
+            rightsProfileId: profile.id,
+            approvedRightsReviewId: review.id,
           },
           create: {
             bookId: book.id,
@@ -330,7 +405,7 @@ async function main() {
             type: BookType.text,
             isFree: true,
             rightsProfileId: profile.id,
-            approvedRightsReviewId: 'seed-review-harry-potter',
+            approvedRightsReviewId: review.id,
             rightsStatus: 'APPROVED',
             rightsAllowedCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
             rightsBlockedCountryCodes: [],

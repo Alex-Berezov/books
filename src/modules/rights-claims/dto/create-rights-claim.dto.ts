@@ -98,23 +98,18 @@ export class CreateRightsClaimDto {
   @IsUUID()
   bookVersionId?: string;
 
-  // 🔴 Эти два поля намеренно остались `@IsString()`, см. `LEGACY-200`.
-  // `uuid` у `RightsProfile` и `RightsIntake` — только **дефолт** схемы, колонка
-  // текстовая, и идентификатор здесь задаётся снаружи: `prisma/seed.ts:99,117`
-  // кладёт `seed-intake-harry-potter` и `seed-profile-harry-potter`,
-  // `test/helpers/book-with-rights.ts:40-41` — `test-intake-<slug>`. Пути,
-  // создающего профиль, в `src` нет вовсе. Пока не проверено, какие значения
-  // лежат в боевой базе, ужесточение отбило бы запрос по идентификатору,
-  // который в базе валиден. Граница записи `LEGACY-119` требовала этой сверки
-  // именно здесь.
+  // LEGACY-200: ужесточено 08.09.2026 до `@IsUUID()`. Фикстуры (`prisma/seed.ts`,
+  // `test/helpers/book-with-rights.ts`) больше не задают `id` этих моделей литералом -
+  // значение всегда `@default(uuid())` схемы, а не строка снаружи. Сверка боевой базы
+  // от 17.08.2026 не нашла ни одного не-uuid значения в `RightsProfile`/`RightsIntake`.
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   rightsProfileId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUUID()
   rightsIntakeId?: string;
 
   @ApiPropertyOptional()

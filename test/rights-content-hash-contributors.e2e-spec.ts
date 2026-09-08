@@ -125,10 +125,11 @@ describe('Rights content hash — contributors (e2e)', () => {
   afterAll(async () => {
     await prisma.bookVersionContributor.deleteMany({ where: { bookVersionId: versionId } });
     await cleanupBookWithRights(prisma, slug);
+    // LEGACY-200: `RightsProfile.id` больше не выводится из слага литералом, отдельного
+    // deleteMany по нему не построить - `cleanupBookWithRights` находит профиль по книге,
+    // а `RightsProfileContributor.rightsProfileId` каскадно удаляется вместе с ним
+    // (`onDelete: Cascade`, schema.prisma:1944).
     for (const extraSlug of createdSlugs) {
-      await prisma.rightsProfileContributor.deleteMany({
-        where: { rightsProfileId: `test-profile-${extraSlug}` },
-      });
       await cleanupBookWithRights(prisma, extraSlug);
     }
     await prisma.person.deleteMany({ where: { id: { in: [personId, ...createdPersonIds] } } });

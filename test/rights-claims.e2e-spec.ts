@@ -119,6 +119,62 @@ describe('Rights claims e2e', () => {
       });
   });
 
+  // LEGACY-200. Три поля модуля оставались `@IsString()` дольше остальных: `id`
+  // `RightsProfile` и `RightsIntake` задавали снаружи фикстуры, и ужесточение
+  // отбило бы значение, валидное в базе. С 08.09.2026 фикстуры этого не делают,
+  // поля переведены на `@IsUUID()`. Посадка на оба входа: тело создания и
+  // query-фильтр списка — одного мало, ужесточение сняли бы на второй половине
+  // и заметить это было бы нечем.
+  it('rejects a non-uuid rightsProfileId/rightsIntakeId in the body with 400 (LEGACY-200)', async () => {
+    await request(http())
+      .post('/admin/rights/claims')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        claimType: 'DMCA_TAKEDOWN',
+        severity: 'HIGH',
+        claimantName: 'Acme Publishing',
+        claimantType: 'PUBLISHER',
+        claimantIsAuthorized: true,
+        rightsProfileId: 'seed-profile-harry-potter',
+        rightsIntakeId: 'seed-intake-harry-potter',
+        descriptionRu: 'Правообладатель требует удалить текст.',
+        goodFaithStatement: true,
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        // Оба поля названы поимённо: возврат одного из них к `@IsString()`
+        // оставил бы 400 от второго, и проверка «просто 400» не покраснела бы.
+        const message = (body.message as string[]).join(' ');
+        expect(message).toContain('rightsProfileId');
+        expect(message).toContain('rightsIntakeId');
+      });
+  });
+
+  it('rejects a non-uuid rightsProfileId in the list filter with 400 (LEGACY-200)', async () => {
+    await request(http())
+      .get('/admin/rights/claims')
+      .query({ rightsProfileId: 'seed-profile-harry-potter' })
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400)
+      .expect(({ body }) => {
+        expect((body.message as string[]).join(' ')).toContain('rightsProfileId');
+      });
+  });
+
+  // Положительный контроль к двум проверкам выше: uuid-значение несуществующего
+  // профиля проходит валидацию и доходит до выборки. Без него обе краснели бы
+  // и на коде, где фильтр отвергает вообще всё.
+  it('accepts a well-formed uuid in the list filter (LEGACY-200)', async () => {
+    await request(http())
+      .get('/admin/rights/claims')
+      .query({ rightsProfileId: randomUUID() })
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([]);
+      });
+  });
+
   // LEGACY-202. Половина модуля была закрыта, а половина нет: `LEGACY-119`
   // проверила тело и query-фильтры, а параметры пути остались строкой. Битый
   // `:id` доходил до `requireClaim` и возвращался как 404 «не найдено» — то есть
