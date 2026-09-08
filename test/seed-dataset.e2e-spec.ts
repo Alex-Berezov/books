@@ -5,6 +5,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { TaxonomyIndexabilityService } from '../src/modules/seo/indexability/taxonomy-indexability.service';
 import { httpServerOf } from './http-server';
 
 /**
@@ -201,6 +202,27 @@ describe('Seeded dataset (e2e)', () => {
     expect(rightsBefore?.currentRightsProfileId).toBeDefined();
     expect(rightsBefore?.approvedRightsReviewId).toBeDefined();
 
+    // 🔴 Каталог `Q1` проверяется вместе с демо-книгой, а не отдельным тестом: сид гоняется
+    // здесь один раз, и вторая посадка на идемпотентность стоила бы второго прогона.
+    // Считаются привязки всех пяти каталожных книг: `upsert` по составному ключу защищает
+    // от дублей только пока ключ в `where` тот же самый, а опечатка в нём (перепутанные
+    // `bookVersionId`/`categoryId`) удвоила бы строки на каждом пересеве - и в конвейере
+    // фронта, где сид гоняется поверх уже засеянной базы, и в `deploy.yml`.
+    const catalogSlugs = [
+      'treasure-island',
+      'the-jungle-book',
+      'around-the-world-in-eighty-days',
+      'the-three-musketeers',
+      'twenty-thousand-leagues-under-the-sea',
+    ];
+    const catalogWhere = { bookVersion: { book: { slug: { in: catalogSlugs } } } };
+    const catalogCategoriesBefore = await prisma.bookCategory.count({ where: catalogWhere });
+    const catalogTagsBefore = await prisma.bookTag.count({ where: catalogWhere });
+    // Пять книг x пять языков x три категории и один тег. Точные числа, а не нижняя
+    // граница: это собственные книги сида, соседние наборы их не заводят.
+    expect(catalogCategoriesBefore).toBe(75);
+    expect(catalogTagsBefore).toBe(25);
+
     const intakesBefore = await prisma.rightsIntake.count();
     const profilesBefore = await prisma.rightsProfile.count();
     const reviewsBefore = await prisma.rightsReview.count();
@@ -273,5 +295,183 @@ describe('Seeded dataset (e2e)', () => {
     expect(await prisma.rightsProfile.count()).toBe(profilesBefore);
     expect(await prisma.rightsReview.count()).toBe(reviewsBefore);
     expect(await prisma.rightsReviewImport.count()).toBe(importsBefore);
+
+    expect(await prisma.bookCategory.count({ where: catalogWhere })).toBe(catalogCategoriesBefore);
+    expect(await prisma.bookTag.count({ where: catalogWhere })).toBe(catalogTagsBefore);
+    // Каждая каталожная книга осталась при своей цепочке: счётчики правовых моделей выше
+    // уже проверены, но они не сказали бы, что ссылки шести книг не съехали на одну.
+    const catalogBooks = await prisma.book.findMany({
+      where: { slug: { in: catalogSlugs } },
+      select: { slug: true, rightsIntakeId: true, currentRightsProfileId: true },
+    });
+    expect(catalogBooks).toHaveLength(catalogSlugs.length);
+    expect(new Set(catalogBooks.map((b) => b.rightsIntakeId)).size).toBe(catalogSlugs.length);
+    expect(new Set(catalogBooks.map((b) => b.currentRightsProfileId)).size).toBe(
+      catalogSlugs.length,
+    );
   }, 180_000);
+
+  /**
+   * Что сид кладёт под гейт SEO на пути PR (`Q1`, `LEGACY-016`).
+   *
+   * 🔴 Смоук-прогон `books-front/scripts/seo-audit.mjs` требует, чтобы каждый из четырёх
+   * хабов (`categories`, `genres`, `collections`, `tags`) отрисовал в серверном HTML
+   * хотя бы одну ссылку на термин. Хаб рисует только **линкуемый** термин, а линкуемость
+   * (`books-front/lib/seo/taxonomy-linkable.ts:55-74`) требует одновременно видимости,
+   * непустого счётчика книг на языке страницы и `autoIndexable`. До 08.09.2026 сид давал
+   * две категории с переводом только на `en` и ни одного тега — четыре хаба из пяти
+   * проверяемых оказывались пусты, и гейт краснел бы на составе сида, а не на регрессии.
+   *
+   * Проверяется здесь именно **сид**, а не логика листингов: их держат свои спеки
+   * на своих фикстурах и остались бы зелёными, даже если бы сид не клал ничего.
+   *
+   * ⚠️ Ассерты нижней границей, а не точным числом: соседние наборы идут по копии той же
+   * шаблонной базы и заводят свои термины.
+   */
+  describe.each(['en', 'es', 'fr', 'pt', 'ru'])('каталог для гейта SEO, язык %s', (lang) => {
+    /**
+     * 🔴 Условие линкуемости повторяет фронтовое целиком
+     * (`books-front/lib/seo/taxonomy-linkable.ts:55-74`): видимость, индексируемость,
+     * непустой счётчик книг на языке страницы и `autoIndexable`. Плюс перевод на этот язык -
+     * его в предикате нет, но без него хаб ссылки не нарисует, потому что берёт из перевода
+     * адрес; ассерт без этого условия зеленел бы на сиде без переводов.
+     *
+     * ⚠️ `isVisible` и `indexable` проверяются, хотя сид их не задаёт и живёт на умолчаниях
+     * схемы: оба поля правятся из админки (`category.service.ts:195-196`), и скрытый там
+     * термин оставил бы спеку зелёной при пустом хабе.
+     */
+    const linkableIn = (
+      items: Array<{
+        key?: string;
+        booksCount?: number;
+        autoIndexable?: boolean;
+        indexable?: boolean;
+        isVisible?: boolean;
+        translations?: Array<{ language: string; slug: string }>;
+      }>,
+    ) =>
+      items.filter(
+        (t) =>
+          t.isVisible !== false &&
+          t.indexable !== false &&
+          (t.booksCount ?? 0) > 0 &&
+          t.autoIndexable === true &&
+          Boolean(t.translations?.find((tr) => tr.language === lang)?.slug),
+      );
+
+    /**
+     * 🔴 Дерево, а не плоский список: хабы читают именно `GET /categories/tree?lang=&type=`
+     * (`books-front/app/[lang]/categories/page.tsx:46` и соседние, через
+     * `books-front/api/endpoints/public.ts:448`). Спека на `GET /:lang/categories`
+     * проверяла бы **вторую** проекцию языка: `CategoryService.list` и `getTree` держат
+     * её двумя копиями кода (`category.service.ts:157-172` и `:989-1005`), и разъехавшись,
+     * они оставили бы спеку зелёной при пустом хабе - тот же класс отказа, что `LEGACY-294`.
+     */
+    type TreeNode = Parameters<typeof linkableIn>[0][number] & { children?: TreeNode[] };
+    const flatten = (nodes: TreeNode[]): TreeNode[] =>
+      nodes.flatMap((n) => [n, ...flatten(n.children ?? [])]);
+
+    /**
+     * ⚠️ Ключ термина проверяется поимённо, а не «хоть один линкуемый». Старые `fantasy`
+     * и `bestsellers` имеют `en`-перевод и книгу от демо-книги, поэтому снятый вызов
+     * `seedSeoCatalog()` оставил бы `en/genre` и `en/collection` зелёными, а посадка
+     * краснела бы 18 случаями из 20 вместо всех двадцати.
+     */
+    it.each([
+      ['category', 'world-literature'],
+      ['genre', 'adventure'],
+      ['collection', 'school-reading'],
+    ])('сид даёт хабу %s линкуемый термин %s', async (type, key) => {
+      const res = await get(`/categories/tree?lang=${lang}&type=${type}`).expect(200);
+
+      expect(linkableIn(flatten(res.body as TreeNode[])).map((t) => t.key)).toContain(key);
+    });
+
+    it('сид даёт хабу tags линкуемый термин classics', async () => {
+      const res = await get(`/${lang}/tags?limit=100`).expect(200);
+      const body = res.body as { data: Parameters<typeof linkableIn>[0] };
+
+      expect(linkableIn(body.data).map((t) => t.key)).toContain('classics');
+    });
+  });
+
+  /**
+   * 🔴 Индексируемость обязана быть **заслужена данными**, а не унаследована умолчанием.
+   *
+   * `CategoryTranslation.autoIndexable` и `TagTranslation.autoIndexable` объявлены
+   * `@default(true)` (`prisma/schema.prisma:750,791`), и сид, пишущий переводы напрямую,
+   * получает `true` не написав ни строки. Термин с одной книгой выглядел бы в хабе так же,
+   * как термин с пятью, — ровно до первого вызова пересчёта: `resolveAutoIndexable`
+   * закрывает термин при `bookCount <= 2` (`seo/indexability/taxonomyIndexability.ts:19-37`),
+   * и хабы опустели бы молча, уже после мержа, на первой же публикации версии через админку
+   * (`book-version.service.ts:1203`).
+   *
+   * Поэтому тест не читает состояние, а **вызывает пересчёт** и смотрит, что термины
+   * сида его пережили: пять опубликованных версий на язык — это и есть порог открытия.
+   */
+  it('пересчёт индексируемости оставляет термины сида открытыми', async () => {
+    const indexability = app.get(TaxonomyIndexabilityService);
+
+    const categories = await prisma.category.findMany({
+      where: { key: { in: ['world-literature', 'adventure', 'school-reading'] } },
+      select: { id: true, key: true },
+    });
+    expect(categories).toHaveLength(3);
+
+    const tag = await prisma.tag.findUnique({ where: { key: 'classics' }, select: { id: true } });
+    expect(tag).not.toBeNull();
+
+    // 🔴 Сначала — состояние, которое оставил сам сид. `bookCount` он пишет сам
+    // (пересчёт из сида не зовётся), а карта сайта строит из этого поля кластер
+    // `hreflang`: нулевой кэш оставил бы все адреса терминов без `xhtml:link`,
+    // и проверка кластера не могла бы покраснеть.
+    const seededCategoryCounts = await prisma.categoryTranslation.findMany({
+      where: { categoryId: { in: categories.map((c) => c.id) } },
+      select: { bookCount: true },
+    });
+    expect(seededCategoryCounts).toHaveLength(15);
+    for (const t of seededCategoryCounts) expect(t.bookCount).toBeGreaterThanOrEqual(5);
+
+    const seededTagCounts = await prisma.tagTranslation.findMany({
+      where: { tagId: tag!.id },
+      select: { bookCount: true },
+    });
+    expect(seededTagCounts).toHaveLength(5);
+    for (const t of seededTagCounts) expect(t.bookCount).toBeGreaterThanOrEqual(5);
+
+    await indexability.recomputeForTerms(
+      categories.map((c) => c.id),
+      [tag!.id],
+    );
+
+    const categoryTranslations = await prisma.categoryTranslation.findMany({
+      where: { categoryId: { in: categories.map((c) => c.id) } },
+      select: {
+        language: true,
+        autoIndexable: true,
+        bookCount: true,
+        category: { select: { key: true } },
+      },
+    });
+    // Пять языков на каждую из трёх категорий — недосозданный язык виден по длине.
+    expect(categoryTranslations).toHaveLength(15);
+    for (const t of categoryTranslations) {
+      expect({ term: t.category.key, lang: t.language, open: t.autoIndexable }).toEqual({
+        term: t.category.key,
+        lang: t.language,
+        open: true,
+      });
+      expect(t.bookCount).toBeGreaterThanOrEqual(5);
+    }
+
+    const tagTranslations = await prisma.tagTranslation.findMany({
+      where: { tagId: tag!.id },
+      select: { language: true, autoIndexable: true, bookCount: true },
+    });
+    expect(tagTranslations).toHaveLength(5);
+    for (const t of tagTranslations) {
+      expect({ lang: t.language, open: t.autoIndexable }).toEqual({ lang: t.language, open: true });
+      expect(t.bookCount).toBeGreaterThanOrEqual(5);
+    }
+  }, 60_000);
 });

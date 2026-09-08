@@ -73,6 +73,615 @@ const VERSION_SEEDS = [
 /** Английская версия — она же заводится внутри `book.upsert`, чтобы книга не создавалась пустой. */
 const EN_VERSION = VERSION_SEEDS[0];
 
+/**
+ * Каталог под гейт SEO на пути PR (`Q1`, `LEGACY-016`).
+ *
+ * 🔴 Пять книг на язык - это не «побольше данных», а ровно порог индексируемости.
+ * `resolveAutoIndexable` (`src/modules/seo/indexability/taxonomyIndexability.ts:19-37`)
+ * открывает термин при `bookCount >= 5` и закрывает при `<= 2`, между - держит прежнее
+ * состояние. Хаб рисует ссылку только на линкуемый термин, а линкуемость требует
+ * `autoIndexable` (`books-front/lib/seo/taxonomy-linkable.ts:55-74`). Меньшее число книг
+ * дало бы зелёный аудит лишь потому, что колонка `autoIndexable` объявлена
+ * `@default(true)`, - и первый же вызов пересчёта (`book-version.service.ts:1203`,
+ * `category.service.ts:885`) молча опустошил бы хабы. Решение арбитра 08.09.2026,
+ * `books-app-docs/ai-context/decisions-log.md`.
+ *
+ * ⚠️ Термин каждого вида ровно один: `smoke`-прогон `books-front/scripts/seo-audit.mjs`
+ * требует одной живой ссылки на каждом из четырёх хабов, а не полного каталога.
+ * `fantasy` и `bestsellers` намеренно оставлены как были - они обслуживают другие спеки.
+ */
+const SEO_CATALOG_CATEGORIES: Array<{
+  key: string;
+  type: CategoryType;
+  name: string;
+  translations: Array<{ language: Language; name: string; slug: string }>;
+}> = [
+  {
+    key: 'world-literature',
+    type: CategoryType.category,
+    name: 'World literature',
+    translations: [
+      { language: Language.en, name: 'World literature', slug: 'world-literature' },
+      { language: Language.ru, name: 'Мировая литература', slug: 'mirovaya-literatura' },
+      { language: Language.es, name: 'Literatura mundial', slug: 'literatura-mundial' },
+      { language: Language.fr, name: 'Littérature mondiale', slug: 'litterature-mondiale' },
+      { language: Language.pt, name: 'Literatura mundial', slug: 'literatura-mundial' },
+    ],
+  },
+  {
+    key: 'adventure',
+    type: CategoryType.genre,
+    name: 'Adventure',
+    translations: [
+      { language: Language.en, name: 'Adventure', slug: 'adventure' },
+      { language: Language.ru, name: 'Приключения', slug: 'priklyucheniya' },
+      { language: Language.es, name: 'Aventuras', slug: 'aventuras' },
+      { language: Language.fr, name: 'Aventure', slug: 'aventure' },
+      { language: Language.pt, name: 'Aventura', slug: 'aventura' },
+    ],
+  },
+  {
+    key: 'school-reading',
+    type: CategoryType.collection,
+    name: 'School reading',
+    translations: [
+      { language: Language.en, name: 'School reading', slug: 'school-reading' },
+      { language: Language.ru, name: 'Школьное чтение', slug: 'shkolnoe-chtenie' },
+      { language: Language.es, name: 'Lectura escolar', slug: 'lectura-escolar' },
+      { language: Language.fr, name: 'Lecture scolaire', slug: 'lecture-scolaire' },
+      { language: Language.pt, name: 'Leitura escolar', slug: 'leitura-escolar' },
+    ],
+  },
+];
+
+/** Языки каталога: те же пять, на которых заведены переводы терминов и версии книг. */
+const SEO_CATALOG_LANGUAGES: Language[] = [
+  Language.en,
+  Language.ru,
+  Language.es,
+  Language.fr,
+  Language.pt,
+];
+
+const SEO_CATALOG_TAG = {
+  key: 'classics',
+  name: 'Classics',
+  translations: [
+    { language: Language.en, name: 'Classics', slug: 'classics' },
+    { language: Language.ru, name: 'Классика', slug: 'klassika' },
+    { language: Language.es, name: 'Clásicos', slug: 'clasicos' },
+    { language: Language.fr, name: 'Classiques', slug: 'classiques' },
+    { language: Language.pt, name: 'Clássicos', slug: 'classicos' },
+  ],
+};
+
+/**
+ * Пять книг каталога, каждая - на пяти языках. Названия настоящие: страницы книг
+ * попадают и в карту сайта, и в выборку смоук-прогона, а осмысленный заголовок
+ * отличает сломанную страницу от пустой быстрее, чем `seed-book-3`.
+ *
+ * ⚠️ Слаг версии уникален **в пределах языка** (`@@unique([language, slug])` на
+ * `BookVersion`), и с адресами терминов он не сталкивается вовсе: те живут
+ * в `CategoryTranslation`/`TagTranslation`. Поэтому одно и то же слово занимает
+ * слаг на разных языках свободно, и суффикса языка здесь нет ни у одной записи.
+ */
+const SEO_CATALOG_BOOKS: Array<{
+  slug: string;
+  author: string;
+  versions: Array<{ language: Language; title: string; slug: string; description: string }>;
+}> = [
+  {
+    slug: 'treasure-island',
+    author: 'Robert Louis Stevenson',
+    versions: [
+      {
+        language: Language.en,
+        title: 'Treasure Island',
+        slug: 'treasure-island',
+        description: 'A boy, a map and a mutiny on the way to the pirate hoard.',
+      },
+      {
+        language: Language.ru,
+        title: 'Остров сокровищ',
+        slug: 'ostrov-sokrovishch',
+        description: 'Мальчик, карта и мятеж на пути к пиратскому кладу.',
+      },
+      {
+        language: Language.es,
+        title: 'La isla del tesoro',
+        slug: 'la-isla-del-tesoro',
+        description: 'Un muchacho, un mapa y un motín camino del tesoro pirata.',
+      },
+      {
+        language: Language.fr,
+        title: "L'Île au trésor",
+        slug: 'l-ile-au-tresor',
+        description: 'Un garçon, une carte et une mutinerie sur la route du trésor.',
+      },
+      {
+        language: Language.pt,
+        title: 'A Ilha do Tesouro',
+        slug: 'a-ilha-do-tesouro',
+        description: 'Um rapaz, um mapa e um motim a caminho do tesouro pirata.',
+      },
+    ],
+  },
+  {
+    slug: 'the-jungle-book',
+    author: 'Rudyard Kipling',
+    versions: [
+      {
+        language: Language.en,
+        title: 'The Jungle Book',
+        slug: 'the-jungle-book',
+        description: 'A boy raised by wolves learns the law of the jungle.',
+      },
+      {
+        language: Language.ru,
+        title: 'Книга джунглей',
+        slug: 'kniga-dzhungley',
+        description: 'Мальчик, выращенный волками, учится закону джунглей.',
+      },
+      {
+        language: Language.es,
+        title: 'El libro de la selva',
+        slug: 'el-libro-de-la-selva',
+        description: 'Un niño criado por lobos aprende la ley de la selva.',
+      },
+      {
+        language: Language.fr,
+        title: 'Le Livre de la jungle',
+        slug: 'le-livre-de-la-jungle',
+        description: 'Un enfant élevé par des loups apprend la loi de la jungle.',
+      },
+      {
+        language: Language.pt,
+        title: 'O Livro da Selva',
+        slug: 'o-livro-da-selva',
+        description: 'Um menino criado por lobos aprende a lei da selva.',
+      },
+    ],
+  },
+  {
+    slug: 'around-the-world-in-eighty-days',
+    author: 'Jules Verne',
+    versions: [
+      {
+        language: Language.en,
+        title: 'Around the World in Eighty Days',
+        slug: 'around-the-world-in-eighty-days',
+        description: 'A wager sends Phileas Fogg racing the calendar around the globe.',
+      },
+      {
+        language: Language.ru,
+        title: 'Вокруг света за восемьдесят дней',
+        slug: 'vokrug-sveta-za-vosemdesyat-dney',
+        description: 'Пари отправляет Филеаса Фогга в гонку с календарём вокруг света.',
+      },
+      {
+        language: Language.es,
+        title: 'La vuelta al mundo en ochenta días',
+        slug: 'la-vuelta-al-mundo-en-ochenta-dias',
+        description: 'Una apuesta lanza a Phileas Fogg a una carrera contra el calendario.',
+      },
+      {
+        language: Language.fr,
+        title: 'Le Tour du monde en quatre-vingts jours',
+        slug: 'le-tour-du-monde-en-quatre-vingts-jours',
+        description: 'Un pari lance Phileas Fogg dans une course contre le calendrier.',
+      },
+      {
+        language: Language.pt,
+        title: 'A Volta ao Mundo em Oitenta Dias',
+        slug: 'a-volta-ao-mundo-em-oitenta-dias',
+        description: 'Uma aposta lança Phileas Fogg numa corrida contra o calendário.',
+      },
+    ],
+  },
+  {
+    slug: 'the-three-musketeers',
+    author: 'Alexandre Dumas',
+    versions: [
+      {
+        language: Language.en,
+        title: 'The Three Musketeers',
+        slug: 'the-three-musketeers',
+        description: "A Gascon joins the king's musketeers and their quarrels.",
+      },
+      {
+        language: Language.ru,
+        title: 'Три мушкетёра',
+        slug: 'tri-mushketyora',
+        description: 'Гасконец попадает в королевские мушкетёры и в их распри.',
+      },
+      {
+        language: Language.es,
+        title: 'Los tres mosqueteros',
+        slug: 'los-tres-mosqueteros',
+        description: 'Un gascón entra en los mosqueteros del rey y en sus pleitos.',
+      },
+      {
+        language: Language.fr,
+        title: 'Les Trois Mousquetaires',
+        slug: 'les-trois-mousquetaires',
+        description: 'Un Gascon entre chez les mousquetaires du roi et dans leurs querelles.',
+      },
+      {
+        language: Language.pt,
+        title: 'Os Três Mosqueteiros',
+        slug: 'os-tres-mosqueteiros',
+        description: 'Um gascão entra para os mosqueteiros do rei e para as suas contendas.',
+      },
+    ],
+  },
+  {
+    slug: 'twenty-thousand-leagues-under-the-sea',
+    author: 'Jules Verne',
+    versions: [
+      {
+        language: Language.en,
+        title: 'Twenty Thousand Leagues Under the Sea',
+        slug: 'twenty-thousand-leagues-under-the-sea',
+        description: 'Captain Nemo takes three captives on a voyage beneath the oceans.',
+      },
+      {
+        language: Language.ru,
+        title: 'Двадцать тысяч лье под водой',
+        slug: 'dvadtsat-tysyach-le-pod-vodoy',
+        description: 'Капитан Немо увозит троих пленников в плавание под океанами.',
+      },
+      {
+        language: Language.es,
+        title: 'Veinte mil leguas de viaje submarino',
+        slug: 'veinte-mil-leguas-de-viaje-submarino',
+        description: 'El capitán Nemo lleva a tres cautivos a un viaje bajo los océanos.',
+      },
+      {
+        language: Language.fr,
+        title: 'Vingt mille lieues sous les mers',
+        slug: 'vingt-mille-lieues-sous-les-mers',
+        description: 'Le capitaine Nemo emmène trois captifs sous les océans.',
+      },
+      {
+        language: Language.pt,
+        title: 'Vinte Mil Léguas Submarinas',
+        slug: 'vinte-mil-leguas-submarinas',
+        description: 'O capitão Nemo leva três cativos numa viagem sob os oceanos.',
+      },
+    ],
+  },
+];
+
+/**
+ * Правовая цепочка одной книги: `RightsIntake` -> `RightsProfile` -> `RightsReview`
+ * (плюс импорт отчёта). Возвращает три ссылки, которые кладутся в саму книгу и в снимок
+ * каждой её версии.
+ *
+ * Вынесена из `main` не ради красоты: с 08.09.2026 (`Q1`, `LEGACY-016`) сид заводит
+ * шесть книг вместо одной, а цепочка у каждой своя - `RightsProfile.rightsIntakeId`
+ * и `RightsReview.rightsProfileId` связывают её с конкретной заявкой. Одна цепочка
+ * на всех означала бы, что вердикт по одной книге стоит снимком на чужих версиях.
+ *
+ * LEGACY-200: `RightsIntake`/`RightsProfile`/`RightsReview`/`RightsReviewImport` больше не
+ * получают `id` литералом - `@default(uuid())` в схеме реален, только если ничто в коде
+ * не подставляет своё значение. Идемпотентность сида (повторный прогон поверх той же базы)
+ * держится не на фиксированном id этих четырёх записей, а на `Book.slug`: если книга с этим
+ * слагом уже привязана к цепочке прав, цепочка переиспользуется по ссылкам из самой книги,
+ * а не создаётся заново.
+ *
+ * ⚠️ Цепочка заводится одной транзакцией по той же причине, что и блок версий ниже.
+ * Прежняя форма на `upsert` с фиксированными id самолечилась: обрыв посередине
+ * чинился следующим прогоном, потому что ключ был известен заранее. Теперь ключа нет,
+ * и оборванная на середине цепочка (Ctrl+C, `P1017`, OOM контейнера на шаге сида
+ * в конвейере фронта - `LEGACY-294`) осталась бы без книги, а значит недостижимой
+ * навсегда: следующий прогон её не найдёт и заведёт вторую.
+ */
+async function ensureRightsChain(
+  bookSlug: string,
+  candidate: { title: string; author: string; summaryRu: string },
+) {
+  return prisma.$transaction(
+    async (tx) => {
+      const existingBook = await tx.book.findUnique({
+        where: { slug: bookSlug },
+        select: {
+          rightsIntakeId: true,
+          currentRightsProfileId: true,
+          approvedRightsReviewId: true,
+        },
+      });
+
+      // 🔴 Переиспользуется **каждая ссылка по отдельности**, а не тройка целиком.
+      // Условие «все три на месте, иначе создаём заново» строило новую цепочку из-за
+      // одной недостающей строки, а живые оставляло висеть без владельца. Прежний
+      // `upsert` по фиксированному id чинил ровно недостающую запись - это поведение
+      // и восстановлено. `findUnique` вместо доверия ссылке обязателен: колонки
+      // `Book.currentRightsProfileId` и `approvedRightsReviewId` внешнего ключа
+      // не несут, и ссылка переживает удаление строки, на которую указывает.
+      const intake =
+        (existingBook?.rightsIntakeId
+          ? await tx.rightsIntake.findUnique({
+              where: { id: existingBook.rightsIntakeId },
+              select: { id: true },
+            })
+          : null) ??
+        (await tx.rightsIntake.create({
+          data: {
+            candidateTitle: candidate.title,
+            candidateAuthor: candidate.author,
+            originalLanguage: 'en',
+            originalTitle: candidate.title,
+            workflowStatus: 'APPROVED',
+            targetLanguages: ['en', 'es', 'fr', 'pt', 'ru'],
+            targetCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
+            plannedContentTypes: ['text', 'audio'],
+          },
+          select: { id: true },
+        }));
+
+      const profile =
+        (existingBook?.currentRightsProfileId
+          ? await tx.rightsProfile.findUnique({
+              where: { id: existingBook.currentRightsProfileId },
+              select: { id: true },
+            })
+          : null) ??
+        (await tx.rightsProfile.create({
+          data: {
+            rightsIntakeId: intake.id,
+            status: 'APPROVED',
+            isCurrent: true,
+            overallStatus: 'PUBLISHABLE',
+            publicationGate: 'ALLOW',
+            confidence: 'HIGH',
+            summaryRu: candidate.summaryRu,
+            conclusionRu: 'Approved for publication',
+          },
+          select: { id: true },
+        }));
+
+      // Импорт заводится только вместе с ревью: он существует ради него одного
+      // (`RightsReview.rightsReviewImportId` объявлен `@unique`), и отдельной ссылки
+      // на импорт у книги нет - искать его при живом ревью незачем.
+      const review =
+        (existingBook?.approvedRightsReviewId
+          ? await tx.rightsReview.findUnique({
+              where: { id: existingBook.approvedRightsReviewId },
+              select: { id: true },
+            })
+          : null) ??
+        (await (async () => {
+          const createdImport = await tx.rightsReviewImport.create({
+            data: {
+              rightsIntakeId: intake.id,
+              importStatus: 'VALIDATED',
+              isCurrent: true,
+              reportJson: { source: 'seed' },
+            },
+            select: { id: true },
+          });
+
+          return tx.rightsReview.create({
+            data: {
+              rightsProfileId: profile.id,
+              rightsReviewImportId: createdImport.id,
+              status: 'HUMAN_APPROVED',
+              reviewerType: 'HUMAN',
+              overallStatus: 'PUBLISHABLE',
+              publicationGate: 'ALLOW',
+              confidence: 'HIGH',
+              summaryRu: 'Public domain work',
+              conclusionRu: 'Approved',
+              approvedAt: new Date(),
+            },
+            select: { id: true },
+          });
+        })());
+
+      // Разрыв цикла: `RightsIntake.approvedReviewId` указывает на ревью, которого
+      // в момент создания самого intake ещё не существует. Ставится безусловно —
+      // при переиспользованном intake и заново созданном ревью ссылка иначе осталась бы
+      // на удалённой строке.
+      await tx.rightsIntake.update({
+        where: { id: intake.id },
+        data: { approvedReviewId: review.id },
+      });
+
+      return { intake, profile, review };
+    },
+    { timeout: 30_000, maxWait: 15_000 },
+  );
+}
+
+/**
+ * Термины и книги каталога: три категории, один тег и пять книг на пяти языках.
+ *
+ * Порядок внутри важен: термины заводятся до книг, потому что привязка `BookCategory`
+ * ссылается и на версию, и на термин, а не создаёт ни того, ни другого.
+ *
+ * ⚠️ `autoIndexable` и `bookCount` на переводах терминов не проставляются намеренно.
+ * Это кэш пересчёта (`TaxonomyIndexabilityService`), и сид не имеет права объявлять
+ * индексируемость в обход порога: пять опубликованных версий на язык - то самое условие,
+ * при котором пересчёт откроет термин сам. Проставленный руками `true` выглядел бы
+ * так же, но пережил бы удаление книг.
+ */
+async function seedSeoCatalog(): Promise<void> {
+  // ⚠️ Термин и все его переводы - одной транзакцией, тем же приёмом, что версии и переводы
+  // автора ниже. Обрыв между `category.upsert` и его `fr`-переводом оставляет термин без
+  // языка: `GET /categories/tree?lang=fr` вернёт узел без `fr` в `translations`, и хаб
+  // коллекций на этом языке ссылки не нарисует при ненулевом коде возврата сида.
+  const { categories, tag } = await prisma.$transaction(
+    async (tx) => {
+      const categories: Array<{ id: string }> = [];
+      for (const term of SEO_CATALOG_CATEGORIES) {
+        const category = await tx.category.upsert({
+          where: { key: term.key },
+          // Тип и имя обновляются вместе со слагами переводов: иначе правка `type`
+          // в таблице выше применилась бы к переводу и не применилась бы к термину,
+          // и перенесённый из жанров в категории `adventure` продолжил бы висеть
+          // в жанрах при диффе, выглядящем применённым.
+          update: { type: term.type, name: term.name },
+          create: { key: term.key, type: term.type, name: term.name, slug: term.key },
+          select: { id: true },
+        });
+        categories.push(category);
+
+        for (const t of term.translations) {
+          await tx.categoryTranslation.upsert({
+            where: { categoryId_language: { categoryId: category.id, language: t.language } },
+            update: { name: t.name, slug: t.slug },
+            create: { categoryId: category.id, language: t.language, name: t.name, slug: t.slug },
+          });
+        }
+      }
+
+      const tag = await tx.tag.upsert({
+        where: { key: SEO_CATALOG_TAG.key },
+        update: { name: SEO_CATALOG_TAG.name },
+        create: {
+          key: SEO_CATALOG_TAG.key,
+          name: SEO_CATALOG_TAG.name,
+          slug: SEO_CATALOG_TAG.key,
+        },
+        select: { id: true },
+      });
+      for (const t of SEO_CATALOG_TAG.translations) {
+        await tx.tagTranslation.upsert({
+          where: { tagId_language: { tagId: tag.id, language: t.language } },
+          update: { name: t.name, slug: t.slug },
+          create: { tagId: tag.id, language: t.language, name: t.name, slug: t.slug },
+        });
+      }
+
+      return { categories, tag };
+    },
+    { timeout: 30_000, maxWait: 15_000 },
+  );
+
+  for (const bookSeed of SEO_CATALOG_BOOKS) {
+    const { intake, profile, review } = await ensureRightsChain(bookSeed.slug, {
+      title: bookSeed.versions[0].title,
+      author: bookSeed.author,
+      summaryRu: 'Public domain work',
+    });
+
+    const book = await prisma.book.upsert({
+      where: { slug: bookSeed.slug },
+      update: {
+        rightsIntakeId: intake.id,
+        currentRightsProfileId: profile.id,
+        approvedRightsReviewId: review.id,
+        rightsCreatedAt: new Date(),
+      },
+      create: {
+        slug: bookSeed.slug,
+        rightsIntakeId: intake.id,
+        currentRightsProfileId: profile.id,
+        approvedRightsReviewId: review.id,
+        rightsCreatedAt: new Date(),
+      },
+    });
+
+    // ⚠️ Версии и привязки одной транзакцией по той же причине, что и блок демо-книги
+    // выше: обрыв посередине оставляет книгу с частью языков, и хаб на недосозданном
+    // языке молча пуст при ненулевом коде возврата сида.
+    await prisma.$transaction(
+      async (tx) => {
+        for (const v of bookSeed.versions) {
+          const version = await tx.bookVersion.upsert({
+            where: { bookId_language: { bookId: book.id, language: v.language } },
+            update: {
+              title: v.title,
+              slug: v.slug,
+              author: bookSeed.author,
+              description: v.description,
+              status: 'published',
+              rightsProfileId: profile.id,
+              approvedRightsReviewId: review.id,
+            },
+            create: {
+              bookId: book.id,
+              language: v.language,
+              title: v.title,
+              slug: v.slug,
+              author: bookSeed.author,
+              description: v.description,
+              coverImageUrl: 'https://example.com/cover.jpg',
+              type: BookType.text,
+              isFree: true,
+              // LEGACY-267: схема даёт `draft` умолчанием - публичность прописывается явно.
+              status: 'published',
+              rightsProfileId: profile.id,
+              approvedRightsReviewId: review.id,
+              rightsStatus: 'APPROVED',
+              rightsAllowedCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
+              rightsBlockedCountryCodes: [],
+              rightsLicenseRequiredCountryCodes: [],
+              rightsPendingCountryCodes: [],
+            },
+            select: { id: true },
+          });
+
+          for (const category of categories) {
+            await tx.bookCategory.upsert({
+              where: {
+                bookVersionId_categoryId: { bookVersionId: version.id, categoryId: category.id },
+              },
+              update: {},
+              create: { bookVersionId: version.id, categoryId: category.id },
+            });
+          }
+
+          await tx.bookTag.upsert({
+            where: { bookVersionId_tagId: { bookVersionId: version.id, tagId: tag.id } },
+            update: {},
+            create: { bookVersionId: version.id, tagId: tag.id },
+          });
+        }
+      },
+      { timeout: 60_000, maxWait: 15_000 },
+    );
+  }
+
+  /**
+   * 🔴 `bookCount` на переводе - кэш, который ведёт `TaxonomyIndexabilityService`, и сид
+   * пишет его сам только потому, что пересчёт здесь не зовётся (`autoIndexable` обязан
+   * оставаться заслуженным порогом, а не объявленным). Без этой строки поле остаётся
+   * схемным нулём при пяти реальных книгах, и расходятся два потребителя: хабы читают
+   * живой счёт сырым SQL (`category.service.ts:146-155`) и работают, а карта сайта строит
+   * кластер `hreflang` **из кэша** (`books-front/lib/seo/hreflang-alternates.ts:83-104`
+   * через `app/sitemaps/[filename]/route.ts:313`) - и отдаёт все двадцать адресов терминов
+   * вообще без `xhtml:link`, включая self-ссылку. Проверка кластера на такой базе не может
+   * покраснеть никогда. Решение арбитра 08.09.2026, `books-app-docs/ai-context/decisions-log.md`.
+   *
+   * ⚠️ Число берётся запросом по тому же составу, что завёл сид, а не литералом: состав
+   * каталога правится таблицами выше, и литерал разошёлся бы с ними молча. Считаются строки
+   * связи с опубликованной версией нужного языка - ровно так же, как их считает пересчёт
+   * (`taxonomy-indexability.service.ts:37-54`).
+   */
+  for (const category of categories) {
+    for (const language of SEO_CATALOG_LANGUAGES) {
+      const bookCount = await prisma.bookCategory.count({
+        where: { categoryId: category.id, bookVersion: { language, status: 'published' } },
+      });
+      await prisma.categoryTranslation.updateMany({
+        where: { categoryId: category.id, language },
+        data: { bookCount },
+      });
+    }
+  }
+
+  for (const language of SEO_CATALOG_LANGUAGES) {
+    const bookCount = await prisma.bookTag.count({
+      where: { tagId: tag.id, bookVersion: { language, status: 'published' } },
+    });
+    await prisma.tagTranslation.updateMany({
+      where: { tagId: tag.id, language },
+      data: { bookCount },
+    });
+  }
+}
+
 async function main() {
   // Seed Roles
   await prisma.$transaction([
@@ -158,131 +767,12 @@ async function main() {
     }
   }
 
-  // Seed Book with Version via Rights Intake Workflow.
-  //
-  // LEGACY-200: `RightsIntake`/`RightsProfile`/`RightsReview`/`RightsReviewImport` больше не
-  // получают `id` литералом - `@default(uuid())` в схеме реален, только если ничто в коде
-  // не подставляет своё значение. Идемпотентность сида (повторный прогон поверх той же базы)
-  // держится не на фиксированном id этих четырёх записей, а на `Book.slug`: если книга с этим
-  // слагом уже привязана к цепочке прав, цепочка переиспользуется по ссылкам из самой книги,
-  // а не создаётся заново.
-  // ⚠️ Цепочка заводится одной транзакцией по той же причине, что и блок версий ниже.
-  // Прежняя форма на `upsert` с фиксированными id самолечилась: обрыв посередине
-  // чинился следующим прогоном, потому что ключ был известен заранее. Теперь ключа нет,
-  // и оборванная на середине цепочка (Ctrl+C, `P1017`, OOM контейнера на шаге сида
-  // в конвейере фронта - `LEGACY-294`) осталась бы без книги, а значит недостижимой
-  // навсегда: следующий прогон её не найдёт и заведёт вторую.
-  const { intake, profile, review } = await prisma.$transaction(
-    async (tx) => {
-      const existingBook = await tx.book.findUnique({
-        where: { slug: SEED_BOOK_SLUG },
-        select: {
-          rightsIntakeId: true,
-          currentRightsProfileId: true,
-          approvedRightsReviewId: true,
-        },
-      });
-
-      // 🔴 Переиспользуется **каждая ссылка по отдельности**, а не тройка целиком.
-      // Условие «все три на месте, иначе создаём заново» строило новую цепочку из-за
-      // одной недостающей строки, а живые оставляло висеть без владельца. Прежний
-      // `upsert` по фиксированному id чинил ровно недостающую запись - это поведение
-      // и восстановлено. `findUnique` вместо доверия ссылке обязателен: колонки
-      // `Book.currentRightsProfileId` и `approvedRightsReviewId` внешнего ключа
-      // не несут, и ссылка переживает удаление строки, на которую указывает.
-      const intake =
-        (existingBook?.rightsIntakeId
-          ? await tx.rightsIntake.findUnique({
-              where: { id: existingBook.rightsIntakeId },
-              select: { id: true },
-            })
-          : null) ??
-        (await tx.rightsIntake.create({
-          data: {
-            candidateTitle: "Harry Potter and the Philosopher's Stone",
-            candidateAuthor: 'J.K. Rowling',
-            originalLanguage: 'en',
-            originalTitle: "Harry Potter and the Philosopher's Stone",
-            workflowStatus: 'APPROVED',
-            targetLanguages: ['en', 'es', 'fr', 'pt', 'ru'],
-            targetCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
-            plannedContentTypes: ['text', 'audio'],
-          },
-          select: { id: true },
-        }));
-
-      const profile =
-        (existingBook?.currentRightsProfileId
-          ? await tx.rightsProfile.findUnique({
-              where: { id: existingBook.currentRightsProfileId },
-              select: { id: true },
-            })
-          : null) ??
-        (await tx.rightsProfile.create({
-          data: {
-            rightsIntakeId: intake.id,
-            status: 'APPROVED',
-            isCurrent: true,
-            overallStatus: 'PUBLISHABLE',
-            publicationGate: 'ALLOW',
-            confidence: 'HIGH',
-            summaryRu: 'Public domain work - author died in 1946',
-            conclusionRu: 'Approved for publication',
-          },
-          select: { id: true },
-        }));
-
-      // Импорт заводится только вместе с ревью: он существует ради него одного
-      // (`RightsReview.rightsReviewImportId` объявлен `@unique`), и отдельной ссылки
-      // на импорт у книги нет - искать его при живом ревью незачем.
-      const review =
-        (existingBook?.approvedRightsReviewId
-          ? await tx.rightsReview.findUnique({
-              where: { id: existingBook.approvedRightsReviewId },
-              select: { id: true },
-            })
-          : null) ??
-        (await (async () => {
-          const createdImport = await tx.rightsReviewImport.create({
-            data: {
-              rightsIntakeId: intake.id,
-              importStatus: 'VALIDATED',
-              isCurrent: true,
-              reportJson: { source: 'seed' },
-            },
-            select: { id: true },
-          });
-
-          return tx.rightsReview.create({
-            data: {
-              rightsProfileId: profile.id,
-              rightsReviewImportId: createdImport.id,
-              status: 'HUMAN_APPROVED',
-              reviewerType: 'HUMAN',
-              overallStatus: 'PUBLISHABLE',
-              publicationGate: 'ALLOW',
-              confidence: 'HIGH',
-              summaryRu: 'Public domain work',
-              conclusionRu: 'Approved',
-              approvedAt: new Date(),
-            },
-            select: { id: true },
-          });
-        })());
-
-      // Разрыв цикла: `RightsIntake.approvedReviewId` указывает на ревью, которого
-      // в момент создания самого intake ещё не существует. Ставится безусловно —
-      // при переиспользованном intake и заново созданном ревью ссылка иначе осталась бы
-      // на удалённой строке.
-      await tx.rightsIntake.update({
-        where: { id: intake.id },
-        data: { approvedReviewId: review.id },
-      });
-
-      return { intake, profile, review };
-    },
-    { timeout: 30_000, maxWait: 15_000 },
-  );
+  // Демо-книга через правовой конвейер: цепочка прав, затем сама книга со ссылками на неё.
+  const { intake, profile, review } = await ensureRightsChain(SEED_BOOK_SLUG, {
+    title: EN_VERSION.title,
+    author: EN_VERSION.author,
+    summaryRu: 'Public domain work - author died in 1946',
+  });
 
   // Create Book with rights linkage
   const book = await prisma.book.upsert({
@@ -461,7 +951,9 @@ async function main() {
     ),
   );
 
-  console.log('Seeded categories and a sample book with version');
+  await seedSeoCatalog();
+
+  console.log('Seeded categories, a sample book with versions and the SEO catalog');
 }
 
 main()
