@@ -166,13 +166,56 @@ describe('RightsLicensesService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    // LEGACY-017: три кода приходят из общего assertCountryCodes, где сообщение передаётся
+    // отдельным аргументом. Без этих проверок перестановка аргументов местами компилируется
+    // молча, и наружу уезжает русский текст в поле `code`.
+    it('rejects EXCEPT_COUNTRY_LIST scope without excluded country codes', async () => {
+      await expect(
+        service.create(
+          validDto({ territoryScope: RightsLicenseTerritoryScope.EXCEPT_COUNTRY_LIST }),
+          'user-1',
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'EXCLUDED_COUNTRY_CODES_REQUIRED',
+          message: expect.stringContaining('территориальном охвате'),
+        },
+      });
+    });
+
+    it('names the code, not the message, when the country list is empty', async () => {
+      await expect(
+        service.create(
+          validDto({ territoryScope: RightsLicenseTerritoryScope.COUNTRY_LIST }),
+          'user-1',
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'COUNTRY_CODES_REQUIRED',
+          message: expect.stringContaining('хотя бы одну страну'),
+        },
+      });
+    });
+
+    it('rejects a country code that is not ISO 3166-1 alpha-2', async () => {
+      await expect(
+        service.create(
+          validDto({
+            territoryScope: RightsLicenseTerritoryScope.COUNTRY_LIST,
+            countryCodes: ['ESP'],
+          }),
+          'user-1',
+        ),
+      ).rejects.toMatchObject({ response: { code: 'INVALID_COUNTRY_CODE' } });
+    });
+
     it('rejects a perpetual license that also has an expiry date', async () => {
       await expect(
         service.create(
           validDto({ isPerpetual: true, expiresAt: daysFromNow(365).toISOString() }),
           'user-1',
         ),
-      ).rejects.toThrow('PERPETUAL_WITH_EXPIRY');
+      ).rejects.toMatchObject({ response: { code: 'PERPETUAL_WITH_EXPIRY' } });
     });
 
     it('rejects expiresAt earlier than effectiveFrom', async () => {
@@ -184,13 +227,13 @@ describe('RightsLicensesService', () => {
           }),
           'user-1',
         ),
-      ).rejects.toThrow('INVALID_LICENSE_PERIOD');
+      ).rejects.toMatchObject({ response: { code: 'INVALID_LICENSE_PERIOD' } });
     });
 
     it('rejects attributionRequired without attribution text', async () => {
       await expect(
         service.create(validDto({ attributionRequired: true }), 'user-1'),
-      ).rejects.toThrow('ATTRIBUTION_TEXT_REQUIRED');
+      ).rejects.toMatchObject({ response: { code: 'ATTRIBUTION_TEXT_REQUIRED' } });
     });
 
     it('rejects activating an already expired license', async () => {
@@ -202,13 +245,50 @@ describe('RightsLicensesService', () => {
           }),
           'user-1',
         ),
-      ).rejects.toThrow('CANNOT_ACTIVATE_EXPIRED_LICENSE');
+      ).rejects.toMatchObject({ response: { code: 'CANNOT_ACTIVATE_EXPIRED_LICENSE' } });
     });
 
     it('rejects a malformed documentSha256', async () => {
       await expect(
         service.create(validDto({ documentSha256: 'not-a-hash' }), 'user-1'),
-      ).rejects.toThrow('INVALID_DOCUMENT_SHA256');
+      ).rejects.toMatchObject({ response: { code: 'INVALID_DOCUMENT_SHA256' } });
+    });
+
+    it('rejects a blank title', async () => {
+      await expect(service.create(validDto({ title: '   ' }), 'user-1')).rejects.toMatchObject({
+        response: { code: 'TITLE_REQUIRED' },
+      });
+    });
+
+    it('rejects a blank licensor', async () => {
+      await expect(service.create(validDto({ licensor: '  ' }), 'user-1')).rejects.toMatchObject({
+        response: { code: 'LICENSOR_REQUIRED' },
+      });
+    });
+
+    it('rejects an unsupported language code', async () => {
+      await expect(
+        service.create(validDto({ languageCodes: ['de'] }), 'user-1'),
+      ).rejects.toMatchObject({ response: { code: 'INVALID_LANGUAGE_CODE' } });
+    });
+
+    it('rejects an unknown media format', async () => {
+      await expect(
+        service.create(
+          validDto({
+            mediaFormats: ['HOLOGRAM'] as unknown as CreateRightsLicenseDto['mediaFormats'],
+          }),
+          'user-1',
+        ),
+      ).rejects.toMatchObject({ response: { code: 'INVALID_MEDIA_FORMAT' } });
+    });
+
+    it('rejects a document media asset that is missing or deleted', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({ id: 'asset-1', isDeleted: true });
+
+      await expect(
+        service.create(validDto({ documentMediaAssetId: 'asset-1' }), 'user-1'),
+      ).rejects.toMatchObject({ response: { code: 'MEDIA_ASSET_NOT_FOUND' } });
     });
   });
 
@@ -218,8 +298,8 @@ describe('RightsLicensesService', () => {
         makeRecord({ status: RightsLicenseStatus.REVOKED, revokedAt: NOW }),
       );
 
-      await expect(service.update('lic-1', { title: 'Новое имя' }, 'user-1')).rejects.toThrow(
-        'LICENSE_REVOKED_IMMUTABLE',
+      await expect(service.update('lic-1', { title: 'Новое имя' }, 'user-1')).rejects.toMatchObject(
+        { response: { code: 'LICENSE_REVOKED_IMMUTABLE' } },
       );
     });
   });
@@ -228,9 +308,9 @@ describe('RightsLicensesService', () => {
     it('requires a reason', async () => {
       prisma.rightsLicense.findUnique.mockResolvedValue(makeRecord());
 
-      await expect(service.revoke('lic-1', { reasonRu: '   ' }, 'user-1')).rejects.toThrow(
-        'REVOCATION_REASON_REQUIRED',
-      );
+      await expect(service.revoke('lic-1', { reasonRu: '   ' }, 'user-1')).rejects.toMatchObject({
+        response: { code: 'REVOCATION_REASON_REQUIRED' },
+      });
     });
 
     it('sets revocation fields and records a REVOKED event', async () => {
@@ -280,7 +360,7 @@ describe('RightsLicensesService', () => {
           { linkType: RightsLicenseLinkType.RIGHTS_PROFILE, bookVersionId: 'version-1' },
           'user-1',
         ),
-      ).rejects.toThrow('LINK_TARGET_MISMATCH');
+      ).rejects.toMatchObject({ response: { code: 'LINK_TARGET_MISMATCH' } });
     });
 
     it('returns the existing link instead of creating a duplicate', async () => {

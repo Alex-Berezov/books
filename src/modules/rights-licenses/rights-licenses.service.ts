@@ -34,6 +34,17 @@ const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * LEGACY-017: тело ошибки несёт код рядом с человеко-читаемым сообщением — тот же формат,
+ * что и `rights-claims.service.ts`, где однотипный хелпер уже есть.
+ */
+const fail: (code: string, messageRu: string) => never = (code, messageRu) => {
+  throw new BadRequestException({ message: messageRu, code });
+};
+
+/** Один и тот же отказ поднимается из двух веток `link` — текст держится одной строкой. */
+const LINK_TARGET_MISMATCH_MESSAGE = 'Тип связи не соответствует переданной цели.';
+
 /** Which FK on RightsLicenseLink each link type is allowed to populate. */
 const LINK_TARGET_FIELDS: Record<RightsLicenseLinkType, keyof LinkTargets> = {
   [RightsLicenseLinkType.RIGHTS_PROFILE]: 'rightsProfileId',
@@ -246,7 +257,7 @@ export class RightsLicensesService {
     if (existing.status === RightsLicenseStatus.REVOKED || existing.revokedAt) {
       const touchesMoreThanNotes = Object.keys(dto).some((key) => key !== 'notesRu');
       if (touchesMoreThanNotes) {
-        throw new BadRequestException('LICENSE_REVOKED_IMMUTABLE');
+        fail('LICENSE_REVOKED_IMMUTABLE', 'Лицензия отозвана — менять можно только поле notesRu.');
       }
     }
 
@@ -291,7 +302,7 @@ export class RightsLicensesService {
     const existing = await this.licenseDelegate.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('RightsLicense not found');
     if (!dto.reasonRu || dto.reasonRu.trim().length === 0) {
-      throw new BadRequestException('REVOCATION_REASON_REQUIRED');
+      fail('REVOCATION_REASON_REQUIRED', 'Для отзыва лицензии нужно указать причину.');
     }
 
     const warnings: string[] = [];
@@ -346,11 +357,11 @@ export class RightsLicensesService {
     const providedFields = Object.keys(targets);
 
     if (providedFields.length !== 1 || providedFields[0] !== targetField) {
-      throw new BadRequestException('LINK_TARGET_MISMATCH');
+      fail('LINK_TARGET_MISMATCH', LINK_TARGET_MISMATCH_MESSAGE);
     }
 
     const targetId = targets[targetField];
-    if (!targetId) throw new BadRequestException('LINK_TARGET_MISMATCH');
+    if (!targetId) fail('LINK_TARGET_MISMATCH', LINK_TARGET_MISMATCH_MESSAGE);
 
     await this.assertLinkTargetExists(dto.linkType, targetId);
 
@@ -455,9 +466,8 @@ export class RightsLicensesService {
   ): Promise<void> {
     const title = dto.title ?? existing?.title;
     const licensor = dto.licensor ?? existing?.licensor;
-    if (!title || title.trim().length === 0) throw new BadRequestException('TITLE_REQUIRED');
-    if (!licensor || licensor.trim().length === 0)
-      throw new BadRequestException('LICENSOR_REQUIRED');
+    if (!title || title.trim().length === 0) fail('TITLE_REQUIRED', 'Укажите название лицензии.');
+    if (!licensor || licensor.trim().length === 0) fail('LICENSOR_REQUIRED', 'Укажите лицензиара.');
 
     const territoryScope =
       dto.territoryScope ?? existing?.territoryScope ?? RightsLicenseTerritoryScope.UNKNOWN;
@@ -466,23 +476,33 @@ export class RightsLicensesService {
       dto.excludedCountryCodes ?? toStringArray(existing?.excludedCountryCodes);
 
     if (territoryScope === RightsLicenseTerritoryScope.COUNTRY_LIST) {
-      this.assertCountryCodes(countryCodes, 'COUNTRY_CODES_REQUIRED');
+      this.assertCountryCodes(
+        countryCodes,
+        'COUNTRY_CODES_REQUIRED',
+        'При территориальном охвате "список стран" нужно указать хотя бы одну страну.',
+      );
     }
     if (territoryScope === RightsLicenseTerritoryScope.EXCEPT_COUNTRY_LIST) {
-      this.assertCountryCodes(excludedCountryCodes, 'EXCLUDED_COUNTRY_CODES_REQUIRED');
+      this.assertCountryCodes(
+        excludedCountryCodes,
+        'EXCLUDED_COUNTRY_CODES_REQUIRED',
+        'При территориальном охвате "все страны кроме" нужно указать хотя бы одну исключённую страну.',
+      );
     }
 
     const languageCodes = dto.languageCodes ?? toStringArray(existing?.languageCodes);
     for (const code of languageCodes) {
       if (!SUPPORTED_LANGUAGE_CODES.includes(code.toLowerCase())) {
-        throw new BadRequestException('INVALID_LANGUAGE_CODE');
+        fail('INVALID_LANGUAGE_CODE', 'Код языка не поддерживается.');
       }
     }
 
     const mediaFormats = dto.mediaFormats ?? toStringArray(existing?.mediaFormats);
     const allowedFormats = Object.values(RightsLicenseMediaFormat) as string[];
     for (const format of mediaFormats) {
-      if (!allowedFormats.includes(format)) throw new BadRequestException('INVALID_MEDIA_FORMAT');
+      if (!allowedFormats.includes(format)) {
+        fail('INVALID_MEDIA_FORMAT', 'Недопустимый формат медиа.');
+      }
     }
 
     const effectiveFrom = this.resolveDate(dto.effectiveFrom, existing?.effectiveFrom);
@@ -490,26 +510,38 @@ export class RightsLicensesService {
     const isPerpetual = dto.isPerpetual ?? existing?.isPerpetual ?? false;
 
     if (effectiveFrom && expiresAt && expiresAt.getTime() <= effectiveFrom.getTime()) {
-      throw new BadRequestException('INVALID_LICENSE_PERIOD');
+      fail(
+        'INVALID_LICENSE_PERIOD',
+        'Дата окончания должна быть позже даты начала действия лицензии.',
+      );
     }
     if (isPerpetual && expiresAt) {
-      throw new BadRequestException('PERPETUAL_WITH_EXPIRY');
+      fail('PERPETUAL_WITH_EXPIRY', 'У бессрочной лицензии не может быть даты окончания.');
     }
 
     const attributionRequired = dto.attributionRequired ?? existing?.attributionRequired ?? false;
     const requiredAttributionText =
       dto.requiredAttributionText ?? existing?.requiredAttributionText ?? null;
     if (attributionRequired && !requiredAttributionText) {
-      throw new BadRequestException('ATTRIBUTION_TEXT_REQUIRED');
+      fail(
+        'ATTRIBUTION_TEXT_REQUIRED',
+        'Если указание источника обязательно, нужно задать текст атрибуции.',
+      );
     }
 
     const status = dto.status ?? existing?.status ?? RightsLicenseStatus.DRAFT;
     if (status === RightsLicenseStatus.ACTIVE && expiresAt && expiresAt.getTime() <= Date.now()) {
-      throw new BadRequestException('CANNOT_ACTIVATE_EXPIRED_LICENSE');
+      fail(
+        'CANNOT_ACTIVATE_EXPIRED_LICENSE',
+        'Нельзя активировать лицензию с истёкшим сроком действия.',
+      );
     }
 
     if (dto.documentSha256 && !SHA256_PATTERN.test(dto.documentSha256)) {
-      throw new BadRequestException('INVALID_DOCUMENT_SHA256');
+      fail(
+        'INVALID_DOCUMENT_SHA256',
+        'Хеш документа должен быть SHA-256 в шестнадцатеричном виде (64 символа).',
+      );
     }
 
     if (dto.documentMediaAssetId) {
@@ -517,15 +549,17 @@ export class RightsLicensesService {
         where: { id: dto.documentMediaAssetId },
         select: { id: true, isDeleted: true },
       })) as MediaAssetRow | null;
-      if (!asset || asset.isDeleted) throw new BadRequestException('MEDIA_ASSET_NOT_FOUND');
+      if (!asset || asset.isDeleted) {
+        fail('MEDIA_ASSET_NOT_FOUND', 'Указанный медиафайл не найден или удалён.');
+      }
     }
   }
 
-  private assertCountryCodes(codes: string[], errorCode: string): void {
-    if (!Array.isArray(codes) || codes.length === 0) throw new BadRequestException(errorCode);
+  private assertCountryCodes(codes: string[], errorCode: string, messageRu: string): void {
+    if (!Array.isArray(codes) || codes.length === 0) fail(errorCode, messageRu);
     for (const code of codes) {
       if (!COUNTRY_CODE_PATTERN.test(code.toUpperCase())) {
-        throw new BadRequestException('INVALID_COUNTRY_CODE');
+        fail('INVALID_COUNTRY_CODE', 'Код страны должен быть в формате ISO 3166-1 alpha-2.');
       }
     }
   }
