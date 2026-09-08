@@ -5453,6 +5453,36 @@
         ],
         "type": "object"
       },
+      "PagedUserActivitiesDto": {
+        "properties": {
+          "hasNext": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserActivityDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit",
+          "hasNext"
+        ],
+        "type": "object"
+      },
       "PagedUsersDto": {
         "properties": {
           "items": {
@@ -22407,16 +22437,37 @@
     "/users/me/activities": {
       "get": {
         "operationId": "UsersController_meActivities",
-        "parameters": [],
+        "parameters": [
+          {
+            "description": "Page number",
+            "in": "query",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Number of records per page",
+            "in": "query",
+            "name": "limit",
+            "required": true,
+            "schema": {
+              "default": 10,
+              "example": 10,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/UserActivityDto"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/PagedUserActivitiesDto"
                 }
               }
             },

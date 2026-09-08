@@ -9,7 +9,7 @@ import { Language as PrismaLanguage, RoleName, Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { UserActivityDto } from './dto/user-activity.dto';
+import { PagedUserActivitiesDto } from './dto/paged-user-activities.dto';
 import type { UsersStaffFilter } from './dto/list-users-query.dto';
 import { STAFF_ROLE_NAMES } from './users.constants';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
@@ -36,6 +36,19 @@ const isRecordNotFound = (error: unknown): boolean =>
  * нет, а лишние поля — это лишние данные в памяти без единого потребителя.
  */
 const USER_EXISTS_SELECT = { id: true } satisfies Prisma.UserSelect;
+
+/**
+ * Карточка книги на странице активности пользователя — своя, главы или
+ * аудиоглавы (`getActivities`). Одна константа вместо трёх одинаковых
+ * вложенных селектов подряд (`LEGACY-218`): разъедутся при правке иначе.
+ */
+const ACTIVITY_BOOK_VERSION_SELECT = {
+  id: true,
+  title: true,
+  author: true,
+  coverImageUrl: true,
+  book: { select: { slug: true } },
+} satisfies Prisma.BookVersionSelect;
 
 type PublicUser = AccountUser;
 
@@ -484,89 +497,80 @@ export class UsersService {
   }
 
   /**
-   * ⚠️ Возвращаемый тип объявлен намеренно, а не выведен: `UserActivityDto` —
+   * ⚠️ Возвращаемый тип объявлен намеренно, а не выведен: `PagedUserActivitiesDto` —
    * единственный источник формы этого ответа, и он же стоит в `@ApiOkResponse`
    * маршрута. Пока тип выводился из литерала, добавленное поле в OpenAPI
-   * не попадало (`LEGACY-133`, дополнение от 04.09.2026).
+   * не попадало (`LEGACY-133`, дополнение от 04.09.2026); инлайновый литерал
+   * в сигнатуре — тот же дефект, только этажом выше: обёртка выросла бы полем,
+   * которого нет ни в снимке контракта, ни у клиента (найдено ревью в этом заходе).
+   *
+   * Пагинация и потолок строк добавлены закрытием `LEGACY-218`. Фильтр
+   * скрытого/удалённого родителя переехал в `where` — раньше он стоял JS-фильтром
+   * после выборки (см. историю файла), что при появлении `take`/`skip` укоротило
+   * бы страницы и оставило бы пустой хвост при непустом остатке.
    */
-  async getActivities(userId: string): Promise<UserActivityDto[]> {
-    const comments = await this.prisma.comment.findMany({
-      where: { userId, isDeleted: false },
-      include: {
-        parent: {
-          include: {
-            user: { select: PUBLIC_COMMENT_USER_SELECT },
-          },
-        },
-        // 🔴 Владелец страницы активности модератором не является: ветка ему
-        // положена в том же виде, что анониму в публичной ветке. До 15.08.2026
-        // здесь стоял только `isDeleted`, и скрытый модератором ответ приезжал
-        // сюда целиком — с текстом и с личностью написавшего (`LEGACY-210`).
-        // Образец — `commentChildren` в модуле комментариев, но переносить её
-        // сюда нельзя: она завязана на `canModerate`, которого у этого маршрута
-        // нет вовсе.
-        children: {
-          where: { isDeleted: false, isHidden: false },
-          include: {
-            user: { select: PUBLIC_COMMENT_USER_SELECT },
-          },
-        },
-        bookVersion: {
-          select: {
-            id: true,
-            title: true,
-            author: true,
-            coverImageUrl: true,
-            book: { select: { slug: true } },
-          },
-        },
-        chapter: {
-          include: {
-            bookVersion: {
-              select: {
-                id: true,
-                title: true,
-                author: true,
-                coverImageUrl: true,
-                book: { select: { slug: true } },
-              },
+  async getActivities(userId: string, page = 1, limit = 10): Promise<PagedUserActivitiesDto> {
+    const whereBase: Prisma.CommentWhereInput = {
+      userId,
+      isDeleted: false,
+      OR: [{ parentId: null }, { parent: { is: { isDeleted: false, isHidden: false } } }],
+    };
+
+    const [comments, total] = await this.prisma.$transaction([
+      this.prisma.comment.findMany({
+        where: whereBase,
+        select: {
+          id: true,
+          text: true,
+          isHidden: true,
+          createdAt: true,
+          parentId: true,
+          parent: {
+            select: {
+              id: true,
+              text: true,
+              createdAt: true,
+              user: { select: PUBLIC_COMMENT_USER_SELECT },
             },
           },
-        },
-        audioChapter: {
-          include: {
-            bookVersion: {
-              select: {
-                id: true,
-                title: true,
-                author: true,
-                coverImageUrl: true,
-                book: { select: { slug: true } },
-              },
+          // 🔴 Владелец страницы активности модератором не является: ветка ему
+          // положена в том же виде, что анониму в публичной ветке. До 15.08.2026
+          // здесь стоял только `isDeleted`, и скрытый модератором ответ приезжал
+          // сюда целиком — с текстом и с личностью написавшего (`LEGACY-210`).
+          // Образец — `commentChildren` в модуле комментариев, но переносить её
+          // сюда нельзя: она завязана на `canModerate`, которого у этого маршрута
+          // нет вовсе.
+          children: {
+            where: { isDeleted: false, isHidden: false },
+            select: {
+              id: true,
+              text: true,
+              createdAt: true,
+              user: { select: PUBLIC_COMMENT_USER_SELECT },
             },
           },
+          bookVersion: { select: ACTIVITY_BOOK_VERSION_SELECT },
+          // `select`, а не `include`, и по всей выборке: маршруту нужен только
+          // `bookVersion` главы, а не тело главы целиком (`LEGACY-218` — раньше
+          // `include` тянул полный текст главы на страницу активности), и не все
+          // скаляры родителя с ответами — новая колонка `Comment` иначе начнёт
+          // грузиться сама, без правки этого файла (найдено ревью в этом заходе).
+          chapter: { select: { bookVersion: { select: ACTIVITY_BOOK_VERSION_SELECT } } },
+          audioChapter: { select: { bookVersion: { select: ACTIVITY_BOOK_VERSION_SELECT } } },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        // ⚠️ Второй ключ обязателен именно с появлением `skip`/`take`: `createdAt`
+        // не уникален (двойная отправка, две вкладки, сид одной транзакцией),
+        // а без разрыва порядок между двумя независимыми запросами страниц
+        // Postgres не гарантирует — одна запись приезжает дважды, другая
+        // не приезжает вовсе (`LEGACY-128`; найдено ревью в этом заходе).
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.comment.count({ where: whereBase }),
+    ]);
 
-    // Скрытый модератором родитель приравнивается к удалённому: запись
-    // активности уходит из ответа целиком, как уже уходила при `isDeleted`
-    // (`LEGACY-210`). Оба признака проверяются в одном месте и маппер не
-    // трогается, поэтому форма ответа не меняется — из выдачи пропадают
-    // элементы, полей не убавляется.
-    //
-    // ⚠️ Отсев именно здесь — не потому, что база так не умеет: `where` внутри
-    // `include` связь «к одному» действительно не принимает, но фильтр по ней
-    // ставится на верхнем уровне (`parent: { is: { … } }`). Пока выборка идёт
-    // без `take`/`skip`, разницы нет. Появится пагинация — фильтр обязан
-    // переехать в запрос, иначе страницы поедут короче `limit`, а последняя
-    // окажется пустой при непустом остатке.
-    const activeComments = comments.filter(
-      (c) => !c.parent || (!c.parent.isDeleted && !c.parent.isHidden),
-    );
-
-    return activeComments.map((comment) => {
+    const items = comments.map((comment) => {
       let bookVersion = comment.bookVersion;
       if (!bookVersion && comment.chapter?.bookVersion) {
         bookVersion = comment.chapter.bookVersion;
@@ -630,5 +634,7 @@ export class UsersService {
         })),
       };
     });
+
+    return { items, total, page, limit, hasNext: page * limit < total };
   }
 }

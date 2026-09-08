@@ -22,7 +22,8 @@ import { PublicUserDto, PublicUserWithRolesDto } from './dto/public-user.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { PagedUsersDto } from './dto/paged-users.dto';
 import { UpdateMeDto } from './dto/update-me.dto';
-import { UserActivityDto } from './dto/user-activity.dto';
+import { PagedUserActivitiesDto } from './dto/paged-user-activities.dto';
+import { PaginationDto } from '../../shared/dto/pagination.dto';
 
 interface RequestUser {
   userId: string;
@@ -44,10 +45,10 @@ export class UsersController {
   }
 
   @ApiOperation({ summary: 'Get current user activities (comments & replies)' })
-  @ApiOkResponse({ type: UserActivityDto, isArray: true })
+  @ApiOkResponse({ type: PagedUserActivitiesDto })
   @Get('me/activities')
-  meActivities(@Req() req: { user: RequestUser }): Promise<UserActivityDto[]> {
-    return this.users.getActivities(req.user.userId);
+  meActivities(@Req() req: { user: RequestUser }, @Query() query: PaginationDto) {
+    return this.users.getActivities(req.user.userId, query.page, query.limit);
   }
 
   // Параметры описаны в `ListUsersQueryDto`: явного блока `@ApiQuery` здесь нет

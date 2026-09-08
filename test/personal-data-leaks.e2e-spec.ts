@@ -378,12 +378,16 @@ describe('Personal data leaks (e2e)', () => {
         .set('Authorization', `Bearer ${readerToken}`)
         .expect(200);
 
-      const items = activities.body as {
-        id: string;
-        text: string;
-        isHidden: boolean;
-        replies: { id: string }[];
-      }[];
+      const items = (
+        activities.body as {
+          items: {
+            id: string;
+            text: string;
+            isHidden: boolean;
+            replies: { id: string }[];
+          }[];
+        }
+      ).items;
       const hidden = items.find((i) => i.text === 'My own hidden root text');
       const visible = items.find((i) => i.text === 'My own visible root text');
 
@@ -401,6 +405,71 @@ describe('Personal data leaks (e2e)', () => {
       expect(body).not.toContain('Stranger reply under my hidden root');
       expect(body).toContain('My own reply under my hidden root');
       expect(body).toContain('Stranger reply under my visible root');
+    });
+  });
+
+  /**
+   * `LEGACY-218`. `GET /users/me/activities` не имела потолка строк: активность
+   * пользователя за всё время собиралась в память одним куском. Живой прогон —
+   * потому что юнит-посадка в `users.service.spec.ts` мокает Prisma и не видит,
+   * действительно ли `skip`/`take` режут страницу на живой базе.
+   */
+  describe('LEGACY-218 — пагинация активности', () => {
+    it('limit режет страницу, hasNext честно отражает остаток', async () => {
+      for (let i = 0; i < 3; i += 1) {
+        await request(http())
+          .post('/comments')
+          .set('Authorization', `Bearer ${readerToken}`)
+          .send({ bookVersionId: versionId, text: `Paged activity root ${i}` })
+          .expect(201);
+      }
+
+      const firstPage = await request(http())
+        .get('/users/me/activities?page=1&limit=2')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(200);
+
+      const first = firstPage.body as {
+        items: unknown[];
+        total: number;
+        page: number;
+        limit: number;
+        hasNext: boolean;
+      };
+      expect(first.items.length).toBe(2);
+      expect(first.limit).toBe(2);
+      expect(first.page).toBe(1);
+      expect(first.total).toBeGreaterThanOrEqual(3);
+      expect(first.hasNext).toBe(true);
+
+      const secondPage = await request(http())
+        .get('/users/me/activities?page=2&limit=2')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(200);
+
+      const second = secondPage.body as { items: { id: string }[]; total: number };
+      const firstIds = new Set((first.items as { id: string }[]).map((i) => i.id));
+      // 🔴 Положительный контроль обязателен: `[].every(...)` истинно, и без
+      // проверки длины регрессия «вторая страница пустая при непустом остатке»
+      // оставила бы тест зелёным (`L-015`).
+      expect(second.items.length).toBeGreaterThan(0);
+      // Вторая страница не повторяет первую — иначе `skip` не применился бы.
+      expect(second.items.every((i) => !firstIds.has(i.id))).toBe(true);
+
+      // Обход до конца: объединение страниц даёт ровно `total` РАЗЛИЧНЫХ записей.
+      // Проверка «страница 2 отличается от страницы 1» одна дефект не ловит —
+      // недостижимая строка в середине её проходит (`LEGACY-056`).
+      const seen = new Set<string>();
+      for (let page = 1; ; page += 1) {
+        const res = await request(http())
+          .get(`/users/me/activities?page=${page}&limit=2`)
+          .set('Authorization', `Bearer ${readerToken}`)
+          .expect(200);
+        const body = res.body as { items: { id: string }[]; hasNext: boolean };
+        body.items.forEach((i) => seen.add(i.id));
+        if (!body.hasNext) break;
+      }
+      expect(seen.size).toBe(second.total);
     });
   });
 

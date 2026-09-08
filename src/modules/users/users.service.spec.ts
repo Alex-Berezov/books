@@ -53,6 +53,7 @@ describe('UsersService (unit)', () => {
       },
       comment: {
         findMany: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
         updateMany: jest.fn(),
         deleteMany: jest.fn(),
       },
@@ -541,18 +542,103 @@ describe('UsersService (unit)', () => {
         },
       };
       prismaMock.comment.findMany.mockResolvedValueOnce([mockComment]);
+      prismaMock.comment.count.mockResolvedValueOnce(1);
       const res = await service.getActivities('u1');
-      expect(res.length).toBe(1);
-      expect(res[0].text).toBe('hello');
-      expect(res[0].bookVersion).toEqual({
+      expect(res.items.length).toBe(1);
+      expect(res.total).toBe(1);
+      expect(res.items[0].text).toBe('hello');
+      expect(res.items[0].bookVersion).toEqual({
         id: 'v1',
         title: 'Book Title',
         author: 'Author Name',
         coverImageUrl: 'cover.jpg',
         slug: 'book-slug',
       });
-      expect(res[0].replies.length).toBe(1);
-      expect(res[0].replies[0].text).toBe('reply');
+      expect(res.items[0].replies.length).toBe(1);
+      expect(res.items[0].replies[0].text).toBe('reply');
+    });
+
+    // Посадка LEGACY-218: потолок строк. Вторая страница режется `take`,
+    // `hasNext` считается от `total`, а не от длины текущего куска.
+    it('режет страницу по limit и считает hasNext (LEGACY-218)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      prismaMock.comment.count.mockResolvedValueOnce(25);
+
+      const res = await service.getActivities('u1', 2, 10);
+
+      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
+      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+        skip: number;
+        take: number;
+      };
+      expect(args.skip).toBe(10);
+      expect(args.take).toBe(10);
+      expect(res.page).toBe(2);
+      expect(res.limit).toBe(10);
+      expect(res.total).toBe(25);
+      expect(res.hasNext).toBe(true);
+    });
+
+    it('hasNext ложно на последней странице (LEGACY-218)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      prismaMock.comment.count.mockResolvedValueOnce(20);
+
+      const res = await service.getActivities('u1', 2, 10);
+
+      expect(res.hasNext).toBe(false);
+    });
+
+    // 🔴 Главная половина LEGACY-218: текст главы не читается вовсе. Проверяется
+    // ФОРМА запроса, а не ответа: `include` вместо `select` вернул бы `Chapter`
+    // целиком вместе с колонкой `content` (полный текст главы) на каждый
+    // комментарий к главе — ровно то, ради чего запись заводилась, — а по моку
+    // ответа этого не видно. Точное равенство: `include` рядом с `select`
+    // Prisma не принимает, но подмена `select` на `include` без него пройдёт.
+    it('у главы и аудиоглавы читает только bookVersion, а не тело главы (LEGACY-218)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      await service.getActivities('u1');
+
+      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
+      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+        select?: Record<string, unknown>;
+        include?: Record<string, unknown>;
+      };
+
+      // Верхний уровень выборки — белый список, а не `include`: иначе на каждую
+      // страницу поедут все скаляры `Comment`, включая будущие колонки.
+      expect(args.include).toBeUndefined();
+      expect(args.select).toBeDefined();
+
+      // Ровно `bookVersion` и ничего больше: ни `content`, ни прочих полей главы.
+      const bookVersionOnly = {
+        select: {
+          bookVersion: {
+            select: {
+              id: true,
+              title: true,
+              author: true,
+              coverImageUrl: true,
+              book: { select: { slug: true } },
+            },
+          },
+        },
+      };
+      expect(args.select?.chapter).toEqual(bookVersionOnly);
+      expect(args.select?.audioChapter).toEqual(bookVersionOnly);
+    });
+
+    // Посадка находки ревью: `createdAt` не уникален, и без второго ключа
+    // страницы под `skip`/`take` разъезжаются — запись приезжает дважды либо
+    // не приезжает вовсе (`LEGACY-128`).
+    it('сортирует со вторым ключом, иначе страницы разъезжаются (LEGACY-218)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      await service.getActivities('u1');
+
+      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+        orderBy: unknown;
+      };
+
+      expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
     });
 
     // Посадка LEGACY-191: `parent.user` — автор чужого комментария, `children.user` —
@@ -570,14 +656,14 @@ describe('UsersService (unit)', () => {
 
       expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
       const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
-        include: {
-          parent: { include: { user: { select: Record<string, unknown> } } };
-          children: { include: { user: { select: Record<string, unknown> } } };
+        select: {
+          parent: { select: { user: { select: Record<string, unknown> } } };
+          children: { select: { user: { select: Record<string, unknown> } } };
         };
       };
 
-      expect(args.include.parent.include.user.select).toEqual(PUBLIC_COMMENT_USER_SELECT);
-      expect(args.include.children.include.user.select).toEqual(PUBLIC_COMMENT_USER_SELECT);
+      expect(args.select.parent.select.user.select).toEqual(PUBLIC_COMMENT_USER_SELECT);
+      expect(args.select.children.select.user.select).toEqual(PUBLIC_COMMENT_USER_SELECT);
       expect(Object.keys(PUBLIC_COMMENT_USER_SELECT)).not.toContain('email');
     });
 
@@ -593,72 +679,34 @@ describe('UsersService (unit)', () => {
 
       expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
       const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
-        include: { children: { where: Record<string, unknown> } };
+        select: { children: { where: Record<string, unknown> } };
       };
 
-      expect(args.include.children.where).toEqual({ isDeleted: false, isHidden: false });
+      expect(args.select.children.where).toEqual({ isDeleted: false, isHidden: false });
     });
 
-    // Вторая половина той же записи: у `parent` фильтра в запросе нет вовсе —
-    // связь «к одному» не принимает `where` внутри `include`, — поэтому скрытый
-    // родитель отсеивается в памяти наравне с удалённым.
-    it('не отдаёт активность под скрытым родителем (LEGACY-210)', async () => {
-      const base = {
-        text: 'mine',
-        createdAt: new Date(),
-        children: [],
-        bookVersion: null,
-        chapter: null,
-        audioChapter: null,
+    // Вторая половина той же записи: скрытый и удалённый родитель отсеиваются
+    // `where` самого запроса, а не JS-фильтром после выборки — иначе появление
+    // `skip`/`take` (`LEGACY-218`) укоротило бы страницы и оставило бы пустой
+    // хвост при непустом остатке (предупреждение было записано в комментарии
+    // самого метода до этой правки). Проверяются аргументы запроса: ответ
+    // собирается из мока и о фильтрации в базе ничего не знает — живой прогон
+    // на настоящей связи «к одному» — `test/personal-data-leaks.e2e-spec.ts`,
+    // describe `LEGACY-210`.
+    it('фильтрует скрытого/удалённого родителя в where, а не в памяти (LEGACY-210)', async () => {
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      await service.getActivities('u1');
+
+      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
+      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+        where: Record<string, unknown>;
       };
-      prismaMock.comment.findMany.mockResolvedValueOnce([
-        {
-          ...base,
-          id: 'c1',
-          parentId: 'p1',
-          parent: {
-            id: 'p1',
-            text: 'hidden parent',
-            createdAt: new Date(),
-            isDeleted: false,
-            isHidden: true,
-            user: { id: 'u2' },
-          },
-        },
-        {
-          ...base,
-          id: 'c2',
-          parentId: 'p2',
-          parent: {
-            id: 'p2',
-            text: 'visible parent',
-            createdAt: new Date(),
-            isDeleted: false,
-            isHidden: false,
-            user: { id: 'u3' },
-          },
-        },
-        // Удалённый родитель отсеивался и до правки. Третий случай стоит здесь,
-        // потому что выражение переписано целиком: без него снятие
-        // `!c.parent.isDeleted` не покраснит ни один тест (урок `L-004`).
-        {
-          ...base,
-          id: 'c3',
-          parentId: 'p3',
-          parent: {
-            id: 'p3',
-            text: 'deleted parent',
-            createdAt: new Date(),
-            isDeleted: true,
-            isHidden: false,
-            user: { id: 'u4' },
-          },
-        },
-      ]);
 
-      const res = await service.getActivities('u1');
-
-      expect(res.map((r) => r.id)).toEqual(['c2']);
+      expect(args.where).toEqual({
+        userId: 'u1',
+        isDeleted: false,
+        OR: [{ parentId: null }, { parent: { is: { isDeleted: false, isHidden: false } } }],
+      });
     });
 
     // Посадка LEGACY-212. Три утверждения, и они закрывают разные половины решения
@@ -677,7 +725,11 @@ describe('UsersService (unit)', () => {
         where: Record<string, unknown>;
       };
 
-      expect(args.where).toEqual({ userId: 'u1', isDeleted: false });
+      expect(args.where).toEqual({
+        userId: 'u1',
+        isDeleted: false,
+        OR: [{ parentId: null }, { parent: { is: { isDeleted: false, isHidden: false } } }],
+      });
     });
 
     // Второе и третье — про форму ответа: признак скрытия уходит наружу, а ветка
@@ -708,7 +760,7 @@ describe('UsersService (unit)', () => {
 
       const res = await service.getActivities('u1');
 
-      expect(res[0].replies.map((r) => r.id)).toEqual(['own']);
+      expect(res.items[0].replies.map((r) => r.id)).toEqual(['own']);
     });
 
     it('у скрытой записи отдаёт флаг, а чужие ответы убирает (LEGACY-212)', async () => {
@@ -731,9 +783,9 @@ describe('UsersService (unit)', () => {
 
       const res = await service.getActivities('u1');
 
-      expect(res.map((r) => r.id)).toEqual(['c1', 'c2']);
-      expect(res[0].isHidden).toBe(true);
-      expect(res[0].replies).toEqual([]);
+      expect(res.items.map((r) => r.id)).toEqual(['c1', 'c2']);
+      expect(res.items[0].isHidden).toBe(true);
+      expect(res.items[0].replies).toEqual([]);
     });
 
     it('у обычной записи флаг false, а replies на месте (LEGACY-212)', async () => {
@@ -761,8 +813,8 @@ describe('UsersService (unit)', () => {
 
       const res = await service.getActivities('u1');
 
-      expect(res[0].isHidden).toBe(false);
-      expect(res[0].replies.map((r) => r.id)).toEqual(['r1']);
+      expect(res.items[0].isHidden).toBe(false);
+      expect(res.items[0].replies.map((r) => r.id)).toEqual(['r1']);
     });
   });
 
