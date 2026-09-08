@@ -11135,18 +11135,40 @@
         "operationId": "AuthorController_checkSlug",
         "parameters": [
           {
+            "description": "Slug to check for uniqueness",
             "in": "query",
             "name": "slug",
             "required": true,
             "schema": {
+              "example": "leo-tolstoy",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
               "type": "string"
             }
           },
           {
+            "description": "Author translation language",
             "in": "query",
-            "name": "excludeId",
+            "name": "lang",
             "required": true,
             "schema": {
+              "enum": [
+                "en",
+                "es",
+                "fr",
+                "pt",
+                "ru"
+              ],
+              "example": "en",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Author ID to exclude from the check (when editing)",
+            "in": "query",
+            "name": "excludeId",
+            "required": false,
+            "schema": {
+              "example": "550e8400-e29b-41d4-a716-446655440000",
               "type": "string"
             }
           }

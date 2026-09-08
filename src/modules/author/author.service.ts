@@ -771,8 +771,8 @@ export class AuthorService {
     return this.prisma.author.delete({ where: { id } });
   }
 
-  async checkSlugExists(slug: string, excludeId?: string) {
-    const where: Prisma.AuthorTranslationWhereInput = { slug };
+  async checkSlugExists(slug: string, language: Language, excludeId?: string) {
+    const where: Prisma.AuthorTranslationWhereInput = { slug, language };
     if (excludeId) {
       where.NOT = { authorId: excludeId };
     }

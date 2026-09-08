@@ -306,6 +306,46 @@ describe('AuthorService', () => {
     });
   });
 
+  describe('checkSlugExists (LEGACY-215)', () => {
+    it('filters by language — a slug taken in ru is free in en', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+
+      const result = await service.checkSlugExists('leo-tolstoy', 'en' as Language);
+
+      // L-005: с одним `toHaveBeenCalledWith` спека осталась бы зелёной, появись рядом
+      // второй запрос без `language` — именно так дефект LEGACY-215 и вернулся бы.
+      expect(prisma.authorTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.authorTranslation.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'leo-tolstoy', language: 'en' },
+      });
+      expect(result).toBeNull();
+    });
+
+    it('reports a slug taken when the same language already has it', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue({
+        id: 'trans1',
+        authorId: 'auth1',
+        slug: 'leo-tolstoy',
+        language: 'ru',
+      });
+
+      const result = await service.checkSlugExists('leo-tolstoy', 'ru' as Language);
+
+      expect(result).not.toBeNull();
+    });
+
+    it('adds excludeId to the filter when provided', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+
+      await service.checkSlugExists('leo-tolstoy', 'en' as Language, 'auth1');
+
+      expect(prisma.authorTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.authorTranslation.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'leo-tolstoy', language: 'en', NOT: { authorId: 'auth1' } },
+      });
+    });
+  });
+
   describe('getPublicBySlug', () => {
     it('returns author public view data with translated books', async () => {
       prisma.authorTranslation.findFirst.mockResolvedValue({

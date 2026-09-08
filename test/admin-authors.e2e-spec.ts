@@ -181,7 +181,7 @@ describe('Admin authors routing (e2e)', () => {
     it('сообщает, что заведомо свободный слаг свободен', async () => {
       const response = await request(http())
         .get('/admin/authors/check-slug')
-        .query({ slug: `free-author-slug-${Date.now()}` })
+        .query({ slug: `free-author-slug-${Date.now()}`, lang: 'en' })
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 
@@ -205,7 +205,7 @@ describe('Admin authors routing (e2e)', () => {
       try {
         const response = await request(http())
           .get('/admin/authors/check-slug')
-          .query({ slug })
+          .query({ slug, lang: 'en' })
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200);
 
@@ -217,7 +217,7 @@ describe('Admin authors routing (e2e)', () => {
         // Тот же слаг у того же автора при редактировании занятым не считается.
         const excluded = await request(http())
           .get('/admin/authors/check-slug')
-          .query({ slug, excludeId: authorId })
+          .query({ slug, lang: 'en', excludeId: authorId })
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200);
 
@@ -230,17 +230,63 @@ describe('Admin authors routing (e2e)', () => {
       }
     });
 
-    it('без токена отвечает 401 от гварда, а не 404 от чужого маршрута', async () => {
+    // LEGACY-215: слаг уникален в пределах языка, а не глобально. До этой правки
+    // отсутствие `language` в WHERE делало слаг, занятый в ru, ложно занятым и в en.
+    it('слаг, занятый в ru, остаётся свободным в en', async () => {
+      const slug = `ru-only-slug-${Date.now()}`;
+      const created = await request(http())
+        .post('/admin/authors')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          translations: [{ language: 'ru', name: 'Только по-русски', slug }],
+        })
+        .expect(201);
+      const authorId = (created.body as { id: string }).id;
+
+      try {
+        const ruCheck = await request(http())
+          .get('/admin/authors/check-slug')
+          .query({ slug, lang: 'ru' })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        expect(ruCheck.body).toEqual({
+          exists: true,
+          existingAuthor: { id: authorId, slug },
+        });
+
+        const enCheck = await request(http())
+          .get('/admin/authors/check-slug')
+          .query({ slug, lang: 'en' })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        expect(enCheck.body).toEqual({ exists: false });
+      } finally {
+        await request(http())
+          .delete(`/admin/authors/${authorId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(204);
+      }
+    });
+
+    it('без lang отвечает 400, а не молча проверяет по всем языкам', async () => {
       await request(http())
         .get('/admin/authors/check-slug')
         .query({ slug: 'anything' })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+    });
+
+    it('без токена отвечает 401 от гварда, а не 404 от чужого маршрута', async () => {
+      await request(http())
+        .get('/admin/authors/check-slug')
+        .query({ slug: 'anything', lang: 'en' })
         .expect(401);
     });
 
     it('аутентифицированному без роли отвечает 403', async () => {
       await request(http())
         .get('/admin/authors/check-slug')
-        .query({ slug: 'anything' })
+        .query({ slug: 'anything', lang: 'en' })
         .set('Authorization', `Bearer ${readerToken}`)
         .expect(403);
     });
@@ -301,7 +347,7 @@ describe('Admin authors routing (e2e)', () => {
     it('не перехватывает check-slug — тот отвечает своей формой, а не поиском по id', async () => {
       const response = await request(http())
         .get('/admin/authors/check-slug')
-        .query({ slug: `still-literal-${Date.now()}` })
+        .query({ slug: `still-literal-${Date.now()}`, lang: 'en' })
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 

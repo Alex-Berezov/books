@@ -16,6 +16,7 @@ import { AuthorService } from './author.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
 import { ListAuthorsQueryDto } from './dto/list-authors-query.dto';
+import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -30,8 +31,8 @@ export class AuthorController {
   @ApiOperation({ summary: 'Check slug uniqueness for an author' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async checkSlug(@Query('slug') slug: string, @Query('excludeId') excludeId?: string) {
-    const existing = await this.service.checkSlugExists(slug, excludeId);
+  async checkSlug(@Query() query: CheckSlugQueryDto) {
+    const existing = await this.service.checkSlugExists(query.slug, query.lang, query.excludeId);
     if (!existing) {
       return { exists: false };
     }
