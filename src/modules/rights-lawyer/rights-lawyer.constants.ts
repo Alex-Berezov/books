@@ -159,11 +159,16 @@ export const LAWYER_ESCALATABLE_INTAKE_STATUSES: readonly string[] = [
   'HUMAN_REVIEW_REQUIRED',
 ];
 
-/** Profile statuses that Phase 19 is allowed to move to LAWYER_REVIEW_REQUIRED. */
-export const LAWYER_ESCALATABLE_PROFILE_STATUSES: readonly string[] = [
-  'IMPORTED',
-  'HUMAN_REVIEW_REQUIRED',
-];
+/**
+ * Profile statuses that Phase 19 is allowed to move to LAWYER_REVIEW_REQUIRED.
+ *
+ * LEGACY-035: 'IMPORTED' снят 08.09.2026 — `RightsProfile.status` никогда не принимает это
+ * значение: все четыре места создания профиля задают статус явно
+ * (`rights-materialization.service.ts:499`, `prisma/seed.ts:172`,
+ * `test/helpers/book-with-rights.ts:63`, `test/book-version-publish-gate.e2e-spec.ts:394`),
+ * ветка была мёртвой. Не возвращать без нового пути создания профиля, который пишет IMPORTED.
+ */
+export const LAWYER_ESCALATABLE_PROFILE_STATUSES: readonly string[] = ['HUMAN_REVIEW_REQUIRED'];
 
 // ---------------------------------------------------------------------------
 // Risk factor catalogue

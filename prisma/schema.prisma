@@ -965,7 +965,7 @@ model RightsProfile {
   currentReviewImportId String?
   currentReviewImport RightsReviewImport? @relation("ProfileCurrentReviewImport", fields: [currentReviewImportId], references: [id], onDelete: SetNull)
 
-  status RightsProfileStatus @default(IMPORTED)
+  status RightsProfileStatus @default(HUMAN_REVIEW_REQUIRED)
   isCurrent Boolean @default(true)
 
   overallStatus RightsOverallStatus
@@ -1595,6 +1595,11 @@ enum RightsApprovalDecision {
 }
 
 enum RightsProfileStatus {
+  /// LEGACY-035: недостижим — `RightsProfile.status` не берёт значение по умолчанию нигде.
+  /// Профиль создают четыре места, и все четыре задают статус явно:
+  /// `src/modules/rights-intake/rights-materialization.service.ts:499` (единственное в проде),
+  /// `prisma/seed.ts:172`, `test/helpers/book-with-rights.ts:63`,
+  /// `test/book-version-publish-gate.e2e-spec.ts:394`. Значение зарезервировано, не удалять.
   IMPORTED
   HUMAN_REVIEW_REQUIRED
   APPROVED
@@ -1609,6 +1614,11 @@ enum RightsProfileStatus {
   LAWYER_APPROVED
 }
 
+/// LEGACY-034: `DRAFT` и `AGENT_COMPLETED` зарезервированы — ничего в `books/src`
+/// их не присваивает. Roadmap фазы 5 описывал промежуточные состояния «черновик →
+/// агент закончил → человек», но воркфлоу не реализован. Не «реализовывать» попутно
+/// без отдельного продуктового решения, не удалять — значения остаются частью
+/// контракта enum'а.
 enum RightsReviewStatus {
   DRAFT
   AGENT_COMPLETED
