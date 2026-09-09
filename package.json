@@ -24,6 +24,8 @@
     "delegate-check:self-test": "node scripts/delegate-check.mjs --self-test",
     "check-migration-compat": "node scripts/check-migration-compat.mjs",
     "check-migration-compat:self-test": "node scripts/check-migration-compat.mjs --self-test",
+    "check:response-schema": "node scripts/check-response-schema.mjs",
+    "check:response-schema:self-test": "node scripts/check-response-schema.mjs --self-test",
     "check:env": "node scripts/check-env.mjs",
     "check:env:self-test": "node scripts/check-env.mjs --self-test",
     "test": "jest --maxWorkers=50%",

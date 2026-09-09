@@ -245,6 +245,17 @@ jobs:
           yarn check:env:self-test
           yarn check:env
 
+      # ⚠️ Продублировано из `scripts/ci.sh` по той же причине, что и три шага выше:
+      # выкат идёт по тегу `v*`, где `ci.yml` не запускается вовсе (LEGACY-078,
+      # LEGACY-207, LEGACY-209). Шаг сверяет схему ответа в `libs/api-client/api-schema.json`
+      # с фактическим типом возврата метода контроллера: DTO, забывший поле, документирует
+      # меньше, чем ручка отдаёт, и толкает `books-front` выкинуть верное поле из своих
+      # рукописных типов — на этом встал строгий слой type-sync в пачке `Q4`.
+      - name: 📐 Response Schema vs Controller Return Types
+        run: |
+          yarn check:response-schema:self-test
+          yarn check:response-schema
+
       # ⚠️ Продублировано из `scripts/ci.sh` по той же причине, что и два шага выше:
       # выкат идёт по тегу `v*`, где `ci.yml` не запускается вовсе. Содержимое конфигов
       # мониторинга не разбирает больше ничто — ни tsc, ни eslint; битый

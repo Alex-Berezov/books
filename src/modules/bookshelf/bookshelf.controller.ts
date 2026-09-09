@@ -22,7 +22,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { BookshelfService } from './bookshelf.service';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
-import { BookshelfListDto, BookshelfItemDto } from './dto/bookshelf.dto';
+import { BookshelfListDto, BookshelfEntryDto } from './dto/bookshelf.dto';
 
 interface RequestUser {
   userId: string;
@@ -50,7 +50,7 @@ export class BookshelfController {
   @Post('me/bookshelf/:versionId')
   @ApiOperation({ summary: 'Add version to my bookshelf' })
   @ApiParam({ name: 'versionId' })
-  @ApiCreatedResponse({ type: BookshelfItemDto })
+  @ApiCreatedResponse({ type: BookshelfEntryDto })
   add(@Req() req: { user: RequestUser }, @Param('versionId') versionId: string) {
     return this.service.add(req.user.userId, versionId);
   }

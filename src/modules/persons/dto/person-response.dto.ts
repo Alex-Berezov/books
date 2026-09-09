@@ -82,6 +82,14 @@ export class PersonListItemDto {
 
   @ApiPropertyOptional()
   notesRu?: string | null;
+
+  // Персона приходит связью без `select` (book-version.service.ts, persons.service.ts),
+  // то есть строкой целиком - служебные поля в ответе есть.
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiProperty()
+  updatedAt!: Date;
 }
 
 export class PersonDetailDto extends PersonListItemDto {

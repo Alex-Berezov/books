@@ -1,5 +1,11 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -17,13 +23,13 @@ import {
   WithdrawLawyerReviewDto,
 } from './dto/reason.dto';
 import { RequestLawyerReviewDto, RequireLawyerReviewDto } from './dto/request-lawyer-review.dto';
-import type {
+import {
   LawyerReviewDetailDto,
   LawyerReviewListResponseDto,
   LegalOpinionDto,
 } from './dto/lawyer-review-response.dto';
-import type { RiskAssessmentSnapshotDto } from './dto/risk-assessment-response.dto';
-import type {
+import { RiskAssessmentSnapshotDto } from './dto/risk-assessment-response.dto';
+import {
   LawyerExpiryScanResultDto,
   VersionLawyerReviewDto,
 } from './dto/version-lawyer-review-response.dto';
@@ -44,6 +50,7 @@ export class RightsLawyerReviewController {
   ) {}
 
   @Get('admin/rights/lawyer-reviews')
+  @ApiOkResponse({ type: LawyerReviewListResponseDto })
   @ApiOperation({ summary: 'Legal review inbox' })
   list(
     @Query() query: ListLawyerReviewsDto,
@@ -63,6 +70,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/expiry-scan')
+  @ApiCreatedResponse({ type: LawyerExpiryScanResultDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Materialise expired legal opinions (admin only)' })
   runExpiryScan(@Req() req: { user: { userId: string } }): Promise<LawyerExpiryScanResultDto> {
@@ -138,12 +146,14 @@ export class RightsLawyerReviewController {
   }
 
   @Get('admin/rights/lawyer-reviews/:id/opinions')
+  @ApiOkResponse({ type: [LegalOpinionDto] })
   @ApiOperation({ summary: 'Legal opinions attached to a review' })
   listOpinions(@Param('id') id: string): Promise<LegalOpinionDto[]> {
     return this.opinions.list(id);
   }
 
   @Post('admin/rights/lawyer-reviews/:id/opinions')
+  @ApiCreatedResponse({ type: LegalOpinionDto })
   @Roles(Role.Admin, Role.Lawyer)
   @ApiOperation({ summary: 'Attach a legal opinion; creates LEGAL_OPINION evidence' })
   attachOpinion(
@@ -155,6 +165,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/opinions/:opinionId/archive')
+  @ApiCreatedResponse({ type: LegalOpinionDto })
   @Roles(Role.Admin, Role.Lawyer)
   @ApiOperation({ summary: 'Archive a legal opinion (soft), reason required' })
   archiveOpinion(
@@ -202,6 +213,7 @@ export class RightsLawyerReviewController {
   }
 
   @Get('admin/rights/intakes/:id/lawyer-reviews')
+  @ApiOkResponse({ type: LawyerReviewListResponseDto })
   @ApiOperation({ summary: 'Legal reviews of an intake' })
   listByIntake(
     @Param('id') id: string,
@@ -211,6 +223,7 @@ export class RightsLawyerReviewController {
   }
 
   @Get('admin/rights/profiles/:id/risk-assessment')
+  @ApiOkResponse({ type: RiskAssessmentSnapshotDto })
   @ApiOperation({ summary: 'Risk assessment of a rights profile; refreshes the snapshot' })
   getRiskAssessment(@Param('id') id: string): Promise<RiskAssessmentSnapshotDto> {
     return this.reviews.getRiskAssessmentForProfile(id);

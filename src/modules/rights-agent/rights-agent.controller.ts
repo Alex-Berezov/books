@@ -10,14 +10,8 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RightsIntakeManifestService } from '../rights-intake/rights-intake-manifest.service';
-import {
-  RIGHTS_REPORT_SCHEMA_VERSIONS,
-  RIGHTS_REPORT_JSON_SCHEMAS,
-  LATEST_RIGHTS_REPORT_SCHEMA_VERSION,
-  getReportSchemaDocument,
-} from '../rights-intake/rights-review-schema.registry';
 import { RightsAgentSubmissionService } from './rights-agent-submission.service';
 import { RightsAgentTokenGuard, type AgentRequest } from './rights-agent-token.guard';
 import { RightsAgentTokenService } from './rights-agent-token.service';
@@ -26,8 +20,14 @@ import { AGENT_ERROR_CODES } from './rights-agent.constants';
 import { agentError } from './rights-agent.errors';
 import { AgentSubmitReportDto } from './dto/agent-submit-report.dto';
 import type { RightsAgentManifestDto } from '../rights-intake/dto/rights-agent-manifest.dto';
-import type { RightsReportSchemaDocument } from '../rights-intake/rights-review-schema.registry';
-import type { AgentSubmitResponseDto } from './dto/agent-submit-response.dto';
+import {
+  LATEST_RIGHTS_REPORT_SCHEMA_VERSION,
+  RIGHTS_REPORT_JSON_SCHEMAS,
+  RIGHTS_REPORT_SCHEMA_VERSIONS,
+  RightsReportSchemaDocument,
+  getReportSchemaDocument,
+} from '../rights-intake/rights-review-schema.registry';
+import { AgentSubmitResponseDto } from './dto/agent-submit-response.dto';
 
 /** Request shape with the fields the controller reads for auditing. */
 interface AgentHttpRequest extends AgentRequest {
@@ -80,6 +80,7 @@ export class RightsAgentController {
   }
 
   @Post('submissions')
+  @ApiOkResponse({ type: AgentSubmitResponseDto })
   // 200, not Nest's default 201: the documented agent contract is "a submission always
   // answers 200, even when validation fails" — the agent distinguishes outcomes by the
   // `status` field, and 2xx-vs-4xx tells it whether the report was accepted at all.

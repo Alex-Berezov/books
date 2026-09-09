@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -26,7 +27,7 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 import { ListCommentsQueryDto } from './dto/list-comments.dto';
 import { CommentListDto } from './dto/comment-list.dto';
-import { CommentDto } from './dto/comment.dto';
+import { CommentDetailDto } from './dto/comment.dto';
 import { AdminCommentsQueryDto, AdminCommentsResponseDto } from './dto/admin-comments.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -86,7 +87,10 @@ export class CommentsController {
   @UseGuards(JwtAuthGuard, RateLimitGuard)
   @ApiOperation({ summary: 'Create comment' })
   @ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
-  @ApiOkResponse({ type: CommentDto })
+  // `@HttpCode` у метода нет, значит Nest отвечает 201 — описываем тот код, который ручка
+  // действительно отдаёт. До 09.09.2026 здесь стоял `@ApiOkResponse`, и ответа 201 в схеме
+  // не было описано вовсе ни под каким кодом.
+  @ApiCreatedResponse({ type: CommentDetailDto })
   create(@Req() req: { user: RequestUser }, @Body() dto: CreateCommentDto) {
     return this.service.create(req.user.userId, dto);
   }
@@ -100,7 +104,7 @@ export class CommentsController {
   @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get comment (hidden ones are visible to moderators only)' })
   @ApiParam({ name: 'id' })
-  @ApiOkResponse({ type: CommentDto })
+  @ApiOkResponse({ type: CommentDetailDto })
   get(@Param('id') id: string, @Req() req?: { user?: RequestUser }) {
     return this.service.get(id, req?.user);
   }
@@ -112,7 +116,7 @@ export class CommentsController {
     summary: 'Update comment (owner can edit text; admins/moderators can also hide/unhide)',
   })
   @ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
-  @ApiOkResponse({ type: CommentDto })
+  @ApiOkResponse({ type: CommentDetailDto })
   update(
     @Req() req: { user: RequestUser },
     @Param('id') id: string,

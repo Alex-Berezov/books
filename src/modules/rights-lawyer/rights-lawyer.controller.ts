@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -8,7 +8,7 @@ import { CreateLawyerDto } from './dto/create-lawyer.dto';
 import { ListLawyersDto } from './dto/list-lawyers.dto';
 import { DeactivateLawyerDto } from './dto/reason.dto';
 import { UpdateLawyerDto } from './dto/update-lawyer.dto';
-import type { LawyerDetailDto, LawyersListResponseDto } from './dto/lawyer-response.dto';
+import { LawyerDetailDto, LawyersListResponseDto } from './dto/lawyer-response.dto';
 
 /**
  * Directory of lawyers. Reading is open to every role that touches the legal workflow;
@@ -23,6 +23,7 @@ export class RightsLawyerController {
   constructor(private readonly lawyers: RightsLawyerService) {}
 
   @Get('admin/rights/lawyers')
+  @ApiOkResponse({ type: LawyersListResponseDto })
   @ApiOperation({ summary: 'List lawyers' })
   list(@Query() query: ListLawyersDto): Promise<LawyersListResponseDto> {
     return this.lawyers.list(query);

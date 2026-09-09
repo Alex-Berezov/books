@@ -1,5 +1,11 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -14,16 +20,13 @@ import { ListRecheckTasksDto } from './dto/list-recheck-tasks.dto';
 import { ListScanRunsDto } from './dto/list-scan-runs.dto';
 import { SnoozeRecheckTaskDto } from './dto/snooze-recheck-task.dto';
 import { UpdateRecheckScheduleDto } from './dto/update-recheck-schedule.dto';
-import type {
-  RecheckScanRunDto,
-  RecheckScanRunListResponseDto,
-} from './dto/recheck-scan-response.dto';
-import type {
+import { RecheckScanRunDto, RecheckScanRunListResponseDto } from './dto/recheck-scan-response.dto';
+import {
   RecheckScheduleWithTasksDto,
   RecheckTaskDetailDto,
   RecheckTaskListResponseDto,
 } from './dto/recheck-task-response.dto';
-import type { ReviewChainResponseDto } from './dto/review-chain-response.dto';
+import { ReviewChainResponseDto } from './dto/review-chain-response.dto';
 import type { VersionRecheckDto } from './dto/version-recheck-response.dto';
 
 /**
@@ -43,6 +46,7 @@ export class RightsRecheckController {
   ) {}
 
   @Post('admin/rights/recheck/scan')
+  @ApiCreatedResponse({ type: RecheckScanRunDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Run the recheck scan now (admin only)' })
   runScan(@Req() req: { user: { userId: string } }): Promise<RecheckScanRunDto> {
@@ -50,12 +54,14 @@ export class RightsRecheckController {
   }
 
   @Get('admin/rights/recheck/scan-runs')
+  @ApiOkResponse({ type: RecheckScanRunListResponseDto })
   @ApiOperation({ summary: 'History of recheck scan runs' })
   listScanRuns(@Query() query: ListScanRunsDto): Promise<RecheckScanRunListResponseDto> {
     return this.scheduler.listScanRuns(query);
   }
 
   @Get('admin/rights/recheck/tasks')
+  @ApiOkResponse({ type: RecheckTaskListResponseDto })
   @ApiOperation({ summary: 'List recheck tasks' })
   listTasks(@Query() query: ListRecheckTasksDto): Promise<RecheckTaskListResponseDto> {
     return this.recheck.list(query);
@@ -126,6 +132,7 @@ export class RightsRecheckController {
   }
 
   @Get('admin/rights/intakes/:id/recheck-tasks')
+  @ApiOkResponse({ type: RecheckTaskListResponseDto })
   @ApiOperation({ summary: 'Recheck tasks of an intake' })
   listIntakeTasks(
     @Param('id') id: string,
@@ -135,6 +142,7 @@ export class RightsRecheckController {
   }
 
   @Get('admin/rights/intakes/:id/review-chain')
+  @ApiOkResponse({ type: ReviewChainResponseDto })
   @ApiOperation({ summary: 'Ordered history of rights reviews of an intake' })
   getReviewChain(@Param('id') id: string): Promise<ReviewChainResponseDto> {
     return this.reviewChain.getChainForIntake(id);

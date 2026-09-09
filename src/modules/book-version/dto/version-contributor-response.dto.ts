@@ -37,6 +37,22 @@ export class BookVersionContributorResponseDto {
   @ApiPropertyOptional({ enum: RightsConfidence })
   confidence?: RightsConfidence | null;
 
+  // Строка отдаётся целиком (book-version.service.ts: findMany/create без `select`),
+  // поэтому здесь и служебные поля Prisma, и `sourceEvidenceIds`.
+  @ApiPropertyOptional({
+    type: 'array',
+    items: { type: 'string' },
+    nullable: true,
+    description: 'Идентификаторы доказательств, из которых взята роль (Json в базе)',
+  })
+  sourceEvidenceIds?: unknown;
+
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiProperty()
+  updatedAt!: Date;
+
   @ApiPropertyOptional({ type: PersonListItemDto })
   person?: PersonListItemDto;
 }

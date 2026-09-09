@@ -1,5 +1,12 @@
 import { Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
@@ -18,6 +25,7 @@ export class RightsProfileController {
   ) {}
 
   @Post('review-imports/:importId/materialize')
+  @ApiCreatedResponse({ type: RightsProfileDetailDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Materialize a rights profile from a validated review import' })
   async materialize(@Param('importId') importId: string): Promise<RightsProfileDetailDto> {
@@ -47,6 +55,7 @@ export class RightsProfileController {
   }
 
   @Get('profiles/:profileId')
+  @ApiOkResponse({ type: RightsProfileDetailDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Get rights profile detail by ID' })
   async getById(@Param('profileId') profileId: string): Promise<RightsProfileDetailDto> {

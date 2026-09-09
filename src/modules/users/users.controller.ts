@@ -38,15 +38,15 @@ export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   @ApiOperation({ summary: 'Get current user profile' })
-  @ApiOkResponse({ type: PublicUserWithRolesDto })
   @Get('me')
+  @ApiOkResponse({ type: PublicUserWithRolesDto })
   me(@Req() req: { user: RequestUser }) {
     return this.users.me(req.user.userId);
   }
 
   @ApiOperation({ summary: 'Get current user activities (comments & replies)' })
-  @ApiOkResponse({ type: PagedUserActivitiesDto })
   @Get('me/activities')
+  @ApiOkResponse({ type: PagedUserActivitiesDto })
   meActivities(@Req() req: { user: RequestUser }, @Query() query: PaginationDto) {
     return this.users.getActivities(req.user.userId, query.page, query.limit);
   }
@@ -69,15 +69,15 @@ export class UsersController {
   }
 
   @ApiOperation({ summary: 'Update current user profile (alternative profile path)' })
-  @ApiOkResponse({ type: PublicUserDto })
   @Patch('profile')
+  @ApiOkResponse({ type: PublicUserDto })
   updateProfile(@Req() req: { user: RequestUser }, @Body() dto: UpdateMeDto) {
     return this.users.updateMe(req.user.userId, dto);
   }
 
   @ApiOperation({ summary: 'Update current user profile' })
-  @ApiOkResponse({ type: PublicUserDto })
   @Patch('me')
+  @ApiOkResponse({ type: PublicUserDto })
   updateMe(@Req() req: { user: RequestUser }, @Body() dto: UpdateMeDto) {
     return this.users.updateMe(req.user.userId, dto);
   }
@@ -97,6 +97,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Delete user by id (admin only)' })
   @Roles(Role.Admin)
   @Delete(':id')
+  @ApiOkResponse({ type: PublicUserDto })
   deleteById(@Param('id') id: string) {
     return this.users.deleteById(id);
   }

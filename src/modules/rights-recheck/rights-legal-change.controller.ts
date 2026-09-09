@@ -1,5 +1,11 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -7,7 +13,7 @@ import { RightsLegalChangeService } from './rights-legal-change.service';
 import { CreateLegalChangeDto } from './dto/create-legal-change.dto';
 import { ListLegalChangesDto } from './dto/list-legal-changes.dto';
 import { UpdateLegalChangeDto } from './dto/update-legal-change.dto';
-import type {
+import {
   LegalChangeDetailDto,
   LegalChangeDto,
   LegalChangeListResponseDto,
@@ -23,12 +29,14 @@ export class RightsLegalChangeController {
   constructor(private readonly legalChanges: RightsLegalChangeService) {}
 
   @Get('admin/rights/legal-changes')
+  @ApiOkResponse({ type: LegalChangeListResponseDto })
   @ApiOperation({ summary: 'List declared legal changes' })
   list(@Query() query: ListLegalChangesDto): Promise<LegalChangeListResponseDto> {
     return this.legalChanges.list(query);
   }
 
   @Post('admin/rights/legal-changes')
+  @ApiCreatedResponse({ type: LegalChangeDto })
   @ApiOperation({ summary: 'Declare a legal change (DRAFT)' })
   create(
     @Body() dto: CreateLegalChangeDto,
@@ -44,6 +52,7 @@ export class RightsLegalChangeController {
   }
 
   @Patch('admin/rights/legal-changes/:id')
+  @ApiOkResponse({ type: LegalChangeDto })
   @ApiOperation({ summary: 'Edit a DRAFT legal change' })
   update(
     @Param('id') id: string,
@@ -64,6 +73,7 @@ export class RightsLegalChangeController {
   }
 
   @Post('admin/rights/legal-changes/:id/archive')
+  @ApiCreatedResponse({ type: LegalChangeDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Archive a legal change (admin only)' })
   archive(

@@ -12,7 +12,13 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { RightsIntakeService } from './rights-intake.service';
 import { RightsIntakeManifestService } from './rights-intake-manifest.service';
 import { RightsApprovalService } from './rights-approval.service';
@@ -31,6 +37,7 @@ import { RightsIntakeReadinessDto } from './dto/rights-intake-readiness.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+import { RightsAgentManifestDto } from './dto/rights-agent-manifest.dto';
 
 @ApiTags('rights-intakes')
 @ApiBearerAuth()
@@ -58,12 +65,14 @@ export class RightsIntakeController {
   }
 
   @Get(':id/agent-manifest')
+  @ApiOkResponse({ type: RightsAgentManifestDto })
   @ApiOperation({ summary: 'Export agent manifest for external ChatGPT-based rights check' })
   agentManifest(@Param('id') id: string) {
     return this.manifestService.generate(id);
   }
 
   @Get(':id/readiness')
+  @ApiOkResponse({ type: RightsIntakeReadinessDto })
   @ApiOperation({
     summary: 'Non-blocking readiness check of a rights intake before sending it to the agent',
   })
@@ -107,6 +116,7 @@ export class RightsIntakeController {
   }
 
   @Post(':intakeId/reviews/:reviewId/approve')
+  @ApiCreatedResponse({ type: RightsProfileDetailDto })
   @ApiOperation({ summary: 'Approve a rights review (human approval)' })
   async approveReview(
     @Param('intakeId') intakeId: string,
@@ -118,6 +128,7 @@ export class RightsIntakeController {
   }
 
   @Post(':intakeId/reviews/:reviewId/reject')
+  @ApiCreatedResponse({ type: RightsProfileDetailDto })
   @ApiOperation({ summary: 'Reject a rights review (human rejection)' })
   async rejectReview(
     @Param('intakeId') intakeId: string,
@@ -129,6 +140,7 @@ export class RightsIntakeController {
   }
 
   @Get(':intakeId/approvals')
+  @ApiOkResponse({ type: [RightsReviewApprovalDto] })
   @ApiOperation({ summary: 'Get all approvals for a rights intake' })
   async getApprovalsByIntake(
     @Param('intakeId') intakeId: string,
@@ -137,6 +149,7 @@ export class RightsIntakeController {
   }
 
   @Post(':id/create-book')
+  @ApiCreatedResponse({ type: CreateBookFromClearanceResponseDto })
   @ApiOperation({ summary: 'Create book from approved rights clearance' })
   async createBookFromClearance(
     @Param('id') id: string,

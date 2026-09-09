@@ -163,6 +163,151 @@
         ],
         "type": "object"
       },
+      "AgentSubmissionDto": {
+        "properties": {
+          "agentName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "agentVersion": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "declaredSchemaVersion": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "materialization": {
+            "enum": [
+              "NOT_ATTEMPTED",
+              "SKIPPED",
+              "SUCCEEDED",
+              "FAILED"
+            ],
+            "type": "string"
+          },
+          "materializationError": {
+            "nullable": true,
+            "type": "object"
+          },
+          "materializedProfileId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "payloadSizeBytes": {
+            "nullable": true,
+            "type": "object"
+          },
+          "processedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rejectionCode": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rejectionMessageRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "reportJsonSha256": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsIntakeId": {
+            "type": "string"
+          },
+          "rightsReviewImportId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "sourceFileName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "RECEIVED",
+              "VALIDATED",
+              "VALIDATION_FAILED",
+              "REJECTED",
+              "FAILED"
+            ],
+            "type": "string"
+          },
+          "tokenPrefix": {
+            "description": "Display prefix of the token used",
+            "nullable": true,
+            "type": "object"
+          },
+          "uploadTokenId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "validationErrorCount": {
+            "type": "number"
+          },
+          "validationWarningCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "rightsIntakeId",
+          "uploadTokenId",
+          "tokenPrefix",
+          "status",
+          "declaredSchemaVersion",
+          "reportJsonSha256",
+          "payloadSizeBytes",
+          "sourceFileName",
+          "agentName",
+          "agentVersion",
+          "rightsReviewImportId",
+          "validationErrorCount",
+          "validationWarningCount",
+          "rejectionCode",
+          "rejectionMessageRu",
+          "materialization",
+          "materializationError",
+          "materializedProfileId",
+          "processedAt",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "AgentSubmissionListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSubmissionDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "type": "object"
+      },
       "AgentSubmitReportDto": {
         "properties": {
           "agentName": {
@@ -200,6 +345,279 @@
         },
         "required": [
           "report"
+        ],
+        "type": "object"
+      },
+      "AgentSubmitResponseDto": {
+        "properties": {
+          "humanApprovalRequired": {
+            "description": "Always true — an agent submission is never approved automatically",
+            "example": true,
+            "type": "boolean"
+          },
+          "intakeId": {
+            "type": "string"
+          },
+          "materialization": {
+            "enum": [
+              "NOT_ATTEMPTED",
+              "SKIPPED",
+              "SUCCEEDED",
+              "FAILED"
+            ],
+            "type": "string"
+          },
+          "messageRu": {
+            "type": "string"
+          },
+          "receivedAt": {
+            "description": "ISO timestamp",
+            "type": "string"
+          },
+          "reportJsonSha256": {
+            "nullable": true,
+            "type": "object"
+          },
+          "reviewImportId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "schemaVersion": {
+            "nullable": true,
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "VALIDATED",
+              "VALIDATION_FAILED"
+            ],
+            "type": "string"
+          },
+          "submissionId": {
+            "type": "string"
+          },
+          "validationErrors": {
+            "items": {
+              "$ref": "#/components/schemas/AgentValidationIssueDto"
+            },
+            "type": "array"
+          },
+          "validationWarnings": {
+            "items": {
+              "$ref": "#/components/schemas/AgentValidationIssueDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "submissionId",
+          "status",
+          "intakeId",
+          "schemaVersion",
+          "reviewImportId",
+          "reportJsonSha256",
+          "validationErrors",
+          "validationWarnings",
+          "materialization",
+          "humanApprovalRequired",
+          "messageRu",
+          "receivedAt"
+        ],
+        "type": "object"
+      },
+      "AgentTokenDto": {
+        "properties": {
+          "allowRetryOnValidationError": {
+            "type": "boolean"
+          },
+          "allowedSchemaVersions": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "autoMaterialize": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "failedAttempts": {
+            "type": "number"
+          },
+          "firstUsedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isExpired": {
+            "type": "boolean"
+          },
+          "isUsable": {
+            "description": "Token can still be used for a submission",
+            "type": "boolean"
+          },
+          "issuedByUserId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "labelRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lastUsedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "maxFailedAttempts": {
+            "type": "number"
+          },
+          "maxUses": {
+            "type": "number"
+          },
+          "remainingUses": {
+            "type": "number"
+          },
+          "revokeReasonRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "revokedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsIntakeId": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ACTIVE",
+              "USED",
+              "REVOKED",
+              "EXPIRED"
+            ],
+            "type": "string"
+          },
+          "tokenPrefix": {
+            "description": "First 12 characters of the token, for display only",
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "usedCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "rightsIntakeId",
+          "tokenPrefix",
+          "status",
+          "labelRu",
+          "maxUses",
+          "usedCount",
+          "remainingUses",
+          "failedAttempts",
+          "maxFailedAttempts",
+          "allowRetryOnValidationError",
+          "autoMaterialize",
+          "allowedSchemaVersions",
+          "expiresAt",
+          "isExpired",
+          "isUsable",
+          "issuedByUserId",
+          "firstUsedAt",
+          "lastUsedAt",
+          "revokedAt",
+          "revokeReasonRu",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "AgentTokenListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTokenDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "AgentValidationIssueDto": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "message",
+          "code"
+        ],
+        "type": "object"
+      },
+      "AggregatePointDto": {
+        "properties": {
+          "count": {
+            "type": "number"
+          },
+          "date": {
+            "example": "2025-08-01",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "count"
+        ],
+        "type": "object"
+      },
+      "AggregateResponseDto": {
+        "properties": {
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/AggregatePointDto"
+            },
+            "type": "array"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "total",
+          "series"
         ],
         "type": "object"
       },
@@ -1169,6 +1587,10 @@
           "contributionNoteRu": {
             "type": "object"
           },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "creditedLanguage": {
             "type": "object"
           },
@@ -1210,6 +1632,18 @@
           },
           "roleOtherRu": {
             "type": "object"
+          },
+          "sourceEvidenceIds": {
+            "description": "Идентификаторы доказательств, из которых взята роль (Json в базе)",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
           }
         },
         "required": [
@@ -1218,7 +1652,9 @@
           "personId",
           "role",
           "displayOrder",
-          "isPrimary"
+          "isPrimary",
+          "createdAt",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -1275,6 +1711,30 @@
           "isFree",
           "createdAt",
           "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BookshelfEntryDto": {
+        "properties": {
+          "addedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "bookVersionId": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "bookVersionId",
+          "addedAt"
         ],
         "type": "object"
       },
@@ -1732,6 +2192,92 @@
         ],
         "type": "object"
       },
+      "CommentDetailDto": {
+        "properties": {
+          "audioChapterId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "bookVersionId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "chapterId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/CommentDto"
+            },
+            "type": "array"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isDeleted": {
+            "type": "boolean"
+          },
+          "isHidden": {
+            "type": "boolean"
+          },
+          "parentId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rating": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CommentRatingDto"
+              }
+            ],
+            "nullable": true
+          },
+          "ratingId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "ratingScore": {
+            "description": "Rating score associated with this review (1-5)",
+            "nullable": true,
+            "type": "object"
+          },
+          "text": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/CommentUserDto"
+          },
+          "userId": {
+            "description": "Автор комментария; публичный профиль лежит в `user`",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "parentId",
+          "bookVersionId",
+          "chapterId",
+          "audioChapterId",
+          "ratingId",
+          "text",
+          "isHidden",
+          "isDeleted",
+          "createdAt",
+          "updatedAt",
+          "user",
+          "children",
+          "rating"
+        ],
+        "type": "object"
+      },
       "CommentDto": {
         "properties": {
           "audioChapterId": {
@@ -1785,10 +2331,15 @@
           },
           "user": {
             "$ref": "#/components/schemas/CommentUserDto"
+          },
+          "userId": {
+            "description": "Автор комментария; публичный профиль лежит в `user`",
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "userId",
           "parentId",
           "bookVersionId",
           "chapterId",
@@ -1811,7 +2362,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/CommentDto"
+              "$ref": "#/components/schemas/CommentDetailDto"
             },
             "type": "array"
           },
@@ -1831,6 +2382,40 @@
           "page",
           "limit",
           "hasNext"
+        ],
+        "type": "object"
+      },
+      "CommentRatingDto": {
+        "properties": {
+          "bookId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "score": {
+            "description": "Оценка книги, 1-5",
+            "type": "number"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "bookId",
+          "score",
+          "createdAt",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -1882,6 +2467,84 @@
         },
         "type": "object"
       },
+      "ComponentTerritoryAssessmentDto": {
+        "properties": {
+          "accessPolicy": {
+            "type": "string"
+          },
+          "confidence": {
+            "nullable": true,
+            "type": "object"
+          },
+          "countryCode": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "geoBlockRequired": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "legalBasisRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "licenseId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "licenseTitle": {
+            "nullable": true,
+            "type": "object"
+          },
+          "notesRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "publicDomainFromYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "reasonRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsComponentId": {
+            "type": "string"
+          },
+          "rightsExpireAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "sourceEvidenceIds": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsComponentId",
+          "countryCode",
+          "status",
+          "accessPolicy",
+          "geoBlockRequired",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
       "ConfirmMediaDto": {
         "properties": {
           "contentType": {
@@ -1919,6 +2582,81 @@
         "required": [
           "key",
           "url"
+        ],
+        "type": "object"
+      },
+      "ContributorResponseDto": {
+        "properties": {
+          "birthDate": {
+            "nullable": true,
+            "type": "object"
+          },
+          "birthYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deathDate": {
+            "nullable": true,
+            "type": "object"
+          },
+          "deathYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "gutenbergAgentId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "description": "Person ID — участники хранятся в справочнике Person",
+            "type": "string"
+          },
+          "isni": {
+            "nullable": true,
+            "type": "object"
+          },
+          "nationalityCountry": {
+            "description": "2-letter country code",
+            "nullable": true,
+            "type": "object"
+          },
+          "notesRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "publicDomainFromYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "sortName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "viafId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "wikidataId": {
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "createdAt",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -2108,6 +2846,107 @@
         },
         "required": [
           "slug"
+        ],
+        "type": "object"
+      },
+      "CreateBookFromClearanceResponseBookDto": {
+        "properties": {
+          "approvedRightsReviewId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "currentRightsProfileId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "rightsCreatedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsIntakeId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "rightsIntakeId",
+          "currentRightsProfileId",
+          "approvedRightsReviewId",
+          "rightsCreatedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "CreateBookFromClearanceResponseDto": {
+        "properties": {
+          "approvedRightsReviewId": {
+            "type": "string"
+          },
+          "book": {
+            "$ref": "#/components/schemas/CreateBookFromClearanceResponseBookDto"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/CreateBookFromClearanceResponseVersionDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "book",
+          "versions",
+          "rightsProfileId",
+          "approvedRightsReviewId"
+        ],
+        "type": "object"
+      },
+      "CreateBookFromClearanceResponseVersionDto": {
+        "properties": {
+          "bookId": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "rightsStatus": {
+            "nullable": true,
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bookId",
+          "language",
+          "title",
+          "status",
+          "rightsStatus"
         ],
         "type": "object"
       },
@@ -4045,6 +4884,39 @@
         ],
         "type": "object"
       },
+      "DecidedByUserDto": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ],
+        "type": "object"
+      },
+      "DirectUploadResponseDto": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "publicUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "publicUrl"
+        ],
+        "type": "object"
+      },
       "DismissRecheckTaskDto": {
         "properties": {
           "reasonRu": {
@@ -4054,6 +4926,57 @@
         },
         "required": [
           "reasonRu"
+        ],
+        "type": "object"
+      },
+      "EditionRightsDto": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "languageCode": {
+            "type": "string"
+          },
+          "legalBasisRu": {
+            "type": "object"
+          },
+          "notesRu": {
+            "type": "object"
+          },
+          "requiresGeoBlock": {
+            "type": "boolean"
+          },
+          "sourceEditionId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "translationOrigin": {
+            "type": "string"
+          },
+          "translationSourceLanguage": {
+            "type": "object"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sourceEditionId",
+          "languageCode",
+          "status",
+          "notesRu",
+          "legalBasisRu",
+          "translationOrigin",
+          "translationSourceLanguage",
+          "requiresGeoBlock",
+          "createdAt",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -4591,6 +5514,138 @@
         ],
         "type": "object"
       },
+      "LawyerDto": {
+        "properties": {
+          "barId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "deactivateReasonRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "deactivatedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "email": {
+            "nullable": true,
+            "type": "object"
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "hasLawyerRole": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "jurisdictionCodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "lawyerType": {
+            "enum": [
+              "IN_HOUSE",
+              "EXTERNAL_COUNSEL",
+              "LAW_FIRM",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "notesRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "organization": {
+            "nullable": true,
+            "type": "object"
+          },
+          "phone": {
+            "nullable": true,
+            "type": "object"
+          },
+          "specializationRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "userEmail": {
+            "nullable": true,
+            "type": "object"
+          },
+          "userId": {
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "fullName",
+          "lawyerType",
+          "organization",
+          "barId",
+          "email",
+          "phone",
+          "jurisdictionCodes",
+          "specializationRu",
+          "notesRu",
+          "userId",
+          "userEmail",
+          "hasLawyerRole",
+          "isActive",
+          "deactivatedAt",
+          "deactivateReasonRu",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "LawyerExpiryScanResultDto": {
+        "properties": {
+          "checkedCount": {
+            "type": "number"
+          },
+          "expiredCount": {
+            "type": "number"
+          },
+          "expiringSoonCount": {
+            "type": "number"
+          },
+          "notificationsSent": {
+            "type": "number"
+          },
+          "reviewIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "runAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkedCount",
+          "expiredCount",
+          "expiringSoonCount",
+          "notificationsSent",
+          "reviewIds",
+          "runAt"
+        ],
+        "type": "object"
+      },
       "LawyerReviewDto": {
         "properties": {
           "activeOpinionsCount": {
@@ -4898,6 +5953,293 @@
           "versionLanguage",
           "createdAt",
           "updatedAt"
+        ],
+        "type": "object"
+      },
+      "LawyerReviewListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LawyerReviewDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "LawyersListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LawyerDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "LegalChangeDto": {
+        "properties": {
+          "affectedProfilesCount": {
+            "type": "number"
+          },
+          "appliedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "appliedByUserId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "appliesToAllCountries": {
+            "type": "boolean"
+          },
+          "archivedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "changeType": {
+            "enum": [
+              "COPYRIGHT_TERM_CHANGE",
+              "PUBLIC_DOMAIN_RULE_CHANGE",
+              "TRANSLATION_RIGHTS_CHANGE",
+              "NEIGHBOURING_RIGHTS_CHANGE",
+              "COURT_DECISION",
+              "TREATY_RATIFICATION",
+              "PLATFORM_POLICY_CHANGE",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "createdByUserId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdTasksCount": {
+            "type": "number"
+          },
+          "descriptionRu": {
+            "type": "string"
+          },
+          "effectiveFrom": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "jurisdictionCodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "severity": {
+            "enum": [
+              "INFO",
+              "WARNING",
+              "BLOCKING"
+            ],
+            "type": "string"
+          },
+          "sourceTitle": {
+            "nullable": true,
+            "type": "object"
+          },
+          "sourceUrl": {
+            "nullable": true,
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "APPLIED",
+              "ARCHIVED"
+            ],
+            "type": "string"
+          },
+          "titleRu": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "titleRu",
+          "descriptionRu",
+          "changeType",
+          "status",
+          "severity",
+          "jurisdictionCodes",
+          "appliesToAllCountries",
+          "effectiveFrom",
+          "sourceUrl",
+          "sourceTitle",
+          "appliedAt",
+          "appliedByUserId",
+          "affectedProfilesCount",
+          "createdTasksCount",
+          "archivedAt",
+          "createdByUserId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "LegalChangeListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LegalChangeDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "LegalOpinionDto": {
+        "properties": {
+          "archiveReasonRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "archivedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "bodyRu": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "documentSha256": {
+            "nullable": true,
+            "type": "object"
+          },
+          "documentUrl": {
+            "nullable": true,
+            "type": "object"
+          },
+          "fileName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "issuedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "jurisdictionCodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "EXTERNAL_COUNSEL_MEMO",
+              "IN_HOUSE_MEMO",
+              "EMAIL_CONFIRMATION",
+              "COURT_FILING",
+              "REGULATOR_RESPONSE",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "lawyerId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lawyerNameSnapshot": {
+            "nullable": true,
+            "type": "object"
+          },
+          "mimeType": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsEvidenceId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsLawyerReviewId": {
+            "type": "string"
+          },
+          "titleRu": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsLawyerReviewId",
+          "kind",
+          "titleRu",
+          "bodyRu",
+          "lawyerId",
+          "lawyerNameSnapshot",
+          "documentUrl",
+          "documentSha256",
+          "fileName",
+          "mimeType",
+          "issuedAt",
+          "jurisdictionCodes",
+          "rightsEvidenceId",
+          "archivedAt",
+          "archiveReasonRu",
+          "createdAt"
         ],
         "type": "object"
       },
@@ -5285,6 +6627,259 @@
         ],
         "type": "object"
       },
+      "ManifestAgentTaskDto": {
+        "properties": {
+          "importantRules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "requiredChecks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requiredOutputs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "objective",
+          "requiredChecks",
+          "requiredOutputs",
+          "importantRules"
+        ],
+        "type": "object"
+      },
+      "ManifestExpectedResultSchemaDto": {
+        "properties": {
+          "format": {
+            "example": "json",
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requiredTopLevelFields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "schemaUrl": {
+            "example": "https://api.bibliaris.com/api/rights/agent/report-schema/1.0",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "string"
+          },
+          "submission": {
+            "$ref": "#/components/schemas/ManifestSubmissionDto"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "format",
+          "schemaUrl",
+          "requiredTopLevelFields",
+          "submission",
+          "notes"
+        ],
+        "type": "object"
+      },
+      "ManifestGeneratedByDto": {
+        "properties": {
+          "module": {
+            "type": "string"
+          },
+          "product": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "product",
+          "module"
+        ],
+        "type": "object"
+      },
+      "ManifestIntakeDto": {
+        "properties": {
+          "authorBirthYear": {
+            "type": "object"
+          },
+          "authorDeathYear": {
+            "type": "object"
+          },
+          "candidateAuthor": {
+            "type": "string"
+          },
+          "candidateTitle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notesRu": {
+            "type": "object"
+          },
+          "originalLanguage": {
+            "type": "object"
+          },
+          "originalTitle": {
+            "type": "object"
+          },
+          "workflowStatus": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workflowStatus",
+          "candidateTitle",
+          "candidateAuthor",
+          "originalTitle",
+          "originalLanguage",
+          "authorBirthYear",
+          "authorDeathYear",
+          "notesRu"
+        ],
+        "type": "object"
+      },
+      "ManifestPublicationPlanDto": {
+        "properties": {
+          "plannedComponents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "plannedContentTypes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "targetCountryCodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "targetLanguages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "targetLanguages",
+          "targetCountryCodes",
+          "plannedContentTypes",
+          "plannedComponents"
+        ],
+        "type": "object"
+      },
+      "ManifestReadinessDto": {
+        "properties": {
+          "missing": {
+            "items": {
+              "$ref": "#/components/schemas/RightsIntakeReadinessItemDto"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/RightsIntakeReadinessItemDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "missing",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "ManifestSourceDto": {
+        "properties": {
+          "derivedFromUrl": {
+            "example": false,
+            "type": "boolean"
+          },
+          "externalId": {
+            "type": "object"
+          },
+          "language": {
+            "type": "object"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "providerHint": {
+            "example": "Wikisource (ru)",
+            "nullable": true,
+            "type": "object"
+          },
+          "textType": {
+            "type": "string"
+          },
+          "title": {
+            "type": "object"
+          },
+          "url": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "provider",
+          "providerHint",
+          "externalId",
+          "url",
+          "title",
+          "language",
+          "textType",
+          "derivedFromUrl"
+        ],
+        "type": "object"
+      },
+      "ManifestSubmissionDto": {
+        "properties": {
+          "authHeader": {
+            "example": "X-Bibliaris-Agent-Token",
+            "type": "string"
+          },
+          "endpoint": {
+            "example": "https://api.bibliaris.com/api/rights/agent/submissions",
+            "type": "string"
+          },
+          "method": {
+            "example": "POST",
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "method",
+          "authHeader",
+          "note"
+        ],
+        "type": "object"
+      },
       "PageGroupResponse": {
         "properties": {
           "pages": {
@@ -5374,6 +6969,12 @@
             ],
             "example": "draft",
             "type": "string"
+          },
+          "systemKey": {
+            "description": "Системный ключ страницы: по нему страницу зовут по адресу /pages/by-key/{systemKey}",
+            "example": "privacy",
+            "nullable": true,
+            "type": "object"
           },
           "title": {
             "example": "About Us",
@@ -5618,6 +7219,10 @@
           "canonicalName": {
             "type": "string"
           },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "deathDate": {
             "type": "object"
           },
@@ -5662,6 +7267,10 @@
             ],
             "type": "string"
           },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "viafId": {
             "type": "object"
           },
@@ -5673,6 +7282,8 @@
           "id",
           "type",
           "canonicalName",
+          "createdAt",
+          "updatedAt",
           "translations"
         ],
         "type": "object"
@@ -5686,6 +7297,10 @@
             "type": "object"
           },
           "canonicalName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
             "type": "string"
           },
           "deathDate": {
@@ -5726,6 +7341,10 @@
             ],
             "type": "string"
           },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "viafId": {
             "type": "object"
           },
@@ -5736,7 +7355,9 @@
         "required": [
           "id",
           "type",
-          "canonicalName"
+          "canonicalName",
+          "createdAt",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -5763,6 +7384,61 @@
           "total",
           "limit",
           "offset"
+        ],
+        "type": "object"
+      },
+      "PersonSummaryDto": {
+        "properties": {
+          "birthYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "canonicalName": {
+            "type": "string"
+          },
+          "deathYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "gutenbergAgentId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isni": {
+            "nullable": true,
+            "type": "object"
+          },
+          "nationalityCountryCode": {
+            "nullable": true,
+            "type": "object"
+          },
+          "slug": {
+            "nullable": true,
+            "type": "object"
+          },
+          "sortName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "type": {
+            "type": "string"
+          },
+          "viafId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "wikidataId": {
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "canonicalName"
         ],
         "type": "object"
       },
@@ -5840,6 +7516,46 @@
           "type",
           "contentType",
           "size"
+        ],
+        "type": "object"
+      },
+      "PresignResponseDto": {
+        "properties": {
+          "headers": {
+            "description": "Headers to include with upload request",
+            "type": "object"
+          },
+          "key": {
+            "type": "string"
+          },
+          "method": {
+            "description": "HTTP method to use",
+            "enum": [
+              "POST",
+              "PUT"
+            ],
+            "example": "POST",
+            "type": "string"
+          },
+          "token": {
+            "description": "Token required by direct upload endpoint",
+            "type": "string"
+          },
+          "ttlSec": {
+            "description": "Time-to-live in seconds",
+            "type": "number"
+          },
+          "url": {
+            "description": "Direct upload URL (for local driver this is API endpoint)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "url",
+          "method",
+          "token",
+          "ttlSec"
         ],
         "type": "object"
       },
@@ -6312,18 +8028,140 @@
             "nullable": true,
             "type": "object"
           },
+          "bookVersionId": {
+            "type": "string"
+          },
           "chapterNumber": {
             "nullable": true,
             "type": "object"
           },
+          "id": {
+            "type": "string"
+          },
           "position": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "bookVersionId",
+          "chapterNumber",
+          "audioChapterNumber",
+          "position",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "RecheckScanRunDto": {
+        "properties": {
+          "durationMs": {
+            "nullable": true,
+            "type": "object"
+          },
+          "errorMessage": {
+            "nullable": true,
+            "type": "object"
+          },
+          "finishedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "profilesScanned": {
+            "type": "number"
+          },
+          "remindersSent": {
+            "type": "number"
+          },
+          "source": {
+            "enum": [
+              "SCHEDULER",
+              "CONTENT_HASH",
+              "VERSION_CREATED",
+              "LEGAL_CHANGE",
+              "MANUAL"
+            ],
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED"
+            ],
+            "type": "string"
+          },
+          "tasksAutoClosed": {
+            "type": "number"
+          },
+          "tasksCreated": {
+            "type": "number"
+          },
+          "tasksEscalated": {
+            "type": "number"
+          },
+          "triggeredByUserId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "versionsScanned": {
             "type": "number"
           }
         },
         "required": [
-          "chapterNumber",
-          "audioChapterNumber",
-          "position"
+          "id",
+          "status",
+          "source",
+          "startedAt",
+          "finishedAt",
+          "durationMs",
+          "profilesScanned",
+          "versionsScanned",
+          "tasksCreated",
+          "tasksEscalated",
+          "tasksAutoClosed",
+          "remindersSent",
+          "errorMessage",
+          "triggeredByUserId"
+        ],
+        "type": "object"
+      },
+      "RecheckScanRunListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecheckScanRunDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
         ],
         "type": "object"
       },
@@ -6630,6 +8468,32 @@
         ],
         "type": "object"
       },
+      "RecheckTaskListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecheckTaskDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "type": "object"
+      },
       "RecordClaimResponseDto": {
         "properties": {
           "responseChannel": {
@@ -6928,6 +8792,133 @@
         ],
         "type": "object"
       },
+      "ReviewChainDiffDto": {
+        "properties": {
+          "changedCountryCount": {
+            "type": "number"
+          },
+          "confidenceChanged": {
+            "type": "boolean"
+          },
+          "overallStatusChanged": {
+            "type": "boolean"
+          },
+          "publicationGateChanged": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "overallStatusChanged",
+          "publicationGateChanged",
+          "confidenceChanged",
+          "changedCountryCount"
+        ],
+        "type": "object"
+      },
+      "ReviewChainItemDto": {
+        "properties": {
+          "approvedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "approvedByUserId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "approvedByUserName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "chainRootReviewId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "diffFromPrevious": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ReviewChainDiffDto"
+              }
+            ],
+            "nullable": true
+          },
+          "id": {
+            "type": "string"
+          },
+          "isCurrent": {
+            "type": "boolean"
+          },
+          "nextReviewAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "overallStatus": {
+            "type": "string"
+          },
+          "previousReviewId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "publicationGate": {
+            "type": "string"
+          },
+          "revisionNumber": {
+            "type": "number"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "rightsReviewImportId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "revisionNumber",
+          "previousReviewId",
+          "chainRootReviewId",
+          "status",
+          "overallStatus",
+          "publicationGate",
+          "confidence",
+          "nextReviewAt",
+          "approvedAt",
+          "approvedByUserId",
+          "approvedByUserName",
+          "rightsProfileId",
+          "rightsReviewImportId",
+          "isCurrent",
+          "createdAt",
+          "diffFromPrevious"
+        ],
+        "type": "object"
+      },
+      "ReviewChainResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewChainItemDto"
+            },
+            "type": "array"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "type": "object"
+      },
       "RevokeAgentTokenDto": {
         "properties": {
           "reasonRu": {
@@ -6950,6 +8941,126 @@
         },
         "required": [
           "reasonRu"
+        ],
+        "type": "object"
+      },
+      "RightsActionDto": {
+        "properties": {
+          "actionType": {
+            "type": "string"
+          },
+          "affectedCountryCodes": {
+            "type": "object"
+          },
+          "assignedToUserId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "completedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "completedByUserId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "completionNotesRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "descriptionRu": {
+            "type": "string"
+          },
+          "dueAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isBlocking": {
+            "type": "boolean"
+          },
+          "isResolved": {
+            "type": "boolean"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsProfileId",
+          "actionType",
+          "status",
+          "descriptionRu",
+          "affectedCountryCodes",
+          "isBlocking",
+          "assignedToUserId",
+          "dueAt",
+          "completedAt",
+          "completedByUserId",
+          "completionNotesRu",
+          "isResolved",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "RightsAgentManifestDto": {
+        "properties": {
+          "agentTask": {
+            "$ref": "#/components/schemas/ManifestAgentTaskDto"
+          },
+          "expectedResultSchema": {
+            "$ref": "#/components/schemas/ManifestExpectedResultSchemaDto"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "generatedBy": {
+            "$ref": "#/components/schemas/ManifestGeneratedByDto"
+          },
+          "intake": {
+            "$ref": "#/components/schemas/ManifestIntakeDto"
+          },
+          "manifestType": {
+            "example": "BIBLIARIS_RIGHTS_CLEARANCE_INPUT",
+            "type": "string"
+          },
+          "manifestVersion": {
+            "type": "string"
+          },
+          "publicationPlan": {
+            "$ref": "#/components/schemas/ManifestPublicationPlanDto"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/ManifestReadinessDto"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ManifestSourceDto"
+          }
+        },
+        "required": [
+          "manifestVersion",
+          "manifestType",
+          "generatedAt",
+          "generatedBy",
+          "intake",
+          "source",
+          "publicationPlan",
+          "agentTask",
+          "expectedResultSchema",
+          "readiness"
         ],
         "type": "object"
       },
@@ -7849,6 +9960,75 @@
         ],
         "type": "object"
       },
+      "RightsComponentDto": {
+        "properties": {
+          "componentType": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/components/schemas/RightsProfileContributorDto"
+            },
+            "type": "array"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "languageCode": {
+            "type": "object"
+          },
+          "licenses": {
+            "items": {
+              "$ref": "#/components/schemas/RightsLicenseSummaryDto"
+            },
+            "type": "array"
+          },
+          "notesRu": {
+            "type": "object"
+          },
+          "requiredAction": {
+            "type": "string"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "territoryAssessments": {
+            "items": {
+              "$ref": "#/components/schemas/ComponentTerritoryAssessmentDto"
+            },
+            "type": "array"
+          },
+          "titleRu": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsProfileId",
+          "componentType",
+          "titleRu",
+          "status",
+          "requiredAction",
+          "confidence",
+          "notesRu",
+          "territoryAssessments",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
       "RightsContentHashCheckDto": {
         "properties": {
           "algorithmVersion": {
@@ -7896,6 +10076,148 @@
           "reasonCode",
           "reasonRu",
           "checkedAt"
+        ],
+        "type": "object"
+      },
+      "RightsEvidenceDto": {
+        "properties": {
+          "accessedAt": {
+            "type": "object"
+          },
+          "archivedAt": {
+            "type": "object"
+          },
+          "authority": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "evidenceType": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "object"
+          },
+          "fileSha256": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isArchivedCopy": {
+            "description": "Архивная копия документа загружена",
+            "type": "boolean"
+          },
+          "isCurrent": {
+            "type": "boolean"
+          },
+          "jurisdictionCode": {
+            "type": "object"
+          },
+          "relevantExcerpt": {
+            "type": "object"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "object"
+          },
+          "sourceLevel": {
+            "type": "string"
+          },
+          "summaryRu": {
+            "type": "string"
+          },
+          "supersededById": {
+            "type": "object"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "url": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "rightsProfileId",
+          "evidenceType",
+          "sourceLevel",
+          "title",
+          "authority",
+          "url",
+          "jurisdictionCode",
+          "accessedAt",
+          "relevantExcerpt",
+          "summaryRu",
+          "createdAt",
+          "updatedAt",
+          "isArchivedCopy",
+          "fileSha256",
+          "fileName",
+          "contentType",
+          "sizeBytes",
+          "archivedAt",
+          "isCurrent",
+          "supersededById"
+        ],
+        "type": "object"
+      },
+      "RightsIntakeReadinessDto": {
+        "properties": {
+          "intakeId": {
+            "type": "string"
+          },
+          "isReady": {
+            "type": "boolean"
+          },
+          "missing": {
+            "items": {
+              "$ref": "#/components/schemas/RightsIntakeReadinessItemDto"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/RightsIntakeReadinessItemDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "intakeId",
+          "isReady",
+          "missing",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "RightsIntakeReadinessItemDto": {
+        "properties": {
+          "code": {
+            "example": "TARGET_COUNTRIES_EMPTY",
+            "type": "string"
+          },
+          "field": {
+            "example": "targetCountryCodes",
+            "type": "string"
+          },
+          "messageRu": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "field",
+          "messageRu"
         ],
         "type": "object"
       },
@@ -8508,6 +10830,616 @@
         ],
         "type": "object"
       },
+      "RightsNotificationDto": {
+        "properties": {
+          "agentSubmissionId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "bookVersionId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isRead": {
+            "type": "boolean"
+          },
+          "messageRu": {
+            "type": "string"
+          },
+          "payload": {
+            "nullable": true,
+            "type": "object"
+          },
+          "readAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsIntakeId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsProfileId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsReviewImportId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "severity": {
+            "enum": [
+              "INFO",
+              "SUCCESS",
+              "WARNING",
+              "ERROR"
+            ],
+            "type": "string"
+          },
+          "titleRu": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "AGENT_REPORT_RECEIVED",
+              "AGENT_REPORT_VALIDATION_FAILED",
+              "AGENT_REPORT_MATERIALIZED",
+              "AGENT_REPORT_MATERIALIZATION_FAILED",
+              "AGENT_TOKEN_ISSUED",
+              "AGENT_TOKEN_REVOKED",
+              "HUMAN_REVIEW_REQUIRED",
+              "RECHECK_DUE",
+              "RECHECK_OVERDUE",
+              "RECHECK_TASK_OPENED",
+              "RECHECK_COMPLETED",
+              "LEGAL_CHANGE_APPLIED",
+              "LAWYER_REVIEW_REQUIRED",
+              "OTHER",
+              "LAWYER_REVIEW_ASSIGNED",
+              "LAWYER_REVIEW_APPROVED",
+              "LAWYER_REVIEW_REJECTED",
+              "LAWYER_REVIEW_WITHDRAWN",
+              "LAWYER_OPINION_EXPIRING",
+              "LAWYER_OPINION_EXPIRED"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "severity",
+          "titleRu",
+          "messageRu",
+          "rightsIntakeId",
+          "agentSubmissionId",
+          "rightsReviewImportId",
+          "rightsProfileId",
+          "bookVersionId",
+          "payload",
+          "isRead",
+          "readAt",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "RightsNotificationsListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RightsNotificationDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "RightsNotificationsMarkAllReadDto": {
+        "properties": {
+          "updated": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "updated"
+        ],
+        "type": "object"
+      },
+      "RightsNotificationsUnreadCountDto": {
+        "properties": {
+          "unreadCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "unreadCount"
+        ],
+        "type": "object"
+      },
+      "RightsProfileContributorDto": {
+        "properties": {
+          "birthYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "canonicalName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "confidence": {
+            "nullable": true,
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "creditedLanguage": {
+            "nullable": true,
+            "type": "object"
+          },
+          "creditedName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "deathYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "gutenbergAgentId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isni": {
+            "nullable": true,
+            "type": "object"
+          },
+          "nationalityCountryCode": {
+            "nullable": true,
+            "type": "object"
+          },
+          "notesRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "person": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PersonSummaryDto"
+              }
+            ],
+            "nullable": true
+          },
+          "personId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "publicDomainFromYear": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsComponentId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "roleOtherRu": {
+            "nullable": true,
+            "type": "object"
+          },
+          "sourceEvidenceIds": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "viafId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "wikidataId": {
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "rightsProfileId",
+          "role",
+          "displayName",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "RightsProfileDetailDto": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/RightsActionDto"
+            },
+            "type": "array"
+          },
+          "activeLicensesCount": {
+            "type": "number"
+          },
+          "archivedAt": {
+            "type": "object"
+          },
+          "authorsCount": {
+            "type": "number"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/RightsComponentDto"
+            },
+            "type": "array"
+          },
+          "conclusionRu": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/components/schemas/RightsProfileContributorDto"
+            },
+            "type": "array"
+          },
+          "contributorsCount": {
+            "type": "number"
+          },
+          "contributorsWithoutPersonCount": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "currentLawyerReviewId": {
+            "nullable": true,
+            "type": "object"
+          },
+          "currentReviewImportId": {
+            "type": "object"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/RightsEvidenceDto"
+            },
+            "type": "array"
+          },
+          "expiredLicensesCount": {
+            "type": "number"
+          },
+          "expiringSoonLicensesCount": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "isCurrent": {
+            "type": "boolean"
+          },
+          "lawyerApprovedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lawyerApprovedLawyerName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lawyerOpinionValidUntil": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lawyerReviewBlocking": {
+            "type": "boolean"
+          },
+          "lawyerReviewRequired": {
+            "type": "boolean"
+          },
+          "licenseCoverage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LicenseCoverageResultDto"
+              }
+            ],
+            "nullable": true
+          },
+          "licenseCoveredCountriesCount": {
+            "type": "number"
+          },
+          "licenseRequiredCountriesCount": {
+            "type": "number"
+          },
+          "licenseUncoveredCountriesCount": {
+            "type": "number"
+          },
+          "licenses": {
+            "items": {
+              "$ref": "#/components/schemas/RightsLicenseSummaryDto"
+            },
+            "type": "array"
+          },
+          "licensesCount": {
+            "type": "number"
+          },
+          "narratorsCount": {
+            "type": "number"
+          },
+          "nextReviewAt": {
+            "type": "object"
+          },
+          "overallStatus": {
+            "type": "string"
+          },
+          "publicationGate": {
+            "type": "string"
+          },
+          "reasoningRu": {
+            "type": "object"
+          },
+          "regionalTerritorySummary": {
+            "items": {
+              "$ref": "#/components/schemas/TerritoryRegionSummaryDto"
+            },
+            "type": "array"
+          },
+          "reviews": {
+            "items": {
+              "$ref": "#/components/schemas/RightsReviewDto"
+            },
+            "type": "array"
+          },
+          "revokedLicensesCount": {
+            "type": "number"
+          },
+          "rightsIntakeId": {
+            "type": "string"
+          },
+          "riskAssessedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "riskFactors": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "riskLevel": {
+            "type": "string"
+          },
+          "sourceEdition": {
+            "$ref": "#/components/schemas/SourceEditionDto"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summaryRu": {
+            "type": "string"
+          },
+          "supersededAt": {
+            "type": "object"
+          },
+          "territoryDecisions": {
+            "items": {
+              "$ref": "#/components/schemas/TerritoryDecisionDto"
+            },
+            "type": "array"
+          },
+          "translatorsCount": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsIntakeId",
+          "currentReviewImportId",
+          "status",
+          "isCurrent",
+          "overallStatus",
+          "publicationGate",
+          "confidence",
+          "summaryRu",
+          "conclusionRu",
+          "reasoningRu",
+          "nextReviewAt",
+          "reviews",
+          "territoryDecisions",
+          "regionalTerritorySummary",
+          "components",
+          "evidence",
+          "actions",
+          "supersededAt",
+          "archivedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "RightsReviewApprovalDto": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "decidedByUser": {
+            "$ref": "#/components/schemas/DecidedByUserDto"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notesRu": {
+            "type": "object"
+          },
+          "rightsIntakeId": {
+            "type": "string"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "rightsReviewId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsReviewId",
+          "rightsProfileId",
+          "rightsIntakeId",
+          "decision",
+          "decidedByUser",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "RightsReviewDto": {
+        "properties": {
+          "approvalNotesRu": {
+            "type": "object"
+          },
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/RightsReviewApprovalDto"
+            },
+            "type": "array"
+          },
+          "approvedAt": {
+            "type": "object"
+          },
+          "approvedByUser": {
+            "type": "object"
+          },
+          "approvedByUserId": {
+            "type": "object"
+          },
+          "chainRootReviewId": {
+            "type": "object"
+          },
+          "conclusionRu": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "nextReviewAt": {
+            "type": "object"
+          },
+          "overallStatus": {
+            "type": "string"
+          },
+          "previousReviewId": {
+            "type": "object"
+          },
+          "publicationGate": {
+            "type": "string"
+          },
+          "reasoningRu": {
+            "type": "object"
+          },
+          "rejectedAt": {
+            "type": "object"
+          },
+          "rejectedByUser": {
+            "type": "object"
+          },
+          "rejectedByUserId": {
+            "type": "object"
+          },
+          "rejectionReasonRu": {
+            "type": "object"
+          },
+          "reviewerType": {
+            "type": "string"
+          },
+          "revisionNumber": {
+            "type": "number"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "rightsReviewImportId": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summaryRu": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsProfileId",
+          "rightsReviewImportId",
+          "status",
+          "schemaVersion",
+          "reviewerType",
+          "overallStatus",
+          "publicationGate",
+          "confidence",
+          "summaryRu",
+          "conclusionRu",
+          "reasoningRu",
+          "nextReviewAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
       "RightsReviewImportDetailDto": {
         "properties": {
           "agentModel": {
@@ -8715,6 +11647,151 @@
         ],
         "type": "object"
       },
+      "RiskAssessmentSnapshotDto": {
+        "properties": {
+          "assessedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "blockApprovalEnabled": {
+            "type": "boolean"
+          },
+          "currentLawyerReview": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LawyerReviewDto"
+              }
+            ],
+            "nullable": true
+          },
+          "explicitLawyerRequest": {
+            "type": "boolean"
+          },
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/RiskFactorDto"
+            },
+            "type": "array"
+          },
+          "lawyerApproved": {
+            "type": "boolean"
+          },
+          "lawyerApprovedAt": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lawyerApprovedLawyerName": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lawyerOpinionValidUntil": {
+            "nullable": true,
+            "type": "object"
+          },
+          "lawyerReviewRequired": {
+            "type": "boolean"
+          },
+          "minRiskLevel": {
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ],
+            "type": "string"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "riskLevel": {
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ],
+            "type": "string"
+          },
+          "suggestedTrigger": {
+            "enum": [
+              "AGENT_REQUESTED",
+              "HIGH_RISK_POLICY",
+              "MANUAL_REQUEST",
+              "RIGHTS_CLAIM",
+              "LEGAL_CHANGE",
+              "LICENSE_REQUIRED",
+              "OTHER"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "rightsProfileId",
+          "riskLevel",
+          "factors",
+          "lawyerReviewRequired",
+          "blockApprovalEnabled",
+          "minRiskLevel",
+          "assessedAt",
+          "currentLawyerReview",
+          "explicitLawyerRequest",
+          "suggestedTrigger",
+          "lawyerApproved",
+          "lawyerApprovedAt",
+          "lawyerApprovedLawyerName",
+          "lawyerOpinionValidUntil"
+        ],
+        "type": "object"
+      },
+      "RiskFactorDto": {
+        "properties": {
+          "code": {
+            "enum": [
+              "PUBLICATION_GATE_BLOCK",
+              "OVERALL_STATUS_REJECTED",
+              "CLAIM_ESCALATED_TO_LAWYER",
+              "CRITICAL_CLAIM_OPEN",
+              "AGENT_REQUESTED_LAWYER_REVIEW",
+              "CONFIDENCE_LOW",
+              "OVERALL_STATUS_INSUFFICIENT_DATA",
+              "OVERALL_STATUS_LICENSE_REQUIRED",
+              "UNCERTAIN_COMPONENT",
+              "COPYRIGHTED_COMPONENT_KEPT",
+              "LICENSE_REQUIRED_TERRITORY",
+              "UNRESOLVED_BLOCKING_ACTION",
+              "PENDING_REVIEW_TERRITORY",
+              "CONFIDENCE_MEDIUM",
+              "DERIVATIVE_SOURCE_TEXT",
+              "CONTRIBUTOR_DEATH_YEAR_UNKNOWN",
+              "BLOCKED_TERRITORY"
+            ],
+            "type": "string"
+          },
+          "details": {
+            "nullable": true,
+            "type": "object"
+          },
+          "level": {
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ],
+            "type": "string"
+          },
+          "messageRu": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "level",
+          "messageRu",
+          "details"
+        ],
+        "type": "object"
+      },
       "SatisfyConditionDto": {
         "properties": {
           "notesRu": {
@@ -8792,6 +11869,66 @@
             "example": "2024-01-01T00:00:00.000Z",
             "format": "date-time",
             "type": "string"
+          },
+          "eventDescription": {
+            "example": "Annual book fair",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventEndDate": {
+            "example": "2026-05-03T18:00:00.000Z",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventImageUrl": {
+            "example": "https://example.com/fair.jpg",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventLocationCity": {
+            "example": "Lisbon",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventLocationCountry": {
+            "example": "PT",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventLocationName": {
+            "example": "City Library",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventLocationPostal": {
+            "example": "1000-001",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventLocationRegion": {
+            "example": "Lisboa",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventLocationStreet": {
+            "example": "1 Main St",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventName": {
+            "example": "Book fair",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventStartDate": {
+            "example": "2026-05-01T10:00:00.000Z",
+            "nullable": true,
+            "type": "object"
+          },
+          "eventUrl": {
+            "example": "https://example.com/fair",
+            "nullable": true,
+            "type": "object"
           },
           "id": {
             "example": 1,
@@ -8912,6 +12049,97 @@
         "required": [
           "provider",
           "token"
+        ],
+        "type": "object"
+      },
+      "SourceEditionDto": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "editionRights": {
+            "items": {
+              "$ref": "#/components/schemas/EditionRightsDto"
+            },
+            "type": "array"
+          },
+          "externalId": {
+            "type": "object"
+          },
+          "gutenbergStatus": {
+            "type": "object"
+          },
+          "hasSourceFile": {
+            "description": "Файл загружен и доступен для скачивания",
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notesRu": {
+            "type": "object"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "sourceFileContentType": {
+            "type": "object"
+          },
+          "sourceFileName": {
+            "type": "object"
+          },
+          "sourceFileSha256": {
+            "type": "object"
+          },
+          "sourceFileSizeBytes": {
+            "type": "object"
+          },
+          "sourceFileUploadedAt": {
+            "type": "object"
+          },
+          "sourceLanguage": {
+            "type": "object"
+          },
+          "sourceTextType": {
+            "type": "string"
+          },
+          "sourceTitle": {
+            "type": "object"
+          },
+          "sourceUrl": {
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsProfileId",
+          "provider",
+          "externalId",
+          "sourceUrl",
+          "sourceTitle",
+          "sourceLanguage",
+          "sourceTextType",
+          "gutenbergStatus",
+          "status",
+          "notesRu",
+          "createdAt",
+          "updatedAt",
+          "sourceFileSha256",
+          "sourceFileName",
+          "sourceFileContentType",
+          "sourceFileSizeBytes",
+          "sourceFileUploadedAt",
+          "hasSourceFile",
+          "editionRights"
         ],
         "type": "object"
       },
@@ -9121,6 +12349,212 @@
         ],
         "type": "object"
       },
+      "TerritoryDecisionDto": {
+        "properties": {
+          "accessPolicy": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "finalStatus": {
+            "type": "string"
+          },
+          "geoBlockRequired": {
+            "type": "boolean"
+          },
+          "geoBlockScope": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "legalBasisRu": {
+            "type": "object"
+          },
+          "nextReviewAt": {
+            "type": "object"
+          },
+          "reasonRu": {
+            "type": "string"
+          },
+          "rightsProfileId": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rightsProfileId",
+          "countryCode",
+          "finalStatus",
+          "accessPolicy",
+          "geoBlockRequired",
+          "geoBlockScope",
+          "reasonRu",
+          "legalBasisRu",
+          "confidence",
+          "nextReviewAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "TerritoryRegionCountryDto": {
+        "properties": {
+          "accessPolicy": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string"
+          },
+          "finalStatus": {
+            "type": "string"
+          },
+          "geoBlockRequired": {
+            "type": "boolean"
+          },
+          "geoBlockScope": {
+            "type": "object"
+          },
+          "legalBasisRu": {
+            "type": "object"
+          },
+          "nextReviewAt": {
+            "type": "object"
+          },
+          "reasonRu": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "countryCode",
+          "finalStatus",
+          "accessPolicy",
+          "geoBlockRequired",
+          "reasonRu",
+          "confidence"
+        ],
+        "type": "object"
+      },
+      "TerritoryRegionReasonDto": {
+        "properties": {
+          "accessPolicy": {
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string"
+          },
+          "finalStatus": {
+            "type": "string"
+          },
+          "legalBasisRu": {
+            "type": "object"
+          },
+          "reasonRu": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "countryCode",
+          "finalStatus",
+          "accessPolicy",
+          "reasonRu"
+        ],
+        "type": "object"
+      },
+      "TerritoryRegionSummaryDto": {
+        "properties": {
+          "allowedCountryCount": {
+            "type": "number"
+          },
+          "blockedCountryCount": {
+            "type": "number"
+          },
+          "blockingReasons": {
+            "items": {
+              "$ref": "#/components/schemas/TerritoryRegionReasonDto"
+            },
+            "type": "array"
+          },
+          "countries": {
+            "items": {
+              "$ref": "#/components/schemas/TerritoryRegionCountryDto"
+            },
+            "type": "array"
+          },
+          "countryCount": {
+            "type": "number"
+          },
+          "geoBlockRequiredCount": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string"
+          },
+          "licenseRequiredCountryCount": {
+            "type": "number"
+          },
+          "licensedCountryCount": {
+            "type": "number"
+          },
+          "notTargetedCountryCount": {
+            "type": "number"
+          },
+          "pendingReviewCountryCount": {
+            "type": "number"
+          },
+          "regionCode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "targetAllowedCountryCount": {
+            "type": "number"
+          },
+          "targetCountryCount": {
+            "type": "number"
+          },
+          "targetedCountryCount": {
+            "type": "number"
+          },
+          "undecidedCountryCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "regionCode",
+          "label",
+          "status",
+          "countryCount",
+          "targetedCountryCount",
+          "targetCountryCount",
+          "targetAllowedCountryCount",
+          "allowedCountryCount",
+          "licensedCountryCount",
+          "blockedCountryCount",
+          "licenseRequiredCountryCount",
+          "pendingReviewCountryCount",
+          "notTargetedCountryCount",
+          "undecidedCountryCount",
+          "geoBlockRequiredCount",
+          "countries",
+          "blockingReasons"
+        ],
+        "type": "object"
+      },
       "ToggleLikeResponseDto": {
         "properties": {
           "dislikes": {
@@ -9141,6 +12575,40 @@
           "isLike",
           "likes",
           "dislikes"
+        ],
+        "type": "object"
+      },
+      "TopViewsItemDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "bookVersionId",
+          "count"
+        ],
+        "type": "object"
+      },
+      "TopViewsResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TopViewsItemDto"
+            },
+            "type": "array"
+          },
+          "totalVersions": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "totalVersions"
         ],
         "type": "object"
       },
@@ -11543,6 +15011,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -11599,6 +15074,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -11636,6 +15118,13 @@
         },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -12338,6 +15827,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsActionDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -12376,6 +15872,13 @@
         },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsActionDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -12439,6 +15942,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSubmissionListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -12468,6 +15978,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSubmissionDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -12507,6 +16024,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTokenDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -13848,6 +17372,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsAgentManifestDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -13919,6 +17450,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSubmissionListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -13980,6 +17518,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTokenListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14056,6 +17601,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateBookFromClearanceResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14285,6 +17837,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LawyerReviewListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14314,6 +17873,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsIntakeReadinessDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14481,6 +18047,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecheckTaskListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14510,6 +18083,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewChainResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14718,6 +18298,16 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RightsReviewApprovalDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14765,6 +18355,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsProfileDetailDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -14812,6 +18409,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsProfileDetailDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15004,6 +18608,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LawyerReviewListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15052,6 +18663,13 @@
         "parameters": [],
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LawyerExpiryScanResultDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15360,6 +18978,16 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LegalOpinionDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15397,6 +19025,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalOpinionDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15444,6 +19079,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalOpinionDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15620,6 +19262,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LawyersListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15874,6 +19523,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalChangeListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15902,6 +19558,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalChangeDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -15968,6 +19631,13 @@
         },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalChangeDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16026,6 +19696,13 @@
         ],
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalChangeDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16541,6 +20218,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsNotificationsListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16561,6 +20245,13 @@
         "parameters": [],
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsNotificationsMarkAllReadDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16581,6 +20272,13 @@
         "parameters": [],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsNotificationsUnreadCountDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16610,6 +20308,13 @@
         ],
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsNotificationDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16744,6 +20449,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskAssessmentSnapshotDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16773,6 +20485,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsProfileDetailDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16941,6 +20660,13 @@
         "parameters": [],
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecheckScanRunDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -16993,6 +20719,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecheckScanRunListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -17152,6 +20885,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecheckTaskListResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -17449,6 +21189,13 @@
         ],
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsProfileDetailDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -18315,6 +22062,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationGateResultDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -20589,11 +24343,11 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommentDto"
+                  "$ref": "#/components/schemas/CommentDetailDto"
                 }
               }
             },
@@ -20659,7 +24413,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommentDto"
+                  "$ref": "#/components/schemas/CommentDetailDto"
                 }
               }
             },
@@ -20703,7 +24457,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommentDto"
+                  "$ref": "#/components/schemas/CommentDetailDto"
                 }
               }
             },
@@ -21072,7 +24826,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookshelfItemDto"
+                  "$ref": "#/components/schemas/BookshelfEntryDto"
                 }
               }
             },
@@ -21527,6 +25281,13 @@
         },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSubmitResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -22191,6 +25952,13 @@
         ],
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectUploadResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -22231,6 +25999,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectUploadResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -22276,6 +26051,13 @@
         },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -22560,6 +26342,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicUserDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -23679,6 +27468,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregateResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -23733,6 +27529,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopViewsResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },

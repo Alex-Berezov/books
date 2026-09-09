@@ -1,11 +1,17 @@
 import { Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RightsNotificationsService } from './rights-notifications.service';
 import { ListRightsNotificationsDto } from './dto/list-rights-notifications.dto';
-import type {
+import {
   RightsNotificationDto,
   RightsNotificationsListResponseDto,
   RightsNotificationsMarkAllReadDto,
@@ -23,6 +29,7 @@ export class RightsNotificationsController {
   constructor(private readonly service: RightsNotificationsService) {}
 
   @Get('admin/rights/notifications')
+  @ApiOkResponse({ type: RightsNotificationsListResponseDto })
   @ApiOperation({ summary: 'List in-app rights notifications visible to the current user' })
   list(
     @Query() query: ListRightsNotificationsDto,
@@ -33,6 +40,7 @@ export class RightsNotificationsController {
 
   // Declared before the parameterised routes so `unread-count` is never parsed as an id.
   @Get('admin/rights/notifications/unread-count')
+  @ApiOkResponse({ type: RightsNotificationsUnreadCountDto })
   @ApiOperation({ summary: 'Number of unread notifications' })
   unreadCount(
     @Req() req: { user: { userId: string } },
@@ -41,6 +49,7 @@ export class RightsNotificationsController {
   }
 
   @Post('admin/rights/notifications/read-all')
+  @ApiCreatedResponse({ type: RightsNotificationsMarkAllReadDto })
   @ApiOperation({ summary: 'Mark every visible notification as read' })
   markAllRead(
     @Req() req: { user: { userId: string } },
@@ -49,6 +58,7 @@ export class RightsNotificationsController {
   }
 
   @Post('admin/rights/notifications/:id/read')
+  @ApiCreatedResponse({ type: RightsNotificationDto })
   @ApiOperation({ summary: 'Mark one notification as read' })
   markRead(
     @Param('id') id: string,

@@ -79,6 +79,23 @@ step "Migration backwards-compatibility check"
 yarn check-migration-compat:self-test
 yarn check-migration-compat
 
+# Схему ответа Swagger строит только из `@ApiResponse({ type })` — плагина `@nestjs/swagger`
+# здесь нет (`nest-cli.json` без `plugins`). Значит DTO, забывший поле, документирует меньше,
+# чем ручка отдаёт, и не краснеет нигде. Цена этого не косметическая: `books-front` пишет
+# `types/api-schema/**` руками и сверяет их с этой схемой (`yarn check:type-sync` там),
+# то есть бедное DTO толкает фронт ВЫКИНУТЬ верное поле из своего типа. Ровно на этом
+# встал строгий слой type-sync в пачке `Q4`: `ReadingProgressDto` описывал 3 поля,
+# а `reading-progress.service.ts` отдавал 7.
+#
+# Сверяются два машинных источника: тип возврата метода контроллера (TS Compiler API,
+# сужение `select`/`include` учтено) и `libs/api-client/api-schema.json`. Красное — только
+# «схема беднее ответа»; маршруты без схемы вовсе и маршруты с нечитаемым типом (`any`)
+# печатаются отдельными списками и гейт ими не краснеет — храповик на них живёт во фронте
+# (`scripts/type-sync/surface.json`). Self-test первым, причина та же, что у соседей выше.
+step "Response schema vs controller return types"
+yarn check:response-schema:self-test
+yarn check:response-schema
+
 # Nothing else compares the keys the code reads with `.env.example`: there is no validation
 # schema on ConfigModule and no test over the example. That is how LEGACY-171 lived for years —
 # the geo-block policy key was simply missing from the example (LEGACY-207).

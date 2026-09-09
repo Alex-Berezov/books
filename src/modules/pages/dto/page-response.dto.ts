@@ -44,6 +44,44 @@ export class SeoResponse {
   @ApiProperty({ required: false, nullable: true, example: '@creator' })
   twitterCreator!: string | null;
 
+  // Событийная разметка Schema.org: связь `seo` выбирается целиком (pages.service.ts,
+  // `include: { seo: true }`), и эти двенадцать полей ответ содержал, а схема - нет.
+  @ApiProperty({ required: false, nullable: true, example: 'Book fair' })
+  eventName!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: 'Annual book fair' })
+  eventDescription!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: '2026-05-01T10:00:00.000Z' })
+  eventStartDate!: Date | null;
+
+  @ApiProperty({ required: false, nullable: true, example: '2026-05-03T18:00:00.000Z' })
+  eventEndDate!: Date | null;
+
+  @ApiProperty({ required: false, nullable: true, example: 'https://example.com/fair' })
+  eventUrl!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: 'https://example.com/fair.jpg' })
+  eventImageUrl!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: 'City Library' })
+  eventLocationName!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: '1 Main St' })
+  eventLocationStreet!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: 'Lisbon' })
+  eventLocationCity!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: 'Lisboa' })
+  eventLocationRegion!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: '1000-001' })
+  eventLocationPostal!: string | null;
+
+  @ApiProperty({ required: false, nullable: true, example: 'PT' })
+  eventLocationCountry!: string | null;
+
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   createdAt!: Date;
 
@@ -125,6 +163,15 @@ export class PageResponse {
 
   @ApiProperty({ required: false, nullable: true, example: 'uuid-group' })
   translationGroupId!: string | null;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    example: 'privacy',
+    description:
+      'Системный ключ страницы: по нему страницу зовут по адресу /pages/by-key/{systemKey}',
+  })
+  systemKey!: string | null;
 
   @ApiProperty({ required: false, nullable: true, type: [PageTranslation] })
   translations?: PageTranslation[];

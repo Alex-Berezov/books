@@ -11,7 +11,7 @@ import {
   UnauthorizedException,
   ForbiddenException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
@@ -60,6 +60,7 @@ export class UploadsController {
   @UseGuards(JwtAuthGuard, RateLimitGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager, Role.User)
   @Post('presign')
+  @ApiCreatedResponse({ type: PresignResponseDto })
   async presign(@Body() dto: PresignRequestDto, @Req() req: Request): Promise<PresignResponseDto> {
     const typedReq = req as Request & { user?: { userId: string; email: string } };
     const userId = typedReq.user?.userId;
@@ -80,6 +81,7 @@ export class UploadsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RateLimitGuard)
   @Post('direct')
+  @ApiCreatedResponse({ type: DirectUploadResponseDto })
   async direct(
     @Headers('x-upload-token') token: string,
     @Req() req: Request,
@@ -98,6 +100,7 @@ export class UploadsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager, Role.User)
   @Post('confirm')
+  @ApiCreatedResponse({ type: DirectUploadResponseDto })
   async confirm(
     @Query('key', RequiredStringPipe) key: string,
     @Req() req: Request,

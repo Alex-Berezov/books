@@ -46,6 +46,24 @@ export class BookshelfItemDto {
   bookVersion!: BookVersionDto;
 }
 
+// Ответ на добавление - это строка Prisma целиком (bookshelf.service.ts: create/findFirst
+// без `select`), а не элемент списка: `bookVersion` в ней нет, зато есть `userId`
+// и `bookVersionId`. До 09.09.2026 маршрут ссылался на BookshelfItemDto, и схема
+// молчала о двух отданных полях, обещая взамен вложенную версию книги.
+export class BookshelfEntryDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  userId!: string;
+
+  @ApiProperty()
+  bookVersionId!: string;
+
+  @ApiProperty()
+  addedAt!: Date;
+}
+
 export class BookshelfListDto {
   @ApiProperty({ type: () => [BookshelfItemDto] })
   items!: BookshelfItemDto[];

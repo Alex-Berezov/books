@@ -10,7 +10,13 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -20,6 +26,7 @@ import { LinkRightsComponentContributorDto } from './dto/link-rights-component-c
 import { LinkSourceEditionContributorDto } from './dto/link-source-edition-contributor.dto';
 import { QueryContributorsDto } from './dto/query-contributors.dto';
 import { UpdateContributorDto } from './dto/update-contributor.dto';
+import { ContributorResponseDto } from './dto/contributor-response.dto';
 
 @ApiTags('Contributors')
 @Controller('admin')
@@ -36,6 +43,7 @@ export class ContributorsController {
   }
 
   @Post('contributors')
+  @ApiCreatedResponse({ type: ContributorResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Create a new contributor' })
   async create(@Body() dto: CreateContributorDto) {
@@ -43,6 +51,7 @@ export class ContributorsController {
   }
 
   @Get('contributors/:id')
+  @ApiOkResponse({ type: ContributorResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Get contributor detail by ID' })
   async findOne(@Param('id') id: string) {
@@ -50,6 +59,7 @@ export class ContributorsController {
   }
 
   @Patch('contributors/:id')
+  @ApiOkResponse({ type: ContributorResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Update contributor details' })
   async update(@Param('id') id: string, @Body() dto: UpdateContributorDto) {

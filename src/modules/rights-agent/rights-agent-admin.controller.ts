@@ -1,5 +1,11 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -9,11 +15,11 @@ import { CreateAgentTokenDto } from './dto/create-agent-token.dto';
 import { ListAgentSubmissionsDto } from './dto/list-agent-submissions.dto';
 import { ListAgentTokensDto } from './dto/list-agent-tokens.dto';
 import { RevokeAgentTokenDto } from './dto/revoke-agent-token.dto';
-import type {
+import {
   AgentSubmissionDto,
   AgentSubmissionListResponseDto,
 } from './dto/agent-submission-response.dto';
-import type {
+import {
   AgentTokenDto,
   AgentTokenIssuedDto,
   AgentTokenListResponseDto,
@@ -43,6 +49,7 @@ export class RightsAgentAdminController {
   }
 
   @Get('admin/rights/intakes/:id/agent-tokens')
+  @ApiOkResponse({ type: AgentTokenListResponseDto })
   @ApiOperation({ summary: 'List upload tokens of an intake' })
   listTokens(
     @Param('id') id: string,
@@ -52,6 +59,7 @@ export class RightsAgentAdminController {
   }
 
   @Post('admin/rights/agent-tokens/:tokenId/revoke')
+  @ApiCreatedResponse({ type: AgentTokenDto })
   @ApiOperation({ summary: 'Revoke an upload token' })
   revokeToken(
     @Param('tokenId') tokenId: string,
@@ -62,6 +70,7 @@ export class RightsAgentAdminController {
   }
 
   @Get('admin/rights/intakes/:id/agent-submissions')
+  @ApiOkResponse({ type: AgentSubmissionListResponseDto })
   @ApiOperation({ summary: 'Agent submission history of an intake' })
   listIntakeSubmissions(
     @Param('id') id: string,
@@ -71,6 +80,7 @@ export class RightsAgentAdminController {
   }
 
   @Get('admin/rights/agent-submissions')
+  @ApiOkResponse({ type: AgentSubmissionListResponseDto })
   @ApiOperation({ summary: 'Global agent submission log' })
   listSubmissions(
     @Query() query: ListAgentSubmissionsDto,
@@ -79,6 +89,7 @@ export class RightsAgentAdminController {
   }
 
   @Get('admin/rights/agent-submissions/:submissionId')
+  @ApiOkResponse({ type: AgentSubmissionDto })
   @ApiOperation({ summary: 'Agent submission details' })
   getSubmission(@Param('submissionId') submissionId: string): Promise<AgentSubmissionDto> {
     return this.submissions.getById(submissionId);

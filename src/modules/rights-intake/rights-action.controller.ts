@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -16,12 +16,14 @@ export class RightsActionController {
   constructor(private readonly service: RightsActionService) {}
 
   @Get(':actionId')
+  @ApiOkResponse({ type: RightsActionDto })
   @ApiOperation({ summary: 'Get a required rights action by id' })
   async getById(@Param('actionId') actionId: string): Promise<RightsActionDto> {
     return this.service.getById(actionId);
   }
 
   @Patch(':actionId')
+  @ApiOkResponse({ type: RightsActionDto })
   @ApiOperation({
     summary: 'Update a required rights action (status, assignee, due date, comment)',
     description:

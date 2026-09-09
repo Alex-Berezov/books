@@ -36,6 +36,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiHeader,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -595,6 +596,7 @@ export class BookVersionController {
   }
 
   @Get('admin/versions/:id/publication-gate')
+  @ApiOkResponse({ type: PublicationGateResultDto })
   @ApiOperation({
     summary: 'Check publication gate for a version',
     description:
