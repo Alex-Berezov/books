@@ -35,6 +35,7 @@ import { PageResponse, PaginatedPagesResponse } from './dto/page-response.dto';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
 import { PaginatedPageGroupsResponse } from './dto/page-group-response.dto';
+import { ListPagesQueryDto } from './dto/list-pages-query.dto';
 
 @ApiTags('pages')
 @Controller()
@@ -121,8 +122,8 @@ export class PagesController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async findAllGrouped(@Query() query: PaginationDto) {
-    return this.service.adminListGrouped(query.page, query.limit);
+  async findAllGrouped(@Query() query: ListPagesQueryDto) {
+    return this.service.adminListGrouped(query.page, query.limit, query.search, query.status);
   }
 
   // Public: get page by slug (only published)

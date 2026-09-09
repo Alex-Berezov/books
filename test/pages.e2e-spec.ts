@@ -187,4 +187,127 @@ describe('Pages e2e', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(204);
   });
+
+  it('GET /admin/pages - search and status filter (LEGACY-371)', async () => {
+    const stamp = Date.now();
+    const needle = `zzquux${stamp}`;
+
+    // one draft page matching the search term, one published page that doesn't
+    const draftSlug = `${needle}-draft`;
+    const draftRes = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ slug: draftSlug, title: `Needle ${needle}`, type: 'generic', content: 'x' })
+      .expect(201);
+    const draft = draftRes.body as { id: string; translationGroupId: string };
+
+    const publishedSlug = `unrelated-${stamp}`;
+    const publishedRes = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ slug: publishedSlug, title: 'Unrelated title', type: 'generic', content: 'y' })
+      .expect(201);
+    const published = publishedRes.body as { id: string; translationGroupId: string };
+    await request(http())
+      .patch(`/admin/en/pages/${published.id}/publish`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+
+    const groupIdsOf = (body: unknown): string[] =>
+      (body as { data: Array<{ translationGroupId: string }> }).data.map(
+        (g) => g.translationGroupId,
+      );
+
+    // before LEGACY-371 was fixed, either query param alone was a 400
+    // (global ValidationPipe forbids fields the DTO doesn't declare)
+    const bySearch = await request(http())
+      .get(`/admin/pages?search=${needle}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(groupIdsOf(bySearch.body)).toContain(draft.translationGroupId);
+    expect(groupIdsOf(bySearch.body)).not.toContain(published.translationGroupId);
+
+    // the draft matches the (shortened) search term but not the status:
+    // the two conditions are combined, not applied one instead of the other
+    const byStatus = await request(http())
+      .get(`/admin/pages?status=published&search=${needle.slice(0, 4)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(groupIdsOf(byStatus.body)).not.toContain(draft.translationGroupId);
+
+    const byStatusOnly = await request(http())
+      .get(`/admin/pages?status=draft&search=${needle}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(groupIdsOf(byStatusOnly.body)).toContain(draft.translationGroupId);
+
+    // an unknown status value must still be rejected — the DTO is a closed set
+    await request(http())
+      .get('/admin/pages?status=archived')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400);
+
+    // a term over the cap is a 400, not an unbounded ILIKE over every page
+    await request(http())
+      .get(`/admin/pages?search=${'a'.repeat(101)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400);
+
+    // Cleanup
+    await request(http())
+      .delete(`/admin/en/pages/${draft.id}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+    await request(http())
+      .delete(`/admin/en/pages/${published.id}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+  });
+
+  it('GET /admin/pages - "%" in the search term is a character, not a wildcard (LEGACY-371)', async () => {
+    const stamp = Date.now();
+
+    // the unit spec asserts only the shape of the Prisma `where`; whether the
+    // backslash actually reaches Postgres as LIKE's escape character is
+    // something only a real query can answer
+    const created = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        slug: `discount-${stamp}`,
+        title: `100% off sale ${stamp}`,
+        type: 'generic',
+        content: 'x',
+      })
+      .expect(201);
+    const page = created.body as { id: string; translationGroupId: string };
+
+    const idsFor = async (term: string): Promise<string[]> => {
+      const res = await request(http())
+        .get(`/admin/pages?search=${encodeURIComponent(term)}&limit=100`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+      return (res.body as { data: Array<{ translationGroupId: string }> }).data.map(
+        (g) => g.translationGroupId,
+      );
+    };
+
+    // the discriminating case: "100%sale" occurs in no title as text, but as a
+    // LIKE pattern it reads "100", anything, "sale" — and that does match
+    // "100% off sale". Escaped, the page must NOT come back; drop the escaping
+    // and it does, which is exactly what this case is here to catch.
+    expect(await idsFor('100%sale')).not.toContain(page.translationGroupId);
+
+    // the same for "_": as a pattern it stands for any single character
+    expect(await idsFor('100_ off')).not.toContain(page.translationGroupId);
+
+    // and escaping must not cost legitimate matching: the literal substring is found
+    expect(await idsFor('100% off')).toContain(page.translationGroupId);
+
+    // Cleanup
+    await request(http())
+      .delete(`/admin/en/pages/${page.id}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+  });
 });

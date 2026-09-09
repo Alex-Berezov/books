@@ -11797,6 +11797,29 @@
               "maximum": 100,
               "type": "number"
             }
+          },
+          {
+            "description": "Search by title or slug",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by publication status",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "draft",
+                "published"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {

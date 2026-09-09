@@ -12,6 +12,7 @@ type PrismaStub = {
     create: jest.Mock;
     update: jest.Mock;
     delete: jest.Mock;
+    groupBy: jest.Mock;
   };
   seo: { findUnique: jest.Mock };
   $transaction: jest.Mock;
@@ -26,6 +27,7 @@ const createPrismaStub = (): PrismaStub => {
       create: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      groupBy: jest.fn(),
     },
     seo: { findUnique: jest.fn() },
     $transaction: jest.fn(),
@@ -61,6 +63,68 @@ describe('PagesService (unit)', () => {
       prisma as unknown as PrismaService,
       slugRedirects as unknown as SlugRedirectService,
     );
+  });
+
+  describe('adminListGrouped (LEGACY-371: search and status filter)', () => {
+    const whereOfGroupBy = (call: number): Record<string, unknown> =>
+      (prisma.page.groupBy.mock.calls[call][0] as { where: Record<string, unknown> }).where;
+
+    beforeEach(() => {
+      prisma.page.groupBy.mockResolvedValue([]);
+      prisma.page.findMany.mockResolvedValue([]);
+    });
+
+    it('filters nothing but the missing group id when neither field is given', async () => {
+      await service.adminListGrouped(1, 20);
+
+      expect(whereOfGroupBy(0)).toEqual({ translationGroupId: { not: null } });
+      // страница и её итог обязаны считаться по одному условию, иначе
+      // `totalPages` описывает не тот набор, который отдан в `data`
+      expect(whereOfGroupBy(1)).toEqual(whereOfGroupBy(0));
+    });
+
+    it('escapes LIKE wildcards so that "100%_off" is a term, not a pattern', async () => {
+      await service.adminListGrouped(1, 20, '100%_off');
+
+      expect(whereOfGroupBy(0)).toEqual({
+        translationGroupId: { not: null },
+        OR: [
+          { title: { contains: String.raw`100\%\_off`, mode: 'insensitive' } },
+          { slug: { contains: String.raw`100\%\_off`, mode: 'insensitive' } },
+        ],
+      });
+    });
+
+    it('drops a search that is only whitespace instead of matching every row', async () => {
+      await service.adminListGrouped(1, 20, '   ');
+
+      expect(whereOfGroupBy(0)).toEqual({ translationGroupId: { not: null } });
+    });
+
+    it('combines status with search instead of replacing it', async () => {
+      await service.adminListGrouped(1, 20, 'about', PublicationStatus.draft);
+
+      expect(whereOfGroupBy(0)).toEqual({
+        translationGroupId: { not: null },
+        OR: [
+          { title: { contains: 'about', mode: 'insensitive' } },
+          { slug: { contains: 'about', mode: 'insensitive' } },
+        ],
+        status: PublicationStatus.draft,
+      });
+    });
+
+    it('reads the translations of the selected groups without the filter', async () => {
+      prisma.page.groupBy.mockResolvedValueOnce([{ translationGroupId: 'g-1' }]);
+
+      await service.adminListGrouped(1, 20, 'about', PublicationStatus.draft);
+
+      // фильтр отбирает строки таблицы, а не языки внутри строки: значки
+      // переводов должны остаться полными у уже отобранной группы
+      expect(prisma.page.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { translationGroupId: { in: ['g-1'] } } }),
+      );
+    });
   });
 
   describe('getPublicBySlug', () => {

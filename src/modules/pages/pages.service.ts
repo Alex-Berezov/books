@@ -8,6 +8,16 @@ import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/reserved-slugs';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
+/**
+ * `%` и `_` в запросе пользователя — это символы, а не подстановки; та же
+ * причина и то же экранирование, что в `author.service.ts` (там оно называется
+ * так же и не переиспользовано специально — сравнение с общим местом не входило
+ * в границы `LEGACY-371`).
+ */
+function escapeLikeWildcards(term: string): string {
+  return term.replace(/([\\%_])/g, '\\$1');
+}
+
 @Injectable()
 export class PagesService {
   constructor(
@@ -100,8 +110,28 @@ export class PagesService {
     };
   }
 
-  async adminListGrouped(page = 1, limit = 20) {
+  async adminListGrouped(page = 1, limit = 20, search?: string, status?: PublicationStatus) {
     const skip = (page - 1) * limit;
+
+    // Фильтр стоит на уровне отдельной страницы (Page), а не группы: группа
+    // проходит в выдачу, если хотя бы один её перевод совпадает с поиском
+    // и статусом. `groupBy` агрегирует только строки, прошедшие `where`, —
+    // группа без единого совпадения в выдаче не появится вовсе, а фильтр
+    // не сужает список переводов внутри уже отобранной группы (второй запрос
+    // ниже читает их снова, без `where`).
+    const term = search?.trim();
+    const where: Prisma.PageWhereInput = {
+      translationGroupId: { not: null },
+      ...(term
+        ? {
+            OR: [
+              { title: { contains: escapeLikeWildcards(term), mode: 'insensitive' as const } },
+              { slug: { contains: escapeLikeWildcards(term), mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+      ...(status ? { status } : {}),
+    };
 
     // 1. Get unique translationGroupIds (pagination base)
     // We only consider pages that have a translationGroupId.
@@ -109,7 +139,7 @@ export class PagesService {
     // For now, assuming migration filled them or they are new.
     const groups = await this.prisma.page.groupBy({
       by: ['translationGroupId'],
-      where: { translationGroupId: { not: null } },
+      where,
       _max: { updatedAt: true },
       orderBy: {
         _max: { updatedAt: 'desc' },
@@ -121,7 +151,7 @@ export class PagesService {
     const totalGroups = (
       await this.prisma.page.groupBy({
         by: ['translationGroupId'],
-        where: { translationGroupId: { not: null } },
+        where,
       })
     ).length;
 
