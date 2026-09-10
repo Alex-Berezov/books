@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 
 export type RegionalRightsStatus =
   | 'ALLOWED'
@@ -13,11 +13,11 @@ export class TerritoryRegionCountryDto {
   @ApiProperty() finalStatus!: string;
   @ApiProperty() accessPolicy!: string;
   @ApiProperty() geoBlockRequired!: boolean;
-  @ApiPropertyOptional() geoBlockScope!: string | null;
+  @ApiProperty({ type: String, nullable: true }) geoBlockScope!: string | null;
   @ApiProperty() reasonRu!: string;
-  @ApiPropertyOptional() legalBasisRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) legalBasisRu!: string | null;
   @ApiProperty() confidence!: string;
-  @ApiPropertyOptional() nextReviewAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) nextReviewAt!: string | null;
 }
 
 export class TerritoryRegionReasonDto {
@@ -25,13 +25,16 @@ export class TerritoryRegionReasonDto {
   @ApiProperty() finalStatus!: string;
   @ApiProperty() accessPolicy!: string;
   @ApiProperty() reasonRu!: string;
-  @ApiPropertyOptional() legalBasisRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) legalBasisRu!: string | null;
 }
 
 export class TerritoryRegionSummaryDto {
   @ApiProperty() regionCode!: string;
   @ApiProperty() label!: string;
-  @ApiProperty() status!: RegionalRightsStatus;
+  @ApiProperty({
+    enum: ['ALLOWED', 'BLOCKED', 'LICENSE_REQUIRED', 'PENDING_REVIEW', 'NOT_TARGETED', 'MIXED'],
+  })
+  status!: RegionalRightsStatus;
   @ApiProperty() countryCount!: number;
   @ApiProperty() targetedCountryCount!: number;
   /**

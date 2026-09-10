@@ -9,6 +9,7 @@ import { REVIEW_IMPORTABLE_INTAKE_STATUSES } from './rights-intake.constants';
 import { RIGHTS_REVIEW_IMPORT_SCHEMA_VERSION } from './rights-review-import.constants';
 import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
 import type { CreateRightsReviewImportDto } from './dto/create-rights-review-import.dto';
+import type { RightsReviewImportRecordDto } from './dto/rights-review-import-response.dto';
 
 @Injectable()
 export class RightsReviewImportService {
@@ -31,8 +32,19 @@ export class RightsReviewImportService {
   /**
    * @param userId id of the human importing the report, or `null` when the report
    *   arrived through the Phase 17 agent API (no human involved).
+   *
+   * Возвращает строку `RightsReviewImport` целиком — так её отдаёт наружу
+   * `POST /admin/rights/intakes/:id/review-imports`. Тип выписан руками и
+   * приводится приведением, потому что делегат этой модели здесь рукописный
+   * (`ri`, ADR-011) и отдаёт `Record<string, unknown>`: без аннотации форму
+   * ответа не читает ни человек, ни `yarn check:response-schema`. Поля
+   * `RightsReviewImportRecordDto` перечислены по `prisma/schema.prisma`.
    */
-  async create(intakeId: string, dto: CreateRightsReviewImportDto, userId: string | null) {
+  async create(
+    intakeId: string,
+    dto: CreateRightsReviewImportDto,
+    userId: string | null,
+  ): Promise<RightsReviewImportRecordDto> {
     const intake = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
     if (!intake) {
       throw new NotFoundException(`Rights intake with ID '${intakeId}' not found`);
@@ -135,7 +147,7 @@ export class RightsReviewImportService {
           validationWarnings: warnings.length > 0 ? (warnings as unknown as JSON) : undefined,
         },
       });
-      return importRecord;
+      return importRecord as unknown as RightsReviewImportRecordDto;
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
@@ -174,7 +186,7 @@ export class RightsReviewImportService {
       return created;
     });
 
-    return result;
+    return result as unknown as RightsReviewImportRecordDto;
   }
 
   async listByIntake(intakeId: string, query: { page?: number; limit?: number; status?: string }) {

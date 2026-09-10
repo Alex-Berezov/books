@@ -7,26 +7,26 @@ import {
 export class AgentSubmissionDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsIntakeId!: string;
-  @ApiProperty({ nullable: true }) uploadTokenId!: string | null;
-  @ApiProperty({ nullable: true, description: 'Display prefix of the token used' })
+  @ApiProperty({ type: String, nullable: true }) uploadTokenId!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: 'Display prefix of the token used' })
   tokenPrefix!: string | null;
   @ApiProperty({ enum: RightsAgentSubmissionStatus }) status!: RightsAgentSubmissionStatus;
-  @ApiProperty({ nullable: true }) declaredSchemaVersion!: string | null;
-  @ApiProperty({ nullable: true }) reportJsonSha256!: string | null;
-  @ApiProperty({ nullable: true }) payloadSizeBytes!: number | null;
-  @ApiProperty({ nullable: true }) sourceFileName!: string | null;
-  @ApiProperty({ nullable: true }) agentName!: string | null;
-  @ApiProperty({ nullable: true }) agentVersion!: string | null;
-  @ApiProperty({ nullable: true }) rightsReviewImportId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) declaredSchemaVersion!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reportJsonSha256!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) payloadSizeBytes!: number | null;
+  @ApiProperty({ type: String, nullable: true }) sourceFileName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) agentName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) agentVersion!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsReviewImportId!: string | null;
   @ApiProperty() validationErrorCount!: number;
   @ApiProperty() validationWarningCount!: number;
-  @ApiProperty({ nullable: true }) rejectionCode!: string | null;
-  @ApiProperty({ nullable: true }) rejectionMessageRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rejectionCode!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rejectionMessageRu!: string | null;
   @ApiProperty({ enum: RightsAgentSubmissionMaterialization })
   materialization!: RightsAgentSubmissionMaterialization;
-  @ApiProperty({ nullable: true }) materializationError!: string | null;
-  @ApiProperty({ nullable: true }) materializedProfileId!: string | null;
-  @ApiProperty({ nullable: true }) processedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) materializationError!: string | null;
+  @ApiProperty({ type: String, nullable: true }) materializedProfileId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) processedAt!: string | null;
   @ApiProperty() createdAt!: string;
 }
 

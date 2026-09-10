@@ -9,6 +9,15 @@ import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/re
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 /**
+ * Точная форма, которую реально возвращает Prisma с `include: { seo: true }` — используется как
+ * настоящий тип возврата вместо `any` в `pages.controller.ts` (Q6, `LEGACY-016`/`LEGACY-183`).
+ * `PageResponse` (Swagger DTO) описывает ту же форму для документации отдельно: сверять TS-тип
+ * с ней напрямую нельзя, у неё `faq`/`sections` заужены до `Record<string, unknown> | null`,
+ * а Prisma отдаёт `JsonValue`.
+ */
+type PageWithSeo = Prisma.PageGetPayload<{ include: { seo: true } }>;
+
+/**
  * `%` и `_` в запросе пользователя — это символы, а не подстановки; та же
  * причина и то же экранирование, что в `author.service.ts` (там оно называется
  * так же и не переиспользовано специально — сравнение с общим местом не входило
@@ -63,7 +72,11 @@ export class PagesService {
    * Public resolver with language policy: prefers query lang, then Accept-Language, then default.
    * If a language is resolved but no page exists in that language, falls back to any published page with the slug.
    */
-  async getPublicBySlugWithPolicy(slug: string, queryLang?: string, acceptLanguage?: string) {
+  async getPublicBySlugWithPolicy(
+    slug: string,
+    queryLang?: string,
+    acceptLanguage?: string,
+  ): Promise<PageWithSeo | null> {
     const candidates = await this.prisma.page.findMany({
       where: { slug, status: 'published' },
       select: { id: true, language: true },
@@ -211,7 +224,7 @@ export class PagesService {
     return { ...page, translations };
   }
 
-  async create(dto: CreatePageDto, language: Language) {
+  async create(dto: CreatePageDto, language: Language): Promise<PageWithSeo> {
     // Before anything is written: a reserved slug is not a page with a bad name,
     // it is a page with no address — the router answers that path first.
     if (isReservedSlug(dto.slug)) throw new BadRequestException(RESERVED_SLUG_MESSAGE);
@@ -267,7 +280,7 @@ export class PagesService {
     }
   }
 
-  async update(id: string, dto: UpdatePageDto) {
+  async update(id: string, dto: UpdatePageDto): Promise<PageWithSeo> {
     const exists = await this.prisma.page.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Page not found');
     if (dto.slug || dto.language) {
@@ -386,7 +399,7 @@ export class PagesService {
     }
   }
 
-  async setStatus(id: string, status: PublicationStatus) {
+  async setStatus(id: string, status: PublicationStatus): Promise<PageWithSeo> {
     const exists = await this.prisma.page.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Page not found');
     return this.prisma.page.update({
@@ -396,7 +409,7 @@ export class PagesService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string): Promise<{ success: boolean }> {
     const exists = await this.prisma.page.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Page not found');
     await this.prisma.page.delete({ where: { id } });

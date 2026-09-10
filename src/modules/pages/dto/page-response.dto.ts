@@ -1,91 +1,128 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PublicationStatus, Language } from '@prisma/client';
 
 export class SeoResponse {
   @ApiProperty({ example: 1 })
   id!: number;
 
-  @ApiProperty({ required: false, nullable: true, example: 'SEO Title' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'SEO Title' })
   metaTitle!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'SEO Description' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'SEO Description' })
   metaDescription!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'https://example.com/page' })
+  @ApiProperty({
+    type: String,
+    required: false,
+    nullable: true,
+    example: 'https://example.com/page',
+  })
   canonicalUrl!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'index, follow' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'index, follow' })
   robots!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'OG Title' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'OG Title' })
   ogTitle!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'OG Description' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'OG Description' })
   ogDescription!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'website' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'website' })
   ogType!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'https://example.com/page' })
+  @ApiProperty({
+    type: String,
+    required: false,
+    nullable: true,
+    example: 'https://example.com/page',
+  })
   ogUrl!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'https://example.com/image.jpg' })
+  @ApiProperty({
+    type: String,
+    required: false,
+    nullable: true,
+    example: 'https://example.com/image.jpg',
+  })
   ogImageUrl!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'Image alt text' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'Image alt text' })
   ogImageAlt!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'summary_large_image' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'summary_large_image' })
   twitterCard!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: '@site' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: '@site' })
   twitterSite!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: '@creator' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: '@creator' })
   twitterCreator!: string | null;
 
   // Событийная разметка Schema.org: связь `seo` выбирается целиком (pages.service.ts,
   // `include: { seo: true }`), и эти двенадцать полей ответ содержал, а схема - нет.
-  @ApiProperty({ required: false, nullable: true, example: 'Book fair' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'Book fair' })
   eventName!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'Annual book fair' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'Annual book fair' })
   eventDescription!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: '2026-05-01T10:00:00.000Z' })
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    required: false,
+    nullable: true,
+    example: '2026-05-01T10:00:00.000Z',
+  })
   eventStartDate!: Date | null;
 
-  @ApiProperty({ required: false, nullable: true, example: '2026-05-03T18:00:00.000Z' })
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    required: false,
+    nullable: true,
+    example: '2026-05-03T18:00:00.000Z',
+  })
   eventEndDate!: Date | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'https://example.com/fair' })
+  @ApiProperty({
+    type: String,
+    required: false,
+    nullable: true,
+    example: 'https://example.com/fair',
+  })
   eventUrl!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'https://example.com/fair.jpg' })
+  @ApiProperty({
+    type: String,
+    required: false,
+    nullable: true,
+    example: 'https://example.com/fair.jpg',
+  })
   eventImageUrl!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'City Library' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'City Library' })
   eventLocationName!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: '1 Main St' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: '1 Main St' })
   eventLocationStreet!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'Lisbon' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'Lisbon' })
   eventLocationCity!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'Lisboa' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'Lisboa' })
   eventLocationRegion!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: '1000-001' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: '1000-001' })
   eventLocationPostal!: string | null;
 
-  @ApiProperty({ required: false, nullable: true, example: 'PT' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'PT' })
   eventLocationCountry!: string | null;
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  @ApiProperty({ type: String, format: 'date-time', example: '2024-01-01T00:00:00.000Z' })
   createdAt!: Date;
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  @ApiProperty({ type: String, format: 'date-time', example: '2024-01-01T00:00:00.000Z' })
   updatedAt!: Date;
 }
 
@@ -119,10 +156,11 @@ export class PageResponse {
   @ApiProperty({ example: 'Page content here...' })
   content!: string;
 
-  @ApiProperty({ required: false, nullable: true, example: 'Browse Book Categories' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'Browse Book Categories' })
   h1!: string | null;
 
   @ApiProperty({
+    type: String,
     required: false,
     nullable: true,
     example: 'Explore book categories on Bibliaris.',
@@ -130,16 +168,24 @@ export class PageResponse {
   shortDescription!: string | null;
 
   @ApiProperty({
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: { question: { type: 'string' }, answer: { type: 'string' } },
+    },
     required: false,
     nullable: true,
-    description: 'FAQ structured data as JSON array',
+    description: 'FAQ structured data as JSON array. Shape declared by `CreatePageDto.faq`.',
+    example: [{ question: 'What is this?', answer: 'This is...' }],
   })
   faq?: Record<string, unknown> | null;
 
-  @ApiProperty({
-    required: false,
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: true,
     nullable: true,
-    description: 'Homepage sections configuration (JSON object with block data)',
+    description:
+      'Homepage sections configuration (JSON object with block data). Free-form by design: `CreatePageDto.sections` is `Record<string, unknown>` with no per-key validation, and the front reads it as the same type.',
   })
   sections?: Record<string, unknown> | null;
 
@@ -149,22 +195,23 @@ export class PageResponse {
   @ApiProperty({ enum: Object.values(PublicationStatus), example: 'draft' })
   status!: PublicationStatus;
 
-  @ApiProperty({ required: false, nullable: true, example: 1 })
+  @ApiProperty({ type: Number, required: false, nullable: true, example: 1 })
   seoId!: number | null;
 
   @ApiProperty({ required: false, nullable: true, type: SeoResponse })
   seo!: SeoResponse | null;
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  @ApiProperty({ type: String, format: 'date-time', example: '2024-01-01T00:00:00.000Z' })
   createdAt!: Date;
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  @ApiProperty({ type: String, format: 'date-time', example: '2024-01-01T00:00:00.000Z' })
   updatedAt!: Date;
 
-  @ApiProperty({ required: false, nullable: true, example: 'uuid-group' })
+  @ApiProperty({ type: String, required: false, nullable: true, example: 'uuid-group' })
   translationGroupId!: string | null;
 
   @ApiProperty({
+    type: String,
     required: false,
     nullable: true,
     example: 'privacy',
@@ -172,9 +219,25 @@ export class PageResponse {
       'Системный ключ страницы: по нему страницу зовут по адресу /pages/by-key/{systemKey}',
   })
   systemKey!: string | null;
+}
 
-  @ApiProperty({ required: false, nullable: true, type: [PageTranslation] })
-  translations?: PageTranslation[];
+/**
+ * Ответ `GET /admin/pages/:id` и только его. `translations` добавляет одна-единственная
+ * ветка - `PagesService.findById` вторым запросом по `translationGroupId`; остальные методы
+ * модуля возвращают строку `Page` с `include: { seo: true }` и языковых близнецов не грузят.
+ *
+ * Поэтому поле живёт в наследнике, а не в `PageResponse`: пока оно стояло в базовом классе,
+ * схема была **богаче** ответа, и фронт по сгенерированному типу читал `page.translations`
+ * у публичной страницы - код собирался, значение всегда было `undefined`. Сторож
+ * `check-response-schema.mjs` такое не ловит по устройству: он ищет обратное - поле ответа,
+ * которого нет в схеме.
+ */
+export class PageWithTranslationsResponse extends PageResponse {
+  @ApiProperty({
+    type: [PageTranslation],
+    description: 'Языковые версии страницы из той же группы перевода; пустой массив, если их нет',
+  })
+  translations!: PageTranslation[];
 }
 
 export class PaginationMeta {

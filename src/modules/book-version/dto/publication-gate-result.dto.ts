@@ -14,7 +14,7 @@ export class PublicationGateReasonDto {
   @ApiProperty({ required: false })
   messageEn?: string;
 
-  @ApiProperty({ required: false })
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true })
   details?: Record<string, unknown>;
 
   constructor(data: {
@@ -45,13 +45,13 @@ export class PublicationGateResultDto {
   @ApiProperty()
   checkedAt: string;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsProfileId: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   approvedRightsReviewId: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsStatus: string | null;
 
   @ApiProperty({ type: [PublicationGateReasonDto] })
@@ -74,20 +74,20 @@ export class PublicationGateResultDto {
   })
   preparationBlockingReasons!: PublicationGateReasonDto[];
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   contentHashBaseline!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   contentHashCurrent!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: Boolean, nullable: true })
   contentHashMatches!: boolean | null;
 
   @ApiProperty()
   rightsRecheckRequired!: boolean;
 
   // Phase 15: license coverage of the markets that require a license
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   licenseCoverageStatus!: string | null;
 
   @ApiProperty({ type: [String] })
@@ -121,49 +121,49 @@ export class PublicationGateResultDto {
   @ApiProperty()
   hasWorldwideClaimBlock!: boolean;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   worstClaimSeverity!: string | null;
 
   @ApiProperty({ type: [String] })
   claimIds!: string[];
 
   // Phase 18: automatic recheck
-  @ApiPropertyOptional()
-  openRecheckTasksCount?: number;
+  @ApiProperty()
+  openRecheckTasksCount!: number;
 
-  @ApiPropertyOptional()
-  overdueRecheckTasksCount?: number;
+  @ApiProperty()
+  overdueRecheckTasksCount!: number;
 
-  @ApiPropertyOptional()
-  blockingRecheckTasksCount?: number;
+  @ApiProperty()
+  blockingRecheckTasksCount!: number;
 
-  @ApiPropertyOptional({ nullable: true })
-  nextRecheckDueAt?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  nextRecheckDueAt!: string | null;
 
-  @ApiPropertyOptional({ type: [String] })
-  recheckTaskIds?: string[];
+  @ApiProperty({ type: [String] })
+  recheckTaskIds!: string[];
 
   // Phase 19: lawyer workflow. All optional — existing fields and codes are untouched.
-  @ApiPropertyOptional()
-  lawyerReviewRequired?: boolean;
+  @ApiProperty()
+  lawyerReviewRequired!: boolean;
 
-  @ApiPropertyOptional()
-  lawyerApproved?: boolean;
+  @ApiProperty()
+  lawyerApproved!: boolean;
 
-  @ApiPropertyOptional()
-  openLawyerReviewsCount?: number;
+  @ApiProperty()
+  openLawyerReviewsCount!: number;
 
-  @ApiPropertyOptional()
-  pendingLawyerConditionsCount?: number;
+  @ApiProperty()
+  pendingLawyerConditionsCount!: number;
 
-  @ApiPropertyOptional({ nullable: true })
-  riskLevel?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  riskLevel!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  lawyerOpinionValidUntil?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  lawyerOpinionValidUntil!: string | null;
 
-  @ApiPropertyOptional({ type: [String] })
-  lawyerReviewIds?: string[];
+  @ApiProperty({ type: [String] })
+  lawyerReviewIds!: string[];
 
   constructor(data: {
     versionId: string;
@@ -256,7 +256,7 @@ export class UpdateRightsGeoBlockDto {
   @IsBoolean()
   configured!: boolean;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, required: false, nullable: true })
   @IsOptional()
   @IsString()
   notesRu?: string | null;

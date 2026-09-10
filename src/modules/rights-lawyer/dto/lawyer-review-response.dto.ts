@@ -14,7 +14,14 @@ export class RiskFactorDto {
   @ApiProperty({ enum: RightsRiskFactorCode }) code!: RightsRiskFactorCode;
   @ApiProperty({ enum: RightsRiskLevel }) level!: RightsRiskLevel;
   @ApiProperty() messageRu!: string;
-  @ApiProperty({ nullable: true, type: Object }) details!: Record<string, unknown> | null;
+  @ApiProperty({
+    nullable: true,
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Free-form by design: each `RightsRiskFactorCode` carries its own keys, copied through by `RightsRiskAssessmentService` (`details: factor.details ?? null`) without a shared shape.',
+  })
+  details!: Record<string, unknown> | null;
 }
 
 export class LawyerConditionDto {
@@ -25,10 +32,10 @@ export class LawyerConditionDto {
   @ApiProperty({ enum: RightsLawyerConditionStatus }) status!: RightsLawyerConditionStatus;
   @ApiProperty() isBlocking!: boolean;
   @ApiProperty({ type: [String] }) affectedCountryCodes!: string[];
-  @ApiProperty({ nullable: true }) satisfiedAt!: string | null;
-  @ApiProperty({ nullable: true }) satisfiedNotesRu!: string | null;
-  @ApiProperty({ nullable: true }) waivedAt!: string | null;
-  @ApiProperty({ nullable: true }) waiveReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) satisfiedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) satisfiedNotesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) waivedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) waiveReasonRu!: string | null;
   @ApiProperty() createdAt!: string;
 }
 
@@ -38,18 +45,18 @@ export class LegalOpinionDto {
   @ApiProperty({ enum: RightsLegalOpinionKind }) kind!: RightsLegalOpinionKind;
   @ApiProperty() titleRu!: string;
   @ApiProperty() bodyRu!: string;
-  @ApiProperty({ nullable: true }) lawyerId!: string | null;
-  @ApiProperty({ nullable: true }) lawyerNameSnapshot!: string | null;
-  @ApiProperty({ nullable: true }) documentUrl!: string | null;
-  @ApiProperty({ nullable: true }) documentSha256!: string | null;
-  @ApiProperty({ nullable: true }) fileName!: string | null;
-  @ApiProperty({ nullable: true }) mimeType!: string | null;
-  @ApiProperty({ nullable: true }) issuedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerNameSnapshot!: string | null;
+  @ApiProperty({ type: String, nullable: true }) documentUrl!: string | null;
+  @ApiProperty({ type: String, nullable: true }) documentSha256!: string | null;
+  @ApiProperty({ type: String, nullable: true }) fileName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) mimeType!: string | null;
+  @ApiProperty({ type: String, nullable: true }) issuedAt!: string | null;
   @ApiProperty({ type: [String] }) jurisdictionCodes!: string[];
   /** Доказательство типа LEGAL_OPINION, созданное автоматически при прикреплении. */
-  @ApiProperty({ nullable: true }) rightsEvidenceId!: string | null;
-  @ApiProperty({ nullable: true }) archivedAt!: string | null;
-  @ApiProperty({ nullable: true }) archiveReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsEvidenceId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) archivedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) archiveReasonRu!: string | null;
   @ApiProperty() createdAt!: string;
 }
 
@@ -61,8 +68,15 @@ export class LawyerReviewEventDto {
   @ApiProperty({ enum: RightsLawyerReviewStatus, nullable: true })
   toStatus!: RightsLawyerReviewStatus | null;
   @ApiProperty() messageRu!: string;
-  @ApiProperty({ nullable: true, type: Object }) payload!: Record<string, unknown> | null;
-  @ApiProperty({ nullable: true }) createdByUserId!: string | null;
+  @ApiProperty({
+    nullable: true,
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Free-form by design: each `RightsLawyerReviewEventType` writes its own keys (`{ trigger, riskLevel, blocksApproval }`, `{ lawyerId, lawyerName }`, `{ conditionId, code }`, `{ reviewNumber, withdrawReasonRu }`, …). `appendEvent` takes `payload: unknown`.',
+  })
+  payload!: Record<string, unknown> | null;
+  @ApiProperty({ type: String, nullable: true }) createdByUserId!: string | null;
   @ApiProperty() createdAt!: string;
 }
 
@@ -77,46 +91,46 @@ export class LawyerReviewDto {
   @ApiProperty({ enum: RightsLawyerReviewStatus }) effectiveStatus!: RightsLawyerReviewStatus;
   @ApiProperty({ enum: RightsLawyerReviewTrigger }) trigger!: RightsLawyerReviewTrigger;
   @ApiProperty({ enum: RightsRiskLevel }) riskLevel!: RightsRiskLevel;
-  @ApiProperty({ nullable: true }) rightsProfileId!: string | null;
-  @ApiProperty({ nullable: true }) rightsIntakeId!: string | null;
-  @ApiProperty({ nullable: true }) rightsReviewId!: string | null;
-  @ApiProperty({ nullable: true }) bookId!: string | null;
-  @ApiProperty({ nullable: true }) bookVersionId!: string | null;
-  @ApiProperty({ nullable: true }) rightsClaimId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsProfileId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsIntakeId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsReviewId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) bookId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) bookVersionId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsClaimId!: string | null;
   @ApiProperty() titleRu!: string;
   @ApiProperty() questionRu!: string;
-  @ApiProperty({ nullable: true }) contextRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) contextRu!: string | null;
   @ApiProperty({ type: [String] }) affectedCountryCodes!: string[];
   @ApiProperty({ type: [String] }) affectedLanguages!: string[];
   @ApiProperty({ type: [String] }) affectedComponentIds!: string[];
   @ApiProperty() blocksApproval!: boolean;
-  @ApiProperty({ nullable: true }) requestedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) requestedByUserId!: string | null;
   @ApiProperty() requestedAt!: string;
-  @ApiProperty({ nullable: true }) dueAt!: string | null;
-  @ApiProperty({ nullable: true }) assignedLawyerId!: string | null;
-  @ApiProperty({ nullable: true }) assignedLawyerName!: string | null;
-  @ApiProperty({ nullable: true }) assignedAt!: string | null;
-  @ApiProperty({ nullable: true }) startedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) dueAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) assignedLawyerId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) assignedLawyerName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) assignedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) startedAt!: string | null;
   @ApiProperty({ enum: RightsLawyerDecision, nullable: true })
   decision!: RightsLawyerDecision | null;
-  @ApiProperty({ nullable: true }) decidedAt!: string | null;
-  @ApiProperty({ nullable: true }) decidedByUserId!: string | null;
-  @ApiProperty({ nullable: true }) decidedLawyerId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) decidedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) decidedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) decidedLawyerId!: string | null;
   /** Имя юриста на момент решения — приоритетно для отображения истории. */
-  @ApiProperty({ nullable: true }) lawyerNameSnapshot!: string | null;
-  @ApiProperty({ nullable: true }) opinionSummaryRu!: string | null;
-  @ApiProperty({ nullable: true }) restrictionsRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerNameSnapshot!: string | null;
+  @ApiProperty({ type: String, nullable: true }) opinionSummaryRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) restrictionsRu!: string | null;
   @ApiProperty({ type: [String] }) approvedCountryCodes!: string[];
   @ApiProperty({ type: [String] }) blockedCountryCodes!: string[];
-  @ApiProperty({ nullable: true }) validUntil!: string | null;
-  @ApiProperty({ nullable: true }) expiredAt!: string | null;
-  @ApiProperty({ nullable: true }) withdrawnAt!: string | null;
-  @ApiProperty({ nullable: true }) withdrawReasonRu!: string | null;
-  @ApiProperty({ nullable: true }) reopenedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) validUntil!: string | null;
+  @ApiProperty({ type: String, nullable: true }) expiredAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) withdrawnAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) withdrawReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reopenedAt!: string | null;
 
   @ApiProperty() isOverdue!: boolean;
-  @ApiProperty({ nullable: true }) daysUntilDue!: number | null;
-  @ApiProperty({ nullable: true }) daysUntilExpiry!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) daysUntilDue!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) daysUntilExpiry!: number | null;
   @ApiProperty() isExpiringSoon!: boolean;
   @ApiProperty() blocksPublication!: boolean;
   @ApiProperty() pendingConditionsCount!: number;
@@ -125,9 +139,9 @@ export class LawyerReviewDto {
   @ApiProperty() opinionsCount!: number;
   @ApiProperty() activeOpinionsCount!: number;
 
-  @ApiProperty({ nullable: true }) intakeTitle!: string | null;
-  @ApiProperty({ nullable: true }) bookSlug!: string | null;
-  @ApiProperty({ nullable: true }) versionLanguage!: string | null;
+  @ApiProperty({ type: String, nullable: true }) intakeTitle!: string | null;
+  @ApiProperty({ type: String, nullable: true }) bookSlug!: string | null;
+  @ApiProperty({ type: String, nullable: true }) versionLanguage!: string | null;
 
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;

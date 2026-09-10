@@ -15,19 +15,21 @@ import {
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
   ApiTags,
   ApiTooManyRequestsResponse,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 import { ListCommentsQueryDto } from './dto/list-comments.dto';
 import { CommentListDto } from './dto/comment-list.dto';
-import { CommentDetailDto } from './dto/comment.dto';
+import { CommentBareDto, CommentDetailDto } from './dto/comment.dto';
 import { AdminCommentsQueryDto, AdminCommentsResponseDto } from './dto/admin-comments.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -116,7 +118,15 @@ export class CommentsController {
     summary: 'Update comment (owner can edit text; admins/moderators can also hide/unhide)',
   })
   @ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
-  @ApiOkResponse({ type: CommentDetailDto })
+  // Настоящий union: `dto` без единого поля не трогает `data` и возвращает текущую запись без
+  // `user`/`children` (comments.service.ts, ветка `Object.keys(data).length === 0`); любое
+  // изменение перечитывает связи и отдаёт полную форму.
+  @ApiExtraModels(CommentDetailDto, CommentBareDto)
+  @ApiOkResponse({
+    schema: {
+      oneOf: [{ $ref: getSchemaPath(CommentDetailDto) }, { $ref: getSchemaPath(CommentBareDto) }],
+    },
+  })
   update(
     @Req() req: { user: RequestUser },
     @Param('id') id: string,

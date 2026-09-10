@@ -7,14 +7,21 @@ export class RightsNotificationDto {
   @ApiProperty({ enum: RightsNotificationSeverity }) severity!: RightsNotificationSeverity;
   @ApiProperty() titleRu!: string;
   @ApiProperty() messageRu!: string;
-  @ApiProperty({ nullable: true }) rightsIntakeId!: string | null;
-  @ApiProperty({ nullable: true }) agentSubmissionId!: string | null;
-  @ApiProperty({ nullable: true }) rightsReviewImportId!: string | null;
-  @ApiProperty({ nullable: true }) rightsProfileId!: string | null;
-  @ApiProperty({ nullable: true }) bookVersionId!: string | null;
-  @ApiProperty({ nullable: true, type: Object }) payload!: Record<string, unknown> | null;
+  @ApiProperty({ type: String, nullable: true }) rightsIntakeId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) agentSubmissionId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsReviewImportId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsProfileId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) bookVersionId!: string | null;
+  @ApiProperty({
+    nullable: true,
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Free-form by design: every notification type writes its own keys (`RightsNotificationsService.create` takes `payload: unknown`; callers pass `{ tokenPrefix, maxUses, expiresAt }`, `{ warningCount }`, `{ lawyerReviewId, reviewNumber }`, `{ recheckTaskId, stage }` and so on). No validation constrains the composition.',
+  })
+  payload!: Record<string, unknown> | null;
   @ApiProperty() isRead!: boolean;
-  @ApiProperty({ nullable: true }) readAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) readAt!: string | null;
   @ApiProperty() createdAt!: string;
 }
 

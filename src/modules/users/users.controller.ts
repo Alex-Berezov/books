@@ -10,7 +10,14 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags, ApiParam } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiParam,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RoleName } from '@prisma/client';
@@ -19,6 +26,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PublicUserDto, PublicUserWithRolesDto } from './dto/public-user.dto';
+import { UserRoleDto } from './dto/user-role.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { PagedUsersDto } from './dto/paged-users.dto';
 import { UpdateMeDto } from './dto/update-me.dto';
@@ -106,6 +114,10 @@ export class UsersController {
   @ApiParam({ name: 'id', description: 'User ID' })
   @Roles(Role.Admin)
   @Get(':id/roles')
+  @ApiOkResponse({
+    description: 'Role names assigned to the user',
+    schema: { type: 'array', items: { type: 'string', enum: Object.values(RoleName) } },
+  })
   listRoles(@Param('id') id: string) {
     return this.users.listRoles(id);
   }
@@ -115,6 +127,7 @@ export class UsersController {
   @ApiParam({ name: 'role', description: 'Role name', enum: ['user', 'admin', 'content_manager'] })
   @Roles(Role.Admin)
   @Post(':id/roles/:role')
+  @ApiCreatedResponse({ type: UserRoleDto })
   assignRole(@Param('id') id: string, @Param('role') role: RoleName) {
     return this.users.assignRole(id, role);
   }
@@ -124,6 +137,7 @@ export class UsersController {
   @ApiParam({ name: 'role', description: 'Role name', enum: ['user', 'admin', 'content_manager'] })
   @Roles(Role.Admin)
   @Delete(':id/roles/:role')
+  @ApiOkResponse({ type: UserRoleDto })
   revokeRole(@Param('id') id: string, @Param('role') role: RoleName) {
     return this.users.revokeRole(id, role);
   }

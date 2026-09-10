@@ -60,6 +60,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Request a legal review' })
   request(
@@ -78,12 +79,14 @@ export class RightsLawyerReviewController {
   }
 
   @Get('admin/rights/lawyer-reviews/:id')
+  @ApiOkResponse({ type: LawyerReviewDetailDto })
   @ApiOperation({ summary: 'Legal review details, conditions, opinions and timeline' })
   getById(@Param('id') id: string): Promise<LawyerReviewDetailDto> {
     return this.reviews.getById(id);
   }
 
   @Post('admin/rights/lawyer-reviews/:id/assign')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @ApiOperation({ summary: 'Assign a lawyer (a lawyer may only assign themselves)' })
   assign(
     @Param('id') id: string,
@@ -94,6 +97,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/start')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin, Role.Lawyer)
   @ApiOperation({ summary: 'Take a legal review into work' })
   start(
@@ -104,6 +108,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/decide')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin, Role.Lawyer)
   @ApiOperation({ summary: 'Record the lawyer verdict' })
   decide(
@@ -115,6 +120,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/withdraw')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Withdraw a legal review, reason required' })
   withdraw(
@@ -126,6 +132,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/reopen')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Reopen a closed legal review (admin only)' })
   reopen(
@@ -136,6 +143,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/notes')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @ApiOperation({ summary: 'Append a note to the timeline' })
   addNote(
     @Param('id') id: string,
@@ -178,6 +186,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/conditions')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin, Role.Lawyer)
   @ApiOperation({ summary: 'Add a mandatory condition' })
   addCondition(
@@ -189,6 +198,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/conditions/:conditionId/satisfy')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Mark a condition as satisfied' })
   satisfyCondition(
@@ -201,6 +211,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/lawyer-reviews/:id/conditions/:conditionId/waive')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Waive a condition, reason required (admin only)' })
   waiveCondition(
@@ -230,6 +241,7 @@ export class RightsLawyerReviewController {
   }
 
   @Post('admin/rights/profiles/:id/require-lawyer-review')
+  @ApiCreatedResponse({ type: LawyerReviewDetailDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Force a legal review for a rights profile' })
   requireForProfile(
@@ -241,6 +253,7 @@ export class RightsLawyerReviewController {
   }
 
   @Get('admin/versions/:id/lawyer-review')
+  @ApiOkResponse({ type: VersionLawyerReviewDto })
   @ApiOperation({ summary: 'Legal state of a book version' })
   getVersionLawyerReview(@Param('id') id: string): Promise<VersionLawyerReviewDto> {
     return this.reviews.getVersionLawyerReview(id);

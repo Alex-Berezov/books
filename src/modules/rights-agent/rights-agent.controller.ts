@@ -19,7 +19,8 @@ import { RightsAgentUploadRateLimitGuard } from './rights-agent-upload-rate-limi
 import { AGENT_ERROR_CODES } from './rights-agent.constants';
 import { agentError } from './rights-agent.errors';
 import { AgentSubmitReportDto } from './dto/agent-submit-report.dto';
-import type { RightsAgentManifestDto } from '../rights-intake/dto/rights-agent-manifest.dto';
+import { RightsAgentManifestDto } from '../rights-intake/dto/rights-agent-manifest.dto';
+import { RightsReportSchemaDocumentDto } from './dto/report-schema-document.dto';
 import {
   LATEST_RIGHTS_REPORT_SCHEMA_VERSION,
   RIGHTS_REPORT_JSON_SCHEMAS,
@@ -51,6 +52,7 @@ export class RightsAgentController {
   @Get('report-schema')
   @Header('Cache-Control', 'public, max-age=3600')
   @ApiOperation({ summary: 'JSON Schema of the latest supported report version' })
+  @ApiOkResponse({ type: RightsReportSchemaDocumentDto })
   getLatestSchema(): RightsReportSchemaDocument {
     return RIGHTS_REPORT_JSON_SCHEMAS[LATEST_RIGHTS_REPORT_SCHEMA_VERSION];
   }
@@ -58,6 +60,7 @@ export class RightsAgentController {
   @Get('report-schema/:version')
   @Header('Cache-Control', 'public, max-age=3600')
   @ApiOperation({ summary: 'JSON Schema of a specific report version' })
+  @ApiOkResponse({ type: RightsReportSchemaDocumentDto })
   getSchemaByVersion(@Param('version') version: string): RightsReportSchemaDocument {
     const document = getReportSchemaDocument(version);
     if (!document) {
@@ -72,6 +75,7 @@ export class RightsAgentController {
   @Get('manifest')
   @UseGuards(RightsAgentUploadRateLimitGuard, RightsAgentTokenGuard)
   @ApiOperation({ summary: 'Manifest of the intake bound to the upload token' })
+  @ApiOkResponse({ type: RightsAgentManifestDto })
   async getManifest(@Req() req: AgentHttpRequest): Promise<RightsAgentManifestDto> {
     const context = this.requireContext(req);
     // Reading the manifest records usage metadata but does not consume the token.

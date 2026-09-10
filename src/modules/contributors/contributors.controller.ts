@@ -26,7 +26,12 @@ import { LinkRightsComponentContributorDto } from './dto/link-rights-component-c
 import { LinkSourceEditionContributorDto } from './dto/link-source-edition-contributor.dto';
 import { QueryContributorsDto } from './dto/query-contributors.dto';
 import { UpdateContributorDto } from './dto/update-contributor.dto';
-import { ContributorResponseDto } from './dto/contributor-response.dto';
+import {
+  ContributorLinkResponseDto,
+  ContributorListResponseDto,
+  ContributorResponseDto,
+} from './dto/contributor-response.dto';
+import { DeleteContributorResponseDto } from './dto/delete-contributor-response.dto';
 
 @ApiTags('Contributors')
 @Controller('admin')
@@ -36,6 +41,7 @@ export class ContributorsController {
   constructor(private readonly contributorsService: ContributorsService) {}
 
   @Get('contributors')
+  @ApiOkResponse({ type: ContributorListResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'List contributors with search and filters' })
   async findAll(@Query() query: QueryContributorsDto) {
@@ -67,6 +73,7 @@ export class ContributorsController {
   }
 
   @Delete('contributors/:id')
+  @ApiOkResponse({ type: DeleteContributorResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Delete a contributor' })
   async remove(@Param('id') id: string): Promise<{ id: string }> {
@@ -74,6 +81,7 @@ export class ContributorsController {
   }
 
   @Post('source-editions/:id/contributors')
+  @ApiCreatedResponse({ type: ContributorLinkResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Link contributor to a source edition' })
   async linkSourceEdition(
@@ -85,6 +93,7 @@ export class ContributorsController {
   }
 
   @Delete('source-editions/:id/contributors/:linkId')
+  @ApiOkResponse({ type: ContributorLinkResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Unlink contributor from a source edition' })
   async unlinkSourceEdition(
@@ -100,6 +109,7 @@ export class ContributorsController {
   }
 
   @Post('rights-components/:id/contributors')
+  @ApiCreatedResponse({ type: ContributorLinkResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Link contributor to a rights component' })
   async linkRightsComponent(
@@ -115,6 +125,7 @@ export class ContributorsController {
   }
 
   @Delete('rights-components/:id/contributors/:linkId')
+  @ApiOkResponse({ type: ContributorLinkResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Unlink contributor from a rights component' })
   async unlinkRightsComponent(

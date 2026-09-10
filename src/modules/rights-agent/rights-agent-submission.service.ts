@@ -343,11 +343,11 @@ export class RightsAgentSubmissionService {
       );
 
       return {
-        id: record['id'] as string,
-        importStatus: record['importStatus'] as string,
+        id: record['id'],
+        importStatus: record['importStatus'],
         validationErrors: (record['validationErrors'] as ValidationIssue[] | null) ?? [],
         validationWarnings: (record['validationWarnings'] as ValidationIssue[] | null) ?? [],
-        reportJsonSha256: (record['reportJsonSha256'] as string | null) ?? null,
+        reportJsonSha256: record['reportJsonSha256'] ?? null,
       };
     } catch (error) {
       // Текст исключения остаётся в журнале и дальше не идёт (`LEGACY-197`):

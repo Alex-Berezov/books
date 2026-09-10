@@ -14,12 +14,15 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiExtraModels,
   ApiHeader,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
   ApiResponse,
   ApiTags,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { PagesService } from './pages.service';
 import { CreatePageDto } from './dto/create-page.dto';
@@ -31,7 +34,11 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
-import { PageResponse, PaginatedPagesResponse } from './dto/page-response.dto';
+import {
+  PageResponse,
+  PageWithTranslationsResponse,
+  PaginatedPagesResponse,
+} from './dto/page-response.dto';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
 import { PaginatedPageGroupsResponse } from './dto/page-group-response.dto';
@@ -132,18 +139,26 @@ export class PagesController {
   @ApiParam({ name: 'slug' })
   @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
+  // Возврат объявлен как `Promise<PageWithSeo | null>` (`pages.service.ts`,
+  // `getPublicBySlugWithPolicy`): голый `type: PageResponse` обещал бы объект всегда,
+  // и сгенерированный по схеме клиент не знал бы про пустое тело.
+  @ApiExtraModels(PageResponse)
+  @ApiOkResponse({
+    schema: { allOf: [{ $ref: getSchemaPath(PageResponse) }], nullable: true },
+    description: 'Published page for the resolved language, or null when the row is gone',
+  })
   getPublic(
     @Param('slug') slug: string,
     @Query('lang') lang?: string,
     @Headers('accept-language') acceptLanguage?: string,
-  ): Promise<any> {
+  ): ReturnType<PagesService['getPublicBySlugWithPolicy']> {
     return this.service.getPublicBySlugWithPolicy(slug, lang, acceptLanguage);
   }
 
   @Get('admin/pages/:id')
   @ApiOperation({ summary: 'Get page by ID (admin): any status' })
   @ApiParam({ name: 'id', description: 'Page UUID' })
-  @ApiResponse({ status: 200, type: PageResponse })
+  @ApiResponse({ status: 200, type: PageWithTranslationsResponse })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -197,7 +212,7 @@ export class PagesController {
     @Param('lang', LangParamPipe) lang: Language,
     @Body() dto: CreatePageDto,
     @Headers('x-admin-language') adminLangHeader?: string,
-  ): Promise<any> {
+  ): ReturnType<PagesService['create']> {
     const headerLang = (adminLangHeader || '').toLowerCase();
     const effLang = (Object.values(Language) as string[]).includes(headerLang)
       ? (headerLang as Language)
@@ -209,6 +224,7 @@ export class PagesController {
   @ApiOperation({ summary: 'Update page (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiOkResponse({ type: PageResponse })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -216,7 +232,7 @@ export class PagesController {
     @Param('lang', LangParamPipe) _lang: Language,
     @Param('id') id: string,
     @Body() dto: UpdatePageDto,
-  ): Promise<any> {
+  ): ReturnType<PagesService['update']> {
     return this.service.update(id, dto);
   }
 
@@ -228,7 +244,10 @@ export class PagesController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  remove(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
+  remove(
+    @Param('lang', LangParamPipe) _lang: Language,
+    @Param('id') id: string,
+  ): ReturnType<PagesService['remove']> {
     return this.service.remove(id);
   }
 
@@ -236,10 +255,14 @@ export class PagesController {
   @ApiOperation({ summary: 'Publish page' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiOkResponse({ type: PageResponse })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  publish(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
+  publish(
+    @Param('lang', LangParamPipe) _lang: Language,
+    @Param('id') id: string,
+  ): ReturnType<PagesService['setStatus']> {
     return this.service.setStatus(id, 'published');
   }
 
@@ -247,10 +270,14 @@ export class PagesController {
   @ApiOperation({ summary: 'Unpublish page' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
+  @ApiOkResponse({ type: PageResponse })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  unpublish(@Param('lang', LangParamPipe) _lang: Language, @Param('id') id: string): Promise<any> {
+  unpublish(
+    @Param('lang', LangParamPipe) _lang: Language,
+    @Param('id') id: string,
+  ): ReturnType<PagesService['setStatus']> {
     return this.service.setStatus(id, 'draft');
   }
 

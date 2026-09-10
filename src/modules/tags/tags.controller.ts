@@ -14,7 +14,9 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiCreatedResponse,
   ApiHeader,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -35,6 +37,10 @@ import { Language } from '@prisma/client';
 import { PaginatedTagsResponse } from './dto/tag-response.dto';
 import { CheckTagSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckTagSlugResponseDto } from './dto/check-slug-response.dto';
+import { TagEntityDto } from './dto/tag-entity.dto';
+import { TagTranslationEntityDto } from './dto/tag-translation-entity.dto';
+import { VersionTagLinkDto } from './dto/version-tag-link.dto';
+import { TagBooksBySlugResponseDto } from './dto/tag-books-by-slug-response.dto';
 
 @ApiTags('tags')
 @Controller()
@@ -89,6 +95,7 @@ export class TagsController {
 
   @Post('tags')
   @ApiOperation({ summary: 'Create tag' })
+  @ApiCreatedResponse({ type: TagEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -99,6 +106,7 @@ export class TagsController {
   @Patch('tags/:id')
   @ApiOperation({ summary: 'Update tag' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: TagEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -124,6 +132,7 @@ export class TagsController {
   @ApiParam({ name: 'slug' })
   @ApiQuery({ name: 'lang', required: false, description: 'Optional language (?lang=...)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
+  @ApiOkResponse({ type: TagBooksBySlugResponseDto })
   publicBySlug(
     @Param('slug') slug: string,
     @Query('lang') queryLang?: string,
@@ -135,6 +144,7 @@ export class TagsController {
   @Post('versions/:id/tags')
   @ApiOperation({ summary: 'Attach tag to a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })
+  @ApiCreatedResponse({ type: VersionTagLinkDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -158,6 +168,7 @@ export class TagsController {
   @Get('tags/:id/translations')
   @ApiOperation({ summary: 'List tag translations (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: TagTranslationEntityDto, isArray: true })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -168,6 +179,7 @@ export class TagsController {
   @Post('tags/:id/translations')
   @ApiOperation({ summary: 'Create tag translation (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiCreatedResponse({ type: TagTranslationEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -179,6 +191,7 @@ export class TagsController {
   @ApiOperation({ summary: 'Update tag translation (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @ApiOkResponse({ type: TagTranslationEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

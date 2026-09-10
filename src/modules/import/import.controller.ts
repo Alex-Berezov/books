@@ -6,6 +6,7 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { ImportService } from './import.service';
 import { ImportCategoryDto } from './dto/import-category.dto';
 import { ImportTagDto } from './dto/import-tag.dto';
+import { ImportResultDto } from './dto/import-result.dto';
 
 @ApiTags('import')
 @ApiBearerAuth()
@@ -18,7 +19,7 @@ export class ImportController {
   @Post('categories')
   @ApiOperation({ summary: 'Import categories/genres/collections from JSON' })
   @ApiBody({ type: [ImportCategoryDto] })
-  @ApiResponse({ status: 201, description: 'Import results with counts' })
+  @ApiResponse({ status: 201, description: 'Import results with counts', type: ImportResultDto })
   importCategories(@Body() dto: ImportCategoryDto[]) {
     return this.service.importCategories(dto);
   }
@@ -26,7 +27,7 @@ export class ImportController {
   @Post('tags')
   @ApiOperation({ summary: 'Import tags from JSON' })
   @ApiBody({ type: [ImportTagDto] })
-  @ApiResponse({ status: 201, description: 'Import results with counts' })
+  @ApiResponse({ status: 201, description: 'Import results with counts', type: ImportResultDto })
   importTags(@Body() dto: ImportTagDto[]) {
     return this.service.importTags(dto);
   }

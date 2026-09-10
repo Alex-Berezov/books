@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { RightsConfidence } from '@prisma/client';
 import { PersonListItemDto } from '../../persons/dto/person-response.dto';
 import { ContributorRole } from '../../persons/person-interface';
@@ -16,8 +16,8 @@ export class BookVersionContributorResponseDto {
   @ApiProperty({ enum: ContributorRole })
   role!: ContributorRole;
 
-  @ApiPropertyOptional()
-  roleOtherRu?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  roleOtherRu!: string | null;
 
   @ApiProperty()
   displayOrder!: number;
@@ -25,34 +25,34 @@ export class BookVersionContributorResponseDto {
   @ApiProperty()
   isPrimary!: boolean;
 
-  @ApiPropertyOptional()
-  creditedName?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  creditedName!: string | null;
 
-  @ApiPropertyOptional()
-  creditedLanguage?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  creditedLanguage!: string | null;
 
-  @ApiPropertyOptional()
-  contributionNoteRu?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  contributionNoteRu!: string | null;
 
-  @ApiPropertyOptional({ enum: RightsConfidence })
-  confidence?: RightsConfidence | null;
+  @ApiProperty({ enum: RightsConfidence, nullable: true })
+  confidence!: RightsConfidence | null;
 
   // Строка отдаётся целиком (book-version.service.ts: findMany/create без `select`),
   // поэтому здесь и служебные поля Prisma, и `sourceEvidenceIds`.
-  @ApiPropertyOptional({
+  @ApiProperty({
     type: 'array',
     items: { type: 'string' },
     nullable: true,
     description: 'Идентификаторы доказательств, из которых взята роль (Json в базе)',
   })
-  sourceEvidenceIds?: unknown;
+  sourceEvidenceIds!: unknown;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
 
-  @ApiPropertyOptional({ type: PersonListItemDto })
-  person?: PersonListItemDto;
+  @ApiProperty({ type: PersonListItemDto })
+  person!: PersonListItemDto;
 }

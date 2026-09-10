@@ -1,7 +1,8 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ViewStatsService } from './view-stats.service';
 import { CreateViewDto } from './dto/create-view.dto';
+import { CreateViewResponseDto } from './dto/create-view-response.dto';
 import {
   AggregateQueryDto,
   AggregateResponseDto,
@@ -18,6 +19,7 @@ export class ViewStatsController {
   @Post('views')
   @UseGuards(RateLimitGuard)
   @ApiOperation({ summary: 'Record a view (anonymous or authorized)' })
+  @ApiCreatedResponse({ type: CreateViewResponseDto })
   create(@Req() req: { user?: { userId: string } }, @Body() dto: CreateViewDto) {
     const userId = req.user?.userId ?? null;
     return this.service.create(userId, dto);

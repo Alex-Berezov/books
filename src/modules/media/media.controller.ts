@@ -16,6 +16,8 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiCreatedResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -23,6 +25,8 @@ import {
 } from '@nestjs/swagger';
 import { MediaService } from './media.service';
 import { ConfirmMediaDto, MediaListQueryDto } from './dto/create-media.dto';
+import { MediaAssetResponseDto } from './dto/media-asset-response.dto';
+import { PagedMediaAssetsDto } from './dto/paged-media-assets.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -47,6 +51,7 @@ export class MediaController {
 
   @Post('media/confirm')
   @ApiOperation({ summary: 'Confirm uploaded object and create/update MediaAsset' })
+  @ApiCreatedResponse({ type: MediaAssetResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -58,6 +63,7 @@ export class MediaController {
 
   @Get('media')
   @ApiOperation({ summary: 'List media assets' })
+  @ApiOkResponse({ type: PagedMediaAssetsDto })
   @ApiQuery({ name: 'q', required: false })
   @ApiQuery({ name: 'type', required: false })
   @ApiQuery({ name: 'page', required: false })
@@ -73,6 +79,7 @@ export class MediaController {
   @ApiOperation({
     summary: 'One-step upload: multipart file -> presign -> direct -> media.confirm',
   })
+  @ApiCreatedResponse({ type: MediaAssetResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

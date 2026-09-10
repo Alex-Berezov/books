@@ -6,11 +6,11 @@ class ManifestIntakeDto {
   @ApiProperty() workflowStatus!: string;
   @ApiProperty() candidateTitle!: string;
   @ApiProperty() candidateAuthor!: string;
-  @ApiProperty() originalTitle!: string | null;
-  @ApiProperty() originalLanguage!: string | null;
-  @ApiProperty() authorBirthYear!: number | null;
-  @ApiProperty() authorDeathYear!: number | null;
-  @ApiProperty() notesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) originalTitle!: string | null;
+  @ApiProperty({ type: String, nullable: true }) originalLanguage!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) authorBirthYear!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) authorDeathYear!: number | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
 }
 
 class ManifestSourceDto {
@@ -20,12 +20,12 @@ class ManifestSourceDto {
    * вариантов, и для всего, кроме Gutenberg, это `OTHER`; агент по нему не отличит Викитеку
    * от сайта издательства, поэтому площадка называется здесь.
    */
-  @ApiProperty({ example: 'Wikisource (ru)', nullable: true })
+  @ApiProperty({ type: String, example: 'Wikisource (ru)', nullable: true })
   providerHint!: string | null;
-  @ApiProperty() externalId!: string | null;
-  @ApiProperty() url!: string | null;
-  @ApiProperty() title!: string | null;
-  @ApiProperty() language!: string | null;
+  @ApiProperty({ type: String, nullable: true }) externalId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) url!: string | null;
+  @ApiProperty({ type: String, nullable: true }) title!: string | null;
+  @ApiProperty({ type: String, nullable: true }) language!: string | null;
   @ApiProperty() textType!: string;
   /**
    * WP-F.1: `true` — провайдер и внешний ID выведены приложением из ссылки. Это догадка

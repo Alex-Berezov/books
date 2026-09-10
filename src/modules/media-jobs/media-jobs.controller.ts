@@ -1,10 +1,20 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { MediaProbeService } from './media-probe.service';
 import { MediaCleanupService } from './media-cleanup.service';
+import { CleanupOrphansResponseDto } from './dto/cleanup-orphans-response.dto';
+import { ReprobeResponseDto } from './dto/reprobe-response.dto';
+import { ProbeResponseDto } from './dto/probe-response.dto';
 
 @ApiTags('media-jobs')
 @ApiBearerAuth()
@@ -20,7 +30,7 @@ export class MediaJobsController {
   @Post('reprobe')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Enqueue ffprobe for all audio MediaAssets with missing duration' })
-  @ApiResponse({ status: 202, description: 'Jobs enqueued' })
+  @ApiResponse({ status: 202, description: 'Jobs enqueued', type: ReprobeResponseDto })
   async reprobe() {
     return this.probe.reprobeAll();
   }
@@ -30,6 +40,7 @@ export class MediaJobsController {
   @ApiOperation({
     summary: 'Run two-stage cleanup of orphan MediaAssets (soft-delete + hard-delete)',
   })
+  @ApiOkResponse({ type: CleanupOrphansResponseDto })
   @ApiQuery({ name: 'dryRun', required: false, type: Boolean })
   @ApiQuery({ name: 'softDays', required: false, type: Number })
   @ApiQuery({ name: 'hardDays', required: false, type: Number })
@@ -48,6 +59,7 @@ export class MediaJobsController {
   @Post('probe')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Enqueue ffprobe for a single MediaAsset by id' })
+  @ApiResponse({ status: 202, description: 'Job enqueued', type: ProbeResponseDto })
   @ApiQuery({ name: 'id', required: true, type: String })
   async probeOne(@Query('id') id: string) {
     await this.probe.enqueueProbe(id);

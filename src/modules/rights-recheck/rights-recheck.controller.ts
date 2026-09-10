@@ -27,7 +27,7 @@ import {
   RecheckTaskListResponseDto,
 } from './dto/recheck-task-response.dto';
 import { ReviewChainResponseDto } from './dto/review-chain-response.dto';
-import type { VersionRecheckDto } from './dto/version-recheck-response.dto';
+import { VersionRecheckDto } from './dto/version-recheck-response.dto';
 
 /**
  * Static segments are declared before parametric ones (`recheck/scan`, `recheck/scan-runs`
@@ -69,6 +69,7 @@ export class RightsRecheckController {
 
   @Post('admin/rights/recheck/tasks')
   @ApiOperation({ summary: 'Open a recheck task manually' })
+  @ApiCreatedResponse({ type: RecheckTaskDetailDto })
   createTask(
     @Body() dto: CreateRecheckTaskDto,
     @Req() req: { user: { userId: string } },
@@ -78,12 +79,14 @@ export class RightsRecheckController {
 
   @Get('admin/rights/recheck/tasks/:taskId')
   @ApiOperation({ summary: 'Recheck task details and event timeline' })
+  @ApiOkResponse({ type: RecheckTaskDetailDto })
   getTask(@Param('taskId') taskId: string): Promise<RecheckTaskDetailDto> {
     return this.recheck.getById(taskId);
   }
 
   @Post('admin/rights/recheck/tasks/:taskId/start')
   @ApiOperation({ summary: 'Take a recheck task into work' })
+  @ApiCreatedResponse({ type: RecheckTaskDetailDto })
   startTask(
     @Param('taskId') taskId: string,
     @Req() req: { user: { userId: string } },
@@ -93,6 +96,7 @@ export class RightsRecheckController {
 
   @Post('admin/rights/recheck/tasks/:taskId/complete')
   @ApiOperation({ summary: 'Close a recheck task' })
+  @ApiCreatedResponse({ type: RecheckTaskDetailDto })
   completeTask(
     @Param('taskId') taskId: string,
     @Body() dto: CompleteRecheckTaskDto,
@@ -103,6 +107,7 @@ export class RightsRecheckController {
 
   @Post('admin/rights/recheck/tasks/:taskId/dismiss')
   @ApiOperation({ summary: 'Dismiss a recheck task as not applicable' })
+  @ApiCreatedResponse({ type: RecheckTaskDetailDto })
   dismissTask(
     @Param('taskId') taskId: string,
     @Body() dto: DismissRecheckTaskDto,
@@ -113,6 +118,7 @@ export class RightsRecheckController {
 
   @Post('admin/rights/recheck/tasks/:taskId/snooze')
   @ApiOperation({ summary: 'Postpone reminders of a recheck task' })
+  @ApiCreatedResponse({ type: RecheckTaskDetailDto })
   snoozeTask(
     @Param('taskId') taskId: string,
     @Body() dto: SnoozeRecheckTaskDto,
@@ -124,6 +130,7 @@ export class RightsRecheckController {
   @Post('admin/rights/recheck/tasks/:taskId/reopen')
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Reopen a closed recheck task (admin only)' })
+  @ApiCreatedResponse({ type: RecheckTaskDetailDto })
   reopenTask(
     @Param('taskId') taskId: string,
     @Req() req: { user: { userId: string } },
@@ -150,12 +157,14 @@ export class RightsRecheckController {
 
   @Get('admin/rights/profiles/:id/recheck-schedule')
   @ApiOperation({ summary: 'Recheck schedule of a rights profile' })
+  @ApiOkResponse({ type: RecheckScheduleWithTasksDto })
   getSchedule(@Param('id') id: string): Promise<RecheckScheduleWithTasksDto> {
     return this.recheck.getScheduleForProfile(id);
   }
 
   @Patch('admin/rights/profiles/:id/recheck-schedule')
   @ApiOperation({ summary: 'Update the recheck schedule / policy of a rights profile' })
+  @ApiOkResponse({ type: RecheckScheduleWithTasksDto })
   updateSchedule(
     @Param('id') id: string,
     @Body() dto: UpdateRecheckScheduleDto,
@@ -166,6 +175,7 @@ export class RightsRecheckController {
 
   @Get('admin/versions/:id/recheck')
   @ApiOperation({ summary: 'Recheck state of a book version' })
+  @ApiOkResponse({ type: VersionRecheckDto })
   getVersionRecheck(@Param('id') id: string): Promise<VersionRecheckDto> {
     return this.recheck.getVersionRecheck(id);
   }

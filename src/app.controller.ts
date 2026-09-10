@@ -1,5 +1,7 @@
 import { Controller, Get, Redirect } from '@nestjs/common';
+import { ApiOkResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
+import { AppHealthResponseDto } from './modules/health/dto/app-health-response.dto';
 
 @Controller()
 export class AppController {
@@ -14,6 +16,7 @@ export class AppController {
 
   // Machine-readable health endpoint
   @Get('health')
+  @ApiOkResponse({ type: AppHealthResponseDto })
   getHealth(): { status: string; uptime: number; timestamp: string } {
     return {
       status: 'ok',

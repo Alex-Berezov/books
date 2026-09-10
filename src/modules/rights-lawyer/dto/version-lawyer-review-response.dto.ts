@@ -6,8 +6,15 @@ import { RightsRiskLevel } from '../rights-lawyer-interface';
 export class LawyerGateReasonDto {
   @ApiProperty() code!: string;
   @ApiProperty() messageRu!: string;
-  @ApiProperty({ nullable: true }) lawyerReviewId!: string | null;
-  @ApiProperty({ nullable: true, type: Object }) details!: Record<string, unknown> | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerReviewId!: string | null;
+  @ApiProperty({
+    nullable: true,
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Free-form by design: each gate reason `code` attaches its own keys, built inline per blocker/warning in `rights-lawyer-review.service.ts`. Nothing validates the composition.',
+  })
+  details!: Record<string, unknown> | null;
 }
 
 /** What `evaluateVersionLawyerReview` hands to the publication gate. Nothing is written. */
@@ -20,15 +27,15 @@ export class LawyerGateEvaluationDto {
   @ApiProperty() openReviewsCount!: number;
   @ApiProperty() pendingConditionsCount!: number;
   @ApiProperty({ enum: RightsRiskLevel, nullable: true }) riskLevel!: RightsRiskLevel | null;
-  @ApiProperty({ nullable: true }) lawyerOpinionValidUntil!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerOpinionValidUntil!: string | null;
   @ApiProperty({ type: [String] }) reviewIds!: string[];
 }
 
 export class VersionLawyerReviewDto extends LawyerGateEvaluationDto {
-  @ApiProperty({ nullable: true }) bookId!: string | null;
-  @ApiProperty({ nullable: true }) rightsProfileId!: string | null;
-  @ApiProperty({ nullable: true }) lawyerApprovedAt!: string | null;
-  @ApiProperty({ nullable: true }) lawyerApprovedLawyerName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) bookId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsProfileId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerApprovedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerApprovedLawyerName!: string | null;
   @ApiProperty() isExpiringSoon!: boolean;
   @ApiProperty({ type: [LawyerReviewDto] }) reviews!: LawyerReviewDto[];
   @ApiProperty({ type: [LawyerConditionDto] }) pendingConditions!: LawyerConditionDto[];

@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -19,6 +20,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { ChapterService } from './chapter.service';
+import { ChapterResponseDto } from './dto/chapter-response.dto';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
 import { UseGuards } from '@nestjs/common';
@@ -44,6 +46,7 @@ export class ChapterController {
   @ApiParam({ name: 'bookVersionId' })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
+  @ApiOkResponse({ type: ChapterResponseDto, isArray: true })
   list(
     @Param('bookVersionId') bookVersionId: string,
     @Query('page') rawPage?: string,
@@ -67,6 +70,7 @@ export class ChapterController {
   @ApiParam({ name: 'bookVersionId' })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
+  @ApiOkResponse({ type: ChapterResponseDto, isArray: true })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -83,7 +87,7 @@ export class ChapterController {
   @Post('versions/:bookVersionId/chapters')
   @ApiOperation({ summary: 'Create chapter for a book version' })
   @ApiParam({ name: 'bookVersionId' })
-  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 201, description: 'Created', type: ChapterResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -94,12 +98,14 @@ export class ChapterController {
   @Get('chapters/:id')
   @ApiOperation({ summary: 'Get chapter by id' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: ChapterResponseDto })
   get(@Param('id') id: string, @Headers() headers: GeoRequestHeaders) {
     return this.service.get(id, this.geoIpCountryService.resolveCountry(headers));
   }
 
   @Patch('chapters/:id')
   @ApiOperation({ summary: 'Update chapter by id' })
+  @ApiOkResponse({ type: ChapterResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

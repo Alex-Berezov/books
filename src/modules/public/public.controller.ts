@@ -13,6 +13,7 @@ import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.i
 import {
   ApiBearerAuth,
   ApiHeader,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -46,6 +47,21 @@ import { PublicAuthorLettersQueryDto, PublicAuthorsQueryDto } from './dto/public
 import { PublicTagBooksQueryDto } from './dto/public-tag-books-query.dto';
 import { PublicTagsQueryDto } from './dto/public-tags-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
+import { SlugRedirectResponseDto } from './dto/slug-redirect-response.dto';
+import { PublicPageDto } from './dto/public-page-response.dto';
+import { PublicTagBooksResponseDto } from './dto/public-tag-books-response.dto';
+import { PublicAuthorsListResponseDto } from './dto/public-authors-list-response.dto';
+import { AuthorLetterCountDto } from './dto/author-letter-count.dto';
+import { PagedBookCardsDto, RelatedBooksResponseDto } from '../book/dto/paged-book-cards.dto';
+import { CategoryBookCardsResponseDto } from '../book/dto/category-book-cards-response.dto';
+import { BookOverviewResponseDto } from '../book/dto/book-overview-response.dto';
+import { PaginatedBooksResponseDto } from '../book/dto/paged-books.dto';
+import { ReaderBootstrapResponseDto } from '../book/dto/reader-bootstrap-response.dto';
+import { PublicCategoryBooksResponseDto } from './dto/public-category-books-response.dto';
+import { PublicAuthorDetailResponseDto } from './dto/public-author-detail-response.dto';
+import { PaginatedCategoriesResponse } from '../category/dto/category-response.dto';
+import { PaginatedTagsResponse } from '../tags/dto/tag-response.dto';
+import { TagBookCardsResponseDto } from '../book/dto/tag-book-cards-response.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -73,6 +89,7 @@ export class PublicController {
    */
   @Get('slug-redirect')
   @ApiOperation({ summary: 'Resolve a retired slug to its current one' })
+  @ApiOkResponse({ type: SlugRedirectResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   async slugRedirect(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
@@ -85,6 +102,7 @@ export class PublicController {
   // Localized book overview
   @Get('books/:slug/overview')
   @ApiOperation({ summary: 'Public book overview with language prefix' })
+  @ApiOkResponse({ type: BookOverviewResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   @ApiQuery({
@@ -111,6 +129,7 @@ export class PublicController {
   // Localized books list
   @Get('books')
   @ApiOperation({ summary: 'Public books list with language prefix' })
+  @ApiOkResponse({ type: PaginatedBooksResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   findAll(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Query() query: PaginationDto) {
     // Публичная витрина видит только опубликованное (`LEGACY-093`). Раньше
@@ -134,6 +153,7 @@ export class PublicController {
   // Related books (compact BookCard) for a book page: same-author + similar-by-category
   @Get('books/:slug/related')
   @ApiOperation({ summary: 'Related books (compact cards) for a book page' })
+  @ApiOkResponse({ type: RelatedBooksResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   @ApiQuery({
@@ -152,6 +172,7 @@ export class PublicController {
   // Compact paginated book cards (homepage / catalog) — replaces legacy /books?limit=100
   @Get('books/cards')
   @ApiOperation({ summary: 'Compact paginated book cards for a language (homepage/catalog)' })
+  @ApiOkResponse({ type: PagedBookCardsDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
   @ApiQuery({ name: 'limit', required: false, description: 'Cards per page. Default 24, max 48.' })
@@ -187,6 +208,7 @@ export class PublicController {
     description:
       'Reading progress is returned only for the bearer of the token. Anonymous callers get the book without the personal part.',
   })
+  @ApiOkResponse({ type: ReaderBootstrapResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   getReaderBootstrap(
@@ -213,6 +235,7 @@ export class PublicController {
    */
   @Get('pages/by-key/:systemKey')
   @ApiOperation({ summary: 'Public CMS page by immutable system key' })
+  @ApiOkResponse({ type: PublicPageDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'systemKey', enum: SYSTEM_PAGE_KEY_VALUES })
   getPageByKey(
@@ -230,6 +253,7 @@ export class PublicController {
   // Localized page by slug
   @Get('pages/:slug')
   @ApiOperation({ summary: 'Public CMS page with language prefix' })
+  @ApiOkResponse({ type: PublicPageDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   getPage(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Param('slug') slug: string) {
@@ -239,6 +263,7 @@ export class PublicController {
   // Localized categories by translation slug
   @Get('categories/:slug/books')
   @ApiOperation({ summary: 'Public list of book versions by localized category' })
+  @ApiOkResponse({ type: PublicCategoryBooksResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   categoriesBySlug(
@@ -251,6 +276,7 @@ export class PublicController {
   // Compact paginated book cards for a category (or genre/collection)
   @Get('categories/:slug/books/cards')
   @ApiOperation({ summary: 'Compact paginated book cards for a category/genre/collection' })
+  @ApiOkResponse({ type: CategoryBookCardsResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug', description: 'Category/Genre/Collection slug' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
@@ -266,6 +292,7 @@ export class PublicController {
   // Public category/genre listing with translations and book counts
   @Get('categories')
   @ApiOperation({ summary: 'Public category/genre listing for catalog sidebar' })
+  @ApiOkResponse({ type: PaginatedCategoriesResponse })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   categoriesList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
@@ -290,6 +317,7 @@ export class PublicController {
   // Localized tags by translation slug
   @Get('tags/:slug/books')
   @ApiOperation({ summary: 'Public list of book versions by localized tag' })
+  @ApiOkResponse({ type: PublicTagBooksResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   tagsBySlug(
@@ -309,6 +337,7 @@ export class PublicController {
   // Public tags listing for homepage
   @Get('tags')
   @ApiOperation({ summary: 'Public tags listing for homepage' })
+  @ApiOkResponse({ type: PaginatedTagsResponse })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   tagsList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
@@ -323,6 +352,7 @@ export class PublicController {
   // Compact paginated book cards for a tag
   @Get('tags/:slug/books/cards')
   @ApiOperation({ summary: 'Compact paginated book cards for a tag' })
+  @ApiOkResponse({ type: TagBookCardsResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug', description: 'Tag slug' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })
@@ -343,6 +373,7 @@ export class PublicController {
   // Localized authors list
   @Get('authors')
   @ApiOperation({ summary: 'Public authors list with language prefix' })
+  @ApiOkResponse({ type: PublicAuthorsListResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   authorsList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
@@ -369,6 +400,7 @@ export class PublicController {
    */
   @Get('authors/letters')
   @ApiOperation({ summary: 'Author alphabet index with per-letter counts' })
+  @ApiOkResponse({ type: AuthorLetterCountDto, isArray: true })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiQuery({
     name: 'search',
@@ -386,6 +418,7 @@ export class PublicController {
   // Localized author details by slug
   @Get('authors/:slug')
   @ApiOperation({ summary: 'Public author details by slug with language prefix' })
+  @ApiOkResponse({ type: PublicAuthorDetailResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
   authorBySlug(
@@ -398,6 +431,7 @@ export class PublicController {
   // Compact paginated book cards for an author (author page fallback) — filters by stable authorId
   @Get('authors/:slug/books/cards')
   @ApiOperation({ summary: 'Compact paginated book cards for an author (author page fallback)' })
+  @ApiOkResponse({ type: PagedBookCardsDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug', description: 'Author slug (resolved to stable authorId)' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number. Default 1.' })

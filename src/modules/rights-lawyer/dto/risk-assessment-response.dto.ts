@@ -10,7 +10,7 @@ export class RiskAssessmentSnapshotDto {
   /** Значение `RIGHTS_LAWYER_BLOCK_APPROVAL_ON_HIGH_RISK` на момент оценки. */
   @ApiProperty() blockApprovalEnabled!: boolean;
   @ApiProperty({ enum: RightsRiskLevel }) minRiskLevel!: RightsRiskLevel;
-  @ApiProperty({ nullable: true }) assessedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) assessedAt!: string | null;
   @ApiProperty({ type: LawyerReviewDto, nullable: true })
   currentLawyerReview!: LawyerReviewDto | null;
   @ApiProperty() explicitLawyerRequest!: boolean;
@@ -18,7 +18,7 @@ export class RiskAssessmentSnapshotDto {
   suggestedTrigger!: RightsLawyerReviewTrigger;
   /** Действует ли положительное заключение прямо сейчас. */
   @ApiProperty() lawyerApproved!: boolean;
-  @ApiProperty({ nullable: true }) lawyerApprovedAt!: string | null;
-  @ApiProperty({ nullable: true }) lawyerApprovedLawyerName!: string | null;
-  @ApiProperty({ nullable: true }) lawyerOpinionValidUntil!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerApprovedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerApprovedLawyerName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerOpinionValidUntil!: string | null;
 }

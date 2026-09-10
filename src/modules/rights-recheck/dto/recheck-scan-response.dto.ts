@@ -6,16 +6,16 @@ export class RecheckScanRunDto {
   @ApiProperty({ enum: RightsRecheckScanStatus }) status!: RightsRecheckScanStatus;
   @ApiProperty({ enum: RightsRecheckTriggerSource }) source!: RightsRecheckTriggerSource;
   @ApiProperty() startedAt!: string;
-  @ApiProperty({ nullable: true }) finishedAt!: string | null;
-  @ApiProperty({ nullable: true }) durationMs!: number | null;
+  @ApiProperty({ type: String, nullable: true }) finishedAt!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) durationMs!: number | null;
   @ApiProperty() profilesScanned!: number;
   @ApiProperty() versionsScanned!: number;
   @ApiProperty() tasksCreated!: number;
   @ApiProperty() tasksEscalated!: number;
   @ApiProperty() tasksAutoClosed!: number;
   @ApiProperty() remindersSent!: number;
-  @ApiProperty({ nullable: true }) errorMessage!: string | null;
-  @ApiProperty({ nullable: true }) triggeredByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) errorMessage!: string | null;
+  @ApiProperty({ type: String, nullable: true }) triggeredByUserId!: string | null;
 }
 
 export class RecheckScanRunListResponseDto {

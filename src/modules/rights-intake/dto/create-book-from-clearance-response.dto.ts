@@ -7,16 +7,16 @@ export class CreateBookFromClearanceResponseBookDto {
   @ApiProperty()
   slug!: string;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsIntakeId!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   currentRightsProfileId!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   approvedRightsReviewId!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsCreatedAt!: string | null;
 
   @ApiProperty()
@@ -42,7 +42,7 @@ export class CreateBookFromClearanceResponseVersionDto {
   @ApiProperty()
   status!: string;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsStatus!: string | null;
 }
 

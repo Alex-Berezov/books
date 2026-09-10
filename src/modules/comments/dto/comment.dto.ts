@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { CommentUserDto } from './comment-user.dto';
 
 export class CommentDto {
@@ -8,22 +8,23 @@ export class CommentDto {
   @ApiProperty({ description: 'Автор комментария; публичный профиль лежит в `user`' })
   userId!: string;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   parentId?: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   bookVersionId?: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   chapterId?: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   audioChapterId?: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   ratingId?: string | null;
 
   @ApiPropertyOptional({
+    type: Number,
     nullable: true,
     description: 'Rating score associated with this review (1-5)',
   })
@@ -68,10 +69,10 @@ export class CommentRatingDto {
   @ApiProperty({ description: 'Оценка книги, 1-5' })
   score!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
 }
 
@@ -79,3 +80,11 @@ export class CommentDetailDto extends CommentDto {
   @ApiProperty({ type: CommentRatingDto, nullable: true })
   rating!: CommentRatingDto | null;
 }
+
+/**
+ * `PATCH /comments/:id` с пустым `dto` (ни `text`, ни `isHidden`) не трогает `data` и не
+ * перечитывает связи — ветка `Object.keys(data).length === 0` в `comments.service.ts` отдаёт
+ * текущую запись как есть, без `user` и `children`, которые есть в остальных ответах модуля.
+ * Настоящий union двух форм, а не недосмотр — задокументирован через `oneOf` в контроллере.
+ */
+export class CommentBareDto extends OmitType(CommentDetailDto, ['user', 'children'] as const) {}

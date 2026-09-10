@@ -11,7 +11,14 @@ import {
   UnauthorizedException,
   ForbiddenException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiCreatedResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
@@ -24,6 +31,7 @@ import {
   DirectUploadResponseDto,
   UploadType,
 } from './dto/presign.dto';
+import { UploadLimitsDto } from './dto/upload-limits.dto';
 import { UploadsService } from './uploads.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 
@@ -51,6 +59,7 @@ export class UploadsController {
     summary: 'Public upload limits (max size, allowed content types)',
   })
   @Get('limits')
+  @ApiOkResponse({ type: UploadLimitsDto })
   limits() {
     return this.uploads.getLimits();
   }

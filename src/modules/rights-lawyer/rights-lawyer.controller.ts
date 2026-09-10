@@ -1,5 +1,11 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -30,12 +36,14 @@ export class RightsLawyerController {
   }
 
   @Get('admin/rights/lawyers/:id')
+  @ApiOkResponse({ type: LawyerDetailDto })
   @ApiOperation({ summary: 'Lawyer details' })
   getById(@Param('id') id: string): Promise<LawyerDetailDto> {
     return this.lawyers.getById(id);
   }
 
   @Post('admin/rights/lawyers')
+  @ApiCreatedResponse({ type: LawyerDetailDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Create a lawyer (admin only)' })
   create(
@@ -46,6 +54,7 @@ export class RightsLawyerController {
   }
 
   @Patch('admin/rights/lawyers/:id')
+  @ApiOkResponse({ type: LawyerDetailDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Update a lawyer (admin only)' })
   update(@Param('id') id: string, @Body() dto: UpdateLawyerDto): Promise<LawyerDetailDto> {
@@ -53,6 +62,7 @@ export class RightsLawyerController {
   }
 
   @Post('admin/rights/lawyers/:id/deactivate')
+  @ApiCreatedResponse({ type: LawyerDetailDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Deactivate a lawyer, reason required (admin only)' })
   deactivate(
@@ -64,6 +74,7 @@ export class RightsLawyerController {
   }
 
   @Post('admin/rights/lawyers/:id/activate')
+  @ApiCreatedResponse({ type: LawyerDetailDto })
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Bring a lawyer back into service (admin only)' })
   activate(@Param('id') id: string): Promise<LawyerDetailDto> {

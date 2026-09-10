@@ -6,20 +6,20 @@ export class LawyerDto {
   @ApiProperty() id!: string;
   @ApiProperty() fullName!: string;
   @ApiProperty({ enum: RightsLawyerType }) lawyerType!: RightsLawyerType;
-  @ApiProperty({ nullable: true }) organization!: string | null;
-  @ApiProperty({ nullable: true }) barId!: string | null;
-  @ApiProperty({ nullable: true }) email!: string | null;
-  @ApiProperty({ nullable: true }) phone!: string | null;
+  @ApiProperty({ type: String, nullable: true }) organization!: string | null;
+  @ApiProperty({ type: String, nullable: true }) barId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) email!: string | null;
+  @ApiProperty({ type: String, nullable: true }) phone!: string | null;
   @ApiProperty({ type: [String] }) jurisdictionCodes!: string[];
-  @ApiProperty({ nullable: true }) specializationRu!: string | null;
-  @ApiProperty({ nullable: true }) notesRu!: string | null;
-  @ApiProperty({ nullable: true }) userId!: string | null;
-  @ApiProperty({ nullable: true }) userEmail!: string | null;
+  @ApiProperty({ type: String, nullable: true }) specializationRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) userId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) userEmail!: string | null;
   /** Привязанный пользователь есть, но роли `lawyer` у него нет — UI показывает предупреждение. */
   @ApiProperty() hasLawyerRole!: boolean;
   @ApiProperty() isActive!: boolean;
-  @ApiProperty({ nullable: true }) deactivatedAt!: string | null;
-  @ApiProperty({ nullable: true }) deactivateReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) deactivatedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) deactivateReasonRu!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }

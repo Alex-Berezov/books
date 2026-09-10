@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiCreatedResponse,
   ApiHeader,
   ApiOkResponse,
   ApiOperation,
@@ -22,7 +23,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { CategoryType, Language } from '@prisma/client';
+import { CategoryType, Language, Prisma } from '@prisma/client';
 import { CategoryTreeNodeDto } from './dto/category-tree-node.dto';
 import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -37,6 +38,11 @@ import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
 import { PaginatedCategoriesResponse } from './dto/category-response.dto';
 import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
+import { CategoryEntityDto } from './dto/category-entity.dto';
+import { CategoryAncestorDto } from './dto/category-ancestor.dto';
+import { CategoryBooksResponseDto } from './dto/category-books-response.dto';
+import { CategoryTranslationEntityDto } from './dto/category-translation-entity.dto';
+import { VersionCategoryLinkDto } from './dto/version-category-link.dto';
 
 @ApiTags('categories')
 @Controller()
@@ -121,13 +127,18 @@ export class CategoryController {
   @Get('categories/:id/ancestors')
   @ApiOperation({ summary: 'Get ancestors path of the category (root → ... → parent)' })
   @ApiParam({ name: 'id' })
-  @ApiOkResponse({ description: 'Array from root to parent (excluding the node itself)' })
+  @ApiOkResponse({
+    description: 'Array from root to parent (excluding the node itself)',
+    type: CategoryAncestorDto,
+    isArray: true,
+  })
   ancestors(@Param('id') id: string) {
     return this.service.getAncestors(id);
   }
 
   @Post('categories')
   @ApiOperation({ summary: 'Create category' })
+  @ApiCreatedResponse({ type: CategoryEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -138,6 +149,7 @@ export class CategoryController {
   @Patch('categories/:id')
   @ApiOperation({ summary: 'Update category' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: CategoryEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -159,6 +171,7 @@ export class CategoryController {
   // Public route without language prefix (for backward compatibility)
   @Get('categories/:slug/books')
   @ApiOperation({ summary: 'Public list of book versions by category (without language prefix)' })
+  @ApiOkResponse({ type: CategoryBooksResponseDto })
   @ApiParam({ name: 'slug' })
   @ApiQuery({ name: 'lang', required: false, description: 'Optional language (?lang=...)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
@@ -184,19 +197,31 @@ export class CategoryController {
    */
 
   // === Translations (Admin) ===
+
+  /**
+   * Тип возврата выписан явно, потому что `CategoryService.listTranslations`
+   * отдаёт `Prisma.PrismaPromise`, а не `Promise`: сторож
+   * `yarn check:response-schema` разворачивает только `Promise` и без этой
+   * строки читал форму ответа как объект без свойств. Сама форма та же, что у
+   * `POST`/`PATCH` того же ресурса — запись перевода целиком плюс `seo`.
+   */
   @Get('categories/:id/translations')
   @ApiOperation({ summary: 'List category translations (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: CategoryTranslationEntityDto, isArray: true })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  listTranslations(@Param('id') id: string) {
+  listTranslations(
+    @Param('id') id: string,
+  ): Promise<Prisma.CategoryTranslationGetPayload<{ include: { seo: true } }>[]> {
     return this.service.listTranslations(id);
   }
 
   @Post('categories/:id/translations')
   @ApiOperation({ summary: 'Create category translation (admin)' })
   @ApiParam({ name: 'id' })
+  @ApiCreatedResponse({ type: CategoryTranslationEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -208,6 +233,7 @@ export class CategoryController {
   @ApiOperation({ summary: 'Update category translation (admin)' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'language', enum: Object.values(Language) })
+  @ApiOkResponse({ type: CategoryTranslationEntityDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -234,6 +260,7 @@ export class CategoryController {
   @Post('versions/:id/categories')
   @ApiOperation({ summary: 'Attach category to a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })
+  @ApiCreatedResponse({ type: VersionCategoryLinkDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

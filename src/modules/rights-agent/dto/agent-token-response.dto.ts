@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { RightsAgentTokenStatus } from '../rights-agent-interface';
 
 export class AgentTokenDto {
@@ -7,7 +7,7 @@ export class AgentTokenDto {
   @ApiProperty({ description: 'First 12 characters of the token, for display only' })
   tokenPrefix!: string;
   @ApiProperty({ enum: RightsAgentTokenStatus }) status!: RightsAgentTokenStatus;
-  @ApiProperty({ nullable: true }) labelRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) labelRu!: string | null;
   @ApiProperty() maxUses!: number;
   @ApiProperty() usedCount!: number;
   @ApiProperty() remainingUses!: number;
@@ -19,11 +19,11 @@ export class AgentTokenDto {
   @ApiProperty() expiresAt!: string;
   @ApiProperty() isExpired!: boolean;
   @ApiProperty({ description: 'Token can still be used for a submission' }) isUsable!: boolean;
-  @ApiProperty({ nullable: true }) issuedByUserId!: string | null;
-  @ApiProperty({ nullable: true }) firstUsedAt!: string | null;
-  @ApiProperty({ nullable: true }) lastUsedAt!: string | null;
-  @ApiProperty({ nullable: true }) revokedAt!: string | null;
-  @ApiProperty({ nullable: true }) revokeReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) issuedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) firstUsedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lastUsedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) revokedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) revokeReasonRu!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
@@ -42,5 +42,5 @@ export class AgentTokenListResponseDto {
 }
 
 export class AgentTokenDetailResponseDto extends AgentTokenDto {
-  @ApiPropertyOptional({ nullable: true }) lastUsedIp?: string | null;
+  @ApiProperty({ type: String, nullable: true }) lastUsedIp!: string | null;
 }

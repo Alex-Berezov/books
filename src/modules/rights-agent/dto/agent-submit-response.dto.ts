@@ -16,14 +16,15 @@ export class AgentSubmitResponseDto {
   @ApiProperty({ enum: ['VALIDATED', 'VALIDATION_FAILED'] })
   status!: 'VALIDATED' | 'VALIDATION_FAILED';
   @ApiProperty() intakeId!: string;
-  @ApiProperty({ nullable: true }) schemaVersion!: string | null;
-  @ApiProperty({ nullable: true }) reviewImportId!: string | null;
-  @ApiProperty({ nullable: true }) reportJsonSha256!: string | null;
+  @ApiProperty({ type: String, nullable: true }) schemaVersion!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reviewImportId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reportJsonSha256!: string | null;
   @ApiProperty({ type: [AgentValidationIssueDto] }) validationErrors!: AgentValidationIssueDto[];
   @ApiProperty({ type: [AgentValidationIssueDto] }) validationWarnings!: AgentValidationIssueDto[];
   @ApiProperty({ enum: RightsAgentSubmissionMaterialization })
   materialization!: RightsAgentSubmissionMaterialization;
   @ApiProperty({
+    type: Boolean,
     description: 'Always true — an agent submission is never approved automatically',
     example: true,
   })

@@ -409,7 +409,9 @@ export class TagsService {
   }
 
   // ===== Translations (Admin) =====
-  listTranslations(tagId: string): Promise<any[]> {
+  listTranslations(
+    tagId: string,
+  ): Promise<Prisma.TagTranslationGetPayload<{ include: { seo: true } }>[]> {
     return this.prisma.tagTranslation.findMany({
       where: { tagId },
       orderBy: { language: 'asc' },

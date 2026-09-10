@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  UseInterceptors,
   Headers,
   Req,
 } from '@nestjs/common';
@@ -17,6 +18,12 @@ import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
+import {
+  BookVersionAdminDetailResponseDto,
+  BookVersionResponseDto,
+  PublicBookVersionDetailResponseDto,
+  PublicBookVersionListItemDto,
+} from './dto/book-version-response.dto';
 import {
   PublicationGateResultDto,
   UpdateRightsGeoBlockDto,
@@ -35,6 +42,8 @@ import { RightsClaimListResponseDto } from '../rights-claims/dto/rights-claim-re
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiCreatedResponse,
+  ApiExtraModels,
   ApiHeader,
   ApiOkResponse,
   ApiOperation,
@@ -42,14 +51,26 @@ import {
   ApiQuery,
   ApiResponse,
   ApiTags,
+  ApiUnauthorizedResponse,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { Language, BookType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
+import { GeoBlockRulesResponseDto } from '../geo-block/dto/geo-block.dto';
+import { NoPublicCache } from '../../common/decorators/no-public-cache.decorator';
+import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
+
+interface RequestUser {
+  userId: string;
+  email: string;
+}
 
 @ApiTags('book-versions')
 @Controller()
@@ -62,11 +83,40 @@ export class BookVersionController {
     private readonly geoBlockRuleService: GeoBlockRuleService,
     private readonly licenseCoverageService: RightsLicenseCoverageService,
     private readonly rightsClaimsService: RightsClaimsService,
+    private readonly moderatorRoles: ModeratorRolesService,
   ) {}
 
+  /**
+   * Черновики здесь видит только модератор — по образцу `BookController.findOne`
+   * (`book.controller.ts:247` → `book.service.ts:176`, `LEGACY-090`).
+   *
+   * ⚠️ Не-модератор (в том числе аноним) уходит в публичный `list()` **молча**,
+   * без 401/403: адрес публичный и код ответа менять нельзя. Раньше
+   * `includeDrafts=true` не проверялся ничем — гвардов на маршруте нет,
+   * глобального auth-гварда в приложении тоже, — и `listAdmin` отдавал аноним
+   * черновики со всем правовым контуром версии (`include` без `select`).
+   *
+   * 🔴 `PublicCacheInterceptor` + `@NoPublicCache()` здесь обязательны, и именно
+   * потому, что ответ зависит от пользователя. Интерцептор — не источник утечки,
+   * а единственный механизм, которым ответ помечается персональным: он ставит
+   * `Cache-Control: private, no-store` и `Vary: Authorization`
+   * (`public-cache.interceptor.ts`). Без него маршрут не отдаёт ни того, ни
+   * другого, а ключом общего кэша остаётся один URL — и админский ответ
+   * (`listAdmin`, все 66 полей строки, включая `rightsContentHashInput`)
+   * раздаётся анониму, пришедшему по тому же адресу. `private, no-store`
+   * не понижается до `s-maxage` ни для одной ветки: одна и та же ручка отвечает
+   * и модератору, и анониму, а различить их постфактум уже нечем.
+   *
+   * Интерцептор вешается на обработчик, а не на класс: остальные маршруты этого
+   * контроллера — админские, публичного кэша им не нужно вовсе.
+   */
   @Get('books/:bookId/versions')
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
+  @UseInterceptors(PublicCacheInterceptor)
+  @NoPublicCache()
   @ApiOperation({
-    summary: 'List versions for a book (public)',
+    summary: 'List versions for a book (public; drafts are visible to moderators only)',
     description:
       'Публичный список версий книги. Возвращает только опубликованные версии (status=published).',
   })
@@ -89,15 +139,37 @@ export class BookVersionController {
     required: false,
     schema: { type: 'boolean' },
     description:
-      'Только для админов/контент-менеджеров (требует авторизации и ролей). Если true — возвращает также черновики.',
+      'Только для админов/контент-менеджеров (требует токена с ролью admin/content_manager). ' +
+      'Если true и токен модератора предъявлен — возвращает также черновики; иначе параметр игнорируется.',
   })
-  list(
+  // Настоящий union: не-модератор получает публичный `list()` — белый список полей
+  // `PublicBookVersionListItemDto`; модератор с `includeDrafts=true` получает
+  // `listAdmin()` — строку версии целиком, вместе с правовым контуром.
+  @ApiExtraModels(PublicBookVersionListItemDto, BookVersionResponseDto)
+  @ApiOkResponse({
+    schema: {
+      type: 'array',
+      items: {
+        oneOf: [
+          { $ref: getSchemaPath(PublicBookVersionListItemDto) },
+          { $ref: getSchemaPath(BookVersionResponseDto) },
+        ],
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Заголовок Authorization предъявлен, но токен невалиден или истёк. Пустого заголовка ' +
+      'OptionalJwtAuthGuard не требует: без него запрос идёт как анонимный и отвечает 200.',
+  })
+  async list(
     @Param('bookId') bookId: string,
     @Query('language') language?: string,
     @Query('type') type?: string,
     @Query('isFree') isFree?: string,
     @Query('includeDrafts') includeDrafts?: string,
     @Headers('accept-language') acceptLanguage?: string,
+    @Req() req?: { user?: RequestUser },
   ) {
     const langEnum =
       language && Object.values(Language).includes(language as Language)
@@ -105,8 +177,8 @@ export class BookVersionController {
         : undefined;
     const typeEnum =
       type && Object.values(BookType).includes(type as BookType) ? (type as BookType) : undefined;
-    // Если includeDrafts=true и пользователь админ — используем admin-листинг
-    if (includeDrafts === 'true') {
+    // Если includeDrafts=true и пользователь модератор — используем admin-листинг
+    if (includeDrafts === 'true' && (await this.moderatorRoles.isModerator(req?.user))) {
       return this.service.listAdmin(bookId, {
         language: langEnum,
         type: typeEnum,
@@ -180,34 +252,30 @@ export class BookVersionController {
       },
     },
   })
-  @ApiResponse({
-    status: 201,
+  @ApiCreatedResponse({
     description: 'Created',
-    content: {
-      'application/json': {
-        examples: {
-          created: {
-            summary: 'Created draft version',
-            value: {
-              id: '0c1c1e5a-1111-2222-3333-444444444444',
-              bookId: 'a1111111-b222-4c33-d444-555555555555',
-              language: 'en',
-              title: "Harry Potter and the Philosopher's Stone",
-              author: 'J.K. Rowling',
-              description: 'First book of the series',
-              coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
-              type: 'text',
-              isFree: true,
-              referralUrl: 'https://amazon.com/ref123',
-              status: 'draft',
-              publishedAt: null,
-              createdAt: '2025-08-25T12:00:00.000Z',
-              updatedAt: '2025-08-25T12:00:00.000Z',
-              seo: {
-                metaTitle: 'Harry Potter — Summary',
-                metaDescription: 'Overview, themes and details about the book',
-              },
-            },
+    type: BookVersionResponseDto,
+    examples: {
+      created: {
+        summary: 'Created draft version',
+        value: {
+          id: '0c1c1e5a-1111-2222-3333-444444444444',
+          bookId: 'a1111111-b222-4c33-d444-555555555555',
+          language: 'en',
+          title: "Harry Potter and the Philosopher's Stone",
+          author: 'J.K. Rowling',
+          description: 'First book of the series',
+          coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
+          type: 'text',
+          isFree: true,
+          referralUrl: 'https://amazon.com/ref123',
+          status: 'draft',
+          publishedAt: null,
+          createdAt: '2025-08-25T12:00:00.000Z',
+          updatedAt: '2025-08-25T12:00:00.000Z',
+          seo: {
+            metaTitle: 'Harry Potter — Summary',
+            metaDescription: 'Overview, themes and details about the book',
           },
         },
       },
@@ -226,6 +294,7 @@ export class BookVersionController {
   @ApiParam({ name: 'bookId' })
   @ApiBody({ type: CreateBookVersionDto })
   @ApiHeader({ name: 'X-Admin-Language', required: false, description: 'Приоритетнее языка пути' })
+  @ApiCreatedResponse({ type: BookVersionResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -247,6 +316,7 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Admin: list versions for a book (includes drafts)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiParam({ name: 'bookId' })
+  @ApiOkResponse({ type: BookVersionResponseDto, isArray: true })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -278,35 +348,32 @@ export class BookVersionController {
   @Get('versions/:id')
   @ApiOperation({ summary: 'Get version by id' })
   @ApiParam({ name: 'id' })
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'Found (published only for public endpoint)',
-    content: {
-      'application/json': {
-        examples: {
-          published: {
-            summary: 'Published version',
-            value: {
-              id: '0c1c1e5a-1111-2222-3333-444444444444',
-              bookId: 'a1111111-b222-4c33-d444-555555555555',
-              language: 'en',
-              title: "Harry Potter and the Philosopher's Stone",
-              author: 'J.K. Rowling',
-              description: 'First book of the series',
-              coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
-              type: 'text',
-              isFree: true,
-              referralUrl: 'https://amazon.com/ref123',
-              status: 'published',
-              publishedAt: '2025-08-25T13:00:00.000Z',
-              createdAt: '2025-08-25T12:00:00.000Z',
-              updatedAt: '2025-08-25T13:00:00.000Z',
-              seo: {
-                metaTitle: 'Harry Potter — Summary',
-                metaDescription: 'Overview, themes and details about the book',
-              },
-            },
+    type: PublicBookVersionDetailResponseDto,
+    examples: {
+      published: {
+        summary: 'Published version',
+        value: {
+          id: '0c1c1e5a-1111-2222-3333-444444444444',
+          bookId: 'a1111111-b222-4c33-d444-555555555555',
+          language: 'en',
+          title: "Harry Potter and the Philosopher's Stone",
+          author: 'J.K. Rowling',
+          description: 'First book of the series',
+          coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
+          type: 'text',
+          isFree: true,
+          status: 'published',
+          publishedAt: '2025-08-25T13:00:00.000Z',
+          createdAt: '2025-08-25T12:00:00.000Z',
+          updatedAt: '2025-08-25T13:00:00.000Z',
+          seo: {
+            metaTitle: 'Harry Potter — Summary',
+            metaDescription: 'Overview, themes and details about the book',
           },
+          categories: [],
+          tags: [],
         },
       },
     },
@@ -344,42 +411,38 @@ export class BookVersionController {
     description: 'Возвращает версию в любом статусе (draft, published). Требует авторизации.',
   })
   @ApiParam({ name: 'id' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.Admin, Role.ContentManager)
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'Version found (any status)',
-    content: {
-      'application/json': {
-        examples: {
-          draft: {
-            summary: 'Draft version',
-            value: {
-              id: '0c1c1e5a-1111-2222-3333-444444444444',
-              bookId: 'a1111111-b222-4c33-d444-555555555555',
-              language: 'en',
-              title: "Harry Potter and the Philosopher's Stone",
-              author: 'J.K. Rowling',
-              description: 'First book of the series',
-              coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
-              type: 'text',
-              isFree: true,
-              referralUrl: 'https://amazon.com/ref123',
-              status: 'draft',
-              publishedAt: null,
-              createdAt: '2025-08-25T12:00:00.000Z',
-              updatedAt: '2025-08-25T12:00:00.000Z',
-              seo: {
-                metaTitle: 'Harry Potter — Summary',
-                metaDescription: 'Overview, themes and details about the book',
-              },
-            },
+    type: BookVersionAdminDetailResponseDto,
+    examples: {
+      draft: {
+        summary: 'Draft version',
+        value: {
+          id: '0c1c1e5a-1111-2222-3333-444444444444',
+          bookId: 'a1111111-b222-4c33-d444-555555555555',
+          language: 'en',
+          title: "Harry Potter and the Philosopher's Stone",
+          author: 'J.K. Rowling',
+          description: 'First book of the series',
+          coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
+          type: 'text',
+          isFree: true,
+          referralUrl: 'https://amazon.com/ref123',
+          status: 'draft',
+          publishedAt: null,
+          createdAt: '2025-08-25T12:00:00.000Z',
+          updatedAt: '2025-08-25T12:00:00.000Z',
+          seo: {
+            metaTitle: 'Harry Potter — Summary',
+            metaDescription: 'Overview, themes and details about the book',
           },
         },
       },
     },
   })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   getAdmin(@Param('id') id: string) {
     return this.service.getAdmin(id);
   }
@@ -461,42 +524,38 @@ export class BookVersionController {
       },
     },
   })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.Admin, Role.ContentManager)
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'Updated',
-    content: {
-      'application/json': {
-        examples: {
-          updated: {
-            summary: 'Updated version',
-            value: {
-              id: '0c1c1e5a-1111-2222-3333-444444444444',
-              bookId: 'a1111111-b222-4c33-d444-555555555555',
-              language: 'en',
-              title: "Harry Potter and the Sorcerer's Stone",
-              author: 'J.K. Rowling',
-              description: 'Updated description text',
-              coverImageUrl: 'https://cdn.example.com/covers/hp1-new.jpg',
-              type: 'text',
-              isFree: true,
-              referralUrl: 'https://amazon.com/ref123',
-              status: 'draft',
-              publishedAt: null,
-              createdAt: '2025-08-25T12:00:00.000Z',
-              updatedAt: '2025-08-25T12:30:00.000Z',
-              seo: {
-                metaTitle: 'HP1 — Summary (Updated)',
-                metaDescription: 'New meta description text',
-              },
-            },
+    type: BookVersionResponseDto,
+    examples: {
+      updated: {
+        summary: 'Updated version',
+        value: {
+          id: '0c1c1e5a-1111-2222-3333-444444444444',
+          bookId: 'a1111111-b222-4c33-d444-555555555555',
+          language: 'en',
+          title: "Harry Potter and the Sorcerer's Stone",
+          author: 'J.K. Rowling',
+          description: 'Updated description text',
+          coverImageUrl: 'https://cdn.example.com/covers/hp1-new.jpg',
+          type: 'text',
+          isFree: true,
+          referralUrl: 'https://amazon.com/ref123',
+          status: 'draft',
+          publishedAt: null,
+          createdAt: '2025-08-25T12:00:00.000Z',
+          updatedAt: '2025-08-25T12:30:00.000Z',
+          seo: {
+            metaTitle: 'HP1 — Summary (Updated)',
+            metaDescription: 'New meta description text',
           },
         },
       },
     },
   })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateBookVersionDto) {
     return this.service.update(id, dto);
   }
@@ -513,84 +572,76 @@ export class BookVersionController {
 
   @Patch('versions/:id/publish')
   @ApiOperation({ summary: 'Publish version' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.Admin, Role.ContentManager)
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'Published',
-    content: {
-      'application/json': {
-        examples: {
-          published: {
-            summary: 'Version published',
-            value: {
-              id: '0c1c1e5a-1111-2222-3333-444444444444',
-              bookId: 'a1111111-b222-4c33-d444-555555555555',
-              language: 'en',
-              title: "Harry Potter and the Philosopher's Stone",
-              author: 'J.K. Rowling',
-              description: 'First book of the series',
-              coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
-              type: 'text',
-              isFree: true,
-              referralUrl: 'https://amazon.com/ref123',
-              status: 'published',
-              publishedAt: '2025-08-25T13:00:00.000Z',
-              createdAt: '2025-08-25T12:00:00.000Z',
-              updatedAt: '2025-08-25T13:00:00.000Z',
-              seo: {
-                metaTitle: 'Harry Potter — Summary',
-                metaDescription: 'Overview, themes and details about the book',
-              },
-            },
+    type: BookVersionResponseDto,
+    examples: {
+      published: {
+        summary: 'Version published',
+        value: {
+          id: '0c1c1e5a-1111-2222-3333-444444444444',
+          bookId: 'a1111111-b222-4c33-d444-555555555555',
+          language: 'en',
+          title: "Harry Potter and the Philosopher's Stone",
+          author: 'J.K. Rowling',
+          description: 'First book of the series',
+          coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
+          type: 'text',
+          isFree: true,
+          referralUrl: 'https://amazon.com/ref123',
+          status: 'published',
+          publishedAt: '2025-08-25T13:00:00.000Z',
+          createdAt: '2025-08-25T12:00:00.000Z',
+          updatedAt: '2025-08-25T13:00:00.000Z',
+          seo: {
+            metaTitle: 'Harry Potter — Summary',
+            metaDescription: 'Overview, themes and details about the book',
           },
         },
       },
     },
   })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   publish(@Param('id') id: string) {
     return this.service.publish(id);
   }
 
   @Patch('versions/:id/unpublish')
   @ApiOperation({ summary: 'Unpublish version (set draft)' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.Admin, Role.ContentManager)
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'Unpublished (set to draft)',
-    content: {
-      'application/json': {
-        examples: {
-          unpublished: {
-            summary: 'Version is now draft',
-            value: {
-              id: '0c1c1e5a-1111-2222-3333-444444444444',
-              bookId: 'a1111111-b222-4c33-d444-555555555555',
-              language: 'en',
-              title: "Harry Potter and the Philosopher's Stone",
-              author: 'J.K. Rowling',
-              description: 'First book of the series',
-              coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
-              type: 'text',
-              isFree: true,
-              referralUrl: 'https://amazon.com/ref123',
-              status: 'draft',
-              publishedAt: null,
-              createdAt: '2025-08-25T12:00:00.000Z',
-              updatedAt: '2025-08-25T13:10:00.000Z',
-              seo: {
-                metaTitle: 'Harry Potter — Summary',
-                metaDescription: 'Overview, themes and details about the book',
-              },
-            },
+    type: BookVersionResponseDto,
+    examples: {
+      unpublished: {
+        summary: 'Version is now draft',
+        value: {
+          id: '0c1c1e5a-1111-2222-3333-444444444444',
+          bookId: 'a1111111-b222-4c33-d444-555555555555',
+          language: 'en',
+          title: "Harry Potter and the Philosopher's Stone",
+          author: 'J.K. Rowling',
+          description: 'First book of the series',
+          coverImageUrl: 'https://cdn.example.com/covers/hp1.jpg',
+          type: 'text',
+          isFree: true,
+          referralUrl: 'https://amazon.com/ref123',
+          status: 'draft',
+          publishedAt: null,
+          createdAt: '2025-08-25T12:00:00.000Z',
+          updatedAt: '2025-08-25T13:10:00.000Z',
+          seo: {
+            metaTitle: 'Harry Potter — Summary',
+            metaDescription: 'Overview, themes and details about the book',
           },
         },
       },
     },
   })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
   unpublish(@Param('id') id: string) {
     return this.service.unpublish(id);
   }
@@ -619,6 +670,7 @@ export class BookVersionController {
   })
   @ApiParam({ name: 'id' })
   @ApiBody({ type: UpdateRightsGeoBlockDto })
+  @ApiOkResponse({ type: GeoBlockRulesResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -641,6 +693,7 @@ export class BookVersionController {
       'Вычисляет текущий content hash версии без изменения состояния. Возвращает результат сравнения с baseline.',
   })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: RightsContentHashCheckDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -660,6 +713,7 @@ export class BookVersionController {
       'Вычисляет текущий content hash, сравнивает с baseline. Если есть расхождение, фиксирует stale.',
   })
   @ApiParam({ name: 'id' })
+  @ApiCreatedResponse({ type: RightsContentHashCheckDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

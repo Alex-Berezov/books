@@ -684,10 +684,21 @@ export class CategoryService {
       rating: ratingMap.get(book.id) ?? null,
     }));
 
+    // Обратная связь `category` снимается **выбрасыванием ключа**, а не записью
+    // `undefined`: `{ ...trans, category: undefined }` оставлял ключ в типе, хотя
+    // `JSON.stringify` его выкидывает, и схема ответа была вынуждена описывать
+    // поле, которого клиент не видит никогда.
+    let translation: Omit<NonNullable<typeof trans>, 'category'> | null = null;
+    if (trans) {
+      const { category: categoryBackRelation, ...rest } = trans;
+      void categoryBackRelation; // нужна только выше, для поиска категории; в ответ не идёт
+      translation = rest;
+    }
+
     return {
       category: {
         ...category,
-        translation: trans ? { ...trans, category: undefined } : null,
+        translation,
         description: trans?.description ?? null,
         language: pathLang,
       },

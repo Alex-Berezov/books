@@ -11,16 +11,16 @@ export class ReviewChainDiffDto {
 export class ReviewChainItemDto {
   @ApiProperty() id!: string;
   @ApiProperty() revisionNumber!: number;
-  @ApiProperty({ nullable: true }) previousReviewId!: string | null;
-  @ApiProperty({ nullable: true }) chainRootReviewId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) previousReviewId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) chainRootReviewId!: string | null;
   @ApiProperty() status!: string;
   @ApiProperty() overallStatus!: string;
   @ApiProperty() publicationGate!: string;
   @ApiProperty() confidence!: string;
-  @ApiProperty({ nullable: true }) nextReviewAt!: string | null;
-  @ApiProperty({ nullable: true }) approvedAt!: string | null;
-  @ApiProperty({ nullable: true }) approvedByUserId!: string | null;
-  @ApiProperty({ nullable: true }) approvedByUserName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) nextReviewAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) approvedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) approvedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) approvedByUserName!: string | null;
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty() rightsReviewImportId!: string;
   @ApiProperty() isCurrent!: boolean;

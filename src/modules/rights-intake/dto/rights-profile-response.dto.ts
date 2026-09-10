@@ -12,10 +12,10 @@ export class EditionRightsDto {
   @ApiProperty() sourceEditionId!: string;
   @ApiProperty() languageCode!: string;
   @ApiProperty() status!: string;
-  @ApiProperty() notesRu!: string | null;
-  @ApiProperty() legalBasisRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) legalBasisRu!: string | null;
   @ApiProperty() translationOrigin!: string;
-  @ApiProperty() translationSourceLanguage!: string | null;
+  @ApiProperty({ type: String, nullable: true }) translationSourceLanguage!: string | null;
   @ApiProperty() requiresGeoBlock!: boolean;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
@@ -25,14 +25,14 @@ export class SourceEditionDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty() provider!: string;
-  @ApiProperty() externalId!: string | null;
-  @ApiProperty() sourceUrl!: string | null;
-  @ApiProperty() sourceTitle!: string | null;
-  @ApiProperty() sourceLanguage!: string | null;
+  @ApiProperty({ type: String, nullable: true }) externalId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceUrl!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceTitle!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceLanguage!: string | null;
   @ApiProperty() sourceTextType!: string;
-  @ApiProperty() gutenbergStatus!: string | null;
+  @ApiProperty({ type: String, nullable: true }) gutenbergStatus!: string | null;
   @ApiProperty() status!: string;
-  @ApiProperty() notesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 
@@ -41,11 +41,11 @@ export class SourceEditionDto {
    * скачивание идёт через `GET /admin/rights/profiles/:profileId/source-file`.
    * `sourceFileSha256` показывается: по нему видно, что клиренс снят именно с этого файла.
    */
-  @ApiProperty() sourceFileSha256!: string | null;
-  @ApiProperty() sourceFileName!: string | null;
-  @ApiProperty() sourceFileContentType!: string | null;
-  @ApiProperty() sourceFileSizeBytes!: number | null;
-  @ApiProperty() sourceFileUploadedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceFileSha256!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceFileName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceFileContentType!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) sourceFileSizeBytes!: number | null;
+  @ApiProperty({ type: String, nullable: true }) sourceFileUploadedAt!: string | null;
   @ApiProperty({ description: 'Файл загружен и доступен для скачивания' })
   hasSourceFile!: boolean;
 
@@ -59,47 +59,65 @@ export class RightsReviewDto {
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty() rightsReviewImportId!: string;
   @ApiProperty() status!: string;
-  @ApiProperty() schemaVersion!: string | null;
+  @ApiProperty({ type: String, nullable: true }) schemaVersion!: string | null;
   @ApiProperty() reviewerType!: string;
   @ApiProperty() overallStatus!: string;
   @ApiProperty() publicationGate!: string;
   @ApiProperty() confidence!: string;
   @ApiProperty() summaryRu!: string;
   @ApiProperty() conclusionRu!: string;
-  @ApiProperty() reasoningRu!: string | null;
-  @ApiProperty() nextReviewAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reasoningRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) nextReviewAt!: string | null;
 
   // Phase 18: review history chain
-  @ApiPropertyOptional() previousReviewId?: string | null;
-  @ApiPropertyOptional() chainRootReviewId?: string | null;
-  @ApiPropertyOptional() revisionNumber?: number;
+  @ApiProperty({ type: String, nullable: true }) previousReviewId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) chainRootReviewId!: string | null;
+  @ApiProperty() revisionNumber!: number;
 
-  @ApiPropertyOptional()
-  approvedByUserId?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  approvedByUserId!: string | null;
 
-  @ApiPropertyOptional()
-  approvedByUser?: { id: string; name?: string; email: string } | null;
+  @ApiProperty({
+    type: 'object',
+    nullable: true,
+    properties: {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      email: { type: 'string' },
+    },
+    required: ['id', 'email'],
+  })
+  approvedByUser!: { id: string; name?: string; email: string } | null;
 
-  @ApiPropertyOptional()
-  approvedAt?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  approvedAt!: string | null;
 
-  @ApiPropertyOptional()
-  approvalNotesRu?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  approvalNotesRu!: string | null;
 
-  @ApiPropertyOptional()
-  rejectedByUserId?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  rejectedByUserId!: string | null;
 
-  @ApiPropertyOptional()
-  rejectedByUser?: { id: string; name?: string; email: string } | null;
+  @ApiProperty({
+    type: 'object',
+    nullable: true,
+    properties: {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      email: { type: 'string' },
+    },
+    required: ['id', 'email'],
+  })
+  rejectedByUser!: { id: string; name?: string; email: string } | null;
 
-  @ApiPropertyOptional()
-  rejectedAt?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  rejectedAt!: string | null;
 
-  @ApiPropertyOptional()
-  rejectionReasonRu?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  rejectionReasonRu!: string | null;
 
-  @ApiPropertyOptional({ type: [RightsReviewApprovalDto] })
-  approvals?: RightsReviewApprovalDto[];
+  @ApiProperty({ type: [RightsReviewApprovalDto] })
+  approvals!: RightsReviewApprovalDto[];
 
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
@@ -108,19 +126,19 @@ export class RightsReviewDto {
 export class ComponentTerritoryAssessmentDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsComponentId!: string;
-  @ApiPropertyOptional({ nullable: true }) licenseId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) licenseTitle?: string | null;
+  @ApiProperty({ type: String, nullable: true }) licenseId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) licenseTitle!: string | null;
   @ApiProperty() countryCode!: string;
   @ApiProperty() status!: string;
   @ApiProperty() accessPolicy!: string;
   @ApiProperty() geoBlockRequired!: boolean;
-  @ApiPropertyOptional({ nullable: true }) reasonRu!: string | null;
-  @ApiPropertyOptional({ nullable: true }) legalBasisRu!: string | null;
-  @ApiPropertyOptional({ nullable: true }) publicDomainFromYear!: number | null;
-  @ApiPropertyOptional({ nullable: true }) rightsExpireAt!: string | null;
-  @ApiPropertyOptional({ type: [String], nullable: true }) sourceEvidenceIds!: string[] | null;
-  @ApiPropertyOptional({ nullable: true }) confidence!: string | null;
-  @ApiPropertyOptional({ nullable: true }) notesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) legalBasisRu!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) publicDomainFromYear!: number | null;
+  @ApiProperty({ type: String, nullable: true }) rightsExpireAt!: string | null;
+  @ApiProperty({ type: [String], nullable: true }) sourceEvidenceIds!: string[] | null;
+  @ApiProperty({ type: String, nullable: true }) confidence!: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
@@ -129,40 +147,40 @@ export class PersonSummaryDto {
   @ApiProperty() id!: string;
   @ApiProperty() type!: string;
   @ApiProperty() canonicalName!: string;
-  @ApiPropertyOptional({ nullable: true }) sortName?: string | null;
-  @ApiPropertyOptional({ nullable: true }) slug?: string | null;
-  @ApiPropertyOptional({ nullable: true }) birthYear?: number | null;
-  @ApiPropertyOptional({ nullable: true }) deathYear?: number | null;
-  @ApiPropertyOptional({ nullable: true }) nationalityCountryCode?: string | null;
-  @ApiPropertyOptional({ nullable: true }) wikidataId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) viafId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) isni?: string | null;
-  @ApiPropertyOptional({ nullable: true }) gutenbergAgentId?: string | null;
+  @ApiProperty({ type: String, nullable: true }) sortName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) slug!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) birthYear!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) deathYear!: number | null;
+  @ApiProperty({ type: String, nullable: true }) nationalityCountryCode!: string | null;
+  @ApiProperty({ type: String, nullable: true }) wikidataId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) viafId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) isni!: string | null;
+  @ApiProperty({ type: String, nullable: true }) gutenbergAgentId!: string | null;
 }
 
 export class RightsProfileContributorDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsProfileId!: string;
-  @ApiPropertyOptional({ nullable: true }) rightsComponentId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) personId?: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsComponentId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) personId!: string | null;
   @ApiProperty() role!: string;
-  @ApiPropertyOptional({ nullable: true }) roleOtherRu?: string | null;
+  @ApiProperty({ type: String, nullable: true }) roleOtherRu!: string | null;
   @ApiProperty() displayName!: string;
-  @ApiPropertyOptional({ nullable: true }) canonicalName?: string | null;
-  @ApiPropertyOptional({ nullable: true }) creditedName?: string | null;
-  @ApiPropertyOptional({ nullable: true }) birthYear?: number | null;
-  @ApiPropertyOptional({ nullable: true }) deathYear?: number | null;
-  @ApiPropertyOptional({ nullable: true }) nationalityCountryCode?: string | null;
-  @ApiPropertyOptional({ nullable: true }) wikidataId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) viafId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) isni?: string | null;
-  @ApiPropertyOptional({ nullable: true }) gutenbergAgentId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) creditedLanguage?: string | null;
-  @ApiPropertyOptional({ type: [String], nullable: true }) sourceEvidenceIds?: string[] | null;
-  @ApiPropertyOptional({ nullable: true }) publicDomainFromYear?: number | null;
-  @ApiPropertyOptional({ nullable: true }) confidence?: string | null;
-  @ApiPropertyOptional({ nullable: true }) notesRu?: string | null;
-  @ApiPropertyOptional({ type: PersonSummaryDto, nullable: true }) person?: PersonSummaryDto | null;
+  @ApiProperty({ type: String, nullable: true }) canonicalName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) creditedName!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) birthYear!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) deathYear!: number | null;
+  @ApiProperty({ type: String, nullable: true }) nationalityCountryCode!: string | null;
+  @ApiProperty({ type: String, nullable: true }) wikidataId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) viafId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) isni!: string | null;
+  @ApiProperty({ type: String, nullable: true }) gutenbergAgentId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) creditedLanguage!: string | null;
+  @ApiProperty({ type: [String], nullable: true }) sourceEvidenceIds!: string[] | null;
+  @ApiProperty({ type: Number, nullable: true }) publicDomainFromYear!: number | null;
+  @ApiProperty({ type: String, nullable: true }) confidence!: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
+  @ApiProperty({ type: PersonSummaryDto, nullable: true }) person!: PersonSummaryDto | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
@@ -173,20 +191,20 @@ export class RightsComponentDto {
   @ApiProperty() componentType!: string;
   @ApiProperty() titleRu!: string;
   /** WP-7.2: `null` — компонент общий для всех языков версии. */
-  @ApiPropertyOptional() languageCode?: string | null;
+  @ApiProperty({ type: String, nullable: true }) languageCode!: string | null;
   @ApiProperty() status!: string;
   @ApiProperty() requiredAction!: string;
   @ApiProperty() confidence!: string;
-  @ApiProperty() notesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
 
   @ApiProperty({ type: [ComponentTerritoryAssessmentDto] })
   territoryAssessments!: ComponentTerritoryAssessmentDto[];
 
-  @ApiPropertyOptional({ type: [RightsProfileContributorDto] })
-  contributors?: RightsProfileContributorDto[];
+  @ApiProperty({ type: [RightsProfileContributorDto] })
+  contributors!: RightsProfileContributorDto[];
 
-  @ApiPropertyOptional({ type: [RightsLicenseSummaryDto] })
-  licenses?: RightsLicenseSummaryDto[];
+  @ApiProperty({ type: [RightsLicenseSummaryDto] })
+  licenses!: RightsLicenseSummaryDto[];
 
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
@@ -199,11 +217,11 @@ export class TerritoryDecisionDto {
   @ApiProperty() finalStatus!: string;
   @ApiProperty() accessPolicy!: string;
   @ApiProperty() geoBlockRequired!: boolean;
-  @ApiProperty() geoBlockScope!: string | null;
+  @ApiProperty({ type: String, nullable: true }) geoBlockScope!: string | null;
   @ApiProperty() reasonRu!: string;
-  @ApiProperty() legalBasisRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) legalBasisRu!: string | null;
   @ApiProperty() confidence!: string;
-  @ApiProperty() nextReviewAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) nextReviewAt!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
@@ -215,10 +233,10 @@ export class RightsEvidenceDto {
   @ApiProperty() sourceLevel!: string;
   @ApiProperty() title!: string;
   @ApiProperty() authority!: string;
-  @ApiProperty() url!: string | null;
-  @ApiProperty() jurisdictionCode!: string | null;
-  @ApiProperty() accessedAt!: string | null;
-  @ApiProperty() relevantExcerpt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) url!: string | null;
+  @ApiProperty({ type: String, nullable: true }) jurisdictionCode!: string | null;
+  @ApiProperty({ type: String, nullable: true }) accessedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) relevantExcerpt!: string | null;
   @ApiProperty() summaryRu!: string;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
@@ -229,15 +247,15 @@ export class RightsEvidenceDto {
    */
   @ApiProperty({ description: 'Архивная копия документа загружена' })
   isArchivedCopy!: boolean;
-  @ApiProperty() fileSha256!: string | null;
-  @ApiProperty() fileName!: string | null;
-  @ApiProperty() contentType!: string | null;
-  @ApiProperty() sizeBytes!: number | null;
-  @ApiProperty() archivedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) fileSha256!: string | null;
+  @ApiProperty({ type: String, nullable: true }) fileName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) contentType!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) sizeBytes!: number | null;
+  @ApiProperty({ type: String, nullable: true }) archivedAt!: string | null;
 
   /** WP-9.3: доказательство не удаляется, а помечается заменённым другим (ADR-009). */
   @ApiProperty() isCurrent!: boolean;
-  @ApiProperty() supersededById!: string | null;
+  @ApiProperty({ type: String, nullable: true }) supersededById!: string | null;
 }
 
 export class RightsActionDto {
@@ -246,15 +264,20 @@ export class RightsActionDto {
   @ApiProperty() actionType!: string;
   @ApiProperty() status!: string;
   @ApiProperty() descriptionRu!: string;
-  @ApiProperty() affectedCountryCodes!: unknown;
+  @ApiProperty({
+    type: 'array',
+    items: { type: 'string' },
+    description: 'Коды стран, которых касается действие (Json в базе)',
+  })
+  affectedCountryCodes!: unknown;
   @ApiProperty() isBlocking!: boolean;
 
   // WP-5.1: жизненный цикл действия — кто взял, к какому сроку, кто и когда закрыл.
-  @ApiProperty({ nullable: true }) assignedToUserId!: string | null;
-  @ApiProperty({ nullable: true }) dueAt!: string | null;
-  @ApiProperty({ nullable: true }) completedAt!: string | null;
-  @ApiProperty({ nullable: true }) completedByUserId!: string | null;
-  @ApiProperty({ nullable: true }) completionNotesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) assignedToUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) dueAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) completedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) completedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) completionNotesRu!: string | null;
 
   /** Закрыто ли действие: `COMPLETED` или `WAIVED`. `CANCELLED` закрытым не считается. */
   @ApiProperty() isResolved!: boolean;
@@ -266,7 +289,7 @@ export class RightsActionDto {
 export class RightsProfileSummaryDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsIntakeId!: string;
-  @ApiProperty() currentReviewImportId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) currentReviewImportId!: string | null;
   @ApiProperty() status!: string;
   @ApiProperty() isCurrent!: boolean;
   @ApiProperty() overallStatus!: string;
@@ -274,10 +297,10 @@ export class RightsProfileSummaryDto {
   @ApiProperty() confidence!: string;
   @ApiProperty() summaryRu!: string;
   @ApiProperty() conclusionRu!: string;
-  @ApiProperty() reasoningRu!: string | null;
-  @ApiProperty() nextReviewAt!: string | null;
-  @ApiProperty() supersededAt!: string | null;
-  @ApiProperty() archivedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reasoningRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) nextReviewAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) supersededAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) archivedAt!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
@@ -285,7 +308,7 @@ export class RightsProfileSummaryDto {
 export class RightsProfileDetailDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsIntakeId!: string;
-  @ApiProperty() currentReviewImportId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) currentReviewImportId!: string | null;
   @ApiProperty() status!: string;
   @ApiProperty() isCurrent!: boolean;
   @ApiProperty() overallStatus!: string;
@@ -293,10 +316,10 @@ export class RightsProfileDetailDto {
   @ApiProperty() confidence!: string;
   @ApiProperty() summaryRu!: string;
   @ApiProperty() conclusionRu!: string;
-  @ApiProperty() reasoningRu!: string | null;
-  @ApiProperty() nextReviewAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reasoningRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) nextReviewAt!: string | null;
 
-  @ApiPropertyOptional({ type: SourceEditionDto })
+  @ApiProperty({ type: SourceEditionDto, nullable: true })
   sourceEdition!: SourceEditionDto | null;
 
   @ApiProperty({ type: [RightsReviewDto] })
@@ -317,45 +340,45 @@ export class RightsProfileDetailDto {
   @ApiProperty({ type: [RightsActionDto] })
   actions!: RightsActionDto[];
 
-  @ApiPropertyOptional({ type: [RightsProfileContributorDto] })
-  contributors?: RightsProfileContributorDto[];
+  @ApiProperty({ type: [RightsProfileContributorDto] })
+  contributors!: RightsProfileContributorDto[];
 
-  @ApiPropertyOptional() contributorsCount?: number;
-  @ApiPropertyOptional() authorsCount?: number;
-  @ApiPropertyOptional() translatorsCount?: number;
-  @ApiPropertyOptional() narratorsCount?: number;
-  @ApiPropertyOptional() contributorsWithoutPersonCount?: number;
+  @ApiProperty() contributorsCount!: number;
+  @ApiProperty() authorsCount!: number;
+  @ApiProperty() translatorsCount!: number;
+  @ApiProperty() narratorsCount!: number;
+  @ApiProperty() contributorsWithoutPersonCount!: number;
 
   // Phase 15: licenses reachable from this profile and their coverage of license-gated markets
-  @ApiPropertyOptional({ type: [RightsLicenseSummaryDto] })
-  licenses?: RightsLicenseSummaryDto[];
+  @ApiProperty({ type: [RightsLicenseSummaryDto] })
+  licenses!: RightsLicenseSummaryDto[];
 
-  @ApiPropertyOptional({ type: LicenseCoverageResultDto, nullable: true })
-  licenseCoverage?: LicenseCoverageResultDto | null;
+  @ApiProperty({ type: LicenseCoverageResultDto, nullable: true })
+  licenseCoverage!: LicenseCoverageResultDto | null;
 
-  @ApiPropertyOptional() licensesCount?: number;
-  @ApiPropertyOptional() activeLicensesCount?: number;
-  @ApiPropertyOptional() expiredLicensesCount?: number;
-  @ApiPropertyOptional() revokedLicensesCount?: number;
-  @ApiPropertyOptional() expiringSoonLicensesCount?: number;
-  @ApiPropertyOptional() licenseRequiredCountriesCount?: number;
-  @ApiPropertyOptional() licenseCoveredCountriesCount?: number;
-  @ApiPropertyOptional() licenseUncoveredCountriesCount?: number;
+  @ApiProperty() licensesCount!: number;
+  @ApiProperty() activeLicensesCount!: number;
+  @ApiProperty() expiredLicensesCount!: number;
+  @ApiProperty() revokedLicensesCount!: number;
+  @ApiProperty() expiringSoonLicensesCount!: number;
+  @ApiProperty() licenseRequiredCountriesCount!: number;
+  @ApiProperty() licenseCoveredCountriesCount!: number;
+  @ApiProperty() licenseUncoveredCountriesCount!: number;
 
   // Phase 19: снимок оценки риска и юридического утверждения. Читается из уже загруженной
   // записи профиля — дополнительных запросов маппинг не делает.
   @ApiPropertyOptional() riskLevel?: string;
   @ApiPropertyOptional({ type: [Object] }) riskFactors?: Record<string, unknown>[];
-  @ApiPropertyOptional({ nullable: true }) riskAssessedAt?: string | null;
+  @ApiProperty({ type: String, nullable: true }) riskAssessedAt!: string | null;
   @ApiPropertyOptional() lawyerReviewRequired?: boolean;
   @ApiPropertyOptional() lawyerReviewBlocking?: boolean;
-  @ApiPropertyOptional({ nullable: true }) currentLawyerReviewId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) lawyerApprovedAt?: string | null;
-  @ApiPropertyOptional({ nullable: true }) lawyerApprovedLawyerName?: string | null;
-  @ApiPropertyOptional({ nullable: true }) lawyerOpinionValidUntil?: string | null;
+  @ApiProperty({ type: String, nullable: true }) currentLawyerReviewId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerApprovedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerApprovedLawyerName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lawyerOpinionValidUntil!: string | null;
 
-  @ApiProperty() supersededAt!: string | null;
-  @ApiProperty() archivedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) supersededAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) archivedAt!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }

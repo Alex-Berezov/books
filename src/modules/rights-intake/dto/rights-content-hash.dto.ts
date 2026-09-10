@@ -4,10 +4,10 @@ export class RightsContentHashComputationDto {
   @ApiProperty()
   versionId!: string;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsProfileId!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   approvedRightsReviewId!: string | null;
 
   @ApiProperty()
@@ -19,7 +19,7 @@ export class RightsContentHashComputationDto {
   @ApiProperty()
   calculatedAt!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: 'object', additionalProperties: true })
   input!: Record<string, unknown>;
 }
 
@@ -27,7 +27,7 @@ export class RightsContentHashCheckDto {
   @ApiProperty()
   versionId!: string;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   baselineHash!: string | null;
 
   @ApiProperty()
@@ -45,10 +45,10 @@ export class RightsContentHashCheckDto {
   @ApiProperty()
   recheckRequired!: boolean;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   reasonCode!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   reasonRu!: string | null;
 
   @ApiProperty()

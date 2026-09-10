@@ -2,10 +2,12 @@ import { Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiQuery,
   ApiTags,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -34,14 +36,25 @@ export class RightsProfileController {
   }
 
   @Get('intakes/:id/rights-profile')
-  @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Get rights profile(s) for an intake' })
+  // Настоящий union: при `currentOnly` (по умолчанию) отдаётся один профиль,
+  // при `currentOnly=false` — обёртка со списком.
+  @ApiExtraModels(RightsProfileDetailDto, RightsProfileListDto)
+  @ApiOkResponse({
+    schema: {
+      oneOf: [
+        { $ref: getSchemaPath(RightsProfileDetailDto) },
+        { $ref: getSchemaPath(RightsProfileListDto) },
+      ],
+    },
+  })
   @ApiQuery({
     name: 'currentOnly',
     required: false,
     type: Boolean,
     description: 'Return only current profile (default: true)',
   })
+  @Roles(Role.Admin, Role.ContentManager)
   async getByIntake(
     @Param('id') intakeId: string,
     @Query('currentOnly') currentOnly?: string,

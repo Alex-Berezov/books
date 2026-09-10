@@ -31,6 +31,8 @@ import { ApproveRightsReviewDto } from './dto/approve-rights-review.dto';
 import { RejectRightsReviewDto } from './dto/reject-rights-review.dto';
 import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 import { RightsProfileDetailDto } from './dto/rights-profile-response.dto';
+import { RightsIntakeResponseDto } from './dto/rights-intake-response.dto';
+import { PagedRightsIntakesDto } from './dto/paged-rights-intakes.dto';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
 import { RightsIntakeReadinessDto } from './dto/rights-intake-readiness.dto';
@@ -54,12 +56,14 @@ export class RightsIntakeController {
 
   @Get()
   @ApiOperation({ summary: 'List rights intakes' })
+  @ApiOkResponse({ type: PagedRightsIntakesDto })
   list(@Query() dto: ListRightsIntakesDto) {
     return this.service.list(dto);
   }
 
   @Post()
   @ApiOperation({ summary: 'Create rights intake' })
+  @ApiCreatedResponse({ type: RightsIntakeResponseDto })
   create(@Body() dto: CreateRightsIntakeDto, @Req() req: { user: { userId: string } }) {
     return this.service.create(dto, req.user.userId);
   }
@@ -82,18 +86,21 @@ export class RightsIntakeController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get rights intake by ID' })
+  @ApiOkResponse({ type: RightsIntakeResponseDto })
   getById(@Param('id') id: string) {
     return this.service.getById(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update rights intake' })
+  @ApiOkResponse({ type: RightsIntakeResponseDto })
   update(@Param('id') id: string, @Body() dto: UpdateRightsIntakeDto) {
     return this.service.update(id, dto);
   }
 
   @Patch(':id/status')
   @ApiOperation({ summary: 'Change rights intake status' })
+  @ApiOkResponse({ type: RightsIntakeResponseDto })
   changeStatus(@Param('id') id: string, @Body() dto: ChangeRightsIntakeStatusDto) {
     return this.service.changeStatus(id, dto.status);
   }
@@ -101,6 +108,7 @@ export class RightsIntakeController {
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Archive rights intake (soft delete)' })
+  @ApiOkResponse({ type: RightsIntakeResponseDto })
   archive(@Param('id') id: string) {
     return this.service.archive(id);
   }
@@ -111,6 +119,7 @@ export class RightsIntakeController {
   @ApiOperation({
     summary: 'Archive rights intake from any status (admin only, still a soft delete)',
   })
+  @ApiOkResponse({ type: RightsIntakeResponseDto })
   forceArchive(@Param('id') id: string) {
     return this.service.archive(id, { force: true });
   }

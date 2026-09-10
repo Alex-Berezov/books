@@ -40,6 +40,7 @@ export class RightsAgentAdminController {
   @ApiOperation({
     summary: 'Issue a one-time upload token. The raw token is returned only here.',
   })
+  @ApiCreatedResponse({ type: AgentTokenIssuedDto })
   issueToken(
     @Param('id') id: string,
     @Body() dto: CreateAgentTokenDto,

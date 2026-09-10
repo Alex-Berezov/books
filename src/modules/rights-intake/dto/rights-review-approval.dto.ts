@@ -12,8 +12,8 @@ export class RightsReviewApprovalDto {
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty() rightsIntakeId!: string;
   @ApiProperty() decision!: string;
-  @ApiProperty({ type: DecidedByUserDto })
+  @ApiProperty({ type: DecidedByUserDto, nullable: true })
   decidedByUser!: DecidedByUserDto | null;
-  @ApiPropertyOptional() notesRu?: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
   @ApiProperty() createdAt!: string;
 }

@@ -29,6 +29,7 @@ export class BookCardDto {
   @ApiProperty({
     description:
       'Stable author slug for the author page link. null when authorId is null (legacy data).',
+    type: String,
     example: 'william-shakespeare',
     nullable: true,
   })
@@ -36,12 +37,13 @@ export class BookCardDto {
 
   @ApiProperty({
     description: 'Localized cover image URL',
+    type: String,
     example: 'https://api.bibliaris.com/covers/...png',
     nullable: true,
   })
   coverImageUrl!: string | null;
 
-  @ApiProperty({ description: 'Average rating (0-5)', example: 4.5, nullable: true })
+  @ApiProperty({ description: 'Average rating (0-5)', type: Number, example: 4.5, nullable: true })
   rating!: number | null;
 
   @ApiProperty({ description: 'Number of ratings', example: 12 })
@@ -62,6 +64,8 @@ export class BookCardDto {
   @ApiProperty({
     description:
       'ISO date the language version was published (BookVersion.publishedAt). null if unpublished.',
+    type: String,
+    format: 'date-time',
     example: '2026-07-01T00:00:00.000Z',
     nullable: true,
   })

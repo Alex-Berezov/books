@@ -47,6 +47,7 @@ export class RightsLegalChangeController {
 
   @Get('admin/rights/legal-changes/:id')
   @ApiOperation({ summary: 'Legal change details with the tasks it opened' })
+  @ApiOkResponse({ type: LegalChangeDetailDto })
   getById(@Param('id') id: string): Promise<LegalChangeDetailDto> {
     return this.legalChanges.getById(id);
   }
@@ -65,6 +66,7 @@ export class RightsLegalChangeController {
   @Post('admin/rights/legal-changes/:id/apply')
   @Roles(Role.Admin)
   @ApiOperation({ summary: 'Apply a legal change: open recheck tasks in bulk (admin only)' })
+  @ApiCreatedResponse({ type: LegalChangeDetailDto })
   apply(
     @Param('id') id: string,
     @Req() req: { user: { userId: string } },

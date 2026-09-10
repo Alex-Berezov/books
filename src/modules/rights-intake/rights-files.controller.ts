@@ -18,6 +18,8 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiCreatedResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
@@ -30,7 +32,12 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { RightsFilesService } from './rights-files.service';
 import { SupersedeRightsEvidenceDto } from './dto/supersede-rights-evidence.dto';
-import type { RightsFileDescriptorDto, RightsFileDownload } from './rights-files.service';
+// Обычный import, а не `import type`: класс подставляется в `@ApiCreatedResponse({ type })`
+// и нужен в рантайме. Он же служит типом возврата вместо одноимённого интерфейса сервиса.
+import { RightsFileDescriptorDto } from './dto/rights-file-descriptor.dto';
+import { RightsFileLimitsDto } from './dto/rights-file-limits.dto';
+import { SupersedeRightsEvidenceResponseDto } from './dto/supersede-rights-evidence-response.dto';
+import type { RightsFileDownload } from './rights-files.service';
 
 type UploadedFileType = {
   buffer?: Buffer;
@@ -80,6 +87,7 @@ export class RightsFilesController {
 
   @Get('files/limits')
   @ApiOperation({ summary: 'Limits and allowed content types for rights file uploads' })
+  @ApiOkResponse({ type: RightsFileLimitsDto })
   getLimits() {
     return this.service.getLimits();
   }
@@ -94,6 +102,7 @@ export class RightsFilesController {
       'Контрольную сумму считает сервер. Замена уже загруженного файла запрещена — ' +
       'исправленный отчёт загружается новым импортом.',
   })
+  @ApiCreatedResponse({ type: RightsFileDescriptorDto })
   @ApiConsumes('multipart/form-data')
   @ApiBody(MULTIPART_BODY)
   @ApiParam({ name: 'importId' })
@@ -122,6 +131,7 @@ export class RightsFilesController {
       'WP-8.3 (R3-05): контрольная сумма файла входит в content hash клиренса, поэтому ' +
       'загрузка пересчитывает свежесть всех версий профиля. Замена запрещена.',
   })
+  @ApiCreatedResponse({ type: RightsFileDescriptorDto })
   @ApiConsumes('multipart/form-data')
   @ApiBody(MULTIPART_BODY)
   @ApiParam({ name: 'profileId' })
@@ -151,6 +161,7 @@ export class RightsFilesController {
       'с обоснованием блокировки страны. Копию загружает редактор — сервер по внешним ' +
       'адресам не ходит.',
   })
+  @ApiCreatedResponse({ type: RightsFileDescriptorDto })
   @ApiConsumes('multipart/form-data')
   @ApiBody(MULTIPART_BODY)
   @ApiParam({ name: 'evidenceId' })
@@ -181,6 +192,7 @@ export class RightsFilesController {
       'WP-9.3: удалить доказательство нельзя (ADR-009), поэтому «оно больше не действует» ' +
       'выражается ссылкой на преемника.',
   })
+  @ApiOkResponse({ type: SupersedeRightsEvidenceResponseDto })
   @ApiParam({ name: 'evidenceId' })
   async supersedeEvidence(
     @Param('evidenceId') evidenceId: string,

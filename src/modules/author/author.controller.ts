@@ -11,12 +11,26 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AuthorService } from './author.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
 import { ListAuthorsQueryDto } from './dto/list-authors-query.dto';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckAuthorSlugResponseDto } from './dto/check-slug-response.dto';
+import {
+  AdminAuthorItemDto,
+  AdminAuthorsListResponseDto,
+  AuthorResponseDto,
+} from './dto/author-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
@@ -29,9 +43,10 @@ export class AuthorController {
 
   @Get('admin/authors/check-slug')
   @ApiOperation({ summary: 'Check slug uniqueness for an author' })
+  @ApiOkResponse({ type: CheckAuthorSlugResponseDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async checkSlug(@Query() query: CheckSlugQueryDto) {
+  async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckAuthorSlugResponseDto> {
     const existing = await this.service.checkSlugExists(query.slug, query.lang, query.excludeId);
     if (!existing) {
       return { exists: false };
@@ -56,6 +71,7 @@ export class AuthorController {
    */
   @Get('admin/authors')
   @ApiOperation({ summary: 'List authors for admin' })
+  @ApiOkResponse({ type: AdminAuthorsListResponseDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   list(@Query() pagination: ListAuthorsQueryDto) {
@@ -64,6 +80,7 @@ export class AuthorController {
 
   @Post('admin/authors')
   @ApiOperation({ summary: 'Create author' })
+  @ApiCreatedResponse({ type: AuthorResponseDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(@Body() dto: CreateAuthorDto) {
@@ -77,7 +94,11 @@ export class AuthorController {
   @Get('admin/authors/:id')
   @ApiOperation({ summary: 'Get author by id' })
   @ApiParam({ name: 'id', description: 'Author id' })
-  @ApiResponse({ status: 200, description: 'Author, same shape as a list item' })
+  @ApiResponse({
+    status: 200,
+    description: 'Author, same shape as a list item',
+    type: AdminAuthorItemDto,
+  })
   @ApiResponse({ status: 404, description: 'Author not found' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -87,6 +108,7 @@ export class AuthorController {
 
   @Put('admin/authors/:id')
   @ApiOperation({ summary: 'Update author' })
+  @ApiOkResponse({ type: AuthorResponseDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateAuthorDto) {

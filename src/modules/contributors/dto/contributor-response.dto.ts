@@ -1,9 +1,12 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
+import { RightsConfidence } from '@prisma/client';
 import { ContributorRole } from '../../persons/person-interface';
 
 /**
  * Связь участника с rights profile или его компонентом.
  * Физически хранится в таблице RightsProfileContributor (см. фазу 14).
+ * Строка отдаётся целиком (contributors.service.ts: create/delete без `select`),
+ * поэтому здесь все поля модели, а не только те, что приходят в DTO создания связи.
  */
 export class ContributorLinkResponseDto {
   @ApiProperty()
@@ -12,26 +15,73 @@ export class ContributorLinkResponseDto {
   @ApiProperty()
   rightsProfileId!: string;
 
-  @ApiPropertyOptional({ nullable: true })
-  rightsComponentId?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  rightsComponentId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  personId?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  personId!: string | null;
 
   @ApiProperty({ enum: ContributorRole })
   role!: ContributorRole;
 
+  @ApiProperty({ type: String, nullable: true })
+  roleOtherRu!: string | null;
+
   @ApiProperty()
   displayName!: string;
 
-  @ApiPropertyOptional({ nullable: true })
-  creditedName?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  canonicalName!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  notesRu?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  creditedName!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number, nullable: true })
+  birthYear!: number | null;
+
+  @ApiProperty({ type: Number, nullable: true })
+  deathYear!: number | null;
+
+  @ApiProperty({ type: String, nullable: true, description: '2-letter country code' })
+  nationalityCountryCode!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  wikidataId!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  viafId!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  isni!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  gutenbergAgentId!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  creditedLanguage!: string | null;
+
+  @ApiProperty({ type: Number, nullable: true })
+  publicDomainFromYear!: number | null;
+
+  @ApiProperty({
+    type: 'array',
+    items: { type: 'string' },
+    nullable: true,
+    description: 'Идентификаторы доказательств, из которых взята роль (Json в базе)',
+  })
+  sourceEvidenceIds!: unknown;
+
+  @ApiProperty({ enum: RightsConfidence, nullable: true })
+  confidence!: RightsConfidence | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  notesRu!: string | null;
+
+  @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  updatedAt!: Date;
 }
 
 export class ContributorResponseDto {
@@ -41,46 +91,46 @@ export class ContributorResponseDto {
   @ApiProperty()
   displayName!: string;
 
-  @ApiPropertyOptional({ nullable: true })
-  sortName?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  sortName!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  birthDate?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  birthDate!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  deathDate?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  deathDate!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  birthYear?: number | null;
+  @ApiProperty({ type: Number, nullable: true })
+  birthYear!: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  deathYear?: number | null;
+  @ApiProperty({ type: Number, nullable: true })
+  deathYear!: number | null;
 
-  @ApiPropertyOptional({ nullable: true, description: '2-letter country code' })
-  nationalityCountry?: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '2-letter country code' })
+  nationalityCountry!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  publicDomainFromYear?: number | null;
+  @ApiProperty({ type: Number, nullable: true })
+  publicDomainFromYear!: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  wikidataId?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  wikidataId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  viafId?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  viafId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  isni?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  isni!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  gutenbergAgentId?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  gutenbergAgentId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  notesRu?: string | null;
+  @ApiProperty({ type: String, nullable: true })
+  notesRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 
-  @ApiProperty()
+  @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
 }
 

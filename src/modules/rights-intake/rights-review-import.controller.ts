@@ -1,10 +1,17 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { RightsReviewImportService } from './rights-review-import.service';
 import { CreateRightsReviewImportDto } from './dto/create-rights-review-import.dto';
 import {
   ListRightsReviewImportsRequestDto,
   RightsReviewImportDetailDto,
+  RightsReviewImportRecordDto,
   RightsReviewImportsListResponseDto,
 } from './dto/rights-review-import-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -21,6 +28,7 @@ export class RightsReviewImportController {
 
   @Post('admin/rights/intakes/:id/review-imports')
   @ApiOperation({ summary: 'Import a review result for a rights intake' })
+  @ApiCreatedResponse({ type: RightsReviewImportRecordDto })
   create(
     @Param('id') id: string,
     @Body() dto: CreateRightsReviewImportDto,

@@ -15,11 +15,15 @@ import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.i
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiCreatedResponse,
+  ApiExtraModels,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
   ApiResponse,
   ApiTags,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -30,6 +34,11 @@ import { TaxonomyIndexabilitySchedulerService } from './indexability/taxonomy-in
 import { SystemPagesService } from './system-pages/system-pages.service';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoType, ResolveSeoTypeValue } from './dto/resolve-seo.dto';
+import { SeoResolveResponseDto } from './dto/resolve-seo-response.dto';
+import { SeoResponseDto } from './dto/seo-response.dto';
+import { SystemPagesStatusResponseDto } from './dto/system-pages-status-response.dto';
+import { TaxonomyIndexabilityStatusResponseDto } from './dto/taxonomy-indexability-status-response.dto';
+import { RecomputeTaxonomyIndexabilityResponseDto } from './dto/recompute-taxonomy-indexability-response.dto';
 import { ApiHeader } from '@nestjs/swagger';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
@@ -57,6 +66,25 @@ const RESOLVE_SEO_TYPES = Object.values(ResolveSeoType);
 const isResolveSeoType = (val: string): val is ResolveSeoTypeValue =>
   (RESOLVE_SEO_TYPES as readonly string[]).includes(val);
 
+/**
+ * Приведение ответа `SeoService.resolvePublic` к схеме публичного маршрута.
+ *
+ * ⚠️ Приведение, а не проверка: рантайм не трогается ни на инструкцию. Сервис
+ * объявлен `Promise<Record<string, unknown>>`, потому что диспетчер собирает
+ * шесть резолверов в одну таблицу; такой тип для гейта `check:response-schema`
+ * нечитаем, и оба маршрута числились у него `unverifiable` — то есть ни одно
+ * поле ответа не стереглось. Конверт при этом общий и зафиксирован спекой
+ * `resolvePublic: форма ответа каждой ветки (LEGACY-317)` в `seo.service.spec.ts`:
+ * она сверяет набор полей верхнего уровня у каждой из шести веток.
+ *
+ * Сузить сам сервис нельзя, не переписав `buildTermBundle` и все шесть
+ * резолверов, — это отдельная правка. До неё точка расхождения одна и она здесь,
+ * а не рассыпана по обоим обработчикам.
+ */
+const asResolvedBundle = (
+  bundle: Promise<Record<string, unknown>>,
+): Promise<SeoResolveResponseDto> => bundle as unknown as Promise<SeoResolveResponseDto>;
+
 @ApiTags('seo')
 @Controller()
 export class SeoController {
@@ -75,7 +103,10 @@ export class SeoController {
     summary:
       'Recompute bookCount / autoIndexable for every taxonomy translation (hysteresis: close <=2, open >=5)',
   })
-  @ApiResponse({ status: 201, description: 'Counters recomputed' })
+  @ApiCreatedResponse({
+    type: RecomputeTaxonomyIndexabilityResponseDto,
+    description: 'Counters recomputed',
+  })
   @ApiQuery({
     name: 'cold',
     required: false,
@@ -104,7 +135,10 @@ export class SeoController {
     description:
       'The sweep is the safety net that catches a counter no targeted hook updated. It runs in-process, so this is the only way to confirm from outside that it actually ran.',
   })
-  @ApiResponse({ status: 200, description: 'Scheduler state and last run result' })
+  @ApiOkResponse({
+    type: TaxonomyIndexabilityStatusResponseDto,
+    description: 'Scheduler state and last run result',
+  })
   taxonomyIndexabilityStatus() {
     return this.scheduler.getStatus();
   }
@@ -118,21 +152,32 @@ export class SeoController {
     description:
       'The homepage and the four taxonomy hubs are found by an immutable systemKey. When one no longer resolves — unpublished, deleted, or a language added after the backfill — nothing errors: the page falls back to dictionary strings and silently loses its meta, H1, SEO text and FAQ. This names the pages that no longer resolve, per language, with their current public slug. Also logged at startup.',
   })
-  @ApiResponse({ status: 200, description: 'State of every system page, plus the problems only' })
+  @ApiOkResponse({
+    type: SystemPagesStatusResponseDto,
+    description: 'State of every system page, plus the problems only',
+  })
   systemPagesStatus() {
     return this.systemPages.check();
   }
 
   @Get('versions/:bookVersionId/seo')
   @ApiOperation({ summary: 'Get SEO meta for a book version' })
+  // Тело ответа может отсутствовать: у версии без `seoId` сервис отдаёт `null`
+  // (`seo.service.ts`, `getByVersion`). `type: SeoResponseDto` обещал бы объект всегда,
+  // и сгенерированный по схеме клиент разбирал бы `null` как запись.
+  @ApiExtraModels(SeoResponseDto)
+  @ApiOkResponse({
+    schema: { allOf: [{ $ref: getSchemaPath(SeoResponseDto) }], nullable: true },
+    description: 'SEO meta, or null when the version has no SEO record',
+  })
   @ApiParam({ name: 'bookVersionId' })
-  @ApiResponse({ status: 200, description: 'SEO meta or null if not set' })
   get(@Param('bookVersionId') bookVersionId: string) {
     return this.service.getByVersion(bookVersionId);
   }
 
   @Put('versions/:bookVersionId/seo')
   @ApiOperation({ summary: 'Create or update SEO meta for a book version (upsert)' })
+  @ApiOkResponse({ type: SeoResponseDto })
   @ApiParam({ name: 'bookVersionId' })
   @ApiBody({
     description: 'Partial SEO fields to upsert',
@@ -169,20 +214,24 @@ export class SeoController {
   })
   @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
   @ApiHeader({ name: 'Accept-Language', required: false })
-  @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
+  @ApiResponse({
+    status: 200,
+    description: 'Resolved SEO bundle',
+    type: SeoResolveResponseDto,
+  })
   resolve(
     @Query('type') typeRaw: string,
     @Query('id') idRaw: string,
     @Query('slug') slug?: string,
     @Query('lang') queryLang?: string,
     @Headers('accept-language') acceptLanguage?: string,
-  ): Promise<any> {
+  ): Promise<SeoResolveResponseDto> {
     const t = String(typeRaw);
     const id = String(idRaw);
     if (!isResolveSeoType(t)) {
       throw new BadRequestException('Invalid type');
     }
-    return this.service.resolvePublic(t, id, { queryLang, acceptLanguage, slug });
+    return asResolvedBundle(this.service.resolvePublic(t, id, { queryLang, acceptLanguage, slug }));
   }
 
   // Language-prefixed public resolver (prefix has higher priority than query/header)
@@ -201,7 +250,11 @@ export class SeoController {
     description: 'Translation slug (for category/genre/tag)',
   })
   @ApiHeader({ name: 'Accept-Language', required: false })
-  @ApiResponse({ status: 200, description: 'Resolved SEO bundle' })
+  @ApiResponse({
+    status: 200,
+    description: 'Resolved SEO bundle',
+    type: SeoResolveResponseDto,
+  })
   resolveWithLang(
     @Param('lang', LangParamPipe) pathLang: Language,
     @Query('type') typeRaw: string,
@@ -209,12 +262,14 @@ export class SeoController {
     @Query('slug') slug?: string,
     @Query('lang') queryLang?: string,
     @Headers('accept-language') acceptLanguage?: string,
-  ): Promise<any> {
+  ): Promise<SeoResolveResponseDto> {
     const t = String(typeRaw);
     const id = String(idRaw);
     if (!isResolveSeoType(t)) {
       throw new BadRequestException('Invalid type');
     }
-    return this.service.resolvePublic(t, id, { pathLang, queryLang, acceptLanguage, slug });
+    return asResolvedBundle(
+      this.service.resolvePublic(t, id, { pathLang, queryLang, acceptLanguage, slug }),
+    );
   }
 }

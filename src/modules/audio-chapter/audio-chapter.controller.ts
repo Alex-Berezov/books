@@ -13,6 +13,8 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -20,6 +22,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AudioChapterService } from './audio-chapter.service';
+import { AudioChapterResponseDto } from './dto/audio-chapter-response.dto';
+import { PagedAudioChaptersDto } from './dto/paged-audio-chapters.dto';
 import { CreateAudioChapterDto } from './dto/create-audio-chapter.dto';
 import { UpdateAudioChapterDto } from './dto/update-audio-chapter.dto';
 import { ReorderAudioChaptersDto } from './dto/reorder-audio-chapters.dto';
@@ -47,6 +51,7 @@ export class AudioChapterController {
     required: false,
     schema: { type: 'integer', minimum: 1, maximum: 100 },
   })
+  @ApiOkResponse({ type: PagedAudioChaptersDto })
   list(
     @Param('bookVersionId') bookVersionId: string,
     @Query() pagination?: PaginationDto,
@@ -73,6 +78,7 @@ export class AudioChapterController {
     required: false,
     schema: { type: 'integer', minimum: 1, maximum: 100 },
   })
+  @ApiOkResponse({ type: PagedAudioChaptersDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -85,7 +91,7 @@ export class AudioChapterController {
   @Post('versions/:bookVersionId/audio-chapters')
   @ApiOperation({ summary: 'Create audio chapter for a book version' })
   @ApiParam({ name: 'bookVersionId' })
-  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 201, description: 'Created', type: AudioChapterResponseDto })
   @ApiResponse({ status: 409, description: 'Audio chapter number already exists' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -97,6 +103,7 @@ export class AudioChapterController {
   @Post('versions/:bookVersionId/audio-chapters/reorder')
   @ApiOperation({ summary: 'Reorder audio chapters atomically by id list (1-based numbering)' })
   @ApiParam({ name: 'bookVersionId' })
+  @ApiCreatedResponse({ type: AudioChapterResponseDto, isArray: true })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -107,6 +114,7 @@ export class AudioChapterController {
   @Get('audio-chapters/:id')
   @ApiOperation({ summary: 'Get audio chapter by id (public, published version only)' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: AudioChapterResponseDto })
   get(@Param('id') id: string, @Headers() headers: GeoRequestHeaders) {
     return this.service.getPublic(id, this.geoIpCountryService.resolveCountry(headers));
   }
@@ -114,6 +122,7 @@ export class AudioChapterController {
   @Get('admin/audio-chapters/:id')
   @ApiOperation({ summary: 'Admin: get audio chapter by id (any status)' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: AudioChapterResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
@@ -123,6 +132,7 @@ export class AudioChapterController {
 
   @Patch('audio-chapters/:id')
   @ApiOperation({ summary: 'Update audio chapter by id' })
+  @ApiOkResponse({ type: AudioChapterResponseDto })
   @ApiResponse({ status: 409, description: 'Audio chapter number already exists' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)

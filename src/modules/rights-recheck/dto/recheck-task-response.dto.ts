@@ -18,41 +18,41 @@ export class RecheckTaskDto {
   @ApiProperty({ enum: RightsRecheckSeverity }) severity!: RightsRecheckSeverity;
   @ApiProperty({ enum: RightsRecheckTriggerSource }) source!: RightsRecheckTriggerSource;
 
-  @ApiProperty({ nullable: true }) rightsProfileId!: string | null;
-  @ApiProperty({ nullable: true }) rightsIntakeId!: string | null;
-  @ApiProperty({ nullable: true }) baselineReviewId!: string | null;
-  @ApiProperty({ nullable: true }) bookId!: string | null;
-  @ApiProperty({ nullable: true }) bookVersionId!: string | null;
-  @ApiProperty({ nullable: true }) legalChangeEventId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsProfileId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rightsIntakeId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) baselineReviewId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) bookId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) bookVersionId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) legalChangeEventId!: string | null;
 
   @ApiProperty() titleRu!: string;
   @ApiProperty() descriptionRu!: string;
-  @ApiProperty({ nullable: true }) triggerCode!: string | null;
+  @ApiProperty({ type: String, nullable: true }) triggerCode!: string | null;
   @ApiProperty({ type: [String] }) affectedCountryCodes!: string[];
 
   @ApiProperty() dueAt!: string;
   @ApiProperty({ enum: RightsRecheckReminderStage }) reminderStage!: RightsRecheckReminderStage;
   @ApiProperty() remindersSentCount!: number;
-  @ApiProperty({ nullable: true }) lastReminderAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lastReminderAt!: string | null;
 
-  @ApiProperty({ nullable: true }) snoozedUntil!: string | null;
-  @ApiProperty({ nullable: true }) snoozeReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) snoozedUntil!: string | null;
+  @ApiProperty({ type: String, nullable: true }) snoozeReasonRu!: string | null;
 
-  @ApiProperty({ nullable: true }) startedAt!: string | null;
-  @ApiProperty({ nullable: true }) startedByUserId!: string | null;
-  @ApiProperty({ nullable: true }) completedAt!: string | null;
-  @ApiProperty({ nullable: true }) completedByUserId!: string | null;
-  @ApiProperty({ nullable: true }) completionNotesRu!: string | null;
-  @ApiProperty({ nullable: true }) completedReviewId!: string | null;
-  @ApiProperty({ nullable: true }) dismissedAt!: string | null;
-  @ApiProperty({ nullable: true }) dismissedByUserId!: string | null;
-  @ApiProperty({ nullable: true }) dismissReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) startedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) startedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) completedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) completedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) completionNotesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) completedReviewId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) dismissedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) dismissedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) dismissReasonRu!: string | null;
 
   @ApiProperty({ enum: RightsRecheckResolution, nullable: true })
   resolution!: RightsRecheckResolution | null;
-  @ApiProperty({ nullable: true }) resolutionRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) resolutionRu!: string | null;
 
-  @ApiProperty({ nullable: true }) createdByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) createdByUserId!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 
@@ -71,17 +71,24 @@ export class RecheckTaskEventDto {
   fromStatus!: RightsRecheckStatus | null;
   @ApiProperty({ enum: RightsRecheckStatus, nullable: true }) toStatus!: RightsRecheckStatus | null;
   @ApiProperty() messageRu!: string;
-  @ApiProperty({ nullable: true, type: Object }) payload!: Record<string, unknown> | null;
-  @ApiProperty({ nullable: true }) createdByUserId!: string | null;
+  @ApiProperty({
+    nullable: true,
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Free-form by design: each `RightsRecheckEventType` writes its own keys (`{ stage, previousStage }`, `{ from, to }`, `{ snoozedUntil }`, `{ resolution }`, …). `appendEvent` takes `payload: unknown`.',
+  })
+  payload!: Record<string, unknown> | null;
+  @ApiProperty({ type: String, nullable: true }) createdByUserId!: string | null;
   @ApiProperty() createdAt!: string;
 }
 
 export class RecheckTaskTargetsDto {
-  @ApiPropertyOptional({ nullable: true }) intakeTitle?: string | null;
-  @ApiPropertyOptional({ nullable: true }) intakeStatus?: string | null;
-  @ApiPropertyOptional({ nullable: true }) profileStatus?: string | null;
-  @ApiPropertyOptional({ nullable: true }) versionLanguage?: string | null;
-  @ApiPropertyOptional({ nullable: true }) versionTitle?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) intakeTitle?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) intakeStatus?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) profileStatus?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) versionLanguage?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) versionTitle?: string | null;
 }
 
 export class RecheckTaskDetailDto extends RecheckTaskDto {
@@ -99,12 +106,12 @@ export class RecheckTaskListResponseDto {
 export class RecheckScheduleDto {
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty({ enum: RightsRecheckPolicy }) recheckPolicy!: RightsRecheckPolicy;
-  @ApiProperty({ nullable: true }) recheckIntervalDays!: number | null;
-  @ApiProperty({ nullable: true }) nextReviewAt!: string | null;
-  @ApiProperty({ nullable: true }) recheckPausedUntil!: string | null;
-  @ApiProperty({ nullable: true }) recheckPauseReasonRu!: string | null;
-  @ApiProperty({ nullable: true }) lastRecheckScanAt!: string | null;
-  @ApiProperty({ nullable: true }) computedDueAt!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) recheckIntervalDays!: number | null;
+  @ApiProperty({ type: String, nullable: true }) nextReviewAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) recheckPausedUntil!: string | null;
+  @ApiProperty({ type: String, nullable: true }) recheckPauseReasonRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) lastRecheckScanAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) computedDueAt!: string | null;
   @ApiProperty() openTasksCount!: number;
 }
 

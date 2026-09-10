@@ -20,6 +20,7 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
+  ApiOkResponse,
   ApiParam,
   ApiQuery,
   ApiHeader,
@@ -38,6 +39,11 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CheckBookSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckBookSlugResponseDto } from './dto/check-slug-response.dto';
+import { BookDetailResponseDto } from './dto/book-detail-response.dto';
+import { BookEntityDto } from './dto/book-entity.dto';
+import { BookRatingDto, BookRatingScoreDto } from './dto/book-rating.dto';
+import { BookOverviewResponseDto } from './dto/book-overview-response.dto';
+import { PaginatedBooksResponseDto } from './dto/paged-books.dto';
 
 interface RequestUser {
   userId: string;
@@ -136,7 +142,7 @@ export class BookController {
     summary: 'Get list of all unique themes',
     description: 'Returns a list of all unique themes used in book versions. Admin only.',
   })
-  @ApiResponse({ status: 200, description: 'List of themes returned' })
+  @ApiOkResponse({ description: 'List of themes returned', type: String, isArray: true })
   async getThemes() {
     try {
       return await this.bookService.getAllThemes();
@@ -152,9 +158,9 @@ export class BookController {
     description:
       'Aggregated overview of a book: available languages, presence of text/audio/summary, version IDs, and an SEO bundle. Only published versions are shown publicly.',
   })
+  @ApiOkResponse({ description: 'Overview returned', type: BookOverviewResponseDto })
   @ApiParam({ name: 'slug', description: 'Unique book slug' })
   @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
-  @ApiResponse({ status: 200, description: 'Overview returned' })
   @ApiHeader({
     name: 'Accept-Language',
     required: false,
@@ -192,7 +198,10 @@ export class BookController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Get all books with pagination (admin: includes drafts)' })
-  @ApiResponse({ status: 200, description: 'Books list successfully retrieved' })
+  @ApiOkResponse({
+    description: 'Books list successfully retrieved',
+    type: PaginatedBooksResponseDto,
+  })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findAll(@Query() paginationDto: PaginationDto) {
     try {
@@ -220,7 +229,7 @@ export class BookController {
     schema: { type: 'string', pattern: SLUG_PATTERN },
     example: 'harry-potter',
   })
-  @ApiResponse({ status: 200, description: 'Book found' })
+  @ApiOkResponse({ description: 'Book found', type: BookDetailResponseDto })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findBySlug(@Param('slug') slug: string, @Req() req?: { user?: RequestUser }) {
@@ -240,7 +249,7 @@ export class BookController {
   @NoPublicCache()
   @ApiOperation({ summary: 'Get book by ID (drafts are visible to moderators only)' })
   @ApiParam({ name: 'id', description: 'Unique book ID' })
-  @ApiResponse({ status: 200, description: 'Book found' })
+  @ApiOkResponse({ description: 'Book found', type: BookDetailResponseDto })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findOne(@Param('id') id: string, @Req() req?: { user?: RequestUser }) {
@@ -255,7 +264,7 @@ export class BookController {
   @Patch(':id')
   @ApiOperation({ summary: 'Update book' })
   @ApiParam({ name: 'id', description: 'Unique book ID' })
-  @ApiResponse({ status: 200, description: 'Book successfully updated' })
+  @ApiOkResponse({ description: 'Book successfully updated', type: BookEntityDto })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   @ApiBearerAuth()
@@ -295,7 +304,7 @@ export class BookController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rate a book' })
   @ApiParam({ name: 'id', description: 'Unique book ID' })
-  @ApiResponse({ status: 200, description: 'Book successfully rated' })
+  @ApiOkResponse({ description: 'Book successfully rated', type: BookRatingDto })
   @ApiResponse({ status: 400, description: 'Invalid rating score' })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
@@ -318,7 +327,7 @@ export class BookController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get current user rating for a book' })
   @ApiParam({ name: 'id', description: 'Unique book ID' })
-  @ApiResponse({ status: 200, description: 'User rating score (1-5 or null)' })
+  @ApiOkResponse({ description: 'User rating score (1-5 or null)', type: BookRatingScoreDto })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async getMyRating(
     @Param('id') bookId: string,

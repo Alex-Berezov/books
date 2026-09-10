@@ -15,15 +15,15 @@ export class LegalChangeDto {
   @ApiProperty({ enum: RightsRecheckSeverity }) severity!: RightsRecheckSeverity;
   @ApiProperty({ type: [String] }) jurisdictionCodes!: string[];
   @ApiProperty() appliesToAllCountries!: boolean;
-  @ApiProperty({ nullable: true }) effectiveFrom!: string | null;
-  @ApiProperty({ nullable: true }) sourceUrl!: string | null;
-  @ApiProperty({ nullable: true }) sourceTitle!: string | null;
-  @ApiProperty({ nullable: true }) appliedAt!: string | null;
-  @ApiProperty({ nullable: true }) appliedByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) effectiveFrom!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceUrl!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceTitle!: string | null;
+  @ApiProperty({ type: String, nullable: true }) appliedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) appliedByUserId!: string | null;
   @ApiProperty() affectedProfilesCount!: number;
   @ApiProperty() createdTasksCount!: number;
-  @ApiProperty({ nullable: true }) archivedAt!: string | null;
-  @ApiProperty({ nullable: true }) createdByUserId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) archivedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) createdByUserId!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
