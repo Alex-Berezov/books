@@ -26,6 +26,30 @@ export const CORS_EXPOSED_HEADERS = [
 ];
 
 /**
+ * Заголовки запроса, которые браузер вправе прислать.
+ *
+ * 🔴 Список один на обе ветки ниже по той же причине, что и `CORS_EXPOSED_HEADERS`:
+ * заголовок, дописанный в одну ветку из двух, даёт отказ, воспроизводимый только локально
+ * или только в проде.
+ *
+ * 🔴 `X-Upload-Token` обязателен, иначе прямая загрузка не работает вовсе: разовый токен
+ * читается только заголовком (`modules/uploads/uploads.controller.ts`, `@Headers('x-upload-token')`),
+ * а запрос кросс-доменный (фронт на `bibliaris.com`, API на `api.bibliaris.com`) и с
+ * `Content-Type: audio/mpeg`, то есть предзапрос неизбежен. Без заголовка в этом списке
+ * браузер тело не отправляет и на сервере не остаётся даже строчки лога (`LEGACY-372`).
+ */
+export const CORS_ALLOWED_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'X-Admin-Language',
+  'Accept-Language',
+  'X-Upload-Token',
+  'Accept',
+  'Origin',
+  'X-Requested-With',
+];
+
+/**
  * CORS Configuration for the API
  *
  * Configures Cross-Origin Resource Sharing for interaction with frontend applications.
@@ -56,7 +80,7 @@ export function getCorsConfig(): CorsOptions {
       origin: '*',
       credentials: false, // credentials do not work with a wildcard origin
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Language', 'Accept-Language'],
+      allowedHeaders: CORS_ALLOWED_HEADERS,
       exposedHeaders: CORS_EXPOSED_HEADERS,
     };
   }
@@ -80,15 +104,7 @@ export function getCorsConfig(): CorsOptions {
     },
     credentials: allowCredentials,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Admin-Language',
-      'Accept-Language',
-      'Accept',
-      'Origin',
-      'X-Requested-With',
-    ],
+    allowedHeaders: CORS_ALLOWED_HEADERS,
     exposedHeaders: CORS_EXPOSED_HEADERS,
     maxAge: 86400, // 24 hours - cache preflight requests
   };

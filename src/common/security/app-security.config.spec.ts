@@ -59,9 +59,16 @@ describe('Security config (Helmet, CORS, limits)', () => {
     )(app.getHttpServer())
       .options('/echo/json')
       .set('Origin', origin)
-      .set('Access-Control-Request-Method', 'POST');
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'authorization,content-type,x-upload-token');
     expect([200, 204]).toContain(preflight.status);
     expect(preflight.headers['access-control-allow-origin']).toBe(origin);
+    // 🔴 Заголовок проверяется на живом ответе, а не в объекте конфигурации: `cors.config.spec.ts`
+    // сверяет список сам с собой и останется зелёным, если `configureSecurity` перестанет
+    // передавать `allowedHeaders` в `enableCors` или если сырое тело встанет раньше CORS.
+    // Без `X-Upload-Token` в ответе браузер не отправляет тело прямой загрузки вовсе
+    // (`LEGACY-372`) — ни 401, ни строчки в логе.
+    expect(preflight.headers['access-control-allow-headers']).toContain('X-Upload-Token');
   });
 
   it('applies JSON and URL-encoded body limits (1mb default)', async () => {
