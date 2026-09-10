@@ -6,19 +6,19 @@ import { ApiProperty } from '@nestjs/swagger';
  * (`prisma/schema.prisma`). У модели нет `updatedAt` — только `createdAt`.
  */
 export class ChapterResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookVersionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   number!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   content!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })

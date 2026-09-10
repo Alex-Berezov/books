@@ -46,10 +46,10 @@ export class CategoryBookVersionDto extends PublicBookVersionDto {
  * `id`/`slug`/`createdAt`/`updatedAt`), опубликованные версии и средняя оценка.
  */
 export class CategoryBookDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })

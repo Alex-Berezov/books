@@ -24,19 +24,19 @@ import { CommentUserDto } from '../../comments/dto/comment-user.dto';
 
 /** Книга, к которой относится комментарий: своя, главы или аудиоглавы. */
 export class ActivityBookVersionDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   author!: string;
 
   @ApiProperty({ nullable: true, type: String, format: 'uri' })
   coverImageUrl!: string | null;
 
-  @ApiProperty({ description: 'Slug of the book the version belongs to' })
+  @ApiProperty({ type: String, description: 'Slug of the book the version belongs to' })
   slug!: string;
 }
 
@@ -48,10 +48,10 @@ export class ActivityBookVersionDto {
  * при неизменившемся ответе (найдено ревью в этом заходе).
  */
 export class ActivityCommentDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   text!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })
@@ -62,10 +62,10 @@ export class ActivityCommentDto {
 }
 
 export class UserActivityDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   text!: string;
 
   /**
@@ -73,7 +73,7 @@ export class UserActivityDto {
    * выдаче — иначе модерация неотличима от пропажи данных (`LEGACY-212`);
    * наружу уходит только сам признак, без причины и без имени модератора.
    */
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isHidden!: boolean;
 
   @ApiProperty({ type: String, format: 'date-time' })

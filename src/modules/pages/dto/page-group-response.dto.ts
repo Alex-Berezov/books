@@ -2,7 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { PageResponse, PaginationMeta } from './page-response.dto';
 
 export class PageGroupResponse {
-  @ApiProperty({ example: 'uuid-group' })
+  @ApiProperty({ type: String, example: 'uuid-group' })
   translationGroupId!: string;
 
   @ApiProperty({ type: [PageResponse] })

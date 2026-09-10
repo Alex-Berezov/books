@@ -8,10 +8,10 @@ export class LivenessResponseDto {
   @ApiProperty({ enum: ['up', 'down'] })
   status!: 'up' | 'down';
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   uptime!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   timestamp!: string;
 
   @ApiProperty({

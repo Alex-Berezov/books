@@ -1,3 +1,4 @@
+import { RightsReviewImportStatus } from '@prisma/client';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RightsIntakeResponseDto } from './rights-intake-response.dto';
 
@@ -8,7 +9,7 @@ import { RightsIntakeResponseDto } from './rights-intake-response.dto';
  */
 export class RightsIntakeReviewImportSummaryDto {
   @ApiProperty() id!: string;
-  @ApiProperty() importStatus!: string;
+  @ApiProperty({ enum: RightsReviewImportStatus }) importStatus!: RightsReviewImportStatus;
   @ApiProperty() isCurrent!: boolean;
   @ApiProperty() validationErrorsCount!: number;
   @ApiProperty() validationWarningsCount!: number;

@@ -8,11 +8,23 @@ import {
   RightsLicenseType,
 } from '../rights-license-interface';
 
+/**
+ * 🔴 Обнуляемое поле здесь пишется `@ApiProperty({ type: <T>, nullable: true })`, а не
+ * `@ApiPropertyOptional({ nullable: true })`. Причины две, и обе машинные.
+ *
+ * 1. Без `type` Swagger берёт тип из `design:type`, а у объединения `string | null` он равен
+ *    `Object` - в схему уходит объект без свойств (`Record<string, never>`), и сверять по нему
+ *    нечего (`LEGACY-374`).
+ * 2. `@ApiPropertyOptional` выводит поле из `required`, хотя мапперы
+ *    (`rights-licenses.service.ts:708` `mapSummary`, `:745` `buildDetail`, `:776` `mapLink`,
+ *    `:794` `mapEvent`) выставляют **каждый** ключ явно: пустота выражается значением `null`,
+ *    а не отсутствием ключа.
+ */
 export class RightsLicenseSummaryDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   licenseKey!: string | null;
 
   @ApiProperty({ enum: RightsLicenseType })
@@ -27,31 +39,31 @@ export class RightsLicenseSummaryDto {
   })
   effectiveStatus!: RightsLicenseStatus;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   licensor!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   licensee!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsHolder!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   referenceNumber!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   grantedAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   effectiveFrom!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   expiresAt!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isPerpetual!: boolean;
 
   @ApiProperty({ enum: RightsLicenseTerritoryScope })
@@ -69,139 +81,139 @@ export class RightsLicenseSummaryDto {
   @ApiProperty({ enum: RightsLicenseMediaFormat, isArray: true })
   mediaFormats!: RightsLicenseMediaFormat[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   commercialUseAllowed!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   modificationAllowed!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   translationAllowed!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   sublicensingAllowed!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   attributionRequired!: boolean;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   requiredAttributionText!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   exclusive!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   revocable!: boolean;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   revokedAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   revocationReasonRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   confidence!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   updatedAt!: string;
 }
 
 export class RightsLicenseLinkDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   rightsLicenseId!: string;
 
   @ApiProperty({ enum: RightsLicenseLinkType })
   linkType!: RightsLicenseLinkType;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsProfileId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsComponentId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   componentTerritoryAssessmentId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   territoryDecisionId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   sourceEditionId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   rightsEvidenceId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   bookVersionId!: string | null;
 
   @ApiProperty({ type: [String] })
   coversCountryCodes!: string[];
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   notesRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 }
 
 export class RightsLicenseEventDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
   @ApiProperty({ enum: RightsLicenseEventType })
   eventType!: RightsLicenseEventType;
 
-  @ApiPropertyOptional({ enum: RightsLicenseStatus, nullable: true })
+  @ApiProperty({ enum: RightsLicenseStatus, nullable: true })
   previousStatus!: RightsLicenseStatus | null;
 
-  @ApiPropertyOptional({ enum: RightsLicenseStatus, nullable: true })
+  @ApiProperty({ enum: RightsLicenseStatus, nullable: true })
   currentStatus!: RightsLicenseStatus | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   notesRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   createdByUserId!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 }
 
 export class RightsLicenseDetailDto extends RightsLicenseSummaryDto {
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   royaltyTermsRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   otherConditionsRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   notesRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   documentStorageKey!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   documentSha256!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   documentUrl!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   documentMediaAssetId!: string | null;
 
   @ApiProperty({ type: [String] })
   sourceEvidenceIds!: string[];
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   createdByUserId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   revokedByUserId!: string | null;
 
   @ApiProperty({ type: [RightsLicenseLinkDto] })
@@ -218,38 +230,43 @@ export class RightsLicenseListResponseDto {
   @ApiProperty({ type: [RightsLicenseSummaryDto] })
   items!: RightsLicenseSummaryDto[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   page!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   limit!: number;
 }
 
 export class LicenseIssueDto {
-  @ApiProperty({ example: 'LICENSE_MISSING_FOR_COUNTRY' })
+  @ApiProperty({ type: String, example: 'LICENSE_MISSING_FOR_COUNTRY' })
   code!: string;
 
   @ApiProperty({ enum: ['BLOCKER', 'WARNING'] })
   severity!: 'BLOCKER' | 'WARNING';
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   messageRu!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  // Ключа может не быть вовсе, но `null` в нём не бывает: обе ветки, которые собирают
+  // `LicenseIssue`, кладут либо строку, либо ничего - `rejectionFor` пишет `licenseId`
+  // и `countryCode` через `base` (rights-license-coverage.service.ts:359), а
+  // `LICENSE_MISSING_FOR_COUNTRY` - только `countryCode` (там же:340). Поэтому
+  // необязательное поле без `nullable`, а не `nullable` без обязательности.
+  @ApiPropertyOptional({ type: String })
   licenseId?: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String })
   countryCode?: string;
 }
 
 export class CountryCoverageResultDto {
-  @ApiProperty({ example: 'ES' })
+  @ApiProperty({ type: String, example: 'ES' })
   countryCode!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   covered!: boolean;
 
   @ApiProperty({ type: [String] })
@@ -263,7 +280,7 @@ export class LicenseCoverageResultDto {
   @ApiProperty({ enum: ['NOT_REQUIRED', 'COVERED', 'PARTIAL', 'NOT_COVERED'] })
   status!: 'NOT_REQUIRED' | 'COVERED' | 'PARTIAL' | 'NOT_COVERED';
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   checkedAt!: string;
 
   @ApiProperty({ type: [String] })
@@ -292,6 +309,6 @@ export class LicenseCoverageResultDto {
 }
 
 export class UnlinkRightsLicenseResponseDto {
-  @ApiProperty({ example: true })
+  @ApiProperty({ type: Boolean, example: true })
   success!: boolean;
 }

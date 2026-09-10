@@ -31,14 +31,14 @@ export class AggregateQueryDto {
 }
 
 export class AggregatePointDto {
-  @ApiProperty({ example: '2025-08-01' })
+  @ApiProperty({ type: String, example: '2025-08-01' })
   date!: string;
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   count!: number;
 }
 
 export class AggregateResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total!: number;
   @ApiProperty({ type: [AggregatePointDto] })
   series!: AggregatePointDto[];
@@ -64,15 +64,15 @@ export class TopViewsQueryDto {
 }
 
 export class TopViewsItemDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   bookVersionId!: string;
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   count!: number;
 }
 
 export class TopViewsResponseDto {
   @ApiProperty({ type: [TopViewsItemDto] })
   items!: TopViewsItemDto[];
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   totalVersions!: number;
 }

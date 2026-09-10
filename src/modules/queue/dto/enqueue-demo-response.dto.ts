@@ -6,6 +6,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
  * `{ id: string | undefined }` — id задачи BullMQ, если очередь включена.
  */
 export class EnqueueDemoResponseDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   id?: string;
 }

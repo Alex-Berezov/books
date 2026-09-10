@@ -28,7 +28,11 @@ export class RightsFileAllowedContentTypesDto {
  * `RightsFileStorageService.getLimits()` через `RightsFilesService.getLimits()`.
  */
 export class RightsFileLimitsDto {
-  @ApiProperty({ description: 'Максимальный размер загружаемого файла в мегабайтах', example: 25 })
+  @ApiProperty({
+    type: Number,
+    description: 'Максимальный размер загружаемого файла в мегабайтах',
+    example: 25,
+  })
   maxSizeMb!: number;
 
   @ApiProperty({ type: RightsFileAllowedContentTypesDto })

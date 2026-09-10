@@ -6,15 +6,15 @@ import { ApiProperty } from '@nestjs/swagger';
  * место — административный маршрут под гвардом, а не публичный контракт.
  */
 export class CommentUserDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   name?: string | null;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   nickname?: string | null;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   avatarUrl?: string | null;
 }

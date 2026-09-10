@@ -6,22 +6,22 @@ import { ApiProperty } from '@nestjs/swagger';
  * `AudioChapter` (`prisma/schema.prisma`).
  */
 export class AudioChapterResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookVersionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   number!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   audioUrl!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   duration!: number;
 
   @ApiProperty({ type: String, nullable: true })

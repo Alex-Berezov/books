@@ -6,35 +6,41 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * (`src/modules/background-jobs/background-jobs.registry.ts`).
  */
 export class BackgroundJobStatusDto {
-  @ApiProperty({ description: 'Устойчивое имя механизма — оно же ключ в ответе эндпоинта.' })
+  @ApiProperty({
+    type: String,
+    description: 'Устойчивое имя механизма — оно же ключ в ответе эндпоинта.',
+  })
   name!: string;
 
   @ApiProperty({ enum: ['ACTIVE', 'DEGRADED', 'DISABLED'] })
   state!: 'ACTIVE' | 'DEGRADED' | 'DISABLED';
 
-  @ApiPropertyOptional({ description: 'Обязательна для DEGRADED и DISABLED.' })
+  @ApiPropertyOptional({ type: String, description: 'Обязательна для DEGRADED и DISABLED.' })
   reason?: string;
 
-  @ApiPropertyOptional({ description: 'Расписание для активных: «daily at 03:00 UTC».' })
+  @ApiPropertyOptional({
+    type: String,
+    description: 'Расписание для активных: «daily at 03:00 UTC».',
+  })
   schedule?: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   purpose!: string;
 }
 
 export class BackgroundJobsCountsDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   ACTIVE!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   DEGRADED!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   DISABLED!: number;
 }
 
 export class BackgroundJobsStatusResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   checkedAt!: string;
 
   @ApiProperty({ type: BackgroundJobsCountsDto })

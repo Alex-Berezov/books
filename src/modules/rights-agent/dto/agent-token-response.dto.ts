@@ -4,7 +4,7 @@ import { RightsAgentTokenStatus } from '../rights-agent-interface';
 export class AgentTokenDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsIntakeId!: string;
-  @ApiProperty({ description: 'First 12 characters of the token, for display only' })
+  @ApiProperty({ type: String, description: 'First 12 characters of the token, for display only' })
   tokenPrefix!: string;
   @ApiProperty({ enum: RightsAgentTokenStatus }) status!: RightsAgentTokenStatus;
   @ApiProperty({ type: String, nullable: true }) labelRu!: string | null;
@@ -30,7 +30,7 @@ export class AgentTokenDto {
 
 /** Returned only by the issue endpoint — the raw token is never persisted or shown again. */
 export class AgentTokenIssuedDto extends AgentTokenDto {
-  @ApiProperty({ description: 'Raw token. Shown exactly once, at issue time.' })
+  @ApiProperty({ type: String, description: 'Raw token. Shown exactly once, at issue time.' })
   token!: string;
 }
 

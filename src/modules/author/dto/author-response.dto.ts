@@ -11,7 +11,7 @@ import { AuthorFaqDto, AuthorQuoteDto } from './author-translation.dto';
  * `class-validator` не нужен (`STYLE_GUIDE.md` §7).
  */
 export class AuthorTranslationSeoResponseDto {
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   id!: number;
 
   @ApiProperty({ type: String, format: 'date-time' })
@@ -105,19 +105,19 @@ export class AuthorTranslationSeoResponseDto {
  * (`AuthorTranslationDto` в `author-translation.dto.ts`).
  */
 export class AuthorTranslationResponseDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   authorId!: string;
 
   @ApiProperty({ enum: Language })
   language!: Language;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
   @ApiProperty({ nullable: true, type: String })
@@ -154,7 +154,7 @@ export class AuthorTranslationResponseDto {
  * только колонки модели `Author` (`prisma/schema.prisma:616-630`).
  */
 export class AuthorDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
   @ApiProperty({ nullable: true, type: String, example: '1854-10-16' })
@@ -199,13 +199,19 @@ export class AuthorResponseDto extends AuthorDto {
  * подставляет `''`, а не `null`.
  */
 export class AdminAuthorItemDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ description: 'Slug of the picked translation, empty string if there is none' })
+  @ApiProperty({
+    type: String,
+    description: 'Slug of the picked translation, empty string if there is none',
+  })
   slug!: string;
 
-  @ApiProperty({ description: 'Name of the picked translation, empty string if there is none' })
+  @ApiProperty({
+    type: String,
+    description: 'Name of the picked translation, empty string if there is none',
+  })
   name!: string;
 
   @ApiProperty({ nullable: true, type: String, example: '1854-10-16' })
@@ -226,7 +232,7 @@ export class AdminAuthorItemDto {
   @ApiProperty({ type: AuthorTranslationResponseDto, isArray: true })
   translations!: AuthorTranslationResponseDto[];
 
-  @ApiProperty({ description: 'Number of published books of this author' })
+  @ApiProperty({ type: Number, description: 'Number of published books of this author' })
   booksCount!: number;
 }
 
@@ -235,16 +241,16 @@ export class AdminAuthorItemDto {
  * которую возвращает `AuthorService.list` (`author.service.ts:314-323`).
  */
 export class AdminAuthorsListMetaDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   page!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   limit!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   totalPages!: number;
 }
 

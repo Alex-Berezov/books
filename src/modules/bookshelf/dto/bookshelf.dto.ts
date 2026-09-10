@@ -1,45 +1,45 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export class BookVersionDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookId!: string;
 
-  @ApiProperty({ example: 'en' })
+  @ApiProperty({ type: String, example: 'en' })
   language!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   author!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   description!: string;
 
-  @ApiProperty({ example: 'https://example.com/c.jpg' })
+  @ApiProperty({ type: String, example: 'https://example.com/c.jpg' })
   coverImageUrl!: string;
 
-  @ApiProperty({ example: 'text' })
+  @ApiProperty({ type: String, example: 'text' })
   type!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isFree!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Date })
   createdAt!: Date;
 
-  @ApiProperty()
+  @ApiProperty({ type: Date })
   updatedAt!: Date;
 }
 
 export class BookshelfItemDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Date })
   addedAt!: Date;
 
   @ApiProperty({ type: () => BookVersionDto })
@@ -51,16 +51,16 @@ export class BookshelfItemDto {
 // и `bookVersionId`. До 09.09.2026 маршрут ссылался на BookshelfItemDto, и схема
 // молчала о двух отданных полях, обещая взамен вложенную версию книги.
 export class BookshelfEntryDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   userId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookVersionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Date })
   addedAt!: Date;
 }
 
@@ -68,15 +68,15 @@ export class BookshelfListDto {
   @ApiProperty({ type: () => [BookshelfItemDto] })
   items!: BookshelfItemDto[];
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   page!: number;
 
-  @ApiProperty({ example: 10 })
+  @ApiProperty({ type: Number, example: 10 })
   limit!: number;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   total!: number;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   hasNext!: boolean;
 }

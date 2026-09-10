@@ -1,4 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
+import {
+  BookVersionCharacterDto,
+  BookVersionQuoteDto,
+  BookVersionSymbolDto,
+} from '../../../shared/dto/book-version-json.dto';
 import { Language, BookType, PublicationStatus } from '@prisma/client';
 import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 import {
@@ -33,31 +39,31 @@ export class SeoMetaSummaryDto {
  * (`book/dto/book-detail-response.dto.ts`, `PUBLIC_BOOK_VERSION_SELECT`), а не эта DTO.
  */
 export class BookVersionResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookId!: string;
 
   @ApiProperty({ enum: Language })
   language!: Language;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   author!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   description!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   coverImageUrl!: string;
 
   @ApiProperty({ enum: BookType })
   type!: BookType;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isFree!: boolean;
 
   @ApiProperty({ type: String, nullable: true })
@@ -106,47 +112,42 @@ export class BookVersionResponseDto {
   authorId!: string | null;
 
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: [BookVersionCharacterDto],
     nullable: true,
-    description: 'Персонажи книги (Json в базе, произвольная форма)',
+    description: 'Персонажи книги (Json-колонка; форма задана CreateBookVersionDto.characters)',
   })
-  characters!: unknown;
+  characters!: BookVersionCharacterDto[] | null;
 
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: [BookVersionQuoteDto],
     nullable: true,
-    description: 'Цитаты из книги (Json в базе, произвольная форма)',
+    description: 'Цитаты из книги (Json-колонка; форма задана CreateBookVersionDto.quotes)',
   })
-  quotes!: unknown;
+  quotes!: BookVersionQuoteDto[] | null;
 
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: [FaqItemDto],
     nullable: true,
-    description: 'FAQ по книге (Json в базе, произвольная форма)',
+    description: 'FAQ по книге (Json-колонка; форма задана CreateBookVersionDto.faq)',
   })
-  faq!: unknown;
+  faq!: FaqItemDto[] | null;
 
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: [String],
     nullable: true,
-    description: 'Темы книги (Json в базе, произвольная форма)',
+    description: 'Темы книги (Json-колонка: массив строк)',
   })
-  themes!: unknown;
+  themes!: string[] | null;
 
   @ApiProperty({ type: String, nullable: true })
   originalTitle!: string | null;
 
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: [String],
     nullable: true,
-    description: 'Альтернативные названия книги (Json в базе, произвольная форма)',
+    description: 'Альтернативные названия книги (Json-колонка: массив строк)',
   })
-  alternativeTitles!: unknown;
+  alternativeTitles!: string[] | null;
 
   @ApiProperty({ type: String, nullable: true })
   shortDescription!: string | null;
@@ -155,12 +156,11 @@ export class BookVersionResponseDto {
   summaryShort!: string | null;
 
   @ApiProperty({
-    type: 'object',
-    additionalProperties: true,
+    type: [BookVersionSymbolDto],
     nullable: true,
-    description: 'Символы в книге (Json в базе, произвольная форма)',
+    description: 'Символы в книге (Json-колонка; форма задана CreateBookVersionDto.symbols)',
   })
-  symbols!: unknown;
+  symbols!: BookVersionSymbolDto[] | null;
 
   @ApiProperty({ type: String, nullable: true })
   coverAlt!: string | null;
@@ -214,10 +214,10 @@ export class BookVersionResponseDto {
   })
   rightsRequiredActions!: unknown;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   rightsGeoBlockRequired!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   rightsGeoBlockConfigured!: boolean;
 
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
@@ -252,7 +252,7 @@ export class BookVersionResponseDto {
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
   rightsContentHashCalculatedAt!: Date | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   rightsRecheckRequired!: boolean;
 
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
@@ -289,7 +289,7 @@ export class BookVersionResponseDto {
   @ApiProperty({ type: String, nullable: true })
   rightsLicenseAttributionTextRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   rightsClaimBlockActive!: boolean;
 
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
@@ -304,10 +304,10 @@ export class BookVersionResponseDto {
  * подмножество полей `Book`, добавленное `include: { book: { select: {...} } }`.
  */
 export class BookVersionAdminBookSummaryDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -328,7 +328,7 @@ export class BookVersionAdminBookSummaryDto {
  * и вложенные `book`/`categories`/`tags`, которые метод добавляет сверх модели.
  */
 export class BookVersionAdminDetailResponseDto extends BookVersionResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookSlug!: string;
 
   @ApiProperty({ type: BookVersionAdminBookSummaryDto })

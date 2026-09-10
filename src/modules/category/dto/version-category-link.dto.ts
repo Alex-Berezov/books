@@ -9,18 +9,18 @@ import { ApiProperty } from '@nestjs/swagger';
  * версии с категорией (`prisma.bookCategory.findFirst`), без выборки полей.
  */
 export class VersionCategoryLinkDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookVersionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   categoryId!: string;
 
-  @ApiProperty({ default: false })
+  @ApiProperty({ type: Boolean, default: false })
   isPrimary!: boolean;
 
-  @ApiProperty({ default: 0 })
+  @ApiProperty({ type: Number, default: 0 })
   sortOrder!: number;
 }

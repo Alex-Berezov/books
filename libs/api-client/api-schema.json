@@ -176,7 +176,7 @@
         "properties": {
           "avatarUrl": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "email": {
             "type": "string"
@@ -186,11 +186,11 @@
           },
           "name": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "nickname": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           }
         },
         "required": [
@@ -206,15 +206,15 @@
           },
           "bookId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookTitle": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookVersionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "createdAt": {
             "format": "date-time",
@@ -228,7 +228,7 @@
           },
           "parentId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "repliesCount": {
             "type": "number"
@@ -247,6 +247,34 @@
         ],
         "type": "object"
       },
+      "AdminCommentsMetaDto": {
+        "properties": {
+          "limit": {
+            "example": 20,
+            "type": "number"
+          },
+          "page": {
+            "example": 1,
+            "type": "number"
+          },
+          "total": {
+            "example": 45,
+            "type": "number"
+          },
+          "totalPages": {
+            "description": "Math.ceil(total / limit)",
+            "example": 3,
+            "type": "number"
+          }
+        },
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "totalPages"
+        ],
+        "type": "object"
+      },
       "AdminCommentsResponseDto": {
         "properties": {
           "data": {
@@ -256,7 +284,7 @@
             "type": "array"
           },
           "meta": {
-            "type": "object"
+            "$ref": "#/components/schemas/AdminCommentsMetaDto"
           }
         },
         "required": [
@@ -2573,15 +2601,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "description": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/BookVersionCharacterDto"
             },
             "nullable": true,
             "type": "array"
@@ -2621,15 +2641,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -2676,15 +2688,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "author": {
-                  "type": "string"
-                },
-                "text": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/BookVersionQuoteDto"
             },
             "nullable": true,
             "type": "array"
@@ -2713,15 +2717,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "description": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/BookVersionSymbolDto"
             },
             "nullable": true,
             "type": "array"
@@ -3635,10 +3631,12 @@
       "BookVersionAdminDetailResponseDto": {
         "properties": {
           "alternativeTitles": {
-            "additionalProperties": true,
-            "description": "Альтернативные названия книги (Json в базе, произвольная форма)",
+            "description": "Альтернативные названия книги (Json-колонка: массив строк)",
+            "items": {
+              "type": "string"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "approvedRightsReviewId": {
             "nullable": true,
@@ -3671,10 +3669,12 @@
             "type": "array"
           },
           "characters": {
-            "additionalProperties": true,
-            "description": "Персонажи книги (Json в базе, произвольная форма)",
+            "description": "Персонажи книги (Json-колонка; форма задана CreateBookVersionDto.characters)",
+            "items": {
+              "$ref": "#/components/schemas/BookVersionCharacterDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "copyrightStatus": {
             "nullable": true,
@@ -3699,10 +3699,12 @@
             "type": "number"
           },
           "faq": {
-            "additionalProperties": true,
-            "description": "FAQ по книге (Json в базе, произвольная форма)",
+            "description": "FAQ по книге (Json-колонка; форма задана CreateBookVersionDto.faq)",
+            "items": {
+              "$ref": "#/components/schemas/FaqItemDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "firstPublishedYear": {
             "nullable": true,
@@ -3746,10 +3748,12 @@
             "type": "string"
           },
           "quotes": {
-            "additionalProperties": true,
-            "description": "Цитаты из книги (Json в базе, произвольная форма)",
+            "description": "Цитаты из книги (Json-колонка; форма задана CreateBookVersionDto.quotes)",
+            "items": {
+              "$ref": "#/components/schemas/BookVersionQuoteDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "referralUrl": {
             "nullable": true,
@@ -3922,10 +3926,12 @@
             "type": "string"
           },
           "symbols": {
-            "additionalProperties": true,
-            "description": "Символы в книге (Json в базе, произвольная форма)",
+            "description": "Символы в книге (Json-колонка; форма задана CreateBookVersionDto.symbols)",
+            "items": {
+              "$ref": "#/components/schemas/BookVersionSymbolDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "tags": {
             "items": {
@@ -3934,10 +3940,12 @@
             "type": "array"
           },
           "themes": {
-            "additionalProperties": true,
-            "description": "Темы книги (Json в базе, произвольная форма)",
+            "description": "Темы книги (Json-колонка: массив строк)",
+            "items": {
+              "type": "string"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "title": {
             "type": "string"
@@ -4025,6 +4033,21 @@
           "book",
           "categories",
           "tags"
+        ],
+        "type": "object"
+      },
+      "BookVersionCharacterDto": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
         ],
         "type": "object"
       },
@@ -4202,13 +4225,29 @@
         ],
         "type": "object"
       },
+      "BookVersionQuoteDto": {
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
       "BookVersionResponseDto": {
         "properties": {
           "alternativeTitles": {
-            "additionalProperties": true,
-            "description": "Альтернативные названия книги (Json в базе, произвольная форма)",
+            "description": "Альтернативные названия книги (Json-колонка: массив строк)",
+            "items": {
+              "type": "string"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "approvedRightsReviewId": {
             "nullable": true,
@@ -4229,10 +4268,12 @@
             "type": "string"
           },
           "characters": {
-            "additionalProperties": true,
-            "description": "Персонажи книги (Json в базе, произвольная форма)",
+            "description": "Персонажи книги (Json-колонка; форма задана CreateBookVersionDto.characters)",
+            "items": {
+              "$ref": "#/components/schemas/BookVersionCharacterDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "copyrightStatus": {
             "nullable": true,
@@ -4257,10 +4298,12 @@
             "type": "number"
           },
           "faq": {
-            "additionalProperties": true,
-            "description": "FAQ по книге (Json в базе, произвольная форма)",
+            "description": "FAQ по книге (Json-колонка; форма задана CreateBookVersionDto.faq)",
+            "items": {
+              "$ref": "#/components/schemas/FaqItemDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "firstPublishedYear": {
             "nullable": true,
@@ -4304,10 +4347,12 @@
             "type": "string"
           },
           "quotes": {
-            "additionalProperties": true,
-            "description": "Цитаты из книги (Json в базе, произвольная форма)",
+            "description": "Цитаты из книги (Json-колонка; форма задана CreateBookVersionDto.quotes)",
+            "items": {
+              "$ref": "#/components/schemas/BookVersionQuoteDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "referralUrl": {
             "nullable": true,
@@ -4480,16 +4525,20 @@
             "type": "string"
           },
           "symbols": {
-            "additionalProperties": true,
-            "description": "Символы в книге (Json в базе, произвольная форма)",
+            "description": "Символы в книге (Json-колонка; форма задана CreateBookVersionDto.symbols)",
+            "items": {
+              "$ref": "#/components/schemas/BookVersionSymbolDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "themes": {
-            "additionalProperties": true,
-            "description": "Темы книги (Json в базе, произвольная форма)",
+            "description": "Темы книги (Json-колонка: массив строк)",
+            "items": {
+              "type": "string"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "title": {
             "type": "string"
@@ -4573,6 +4622,21 @@
           "rightsClaimBlockActive",
           "rightsClaimBlockAppliedAt",
           "seo"
+        ],
+        "type": "object"
+      },
+      "BookVersionSymbolDto": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description"
         ],
         "type": "object"
       },
@@ -5061,15 +5125,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -5344,6 +5400,9 @@
           "key",
           "type",
           "booksCount",
+          "indexable",
+          "isVisible",
+          "sortOrder",
           "translations"
         ],
         "type": "object"
@@ -5378,15 +5437,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -5483,13 +5534,19 @@
             "type": "number"
           },
           "description": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "faq": {
-            "type": "object"
+            "items": {
+              "$ref": "#/components/schemas/FaqItemDto"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "h1": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "language": {
             "enum": [
@@ -5502,28 +5559,35 @@
             "type": "string"
           },
           "metaDescription": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "metaTitle": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "name": {
             "type": "string"
           },
           "ogDescription": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "ogImageAlt": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "ogImageUrl": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "ogTitle": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "shortDescription": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "slug": {
             "type": "string"
@@ -5566,15 +5630,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -5723,6 +5779,9 @@
           "key",
           "type",
           "booksCount",
+          "indexable",
+          "isVisible",
+          "sortOrder",
           "translations",
           "children"
         ],
@@ -6319,18 +6378,18 @@
         "properties": {
           "avatarUrl": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "id": {
             "type": "string"
           },
           "name": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "nickname": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           }
         },
         "required": [
@@ -9217,6 +9276,23 @@
         ],
         "type": "object"
       },
+      "FaqItemDto": {
+        "properties": {
+          "answer": {
+            "example": "This is...",
+            "type": "string"
+          },
+          "question": {
+            "example": "What is this?",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "type": "object"
+      },
       "GeoAccessCheckResultDto": {
         "properties": {
           "allowed": {
@@ -9224,7 +9300,7 @@
           },
           "bookVersionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "countryCode": {
             "example": "GB",
@@ -9232,15 +9308,15 @@
           },
           "matchedRuleId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "messageRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "reasonCode": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "scope": {
             "enum": [
@@ -9257,7 +9333,11 @@
         "required": [
           "allowed",
           "countryCode",
-          "scope"
+          "scope",
+          "matchedRuleId",
+          "reasonCode",
+          "messageRu",
+          "bookVersionId"
         ],
         "type": "object"
       },
@@ -9268,11 +9348,11 @@
           },
           "bookId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookVersionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "countryCode": {
             "example": "GB",
@@ -9295,15 +9375,15 @@
           },
           "legalBasisRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "reasonRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsProfileId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "scope": {
             "enum": [
@@ -9318,36 +9398,46 @@
           },
           "sourceFinalStatus": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "territoryDecisionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "updatedAt": {
             "type": "string"
           },
           "verificationNotesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "verifiedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "verifiedByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "bookId",
+          "bookVersionId",
+          "rightsProfileId",
+          "territoryDecisionId",
           "scope",
           "countryCode",
           "accessPolicy",
+          "sourceFinalStatus",
           "isActive",
+          "reasonRu",
+          "legalBasisRu",
           "generatedFrom",
           "generatedAt",
+          "verifiedAt",
+          "verifiedByUserId",
+          "verificationNotesRu",
           "createdAt",
           "updatedAt"
         ],
@@ -9394,7 +9484,7 @@
           },
           "lastGeneratedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "scopes": {
             "items": {
@@ -9415,7 +9505,7 @@
           },
           "verifiedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "verifiedRulesCount": {
             "type": "number"
@@ -9424,6 +9514,8 @@
         "required": [
           "geoBlockRequired",
           "configured",
+          "verifiedAt",
+          "lastGeneratedAt",
           "totalRulesCount",
           "activeRulesCount",
           "verifiedRulesCount",
@@ -9437,18 +9529,18 @@
           "lastResolvedAt": {
             "example": "2026-07-31T12:00:00.000Z",
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "lastResolvedHeader": {
             "description": "Header that supplied the most recent country",
             "example": "cf-ipcountry",
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "lastUnknownAt": {
             "example": "2026-07-31T11:59:00.000Z",
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "resolvedCount": {
             "description": "Requests whose country was resolved",
@@ -9490,6 +9582,9 @@
           "unknownCount",
           "totalCount",
           "unknownRatio",
+          "lastResolvedHeader",
+          "lastResolvedAt",
+          "lastUnknownAt",
           "windowStartedAt"
         ],
         "type": "object"
@@ -11182,11 +11277,9 @@
             "type": "string"
           },
           "countryCode": {
-            "nullable": true,
             "type": "string"
           },
           "licenseId": {
-            "nullable": true,
             "type": "string"
           },
           "messageRu": {
@@ -11880,15 +11973,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -11985,10 +12070,18 @@
           "title",
           "type",
           "content",
+          "h1",
+          "shortDescription",
+          "faq",
+          "sections",
           "language",
           "status",
+          "seoId",
+          "seo",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "translationGroupId",
+          "systemKey"
         ],
         "type": "object"
       },
@@ -12046,15 +12139,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -12158,10 +12243,18 @@
           "title",
           "type",
           "content",
+          "h1",
+          "shortDescription",
+          "faq",
+          "sections",
           "language",
           "status",
+          "seoId",
+          "seo",
           "createdAt",
           "updatedAt",
+          "translationGroupId",
+          "systemKey",
           "translations"
         ],
         "type": "object"
@@ -12451,10 +12544,12 @@
       "PersonDetailDto": {
         "properties": {
           "birthDate": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "birthYear": {
-            "type": "object"
+            "nullable": true,
+            "type": "number"
           },
           "canonicalName": {
             "type": "string"
@@ -12464,34 +12559,43 @@
             "type": "string"
           },
           "deathDate": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "deathYear": {
-            "type": "object"
+            "nullable": true,
+            "type": "number"
           },
           "gutenbergAgentId": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "id": {
             "type": "string"
           },
           "isni": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "nationalityCountryCode": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "notesRu": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "publicDomainFromYear": {
-            "type": "object"
+            "nullable": true,
+            "type": "number"
           },
           "slug": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "sortName": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "translations": {
             "items": {
@@ -12512,10 +12616,12 @@
             "type": "string"
           },
           "viafId": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "wikidataId": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -12531,10 +12637,12 @@
       "PersonListItemDto": {
         "properties": {
           "birthDate": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "birthYear": {
-            "type": "object"
+            "nullable": true,
+            "type": "number"
           },
           "canonicalName": {
             "type": "string"
@@ -12544,34 +12652,43 @@
             "type": "string"
           },
           "deathDate": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "deathYear": {
-            "type": "object"
+            "nullable": true,
+            "type": "number"
           },
           "gutenbergAgentId": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "id": {
             "type": "string"
           },
           "isni": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "nationalityCountryCode": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "notesRu": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "publicDomainFromYear": {
-            "type": "object"
+            "nullable": true,
+            "type": "number"
           },
           "slug": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "sortName": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "type": {
             "enum": [
@@ -12586,10 +12703,12 @@
             "type": "string"
           },
           "viafId": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "wikidataId": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -12694,7 +12813,8 @@
       "PersonTranslationResponseDto": {
         "properties": {
           "biography": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "displayName": {
             "type": "string"
@@ -12716,19 +12836,23 @@
             "type": "string"
           },
           "photoUrl": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "shortDescription": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "slug": {
             "type": "string"
           },
           "wikidataUrl": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "wikipediaUrl": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -12771,6 +12895,9 @@
       "PresignResponseDto": {
         "properties": {
           "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
             "description": "Headers to include with upload request",
             "type": "object"
           },
@@ -13066,6 +13193,13 @@
       "PublicAuthorTranslationDto": {
         "properties": {
           "language": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
             "type": "string"
           },
           "name": {
@@ -13605,15 +13739,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -13717,15 +13843,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -14445,7 +14563,7 @@
               "DELETE /comments/:id"
             ],
             "items": {
-              "type": "array"
+              "type": "string"
             },
             "type": "array"
           },
@@ -14607,14 +14725,14 @@
         "properties": {
           "audioChapterNumber": {
             "nullable": true,
-            "type": "object"
+            "type": "number"
           },
           "bookVersionId": {
             "type": "string"
           },
           "chapterNumber": {
             "nullable": true,
-            "type": "object"
+            "type": "number"
           },
           "id": {
             "type": "string"
@@ -16227,20 +16345,20 @@
           },
           "appliedByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookVersionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "countryCode": {
             "description": "null = worldwide",
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "createdAt": {
             "type": "string"
@@ -16256,22 +16374,22 @@
           },
           "expiresAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "id": {
             "type": "string"
           },
           "liftReasonRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "liftedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "liftedByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "reasonRu": {
             "type": "string"
@@ -16330,51 +16448,51 @@
           },
           "contentType": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "createdAt": {
             "type": "string"
           },
           "fileName": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "id": {
             "type": "string"
           },
           "mediaAssetId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "notesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsClaimId": {
             "type": "string"
           },
           "sha256": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "sizeBytes": {
             "nullable": true,
-            "type": "object"
+            "type": "number"
           },
           "storageKey": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "title": {
             "type": "string"
           },
           "uploadedByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "url": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           }
         },
         "required": [
@@ -16390,7 +16508,7 @@
         "properties": {
           "componentType": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "createdAt": {
             "type": "string"
@@ -16400,18 +16518,18 @@
           },
           "notesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsClaimId": {
             "type": "string"
           },
           "rightsComponentId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "titleRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           }
         },
         "required": [
@@ -16446,7 +16564,7 @@
           },
           "assignedToUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "attachments": {
             "items": {
@@ -16465,15 +16583,15 @@
           },
           "blocksPublicationOverrideReasonRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookVersionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "channel": {
             "enum": [
@@ -16508,11 +16626,11 @@
           },
           "claimantAddress": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimantEmail": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimantIsAuthorized": {
             "type": "boolean"
@@ -16522,15 +16640,15 @@
           },
           "claimantOrganization": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimantPersonId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimantPhone": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimantType": {
             "enum": [
@@ -16548,19 +16666,19 @@
           },
           "claimedRightsDescriptionRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimedWorkAuthor": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimedWorkTitle": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "closedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "components": {
             "items": {
@@ -16570,31 +16688,31 @@
           },
           "counterNoticeClaimantName": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "counterNoticeReceivedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "counterNoticeTextRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "createdAt": {
             "type": "string"
           },
           "createdByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "daysUntilDeadline": {
             "description": "May be negative for overdue claims",
             "nullable": true,
-            "type": "object"
+            "type": "number"
           },
           "deadlineAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "descriptionRu": {
             "type": "string"
@@ -16622,7 +16740,7 @@
           },
           "internalNotesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "isOpen": {
             "description": "The claim status belongs to OPEN_CLAIM_STATUSES",
@@ -16634,19 +16752,19 @@
           },
           "mediaAssetId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "originalNoticeText": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "originalNoticeUrl": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "parentClaimId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "receivedAt": {
             "type": "string"
@@ -16671,19 +16789,19 @@
           },
           "resolutionNotesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "resolvedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "resolvedByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "responseByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "responseChannel": {
             "enum": [
@@ -16700,19 +16818,19 @@
           },
           "responseSentAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "responseTextRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsIntakeId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsProfileId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "severity": {
             "enum": [
@@ -16787,7 +16905,7 @@
           },
           "createdByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "currentStatus": {
             "enum": [
@@ -16835,7 +16953,7 @@
           },
           "notesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "previousStatus": {
             "enum": [
@@ -16908,7 +17026,7 @@
           },
           "assignedToUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "blockedCountryCodes": {
             "items": {
@@ -16921,11 +17039,11 @@
           },
           "bookId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "bookVersionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "channel": {
             "enum": [
@@ -16960,7 +17078,7 @@
           },
           "claimantEmail": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimantIsAuthorized": {
             "type": "boolean"
@@ -16970,7 +17088,7 @@
           },
           "claimantOrganization": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimantType": {
             "enum": [
@@ -16988,15 +17106,15 @@
           },
           "claimedWorkAuthor": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "claimedWorkTitle": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "closedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "createdAt": {
             "type": "string"
@@ -17004,11 +17122,11 @@
           "daysUntilDeadline": {
             "description": "May be negative for overdue claims",
             "nullable": true,
-            "type": "object"
+            "type": "number"
           },
           "deadlineAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "descriptionRu": {
             "type": "string"
@@ -17050,15 +17168,15 @@
           },
           "resolvedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsIntakeId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsProfileId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "severity": {
             "enum": [
@@ -17864,6 +17982,11 @@
             "type": "string"
           },
           "importStatus": {
+            "enum": [
+              "VALIDATED",
+              "VALIDATION_FAILED",
+              "SUPERSEDED"
+            ],
             "type": "string"
           },
           "isCurrent": {
@@ -17939,7 +18062,7 @@
           },
           "confidence": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "countryCodes": {
             "items": {
@@ -17952,27 +18075,27 @@
           },
           "createdByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "documentMediaAssetId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "documentSha256": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "documentStorageKey": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "documentUrl": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "effectiveFrom": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "effectiveStatus": {
             "description": "Status computed at request time (expiry, revocation, effective date applied)",
@@ -18004,11 +18127,11 @@
           },
           "expiresAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "grantedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "id": {
             "type": "string"
@@ -18024,7 +18147,7 @@
           },
           "licenseKey": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "licenseType": {
             "enum": [
@@ -18040,7 +18163,7 @@
           },
           "licensee": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "licensor": {
             "type": "string"
@@ -18072,42 +18195,42 @@
           },
           "notesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "otherConditionsRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "referenceNumber": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "requiredAttributionText": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "revocable": {
             "type": "boolean"
           },
           "revocationReasonRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "revokedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "revokedByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsHolder": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "royaltyTermsRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "sourceEvidenceIds": {
             "items": {
@@ -18158,11 +18281,18 @@
         },
         "required": [
           "id",
+          "licenseKey",
           "licenseType",
           "status",
           "effectiveStatus",
           "title",
           "licensor",
+          "licensee",
+          "rightsHolder",
+          "referenceNumber",
+          "grantedAt",
+          "effectiveFrom",
+          "expiresAt",
           "isPerpetual",
           "territoryScope",
           "countryCodes",
@@ -18174,11 +18304,24 @@
           "translationAllowed",
           "sublicensingAllowed",
           "attributionRequired",
+          "requiredAttributionText",
           "exclusive",
           "revocable",
+          "revokedAt",
+          "revocationReasonRu",
+          "confidence",
           "createdAt",
           "updatedAt",
+          "royaltyTermsRu",
+          "otherConditionsRu",
+          "notesRu",
+          "documentStorageKey",
+          "documentSha256",
+          "documentUrl",
+          "documentMediaAssetId",
           "sourceEvidenceIds",
+          "createdByUserId",
+          "revokedByUserId",
           "links",
           "events",
           "warnings"
@@ -18192,7 +18335,7 @@
           },
           "createdByUserId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "currentStatus": {
             "enum": [
@@ -18227,7 +18370,7 @@
           },
           "notesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "previousStatus": {
             "enum": [
@@ -18246,6 +18389,10 @@
         "required": [
           "id",
           "eventType",
+          "previousStatus",
+          "currentStatus",
+          "notesRu",
+          "createdByUserId",
           "createdAt"
         ],
         "type": "object"
@@ -18254,11 +18401,11 @@
         "properties": {
           "bookVersionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "componentTerritoryAssessmentId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "coversCountryCodes": {
             "items": {
@@ -18286,37 +18433,45 @@
           },
           "notesRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsComponentId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsEvidenceId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsLicenseId": {
             "type": "string"
           },
           "rightsProfileId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "sourceEditionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "territoryDecisionId": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           }
         },
         "required": [
           "id",
           "rightsLicenseId",
           "linkType",
+          "rightsProfileId",
+          "rightsComponentId",
+          "componentTerritoryAssessmentId",
+          "territoryDecisionId",
+          "sourceEditionId",
+          "rightsEvidenceId",
+          "bookVersionId",
           "coversCountryCodes",
+          "notesRu",
           "createdAt"
         ],
         "type": "object"
@@ -18357,7 +18512,7 @@
           },
           "confidence": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "countryCodes": {
             "items": {
@@ -18370,7 +18525,7 @@
           },
           "effectiveFrom": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "effectiveStatus": {
             "description": "Status computed at request time (expiry, revocation, effective date applied)",
@@ -18396,11 +18551,11 @@
           },
           "expiresAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "grantedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "id": {
             "type": "string"
@@ -18416,7 +18571,7 @@
           },
           "licenseKey": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "licenseType": {
             "enum": [
@@ -18432,7 +18587,7 @@
           },
           "licensee": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "licensor": {
             "type": "string"
@@ -18458,26 +18613,26 @@
           },
           "referenceNumber": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "requiredAttributionText": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "revocable": {
             "type": "boolean"
           },
           "revocationReasonRu": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "revokedAt": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "rightsHolder": {
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "status": {
             "enum": [
@@ -18515,11 +18670,18 @@
         },
         "required": [
           "id",
+          "licenseKey",
           "licenseType",
           "status",
           "effectiveStatus",
           "title",
           "licensor",
+          "licensee",
+          "rightsHolder",
+          "referenceNumber",
+          "grantedAt",
+          "effectiveFrom",
+          "expiresAt",
           "isPerpetual",
           "territoryScope",
           "countryCodes",
@@ -18531,8 +18693,12 @@
           "translationAllowed",
           "sublicensingAllowed",
           "attributionRequired",
+          "requiredAttributionText",
           "exclusive",
           "revocable",
+          "revokedAt",
+          "revocationReasonRu",
+          "confidence",
           "createdAt",
           "updatedAt"
         ],
@@ -20384,6 +20550,31 @@
         },
         "required": [
           "id",
+          "metaTitle",
+          "metaDescription",
+          "canonicalUrl",
+          "robots",
+          "ogTitle",
+          "ogDescription",
+          "ogType",
+          "ogUrl",
+          "ogImageUrl",
+          "ogImageAlt",
+          "twitterCard",
+          "twitterSite",
+          "twitterCreator",
+          "eventName",
+          "eventDescription",
+          "eventStartDate",
+          "eventEndDate",
+          "eventUrl",
+          "eventImageUrl",
+          "eventLocationName",
+          "eventLocationStreet",
+          "eventLocationCity",
+          "eventLocationRegion",
+          "eventLocationPostal",
+          "eventLocationCountry",
           "createdAt",
           "updatedAt"
         ],
@@ -21113,7 +21304,11 @@
           "name",
           "slug",
           "key",
-          "translations"
+          "indexable",
+          "isVisible",
+          "sortOrder",
+          "translations",
+          "booksCount"
         ],
         "type": "object"
       },
@@ -21148,15 +21343,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -21326,15 +21513,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -21492,10 +21671,12 @@
             "type": "number"
           },
           "canonicalUrl": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "description": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "faq": {
             "example": [
@@ -21505,12 +21686,14 @@
               }
             ],
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
+            "nullable": true,
             "type": "array"
           },
           "h1": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "indexable": {
             "default": true,
@@ -21527,25 +21710,31 @@
             "type": "string"
           },
           "metaDescription": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "metaTitle": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "name": {
             "type": "string"
           },
           "ogDescription": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "ogImageAlt": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "ogImageUrl": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "ogTitle": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "relatedCategorySlugs": {
             "example": [
@@ -21589,10 +21778,12 @@
           },
           "robots": {
             "example": "index, follow",
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "shortDescription": {
-            "type": "object"
+            "nullable": true,
+            "type": "string"
           },
           "slug": {
             "type": "string"
@@ -21636,15 +21827,7 @@
               }
             ],
             "items": {
-              "properties": {
-                "answer": {
-                  "type": "string"
-                },
-                "question": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "nullable": true,
             "type": "array"
@@ -24079,7 +24262,7 @@
           "notesRu": {
             "example": "Checked blocked GB and allowed US scenarios.",
             "nullable": true,
-            "type": "object"
+            "type": "string"
           },
           "verified": {
             "example": true,

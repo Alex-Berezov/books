@@ -13,10 +13,10 @@ import {
 } from '../rights-claim-interface';
 
 export class RightsClaimSummaryDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty({ example: 'CLM-2026-000042' })
+  @ApiProperty({ type: String, example: 'CLM-2026-000042' })
   claimNumber!: string;
 
   @ApiProperty({ enum: RightsClaimType })
@@ -31,43 +31,43 @@ export class RightsClaimSummaryDto {
   @ApiProperty({ enum: RightsClaimChannel })
   channel!: RightsClaimChannel;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   receivedAt!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   deadlineAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   resolvedAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   closedAt!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   claimantName!: string;
 
   @ApiProperty({ enum: RightsClaimantType })
   claimantType!: RightsClaimantType;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimantOrganization!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimantEmail!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   claimantIsAuthorized!: boolean;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   bookId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   bookVersionId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   rightsProfileId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   rightsIntakeId!: string | null;
 
   @ApiProperty({ type: [String] })
@@ -76,22 +76,22 @@ export class RightsClaimSummaryDto {
   @ApiProperty({ type: [String] })
   affectedLanguages!: string[];
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimedWorkTitle!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimedWorkAuthor!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   descriptionRu!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   assignedToUserId!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   blocksPublication!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   requiresLawyerReview!: boolean;
 
   @ApiPropertyOptional({ enum: RightsClaimResolution, nullable: true })
@@ -99,71 +99,75 @@ export class RightsClaimSummaryDto {
 
   // --- Computed fields (never persisted) ---
 
-  @ApiProperty({ description: 'The claim status belongs to OPEN_CLAIM_STATUSES' })
+  @ApiProperty({ type: Boolean, description: 'The claim status belongs to OPEN_CLAIM_STATUSES' })
   isOpen!: boolean;
 
-  @ApiProperty({ description: 'Open claim whose deadline has already passed' })
+  @ApiProperty({ type: Boolean, description: 'Open claim whose deadline has already passed' })
   isOverdue!: boolean;
 
-  @ApiPropertyOptional({ nullable: true, description: 'May be negative for overdue claims' })
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description: 'May be negative for overdue claims',
+  })
   daysUntilDeadline!: number | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   activeBlocksCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   hasWorldwideBlock!: boolean;
 
   @ApiProperty({ type: [String] })
   blockedCountryCodes!: string[];
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   updatedAt!: string;
 }
 
 export class RightsClaimComponentDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   rightsClaimId!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   rightsComponentId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   componentType!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   titleRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   notesRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 }
 
 export class RightsClaimAccessBlockDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   rightsClaimId!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   bookId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   bookVersionId!: string | null;
 
   @ApiProperty({ enum: ClaimBlockScope })
   scope!: ClaimBlockScope;
 
-  @ApiPropertyOptional({ nullable: true, description: 'null = worldwide' })
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'null = worldwide' })
   countryCode!: string | null;
 
   @ApiProperty({ enum: RightsClaimBlockStatus })
@@ -175,77 +179,77 @@ export class RightsClaimAccessBlockDto {
   })
   effectiveStatus!: RightsClaimBlockStatus;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   reasonRu!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   appliedAt!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   appliedByUserId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   expiresAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   liftedAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   liftedByUserId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   liftReasonRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 }
 
 export class RightsClaimAttachmentDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   rightsClaimId!: string;
 
   @ApiProperty({ enum: RightsClaimAttachmentType })
   attachmentType!: RightsClaimAttachmentType;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   fileName!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   mediaAssetId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   storageKey!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   url!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   sha256!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   contentType!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   sizeBytes!: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   notesRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   uploadedByUserId!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 }
 
 export class RightsClaimEventDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
   @ApiProperty({ enum: RightsClaimEventType })
@@ -257,84 +261,84 @@ export class RightsClaimEventDto {
   @ApiPropertyOptional({ enum: RightsClaimStatus, nullable: true })
   currentStatus!: RightsClaimStatus | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   notesRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   createdByUserId!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 }
 
 export class RightsClaimDetailDto extends RightsClaimSummaryDto {
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimantPhone!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimantAddress!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimantPersonId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   mediaAssetId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimedRightsDescriptionRu!: string | null;
 
   @ApiProperty({ type: [String] })
   infringingUrls!: string[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   goodFaithStatement!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   swornStatement!: boolean;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   originalNoticeText!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   originalNoticeUrl!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   internalNotesRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   blocksPublicationOverrideReasonRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   responseSentAt!: string | null;
 
   @ApiPropertyOptional({ enum: RightsClaimChannel, nullable: true })
   responseChannel!: RightsClaimChannel | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   responseTextRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   responseByUserId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   counterNoticeReceivedAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   counterNoticeClaimantName!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   counterNoticeTextRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   resolutionNotesRu!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   resolvedByUserId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   parentClaimId!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   createdByUserId!: string | null;
 
   @ApiProperty({ type: [RightsClaimComponentDto] })
@@ -354,33 +358,33 @@ export class RightsClaimListResponseDto {
   @ApiProperty({ type: [RightsClaimSummaryDto] })
   items!: RightsClaimSummaryDto[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   page!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   limit!: number;
 }
 
 export class ClaimIssueDto {
-  @ApiProperty({ example: 'ACTIVE_RIGHTS_CLAIM' })
+  @ApiProperty({ type: String, example: 'ACTIVE_RIGHTS_CLAIM' })
   code!: string;
 
   @ApiProperty({ enum: ['BLOCKER', 'WARNING'] })
   severity!: 'BLOCKER' | 'WARNING';
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   messageRu!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimId?: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   claimNumber?: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   countryCode?: string;
 
   @ApiPropertyOptional({ description: 'Extra context for the admin UI' })
@@ -388,22 +392,22 @@ export class ClaimIssueDto {
 }
 
 export class ClaimGateEvaluationDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   activeClaimsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   blockingClaimsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   criticalClaimsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   overdueClaimsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   activeBlocksCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   hasWorldwideBlock!: boolean;
 
   @ApiProperty({ type: [String] })
@@ -423,6 +427,6 @@ export class ClaimGateEvaluationDto {
 }
 
 export class ClaimMutationResultDto {
-  @ApiProperty({ example: true })
+  @ApiProperty({ type: Boolean, example: true })
   success!: boolean;
 }

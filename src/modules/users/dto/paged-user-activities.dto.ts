@@ -11,15 +11,15 @@ export class PagedUserActivitiesDto {
   @ApiProperty({ type: UserActivityDto, isArray: true })
   items!: UserActivityDto[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   page!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   limit!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   hasNext!: boolean;
 }

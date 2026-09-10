@@ -2,9 +2,9 @@ import { ApiProperty } from '@nestjs/swagger';
 
 /** One entry of `GET /:lang/authors/letters` (`AuthorService.listPublicLetters`). */
 export class AuthorLetterCountDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   letter!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   count!: number;
 }

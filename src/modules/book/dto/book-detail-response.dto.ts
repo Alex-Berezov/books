@@ -10,28 +10,28 @@ import { BookType, CategoryType, Language, PublicationStatus } from '@prisma/cli
  * which describes the admin/public category listing, not this nested form.
  */
 export class BookCategoryDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
   @ApiProperty({ enum: CategoryType })
   type!: CategoryType;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   indexable!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isVisible!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   sortOrder!: number;
 
   @ApiPropertyOptional({ type: String, nullable: true })
@@ -44,25 +44,25 @@ export class BookCategoryDto {
  * as `BookCategoryDto`.
  */
 export class BookTagDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   indexable!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isVisible!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   sortOrder!: number;
 }
 
@@ -72,10 +72,10 @@ export class BookTagDto {
  * that exact select verbatim.
  */
 export class PublicBookVersionDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookId!: string;
 
   @ApiProperty({ enum: Language })
@@ -87,10 +87,10 @@ export class PublicBookVersionDto {
   @ApiProperty({ enum: BookType })
   type!: BookType;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   author!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })
@@ -99,19 +99,19 @@ export class PublicBookVersionDto {
   @ApiPropertyOptional({ type: String, nullable: true })
   slug!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   coverImageUrl!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })
   coverAlt!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   description!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })
   shortDescription!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isFree!: boolean;
 
   @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true })
@@ -144,10 +144,10 @@ export class BookDetailVersionDto extends PublicBookVersionDto {
  * moderators — same shape either way).
  */
 export class BookDetailResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })

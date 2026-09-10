@@ -8,13 +8,13 @@ import { CategoryType } from '@prisma/client';
  * маршрута) в путь не входит.
  */
 export class CategoryAncestorDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ enum: CategoryType })

@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export enum UploadType {
@@ -24,30 +24,44 @@ export class PresignRequestDto {
 }
 
 export class PresignResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty({ description: 'Direct upload URL (for local driver this is API endpoint)' })
+  @ApiProperty({
+    type: String,
+    description: 'Direct upload URL (for local driver this is API endpoint)',
+  })
   url!: string;
 
   @ApiProperty({ description: 'HTTP method to use', enum: ['POST', 'PUT'], example: 'POST' })
   method!: 'POST' | 'PUT';
 
-  @ApiProperty({ description: 'Headers to include with upload request', required: false })
+  /**
+   * `additionalProperties` здесь не украшение: без него `@ApiProperty` над
+   * `Record<string, string>` уезжает в OpenAPI как `type: object` без единого свойства,
+   * и машинная сверка на фронте видит «объект без читаемых полей» вместо словаря строк
+   * (`LEGACY-374`). Ключи заранее не известны — их задаёт драйвер хранилища, — поэтому
+   * описывается не список полей, а тип значения.
+   */
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: { type: 'string' },
+    description: 'Headers to include with upload request',
+  })
   @IsOptional()
   headers?: Record<string, string>;
 
-  @ApiProperty({ description: 'Token required by direct upload endpoint' })
+  @ApiProperty({ type: String, description: 'Token required by direct upload endpoint' })
   token!: string;
 
-  @ApiProperty({ description: 'Time-to-live in seconds' })
+  @ApiProperty({ type: Number, description: 'Time-to-live in seconds' })
   ttlSec!: number;
 }
 
 export class DirectUploadResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   publicUrl!: string;
 }

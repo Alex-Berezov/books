@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { Language } from '@prisma/client';
 import { BookCategoryDto, BookTagDto } from './book-detail-response.dto';
 import { TagTranslationDto } from '../../tags/dto/tag-translation-entity.dto';
@@ -30,19 +31,19 @@ import { TagTranslationDto } from '../../tags/dto/tag-translation-entity.dto';
  * `select`/`include`, — поэтому он берёт этот класс, а не заводит свою копию.
  */
 export class CategoryTranslationScalarsDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   categoryId!: string;
 
   @ApiProperty({ enum: Language })
   language!: Language;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })
@@ -73,22 +74,18 @@ export class CategoryTranslationScalarsDto {
   ogImageAlt!: string | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { question: { type: 'string' }, answer: { type: 'string' } },
-    },
+    type: [FaqItemDto],
     nullable: true,
     description:
       'Json column. Shape held by `@IsArray() @IsObject({ each: true })` on `CreateCategoryTranslationDto.faq`.',
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
-  faq!: unknown;
+  faq!: FaqItemDto[] | null;
 
-  @ApiProperty({ default: 0 })
+  @ApiProperty({ type: Number, default: 0 })
   bookCount!: number;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   autoIndexable!: boolean;
 
   @ApiPropertyOptional({ type: Number, nullable: true })
@@ -127,12 +124,12 @@ export class BookVersionTagLinkDto {
 
 /** `_count` of a book version: published content present per kind. */
 export class BookVersionContentCountDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   chapters!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   audioChapters!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   summaries!: number;
 }

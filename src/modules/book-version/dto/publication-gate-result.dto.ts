@@ -2,16 +2,16 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class PublicationGateReasonDto {
-  @ApiProperty({ description: 'Unique reason code' })
+  @ApiProperty({ type: String, description: 'Unique reason code' })
   code: string;
 
   @ApiProperty({ enum: ['BLOCKER', 'WARNING'] })
   severity: 'BLOCKER' | 'WARNING';
 
-  @ApiProperty({ description: 'Russian message for admin UI' })
+  @ApiProperty({ type: String, description: 'Russian message for admin UI' })
   messageRu: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ type: String, required: false })
   messageEn?: string;
 
   @ApiPropertyOptional({ type: 'object', additionalProperties: true })
@@ -33,16 +33,16 @@ export class PublicationGateReasonDto {
 }
 
 export class PublicationGateResultDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   versionId: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookId: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   canPublish: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   checkedAt: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -83,7 +83,7 @@ export class PublicationGateResultDto {
   @ApiProperty({ type: Boolean, nullable: true })
   contentHashMatches!: boolean | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   rightsRecheckRequired!: boolean;
 
   // Phase 15: license coverage of the markets that require a license
@@ -103,22 +103,22 @@ export class PublicationGateResultDto {
   licenseIds!: string[];
 
   // Phase 16: rights claims / DMCA
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   activeClaimsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   blockingClaimsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   criticalClaimsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   overdueClaimsCount!: number;
 
   @ApiProperty({ type: [String] })
   claimBlockedCountryCodes!: string[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   hasWorldwideClaimBlock!: boolean;
 
   @ApiProperty({ type: String, nullable: true })
@@ -128,13 +128,13 @@ export class PublicationGateResultDto {
   claimIds!: string[];
 
   // Phase 18: automatic recheck
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   openRecheckTasksCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   overdueRecheckTasksCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   blockingRecheckTasksCount!: number;
 
   @ApiProperty({ type: String, nullable: true })
@@ -144,16 +144,16 @@ export class PublicationGateResultDto {
   recheckTaskIds!: string[];
 
   // Phase 19: lawyer workflow. All optional — existing fields and codes are untouched.
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   lawyerReviewRequired!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   lawyerApproved!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   openLawyerReviewsCount!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   pendingLawyerConditionsCount!: number;
 
   @ApiProperty({ type: String, nullable: true })

@@ -6,13 +6,13 @@ import { ApiProperty } from '@nestjs/swagger';
  * `getByVersion`/`upsertForVersion` отдают запись целиком, без выборки полей.
  */
 export class BookSummaryResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookVersionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   summary!: string;
 
   @ApiProperty({ type: String, nullable: true })

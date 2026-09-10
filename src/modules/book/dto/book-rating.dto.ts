@@ -15,16 +15,16 @@ export class BookRatingScoreDto {
  * row returned by `prisma.bookRating.upsert` (no `select`).
  */
 export class BookRatingDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   userId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookId!: string;
 
-  @ApiProperty({ description: 'Score from 1 to 5' })
+  @ApiProperty({ type: Number, description: 'Score from 1 to 5' })
   score!: number;
 
   @ApiProperty({ type: String, format: 'date-time' })

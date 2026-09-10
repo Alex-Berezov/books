@@ -10,16 +10,16 @@ import { BookCardDto } from './book-card.dto';
  * `AuthorService.listPublic`).
  */
 export class BookCardsPaginationDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   page!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   limit!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   totalPages!: number;
 }
 

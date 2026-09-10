@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { Language } from '@prisma/client';
 import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 
@@ -13,19 +14,19 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
  * возвращает в обоих местах запись перевода целиком, без выборки полей.
  */
 export class CategoryTranslationEntityDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   categoryId!: string;
 
   @ApiProperty({ enum: Language })
   language!: Language;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })
@@ -56,22 +57,18 @@ export class CategoryTranslationEntityDto {
   ogImageAlt?: string | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { question: { type: 'string' }, answer: { type: 'string' } },
-    },
+    type: [FaqItemDto],
     nullable: true,
     description:
       'Json column. Shape held by `@IsArray() @IsObject({ each: true })` on `CreateCategoryTranslationDto.faq`.',
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
-  faq?: Record<string, unknown> | null;
+  faq?: FaqItemDto[] | null;
 
-  @ApiProperty({ default: 0 })
+  @ApiProperty({ type: Number, default: 0 })
   bookCount!: number;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   autoIndexable!: boolean;
 
   @ApiPropertyOptional({ type: Number, nullable: true })

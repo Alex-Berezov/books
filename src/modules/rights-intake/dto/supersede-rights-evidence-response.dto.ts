@@ -9,9 +9,12 @@ import { ApiProperty } from '@nestjs/swagger';
 export class SupersedeRightsEvidenceResponseDto {
   @ApiProperty() id!: string;
 
-  @ApiProperty({ description: 'Всегда `false`: доказательство перестало быть текущим' })
+  @ApiProperty({
+    type: Boolean,
+    description: 'Всегда `false`: доказательство перестало быть текущим',
+  })
   isCurrent!: boolean;
 
-  @ApiProperty({ description: 'Идентификатор заменяющего доказательства' })
+  @ApiProperty({ type: String, description: 'Идентификатор заменяющего доказательства' })
   supersededById!: string;
 }

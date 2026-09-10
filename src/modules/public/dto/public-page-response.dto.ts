@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language, PageType, PublicationStatus } from '@prisma/client';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 
 /**
@@ -9,19 +10,19 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
  * book selects — so every scalar column is part of the real response.
  */
 export class PublicPageDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
   @ApiProperty({ enum: PageType })
   type!: PageType;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   content!: string;
 
   @ApiProperty({ enum: PublicationStatus })
@@ -46,17 +47,18 @@ export class PublicPageDto {
   @ApiPropertyOptional({ type: String, nullable: true })
   shortDescription!: string | null;
 
+  /**
+   * Форма описана классом, а не встроенной схемой: у встроенной нет `required`,
+   * поэтому `question` и `answer` выходили в схему необязательными, и фронт,
+   * читающий `faq.map((item) => item.question)`, сверить было не с чем.
+   */
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { question: { type: 'string' }, answer: { type: 'string' } },
-    },
+    type: [FaqItemDto],
     nullable: true,
     description: 'Json column. Shape declared by `CreatePageDto.faq`.',
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
-  faq!: unknown;
+  faq!: FaqItemDto[] | null;
 
   @ApiPropertyOptional({
     type: 'object',

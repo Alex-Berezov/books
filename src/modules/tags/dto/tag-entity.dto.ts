@@ -11,24 +11,24 @@ import { ApiProperty } from '@nestjs/swagger';
  * выборки полей).
  */
 export class TagEntityDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   indexable!: boolean;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   isVisible!: boolean;
 
-  @ApiProperty({ default: 0 })
+  @ApiProperty({ type: Number, default: 0 })
   sortOrder!: number;
 }

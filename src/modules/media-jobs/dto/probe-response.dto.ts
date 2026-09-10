@@ -6,6 +6,6 @@ import { ApiProperty } from '@nestjs/swagger';
  * постановки задачи (`MediaProbeService.enqueueProbe`).
  */
 export class ProbeResponseDto {
-  @ApiProperty({ description: 'Всегда `true`: задача поставлена в очередь' })
+  @ApiProperty({ type: Boolean, description: 'Всегда `true`: задача поставлена в очередь' })
   ok!: boolean;
 }

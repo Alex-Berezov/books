@@ -20,10 +20,10 @@ import { ASSIGNABLE_ROLE_NAMES, type AssignableRoleName } from '../users.constan
  * в этом же заходе).
  */
 export class PublicUserDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ example: 'user@example.com' })
+  @ApiProperty({ type: String, example: 'user@example.com' })
   email!: string;
 
   @ApiProperty({ nullable: true, type: String, example: 'John Doe' })
@@ -38,7 +38,7 @@ export class PublicUserDto {
   @ApiProperty({ nullable: true, type: String, example: 'johnny' })
   nickname?: string | null;
 
-  @ApiProperty({ example: true })
+  @ApiProperty({ type: Boolean, example: true })
   isActive?: boolean;
 
   @ApiProperty({ nullable: true, type: String, format: 'uri' })

@@ -1,10 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateBookFromClearanceResponseBookDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -19,27 +19,27 @@ export class CreateBookFromClearanceResponseBookDto {
   @ApiProperty({ type: String, nullable: true })
   rightsCreatedAt!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   updatedAt!: string;
 }
 
 export class CreateBookFromClearanceResponseVersionDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   language!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   status!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -53,9 +53,9 @@ export class CreateBookFromClearanceResponseDto {
   @ApiProperty({ type: [CreateBookFromClearanceResponseVersionDto] })
   versions!: CreateBookFromClearanceResponseVersionDto[];
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   rightsProfileId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   approvedRightsReviewId!: string;
 }

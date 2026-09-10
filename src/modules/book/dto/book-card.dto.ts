@@ -17,13 +17,21 @@ export class BookCardDto {
   })
   id!: string;
 
-  @ApiProperty({ description: 'BookVersion.slug for the requested language', example: 'hamlet' })
+  @ApiProperty({
+    type: String,
+    description: 'BookVersion.slug for the requested language',
+    example: 'hamlet',
+  })
   slug!: string;
 
-  @ApiProperty({ description: 'Localized title', example: 'Hamlet' })
+  @ApiProperty({ type: String, description: 'Localized title', example: 'Hamlet' })
   title!: string;
 
-  @ApiProperty({ description: 'Localized display author name', example: 'William Shakespeare' })
+  @ApiProperty({
+    type: String,
+    description: 'Localized display author name',
+    example: 'William Shakespeare',
+  })
   author!: string;
 
   @ApiProperty({
@@ -46,7 +54,7 @@ export class BookCardDto {
   @ApiProperty({ description: 'Average rating (0-5)', type: Number, example: 4.5, nullable: true })
   rating!: number | null;
 
-  @ApiProperty({ description: 'Number of ratings', example: 12 })
+  @ApiProperty({ type: Number, description: 'Number of ratings', example: 12 })
   ratingsCount!: number;
 
   @ApiProperty({

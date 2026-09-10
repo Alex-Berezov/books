@@ -6,10 +6,10 @@ import { ApiProperty } from '@nestjs/swagger';
  * (`src/modules/seo/indexability/taxonomy-indexability-scheduler.service.ts`).
  */
 export class TaxonomyIndexabilityStatusResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   enabled!: boolean;
 
-  @ApiProperty({ description: 'Wall-clock hour (UTC) the sweep is pinned to.' })
+  @ApiProperty({ type: Number, description: 'Wall-clock hour (UTC) the sweep is pinned to.' })
   scheduledHourUtc!: number;
 
   @ApiProperty({ type: String, nullable: true })
@@ -39,6 +39,6 @@ export class TaxonomyIndexabilityStatusResponseDto {
   @ApiProperty({ type: String, nullable: true })
   lastError!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isRunning!: boolean;
 }

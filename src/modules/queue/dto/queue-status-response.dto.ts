@@ -6,6 +6,6 @@ import { ApiProperty } from '@nestjs/swagger';
  * `{ enabled: boolean }` — тривиальный ответ, лишних полей у него нет.
  */
 export class QueueStatusResponseDto {
-  @ApiProperty({ description: 'Есть ли конфигурация Redis для очередей.' })
+  @ApiProperty({ type: Boolean, description: 'Есть ли конфигурация Redis для очередей.' })
   enabled!: boolean;
 }

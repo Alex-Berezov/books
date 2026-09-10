@@ -21,10 +21,10 @@ import { ASSIGNABLE_ROLE_NAMES, type AssignableRoleName } from '../../users/user
  * ⚠️ `passwordHash` здесь нет и быть не должно.
  */
 export class AuthUserResponse {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ example: 'user@example.com' })
+  @ApiProperty({ type: String, example: 'user@example.com' })
   email!: string;
 
   @ApiProperty({ nullable: true, type: String, example: 'John Doe' })
@@ -39,7 +39,7 @@ export class AuthUserResponse {
   @ApiProperty({ nullable: true, type: String, example: 'johnny' })
   nickname?: string | null;
 
-  @ApiProperty({ example: true })
+  @ApiProperty({ type: Boolean, example: true })
   isActive?: boolean;
 
   @ApiProperty({ nullable: true, type: String, format: 'uri' })
@@ -68,10 +68,10 @@ export class AuthUserResponse {
  * которого в ответе нет ни одного байта (найдено ревью в этом же заходе).
  */
 export class AuthTokensResponse {
-  @ApiProperty({ description: 'JWT access token' })
+  @ApiProperty({ type: String, description: 'JWT access token' })
   accessToken!: string;
 
-  @ApiProperty({ description: 'JWT refresh token' })
+  @ApiProperty({ type: String, description: 'JWT refresh token' })
   refreshToken!: string;
 }
 

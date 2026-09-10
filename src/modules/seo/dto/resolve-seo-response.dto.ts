@@ -28,7 +28,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * поэтому в теле ответа его нет и в схеме ему места нет тоже.
  */
 export class SeoResolveMetaDto {
-  @ApiProperty({ description: 'Заголовок страницы (`<title>`).' })
+  @ApiProperty({ type: String, description: 'Заголовок страницы (`<title>`).' })
   title!: string;
 
   @ApiPropertyOptional({
@@ -36,26 +36,36 @@ export class SeoResolveMetaDto {
   })
   description?: string;
 
-  @ApiProperty({ example: 'index, follow', description: 'Значение мета-тега `robots`.' })
+  @ApiProperty({
+    type: String,
+    example: 'index, follow',
+    description: 'Значение мета-тега `robots`.',
+  })
   robots!: string;
 
-  @ApiProperty({ description: 'Канонический адрес страницы, абсолютный.' })
+  @ApiProperty({ type: String, description: 'Канонический адрес страницы, абсолютный.' })
   canonicalUrl!: string;
 }
 
 export class SeoResolveOpenGraphImageDto {
-  @ApiProperty({ description: 'Абсолютный адрес картинки: `Seo.ogImageUrl` или обложка версии.' })
+  @ApiProperty({
+    type: String,
+    description: 'Абсолютный адрес картинки: `Seo.ogImageUrl` или обложка версии.',
+  })
   url!: string;
 
-  @ApiProperty({ description: '`Seo.ogImageAlt`, а при его отсутствии — заголовок страницы.' })
+  @ApiProperty({
+    type: String,
+    description: '`Seo.ogImageAlt`, а при его отсутствии — заголовок страницы.',
+  })
   alt!: string;
 }
 
 export class SeoResolveOpenGraphDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   description?: string;
 
   @ApiProperty({
@@ -64,7 +74,10 @@ export class SeoResolveOpenGraphDto {
   })
   type!: 'website' | 'book';
 
-  @ApiProperty({ description: '`Seo.ogUrl`, а при его отсутствии — канонический адрес.' })
+  @ApiProperty({
+    type: String,
+    description: '`Seo.ogUrl`, а при его отсутствии — канонический адрес.',
+  })
   url!: string;
 
   @ApiPropertyOptional({ type: SeoResolveOpenGraphImageDto })
@@ -78,13 +91,13 @@ export class SeoResolveTwitterDto {
   })
   card!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   site?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   creator?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   image?: string;
 }
 
@@ -92,18 +105,21 @@ export class SeoResolveHreflangDto {
   @ApiProperty({ enum: ['alternate'] })
   rel!: 'alternate';
 
-  @ApiProperty({ example: 'en', description: 'Код языка либо `x-default`.' })
+  @ApiProperty({ type: String, example: 'en', description: 'Код языка либо `x-default`.' })
   hreflang!: string;
 
-  @ApiProperty({ description: 'Абсолютный адрес страницы на этом языке.' })
+  @ApiProperty({ type: String, description: 'Абсолютный адрес страницы на этом языке.' })
   href!: string;
 }
 
 export class SeoResolveBreadcrumbDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty({ description: 'Слаг звена — последний сегмент его канонического адреса.' })
+  @ApiProperty({
+    type: String,
+    description: 'Слаг звена — последний сегмент его канонического адреса.',
+  })
   slug!: string;
 
   @ApiPropertyOptional({

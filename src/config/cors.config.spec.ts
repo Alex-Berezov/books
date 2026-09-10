@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { CORS_ALLOWED_HEADERS, CORS_EXPOSED_HEADERS, getCorsConfig } from './cors.config';
 
 /**
@@ -93,5 +95,49 @@ describe('CORS: состав allowedHeaders', () => {
 
     process.env.CORS_ORIGIN = 'https://bibliaris.com';
     expect(getCorsConfig().allowedHeaders).toEqual(CORS_ALLOWED_HEADERS);
+  });
+});
+
+/**
+ * Заголовки предзапроса на боевой машине отдаёт **только** Nest: в копии живого конфига
+ * `configs/Caddyfile.prod` директивы `Access-Control-Allow-Headers` нет вовсе (там объявлен
+ * один `Access-Control-Allow-Credentials`). Поэтому `X-Upload-Token` заработал в проде
+ * от правки `CORS_ALLOWED_HEADERS`, без единого касания Caddy (`LEGACY-372`).
+ *
+ * 🔴 Стеречь надо ровно это. Директива `header` в Caddy значение апстрима **заменяет**,
+ * а не дополняет: стоит появиться в конфиге своей строке `Access-Control-Allow-Headers`,
+ * и она молча снимет любой заголовок, добавленный в коде, - браузер зарубит запрос
+ * на предзапросе, и на сервере не останется ни строчки лога. Спека краснеет на само
+ * появление такой строки и требует, чтобы список в ней совпал с кодом.
+ *
+ * ⚠️ `scripts/apply-api-subdomain.sh` сюда намеренно не читается. Тот скрипт устарел:
+ * он переписывает `/etc/caddy/Caddyfile` целиком своим телом, где `bibliaris.com`
+ * редиректит на `/docs` вместо `import /etc/caddy/frontend-upstream.caddy`
+ * (`configs/Caddyfile.prod:47-59`), то есть его запуск уронит публичный сайт.
+ * Сверять с ним список - значит звать оператора его запустить. Судьба скрипта - за владельцем.
+ */
+describe('CORS: копия списка заголовков в конфиге Caddy', () => {
+  const caddyPath = join(__dirname, '../../configs/Caddyfile.prod');
+
+  it('копия живого конфига своего списка заголовков не объявляет, а объявит - совпадает с кодом', () => {
+    const caddy = readFileSync(caddyPath, 'utf8');
+
+    // Сначала - что читается тот самый файл и тот самый блок. Без этой строки спека
+    // зеленела бы и на пустом, и на переименованном конфиге: «списка нет» тогда значит
+    // «я ничего не нашла», а не «его там нет».
+    expect(caddy).toContain('Access-Control-Allow-Credentials');
+
+    const line = caddy.match(/Access-Control-Allow-Headers\s+"([^"]+)"/);
+
+    if (line === null) {
+      // Исход «сверять было нечего» назван отдельно, а не молчаливым `return`: зелёная строка
+      // без единой проверки неотличима от «списки совпали» (`L-015`). Сегодня строки в конфиге
+      // нет вовсе - это и есть проверяемое утверждение.
+      expect(caddy).not.toContain('Access-Control-Allow-Headers');
+      return;
+    }
+
+    const inCaddy = line[1].split(',').map((name) => name.trim());
+    expect([...inCaddy].sort()).toEqual([...CORS_ALLOWED_HEADERS].sort());
   });
 });

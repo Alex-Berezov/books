@@ -10,12 +10,12 @@ export class PagedUsersDto {
   @ApiProperty({ type: PublicUserWithRolesDto, isArray: true })
   items!: PublicUserWithRolesDto[];
 
-  @ApiProperty({ example: 42 })
+  @ApiProperty({ type: Number, example: 42 })
   total!: number;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   page!: number;
 
-  @ApiProperty({ example: 20 })
+  @ApiProperty({ type: Number, example: 20 })
   limit!: number;
 }

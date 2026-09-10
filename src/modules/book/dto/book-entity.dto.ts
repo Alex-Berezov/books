@@ -7,10 +7,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * linkage fields are included as-is: they are what the code actually returns.
  */
 export class BookEntityDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })

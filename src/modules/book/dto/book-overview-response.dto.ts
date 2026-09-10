@@ -1,4 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  BookVersionCharacterDto,
+  BookVersionQuoteDto,
+  BookVersionSymbolDto,
+} from '../../../shared/dto/book-version-json.dto';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { Language } from '@prisma/client';
 import { PublicBookVersionDto } from './book-detail-response.dto';
 import {
@@ -52,43 +58,31 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
       'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.alternativeTitles`.',
     example: ['Dorian Gray'],
   })
-  alternativeTitles!: unknown;
+  alternativeTitles!: string[] | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { name: { type: 'string' }, description: { type: 'string' } },
-    },
+    type: [BookVersionCharacterDto],
     nullable: true,
     description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.characters`.',
     example: [{ name: 'Dorian Gray', description: 'Main character' }],
   })
-  characters!: unknown;
+  characters!: BookVersionCharacterDto[] | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { text: { type: 'string' }, author: { type: 'string' } },
-    },
+    type: [BookVersionQuoteDto],
     nullable: true,
     description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.quotes`.',
     example: [{ text: 'To live is the rarest thing in the world.', author: 'Oscar Wilde' }],
   })
-  quotes!: unknown;
+  quotes!: BookVersionQuoteDto[] | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { question: { type: 'string' }, answer: { type: 'string' } },
-    },
+    type: [FaqItemDto],
     nullable: true,
     description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.faq`.',
     example: [{ question: 'What is the genre?', answer: 'Gothic fiction' }],
   })
-  faq!: unknown;
+  faq!: FaqItemDto[] | null;
 
   @ApiPropertyOptional({
     type: 'array',
@@ -98,24 +92,20 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
       'Json column. Shape held by `@IsArray() @IsString({ each: true })` on `CreateBookVersionDto.themes`.',
     example: ['Art', 'Morality'],
   })
-  themes!: unknown;
+  themes!: string[] | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { title: { type: 'string' }, description: { type: 'string' } },
-    },
+    type: [BookVersionSymbolDto],
     nullable: true,
     description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.symbols`.',
     example: [{ title: 'Portrait', description: 'Represents the soul' }],
   })
-  symbols!: unknown;
+  symbols!: BookVersionSymbolDto[] | null;
 
   @ApiProperty({ type: BookVersionContentCountDto })
   _count!: BookVersionContentCountDto;
 
-  @ApiProperty({ description: 'Compatibility alias of `coverImageUrl`' })
+  @ApiProperty({ type: String, description: 'Compatibility alias of `coverImageUrl`' })
   coverUrl!: string;
 }
 
@@ -175,31 +165,34 @@ export class BookOverviewVersionIdsDto {
 
 /** Legacy `book` envelope kept for backwards compatibility with the frontend. */
 export class BookOverviewBookRefDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 }
 
 /** Response of `GET /books/:slug/overview` and `GET /:lang/books/:slug/overview`. */
 export class BookOverviewResponseDto {
-  @ApiProperty({ description: 'Canonical `Book.id`' })
+  @ApiProperty({ type: String, description: 'Canonical `Book.id`' })
   id!: string;
 
-  @ApiProperty({ description: 'Slug of the resolved version, or the requested one' })
+  @ApiProperty({ type: String, description: 'Slug of the resolved version, or the requested one' })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   author!: string;
 
-  @ApiProperty({ description: 'Description with the boilerplate intro stripped' })
+  @ApiProperty({ type: String, description: 'Description with the boilerplate intro stripped' })
   description!: string;
 
-  @ApiProperty({ description: '`coverImageUrl` of the resolved version, empty string when none' })
+  @ApiProperty({
+    type: String,
+    description: '`coverImageUrl` of the resolved version, empty string when none',
+  })
   coverUrl!: string;
 
   @ApiPropertyOptional({ type: Number, description: 'Average rating (0-5)', nullable: true })
@@ -251,13 +244,13 @@ export class BookOverviewResponseDto {
   @ApiProperty({ enum: Language, isArray: true })
   availableLanguages!: Language[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   hasText!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   hasAudio!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   hasSummary!: boolean;
 
   @ApiProperty({ type: BookOverviewVersionIdsDto })

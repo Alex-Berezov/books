@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RightsContentHashComputationDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   versionId!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -10,13 +10,13 @@ export class RightsContentHashComputationDto {
   @ApiProperty({ type: String, nullable: true })
   approvedRightsReviewId!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   hash!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   algorithmVersion!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   calculatedAt!: string;
 
   @ApiProperty({ type: 'object', additionalProperties: true })
@@ -24,25 +24,25 @@ export class RightsContentHashComputationDto {
 }
 
 export class RightsContentHashCheckDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   versionId!: string;
 
   @ApiProperty({ type: String, nullable: true })
   baselineHash!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   currentHash!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   algorithmVersion!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   matchesBaseline!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isStale!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   recheckRequired!: boolean;
 
   @ApiProperty({ type: String, nullable: true })
@@ -51,6 +51,6 @@ export class RightsContentHashCheckDto {
   @ApiProperty({ type: String, nullable: true })
   reasonRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   checkedAt!: string;
 }

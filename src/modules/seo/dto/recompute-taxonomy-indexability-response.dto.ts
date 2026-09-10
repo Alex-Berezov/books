@@ -6,18 +6,18 @@ import { ApiProperty } from '@nestjs/swagger';
  * (`src/modules/seo/indexability/taxonomy-indexability.service.ts`).
  */
 export class RecomputeTaxonomyIndexabilityResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   categoryTranslations!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   tagTranslations!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   changed!: number;
 
-  @ApiProperty({ description: '`autoIndexable` false → true.' })
+  @ApiProperty({ type: Number, description: '`autoIndexable` false → true.' })
   opened!: number;
 
-  @ApiProperty({ description: '`autoIndexable` true → false.' })
+  @ApiProperty({ type: Number, description: '`autoIndexable` true → false.' })
   closed!: number;
 }

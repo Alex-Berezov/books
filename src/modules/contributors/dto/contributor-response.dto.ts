@@ -9,10 +9,10 @@ import { ContributorRole } from '../../persons/person-interface';
  * поэтому здесь все поля модели, а не только те, что приходят в DTO создания связи.
  */
 export class ContributorLinkResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   rightsProfileId!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -27,7 +27,7 @@ export class ContributorLinkResponseDto {
   @ApiProperty({ type: String, nullable: true })
   roleOtherRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   displayName!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -85,10 +85,10 @@ export class ContributorLinkResponseDto {
 }
 
 export class ContributorResponseDto {
-  @ApiProperty({ description: 'Person ID — участники хранятся в справочнике Person' })
+  @ApiProperty({ type: String, description: 'Person ID — участники хранятся в справочнике Person' })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   displayName!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -138,12 +138,12 @@ export class ContributorListResponseDto {
   @ApiProperty({ type: [ContributorResponseDto] })
   items!: ContributorResponseDto[];
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   page!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   limit!: number;
 }

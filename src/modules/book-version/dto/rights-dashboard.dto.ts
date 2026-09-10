@@ -13,10 +13,10 @@ import {
 } from '../../rights-lawyer/dto/lawyer-review-response.dto';
 
 export class BookRightsDashboardBookSummaryDto {
-  @ApiProperty({ example: 'a1111111-b222-4c33-d444-555555555555' })
+  @ApiProperty({ type: String, example: 'a1111111-b222-4c33-d444-555555555555' })
   id!: string;
 
-  @ApiProperty({ example: 'the-odyssey' })
+  @ApiProperty({ type: String, example: 'the-odyssey' })
   slug!: string;
 
   @ApiProperty({ type: String, nullable: true, example: 'intake-uuid' })
@@ -33,19 +33,19 @@ export class BookRightsDashboardBookSummaryDto {
 }
 
 export class BookRightsDashboardVersionSummaryDto {
-  @ApiProperty({ example: 'v1111111-b222-4c33-d444-555555555555' })
+  @ApiProperty({ type: String, example: 'v1111111-b222-4c33-d444-555555555555' })
   id!: string;
 
-  @ApiProperty({ example: 'en' })
+  @ApiProperty({ type: String, example: 'en' })
   language!: string;
 
-  @ApiProperty({ example: 'text' })
+  @ApiProperty({ type: String, example: 'text' })
   type!: string;
 
-  @ApiProperty({ example: 'published' })
+  @ApiProperty({ type: String, example: 'published' })
   status!: string;
 
-  @ApiPropertyOptional({ example: 'The Odyssey' })
+  @ApiPropertyOptional({ type: String, example: 'The Odyssey' })
   title?: string;
 
   @ApiProperty({ type: String, nullable: true, example: 'profile-uuid' })
@@ -57,10 +57,10 @@ export class BookRightsDashboardVersionSummaryDto {
   @ApiProperty({ type: String, nullable: true, example: 'APPROVED' })
   rightsStatus!: string | null;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   rightsGeoBlockRequired!: boolean;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   rightsGeoBlockConfigured!: boolean;
 
   @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
@@ -87,7 +87,7 @@ export class BookRightsDashboardVersionSummaryDto {
   @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
   rightsContentHashCalculatedAt?: string | null;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   rightsRecheckRequired!: boolean;
 
   @ApiProperty({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
@@ -110,7 +110,7 @@ export class BookRightsDashboardVersionSummaryDto {
   rightsLicenseIds?: string[] | null;
 
   // Phase 16: denormalised rights-claim block state
-  @ApiPropertyOptional({ example: false })
+  @ApiPropertyOptional({ type: Boolean, example: false })
   rightsClaimBlockActive?: boolean;
 
   @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-28T12:00:00.000Z' })
@@ -118,10 +118,10 @@ export class BookRightsDashboardVersionSummaryDto {
 }
 
 export class BookRightsDashboardMetricsDto {
-  @ApiProperty({ example: true })
+  @ApiProperty({ type: Boolean, example: true })
   hasClearance!: boolean;
 
-  @ApiProperty({ example: true })
+  @ApiProperty({ type: Boolean, example: true })
   canPublishCurrentVersion!: boolean;
 
   @ApiProperty({ type: String, nullable: true, example: 'ALLOW' })
@@ -133,145 +133,145 @@ export class BookRightsDashboardMetricsDto {
   @ApiProperty({ type: String, nullable: true, example: 'HIGH' })
   confidence!: string | null;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   blockedCountriesCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   licenseRequiredCountriesCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   pendingCountriesCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   geoBlockRequiredCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   unresolvedBlockingActionsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   evidenceCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   componentsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   componentTerritoryAssessmentsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   blockedComponentTerritoryAssessmentsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   reviewRequiredComponentTerritoryAssessmentsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   expiringComponentTerritoryAssessmentsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   reviewsCount!: number;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   isStale!: boolean;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   recheckRequired!: boolean;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   contributorsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   authorsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   translatorsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   narratorsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   contributorsWithoutPersonCount!: number;
 
-  @ApiProperty({ example: 7 })
+  @ApiProperty({ type: Number, example: 7 })
   regionCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   blockedRegionCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   licenseRequiredRegionCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   pendingReviewRegionCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   mixedRegionCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   notTargetedRegionCount!: number;
 
   // Phase 15: license metrics
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   licensesCount!: number;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   activeLicensesCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   expiredLicensesCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   revokedLicensesCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   expiringSoonLicensesCount!: number;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   attributionRequiredLicensesCount!: number;
 
-  @ApiProperty({ example: 'COVERED' })
+  @ApiProperty({ type: String, example: 'COVERED' })
   licenseCoverageStatus!: string;
 
-  @ApiProperty({ example: 3 })
+  @ApiProperty({ type: Number, example: 3 })
   licenseCoveredCountriesCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   licenseUncoveredCountriesCount!: number;
 
   // Phase 16: rights claims / DMCA
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   claimsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   activeClaimsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   blockingClaimsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   criticalClaimsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   overdueClaimsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   activeClaimBlocksCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   claimBlockedCountriesCount!: number;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   hasWorldwideClaimBlock!: boolean;
 
   @ApiProperty({ type: String, nullable: true, example: 'HIGH' })
   worstClaimSeverity!: string | null;
 
   // Phase 18: automatic recheck
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   openRecheckTasksCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   overdueRecheckTasksCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   blockingRecheckTasksCount!: number;
 
   @ApiProperty({ type: String, nullable: true, example: '2027-07-30T00:00:00.000Z' })
@@ -287,10 +287,10 @@ export class BookRightsDashboardMetricsDto {
   @ApiProperty({ type: String, nullable: true, example: 'HIGH' })
   riskLevel!: string | null;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   lawyerReviewRequired!: boolean;
 
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   lawyerApproved!: boolean;
 
   @ApiProperty({ type: String, nullable: true, example: '2026-07-31T00:00:00.000Z' })
@@ -302,17 +302,17 @@ export class BookRightsDashboardMetricsDto {
   @ApiProperty({ type: String, nullable: true, example: '2028-07-31T00:00:00.000Z' })
   lawyerOpinionValidUntil!: string | null;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   openLawyerReviewsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   pendingLawyerConditionsCount!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: Number, example: 0 })
   lawyerReviewsCount!: number;
 
   // WP-1.2а: geo-block is mandatory for this version, but the country source looks broken.
-  @ApiProperty({ example: false })
+  @ApiProperty({ type: Boolean, example: false })
   geoCountrySourceWarning!: boolean;
 }
 

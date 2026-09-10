@@ -56,10 +56,10 @@ export class PublicCategoryBookVersionDto extends PublicBookVersionDto {
 
 /** One book of the category page: `PUBLIC_BOOK_SELECT` columns, its published versions and the average rating. */
 export class PublicCategoryBookDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })

@@ -1,19 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class LikeDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   userId!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   bookVersionId?: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   commentId?: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isLike!: boolean;
 
   @ApiProperty({ type: String, format: 'date-time' })
@@ -21,26 +21,26 @@ export class LikeDto {
 }
 
 export class LikeCountDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   likes!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   dislikes!: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: Number })
   count?: number;
 }
 
 export class ToggleLikeResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   liked!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isLike!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   likes!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   dislikes!: number;
 }

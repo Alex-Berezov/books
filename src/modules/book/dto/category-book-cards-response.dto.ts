@@ -9,16 +9,16 @@ import { BookCardsPaginationDto } from './paged-book-cards.dto';
  * resolved `Category` row plus its matched translation, not a Prisma select.
  */
 export class CategoryCardSummaryDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
   @ApiProperty({ enum: CategoryType })
@@ -27,16 +27,16 @@ export class CategoryCardSummaryDto {
   @ApiPropertyOptional({ type: String, nullable: true })
   parentId!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   indexable!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isVisible!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   sortOrder!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   booksCount!: number;
 
   @ApiProperty({ enum: Language })

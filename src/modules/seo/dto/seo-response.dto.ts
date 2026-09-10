@@ -6,7 +6,7 @@ import { ApiProperty } from '@nestjs/swagger';
  * `versions/:bookVersionId/seo` отдают запись целиком, без выборки полей.
  */
 export class SeoResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   id!: number;
 
   @ApiProperty({ type: String, format: 'date-time' })

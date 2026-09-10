@@ -13,30 +13,30 @@ import { CategoryType } from '@prisma/client';
  * без выборки полей).
  */
 export class CategoryEntityDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
   @ApiProperty({ enum: CategoryType })
   type!: CategoryType;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })
   parentId?: string | null;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   indexable!: boolean;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   isVisible!: boolean;
 
-  @ApiProperty({ default: 0 })
+  @ApiProperty({ type: Number, default: 0 })
   sortOrder!: number;
 }

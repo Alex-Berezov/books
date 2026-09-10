@@ -9,12 +9,12 @@ import { ApiProperty } from '@nestjs/swagger';
  * (`prisma.bookTag.findFirst`), без выборки полей.
  */
 export class VersionTagLinkDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookVersionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   tagId!: string;
 }

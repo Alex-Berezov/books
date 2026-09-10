@@ -13,10 +13,10 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 
 /** A neighbouring author linked from `similarSlugs`, resolved in the requested language. */
 export class PublicSimilarAuthorDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 }
 
@@ -36,40 +36,40 @@ export class PublicAuthorBookVersionDto {
   @ApiProperty({ enum: BookType })
   type!: BookType;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   coverImageUrl!: string;
 
-  @ApiProperty({ description: 'Compatibility alias of `coverImageUrl`' })
+  @ApiProperty({ type: String, description: 'Compatibility alias of `coverImageUrl`' })
   coverUrl!: string;
 }
 
 /** One published book of this author in the requested language. */
 export class PublicAuthorBookDto {
-  @ApiProperty({ description: '`BookVersion.id` of the matched version' })
+  @ApiProperty({ type: String, description: '`BookVersion.id` of the matched version' })
   id!: string;
 
-  @ApiProperty({ description: 'Canonical `Book.id`' })
+  @ApiProperty({ type: String, description: 'Canonical `Book.id`' })
   bookId!: string;
 
-  @ApiProperty({ description: '`BookVersion.slug`, falling back to `Book.slug`' })
+  @ApiProperty({ type: String, description: '`BookVersion.slug`, falling back to `Book.slug`' })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   author!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   coverImageUrl!: string;
 
-  @ApiProperty({ description: 'Compatibility alias of `coverImageUrl`' })
+  @ApiProperty({ type: String, description: 'Compatibility alias of `coverImageUrl`' })
   coverUrl!: string;
 
   @ApiProperty({ enum: BookType })
   type!: BookType;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isFree!: boolean;
 
   @ApiPropertyOptional({ type: Number, description: 'Average rating (0-5)', nullable: true })
@@ -81,10 +81,10 @@ export class PublicAuthorBookDto {
 
 /** Response of `GET /:lang/authors/:slug`. */
 export class PublicAuthorDetailResponseDto {
-  @ApiProperty({ description: 'Canonical `Author.id`' })
+  @ApiProperty({ type: String, description: 'Canonical `Author.id`' })
   id!: string;
 
-  @ApiProperty({ description: 'Slug of the matched translation' })
+  @ApiProperty({ type: String, description: 'Slug of the matched translation' })
   slug!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true, description: 'YYYY-MM-DD' })
@@ -102,7 +102,7 @@ export class PublicAuthorDetailResponseDto {
   @ApiPropertyOptional({ type: String, nullable: true })
   photoUrl!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })

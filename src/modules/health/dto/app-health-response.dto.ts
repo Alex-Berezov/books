@@ -7,12 +7,12 @@ import { ApiProperty } from '@nestjs/swagger';
  * `HealthController` (`/health/liveness`, `/health/readiness`).
  */
 export class AppHealthResponseDto {
-  @ApiProperty({ example: 'ok' })
+  @ApiProperty({ type: String, example: 'ok' })
   status!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   uptime!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   timestamp!: string;
 }

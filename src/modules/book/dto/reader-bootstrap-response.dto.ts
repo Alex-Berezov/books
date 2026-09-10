@@ -9,16 +9,16 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /** One chapter of the resolved text version (`select: { id, number, title, content }`). */
 export class ReaderBootstrapChapterDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty({ description: 'Chapter number, ascending' })
+  @ApiProperty({ type: Number, description: 'Chapter number, ascending' })
   number!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty({ description: 'Full chapter text' })
+  @ApiProperty({ type: String, description: 'Full chapter text' })
   content!: string;
 }
 
@@ -32,25 +32,25 @@ export class ReaderBootstrapProgressDto {
   @ApiPropertyOptional({ type: Number, nullable: true })
   chapterNumber!: number | null;
 
-  @ApiProperty({ description: 'Offset inside the chapter' })
+  @ApiProperty({ type: Number, description: 'Offset inside the chapter' })
   position!: number;
 }
 
 /** Response of `GET /:lang/books/:slug/reader-bootstrap`. */
 export class ReaderBootstrapResponseDto {
-  @ApiProperty({ description: 'Canonical `Book.id`' })
+  @ApiProperty({ type: String, description: 'Canonical `Book.id`' })
   bookId!: string;
 
-  @ApiProperty({ description: 'Id of the resolved text version' })
+  @ApiProperty({ type: String, description: 'Id of the resolved text version' })
   versionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   title!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   author!: string;
 
   @ApiProperty({ type: ReaderBootstrapChapterDto, isArray: true })

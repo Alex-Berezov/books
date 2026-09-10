@@ -8,7 +8,7 @@ import { RoleName } from '@prisma/client';
  * (`users.service.ts:213`, `:233`).
  */
 export class UserRoleDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   userId!: string;
 
   @ApiProperty({ enum: RoleName })

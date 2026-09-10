@@ -3,16 +3,16 @@ import { CategoryType } from '@prisma/client';
 import { CategoryTranslationResponse } from './category-response.dto';
 
 export class CategoryTreeNodeDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
   @ApiProperty({ enum: CategoryType })
@@ -21,7 +21,7 @@ export class CategoryTreeNodeDto {
   @ApiProperty({ type: 'string', nullable: true, required: false })
   parentId?: string | null;
 
-  @ApiProperty({ description: 'Number of books in this category' })
+  @ApiProperty({ type: Number, description: 'Number of books in this category' })
   booksCount!: number;
 
   @ApiPropertyOptional({
@@ -36,14 +36,20 @@ export class CategoryTreeNodeDto {
   })
   autoIndexable?: boolean;
 
-  @ApiPropertyOptional({ default: true })
-  indexable?: boolean;
+  /**
+   * Обязательные: `CategoryService.getTree` собирает узел вручную и кладёт все
+   * три безусловно — `indexable: c.indexable ?? true`, `isVisible: ... ?? true`,
+   * `sortOrder: ... ?? 0` (`category.service.ts:1018-1020`). Тип узла
+   * (`CategoryTreeNode`, `category.service.ts:35-37`) объявляет их так же.
+   */
+  @ApiProperty({ type: Boolean, default: true })
+  indexable!: boolean;
 
-  @ApiPropertyOptional({ default: true })
-  isVisible?: boolean;
+  @ApiProperty({ type: Boolean, default: true })
+  isVisible!: boolean;
 
-  @ApiPropertyOptional({ default: 0 })
-  sortOrder?: number;
+  @ApiProperty({ type: Number, default: 0 })
+  sortOrder!: number;
 
   @ApiProperty({ type: [CategoryTranslationResponse] })
   translations?: CategoryTranslationResponse[];

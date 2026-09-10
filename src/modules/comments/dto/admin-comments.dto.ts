@@ -42,13 +42,13 @@ export class AdminCommentsQueryDto {
 }
 
 export class AdminCommentAuthorDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   name?: string | null;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   nickname?: string | null;
 
   /**
@@ -56,53 +56,78 @@ export class AdminCommentAuthorDto {
    * маршрут закрыт гвардом, а модератору нужно отличать однофамильцев и
    * находить повторных нарушителей.
    */
-  @ApiProperty()
+  @ApiProperty({ type: String })
   email!: string;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   avatarUrl?: string | null;
 }
 
 export class AdminCommentDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   text!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isHidden!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Date })
   createdAt!: Date;
 
   @ApiProperty({ type: AdminCommentAuthorDto })
   author!: AdminCommentAuthorDto;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   bookTitle!: string | null;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   bookId!: string | null;
 
   /**
    * Нужен, чтобы ответить на комментарий: `POST /comments` требует цель, а не
    * только `parentId`.
    */
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   bookVersionId!: string | null;
 
-  @ApiProperty({ required: false, nullable: true })
+  @ApiProperty({ type: String, nullable: true, required: false })
   parentId!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   repliesCount!: number;
+}
+
+/**
+ * Страница выдачи модерации — та же четвёрка, что собирает `comments.service.ts`
+ * в `adminList()` (блок `meta`, строки 319-324).
+ *
+ * 🔴 Отдельный класс, а не встроенный литерал у поля. Плагина swagger в проекте нет
+ * (`nest-cli.json` без `plugins`), схема строится только из декораторов: `@ApiProperty()`
+ * над полем с типом-литералом даёт в OpenAPI голый `type: object` без единого свойства.
+ * `CommentsList.tsx` на фронте читает `meta.totalPages`, а рукописный тип сверяется
+ * со схемой машинно (`yarn check:type-sync`) — пустой объект в схеме толкает фронт
+ * удалить верное поле из своего типа (`LEGACY-374`).
+ */
+export class AdminCommentsMetaDto {
+  @ApiProperty({ type: Number, example: 1 })
+  page!: number;
+
+  @ApiProperty({ type: Number, example: 20 })
+  limit!: number;
+
+  @ApiProperty({ type: Number, example: 45 })
+  total!: number;
+
+  @ApiProperty({ type: Number, description: 'Math.ceil(total / limit)', example: 3 })
+  totalPages!: number;
 }
 
 export class AdminCommentsResponseDto {
   @ApiProperty({ type: [AdminCommentDto] })
   data!: AdminCommentDto[];
 
-  @ApiProperty()
-  meta!: { page: number; limit: number; total: number; totalPages: number };
+  @ApiProperty({ type: AdminCommentsMetaDto })
+  meta!: AdminCommentsMetaDto;
 }

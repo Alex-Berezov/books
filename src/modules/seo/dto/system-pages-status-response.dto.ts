@@ -7,27 +7,27 @@ import { Language } from '@prisma/client';
  * (`src/modules/seo/system-pages/system-pages.service.ts`) один в один.
  */
 export class SystemPageSlugsDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   en?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   es?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   fr?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   pt?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String })
   ru?: string;
 }
 
 export class SystemPageStateDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   systemKey!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   purpose!: string;
 
   @ApiProperty({ enum: Language, isArray: true })
@@ -47,10 +47,10 @@ export class SystemPageStateDto {
 }
 
 export class SystemPagesStatusResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   ok!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   checkedAt!: string;
 
   @ApiProperty({ enum: Language, isArray: true })

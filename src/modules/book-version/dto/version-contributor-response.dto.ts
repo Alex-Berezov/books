@@ -4,13 +4,13 @@ import { PersonListItemDto } from '../../persons/dto/person-response.dto';
 import { ContributorRole } from '../../persons/person-interface';
 
 export class BookVersionContributorResponseDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookVersionId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   personId!: string;
 
   @ApiProperty({ enum: ContributorRole })
@@ -19,10 +19,10 @@ export class BookVersionContributorResponseDto {
   @ApiProperty({ type: String, nullable: true })
   roleOtherRu!: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   displayOrder!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isPrimary!: boolean;
 
   @ApiProperty({ type: String, nullable: true })

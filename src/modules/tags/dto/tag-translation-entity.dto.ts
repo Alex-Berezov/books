@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { Language } from '@prisma/client';
 import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 
@@ -14,19 +15,19 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
  * связью `seo`, см. `TagTranslationEntityDto` ниже.
  */
 export class TagTranslationDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   tagId!: string;
 
   @ApiProperty({ enum: Language })
   language!: Language;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiPropertyOptional({ type: String, nullable: true })
@@ -62,20 +63,16 @@ export class TagTranslationDto {
   @ApiPropertyOptional({ type: String, nullable: true, example: 'index, follow' })
   robots?: string | null;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   indexable!: boolean;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { question: { type: 'string' }, answer: { type: 'string' } },
-    },
+    type: [FaqItemDto],
     nullable: true,
     description: 'Json column. Shape held by `TagFaqDto` on `CreateTagTranslationDto.faq`.',
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
-  faq?: unknown;
+  faq?: FaqItemDto[] | null;
 
   @ApiPropertyOptional({
     type: 'array',
@@ -117,10 +114,10 @@ export class TagTranslationDto {
   })
   relatedCollectionSlugs?: unknown;
 
-  @ApiProperty({ default: 0 })
+  @ApiProperty({ type: Number, default: 0 })
   bookCount!: number;
 
-  @ApiProperty({ default: true })
+  @ApiProperty({ type: Boolean, default: true })
   autoIndexable!: boolean;
 
   @ApiPropertyOptional({ type: Number, nullable: true })

@@ -12,15 +12,15 @@ export class PagedAudioChaptersDto {
   @ApiProperty({ type: AudioChapterResponseDto, isArray: true })
   items!: AudioChapterResponseDto[];
 
-  @ApiProperty({ example: 42 })
+  @ApiProperty({ type: Number, example: 42 })
   total!: number;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   page!: number;
 
-  @ApiProperty({ example: 50 })
+  @ApiProperty({ type: Number, example: 50 })
   limit!: number;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: Number, example: 1 })
   totalPages!: number;
 }

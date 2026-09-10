@@ -2,10 +2,10 @@ import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { CommentUserDto } from './comment-user.dto';
 
 export class CommentDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty({ description: 'Автор комментария; публичный профиль лежит в `user`' })
+  @ApiProperty({ type: String, description: 'Автор комментария; публичный профиль лежит в `user`' })
   userId!: string;
 
   @ApiProperty({ type: String, nullable: true })
@@ -30,19 +30,19 @@ export class CommentDto {
   })
   ratingScore?: number | null;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   text!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isHidden!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isDeleted!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   createdAt!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   updatedAt!: string;
 
   @ApiProperty({ type: CommentUserDto })
@@ -57,16 +57,16 @@ export class CommentDto {
 // нужен потому, что у вложенных `children` эта связь не выбирается (`commentChildren` берёт
 // только `user`): описать `rating` прямо в CommentDto значило бы обещать его и в ветке ответов.
 export class CommentRatingDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   userId!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   bookId!: string;
 
-  @ApiProperty({ description: 'Оценка книги, 1-5' })
+  @ApiProperty({ type: Number, description: 'Оценка книги, 1-5' })
   score!: number;
 
   @ApiProperty({ type: String, format: 'date-time' })

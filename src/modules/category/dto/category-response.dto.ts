@@ -1,45 +1,46 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { CategoryType, Language } from '@prisma/client';
 
 export class CategoryTranslationResponse {
   @ApiProperty({ enum: Language })
   language: Language;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   h1?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   shortDescription?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   description?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   metaTitle?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   metaDescription?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   ogTitle?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   ogDescription?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   ogImageUrl?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, nullable: true })
   ogImageAlt?: string | null;
 
-  @ApiPropertyOptional()
-  faq?: Record<string, unknown> | null;
+  @ApiPropertyOptional({ type: [FaqItemDto], nullable: true })
+  faq?: FaqItemDto[] | null;
 
   @ApiPropertyOptional({
     description: 'Cached number of published books in this language.',
@@ -54,22 +55,22 @@ export class CategoryTranslationResponse {
 }
 
 export class CategoryResponse {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key: string;
 
   @ApiProperty({ enum: CategoryType })
   type: CategoryType;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   booksCount: number;
 
   @ApiPropertyOptional({
@@ -84,30 +85,37 @@ export class CategoryResponse {
   })
   autoIndexable?: boolean;
 
-  @ApiPropertyOptional({ default: true })
-  indexable?: boolean;
+  /**
+   * Обязательные, а не необязательные: `CategoryService.list` кладёт все три
+   * в каждый элемент выдачи безусловно — `indexable: item.indexable ?? true`,
+   * `isVisible: ... ?? true`, `sortOrder: ... ?? 0`
+   * (`category.service.ts:171-173`). «Может отсутствовать» было бы неправдой
+   * о форме ответа, а рукописные типы фронта сверяются с этой схемой машинно.
+   */
+  @ApiProperty({ type: Boolean, default: true })
+  indexable!: boolean;
 
-  @ApiPropertyOptional({ default: true })
-  isVisible?: boolean;
+  @ApiProperty({ type: Boolean, default: true })
+  isVisible!: boolean;
 
-  @ApiPropertyOptional({ default: 0 })
-  sortOrder?: number;
+  @ApiProperty({ type: Number, default: 0 })
+  sortOrder!: number;
 
   @ApiProperty({ type: [CategoryTranslationResponse] })
   translations: CategoryTranslationResponse[];
 }
 
 export class PaginationMeta {
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   page: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   limit: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   total: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   totalPages: number;
 }
 

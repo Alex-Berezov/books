@@ -46,7 +46,7 @@ export class SourceEditionDto {
   @ApiProperty({ type: String, nullable: true }) sourceFileContentType!: string | null;
   @ApiProperty({ type: Number, nullable: true }) sourceFileSizeBytes!: number | null;
   @ApiProperty({ type: String, nullable: true }) sourceFileUploadedAt!: string | null;
-  @ApiProperty({ description: 'Файл загружен и доступен для скачивания' })
+  @ApiProperty({ type: Boolean, description: 'Файл загружен и доступен для скачивания' })
   hasSourceFile!: boolean;
 
   /** WP-7.1: запись на каждый оценённый язык; пустой массив — языковой срез ещё не материализован. */
@@ -245,7 +245,7 @@ export class RightsEvidenceDto {
    * WP-9.3 (R3-08): архивная копия. Ключ хранилища наружу не отдаётся — скачивание идёт
    * через `GET /admin/rights/evidence/:evidenceId/archive-copy`.
    */
-  @ApiProperty({ description: 'Архивная копия документа загружена' })
+  @ApiProperty({ type: Boolean, description: 'Архивная копия документа загружена' })
   isArchivedCopy!: boolean;
   @ApiProperty({ type: String, nullable: true }) fileSha256!: string | null;
   @ApiProperty({ type: String, nullable: true }) fileName!: string | null;

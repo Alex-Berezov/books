@@ -6,22 +6,22 @@ import { BookCardsPaginationDto } from './paged-book-cards.dto';
 
 /** One resolved related-taxonomy term (`RelatedTaxonomyService.resolve` / `RelatedTerm`). */
 export class RelatedTermDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isVisible!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   indexable!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   autoIndexable!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   langBookCount!: number;
 }
 
@@ -46,28 +46,28 @@ export class RelatedTermsDto {
  * translation and resolved related terms — not a Prisma select.
  */
 export class TagCardSummaryDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   name!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   indexable!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Boolean })
   isVisible!: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   sortOrder!: number;
 
-  @ApiProperty()
+  @ApiProperty({ type: Number })
   booksCount!: number;
 
   @ApiProperty({ enum: Language })

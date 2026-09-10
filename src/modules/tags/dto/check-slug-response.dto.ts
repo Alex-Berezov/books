@@ -7,10 +7,10 @@ export class ExistingTagDto {
   })
   id!: string;
 
-  @ApiProperty({ description: 'Tag name', example: 'Aestheticism' })
+  @ApiProperty({ type: String, description: 'Tag name', example: 'Aestheticism' })
   name!: string;
 
-  @ApiProperty({ description: 'Tag slug', example: 'aestheticism' })
+  @ApiProperty({ type: String, description: 'Tag slug', example: 'aestheticism' })
   slug!: string;
 }
 
@@ -22,7 +22,7 @@ export class ExistingTagDto {
  * на другой вопрос и молчала о настоящих совпадениях.
  */
 export class CheckTagSlugResponseDto {
-  @ApiProperty({ description: 'true if the slug is already taken', example: false })
+  @ApiProperty({ type: Boolean, description: 'true if the slug is already taken', example: false })
   exists!: boolean;
 
   @ApiPropertyOptional({

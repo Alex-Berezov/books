@@ -30,10 +30,10 @@ export class BookListVersionDto extends PublicBookVersionDto {
  * average rating and the three availability flags computed from the versions.
  */
 export class BookListItemDto {
-  @ApiProperty()
+  @ApiProperty({ type: String })
   id!: string;
 
-  @ApiProperty()
+  @ApiProperty({ type: String })
   slug!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })
@@ -48,13 +48,16 @@ export class BookListItemDto {
   @ApiPropertyOptional({ type: Number, description: 'Average rating (0-5)', nullable: true })
   rating!: number | null;
 
-  @ApiProperty({ description: 'A published version with chapters or of type `text` exists' })
+  @ApiProperty({
+    type: Boolean,
+    description: 'A published version with chapters or of type `text` exists',
+  })
   hasText!: boolean;
 
-  @ApiProperty({ description: 'A published version with audio chapters exists' })
+  @ApiProperty({ type: Boolean, description: 'A published version with audio chapters exists' })
   hasAudio!: boolean;
 
-  @ApiProperty({ description: 'A published version with a summary exists' })
+  @ApiProperty({ type: Boolean, description: 'A published version with a summary exists' })
   hasSummary!: boolean;
 }
 
