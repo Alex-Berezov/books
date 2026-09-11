@@ -134,11 +134,14 @@ cd /opt/books/app/src            # каталог репозитория на с
 | `yarn build`                 | тяжёлая       | в самом конце и только под правки `nest-cli.json`, `tsconfig*.json`, `package.json`              |
 | `yarn ci`                    | полный набор  | руками почти никогда, это то, что гоняет CI                                                      |
 
-**Ноль ошибок и ноль предупреждений в тех файлах, которые правил.** `yarn lint`
-(`package.json`) объявлен без `--max-warnings`, а `@typescript-eslint/no-floating-promises`
-и `@typescript-eslint/no-unsafe-argument` заведены в `eslint.config.mjs` уровнем `warn` —
-то есть предупреждение настоящее, а код возврата нулевой, и ни гейт, ни `report-honesty.js`
-его не увидят. Смотреть глазами вывод линта по своим файлам, а не только его код возврата.
+**Ноль ошибок и ноль предупреждений — теперь это проверяет машина** (`LEGACY-182`,
+11.09.2026). `yarn lint` объявлен с `--max-warnings=0` (`package.json:17`), а
+`@typescript-eslint/no-floating-promises` и `@typescript-eslint/no-unsafe-argument` подняты
+в `eslint.config.mjs` с `warn` до `error`. Любое предупреждение роняет прогон, а с ним оба
+конвейера: `scripts/ci.sh:24` и `deploy.yml:195` зовут этот же скрипт.
+⚠️ Два места, где строгость всё ещё слабее: `lint-staged` (`package.json:125-129`) зовёт
+`eslint --fix` без флага, поэтому `pre-commit` мягче CI; и `--max-warnings=0` стоит после
+`--fix`, то есть счёт берётся после автопочинки и автопочинимые правила гейт не красят.
 Требование переехало сюда 07.09.2026 из `AGENTS.md` (`LEGACY-168`).
 
 **`yarn lint` запускается с `--fix` и правит файлы на месте.** После него перечитай всё, что успел

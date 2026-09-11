@@ -489,7 +489,7 @@ async checkSlugExists(slug: string, excludeId?: string): Promise<Book | null> {
 
 ```bash
 yarn format       # Prettier на src/ и test/
-yarn lint          # ESLint + fix
+yarn lint          # ESLint + fix, --max-warnings=0: любое предупреждение роняет прогон
 ```
 
 ---

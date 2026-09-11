@@ -39,7 +39,9 @@ interface PrismaStub {
     groupBy: jest.Mock;
   };
   $transaction: jest.Mock;
-  $queryRaw: jest.Mock;
+  // Тип аргументов назван: без него `mock.calls` приходит как `any[]`, и разбор сырого SQL
+  // в тестах ниже читает шаблон через `any`.
+  $queryRaw: jest.Mock<Promise<unknown>, [unknown]>;
 }
 
 const createPrismaStub = (): PrismaStub => {

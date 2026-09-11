@@ -38,7 +38,7 @@ describe('Security config (Helmet, CORS, limits)', () => {
     configureSecurity(app);
     await app.init();
 
-    const res = await request(app.getHttpServer()).get('/echo/headers');
+    const res = await request(app.getHttpServer() as import('http').Server).get('/echo/headers');
     expect(res.status).toBe(200);
     // A few typical helmet headers
     expect(res.headers['x-dns-prefetch-control']).toBeDefined();
