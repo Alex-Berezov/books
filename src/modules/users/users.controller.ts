@@ -128,8 +128,14 @@ export class UsersController {
   @Roles(Role.Admin)
   @Post(':id/roles/:role')
   @ApiCreatedResponse({ type: UserRoleDto })
-  assignRole(@Param('id') id: string, @Param('role') role: RoleName) {
-    return this.users.assignRole(id, role);
+  assignRole(
+    @Param('id') id: string,
+    @Param('role') role: RoleName,
+    @Req() req: { user: RequestUser },
+  ) {
+    // Актёр берётся из запроса, а не из тела: журнал прав должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.users.assignRole(id, role, req.user.userId);
   }
 
   @ApiOperation({ summary: 'Revoke role from user (admin only)' })
@@ -138,23 +144,29 @@ export class UsersController {
   @Roles(Role.Admin)
   @Delete(':id/roles/:role')
   @ApiOkResponse({ type: UserRoleDto })
-  revokeRole(@Param('id') id: string, @Param('role') role: RoleName) {
-    return this.users.revokeRole(id, role);
+  revokeRole(
+    @Param('id') id: string,
+    @Param('role') role: RoleName,
+    @Req() req: { user: RequestUser },
+  ) {
+    return this.users.revokeRole(id, role, req.user.userId);
   }
 
   @ApiOperation({ summary: 'Create user (admin only)' })
   @ApiOkResponse({ type: PublicUserWithRolesDto })
   @Roles(Role.Admin)
   @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.users.create(dto);
+  create(@Body() dto: CreateUserDto, @Req() req: { user: RequestUser }) {
+    // Актёр берётся из запроса, а не из тела: журнал прав должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.users.create(dto, req.user.userId);
   }
 
   @ApiOperation({ summary: 'Update user (admin only)' })
   @ApiOkResponse({ type: PublicUserWithRolesDto })
   @Roles(Role.Admin)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.users.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto, @Req() req: { user: RequestUser }) {
+    return this.users.update(id, dto, req.user.userId);
   }
 }

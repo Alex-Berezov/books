@@ -5,7 +5,13 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Language as PrismaLanguage, RoleName, Prisma } from '@prisma/client';
+import {
+  Language as PrismaLanguage,
+  RoleName,
+  Prisma,
+  AdminAuditAction,
+  AdminAuditTargetType,
+} from '@prisma/client';
 import * as argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -16,6 +22,15 @@ import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-u
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { rolesCache } from '../../common/roles/roles-cache';
+
+/**
+ * Параметры транзакций, меняющих набор ролей вместе с записью в журнал (L-020).
+ *
+ * Дефолт Prisma (`timeout: 5000`, `maxWait: 2000`) рассчитан на пару операторов, а здесь
+ * их до шести: чтение прежнего набора, замена, запись событий. Значения те же,
+ * что у соседних многошаговых транзакций (`contributors.service.ts`, `persons.service.ts`).
+ */
+const USER_ROLES_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 /**
  * Prisma сообщает кодом `P2025`, что строки под запись не нашлось (`LEGACY-194`).
@@ -207,9 +222,21 @@ export class UsersService {
     return roles.map((ur) => ur.role.name);
   }
 
+  /**
+   * ⚠️ Выдача роли и запись о ней идут **одной транзакцией** (`LEGACY-015`). Раздельные
+   * записи дали бы состояние, ради предотвращения которого журнал и заведён: роль выдана,
+   * следа нет — то есть расследовать по журналу можно было бы не всё, а «как повезёт».
+   *
+   * ⚠️ Событие пишется **только на изменение состояния**: повторная выдача уже имеющейся
+   * роли следа не оставляет. Иначе `ROLE_ASSIGNED` перестала бы означать «роль появилась»,
+   * и по журналу нельзя было бы сказать, когда её выдали на самом деле. Признак изменения
+   * даёт сама вставка (`count` от `createMany` с `skipDuplicates`), а не отдельное чтение:
+   * чтение на `READ COMMITTED` не отличает «роли нет» от «её как раз выдают рядом».
+   */
   async assignRole(
     userId: string,
     roleName: RoleName,
+    actorUserId: string | null,
   ): Promise<{ userId: string; role: RoleName }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -218,18 +245,41 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException('Role not found');
-    await this.prisma.userRole.upsert({
-      where: { userId_roleId: { userId, roleId: role.id } },
-      create: { userId, roleId: role.id },
-      update: {},
-    });
+    await this.prisma.$transaction(async (tx) => {
+      // ⚠️ Вставка и признак «роль действительно появилась» берутся **одним** оператором.
+      // Отдельное чтение перед `upsert` выглядело бы проверкой, но ничего не проверяет:
+      // на `READ COMMITTED` (умолчание Postgres) оба параллельных запроса увидели бы `null`
+      // и записали бы по событию на одну фактическую выдачу. `skipDuplicates` разворачивается
+      // в `ON CONFLICT DO NOTHING`, второй запрос ждёт коммита первого на индексе первичного ключа
+      // `UserRole(userId, roleId)` и получает `count === 0` — то есть ответ «не я её выдал».
+      const { count } = await tx.userRole.createMany({
+        data: [{ userId, roleId: role.id }],
+        skipDuplicates: true,
+      });
+      // Состояние не изменилось — записывать нечего (инвариант модели `AdminAuditEvent`).
+      if (count === 0) return;
+      await this.recordRoleAuditEvents(
+        tx,
+        [{ action: AdminAuditAction.ROLE_ASSIGNED, role: role.name }],
+        userId,
+        actorUserId,
+      );
+    }, USER_ROLES_TX_OPTIONS);
+    // Сброс кэша — вне транзакции намеренно: это не запись в базу, и откат транзакции
+    // его бы не отменил. Внутри он сбросился бы раньше, чем данные стали видны.
     rolesCache.invalidate(userId);
     return { userId, role: role.name };
   }
 
+  /**
+   * ⚠️ Отзыв роли и запись о нём идут **одной транзакцией** (`LEGACY-015`), по той же
+   * причине, что и выдача. Отказ `P2025` («роли не было») события не пишет: записывать
+   * нечего — состояние не изменилось, а запись создала бы след действия, которого не было.
+   */
   async revokeRole(
     userId: string,
     roleName: RoleName,
+    actorUserId: string | null,
   ): Promise<{ userId: string; role: RoleName }> {
     if (roleName === 'user') throw new BadRequestException('Cannot revoke base user role');
     const user = await this.prisma.user.findUnique({
@@ -240,7 +290,15 @@ export class UsersService {
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException('Role not found');
     try {
-      await this.prisma.userRole.delete({ where: { userId_roleId: { userId, roleId: role.id } } });
+      await this.prisma.$transaction(async (tx) => {
+        await tx.userRole.delete({ where: { userId_roleId: { userId, roleId: role.id } } });
+        await this.recordRoleAuditEvents(
+          tx,
+          [{ action: AdminAuditAction.ROLE_REVOKED, role: role.name }],
+          userId,
+          actorUserId,
+        );
+      }, USER_ROLES_TX_OPTIONS);
     } catch (error) {
       // `P2025` — «нечего удалять»: роли у пользователя нет. Ответ 404, как
       // у двух проверок выше, а не 500 (`LEGACY-194`). Идемпотентности здесь
@@ -385,7 +443,15 @@ export class UsersService {
     return { items, total, page, limit };
   }
 
-  async create(dto: CreateUserDto): Promise<PublicUser & { roles: RoleName[] }> {
+  /**
+   * ⚠️ Роли, выданные при создании, пишутся в журнал наравне с выдачей через отдельную
+   * ручку (`LEGACY-015`): админка заводит администратора именно здесь, и покрытие одних
+   * только `/roles/:role` оставило бы первого администратора без следа происхождения.
+   */
+  async create(
+    dto: CreateUserDto,
+    actorUserId: string | null,
+  ): Promise<PublicUser & { roles: RoleName[] }> {
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email },
       select: USER_EXISTS_SELECT,
@@ -394,25 +460,39 @@ export class UsersService {
 
     const passwordHash = await argon2.hash(dto.password);
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        name: [dto.firstName, dto.lastName].filter(Boolean).join(' ') || undefined,
-        isActive: dto.isActive ?? true,
-        languagePreference: PrismaLanguage.en, // Default
-        roles: {
-          // `lawyer` (Phase 19) is unknown to the generated client until the VPS regenerates it,
-          // so the assignable-role literal is cast rather than typed through `RoleName`.
-          create: (dto.roles || [RoleName.user]).map((role) => ({
-            role: { connect: { name: role as RoleName } },
-          })),
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email: dto.email,
+          passwordHash,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          name: [dto.firstName, dto.lastName].filter(Boolean).join(' ') || undefined,
+          isActive: dto.isActive ?? true,
+          languagePreference: PrismaLanguage.en, // Default
+          roles: {
+            // `lawyer` (Phase 19) is unknown to the generated client until the VPS regenerates it,
+            // so the assignable-role literal is cast rather than typed through `RoleName`.
+            create: (dto.roles || [RoleName.user]).map((role) => ({
+              role: { connect: { name: role as RoleName } },
+            })),
+          },
         },
-      },
-      select: { ...ACCOUNT_USER_SELECT, roles: { select: { role: { select: { name: true } } } } },
-    });
+        select: { ...ACCOUNT_USER_SELECT, roles: { select: { role: { select: { name: true } } } } },
+      });
+
+      await this.recordRoleAuditEvents(
+        tx,
+        created.roles.map((ur) => ({
+          action: AdminAuditAction.ROLE_ASSIGNED,
+          role: ur.role.name,
+        })),
+        created.id,
+        actorUserId,
+      );
+
+      return created;
+    }, USER_ROLES_TX_OPTIONS);
 
     const roles = user.roles.map((ur) => ur.role.name);
 
@@ -432,7 +512,29 @@ export class UsersService {
     };
   }
 
-  async update(id: string, dto: UpdateUserDto): Promise<PublicUser & { roles: RoleName[] }> {
+  /**
+   * ⚠️ Смена набора ролей пишется в журнал (`LEGACY-015`). Админка меняет роли **двумя**
+   * путями с одной страницы: панель ролей зовёт `/roles/:role`, а эта форма шлёт весь набор
+   * сразу. Покрытие одних только ручек оставило бы журнал не молчащим, а лгущим: строка
+   * `ROLE_ASSIGNED` пережила бы снятие той же роли через форму, и по журналу выходило бы,
+   * что роль до сих пор у пользователя.
+   *
+   * ⚠️ События считаются по **разнице** наборов, а не по факту вызова: замена набора на
+   * такой же следа не оставляет, ровно как повторная выдача в `assignRole`.
+   *
+   * ⚠️ Разница считается от набора, прочитанного в этой же транзакции, но на `READ COMMITTED`
+   * это всё-таки снимок: две одновременные правки одного пользователя обе прочитают прежний
+   * набор и обе запишут свою разницу. В базе окажется верное состояние, в журнале — лишняя
+   * пара строк. Здесь, в отличие от `assignRole`, признак изменения из самой записи не
+   * достать: `deleteMany` + `createMany` не отвечают, что именно поменялось относительно
+   * чужого коммита. Чинится уровнем изоляции или блокировкой строки `User` с разбором
+   * повторов транзакции — отдельной строкой очереди, не этой пачкой.
+   */
+  async update(
+    id: string,
+    dto: UpdateUserDto,
+    actorUserId: string | null,
+  ): Promise<PublicUser & { roles: RoleName[] }> {
     // Читаются ровно те поля, из которых ниже собирается `name`.
     const user = await this.prisma.user.findUnique({
       where: { id },
@@ -466,16 +568,38 @@ export class UsersService {
         if (dbRoles.length !== desired.length) {
           throw new NotFoundException('One or more roles not found');
         }
+        // Прежний набор читается до замены и в той же транзакции: после `deleteMany`
+        // восстановить, что именно сняли, будет уже неоткуда.
+        const before = await tx.userRole.findMany({
+          where: { userId: id },
+          select: { role: { select: { name: true } } },
+        });
+        const had = new Set(before.map((ur) => ur.role.name));
+        const wanted = new Set(dbRoles.map((r) => r.name));
         // Replace role set: remove all, then create desired
         await tx.userRole.deleteMany({ where: { userId: id } });
         await tx.userRole.createMany({
           data: dbRoles.map((r) => ({ userId: id, roleId: r.id })),
           skipDuplicates: true,
         });
+        await this.recordRoleAuditEvents(
+          tx,
+          [
+            ...dbRoles
+              .filter((r) => !had.has(r.name))
+              .map((r) => ({ action: AdminAuditAction.ROLE_ASSIGNED, role: r.name })),
+            ...before
+              .map((ur) => ur.role.name)
+              .filter((name) => !wanted.has(name))
+              .map((name) => ({ action: AdminAuditAction.ROLE_REVOKED, role: name })),
+          ],
+          id,
+          actorUserId,
+        );
       }
 
       return u;
-    });
+    }, USER_ROLES_TX_OPTIONS);
     if (rolesDto) rolesCache.invalidate(id);
 
     const roles = await this.computeRoles(updatedUser);
@@ -636,5 +760,40 @@ export class UsersService {
     });
 
     return { items, total, page, limit, hasNext: page * limit < total };
+  }
+
+  /**
+   * Единственное место записи в журнал административных действий (`LEGACY-015`).
+   *
+   * ⚠️ `tx` — первый обязательный параметр, а не необязательный с запасным вариантом:
+   * забыть его нельзя, вызов без клиента не компилируется. Но подменить его корневым
+   * `PrismaService` компилятор **позволит**: `Prisma.TransactionClient` — это
+   * `Omit<PrismaClient, ITXClientDenyList>`, и наследник `PrismaClient` ему структурно
+   * подходит. Запись, пережившая откат своей операции, — это `LEGACY-036`, и от неё здесь
+   * держит не тип, а посадка: на каждом из четырёх путей записи стоит тест, отличающий
+   * клиент транзакции от корневого. Добавляешь пятый путь — добавляй и такой тест.
+   *
+   * ⚠️ Зовётся **только на фактическое изменение** набора ролей: пустой список событий
+   * не делает запроса вовсе. Инвариант «событие = изменение состояния» описан
+   * в doc-комментарии модели `AdminAuditEvent`.
+   */
+  private async recordRoleAuditEvents(
+    tx: Prisma.TransactionClient,
+    events: Array<{ action: AdminAuditAction; role: RoleName }>,
+    targetUserId: string,
+    actorUserId: string | null,
+  ): Promise<void> {
+    if (events.length === 0) return;
+    await tx.adminAuditEvent.createMany({
+      data: events.map(({ action, role }) => ({
+        actorUserId,
+        action,
+        targetType: AdminAuditTargetType.USER,
+        targetId: targetUserId,
+        // В `payload` только то, без чего событие нечитаемо. Ни почты, ни имени:
+        // выгрузку базы и журнал выката читает кто угодно.
+        payload: { role },
+      })),
+    });
   }
 }

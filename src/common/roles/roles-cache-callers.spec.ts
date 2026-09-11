@@ -29,10 +29,10 @@ type Site = { file: string; op: string };
 const EXPECTED: Array<Site & { count: number; verdict: 'invalidated' | 'exempt'; why: string }> = [
   {
     file: 'modules/users/users.service.ts',
-    op: 'upsert',
-    count: 1,
+    op: 'createMany',
+    count: 2,
     verdict: 'invalidated',
-    why: 'assignRole — роль выдана уже существующему пользователю',
+    why: 'assignRole (вставка с skipDuplicates: count даёт признак изменения состояния для журнала LEGACY-015) и админский update (новый набор ролей вместо прежнего)',
   },
   {
     file: 'modules/users/users.service.ts',
@@ -47,13 +47,6 @@ const EXPECTED: Array<Site & { count: number; verdict: 'invalidated' | 'exempt';
     count: 2,
     verdict: 'invalidated',
     why: 'deleteById и замена набора ролей в админском update',
-  },
-  {
-    file: 'modules/users/users.service.ts',
-    op: 'createMany',
-    count: 1,
-    verdict: 'invalidated',
-    why: 'админский update: новый набор ролей вместо прежнего',
   },
   {
     file: 'modules/auth/auth.service.ts',

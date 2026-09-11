@@ -42,13 +42,12 @@ interface PrismaStub {
   userRole: {
     findMany: jest.Mock;
     deleteMany: jest.Mock;
-    upsert: jest.Mock;
+    createMany: jest.Mock;
     delete: jest.Mock;
-    createMany?: jest.Mock;
   };
   role: {
     findUnique: jest.Mock;
-    findMany?: jest.Mock;
+    findMany: jest.Mock;
   };
   comment: {
     findMany: jest.Mock;
@@ -61,7 +60,14 @@ interface PrismaStub {
   readingProgress: { deleteMany: jest.Mock };
   viewStat: { updateMany: jest.Mock };
   mediaAsset: { updateMany: jest.Mock };
-  $transaction: jest.Mock<Promise<unknown>, [TransactionArg]>;
+  adminAuditEvent: { createMany: jest.Mock };
+  // Второй параметр — `{ timeout, maxWait }` (`USER_ROLES_TX_OPTIONS`). Он объявлен здесь,
+  // а не опущен, потому что это поведение: на дефолтах Prisma смена набора ролей на занятом
+  // пуле отдаёт `P2028`, и посадка на эти значения читает именно `mock.calls[0][1]`.
+  $transaction: jest.Mock<
+    Promise<unknown>,
+    [TransactionArg, { timeout: number; maxWait: number }?]
+  >;
 }
 
 describe('UsersService (unit)', () => {
@@ -98,11 +104,12 @@ describe('UsersService (unit)', () => {
       userRole: {
         findMany: jest.fn(),
         deleteMany: jest.fn(),
-        upsert: jest.fn(),
+        createMany: jest.fn(),
         delete: jest.fn(),
       },
       role: {
         findUnique: jest.fn(),
+        findMany: jest.fn(),
       },
       comment: {
         findMany: jest.fn(),
@@ -117,6 +124,7 @@ describe('UsersService (unit)', () => {
       readingProgress: { deleteMany: jest.fn() },
       viewStat: { updateMany: jest.fn() },
       mediaAsset: { updateMany: jest.fn() },
+      adminAuditEvent: { createMany: jest.fn() },
       $transaction: jest.fn(async (arg: TransactionArg) => {
         if (typeof arg === 'function') {
           return arg(prismaMock);
@@ -236,39 +244,406 @@ describe('UsersService (unit)', () => {
       id: 'r1',
       name: 'admin' as RoleName,
     });
-    const upsert = jest.fn().mockResolvedValue({});
-    prismaMock.userRole.upsert = upsert;
-    const res = await service.assignRole('u1', 'admin');
-    expect(upsert).toHaveBeenCalled();
+    const createMany = jest.fn().mockResolvedValue({ count: 1 });
+    prismaMock.userRole.createMany = createMany;
+    const res = await service.assignRole('u1', 'admin', 'admin-1');
+    expect(createMany).toHaveBeenCalled();
     expect(res).toEqual({ userId: 'u1', role: 'admin' });
 
     const del = jest.fn().mockResolvedValue({});
     prismaMock.userRole.delete = del;
-    const revoked = await service.revokeRole('u1', 'admin');
+    const revoked = await service.revokeRole('u1', 'admin', 'admin-1');
     expect(del).toHaveBeenCalledWith({ where: { userId_roleId: { userId: 'u1', roleId: 'r1' } } });
     expect(revoked).toEqual({ userId: 'u1', role: 'admin' });
   });
 
+  /**
+   * 🔴 LEGACY-015. Состояние базы отвечает «как сейчас», но не «кто и когда»: снятую роль
+   * после отзыва не отличить от никогда не выданной. Посадки ниже держат журнал сразу
+   * по четырём осям: событие пишется, пишется с верным актёром и действием, пишется
+   * **в той же транзакции**, что смена роли, и пишется **только на изменение состояния**.
+   *
+   * ⚠️ Значения `action` и `targetType` сверяются литералами, а не через `AdminAuditAction`:
+   * в базу уходит именно строка, и ссылка на перечисление молча проехала бы переименование
+   * его значения вместе с сервисом.
+   */
+  it('assignRole: пишет событие журнала с актёром и ролью', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+    // `count: 1` — роль вставлена этим запросом. Именно вставка, а не отдельное чтение,
+    // и есть признак изменения состояния.
+    prismaMock.userRole.createMany.mockResolvedValue({ count: 1 });
+
+    await service.assignRole('u1', 'admin', 'admin-1');
+
+    // Число вставок закреплено вместе с их формой: именно `count` этой единственной
+    // вставки решает, писать ли строку журнала. Вторая вставка рядом дала бы две роли
+    // и одно событие — по журналу вторая роль оказалась бы выдана никем.
+    expect(prismaMock.userRole.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.userRole.createMany).toHaveBeenCalledWith({
+      data: [{ userId: 'u1', roleId: 'r1' }],
+      skipDuplicates: true,
+    });
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          actorUserId: 'admin-1',
+          action: 'ROLE_ASSIGNED',
+          targetType: 'USER',
+          targetId: 'u1',
+          payload: { role: 'admin' },
+        },
+      ],
+    });
+  });
+
+  /**
+   * Инвариант «событие = изменение состояния». Повторная выдача уже имеющейся роли
+   * состояния не меняет, и строка в журнале солгала бы о втором наделении правами:
+   * по такому журналу нельзя было бы сказать, когда роль выдали на самом деле.
+   */
+  it('assignRole: повторная выдача уже имеющейся роли события не пишет', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+    // `count: 0` — `ON CONFLICT DO NOTHING` не вставил ничего: роль уже была.
+    // Так же выглядит и проигранная гонка с параллельной выдачей — и это верно:
+    // событие должен написать тот запрос, который роль действительно создал.
+    prismaMock.userRole.createMany.mockResolvedValue({ count: 0 });
+
+    await service.assignRole('u1', 'admin', 'admin-1');
+
+    expect(prismaMock.userRole.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  it('revokeRole: пишет событие журнала с действием ROLE_REVOKED', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+    prismaMock.userRole.delete = jest.fn().mockResolvedValue({});
+
+    await service.revokeRole('u1', 'admin', 'admin-1');
+
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          actorUserId: 'admin-1',
+          action: 'ROLE_REVOKED',
+          targetType: 'USER',
+          targetId: 'u1',
+          payload: { role: 'admin' },
+        },
+      ],
+    });
+  });
+
+  /**
+   * Смена роли и запись о ней идут одним клиентом транзакции. Возврат к раздельным
+   * записям (`this.prisma.userRole.*` вместо `tx.userRole.*`) роняет эту посадку:
+   * вызов уедет на корневой клиент, и `tx` останется незатронутым.
+   *
+   * ⚠️ Посадка нужна **на каждом** пути записи отдельно: она ловит подмену клиента там,
+   * где стоит, и молчит про соседний метод.
+   */
+  it('assignRole: смена роли и запись журнала идут одной транзакцией', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+    const txWrite = jest.fn().mockResolvedValue({ count: 1 });
+    const txAudit = jest.fn().mockResolvedValue({ count: 1 });
+    prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
+      if (typeof arg !== 'function') return Promise.all(arg);
+      return arg({
+        ...prismaMock,
+        userRole: { ...prismaMock.userRole, createMany: txWrite },
+        adminAuditEvent: { createMany: txAudit },
+      } as unknown as PrismaStub);
+    });
+
+    await service.assignRole('u1', 'admin', 'admin-1');
+
+    expect(txWrite).toHaveBeenCalled();
+    expect(txAudit).toHaveBeenCalled();
+    expect(prismaMock.userRole.createMany).not.toHaveBeenCalled();
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  it('revokeRole: снятие роли и запись журнала идут одной транзакцией', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+    const txDelete = jest.fn().mockResolvedValue({});
+    const txAudit = jest.fn().mockResolvedValue({});
+    prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
+      if (typeof arg !== 'function') return Promise.all(arg);
+      return arg({
+        ...prismaMock,
+        userRole: { ...prismaMock.userRole, delete: txDelete },
+        adminAuditEvent: { createMany: txAudit },
+      } as unknown as PrismaStub);
+    });
+
+    await service.revokeRole('u1', 'admin', 'admin-1');
+
+    expect(txDelete).toHaveBeenCalled();
+    expect(txAudit).toHaveBeenCalled();
+    expect(prismaMock.userRole.delete).not.toHaveBeenCalled();
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `P2025` — «роли не было»: состояние не изменилось, значит записывать нечего.
+   * Событие при отказе создало бы след действия, которого не было.
+   */
+  it('revokeRole: при отсутствующей роли события журнала нет', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+    prismaMock.userRole.delete = jest.fn().mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('nothing to delete', {
+        code: 'P2025',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(service.revokeRole('u1', 'admin', 'admin-1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 Основной путь админки — форма пользователя (`PATCH /users/:id`), а не ручки
+   * `/roles/:role`. Без этой посадки журнал не молчал бы, а лгал: строка `ROLE_ASSIGNED`
+   * пережила бы снятие роли через форму, и по журналу выходило бы, что роль на месте.
+   */
+  it('update: смена набора ролей пишет события по разнице наборов', async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', firstName: null, lastName: null });
+    prismaMock.user.update.mockResolvedValue(baseUser);
+    prismaMock.role.findMany.mockResolvedValue([{ id: 'r2', name: 'content_manager' }]);
+    // Было: `admin`. Станет: `content_manager`. Значит одна выдача и один отзыв.
+    prismaMock.userRole.findMany.mockResolvedValue([{ role: { name: 'admin' } }]);
+    prismaMock.userRole.deleteMany.mockResolvedValue({ count: 1 });
+    prismaMock.userRole.createMany.mockResolvedValue({ count: 1 });
+
+    await service.update('u1', { roles: ['content_manager'] }, 'admin-1');
+
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          actorUserId: 'admin-1',
+          action: 'ROLE_ASSIGNED',
+          targetType: 'USER',
+          targetId: 'u1',
+          payload: { role: 'content_manager' },
+        },
+        {
+          actorUserId: 'admin-1',
+          action: 'ROLE_REVOKED',
+          targetType: 'USER',
+          targetId: 'u1',
+          payload: { role: 'admin' },
+        },
+      ],
+    });
+  });
+
+  it('update: замена набора ролей на такой же события не пишет', async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', firstName: null, lastName: null });
+    prismaMock.user.update.mockResolvedValue(baseUser);
+    prismaMock.role.findMany.mockResolvedValue([{ id: 'r1', name: 'admin' }]);
+    prismaMock.userRole.findMany.mockResolvedValue([{ role: { name: 'admin' } }]);
+    prismaMock.userRole.deleteMany.mockResolvedValue({ count: 1 });
+    prismaMock.userRole.createMany.mockResolvedValue({ count: 1 });
+
+    await service.update('u1', { roles: ['admin'] }, 'admin-1');
+
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Та же посадка, что у `assignRole`, но на основном пути админки. Без неё подмена
+   * `recordRoleAuditEvents(tx, ...)` на корневой клиент в `update()` проходит все тесты:
+   * дефолтный стаб `$transaction` отдаёт в колбэк сам `prismaMock`, и разницы не видно.
+   */
+  it('update: смена ролей и запись журнала идут одной транзакцией', async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', firstName: null, lastName: null });
+    prismaMock.userRole.findMany.mockResolvedValue([]);
+    const txAudit = jest.fn().mockResolvedValue({ count: 1 });
+    const txDeleteMany = jest.fn().mockResolvedValue({ count: 0 });
+    const txCreateMany = jest.fn().mockResolvedValue({ count: 1 });
+    prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
+      if (typeof arg !== 'function') return Promise.all(arg);
+      return arg({
+        ...prismaMock,
+        user: { ...prismaMock.user, update: jest.fn().mockResolvedValue(baseUser) },
+        role: {
+          ...prismaMock.role,
+          findMany: jest.fn().mockResolvedValue([{ id: 'r1', name: 'admin' }]),
+        },
+        userRole: {
+          ...prismaMock.userRole,
+          findMany: jest.fn().mockResolvedValue([]),
+          deleteMany: txDeleteMany,
+          createMany: txCreateMany,
+        },
+        adminAuditEvent: { createMany: txAudit },
+      } as unknown as PrismaStub);
+    });
+
+    await service.update('u1', { roles: ['admin'] }, 'admin-1');
+
+    expect(txCreateMany).toHaveBeenCalled();
+    expect(txAudit).toHaveBeenCalledTimes(1);
+    expect(prismaMock.userRole.createMany).not.toHaveBeenCalled();
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ Параметры транзакции — тоже поведение, а не украшение: на дефолтных
+   * `timeout: 5000 / maxWait: 2000` смена набора ролей на занятом пуле отдаёт `P2028` и 500.
+   * Без этой проверки снятие второго аргумента `$transaction` не роняет ничего.
+   */
+  it('все четыре пути: транзакция идёт с явными timeout и maxWait', async () => {
+    const expected = { timeout: 30_000, maxWait: 10_000 };
+    // Читается именно первый вызов: перед каждой проверкой стоит `mockClear()`, поэтому
+    // вызов в мокe ровно один. Имя говорит «первый», чтобы помощник не начал врать, когда
+    // на каком-то пути появится вторая транзакция.
+    const optionsOfFirstTransaction = () => prismaMock.$transaction.mock.calls[0][1];
+
+    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', firstName: null, lastName: null });
+    prismaMock.user.update.mockResolvedValue(baseUser);
+    prismaMock.userRole.findMany.mockResolvedValue([]);
+
+    await service.update('u1', { firstName: 'Jane' }, 'admin-1');
+    expect(optionsOfFirstTransaction()).toEqual(expected);
+
+    prismaMock.$transaction.mockClear();
+    prismaMock.user.findUnique.mockResolvedValue(null);
+    prismaMock.user.create.mockResolvedValue({ ...baseUser, roles: [] });
+
+    await service.create(
+      { email: 'new@example.com', password: 'secret-password', roles: [RoleName.user] },
+      'admin-1',
+    );
+    expect(optionsOfFirstTransaction()).toEqual(expected);
+
+    // ⚠️ Две ручки `/roles/:role` проверяются здесь же, а не «по аналогии»: параметры
+    // транзакции — поведение, и снятие их с любого из четырёх путей обязано краснеть.
+    prismaMock.$transaction.mockClear();
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+    prismaMock.userRole.createMany.mockResolvedValue({ count: 1 });
+
+    await service.assignRole('u1', 'admin', 'admin-1');
+    expect(optionsOfFirstTransaction()).toEqual(expected);
+
+    prismaMock.$transaction.mockClear();
+    prismaMock.userRole.delete = jest.fn().mockResolvedValue({});
+
+    await service.revokeRole('u1', 'admin', 'admin-1');
+    expect(optionsOfFirstTransaction()).toEqual(expected);
+  });
+
+  /**
+   * Первый администратор заводится именно здесь. Без посадки его происхождение
+   * по журналу восстановить было бы нечем.
+   */
+  it('create: роли начального набора пишутся как выдача', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null);
+    prismaMock.user.create.mockResolvedValue({
+      ...baseUser,
+      roles: [{ role: { name: 'admin' } }, { role: { name: 'user' } }],
+    });
+    prismaMock.userRole.findMany.mockResolvedValue([]);
+
+    await service.create(
+      { email: 'new@example.com', password: 'secret-password', roles: [RoleName.admin] },
+      'admin-1',
+    );
+
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          actorUserId: 'admin-1',
+          action: 'ROLE_ASSIGNED',
+          targetType: 'USER',
+          targetId: 'u1',
+          payload: { role: 'admin' },
+        },
+        {
+          actorUserId: 'admin-1',
+          action: 'ROLE_ASSIGNED',
+          targetType: 'USER',
+          targetId: 'u1',
+          payload: { role: 'user' },
+        },
+      ],
+    });
+  });
+
+  /**
+   * Та же посадка на четвёртом и последнем пути записи. Четыре пути — четыре теста
+   * на тождество клиента: подмену ловит только тот, что стоит на этом методе.
+   */
+  it('create: создание пользователя и запись журнала идут одной транзакцией', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null);
+    prismaMock.userRole.findMany.mockResolvedValue([]);
+    const txAudit = jest.fn().mockResolvedValue({ count: 1 });
+    const txCreate = jest.fn().mockResolvedValue({
+      ...baseUser,
+      roles: [{ role: { name: 'admin' } }],
+    });
+    prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
+      if (typeof arg !== 'function') return Promise.all(arg);
+      return arg({
+        ...prismaMock,
+        user: { ...prismaMock.user, create: txCreate },
+        adminAuditEvent: { createMany: txAudit },
+      } as unknown as PrismaStub);
+    });
+
+    await service.create(
+      { email: 'new@example.com', password: 'secret-password', roles: [RoleName.admin] },
+      'admin-1',
+    );
+
+    expect(txCreate).toHaveBeenCalled();
+    expect(txAudit).toHaveBeenCalledTimes(1);
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
   it('revokeRole: cannot revoke base user role', async () => {
-    await expect(service.revokeRole('u1', 'user')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.revokeRole('u1', 'user', 'admin-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('assignRole: user or role not found', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(null);
-    await expect(service.assignRole('missing', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.assignRole('missing', 'admin', 'admin-1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
 
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
     prismaMock.role.findUnique.mockResolvedValueOnce(null);
-    await expect(service.assignRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.assignRole('u1', 'admin', 'admin-1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it('revokeRole: пользователя или роли нет — 404 обеими проверками', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(null);
-    await expect(service.revokeRole('missing', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.revokeRole('missing', 'admin', 'admin-1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
 
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
     prismaMock.role.findUnique.mockResolvedValueOnce(null);
-    await expect(service.revokeRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.revokeRole('u1', 'admin', 'admin-1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   /**
@@ -291,7 +666,9 @@ describe('UsersService (unit)', () => {
       }),
     );
 
-    await expect(service.revokeRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.revokeRole('u1', 'admin', 'admin-1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   /**
@@ -308,7 +685,7 @@ describe('UsersService (unit)', () => {
     });
     prismaMock.userRole.delete.mockRejectedValueOnce(failure);
 
-    await expect(service.revokeRole('u1', 'admin')).rejects.toBe(failure);
+    await expect(service.revokeRole('u1', 'admin', 'admin-1')).rejects.toBe(failure);
   });
 
   /** Отказ не-`Error` объектом тоже не должен превращаться в 404. */
@@ -317,7 +694,9 @@ describe('UsersService (unit)', () => {
     prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: 'admin' });
     prismaMock.userRole.delete.mockRejectedValueOnce({ code: 'P2025' });
 
-    await expect(service.revokeRole('u1', 'admin')).rejects.not.toBeInstanceOf(NotFoundException);
+    await expect(service.revokeRole('u1', 'admin', 'admin-1')).rejects.not.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   /**
@@ -347,7 +726,7 @@ describe('UsersService (unit)', () => {
         id: 'r1',
         name: 'admin' as RoleName,
       });
-      prismaMock.userRole.upsert = jest.fn().mockResolvedValue({});
+      prismaMock.userRole.createMany.mockResolvedValue({ count: 1 });
       prismaMock.userRole.delete = jest.fn().mockResolvedValue({});
     });
 
@@ -355,21 +734,21 @@ describe('UsersService (unit)', () => {
 
     it('assignRole', async () => {
       seed('u1');
-      await service.assignRole('u1', 'admin');
+      await service.assignRole('u1', 'admin', 'admin-1');
       expect(cached('u1')).toBeUndefined();
     });
 
     it('assignRole сбрасывает только названного — соседи в кэше остаются', async () => {
       seed('u1');
       seed('сосед');
-      await service.assignRole('u1', 'admin');
+      await service.assignRole('u1', 'admin', 'admin-1');
       // `clear()` вместо `invalidate(userId)` отправил бы в базу всех вошедших.
       expect(cached('сосед')).toEqual(new Set([Role.Admin]));
     });
 
     it('revokeRole', async () => {
       seed('u1');
-      await service.revokeRole('u1', 'admin');
+      await service.revokeRole('u1', 'admin', 'admin-1');
       expect(cached('u1')).toBeUndefined();
     });
 
@@ -396,7 +775,7 @@ describe('UsersService (unit)', () => {
       prismaMock.user.update.mockResolvedValue(baseUser);
       prismaMock.userRole.findMany.mockResolvedValue([]);
 
-      await service.update('u1', { roles: ['admin'] });
+      await service.update('u1', { roles: ['admin'] }, 'actor-1');
       expect(cached('u1')).toBeUndefined();
     });
 
@@ -405,7 +784,7 @@ describe('UsersService (unit)', () => {
       prismaMock.user.update.mockResolvedValue(baseUser);
       prismaMock.userRole.findMany.mockResolvedValue([]);
 
-      await service.update('u1', { firstName: 'Jane' });
+      await service.update('u1', { firstName: 'Jane' }, 'actor-1');
       expect(cached('u1')).toEqual(new Set([Role.Admin]));
     });
   });
@@ -940,11 +1319,14 @@ describe('UsersService (unit)', () => {
         roles: [{ role: { name: 'user' } }],
       });
 
-      await service.create({
-        email: 'new@example.com',
-        password: 'secret-password',
-        roles: [RoleName.user],
-      });
+      await service.create(
+        {
+          email: 'new@example.com',
+          password: 'secret-password',
+          roles: [RoleName.user],
+        },
+        'actor-1',
+      );
 
       const [select] = selectsOf(prismaMock.user.create);
       expect(select).not.toHaveProperty('passwordHash');
@@ -966,7 +1348,7 @@ describe('UsersService (unit)', () => {
       // до сервиса не дойдёт — глобальный `ValidationPipe` стоит с `forbidNonWhitelisted`
       // и отобьёт его 400-м. Тест смотрит не на тело, а на `select` обоих обращений к базе:
       // чтение берёт три поля без `passwordHash`, запись — белый список аккаунта.
-      await service.update('u1', { nickname: 'new_nick' } as unknown as UpdateUserDto);
+      await service.update('u1', { nickname: 'new_nick' } as unknown as UpdateUserDto, 'actor-1');
 
       const [readSelect] = selectsOf(prismaMock.user.findUnique);
       expect(readSelect).not.toHaveProperty('passwordHash');
@@ -995,11 +1377,12 @@ describe('UsersService (unit)', () => {
 
       prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
       prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: RoleName.admin });
-      await service.assignRole('u1', RoleName.admin);
+      prismaMock.userRole.createMany.mockResolvedValueOnce({ count: 1 });
+      await service.assignRole('u1', RoleName.admin, 'admin-1');
 
       prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
       prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: RoleName.admin });
-      await service.revokeRole('u1', RoleName.admin);
+      await service.revokeRole('u1', RoleName.admin, 'admin-1');
 
       const calls = [
         ...prismaMock.user.findUnique.mock.calls,
