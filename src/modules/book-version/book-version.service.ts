@@ -50,6 +50,29 @@ interface RightsIntakeWithLanguages {
   targetLanguages: unknown;
 }
 
+// Классы Json-колонок описывают форму тела запроса, а Prisma ждёт `InputJsonValue`.
+// Необязательные поля класса дают `| undefined`, которого в JSON не бывает, поэтому граница
+// между DTO и записью в базу проходит ровно здесь — одним местом, а не кастом на каждом поле.
+const toJsonInput = (value: unknown): Prisma.InputJsonValue | undefined =>
+  value === undefined || value === null ? undefined : (value as Prisma.InputJsonValue);
+
+// Три разных входа — три разных итога, и путать их нельзя. Поля нет в правке: колонка
+// не трогается, ключа в `data` не будет вовсе. Пришёл `null`: колонка очищается, и очищается
+// именно `DbNull` — тем же SQL NULL, что лежит у никогда не заполнявшихся строк, иначе
+// «не заполняли» и «очистили» разойдутся в фильтрах по Json. Пришёл массив: пишется как есть.
+// `null` здесь не блажь: админка шлёт его при каждом сохранении пустого списка
+// (`books-front/.../BookForm/buildVersionRequest.ts`), пустого массива она не отправляет никогда.
+type JsonFieldInput = Prisma.InputJsonValue | typeof Prisma.DbNull;
+
+const jsonField = <K extends string>(
+  key: K,
+  value: unknown,
+): Partial<Record<K, JsonFieldInput>> => {
+  if (value === undefined) return {};
+  const written: JsonFieldInput = value === null ? Prisma.DbNull : (value as Prisma.InputJsonValue);
+  return { [key]: written } as Record<K, JsonFieldInput>;
+};
+
 @Injectable()
 export class BookVersionService {
   private readonly logger = new Logger(BookVersionService.name);
@@ -295,15 +318,15 @@ export class BookVersionService {
             copyrightStatus: dto.copyrightStatus,
             authorPageUrl: dto.authorPageUrl,
             authorId: await this.resolveAuthorId(tx, effectiveLanguage, dto.author, dto.authorId),
-            characters: (dto.characters as Prisma.JsonValue) ?? undefined,
-            quotes: (dto.quotes as Prisma.JsonValue) ?? undefined,
-            faq: (dto.faq as Prisma.JsonValue) ?? undefined,
-            themes: (dto.themes as Prisma.JsonValue) ?? undefined,
+            characters: toJsonInput(dto.characters),
+            quotes: toJsonInput(dto.quotes),
+            faq: toJsonInput(dto.faq),
+            themes: toJsonInput(dto.themes),
             originalTitle: dto.originalTitle,
-            alternativeTitles: (dto.alternativeTitles as Prisma.JsonValue) ?? undefined,
+            alternativeTitles: toJsonInput(dto.alternativeTitles),
             shortDescription: dto.shortDescription,
             summaryShort: dto.summaryShort,
-            symbols: (dto.symbols as Prisma.JsonValue) ?? undefined,
+            symbols: toJsonInput(dto.symbols),
             coverAlt: dto.coverAlt,
             // Rights fields from clearance
             rightsProfileId,
@@ -1014,8 +1037,19 @@ export class BookVersionService {
           }
         }
         // Убираем SEO поля из DTO, так как они не существуют в BookVersion schema
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { seoMetaTitle, seoMetaDescription, ...updateData } = dto;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- имена нужны только чтобы отсечь поля от остатка
+        const { seoMetaTitle, seoMetaDescription, ...withoutSeo } = dto;
+        const { characters, quotes, faq, themes, alternativeTitles, symbols, ...updateRest } =
+          withoutSeo;
+        const updateData = {
+          ...updateRest,
+          ...jsonField('characters', characters),
+          ...jsonField('quotes', quotes),
+          ...jsonField('faq', faq),
+          ...jsonField('themes', themes),
+          ...jsonField('alternativeTitles', alternativeTitles),
+          ...jsonField('symbols', symbols),
+        };
 
         // Слаг версии — публичный адрес книги в этом языке. Его смена без записи в
         // историю превращает проиндексированный URL в 404 и теряет накопленные
@@ -1076,7 +1110,7 @@ export class BookVersionService {
       });
 
       return updated;
-    } catch (e: any) {
+    } catch (e: unknown) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Version for this language already exists for this book');
       }

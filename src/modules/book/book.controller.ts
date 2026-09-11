@@ -99,7 +99,7 @@ export class BookController {
           slug: existingBook.slug,
         },
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to check slug', err);
     }
@@ -146,7 +146,7 @@ export class BookController {
   async getThemes() {
     try {
       return await this.bookService.getAllThemes();
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to retrieve themes list', err);
     }
@@ -174,7 +174,7 @@ export class BookController {
   ) {
     try {
       return await this.bookService.getOverview(slug, lang, acceptLanguage);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to get book overview', err);
     }
@@ -206,7 +206,7 @@ export class BookController {
   async findAll(@Query() paginationDto: PaginationDto) {
     try {
       return await this.bookService.findAll(paginationDto);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to retrieve books list', err);
     }
@@ -235,7 +235,7 @@ export class BookController {
   async findBySlug(@Param('slug') slug: string, @Req() req?: { user?: RequestUser }) {
     try {
       return await this.bookService.findBySlug(slug, req?.user);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to get book by slug', err);
     }
@@ -255,7 +255,7 @@ export class BookController {
   async findOne(@Param('id') id: string, @Req() req?: { user?: RequestUser }) {
     try {
       return await this.bookService.findOne(id, req?.user);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to get book', err);
     }
@@ -273,7 +273,7 @@ export class BookController {
   async update(@Param('id') id: string, @Body() updateBookDto: UpdateBookDto) {
     try {
       return await this.bookService.update(id, updateBookDto);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to update book', err);
     }
@@ -292,7 +292,7 @@ export class BookController {
     try {
       await this.bookService.remove(id);
       return { success: true };
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to delete book', err);
     }
@@ -315,7 +315,7 @@ export class BookController {
   ) {
     try {
       return await this.bookService.rateBook(req.user.userId, bookId, dto.score);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to rate book', err);
     }
@@ -335,7 +335,7 @@ export class BookController {
   ): Promise<{ score: number | null }> {
     try {
       return await this.bookService.getUserRating(req.user.userId, bookId);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof HttpException) throw err;
       throw this.internalFailure('Failed to get user rating', err);
     }

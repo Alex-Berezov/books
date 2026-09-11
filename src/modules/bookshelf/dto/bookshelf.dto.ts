@@ -1,5 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+/** Книга-контейнер в строке полки: полке хватает адреса, всю запись сюда тянуть незачем. */
+export class BookshelfBookDto {
+  @ApiProperty({ type: String })
+  id!: string;
+
+  @ApiProperty({ type: String, example: 'portret-doriana-greya' })
+  slug!: string;
+}
+
 export class BookVersionDto {
   @ApiProperty({ type: String })
   id!: string;
@@ -33,6 +42,15 @@ export class BookVersionDto {
 
   @ApiProperty({ type: Date })
   updatedAt!: Date;
+
+  @ApiProperty({ type: String, example: 'portret-doriana-greya' })
+  slug!: string;
+
+  @ApiProperty({ type: Number, description: 'Число глав версии' })
+  chaptersCount!: number;
+
+  @ApiProperty({ type: BookshelfBookDto })
+  book!: BookshelfBookDto;
 }
 
 export class BookshelfItemDto {

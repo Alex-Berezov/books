@@ -18,7 +18,7 @@ export class LanguageResolverGuard implements CanActivate {
       Request & {
         language?: Language;
         params?: Record<string, string>;
-        query?: Record<string, any>;
+        query?: Record<string, unknown>;
       }
     >();
 

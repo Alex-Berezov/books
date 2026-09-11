@@ -75,7 +75,7 @@ export class MediaService {
       });
       await afterCommit(created.id);
       return created;
-    } catch (e: any) {
+    } catch (e: unknown) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         const found = await this.prisma.mediaAsset.findUnique({ where: { key: dto.key } });
         if (found) return found;

@@ -1,5 +1,31 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+
+// Полке нужны карточка версии и адрес книги — и ничего больше. Выборка перечисляет поля
+// поимённо не для красоты: `include` тянул всю строку `BookVersion`, включая 29 правовых
+// колонок и `rightsContentHashInput`, и отдавал их наружу на каждом элементе полки.
+const BOOKSHELF_VERSION_SELECT = {
+  id: true,
+  bookId: true,
+  language: true,
+  title: true,
+  author: true,
+  description: true,
+  coverImageUrl: true,
+  type: true,
+  isFree: true,
+  createdAt: true,
+  updatedAt: true,
+  slug: true,
+  book: { select: { id: true, slug: true } },
+  _count: { select: { chapters: true } },
+} satisfies Prisma.BookVersionSelect;
+
+type BookshelfBookVersion = Omit<
+  Prisma.BookVersionGetPayload<{ select: typeof BOOKSHELF_VERSION_SELECT }>,
+  '_count'
+> & { chaptersCount: number };
 
 @Injectable()
 export class BookshelfService {
@@ -10,7 +36,7 @@ export class BookshelfService {
     page = 1,
     limit = 10,
   ): Promise<{
-    items: { id: string; addedAt: Date; bookVersion: any }[];
+    items: { id: string; addedAt: Date; bookVersion: BookshelfBookVersion }[];
     page: number;
     limit: number;
     total: number;
@@ -24,28 +50,24 @@ export class BookshelfService {
         skip,
         take: limit + 1, // +1 to compute hasNext without a second query
         include: {
-          bookVersion: {
-            include: {
-              book: true,
-              _count: {
-                select: { chapters: true },
-              },
-            },
-          },
+          bookVersion: { select: BOOKSHELF_VERSION_SELECT },
         },
       }),
       this.prisma.bookshelf.count({ where: { userId } }),
     ]);
     const hasNext = itemsRaw.length > limit;
-    const items = itemsRaw.slice(0, limit).map((i) => ({
-      id: i.id,
-      addedAt: i.addedAt,
-      bookVersion: {
-        ...i.bookVersion,
-        chaptersCount: i.bookVersion._count?.chapters || 0,
-        book: i.bookVersion.book,
-      },
-    }));
+    const items = itemsRaw.slice(0, limit).map((i) => {
+      // `_count` — служебная форма запроса, а не поле ответа: наружу идёт готовое число.
+      const { _count, ...version } = i.bookVersion;
+      return {
+        id: i.id,
+        addedAt: i.addedAt,
+        bookVersion: {
+          ...version,
+          chaptersCount: _count?.chapters || 0,
+        },
+      };
+    });
     return { items, page, limit, total, hasNext };
   }
 

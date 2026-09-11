@@ -92,7 +92,7 @@ export class ChapterService {
         return created;
       });
       return chapter;
-    } catch (e: any) {
+    } catch (e: unknown) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Chapter number must be unique within a version');
       }

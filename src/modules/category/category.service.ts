@@ -97,7 +97,7 @@ export class CategoryService {
       this.prisma.category.count({ where }),
       this.prisma.category.findMany({
         where,
-        orderBy: [{ sortOrder: 'asc' } as any, { name: 'asc' }],
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
         skip,
         take: limit,
         include: {
@@ -763,7 +763,7 @@ export class CategoryService {
         },
         include: { seo: true },
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (seoId) {
         await this.prisma.seo.delete({ where: { id: seoId } }).catch(() => {});
       }

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import {
   BadRequestException,
   ConflictException,
@@ -36,8 +35,7 @@ export class LikesService {
 
     if (dto.commentId) {
       const existing = await this.prisma.comment.findUnique({ where: { id: dto.commentId } });
-      if (!existing || (existing as any).isDeleted)
-        throw new NotFoundException('Comment not found');
+      if (!existing || existing.isDeleted) throw new NotFoundException('Comment not found');
     }
     if (dto.bookVersionId) {
       const existing = await this.prisma.bookVersion.findUnique({
@@ -151,8 +149,7 @@ export class LikesService {
 
     if (dto.commentId) {
       const existing = await this.prisma.comment.findUnique({ where: { id: dto.commentId } });
-      if (!existing || (existing as any).isDeleted)
-        throw new NotFoundException('Comment not found');
+      if (!existing || existing.isDeleted) throw new NotFoundException('Comment not found');
     }
     if (dto.bookVersionId) {
       const existing = await this.prisma.bookVersion.findUnique({

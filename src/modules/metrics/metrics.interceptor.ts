@@ -28,7 +28,7 @@ function resolveRouteTemplate(req: Request | undefined): string {
 export class MetricsInterceptor implements NestInterceptor {
   constructor(private readonly metrics: MetricsService) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const httpCtx = context.switchToHttp();
     const req = httpCtx.getRequest<Request>();
     const res = httpCtx.getResponse<Response>();

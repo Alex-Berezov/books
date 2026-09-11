@@ -15,6 +15,12 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
+import {
+  BookVersionCharacterDto,
+  BookVersionQuoteDto,
+  BookVersionSymbolDto,
+} from '../../../shared/dto/book-version-json.dto';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 
 export class CreateBookVersionDto {
   @ApiProperty({
@@ -149,7 +155,7 @@ export class CreateBookVersionDto {
   })
   @IsOptional()
   @IsArray()
-  alternativeTitles?: any;
+  alternativeTitles?: string[];
 
   @ApiPropertyOptional({
     description: 'Краткое описание книги',
@@ -168,12 +174,13 @@ export class CreateBookVersionDto {
   summaryShort?: string | null;
 
   @ApiPropertyOptional({
+    type: [BookVersionSymbolDto],
     description: 'Символы в книге',
     example: [{ title: 'Portrait', description: 'Represents the soul' }],
   })
   @IsOptional()
   @IsArray()
-  symbols?: any;
+  symbols?: BookVersionSymbolDto[];
 
   @ApiPropertyOptional({
     description: 'Альт-текст обложки',
@@ -200,28 +207,31 @@ export class CreateBookVersionDto {
   authorId?: string | null;
 
   @ApiPropertyOptional({
+    type: [BookVersionCharacterDto],
     description: 'Персонажи книги',
     example: [{ name: 'Dorian Gray', description: 'Main character' }],
   })
   @IsOptional()
   @IsArray()
-  characters?: any;
+  characters?: BookVersionCharacterDto[];
 
   @ApiPropertyOptional({
+    type: [BookVersionQuoteDto],
     description: 'Цитаты из книги',
     example: [{ text: 'To live is the rarest thing in the world.', author: 'Oscar Wilde' }],
   })
   @IsOptional()
   @IsArray()
-  quotes?: any;
+  quotes?: BookVersionQuoteDto[];
 
   @ApiPropertyOptional({
+    type: [FaqItemDto],
     description: 'FAQ по книге',
     example: [{ question: 'What is the genre?', answer: 'Gothic fiction' }],
   })
   @IsOptional()
   @IsArray()
-  faq?: any;
+  faq?: FaqItemDto[];
 
   @ApiPropertyOptional({ description: 'Темы книги', example: ['Art', 'Morality'] })
   @IsOptional()

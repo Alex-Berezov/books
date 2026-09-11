@@ -306,6 +306,35 @@ describe('BookVersionService', () => {
   });
 
   /** Минимальный набор моков, при котором `create` доходит до записи версии. */
+  const arrangeUpdateWithJsonColumns = () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      seoId: null,
+      status: 'draft',
+      description: 'D',
+      coverImageUrl: 'https://cdn.example.com/cover.jpg',
+      language: Language.en,
+      author: 'A',
+      slug: 'karamazovy',
+    } as unknown as BookVersion);
+    (prisma.bookVersion.update as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      bookId: 'b1',
+      language: Language.en,
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+      referralUrl: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      seoId: null,
+      seo: null,
+    });
+  };
+
   const arrangeSimpleCreate = () => {
     (prisma.book.findUnique as jest.Mock).mockResolvedValue({
       id: 'b1',
@@ -735,6 +764,72 @@ describe('BookVersionService', () => {
     const res = await service.update('v1', updateDto);
     expect(res.title).toBe('T2');
     expect(prisma.seo.update).toHaveBeenCalled();
+  });
+
+  /**
+   * Json-колонки версии (`characters`, `quotes`, `faq`, `themes`, `alternativeTitles`,
+   * `symbols`) идут в базу через узел границы `toJsonInput`: DTO описывает их классами,
+   * а Prisma принимает только `InputJsonValue`. Сторож смотрит на аргументы вызова, а не
+   * на возврат метода: подстановка там не видна ни по одному полю ответа.
+   */
+  it('передаёт Json-колонки версии в запись как есть', async () => {
+    arrangeUpdateWithJsonColumns();
+
+    await service.update('v1', {
+      characters: [{ name: 'Alyosha', description: 'youngest brother' }],
+      quotes: [{ text: 'Beauty is a fearful thing', author: 'Dostoevsky' }],
+      faq: [{ question: 'Genre?', answer: 'Novel' }],
+      themes: ['faith', 'guilt'],
+      alternativeTitles: ['The Karamazov Brothers'],
+      symbols: [{ title: 'The seed', description: 'rebirth' }],
+    });
+
+    const args = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(args.data.characters).toEqual([{ name: 'Alyosha', description: 'youngest brother' }]);
+    expect(args.data.quotes).toEqual([{ text: 'Beauty is a fearful thing', author: 'Dostoevsky' }]);
+    expect(args.data.faq).toEqual([{ question: 'Genre?', answer: 'Novel' }]);
+    expect(args.data.themes).toEqual(['faith', 'guilt']);
+    expect(args.data.alternativeTitles).toEqual(['The Karamazov Brothers']);
+    expect(args.data.symbols).toEqual([{ title: 'The seed', description: 'rebirth' }]);
+  });
+
+  /**
+   * `null` в Json-колонке означает «очистить», и очищается она `DbNull` — тем же SQL NULL,
+   * что лежит у никогда не заполнявшихся строк. Иначе «очищено» и «не заполняли» разойдутся
+   * в фильтрах по Json при неотличимом для читателя ответе. Это не теоретический случай:
+   * админка шлёт `null` на каждом сохранении пустого списка
+   * (`books-front/.../BookForm/buildVersionRequest.ts`), пустого массива она не шлёт никогда.
+   * До типизации DTO (`LEGACY-181`) поля были `any`, и такой запрос падал 500-м.
+   */
+  it('очищает Json-колонку через DbNull, если в правке пришёл null', async () => {
+    arrangeUpdateWithJsonColumns();
+
+    await service.update('v1', {
+      characters: null as unknown as undefined,
+      themes: ['faith'],
+    });
+
+    const args = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(args.data.characters).toBe(Prisma.DbNull);
+    expect(args.data.themes).toEqual(['faith']);
+  });
+
+  /**
+   * Поля нет в правке — колонка не трогается вовсе: ключ в `data` не попадает. Разница с `null`
+   * принципиальна, поэтому у неё свой случай: подстановка `undefined` вместо отсутствия ключа
+   * работала бы одинаково у Prisma, но стёрла бы границу между «не трогай» и «очисти».
+   */
+  it('не трогает Json-колонку, которой нет в правке', async () => {
+    arrangeUpdateWithJsonColumns();
+
+    await service.update('v1', { themes: ['faith'] });
+
+    const args = (prisma.bookVersion.update as jest.Mock).mock
+      .calls[0][0] as Prisma.BookVersionUpdateArgs;
+    expect(args.data).not.toHaveProperty('characters');
+    expect(args.data.themes).toEqual(['faith']);
   });
 
   /**

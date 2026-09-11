@@ -41,7 +41,7 @@ export interface AxiosErrorWithConfig extends Error {
   config: AxiosRequestConfig;
   response?: {
     status: number;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -178,35 +178,35 @@ export class BooksApiClient {
   }
 
   // Generic request methods with typed responses
-  async get<T = any>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+  async get<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
     return this.axios.get<T>(url, config);
   }
 
-  async post<T = any>(
+  async post<T = unknown>(
     url: string,
-    data?: any,
+    data?: unknown,
     config?: AxiosRequestConfig,
   ): Promise<AxiosResponse<T>> {
     return this.axios.post<T>(url, data, config);
   }
 
-  async put<T = any>(
+  async put<T = unknown>(
     url: string,
-    data?: any,
+    data?: unknown,
     config?: AxiosRequestConfig,
   ): Promise<AxiosResponse<T>> {
     return this.axios.put<T>(url, data, config);
   }
 
-  async patch<T = any>(
+  async patch<T = unknown>(
     url: string,
-    data?: any,
+    data?: unknown,
     config?: AxiosRequestConfig,
   ): Promise<AxiosResponse<T>> {
     return this.axios.patch<T>(url, data, config);
   }
 
-  async delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+  async delete<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
     return this.axios.delete<T>(url, config);
   }
 
@@ -233,12 +233,12 @@ export class BooksApiClient {
       return response.data;
     },
 
-    create: async (data: any) => {
+    create: async (data: unknown) => {
       const response = await this.post('/api/books', data);
       return response.data;
     },
 
-    update: async (id: string, data: any) => {
+    update: async (id: string, data: unknown) => {
       const response = await this.patch(`/api/books/${id}`, data);
       return response.data;
     },
@@ -276,12 +276,12 @@ export class BooksApiClient {
       return response.data;
     },
 
-    create: async (data: any) => {
+    create: async (data: unknown) => {
       const response = await this.post('/api/categories', data);
       return response.data;
     },
 
-    update: async (id: string, data: any) => {
+    update: async (id: string, data: unknown) => {
       const response = await this.patch(`/api/categories/${id}`, data);
       return response.data;
     },
@@ -298,7 +298,7 @@ export class BooksApiClient {
       return response.data;
     },
 
-    updateMe: async (data: any) => {
+    updateMe: async (data: unknown) => {
       const response = await this.patch('/api/users/me', data);
       return response.data;
     },
@@ -357,7 +357,7 @@ export class BooksApiClient {
       return response.data;
     },
 
-    update: async (versionId: string, data: any) => {
+    update: async (versionId: string, data: unknown) => {
       const response = await this.put(`/api/me/progress/${versionId}`, data);
       return response.data;
     },

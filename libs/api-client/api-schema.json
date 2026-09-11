@@ -4174,8 +4174,15 @@
           "author": {
             "type": "string"
           },
+          "book": {
+            "$ref": "#/components/schemas/BookshelfBookDto"
+          },
           "bookId": {
             "type": "string"
+          },
+          "chaptersCount": {
+            "description": "Число глав версии",
+            "type": "number"
           },
           "coverImageUrl": {
             "example": "https://example.com/c.jpg",
@@ -4196,6 +4203,10 @@
           },
           "language": {
             "example": "en",
+            "type": "string"
+          },
+          "slug": {
+            "example": "portret-doriana-greya",
             "type": "string"
           },
           "title": {
@@ -4221,7 +4232,10 @@
           "type",
           "isFree",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "slug",
+          "chaptersCount",
+          "book"
         ],
         "type": "object"
       },
@@ -4648,6 +4662,22 @@
         },
         "required": [
           "tag"
+        ],
+        "type": "object"
+      },
+      "BookshelfBookDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "example": "portret-doriana-greya",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug"
         ],
         "type": "object"
       },
@@ -7263,7 +7293,10 @@
             "example": [
               "Dorian Gray"
             ],
-            "type": "object"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "author": {
             "description": "Автор",
@@ -7288,7 +7321,10 @@
                 "name": "Dorian Gray"
               }
             ],
-            "type": "object"
+            "items": {
+              "$ref": "#/components/schemas/BookVersionCharacterDto"
+            },
+            "type": "array"
           },
           "copyrightStatus": {
             "description": "Статус авторских прав",
@@ -7323,7 +7359,10 @@
                 "question": "What is the genre?"
               }
             ],
-            "type": "object"
+            "items": {
+              "$ref": "#/components/schemas/FaqItemDto"
+            },
+            "type": "array"
           },
           "firstPublishedYear": {
             "description": "Год первой публикации книги",
@@ -7370,7 +7409,10 @@
                 "text": "To live is the rarest thing in the world."
               }
             ],
-            "type": "object"
+            "items": {
+              "$ref": "#/components/schemas/BookVersionQuoteDto"
+            },
+            "type": "array"
           },
           "referralUrl": {
             "description": "Реферальная ссылка",
@@ -7410,7 +7452,10 @@
                 "title": "Portrait"
               }
             ],
-            "type": "object"
+            "items": {
+              "$ref": "#/components/schemas/BookVersionSymbolDto"
+            },
+            "type": "array"
           },
           "themes": {
             "description": "Темы книги",
@@ -22549,8 +22594,11 @@
             "example": [
               "Dorian Gray"
             ],
+            "items": {
+              "type": "string"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "author": {
             "example": "J.K. Rowling",
@@ -22576,8 +22624,11 @@
                 "name": "Dorian Gray"
               }
             ],
+            "items": {
+              "$ref": "#/components/schemas/BookVersionCharacterDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "copyrightStatus": {
             "description": "Статус авторских прав",
@@ -22613,8 +22664,11 @@
                 "question": "What is the genre?"
               }
             ],
+            "items": {
+              "$ref": "#/components/schemas/FaqItemDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "firstPublishedYear": {
             "description": "Год первой публикации книги. Pass null to clear.",
@@ -22669,8 +22723,11 @@
                 "text": "To live is the rarest thing in the world."
               }
             ],
+            "items": {
+              "$ref": "#/components/schemas/BookVersionQuoteDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "referralUrl": {
             "example": "https://partner.example.com/ref/456",
@@ -22709,8 +22766,11 @@
                 "title": "Portrait"
               }
             ],
+            "items": {
+              "$ref": "#/components/schemas/BookVersionSymbolDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "themes": {
             "description": "Темы книги",

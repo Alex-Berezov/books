@@ -205,7 +205,7 @@ export class PagesService {
     });
     if (!page) throw new NotFoundException('Page not found');
 
-    let translations: any[] = [];
+    let translations: { id: string; language: Language; slug: string; title: string }[] = [];
     if (page.translationGroupId) {
       translations = await this.prisma.page.findMany({
         where: {
@@ -253,7 +253,7 @@ export class PagesService {
     const translationGroupId = dto.translationGroupId || randomUUID();
 
     try {
-      const pageInput = {
+      const pageInput: Prisma.PageUncheckedCreateInput = {
         slug: dto.slug,
         title: dto.title,
         type: dto.type,
@@ -261,15 +261,16 @@ export class PagesService {
         h1: dto.h1 ?? null,
         shortDescription: dto.shortDescription ?? null,
         faq: dto.faq ?? Prisma.JsonNull,
-        sections: dto.sections ?? Prisma.JsonNull,
+        // `Record<string, unknown>` из DTO описывает произвольный объект блоков, а Prisma ждёт
+        // `InputJsonValue`: значения `unknown` в неё не проходят. Граница ровно здесь.
+        sections: (dto.sections as Prisma.InputJsonValue) ?? Prisma.JsonNull,
         language,
         status: 'draft' as const,
         seoId: finalSeoId,
         translationGroupId,
       };
       return await this.prisma.page.create({
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        data: pageInput as any,
+        data: pageInput,
         include: { seo: true },
       });
     } catch (e) {

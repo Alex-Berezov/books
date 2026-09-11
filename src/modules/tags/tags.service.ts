@@ -458,7 +458,7 @@ export class TagsService {
         },
         include: { seo: true },
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (seoId) {
         await this.prisma.seo.delete({ where: { id: seoId } }).catch(() => {});
       }
