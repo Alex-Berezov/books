@@ -1,28 +1,44 @@
-/* eslint-disable */
+import { readFileSync } from 'node:fs';
 import { PublicController } from './public.controller';
 import { Language as PrismaLanguage } from '@prisma/client';
+import type { BookService } from '../book/book.service';
+import type { PagesService } from '../pages/pages.service';
+import type { CategoryService } from '../category/category.service';
+import type { TagsService } from '../tags/tags.service';
+import type { AuthorService } from '../author/author.service';
+import type { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
+import type { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 describe('PublicController (unit)', () => {
-  const books = { getOverview: jest.fn() } as any;
-  const pages = { getPublicBySlug: jest.fn() } as any;
-  const categories = { getByLangSlugWithBooks: jest.fn() } as any;
-  const tags = { versionsByTagLangSlug: jest.fn() } as any;
-  const authors = {
+  // Заглушки остаются объектами с `jest.Mock`: так у `expect(books.getOverview)` виден мок,
+  // а не метод класса. Приведение к типу сервиса стоит ровно на границе — в конструкторе.
+  const books = { getOverview: jest.fn() };
+  const pages = { getPublicBySlug: jest.fn() };
+  const categories = { getByLangSlugWithBooks: jest.fn() };
+  const tags = { versionsByTagLangSlug: jest.fn() };
+  const authors: {
+    getPublicBySlug: jest.Mock;
+    listPublic: jest.Mock;
+    listPublicLetters: jest.Mock;
+    // Административный `list` в заглушке объявлен нарочно: спека ниже проверяет, что
+    // публичный список до него не доходит (`LEGACY-214`), и подставляет мок на месте.
+    list?: jest.Mock;
+  } = {
     getPublicBySlug: jest.fn(),
     listPublic: jest.fn(),
     listPublicLetters: jest.fn(),
-  } as any;
-  const geoIpCountry = { resolveCountry: jest.fn().mockReturnValue(null) } as any;
-  const slugRedirects = { resolve: jest.fn().mockResolvedValue(null) } as any;
+  };
+  const geoIpCountry = { resolveCountry: jest.fn().mockReturnValue(null) };
+  const slugRedirects = { resolve: jest.fn().mockResolvedValue(null) };
 
   const controller = new PublicController(
-    books,
-    pages,
-    categories,
-    tags,
-    authors,
-    geoIpCountry,
-    slugRedirects,
+    books as unknown as BookService,
+    pages as unknown as PagesService,
+    categories as unknown as CategoryService,
+    tags as unknown as TagsService,
+    authors as unknown as AuthorService,
+    geoIpCountry as unknown as GeoIpCountryService,
+    slugRedirects as unknown as SlugRedirectService,
   );
 
   beforeEach(() => {
@@ -135,7 +151,7 @@ describe('PublicController (unit)', () => {
    * и отдавал бы 404, причём молча: сборка и типы этого не видят.
    */
   it('declares authors/letters above authors/:slug', () => {
-    const source = require('fs').readFileSync(__dirname + '/public.controller.ts', 'utf8');
+    const source = readFileSync(__dirname + '/public.controller.ts', 'utf8');
     const letters = source.indexOf("@Get('authors/letters')");
     const bySlug = source.indexOf("@Get('authors/:slug')");
 

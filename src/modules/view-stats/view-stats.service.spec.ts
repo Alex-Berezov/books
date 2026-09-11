@@ -1,14 +1,24 @@
-/* eslint-disable */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ViewStatsService } from './view-stats.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CACHE_SERVICE } from '../../shared/cache/cache.interface';
+import type { CacheService } from '../../shared/cache/cache.interface';
 import { ViewSource } from '@prisma/client';
+
+interface PrismaStub {
+  bookVersion: { findUnique: jest.Mock };
+  viewStat: { create: jest.Mock };
+  $queryRaw: jest.Mock;
+}
+
+interface CacheStub {
+  get: jest.Mock;
+  set: jest.Mock;
+}
 
 describe('ViewStatsService (unit)', () => {
   let service: ViewStatsService;
-  let prisma: any;
-  let cache: any;
+  let prisma: PrismaStub;
+  let cache: CacheStub;
 
   const versionId = 'v-1111-2222';
 
@@ -18,12 +28,15 @@ describe('ViewStatsService (unit)', () => {
       bookVersion: { findUnique: jest.fn() },
       viewStat: { create: jest.fn() },
       $queryRaw: jest.fn(),
-    } as any;
+    };
     cache = {
       get: jest.fn().mockResolvedValue(undefined),
       set: jest.fn().mockResolvedValue(undefined),
     };
-    service = new ViewStatsService(prisma as PrismaService, cache);
+    service = new ViewStatsService(
+      prisma as unknown as PrismaService,
+      cache as unknown as CacheService,
+    );
   });
 
   afterEach(() => jest.useRealTimers());

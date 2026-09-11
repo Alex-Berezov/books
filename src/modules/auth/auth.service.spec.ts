@@ -1,5 +1,4 @@
-/* eslint-disable */
-import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SocialIdentityService } from './providers/social-identity.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -18,12 +17,36 @@ jest.mock('argon2', () => ({
   verify: jest.fn(),
 }));
 
+interface PrismaStub {
+  role: { upsert: jest.Mock; findUnique: jest.Mock };
+  user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
+  userRole: { upsert: jest.Mock; findMany: jest.Mock };
+  userIdentity: { findUnique: jest.Mock; upsert: jest.Mock };
+  $transaction: jest.Mock;
+}
+
+interface JwtStub {
+  signAsync: jest.Mock;
+  verifyAsync: jest.Mock;
+}
+
+interface ConfigStub {
+  get: jest.Mock;
+}
+
+interface SocialStub {
+  verify: jest.Mock;
+}
+
+/** Аргумент обращения к делегату `user`: тесты смотрят только на `select`. */
+type UserCallArgs = { select?: Record<string, boolean> };
+
 describe('AuthService (unit)', () => {
   let service: AuthService;
-  let prisma: any;
-  let jwt: any;
-  let config: any;
-  let social: any;
+  let prisma: PrismaStub;
+  let jwt: JwtStub;
+  let config: ConfigStub;
+  let social: SocialStub;
 
   const now = new Date('2025-01-01T00:00:00Z');
   const user: User = {
@@ -35,7 +58,7 @@ describe('AuthService (unit)', () => {
     languagePreference: PrismaLanguage.en,
     createdAt: now,
     lastLogin: null,
-  } as any;
+  } as User;
 
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(now);
@@ -50,12 +73,12 @@ describe('AuthService (unit)', () => {
       // Привязка личности провайдера. По умолчанию её нет — так выглядит первый
       // вход после миграции, когда `providerUserId` прошлых входов нигде не сохранён.
       userIdentity: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn() },
-      $transaction: jest.fn(async (arr: any[]) => arr),
+      $transaction: jest.fn((arr: unknown[]) => Promise.resolve(arr)),
     };
     jwt = {
       signAsync: jest.fn().mockResolvedValueOnce('acc').mockResolvedValueOnce('ref'),
       verifyAsync: jest.fn(),
-    } as Partial<JwtService> as any;
+    };
     config = {
       get: jest.fn((k: string) => {
         const map: Record<string, string> = {
@@ -68,13 +91,13 @@ describe('AuthService (unit)', () => {
         };
         return map[k];
       }),
-    } as Partial<ConfigService> as any;
-    social = { verify: jest.fn() } as Partial<SocialIdentityService> as any;
+    };
+    social = { verify: jest.fn() };
     service = new AuthService(
-      prisma as PrismaService,
-      jwt as JwtService,
-      config as ConfigService,
-      social as SocialIdentityService,
+      prisma as unknown as PrismaService,
+      jwt as unknown as JwtService,
+      config as unknown as ConfigService,
+      social as unknown as SocialIdentityService,
     );
   });
 
@@ -194,7 +217,7 @@ describe('AuthService (unit)', () => {
   });
 
   describe('socialLogin (CR auth-social)', () => {
-    const adminUser: User = { ...user, id: 'u-admin', email: 'admin@bibliaris.com' } as any;
+    const adminUser: User = { ...user, id: 'u-admin', email: 'admin@bibliaris.com' };
 
     function existingAdmin() {
       prisma.user.findUnique.mockResolvedValue(adminUser);
@@ -421,11 +444,11 @@ describe('AuthService (unit)', () => {
      * в мок ради нового метода сервиса, попадает сюда сам. Перечисление трёх имён молча
      * пропустило бы `findFirst` или `upsert`.
      */
-    function userCalls(): any[] {
+    function userCalls(): UserCallArgs[] {
       return Object.values(prisma.user)
-        .filter((fn: any) => typeof fn?.mock?.calls !== 'undefined')
-        .flatMap((fn: any) => fn.mock.calls)
-        .map((call: any[]) => call[0]);
+        .filter((fn) => typeof fn?.mock?.calls !== 'undefined')
+        .flatMap((fn) => fn.mock.calls as unknown[][])
+        .map((call) => call[0] as UserCallArgs);
     }
 
     function expectEverySelect(expectedCalls: number): void {
@@ -433,13 +456,13 @@ describe('AuthService (unit)', () => {
       expect(calls).toHaveLength(expectedCalls);
       for (const args of calls) {
         expect(args).toHaveProperty('select');
-        expect(Object.keys(args.select as object).length).toBeGreaterThan(0);
+        expect(Object.keys(args.select ?? {}).length).toBeGreaterThan(0);
       }
     }
 
     /** Сколько обращений просят argon2-хеш. Законное число — ноль везде, кроме `login`. */
     function passwordHashReads(): number {
-      return userCalls().filter((args: any) => args?.select?.passwordHash === true).length;
+      return userCalls().filter((args) => args?.select?.passwordHash === true).length;
     }
 
     it('register: проверка занятости почты берёт только id, создание — белый список', async () => {
