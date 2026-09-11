@@ -93,12 +93,16 @@ describe('Public versions list — Accept-Language fallback (e2e)', () => {
       .get(`/books/${bookId}/versions`)
       .set('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8')
       .expect(200);
-    expect(resES.body.every((v: any) => v.language === 'es')).toBe(true);
+    expect((resES.body as Array<{ language: string }>).every((v) => v.language === 'es')).toBe(
+      true,
+    );
 
     const resEN = await request(http())
       .get(`/books/${bookId}/versions`)
       .set('Accept-Language', 'en-US,en;q=0.9')
       .expect(200);
-    expect(resEN.body.every((v: any) => v.language === 'en')).toBe(true);
+    expect((resEN.body as Array<{ language: string }>).every((v) => v.language === 'en')).toBe(
+      true,
+    );
   });
 });

@@ -5,8 +5,17 @@ import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-
 import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 
+/**
+ * Аргумент `$transaction`. Колбэчная ветка записана образцом из
+ * `book-version.service.spec.ts`: на место `tx` приходит сам стаб, а возврат
+ * колбэка становится возвратом транзакции. Списочную форму Prisma принимает
+ * наравне с колбэком, и `list()` зовёт именно её, поэтому она остаётся вторым
+ * вариантом аргумента.
+ */
+type TransactionArg<T = unknown> = Promise<T>[] | ((tx: PrismaStub) => Promise<T> | T);
+
 interface PrismaStub {
-  $transaction: jest.Mock<Promise<[any[], number]>, [any[]]>;
+  $transaction: jest.Mock<Promise<unknown>, [TransactionArg]>;
   comment: {
     findUnique: jest.Mock;
     findMany: jest.Mock;
@@ -23,16 +32,15 @@ interface PrismaStub {
 
 const createPrismaStub = (): PrismaStub => {
   const stub: PrismaStub = {
-    $transaction: jest.fn(async (arg: any) => {
+    $transaction: jest.fn(async (arg: TransactionArg) => {
       if (typeof arg === 'function') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        return (arg as (tx: any) => Promise<any>)(stub);
+        return arg(stub);
       }
       const results: unknown[] = [];
       for (const op of arg) {
         results.push(await op);
       }
-      return results as unknown as [any[], number];
+      return results;
     }),
     comment: {
       findUnique: jest.fn(),
@@ -262,8 +270,9 @@ describe('CommentsService', () => {
         },
       };
 
-      prisma.$transaction.mockImplementationOnce((arg: any) => {
-        return Promise.resolve((arg as (tx: any) => any)(txMock));
+      prisma.$transaction.mockImplementationOnce((arg) => {
+        const runInTransaction = arg as (tx: PrismaStub) => Promise<unknown>;
+        return runInTransaction(txMock as unknown as PrismaStub);
       });
 
       await service.remove('c1', { userId: 'u1', email: 'x' });
@@ -449,8 +458,9 @@ describe('CommentsService', () => {
     it('applies hidden filter and target mapping with pagination', async () => {
       prisma.comment.findMany.mockResolvedValueOnce([{ id: 'c1' }]);
       prisma.comment.count.mockResolvedValueOnce(2);
-      prisma.$transaction.mockImplementationOnce(async (ops: any[]) => {
-        const items = (await ops[0]) as any[];
+      prisma.$transaction.mockImplementationOnce(async (arg) => {
+        const ops = arg as Promise<unknown>[];
+        const items = (await ops[0]) as unknown[];
         const total = (await ops[1]) as number;
         return [items, total];
       });
@@ -477,8 +487,9 @@ describe('CommentsService', () => {
       prisma.comment.findMany.mockClear();
       prisma.comment.findMany.mockResolvedValueOnce([]);
       prisma.comment.count.mockResolvedValueOnce(0);
-      prisma.$transaction.mockImplementationOnce(async (ops: any[]) => {
-        const items = (await ops[0]) as any[];
+      prisma.$transaction.mockImplementationOnce(async (arg) => {
+        const ops = arg as Promise<unknown>[];
+        const items = (await ops[0]) as unknown[];
         const total = (await ops[1]) as number;
         return [items, total];
       });
@@ -500,7 +511,7 @@ describe('CommentsService', () => {
       prisma.comment.findMany.mockResolvedValueOnce([]);
       prisma.comment.count.mockResolvedValueOnce(0);
       prisma.$transaction.mockImplementation(() => {
-        return Promise.resolve([[], 0] as [any[], number]);
+        return Promise.resolve([[] as unknown[], 0]);
       });
 
       await service.list({
@@ -549,8 +560,9 @@ describe('CommentsService', () => {
         },
       };
 
-      prisma.$transaction.mockImplementationOnce((arg: any) => {
-        return Promise.resolve((arg as (tx: any) => any)(txMock));
+      prisma.$transaction.mockImplementationOnce((arg) => {
+        const runInTransaction = arg as (tx: PrismaStub) => Promise<unknown>;
+        return runInTransaction(txMock as unknown as PrismaStub);
       });
 
       const res = await service.create('u1', {

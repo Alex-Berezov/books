@@ -68,7 +68,9 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .expect(200);
-    const foundEs = (listEs.body.data as any[]).some((p) => p.slug === slug && p.language === 'es');
+    const foundEs = (listEs.body.data as Array<{ slug: string; language: string }>).some(
+      (p) => p.slug === slug && p.language === 'es',
+    );
     expect(foundEs).toBe(true);
 
     // Ensure not shown in EN listing by default when header=en
@@ -77,7 +79,9 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.en)
       .expect(200);
-    const foundEn = (listEn.body.data as any[]).some((p) => p.slug === slug && p.language === 'en');
+    const foundEn = (listEn.body.data as Array<{ slug: string; language: string }>).some(
+      (p) => p.slug === slug && p.language === 'en',
+    );
     expect(foundEn).toBe(false);
   });
 
@@ -110,7 +114,9 @@ describe('Admin language context (e2e)', () => {
       .set('X-Admin-Language', Language.es)
       .expect(200);
     expect(Array.isArray(listEs.body)).toBe(true);
-    expect((listEs.body as any[]).every((v) => v.language === 'es')).toBe(true);
+    expect((listEs.body as Array<{ language: string }>).every((v) => v.language === 'es')).toBe(
+      true,
+    );
 
     // Override to EN via query
     const listEn = await request(http())
@@ -119,7 +125,7 @@ describe('Admin language context (e2e)', () => {
       .set('X-Admin-Language', Language.es)
       .expect(200);
     expect(Array.isArray(listEn.body)).toBe(true);
-    expect((listEn.body as any[]).length).toBe(0); // no EN versions yet
+    expect((listEn.body as Array<{ language: string }>).length).toBe(0); // no EN versions yet
   });
 
   it('uses path :lang as effective admin language when X-Admin-Language is absent (smoke)', async () => {
@@ -142,15 +148,17 @@ describe('Admin language context (e2e)', () => {
       .get('/admin/fr/pages')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listFr.body.data as any[]).some((p) => p.slug === slug && p.language === 'fr')).toBe(
-      true,
-    );
+    expect(
+      (listFr.body.data as Array<{ slug: string; language: string }>).some(
+        (p) => p.slug === slug && p.language === 'fr',
+      ),
+    ).toBe(true);
 
     const listEn = await request(http())
       .get('/admin/en/pages')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listEn.body.data as any[]).some((p) => p.slug === slug)).toBe(false);
+    expect((listEn.body.data as Array<{ slug: string }>).some((p) => p.slug === slug)).toBe(false);
 
     // BookVersions
     const bookSlug = `admin-langs-book-path-${Date.now()}`;
@@ -175,13 +183,15 @@ describe('Admin language context (e2e)', () => {
       .get(`/admin/fr/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listFrV.body as any[]).every((v) => v.language === 'fr')).toBe(true);
+    expect((listFrV.body as Array<{ language: string }>).every((v) => v.language === 'fr')).toBe(
+      true,
+    );
 
     const listEnV = await request(http())
       .get(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listEnV.body as any[]).length).toBe(0);
+    expect((listEnV.body as Array<{ language: string }>).length).toBe(0);
   });
 
   it('ignores DTO.language on admin Page create and rejects duplicate for same language+slug', async () => {

@@ -2,7 +2,7 @@ import { ChapterService } from './chapter.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Chapter, Prisma } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 
 interface PrismaStub {
@@ -10,14 +10,14 @@ interface PrismaStub {
     findUnique: jest.Mock;
   };
   chapter: {
-    findMany: (args: Prisma.ChapterFindManyArgs) => Promise<any[]>;
+    findMany: (args: Prisma.ChapterFindManyArgs) => Promise<Chapter[]>;
     findFirst: (args: Prisma.ChapterFindFirstArgs) => Promise<{ id: string } | null>;
-    create: (args: Prisma.ChapterCreateArgs) => Promise<any>;
+    create: (args: Prisma.ChapterCreateArgs) => Promise<Chapter>;
     findUnique: (args: Prisma.ChapterFindUniqueArgs) => Promise<{ id: string } | null>;
-    update: (args: Prisma.ChapterUpdateArgs) => Promise<any>;
-    delete: (args: Prisma.ChapterDeleteArgs) => Promise<any>;
+    update: (args: Prisma.ChapterUpdateArgs) => Promise<Chapter>;
+    delete: (args: Prisma.ChapterDeleteArgs) => Promise<Chapter>;
   };
-  $transaction: (cb: (tx: PrismaStub) => Promise<any>) => Promise<any>;
+  $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
 
 const createPrismaStub = (): PrismaStub => {
@@ -33,9 +33,7 @@ const createPrismaStub = (): PrismaStub => {
       update: jest.fn(),
       delete: jest.fn(),
     },
-    $transaction: jest.fn((cb: (tx: PrismaStub) => Promise<any>) => {
-      return cb(stub);
-    }),
+    $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
   };
   return stub;
 };

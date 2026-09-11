@@ -56,7 +56,7 @@ describe('HealthService', () => {
   });
 
   it('readiness up when prisma ok and redis configured+ok', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce(1 as any);
+    prisma.$queryRaw.mockResolvedValueOnce(1);
     redis.isConfigured.mockReturnValue(true);
     redis.ping.mockResolvedValue(true);
 
@@ -67,7 +67,7 @@ describe('HealthService', () => {
   });
 
   it('readiness up when prisma ok and redis not configured (skipped)', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce(1 as any);
+    prisma.$queryRaw.mockResolvedValueOnce(1);
     redis.isConfigured.mockReturnValue(false);
 
     const res = await service.readiness();
@@ -86,7 +86,7 @@ describe('HealthService', () => {
   });
 
   it('readiness down when redis configured but ping fails', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce(1 as any);
+    prisma.$queryRaw.mockResolvedValueOnce(1);
     redis.isConfigured.mockReturnValue(true);
     redis.ping.mockResolvedValue(false);
 
@@ -97,7 +97,7 @@ describe('HealthService', () => {
   });
 
   it('readiness down when redis configured but ping throws', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce(1 as any);
+    prisma.$queryRaw.mockResolvedValueOnce(1);
     redis.isConfigured.mockReturnValue(true);
     redis.ping.mockRejectedValue(new Error('redis down'));
 

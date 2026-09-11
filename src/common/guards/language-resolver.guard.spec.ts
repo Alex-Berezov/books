@@ -6,14 +6,14 @@ import { Language } from '@prisma/client';
 type MockRequest = {
   language?: Language;
   params?: Record<string, string>;
-  query?: Record<string, any>;
-  headers?: Record<string, any>;
+  query?: Record<string, unknown>;
+  headers?: Record<string, string>;
 };
 
 function createContext(mock: {
   params?: Record<string, string>;
-  query?: Record<string, any>;
-  headers?: Record<string, any>;
+  query?: Record<string, unknown>;
+  headers?: Record<string, string>;
 }): { ctx: ExecutionContext; req: MockRequest } {
   const req: MockRequest = {
     params: mock.params || {},

@@ -39,6 +39,13 @@ interface PrismaStub {
   bookRating: {
     groupBy: jest.Mock;
   };
+  /**
+   * Модель `book` общая заглушка не заводит: её подставляют точечно те тесты,
+   * которым нужен обход книг каталога. Отсюда необязательность поля.
+   */
+  book?: {
+    findMany: jest.Mock;
+  };
 }
 
 const createPrismaStub = (): PrismaStub => ({
@@ -688,7 +695,7 @@ describe('CategoryService', () => {
     prisma.category.findFirst.mockResolvedValue({ id: 'cat1', name: 'Cat', slug: 'cat' });
     const now = new Date();
 
-    (prisma as any).book = {
+    prisma.book = {
       findMany: jest.fn().mockResolvedValue([
         {
           id: 'b1',
@@ -771,7 +778,7 @@ describe('CategoryService', () => {
       seo: null,
       description: null,
     });
-    (prisma as any).book = {
+    prisma.book = {
       findMany: jest.fn().mockResolvedValue([
         { id: 'b1', slug: 'b1', versions: [] },
         { id: 'b2', slug: 'b2', versions: [] },

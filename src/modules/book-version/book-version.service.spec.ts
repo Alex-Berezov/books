@@ -36,12 +36,10 @@ interface PrismaStub {
   bookVersion: {
     findMany: (args?: Prisma.BookVersionFindManyArgs) => Promise<BookVersionWithSeo[]>;
     findFirst: (args?: Prisma.BookVersionFindFirstArgs) => Promise<{ id: string } | null>;
-    create: (args: Prisma.BookVersionCreateArgs & { include?: any }) => Promise<BookVersionWithSeo>;
-    findUnique: (
-      args: Prisma.BookVersionFindUniqueArgs & { include?: any },
-    ) => Promise<BookVersionWithSeo | null>;
-    update: (args: Prisma.BookVersionUpdateArgs & { include?: any }) => Promise<BookVersionWithSeo>;
-    delete: (args: Prisma.BookVersionDeleteArgs & { include?: any }) => Promise<BookVersionWithSeo>;
+    create: (args: Prisma.BookVersionCreateArgs) => Promise<BookVersionWithSeo>;
+    findUnique: (args: Prisma.BookVersionFindUniqueArgs) => Promise<BookVersionWithSeo | null>;
+    update: (args: Prisma.BookVersionUpdateArgs) => Promise<BookVersionWithSeo>;
+    delete: (args: Prisma.BookVersionDeleteArgs) => Promise<BookVersionWithSeo>;
   };
   seo: {
     create: (
@@ -116,22 +114,10 @@ const createPrismaStub = (): PrismaStub => {
     bookVersion: {
       findMany: jest.fn<Promise<BookVersionWithSeo[]>, [Prisma.BookVersionFindManyArgs?]>(),
       findFirst: jest.fn<Promise<{ id: string } | null>, [Prisma.BookVersionFindFirstArgs?]>(),
-      create: jest.fn<
-        Promise<BookVersionWithSeo>,
-        [Prisma.BookVersionCreateArgs & { include?: any }]
-      >(),
-      findUnique: jest.fn<
-        Promise<BookVersionWithSeo | null>,
-        [Prisma.BookVersionFindUniqueArgs & { include?: any }]
-      >(),
-      update: jest.fn<
-        Promise<BookVersionWithSeo>,
-        [Prisma.BookVersionUpdateArgs & { include?: any }]
-      >(),
-      delete: jest.fn<
-        Promise<BookVersionWithSeo>,
-        [Prisma.BookVersionDeleteArgs & { include?: any }]
-      >(),
+      create: jest.fn<Promise<BookVersionWithSeo>, [Prisma.BookVersionCreateArgs]>(),
+      findUnique: jest.fn<Promise<BookVersionWithSeo | null>, [Prisma.BookVersionFindUniqueArgs]>(),
+      update: jest.fn<Promise<BookVersionWithSeo>, [Prisma.BookVersionUpdateArgs]>(),
+      delete: jest.fn<Promise<BookVersionWithSeo>, [Prisma.BookVersionDeleteArgs]>(),
     },
     seo: {
       create: jest.fn<
@@ -1207,10 +1193,10 @@ describe('BookVersionService', () => {
 
   it('publish calls publication gate and unpublish does not', async () => {
     const now = new Date();
-    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' } as any);
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
     (prisma.bookVersion.update as jest.Mock)
-      .mockResolvedValueOnce({ id: 'v1', status: 'published', publishedAt: now } as any)
-      .mockResolvedValueOnce({ id: 'v1', status: 'draft', publishedAt: null } as any);
+      .mockResolvedValueOnce({ id: 'v1', status: 'published', publishedAt: now })
+      .mockResolvedValueOnce({ id: 'v1', status: 'draft', publishedAt: null });
 
     const pub = await service.publish('v1');
     expect(pub.status).toBe('published');
@@ -1303,7 +1289,7 @@ describe('BookVersionService', () => {
   });
 
   it('publish throws if gate blocks', async () => {
-    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' } as any);
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
     gateService.assertVersionCanPublish.mockRejectedValue(
       new BadRequestException({
         message: 'Publication blocked by rights gate',
@@ -1323,8 +1309,8 @@ describe('BookVersionService', () => {
   it('listAdmin ignores status filter (returns drafts too)', async () => {
     const now = new Date();
     (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([
-      { id: 'v-pub', status: 'published', createdAt: now, updatedAt: now } as any,
-      { id: 'v-draft', status: 'draft', createdAt: now, updatedAt: now } as any,
+      { id: 'v-pub', status: 'published', createdAt: now, updatedAt: now },
+      { id: 'v-draft', status: 'draft', createdAt: now, updatedAt: now },
     ]);
     const res = await service.listAdmin('b1', {});
     expect(res.map((r) => r.id)).toEqual(['v-pub', 'v-draft']);

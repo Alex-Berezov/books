@@ -9,6 +9,12 @@ import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with
 
 // This test validates language selection policy on category and tag listing endpoints
 
+/** Shape of one book card in `GET /categories/:slug/books` — only the parts this suite asserts on. */
+type CategoryBookCard = { versions: Array<{ language: string }> };
+
+/** Shape of one version in `GET /tags/:slug/books` — only the parts this suite asserts on. */
+type TaggedVersion = { language: string };
+
 describe('Language policy on categories/tags listings (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -115,8 +121,8 @@ describe('Language policy on categories/tags listings (e2e)', () => {
       .expect(200);
     expect(resCatEN.body.availableLanguages).toEqual(expect.arrayContaining(['en', 'es']));
     expect(
-      resCatEN.body.data.every(
-        (b: any): boolean => !!b.versions.some((v: any) => v.language === 'en'),
+      (resCatEN.body.data as CategoryBookCard[]).every((b) =>
+        b.versions.some((v) => v.language === 'en'),
       ),
     ).toBe(true);
 
@@ -126,14 +132,16 @@ describe('Language policy on categories/tags listings (e2e)', () => {
       .set('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8')
       .expect(200);
     expect(
-      resCatES.body.data.every(
-        (b: any): boolean => !!b.versions.some((v: any) => v.language === 'es'),
+      (resCatES.body.data as CategoryBookCard[]).every((b) =>
+        b.versions.some((v) => v.language === 'es'),
       ),
     ).toBe(true);
 
     // Tags: ?lang=es -> only ES
     const resTagES = await request(http()).get(`/tags/${tag.slug}/books?lang=es`).expect(200);
-    expect(resTagES.body.versions.every((v: any) => v.language === 'es')).toBe(true);
+    expect((resTagES.body.versions as TaggedVersion[]).every((v) => v.language === 'es')).toBe(
+      true,
+    );
 
     // Tags: unsupported Accept-Language -> fallback to default (en by default)
     const resTagFallback = await request(http())
@@ -141,6 +149,8 @@ describe('Language policy on categories/tags listings (e2e)', () => {
       .set('Accept-Language', 'de-DE,de;q=0.9')
       .expect(200);
     // default is en unless overridden
-    expect(resTagFallback.body.versions.every((v: any) => v.language === 'en')).toBe(true);
+    expect(
+      (resTagFallback.body.versions as TaggedVersion[]).every((v) => v.language === 'en'),
+    ).toBe(true);
   });
 });

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -9,15 +8,65 @@ import { ModeratorRolesService } from '../../common/roles/moderator-roles.servic
 import { rolesCache } from '../../common/roles/roles-cache';
 import { Role } from '../../common/decorators/roles.decorator';
 import { STAFF_ROLE_NAMES } from './users.constants';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 /** Условие «сотрудник» в фильтре `staff`: только роли из `UserRole`. */
 const STAFF_ROLE_CONDITION = {
   roles: { some: { role: { name: { in: [...STAFF_ROLE_NAMES] } } } },
 };
 
+/**
+ * Аргумент `$transaction`. Колбэчная ветка записана образцом из
+ * `book-version.service.spec.ts`: на место `tx` приходит сам стаб, а возврат
+ * колбэка становится возвратом транзакции. Списочную форму Prisma принимает
+ * наравне с колбэком, и `list()` с `getActivities()` зовут именно её, поэтому
+ * она остаётся вторым вариантом аргумента.
+ */
+type TransactionArg<T = unknown> = Promise<T>[] | ((tx: PrismaStub) => Promise<T> | T);
+
+/**
+ * Заглушка клиента Prisma: у каждой модели объявлены ровно те методы, которые
+ * зовёт `UsersService`. Необязательные поля общий стенд не заводит - их
+ * подставляют отдельные тесты, и именно поэтому они помечены `?`.
+ */
+interface PrismaStub {
+  user: {
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    update: jest.Mock;
+    findMany: jest.Mock;
+    delete: jest.Mock;
+    create: jest.Mock;
+    count: jest.Mock;
+  };
+  userRole: {
+    findMany: jest.Mock;
+    deleteMany: jest.Mock;
+    upsert: jest.Mock;
+    delete: jest.Mock;
+    createMany?: jest.Mock;
+  };
+  role: {
+    findUnique: jest.Mock;
+    findMany?: jest.Mock;
+  };
+  comment: {
+    findMany: jest.Mock;
+    count: jest.Mock;
+    updateMany: jest.Mock;
+    deleteMany: jest.Mock;
+  };
+  like: { deleteMany: jest.Mock };
+  bookshelf: { deleteMany: jest.Mock };
+  readingProgress: { deleteMany: jest.Mock };
+  viewStat: { updateMany: jest.Mock };
+  mediaAsset: { updateMany: jest.Mock };
+  $transaction: jest.Mock<Promise<unknown>, [TransactionArg]>;
+}
+
 describe('UsersService (unit)', () => {
   let service: UsersService;
-  let prismaMock: any;
+  let prismaMock: PrismaStub;
   let moderatorRoles: ModeratorRolesService;
 
   const baseUser: User = {
@@ -25,11 +74,15 @@ describe('UsersService (unit)', () => {
     email: 'user@example.com',
     passwordHash: 'hash',
     name: 'John',
+    firstName: null,
+    lastName: null,
+    nickname: null,
+    isActive: true,
     avatarUrl: null,
     languagePreference: PrismaLanguage.en,
     createdAt: new Date('2025-01-01T00:00:00Z'),
     lastLogin: null,
-  } as any;
+  };
 
   beforeEach(() => {
     prismaMock = {
@@ -64,9 +117,11 @@ describe('UsersService (unit)', () => {
       readingProgress: { deleteMany: jest.fn() },
       viewStat: { updateMany: jest.fn() },
       mediaAsset: { updateMany: jest.fn() },
-      $transaction: jest.fn((arg: any) => {
-        if (Array.isArray(arg)) return Promise.all(arg);
-        return arg(prismaMock);
+      $transaction: jest.fn(async (arg: TransactionArg) => {
+        if (typeof arg === 'function') {
+          return arg(prismaMock);
+        }
+        return Promise.all(arg);
       }),
     };
 
@@ -92,7 +147,7 @@ describe('UsersService (unit)', () => {
 
   /** `where`, с которым сервис реально пошёл в базу за страницей. */
   const whereOfLastList = (): unknown => {
-    const calls = (prismaMock.user.findMany as jest.Mock).mock.calls;
+    const calls = prismaMock.user.findMany.mock.calls;
     return calls[calls.length - 1][0].where;
   };
 
@@ -144,7 +199,7 @@ describe('UsersService (unit)', () => {
       select: ACCOUNT_USER_SELECT,
     });
     expect(res.name).toBe('Jane');
-    expect((res as any).passwordHash).toBeUndefined();
+    expect((res as { passwordHash?: string }).passwordHash).toBeUndefined();
   });
 
   it('deleteById: NotFound when user missing initially', async () => {
@@ -155,16 +210,16 @@ describe('UsersService (unit)', () => {
   it('deleteById: performs cascading cleanup and returns public user', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
     // comments authored by user
-    (prismaMock.comment.findMany as jest.Mock).mockResolvedValueOnce([{ id: 'c1' }, { id: 'c2' }]);
-    (prismaMock.like.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-    (prismaMock.comment.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-    (prismaMock.comment.deleteMany as jest.Mock).mockResolvedValue({ count: 2 });
-    (prismaMock.bookshelf.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-    (prismaMock.readingProgress.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-    (prismaMock.viewStat.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-    (prismaMock.mediaAsset.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-    (prismaMock.userRole.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-    (prismaMock.user.delete as jest.Mock).mockResolvedValue(baseUser);
+    prismaMock.comment.findMany.mockResolvedValueOnce([{ id: 'c1' }, { id: 'c2' }]);
+    prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.comment.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.comment.deleteMany.mockResolvedValue({ count: 2 });
+    prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.user.delete.mockResolvedValue(baseUser);
 
     const res = await service.deleteById('u1');
     expect(prismaMock.$transaction).toHaveBeenCalled();
@@ -176,8 +231,8 @@ describe('UsersService (unit)', () => {
   });
 
   it('assignRole + revokeRole happy path', async () => {
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValue(baseUser);
-    (prismaMock.role.findUnique as jest.Mock).mockResolvedValue({
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.role.findUnique.mockResolvedValue({
       id: 'r1',
       name: 'admin' as RoleName,
     });
@@ -199,20 +254,20 @@ describe('UsersService (unit)', () => {
   });
 
   it('assignRole: user or role not found', async () => {
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    prismaMock.user.findUnique.mockResolvedValueOnce(null);
     await expect(service.assignRole('missing', 'admin')).rejects.toBeInstanceOf(NotFoundException);
 
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
-    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    prismaMock.role.findUnique.mockResolvedValueOnce(null);
     await expect(service.assignRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('revokeRole: пользователя или роли нет — 404 обеими проверками', async () => {
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    prismaMock.user.findUnique.mockResolvedValueOnce(null);
     await expect(service.revokeRole('missing', 'admin')).rejects.toBeInstanceOf(NotFoundException);
 
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
-    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    prismaMock.role.findUnique.mockResolvedValueOnce(null);
     await expect(service.revokeRole('u1', 'admin')).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -227,9 +282,9 @@ describe('UsersService (unit)', () => {
    * подделка прошла бы мимо неё: тест был бы зелёным на несработавшей ветке.
    */
   it('revokeRole: связи нет — 404, а не 500', async () => {
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
-    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce({ id: 'r1', name: 'admin' });
-    (prismaMock.userRole.delete as jest.Mock).mockRejectedValueOnce(
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: 'admin' });
+    prismaMock.userRole.delete.mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError('Record to delete does not exist.', {
         code: 'P2025',
         clientVersion: '7.0.0',
@@ -245,22 +300,22 @@ describe('UsersService (unit)', () => {
    * иначе он не долетит до Sentry — фильтр репортит только 5xx.
    */
   it('revokeRole: любой другой отказ базы пробрасывается как есть', async () => {
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
-    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce({ id: 'r1', name: 'admin' });
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: 'admin' });
     const failure = new Prisma.PrismaClientKnownRequestError('Timed out fetching a connection.', {
       code: 'P2024',
       clientVersion: '7.0.0',
     });
-    (prismaMock.userRole.delete as jest.Mock).mockRejectedValueOnce(failure);
+    prismaMock.userRole.delete.mockRejectedValueOnce(failure);
 
     await expect(service.revokeRole('u1', 'admin')).rejects.toBe(failure);
   });
 
   /** Отказ не-`Error` объектом тоже не должен превращаться в 404. */
   it('revokeRole: отказ без кода Prisma не маскируется под 404', async () => {
-    (prismaMock.user.findUnique as jest.Mock).mockResolvedValueOnce(baseUser);
-    (prismaMock.role.findUnique as jest.Mock).mockResolvedValueOnce({ id: 'r1', name: 'admin' });
-    (prismaMock.userRole.delete as jest.Mock).mockRejectedValueOnce({ code: 'P2025' });
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    prismaMock.role.findUnique.mockResolvedValueOnce({ id: 'r1', name: 'admin' });
+    prismaMock.userRole.delete.mockRejectedValueOnce({ code: 'P2025' });
 
     await expect(service.revokeRole('u1', 'admin')).rejects.not.toBeInstanceOf(NotFoundException);
   });
@@ -287,8 +342,8 @@ describe('UsersService (unit)', () => {
       rolesCache.get(userId, Date.now());
 
     beforeEach(() => {
-      (prismaMock.user.findUnique as jest.Mock).mockResolvedValue(baseUser);
-      (prismaMock.role.findUnique as jest.Mock).mockResolvedValue({
+      prismaMock.user.findUnique.mockResolvedValue(baseUser);
+      prismaMock.role.findUnique.mockResolvedValue({
         id: 'r1',
         name: 'admin' as RoleName,
       });
@@ -320,14 +375,14 @@ describe('UsersService (unit)', () => {
 
     it('deleteById', async () => {
       seed('u1');
-      (prismaMock.comment.findMany as jest.Mock).mockResolvedValueOnce([]);
-      (prismaMock.like.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-      (prismaMock.bookshelf.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-      (prismaMock.readingProgress.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-      (prismaMock.viewStat.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-      (prismaMock.mediaAsset.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-      (prismaMock.userRole.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
-      (prismaMock.user.delete as jest.Mock).mockResolvedValue(baseUser);
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.user.delete.mockResolvedValue(baseUser);
 
       await service.deleteById('u1');
       expect(cached('u1')).toBeUndefined();
@@ -337,9 +392,9 @@ describe('UsersService (unit)', () => {
       seed('u1');
       prismaMock.role.findMany = jest.fn().mockResolvedValue([{ id: 'r1', name: 'admin' }]);
       prismaMock.userRole.createMany = jest.fn().mockResolvedValue({ count: 1 });
-      (prismaMock.userRole.deleteMany as jest.Mock).mockResolvedValue({ count: 1 });
-      (prismaMock.user.update as jest.Mock).mockResolvedValue(baseUser);
-      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+      prismaMock.userRole.deleteMany.mockResolvedValue({ count: 1 });
+      prismaMock.user.update.mockResolvedValue(baseUser);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
 
       await service.update('u1', { roles: ['admin'] });
       expect(cached('u1')).toBeUndefined();
@@ -347,8 +402,8 @@ describe('UsersService (unit)', () => {
 
     it('update без ролей кэш не трогает — сброс не веерный', async () => {
       seed('u1');
-      (prismaMock.user.update as jest.Mock).mockResolvedValue(baseUser);
-      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+      prismaMock.user.update.mockResolvedValue(baseUser);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
 
       await service.update('u1', { firstName: 'Jane' });
       expect(cached('u1')).toEqual(new Set([Role.Admin]));
@@ -358,9 +413,9 @@ describe('UsersService (unit)', () => {
   it('list: pagination boundaries and staff=exclude filter', async () => {
     const uA = { ...baseUser, id: 'uA', email: 'admin@example.com' } as User;
     const uB = { ...baseUser, id: 'uB', email: 'plain@example.com' } as User;
-    (prismaMock.user.count as jest.Mock).mockResolvedValue(2);
-    (prismaMock.user.findMany as jest.Mock).mockResolvedValue([uA, uB]);
-    (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+    prismaMock.user.count.mockResolvedValue(2);
+    prismaMock.user.findMany.mockResolvedValue([uA, uB]);
+    prismaMock.userRole.findMany.mockResolvedValue([]);
 
     const res = await service.list({ page: 1, limit: 1, staff: 'exclude' });
     expect(res.page).toBe(1);
@@ -382,13 +437,11 @@ describe('UsersService (unit)', () => {
   it('list: staff=only фильтрует по ролям в базе, а не по спискам почт', async () => {
     process.env.ADMIN_EMAILS = 'admin@example.com';
     const uA = { ...baseUser, id: 'uA', email: 'admin@example.com' } as User;
-    (prismaMock.user.count as jest.Mock).mockResolvedValue(1);
-    (prismaMock.user.findMany as jest.Mock).mockResolvedValue([uA]);
+    prismaMock.user.count.mockResolvedValue(1);
+    prismaMock.user.findMany.mockResolvedValue([uA]);
     // Список считает роли пакетно (`LEGACY-125`), поэтому строка связи несёт
     // `userId`: по нему роль и раскладывается по пользователям.
-    (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([
-      { userId: 'uA', role: { name: 'admin' } },
-    ]);
+    prismaMock.userRole.findMany.mockResolvedValue([{ userId: 'uA', role: { name: 'admin' } }]);
 
     const res = await service.list({ page: 1, limit: 10, staff: 'only' });
 
@@ -415,22 +468,22 @@ describe('UsersService (unit)', () => {
     );
 
     beforeEach(() => {
-      (prismaMock.user.count as jest.Mock).mockResolvedValue(tenUsers.length);
-      (prismaMock.user.findMany as jest.Mock).mockResolvedValue(tenUsers);
+      prismaMock.user.count.mockResolvedValue(tenUsers.length);
+      prismaMock.user.findMany.mockResolvedValue(tenUsers);
     });
 
     it('на 10 пользователях userRole.findMany зовётся ровно один раз', async () => {
-      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
 
       await service.list({ page: 1, limit: 10 });
 
       expect(prismaMock.userRole.findMany).toHaveBeenCalledTimes(1);
-      const [args] = (prismaMock.userRole.findMany as jest.Mock).mock.calls[0];
+      const [args] = prismaMock.userRole.findMany.mock.calls[0];
       expect(args.where).toEqual({ userId: { in: tenUsers.map((u) => u.id) } });
     });
 
     it('роль из UserRole достаётся своему пользователю, а не всем подряд', async () => {
-      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([
+      prismaMock.userRole.findMany.mockResolvedValue([
         { userId: 'u3', role: { name: 'content_manager' } },
       ]);
 
@@ -448,7 +501,7 @@ describe('UsersService (unit)', () => {
      * пропадёт роль, которой нет ни в одной строке `UserRole`.
      */
     it('базовая роль user есть у каждого, в том числе без связей в UserRole', async () => {
-      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
 
       const res = await service.list({ page: 1, limit: 10 });
 
@@ -466,7 +519,7 @@ describe('UsersService (unit)', () => {
      */
     it('роли берутся через ModeratorRolesService, а не своим запросом', async () => {
       const spy = jest.spyOn(moderatorRoles, 'rolesOfMany');
-      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
 
       await service.list({ page: 1, limit: 10 });
 
@@ -476,8 +529,8 @@ describe('UsersService (unit)', () => {
     });
 
     it('на пустой странице в базу за ролями не ходит вовсе', async () => {
-      (prismaMock.user.count as jest.Mock).mockResolvedValue(0);
-      (prismaMock.user.findMany as jest.Mock).mockResolvedValue([]);
+      prismaMock.user.count.mockResolvedValue(0);
+      prismaMock.user.findMany.mockResolvedValue([]);
 
       const res = await service.list({ page: 7, limit: 10 });
 
@@ -493,7 +546,7 @@ describe('UsersService (unit)', () => {
      */
     it('почта из ADMIN_EMAILS роли не добавляет', async () => {
       process.env.ADMIN_EMAILS = 'u0@example.com';
-      (prismaMock.userRole.findMany as jest.Mock).mockResolvedValue([]);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
 
       const res = await service.list({ page: 1, limit: 10 });
 
@@ -566,8 +619,8 @@ describe('UsersService (unit)', () => {
 
       const res = await service.getActivities('u1', 2, 10);
 
-      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
-      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+      expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+      const args = prismaMock.comment.findMany.mock.calls[0][0] as {
         skip: number;
         take: number;
       };
@@ -598,8 +651,8 @@ describe('UsersService (unit)', () => {
       prismaMock.comment.findMany.mockResolvedValueOnce([]);
       await service.getActivities('u1');
 
-      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
-      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+      expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+      const args = prismaMock.comment.findMany.mock.calls[0][0] as {
         select?: Record<string, unknown>;
         include?: Record<string, unknown>;
       };
@@ -634,7 +687,7 @@ describe('UsersService (unit)', () => {
       prismaMock.comment.findMany.mockResolvedValueOnce([]);
       await service.getActivities('u1');
 
-      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+      const args = prismaMock.comment.findMany.mock.calls[0][0] as {
         orderBy: unknown;
       };
 
@@ -654,8 +707,8 @@ describe('UsersService (unit)', () => {
       prismaMock.comment.findMany.mockResolvedValueOnce([]);
       await service.getActivities('u1');
 
-      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
-      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+      expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+      const args = prismaMock.comment.findMany.mock.calls[0][0] as {
         select: {
           parent: { select: { user: { select: Record<string, unknown> } } };
           children: { select: { user: { select: Record<string, unknown> } } };
@@ -677,8 +730,8 @@ describe('UsersService (unit)', () => {
       prismaMock.comment.findMany.mockResolvedValueOnce([]);
       await service.getActivities('u1');
 
-      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
-      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+      expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+      const args = prismaMock.comment.findMany.mock.calls[0][0] as {
         select: { children: { where: Record<string, unknown> } };
       };
 
@@ -697,8 +750,8 @@ describe('UsersService (unit)', () => {
       prismaMock.comment.findMany.mockResolvedValueOnce([]);
       await service.getActivities('u1');
 
-      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
-      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+      expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+      const args = prismaMock.comment.findMany.mock.calls[0][0] as {
         where: Record<string, unknown>;
       };
 
@@ -720,8 +773,8 @@ describe('UsersService (unit)', () => {
       prismaMock.comment.findMany.mockResolvedValueOnce([]);
       await service.getActivities('u1');
 
-      expect(prismaMock.comment.findMany as jest.Mock).toHaveBeenCalledTimes(1);
-      const args = (prismaMock.comment.findMany as jest.Mock).mock.calls[0][0] as {
+      expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+      const args = prismaMock.comment.findMany.mock.calls[0][0] as {
         where: Record<string, unknown>;
       };
 
@@ -832,7 +885,7 @@ describe('UsersService (unit)', () => {
       prismaMock.userRole.findMany.mockResolvedValueOnce([]);
       await service.me('u1');
 
-      const [select] = selectsOf(prismaMock.user.findUnique as jest.Mock);
+      const [select] = selectsOf(prismaMock.user.findUnique);
       expect(select).toEqual(ACCOUNT_USER_SELECT);
       expect(select).not.toHaveProperty('passwordHash');
     });
@@ -846,19 +899,19 @@ describe('UsersService (unit)', () => {
     });
 
     it('list: findMany зовётся с select без passwordHash', async () => {
-      (prismaMock.user.count as jest.Mock).mockResolvedValueOnce(1);
-      (prismaMock.user.findMany as jest.Mock).mockResolvedValueOnce([baseUser]);
+      prismaMock.user.count.mockResolvedValueOnce(1);
+      prismaMock.user.findMany.mockResolvedValueOnce([baseUser]);
       prismaMock.userRole.findMany.mockResolvedValue([]);
       await service.list({ page: 1, limit: 10 });
 
-      const [select] = selectsOf(prismaMock.user.findMany as jest.Mock);
+      const [select] = selectsOf(prismaMock.user.findMany);
       expect(select).toEqual(ACCOUNT_USER_SELECT);
       expect(select).not.toHaveProperty('passwordHash');
     });
 
     it('list: ни в одном элементе ответа нет ключа passwordHash', async () => {
-      (prismaMock.user.count as jest.Mock).mockResolvedValueOnce(1);
-      (prismaMock.user.findMany as jest.Mock).mockResolvedValueOnce([baseUser]);
+      prismaMock.user.count.mockResolvedValueOnce(1);
+      prismaMock.user.findMany.mockResolvedValueOnce([baseUser]);
       prismaMock.userRole.findMany.mockResolvedValue([]);
       const res = await service.list({ page: 1, limit: 10 });
 
@@ -873,7 +926,7 @@ describe('UsersService (unit)', () => {
       prismaMock.userRole.findMany.mockResolvedValueOnce([]);
       await service.listRoles('u1');
 
-      const [select] = selectsOf(prismaMock.user.findUnique as jest.Mock);
+      const [select] = selectsOf(prismaMock.user.findUnique);
       expect(select).toEqual({ id: true });
     });
 
@@ -882,7 +935,7 @@ describe('UsersService (unit)', () => {
     // Без этих спек возврат `include`/безусловной записи проходит незамеченным.
     it('create: запись зовётся с select без passwordHash', async () => {
       prismaMock.user.findUnique.mockResolvedValueOnce(null);
-      (prismaMock.user.create as jest.Mock).mockResolvedValueOnce({
+      prismaMock.user.create.mockResolvedValueOnce({
         ...baseUser,
         roles: [{ role: { name: 'user' } }],
       });
@@ -891,13 +944,13 @@ describe('UsersService (unit)', () => {
         email: 'new@example.com',
         password: 'secret-password',
         roles: [RoleName.user],
-      } as any);
+      });
 
-      const [select] = selectsOf(prismaMock.user.create as jest.Mock);
+      const [select] = selectsOf(prismaMock.user.create);
       expect(select).not.toHaveProperty('passwordHash');
       expect(select).toMatchObject(ACCOUNT_USER_SELECT);
       // Проверка занятости почты читает только идентификатор.
-      expect(selectsOf(prismaMock.user.findUnique as jest.Mock)[0]).toEqual({ id: true });
+      expect(selectsOf(prismaMock.user.findUnique)[0]).toEqual({ id: true });
     });
 
     it('update: чтение и запись сужены, passwordHash не читается', async () => {
@@ -909,26 +962,30 @@ describe('UsersService (unit)', () => {
       prismaMock.user.update.mockResolvedValueOnce(baseUser);
       prismaMock.userRole.findMany.mockResolvedValue([]);
 
-      await service.update('u1', { nickname: 'new_nick' } as any);
+      // Поле не из `UpdateUserDto`, и приведение здесь нарочное: живой запрос с таким телом
+      // до сервиса не дойдёт — глобальный `ValidationPipe` стоит с `forbidNonWhitelisted`
+      // и отобьёт его 400-м. Тест смотрит не на тело, а на `select` обоих обращений к базе:
+      // чтение берёт три поля без `passwordHash`, запись — белый список аккаунта.
+      await service.update('u1', { nickname: 'new_nick' } as unknown as UpdateUserDto);
 
-      const [readSelect] = selectsOf(prismaMock.user.findUnique as jest.Mock);
+      const [readSelect] = selectsOf(prismaMock.user.findUnique);
       expect(readSelect).not.toHaveProperty('passwordHash');
       expect(Object.keys(readSelect).sort()).toEqual(['firstName', 'id', 'lastName']);
 
-      const [writeSelect] = selectsOf(prismaMock.user.update as jest.Mock);
+      const [writeSelect] = selectsOf(prismaMock.user.update);
       expect(writeSelect).toEqual(ACCOUNT_USER_SELECT);
     });
 
     it('deleteById: удаление зовётся с select без passwordHash', async () => {
       prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
-      (prismaMock.comment.findMany as jest.Mock).mockResolvedValueOnce([]);
+      prismaMock.comment.findMany.mockResolvedValueOnce([]);
       prismaMock.user.delete.mockResolvedValueOnce(baseUser);
 
       await service.deleteById('u1');
 
-      const [deleteSelect] = selectsOf(prismaMock.user.delete as jest.Mock);
+      const [deleteSelect] = selectsOf(prismaMock.user.delete);
       expect(deleteSelect).toEqual(ACCOUNT_USER_SELECT);
-      expect(selectsOf(prismaMock.user.findUnique as jest.Mock)[0]).toEqual({ id: true });
+      expect(selectsOf(prismaMock.user.findUnique)[0]).toEqual({ id: true });
     });
 
     it('ни одна операция над пользователем не идёт без select', async () => {
@@ -945,9 +1002,9 @@ describe('UsersService (unit)', () => {
       await service.revokeRole('u1', RoleName.admin);
 
       const calls = [
-        ...(prismaMock.user.findUnique as jest.Mock).mock.calls,
-        ...(prismaMock.user.findFirst as jest.Mock).mock.calls,
-        ...(prismaMock.user.update as jest.Mock).mock.calls,
+        ...prismaMock.user.findUnique.mock.calls,
+        ...prismaMock.user.findFirst.mock.calls,
+        ...prismaMock.user.update.mock.calls,
       ];
       expect(calls.length).toBeGreaterThan(0);
       for (const [args] of calls) {

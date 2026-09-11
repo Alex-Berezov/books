@@ -1,10 +1,11 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- тело ответа supertest сверх типизированного findTranslation остаётся необёрнутым (res.body.category/.tag, .seo) */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { findTranslation } from './helpers/translations';
 
 describe('Tag Translation Content & SEO (e2e)', () => {
   let app: INestApplication;
@@ -131,8 +132,7 @@ describe('Tag Translation Content & SEO (e2e)', () => {
       .expect(200);
 
     expect(Array.isArray(res.body)).toBe(true);
-    const enTrans = res.body.find((t: any) => t.language === 'en');
-    expect(enTrans).toBeDefined();
+    const enTrans = findTranslation(res.body, 'en');
     expect(enTrans.seo).toBeDefined();
     expect(enTrans.description).toBe('<p>Top selling books</p>');
   });
@@ -166,8 +166,11 @@ describe('Tag Translation Content & SEO (e2e)', () => {
       .get(`/tags/${tagId}/translations`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
-    const frTrans = frBefore.body.find((t: any) => t.language === 'fr');
+    const frTrans = findTranslation(frBefore.body, 'fr');
     const oldSeoId = frTrans.seoId;
+    if (oldSeoId === null) {
+      throw new Error('Expected fr tag translation to have seo before clearing it');
+    }
 
     const res = await request(http())
       .patch(`/tags/${tagId}/translations/fr`)
@@ -203,7 +206,7 @@ describe('Tag Translation Content & SEO (e2e)', () => {
       .get(`/tags/${tagId}/translations`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
-    const enTrans = translations.body.find((t: any) => t.language === 'en');
+    const enTrans = findTranslation(translations.body, 'en');
 
     const res = await request(http())
       .get(`/en/seo/resolve?type=tag&id=${enTrans.slug}`)
@@ -229,7 +232,7 @@ describe('Tag Translation Content & SEO (e2e)', () => {
       .get(`/tags/${tagId}/translations`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
-    const enTrans = translations.body.find((t: any) => t.language === 'en');
+    const enTrans = findTranslation(translations.body, 'en');
     const seoId = enTrans.seoId;
 
     await request(http())

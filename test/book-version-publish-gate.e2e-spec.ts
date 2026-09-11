@@ -158,9 +158,11 @@ describe('BookVersion Publication Gate (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(gateRes.body.canPublish).toBe(false);
-    expect(gateRes.body.blockingReasons.some((r: any) => r.code === 'PUBLICATION_GATE_BLOCK')).toBe(
-      true,
-    );
+    expect(
+      (gateRes.body.blockingReasons as Array<{ code: string }>).some(
+        (r) => r.code === 'PUBLICATION_GATE_BLOCK',
+      ),
+    ).toBe(true);
 
     await request(http())
       .patch(`/versions/${blockedVersionId}/publish`)
@@ -207,7 +209,9 @@ describe('BookVersion Publication Gate (e2e)', () => {
       .expect(200);
     expect(gateRes.body.canPublish).toBe(false);
     expect(
-      gateRes.body.blockingReasons.some((r: any) => r.code === 'UNRESOLVED_BLOCKING_RIGHTS_ACTION'),
+      (gateRes.body.blockingReasons as Array<{ code: string }>).some(
+        (r) => r.code === 'UNRESOLVED_BLOCKING_RIGHTS_ACTION',
+      ),
     ).toBe(true);
 
     await request(http())
@@ -422,8 +426,8 @@ describe('BookVersion Publication Gate (e2e)', () => {
       });
 
       expect(
-        gate.body.blockingReasons.some(
-          (r: any) => r.code === 'BLOCKED_COUNTRIES_REQUIRE_GEO_BLOCK',
+        (gate.body.blockingReasons as Array<{ code: string }>).some(
+          (r) => r.code === 'BLOCKED_COUNTRIES_REQUIRE_GEO_BLOCK',
         ),
       ).toBe(true);
       // The audit snapshot is untouched: the requirement was resolved, not rewritten.

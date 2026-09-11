@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModuleBuilder } from '@nestjs/testing';
 import request from 'supertest';
@@ -15,7 +14,9 @@ jest.mock('@sentry/node', () => {
   return {
     __esModule: true,
     captureException,
-    withScope: (cb: (scope: any) => void) => {
+    withScope: (
+      cb: (scope: { setTag: jest.Mock; setContext: jest.Mock; setUser: jest.Mock }) => void,
+    ) => {
       const scope = {
         setTag: jest.fn(),
         setContext: jest.fn(),
@@ -60,7 +61,7 @@ const shouldRun = Boolean(process.env.SENTRY_DSN);
   });
 
   it('does not report 4xx validation errors to Sentry', async () => {
-    (Sentry as any).captureException.mockClear();
+    jest.mocked(Sentry.captureException).mockClear();
 
     // Send extra field to trigger 400 via forbidNonWhitelisted
     await request(app.getHttpServer())
@@ -68,16 +69,16 @@ const shouldRun = Boolean(process.env.SENTRY_DSN);
       .send({ email: 'e2e_sentry@example.com', password: 'password123', extra: 'oops' })
       .expect(400);
 
-    expect((Sentry as any).captureException).not.toHaveBeenCalled();
+    expect(jest.mocked(Sentry.captureException)).not.toHaveBeenCalled();
   });
 
   it('reports 5xx from /status/sentry-test to Sentry', async () => {
-    (Sentry as any).captureException.mockClear();
+    jest.mocked(Sentry.captureException).mockClear();
 
     await request(app.getHttpServer()).post('/status/sentry-test').expect(500);
 
-    expect((Sentry as any).captureException).toHaveBeenCalledTimes(1);
-    const [arg] = (Sentry as any).captureException.mock.calls[0] ?? [];
+    expect(jest.mocked(Sentry.captureException)).toHaveBeenCalledTimes(1);
+    const [arg] = jest.mocked(Sentry.captureException).mock.calls[0] ?? [];
     expect(arg).toBeInstanceOf(Error);
   });
 });

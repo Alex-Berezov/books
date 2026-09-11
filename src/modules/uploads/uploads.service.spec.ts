@@ -4,21 +4,28 @@ import {
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
+import type { Readable } from 'node:stream';
 import { UploadsService } from './uploads.service';
 import { UploadType } from './dto/presign.dto';
+import type { CacheService } from '../../shared/cache/cache.interface';
+import type {
+  StorageSaveOptions,
+  StorageService,
+  StorageStat,
+} from '../../shared/storage/storage.interface';
 
 describe('UploadsService (unit)', () => {
   const cache = {
-    get: jest.fn<Promise<any>, any>(),
-    set: jest.fn<Promise<void>, any>(),
-    del: jest.fn<Promise<void>, any>(),
+    get: jest.fn<Promise<unknown>, [string]>(),
+    set: jest.fn<Promise<void>, [string, unknown, number?]>(),
+    del: jest.fn<Promise<void>, [string]>(),
   };
   const storage = {
-    save: jest.fn<Promise<string>, any>(),
-    delete: jest.fn<Promise<void>, any>(),
-    exists: jest.fn<Promise<boolean>, any>(),
-    stat: jest.fn<Promise<{ size: number } | null>, any>(),
-    getPublicUrl: jest.fn<string, any>(),
+    save: jest.fn<Promise<string>, [string, Buffer | Readable, StorageSaveOptions?]>(),
+    delete: jest.fn<Promise<void>, [string]>(),
+    exists: jest.fn<Promise<boolean>, [string]>(),
+    stat: jest.fn<Promise<StorageStat | null>, [string]>(),
+    getPublicUrl: jest.fn<string, [string]>(),
   };
 
   let service: UploadsService;
@@ -26,8 +33,8 @@ describe('UploadsService (unit)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     service = new UploadsService(
-      cache as unknown as import('../../shared/cache/cache.interface').CacheService,
-      storage as unknown as import('../../shared/storage/storage.interface').StorageService,
+      cache as unknown as CacheService,
+      storage as unknown as StorageService,
     );
   });
 

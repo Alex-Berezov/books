@@ -40,7 +40,7 @@ describe('ReadingProgressService', () => {
       const progress = { id: 'p1' };
       prisma.readingProgress.findFirst.mockResolvedValueOnce(progress);
       const res = await service.get('u1', 'v1');
-      expect(res).toBe(progress as any);
+      expect(res).toBe(progress);
     });
   });
 
@@ -85,10 +85,10 @@ describe('ReadingProgressService', () => {
       const created = { id: 'p1' };
       prisma.readingProgress.create.mockResolvedValueOnce(created);
       const res1 = await service.upsert('u1', 'v1', { chapterNumber: 1, position: 0.5 });
-      expect(res1).toBe(created as any);
+      expect(res1).toBe(created);
 
       prisma.readingProgress.findFirst.mockResolvedValueOnce({ id: 'p1' });
-      prisma.readingProgress.update.mockResolvedValueOnce({ id: 'p1', position: 0.6 } as any);
+      prisma.readingProgress.update.mockResolvedValueOnce({ id: 'p1', position: 0.6 });
       const res2 = await service.upsert('u1', 'v1', { chapterNumber: 1, position: 0.6 });
       expect(res2).toEqual({ id: 'p1', position: 0.6 });
     });
@@ -99,7 +99,7 @@ describe('ReadingProgressService', () => {
       prisma.readingProgress.findFirst.mockResolvedValueOnce(null);
       prisma.readingProgress.create.mockRejectedValueOnce(new Error('unique violation'));
       prisma.readingProgress.findFirst.mockResolvedValueOnce({ id: 'p1' });
-      prisma.readingProgress.update.mockResolvedValueOnce({ id: 'p1', position: 0.7 } as any);
+      prisma.readingProgress.update.mockResolvedValueOnce({ id: 'p1', position: 0.7 });
       const res = await service.upsert('u1', 'v1', { chapterNumber: 1, position: 0.7 });
       expect(res).toEqual({ id: 'p1', position: 0.7 });
     });

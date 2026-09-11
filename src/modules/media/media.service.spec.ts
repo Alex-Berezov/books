@@ -19,8 +19,8 @@ describe('MediaService (unit)', () => {
     authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const storage = {
-    getPublicUrl: jest.fn<string, any>(),
-    delete: jest.fn<Promise<void>, any>(),
+    getPublicUrl: jest.fn<string, [string]>(),
+    delete: jest.fn<Promise<void>, [string]>(),
   };
 
   let service: MediaService;
@@ -93,7 +93,7 @@ describe('MediaService (unit)', () => {
 
     it('handles unique constraint (P2002) by returning found asset', async () => {
       // Simulate race: create throws P2002, then findUnique returns existing
-      const err: any = { code: 'P2002' };
+      const err = { code: 'P2002' };
       prisma.mediaAsset.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'x' });
       prisma.mediaAsset.create.mockRejectedValue(err);
       storage.getPublicUrl.mockReturnValue('http://u/static/k');

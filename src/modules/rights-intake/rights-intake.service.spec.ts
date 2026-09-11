@@ -1,7 +1,7 @@
 import { RightsIntakeService } from './rights-intake.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { RightsIntakeStatus } from '@prisma/client';
+import { RightsIntakeStatus, RightsSourceProvider } from '@prisma/client';
 
 interface PrismaStub {
   rightsIntake: {
@@ -392,7 +392,7 @@ describe('RightsIntakeService', () => {
       ]);
       mockTransactionArray();
 
-      await service.list({ sourceProvider: 'PROJECT_GUTENBERG' as any });
+      await service.list({ sourceProvider: RightsSourceProvider.PROJECT_GUTENBERG });
       expect(prisma.rightsIntake.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({

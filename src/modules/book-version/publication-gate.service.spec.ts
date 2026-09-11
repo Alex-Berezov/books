@@ -969,10 +969,11 @@ describe('PublicationGateService', () => {
     await expect(service.assertVersionCanPublish('v1')).rejects.toBeInstanceOf(BadRequestException);
     try {
       await service.assertVersionCanPublish('v1');
-    } catch (e: any) {
-      expect(e.response.code).toBe('RIGHTS_PUBLICATION_BLOCKED');
-      expect(e.response.canPublish).toBe(false);
-      expect(Array.isArray(e.response.blockingReasons)).toBe(true);
+    } catch (e) {
+      const response = (e as BadRequestException).getResponse() as Record<string, unknown>;
+      expect(response.code).toBe('RIGHTS_PUBLICATION_BLOCKED');
+      expect(response.canPublish).toBe(false);
+      expect(Array.isArray(response.blockingReasons)).toBe(true);
     }
   });
 

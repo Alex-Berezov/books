@@ -11,7 +11,7 @@ class InMemoryStorage implements StorageService {
     else {
       const chunks: Uint8Array[] = [];
       await new Promise<void>((resolve, reject) => {
-        data.on('data', (c: any) => {
+        data.on('data', (c: Buffer | string) => {
           const u8: Uint8Array = Buffer.isBuffer(c) ? c : Buffer.from(c);
           chunks.push(u8);
         });
