@@ -56,8 +56,10 @@ describe('GeoIpCountryService', () => {
 
   // The platform headers a request can plausibly arrive with, none of which any proxy in front of
   // this origin overwrites. Named one by one because the trusted set lives inline in
-  // `resolveCountry`; a seventh name would slip past this list, so a real whitelist guard needs the
-  // trusted names extracted into a constant first (LEGACY-208).
+  // `resolveCountry`; a seventh name would slip past this list, so a real whitelist guard needs
+  // the trusted names extracted into a constant first. That extraction was never done — it was
+  // noted under LEGACY-208, which closed 12.09.2026 without it, so this list is the only thing
+  // standing between a new platform header and a country the client picked.
   it('takes the country from no header other than the trusted ones', () => {
     const { service } = createService({ NODE_ENV: 'production' });
 
@@ -101,11 +103,12 @@ describe('GeoIpCountryService', () => {
     expect(service.resolveCountry({ 'x-geo-country': 'gb' }, true)).toBe('GB');
   });
 
-  // The other flag, pinned the same way in both positions. This half is a snapshot, not an intent:
-  // nothing in this deployment overwrites `x-country-code`, so turning the flag on lets the client
-  // pick its own market. Why the branch is still here at all — remainder of LEGACY-208. When it
-  // goes, this expectation becomes `null`.
-  it('uses X-Country-Code only while its own flag is on', () => {
+  // The second retired key, pinned in both positions for the same reason as the first: a green
+  // spec over an absent clause proves nothing, so the case that used to demand `'US'` with the
+  // flag on now demands `null` either way. Restoring the branch turns the `on` half red — the
+  // `off` half stays green by design, since with the key unset the branch would not fire even if
+  // it were back; it is here to pin both sides of a switch that no longer exists.
+  it('ignores X-Country-Code with and without the retired flag', () => {
     const { service: off } = createService({ NODE_ENV: 'production' });
     const { service: on } = createService({
       NODE_ENV: 'production',
@@ -113,7 +116,7 @@ describe('GeoIpCountryService', () => {
     });
 
     expect(off.resolveCountry({ 'x-country-code': 'us' })).toBeNull();
-    expect(on.resolveCountry({ 'x-country-code': 'us' })).toBe('US');
+    expect(on.resolveCountry({ 'x-country-code': 'us' })).toBeNull();
   });
 
   describe('country source health (WP-1.2а)', () => {
@@ -239,27 +242,28 @@ describe('GeoIpCountryService', () => {
       expect(await metrics.getCounterValue('geo_country_resolved_total')).toBeNull();
     });
 
+    // LEGACY-208 left two resolving headers where there were three, so the second series here is
+    // `x-geo-country` under NODE_ENV === 'test' rather than the retired `x-country-code`. The
+    // point of the case is unchanged: two headers, two series, not one sum.
     it('separates the headers instead of summing them into one series', async () => {
-      const { service, metrics } = createService({
-        NODE_ENV: 'production',
-        ENABLE_X_COUNTRY_CODE_HEADER: 'true',
-      });
+      const { service, metrics } = createService({ NODE_ENV: 'test' });
 
       service.resolveCountry({ 'cf-ipcountry': 'de' });
       service.resolveCountry({ 'cf-ipcountry': 'fr' });
-      service.resolveCountry({ 'x-country-code': 'us' });
+      service.resolveCountry({ 'x-geo-country': 'us' });
 
       expect(
         await metrics.getCounterValue('geo_country_resolved_total', { header: 'cf-ipcountry' }),
       ).toBe(2);
       expect(
-        await metrics.getCounterValue('geo_country_resolved_total', { header: 'x-country-code' }),
+        await metrics.getCounterValue('geo_country_resolved_total', { header: 'x-geo-country' }),
       ).toBe(1);
     });
 
-    // The third resolving call site. Named separately because a typo in the header string passed
-    // to `record` would produce a series under a name no dashboard queries, and every other spec
-    // in this file would stay green.
+    // The second and last resolving call site — there were three until LEGACY-208 removed the
+    // `x-country-code` branch. Named separately because a typo in the header string passed to
+    // `record` would produce a series under a name no dashboard queries, and every other spec in
+    // this file would stay green.
     it('labels the staging debug header with its own name', async () => {
       const { service, metrics } = createService({ NODE_ENV: 'test' });
 

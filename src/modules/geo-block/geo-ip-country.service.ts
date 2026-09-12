@@ -31,16 +31,15 @@ export class GeoIpCountryService {
    * believing whatever the client typed, silently — a header is just a string to types and tests.
    * Never add a header no proxy in front of the origin overwrites.
    *
-   * LEGACY-208, half closed on 12.09.2026. `ENABLE_GEO_TEST_HEADERS` is gone: it switched
-   * `x-geo-country` on regardless of NODE_ENV, so one line in a deployment secret turned into
-   * "any reader names their own country", with nothing in the logs to tell that apart from an
-   * honest lookup. What is left in front of that header is NODE_ENV === 'test' — still an
-   * environment variable, and still the thing to check first when a production lookup starts
-   * believing the header — and `allowDebugHeader`, which is an argument. Do not put a second
-   * flag back in front of it.
-   *
-   * The `x-country-code` branch below is the same hole and is still open, for a reason that is
-   * not a technical one — see the remainder of LEGACY-208.
+   * LEGACY-208, closed 12.09.2026. Two environment keys used to switch client-supplied country
+   * headers on: `ENABLE_GEO_TEST_HEADERS` for `x-geo-country` and `ENABLE_X_COUNTRY_CODE_HEADER`
+   * for `x-country-code`. Neither header is overwritten by anything in front of this origin, so
+   * either key turned one line in a deployment secret into "any reader names their own country",
+   * with nothing in the logs to tell that apart from an honest lookup. Both are gone, and the
+   * whole `x-country-code` branch with them. What is left in front of `x-geo-country` is
+   * NODE_ENV === 'test' — still an environment variable, and still the thing to check first when
+   * a production lookup starts believing the header — and `allowDebugHeader`, which is an
+   * argument. Do not put a flag back in front of either.
    */
   resolveCountry(headers: GeoRequestHeaders, allowDebugHeader = false): string | null {
     const canUseGeoTestHeader = this.config.get<string>('NODE_ENV') === 'test' || allowDebugHeader;
@@ -52,11 +51,6 @@ export class GeoIpCountryService {
 
     const cloudflareCountry = this.normalize(this.getHeader(headers, 'cf-ipcountry'));
     if (cloudflareCountry) return this.record('cf-ipcountry', cloudflareCountry, allowDebugHeader);
-
-    if (this.config.get<string>('ENABLE_X_COUNTRY_CODE_HEADER') === 'true') {
-      const fallbackCountry = this.normalize(this.getHeader(headers, 'x-country-code'));
-      if (fallbackCountry) return this.record('x-country-code', fallbackCountry, allowDebugHeader);
-    }
 
     return this.record(null, null, allowDebugHeader);
   }
@@ -108,8 +102,8 @@ export class GeoIpCountryService {
   ): string | null {
     if (isDebugLookup) return countryCode;
 
-    // A country always arrives together with the header that carried it: the three resolving
-    // call sites pass both, the fourth passes neither. The `header &&` half of the condition
+    // A country always arrives together with the header that carried it: the two resolving call
+    // sites pass both, the third passes neither. The `header &&` half of the condition
     // states that invariant instead of papering over it with a `'unknown'` label value that
     // no traffic can ever produce — a series like that only misleads whoever queries it.
     if (countryCode && header) {
