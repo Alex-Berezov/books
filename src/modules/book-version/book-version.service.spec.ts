@@ -9,6 +9,7 @@ import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
@@ -1376,6 +1377,73 @@ describe('BookVersionService', () => {
       // событие, пережившее откат своей операции, - это `LEGACY-036`.
       expect(prisma.bookVersion.update).not.toHaveBeenCalled();
       expect(prisma.adminAuditEvent.create).not.toHaveBeenCalled();
+    });
+
+    /**
+     * `try` накрывает только транзакцию. Пересчёт таксономий идёт **после** неё, и его отказ
+     * обязан выйти наружу, а не быть выданным за «снимать нечего»: транзакция к этому моменту
+     * уже закоммичена, версия снята, а ответ `200` с перечитанной версией утверждал бы, что
+     * ничего не произошло. Код отказа взят тот же самый — `P2025`, иначе ветка его и не ловит.
+     */
+    it('does not swallow a post-transaction failure as "nothing to unpublish"', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(publishedSnapshot);
+      const txUpdate = jest
+        .fn()
+        .mockResolvedValue({ id: 'v1', status: 'draft', publishedAt: null });
+      const txQueryRaw = jest.fn().mockResolvedValue([
+        {
+          status: 'published',
+          publishedAt: new Date('2026-09-01T10:00:00.000Z'),
+          rightsLicenseIds: ['lic-A'],
+          rightsLicenseCoverageStatus: 'COVERED',
+          rightsLicenseCheckedAt: new Date('2026-09-01T09:59:00.000Z'),
+          rightsLicenseUncoveredCountryCodes: [],
+        },
+      ]);
+      jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementationOnce((fn: (tx: unknown) => unknown) =>
+          Promise.resolve(fn({ bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw })),
+        );
+
+      const afterCommitFailure = new Prisma.PrismaClientKnownRequestError('gone', {
+        code: 'P2025',
+        clientVersion: 'test',
+      });
+      const withTaxonomy = new BookVersionService(
+        prisma as unknown as PrismaService,
+        gateService as unknown as PublicationGateService,
+        mockRightsContentHashService,
+        { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
+        licenseCoverageService as unknown as RightsLicenseCoverageService,
+        rightsClaimsService as unknown as RightsClaimsService,
+        rightsRecheckService as unknown as RightsRecheckService,
+        {
+          evaluateVersion: jest.fn().mockResolvedValue({ lawyerReviewRequired: false }),
+        } as unknown as RightsLawyerReviewService,
+        geoIpCountryService as unknown as GeoIpCountryService,
+        {
+          record: jest.fn().mockResolvedValue(undefined),
+          recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+          resolve: jest.fn().mockResolvedValue(null),
+        } as unknown as SlugRedirectService,
+        adminAudit as unknown as AdminAuditService,
+        new TerritoryRegionAggregationService(),
+        {
+          // Отказ **однократный**: иначе тест проходил бы и при широком обработчике —
+          // проглоченный отказ первого вызова просто повторился бы вторым.
+          recomputeForBookVersion: jest
+            .fn()
+            .mockRejectedValueOnce(afterCommitFailure)
+            .mockResolvedValue(undefined),
+        } as unknown as TaxonomyIndexabilityService,
+      );
+
+      await expect(withTaxonomy.unpublish('v1', 'admin-7')).rejects.toBe(afterCommitFailure);
+      // Гашение состоялось: отказ пришёл уже после коммита, и выдавать его за «нечего
+      // снимать» нельзя.
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+      expect(adminAudit.record).toHaveBeenCalledTimes(1);
     });
 
     /**

@@ -1263,14 +1263,16 @@ export class BookVersionService {
    * наполнения черновика этим действием не открывается.
    */
   async unpublish(id: string, actorUserId: string | null) {
+    // Только на отказ 404: содержимое версии здесь не нужно — снимок читается под замком
+    // внутри транзакции, а ответ собирает сама запись.
     const existing = await this.prisma.bookVersion.findUnique({
       where: { id },
-      include: { seo: true },
+      select: { id: true },
     });
     if (!existing) throw new NotFoundException('BookVersion not found');
 
-    try {
-      const updated = await this.prisma.$transaction(
+    const updated = await this.prisma
+      .$transaction(
         async (tx) => {
           // Снимок читается под замком строки и **внутри** транзакции: между обычным
           // чтением и записью проходит чужой `publish` и перезаписывает те же колонки.
@@ -1309,28 +1311,34 @@ export class BookVersionService {
         // Границы как у соседей по правовому контуру: замок строки без дедлайна держит
         // её до конца пула соединений, если вызывающий повис (`L-019`).
         { timeout: 30_000, maxWait: 10_000 },
-      );
-
-      // ...and close again when the count drops back to the hysteresis floor.
-      await this.taxonomyIndexabilityService?.recomputeForBookVersion(id);
-
-      return updated;
-    } catch (e: unknown) {
-      // `P2025` под замком строки означает ровно одно: версия не опубликована и даты
+      )
+      // `.catch` висит на самой транзакции, а не `try` вокруг блока — приём взят
+      // с `publish` в этом же файле. Так обработчик накрывает **только** транзакцию:
+      // отказ шага после неё (пересчёт таксономий, сборка ответа) с кодом `P2025` иначе
+      // был бы выдан за «снимать нечего» и вернул бы версию так, будто ничего
+      // не произошло, хотя транзакция уже закоммичена.
+      //
+      // `P2025` из самой транзакции означает ровно одно: версия не опубликована и даты
       // публикации не несёт, то есть снимать нечего — встречное снятие сюда попасть
       // не может, оно ждёт замка. Ответ маршрута не меняется, но версия перечитывается:
       // отдать прочитанное до транзакции значило бы назвать опубликованной строку,
       // состояние которой к этому моменту уже другое.
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
-        const current = await this.prisma.bookVersion.findUnique({
-          where: { id },
-          include: { seo: true },
-        });
-        if (!current) throw new NotFoundException('BookVersion not found');
-        return current;
-      }
-      throw e;
-    }
+      .catch(async (e: unknown) => {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+          const current = await this.prisma.bookVersion.findUnique({
+            where: { id },
+            include: { seo: true },
+          });
+          if (!current) throw new NotFoundException('BookVersion not found');
+          return current;
+        }
+        throw e;
+      });
+
+    // ...and close again when the count drops back to the hysteresis floor.
+    await this.taxonomyIndexabilityService?.recomputeForBookVersion(id);
+
+    return updated;
   }
 
   // Админский листинг без фильтра по статусу
