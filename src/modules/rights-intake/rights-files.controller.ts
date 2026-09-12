@@ -38,6 +38,7 @@ import { RightsFileDescriptorDto } from './dto/rights-file-descriptor.dto';
 import { RightsFileLimitsDto } from './dto/rights-file-limits.dto';
 import { SupersedeRightsEvidenceResponseDto } from './dto/supersede-rights-evidence-response.dto';
 import type { RightsFileDownload } from './rights-files.service';
+import { PRIVATE_NO_STORE } from '../../common/interceptors/cache-control';
 
 type UploadedFileType = {
   buffer?: Buffer;
@@ -234,6 +235,6 @@ function send(res: Response, download: RightsFileDownload): void {
     'Content-Disposition',
     `attachment; filename="${download.fileName.replace(/"/g, '')}"`,
   );
-  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Cache-Control', PRIVATE_NO_STORE);
   res.end(download.buffer);
 }

@@ -1,9 +1,10 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { map, type Observable } from 'rxjs';
+import { catchError, map, throwError, type Observable } from 'rxjs';
 import type { Response } from 'express';
 import { NO_PUBLIC_CACHE } from '../decorators/no-public-cache.decorator';
 import { takeDegradedMark } from './degraded-response';
+import { PRIVATE_NO_STORE, PUBLIC_CACHE, PUBLIC_CACHE_DEGRADED } from './cache-control';
 
 /**
  * `Cache-Control: public` разрешает хранить и раздавать ответ **любому** общему
@@ -25,10 +26,7 @@ export class PublicCacheInterceptor implements NestInterceptor {
       context.getClass(),
     ]);
 
-    response.setHeader(
-      'Cache-Control',
-      isPersonal ? 'private, no-store' : 'public, s-maxage=300, stale-while-revalidate=3600',
-    );
+    response.setHeader('Cache-Control', isPersonal ? PRIVATE_NO_STORE : PUBLIC_CACHE);
 
     // Второй рубеж, и он нужен именно потому, что первый однажды снимут.
     // `no-store` и `Vary` отвечают на разные вопросы: первый говорит «не храни»,
@@ -43,6 +41,23 @@ export class PublicCacheInterceptor implements NestInterceptor {
     // `Vary: *`. Своя реализация всего этого здесь была — 15 строк, повторявших
     // пакет `vary`, который и так стоит в зависимостях.
     if (isPersonal) response.vary('Authorization');
+    // 🔴 `LEGACY-107`. Публичный ответ тоже зависит от заголовка — от
+    // `Accept-Language`. `GET /seo/resolve` выбирает язык из него, когда нет
+    // `?lang=` (`language.util.ts:55-62`), и отдаёт в чужом языке `title`,
+    // `description`, `canonical` и OG-разметку. Маршруты под `/:lang/` от него
+    // не свободны: `resolveRequestedLanguage` отбрасывает язык пути, если книга
+    // на нём не издана (`available`), и снова уходит к заголовку —
+    // `GET /:lang/books/:slug/overview` через `book.service.ts:324-328`.
+    //
+    // Поле дописывается всей публичной ветке, а не списку маршрутов: список
+    // пришлось бы пополнять при каждом новом чтении заголовка, а забывчивость
+    // здесь даёт не медленный кэш, а перемешанные языки. Цена — ключ кэша
+    // расщепляется по значению заголовка; это сужение кэша, не расширение.
+    //
+    // `Authorization` публичная ветка по-прежнему не объявляет: от токена она
+    // не зависит, и приписка расщепила бы общий кэш надвое без причины
+    // (`LEGACY-101`).
+    else response.vary('Accept-Language');
 
     return next.handle().pipe(
       map((value: unknown) => {
@@ -68,9 +83,24 @@ export class PublicCacheInterceptor implements NestInterceptor {
         // no-store` строже, и понижать его нельзя.
         const wasDegraded = takeDegradedMark(value);
         if (wasDegraded && !isPersonal) {
-          response.setHeader('Cache-Control', 'public, s-maxage=10');
+          response.setHeader('Cache-Control', PUBLIC_CACHE_DEGRADED);
         }
         return value;
+      }),
+      catchError((error: unknown) => {
+        // 🔴 Отказ публичного маршрута публичным кэшем не объявляется.
+        // Заголовок ставится в фазе «до», то есть раньше пайпов и обработчика,
+        // и на исключении он уезжает вместе с ответом: `GET /sitemap-de.xml`
+        // с языком вне перечисления отвечал бы 404 и `public, s-maxage=300`,
+        // а общий кэш держал бы этот 404 пять минут плюс час
+        // `stale-while-revalidate`. То же с 500 при секундном отказе базы:
+        // база поднимется через секунду, а ошибка будет раздаваться час.
+        //
+        // Снимается именно здесь, а не в фильтре исключений: фильтр — третье
+        // место одной политики, а тут решение о публичности уже принято
+        // и видно целиком.
+        response.setHeader('Cache-Control', PRIVATE_NO_STORE);
+        return throwError(() => error);
       }),
     );
   }

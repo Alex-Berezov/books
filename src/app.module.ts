@@ -1,5 +1,5 @@
-import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
 import { ConfigModule } from '@nestjs/config';
@@ -34,6 +34,8 @@ import { ImportModule } from './modules/import/import.module';
 import { RightsIntakeModule } from './modules/rights-intake/rights-intake.module';
 import { LanguageResolverGuard } from './common/guards/language-resolver.guard';
 import { GlobalRateLimitGuard } from './common/guards/global-rate-limit.guard';
+import { PrivateVaryInterceptor } from './common/interceptors/private-vary.interceptor';
+import { DefaultCacheControlMiddleware } from './common/middleware/default-cache-control.middleware';
 import { HealthModule } from './modules/health/health.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.module';
@@ -124,7 +126,26 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     { provide: APP_GUARD, useClass: GlobalRateLimitGuard },
     // Language resolution after throttling
     { provide: APP_GUARD, useClass: LanguageResolverGuard },
+    // `LEGACY-101`, `LEGACY-108`. Второй рубеж приватного ответа —
+    // `Vary: Authorization` — ставится в фазе «после», когда решение
+    // `PublicCacheInterceptor` о публичности маршрута уже принято.
+    // Сам `Cache-Control` ставит `DefaultCacheControlMiddleware` ниже.
+    { provide: APP_INTERCEPTOR, useClass: PrivateVaryInterceptor },
   ],
   // No exports: shared providers are exposed by global modules
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * 🔴 `LEGACY-108`. Умолчание кэша — приватное, и ставится оно **middleware**,
+   * а не интерцептором: гвард в Nest отрабатывает раньше интерцепторов, поэтому
+   * 401 `JwtAuthGuard`, 403 `RolesGuard` и 429 `GlobalRateLimitGuard` обрывают
+   * цепочку до них. Middleware идёт до гвардов и покрывает и эти пути.
+   *
+   * Регистрация здесь, а не в `main.ts`: набор e2e поднимает приложение из
+   * `AppModule` напрямую, и `app.use` рядом с `robotsHeaderMiddleware` сторож
+   * не увидел бы вовсе — проверка перестала бы уметь краснеть.
+   */
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(DefaultCacheControlMiddleware).forRoutes('{*path}');
+  }
+}

@@ -111,24 +111,62 @@ export const decoratorBlocks = (content: string): DecoratorBlock[] => {
 };
 
 /**
- * Содержимое ближайшего `@UseGuards(...)` блока, разобранное по балансу
- * скобок. Регулярка `\([^)]*RolesGuard` здесь не годится: она обрывается на
- * первой `)`, то есть `@UseGuards(AuthGuard('jwt'), RolesGuard)` объявила бы
- * закрытый маршрут открытым.
+ * Содержимое ближайшего `@<decorator>(...)` блока, разобранное по балансу
+ * скобок. Регулярка `\([^)]*Имя` здесь не годится: она обрывается на первой
+ * `)`, то есть `@UseGuards(AuthGuard('jwt'), RolesGuard)` объявила бы закрытый
+ * маршрут открытым, а `@UseInterceptors(FileInterceptor('file'),
+ * PublicCacheInterceptor)` — публично кэшируемый обработчик обычным.
  */
-export const useGuardsArgs = (text: string): string => {
-  const start = text.indexOf('@UseGuards(');
-  if (start === -1) return '';
-  let depth = 0;
-  for (let i = start + '@UseGuards'.length; i < text.length; i += 1) {
-    if (text[i] === '(') depth += 1;
-    if (text[i] === ')') {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, i + 1);
+export const decoratorArgs = (text: string, decorator: string): string =>
+  decoratorArgsAll(text, decorator)[0] ?? '';
+
+/**
+ * Содержимое **всех** вхождений `@<decorator>(...)` в блоке.
+ *
+ * 🔴 Нужно потому, что часть декораторов Nest повторяема: `@Header(...)`
+ * ставится по одному на заголовок, и у обработчика их бывает несколько.
+ * Разбор «по первому вхождению» на таком блоке отвечает про чужой заголовок
+ * и молча не видит нужный — тот же класс ошибки, что `L-008`. Для `@UseGuards`
+ * и `@UseInterceptors`, которые не повторяются, первый элемент и есть ответ.
+ */
+export const decoratorArgsAll = (text: string, decorator: string): string[] => {
+  const opening = `@${decorator}(`;
+  const found: string[] = [];
+  let from = 0;
+
+  for (;;) {
+    const start = text.indexOf(opening, from);
+    if (start === -1) return found;
+
+    let depth = 0;
+    let end = text.length;
+    for (let i = start + `@${decorator}`.length; i < text.length; i += 1) {
+      if (text[i] === '(') depth += 1;
+      if (text[i] === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
     }
+    found.push(text.slice(start, end));
+    from = end;
   }
-  return text.slice(start);
 };
+
+/** Содержимое ближайшего `@UseGuards(...)`. Частный случай `decoratorArgs`. */
+export const useGuardsArgs = (text: string): string => decoratorArgs(text, 'UseGuards');
+
+/**
+ * Назван ли `name` среди аргументов `@<decorator>(...)` — по границам слова.
+ *
+ * ⚠️ Границы слова обязательны по той же причине, что и в `guardsInclude`:
+ * `PublicCacheInterceptor` вошло бы в любой будущий
+ * `SoftPublicCacheInterceptor`, который кэша не объявляет.
+ */
+export const decoratorIncludes = (text: string, decorator: string, name: string): boolean =>
+  new RegExp(`\\b${name}\\b`).test(decoratorArgs(text, decorator));
 
 /**
  * Есть ли среди гвардов блока названный — по границам слова.
@@ -139,7 +177,7 @@ export const useGuardsArgs = (text: string): string => {
  * вида в проекте уже есть: `RateLimitGuard` ⊂ `AuthRateLimitGuard`.
  */
 export const guardsInclude = (text: string, guard: string): boolean =>
-  new RegExp(`\\b${guard}\\b`).test(useGuardsArgs(text));
+  decoratorIncludes(text, 'UseGuards', guard);
 
 /**
  * Восемь глаголов Nest, а не пять расхожих. Список совпадает с `HTTP_METHODS`
