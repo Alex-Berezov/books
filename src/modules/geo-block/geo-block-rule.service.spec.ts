@@ -9,6 +9,10 @@ import { CLAIM_ACCESS_BLOCK_MESSAGE_RU } from '../rights-claims/rights-claim.con
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import type { EffectiveClearance } from '../rights-clearance/rights-clearance-resolver.service';
+import type {
+  LicenseCoverageResult,
+  RightsLicenseCoverageService,
+} from '../rights-licenses/rights-license-coverage.service';
 import { GeoBlockScope } from './dto/geo-block.dto';
 import { GeoBlockRuleService } from './geo-block-rule.service';
 
@@ -170,11 +174,31 @@ const createClearanceStub = (
   } satisfies EffectiveClearance),
 });
 
+/** Default: no country is covered by a license — the pre-`LEGACY-029` behaviour. */
+const createLicenseCoverageStub = (
+  overrides: Partial<LicenseCoverageResult> = {},
+): { evaluateVersionCoverage: jest.Mock } => ({
+  evaluateVersionCoverage: jest.fn().mockResolvedValue({
+    status: 'NOT_REQUIRED',
+    checkedAt: '2026-09-12T00:00:00.000Z',
+    requiredCountryCodes: [],
+    coveredCountryCodes: [],
+    uncoveredCountryCodes: [],
+    countries: [],
+    licenseIds: [],
+    blockers: [],
+    warnings: [],
+    attributionTextsRu: [],
+    ...overrides,
+  } satisfies LicenseCoverageResult),
+});
+
 describe('GeoBlockRuleService', () => {
   let prisma: PrismaStub;
   let claimEnforcement: { checkClaimAccess: jest.Mock };
   let config: { get: jest.Mock };
   let clearanceResolver: { resolveForVersion: jest.Mock };
+  let licenseCoverage: { evaluateVersionCoverage: jest.Mock };
   let service: GeoBlockRuleService;
 
   const createService = (configValues: Record<string, string> = {}): GeoBlockRuleService => {
@@ -184,6 +208,7 @@ describe('GeoBlockRuleService', () => {
       claimEnforcement as unknown as RightsClaimEnforcementService,
       config as unknown as ConfigService,
       clearanceResolver as unknown as RightsClearanceResolverService,
+      licenseCoverage as unknown as RightsLicenseCoverageService,
     );
   };
 
@@ -191,6 +216,7 @@ describe('GeoBlockRuleService', () => {
     prisma = createPrismaStub();
     claimEnforcement = createClaimEnforcementStub();
     clearanceResolver = createClearanceStub();
+    licenseCoverage = createLicenseCoverageStub();
     service = createService();
   });
 
@@ -280,6 +306,57 @@ describe('GeoBlockRuleService', () => {
     expect(prisma.geoBlockRule.upsert).not.toHaveBeenCalled();
   });
 
+  /**
+   * `LEGACY-029`. Генерация покрытие **не спрашивает**, и это решение, а не упущение: покрытие
+   * зависит от календаря (`expiresAt`, `revokedAt`), а строка правила постоянна. Страна,
+   * покрытая в момент генерации, осталась бы без правила навсегда — `generateRulesForVersion`
+   * зовётся только руками из контроллера, и вернуть правило после истечения лицензии было бы
+   * некому. Рынок открывает живая проверка в `checkAccess`, она же и закрывает его обратно.
+   *
+   * Спека краснеет от возврата фильтра по покрытию в генерацию.
+   */
+  it('generates a rule for a LICENSE_REQUIRED country even when a license covers it now', async () => {
+    prisma.territoryDecision.findMany.mockResolvedValue([
+      createDecision({
+        countryCode: 'DE',
+        finalStatus: 'LICENSE_REQUIRED',
+        accessPolicy: 'BLOCK',
+        geoBlockRequired: true,
+      }),
+    ]);
+    licenseCoverage.evaluateVersionCoverage.mockResolvedValue({
+      ...(await createLicenseCoverageStub().evaluateVersionCoverage()),
+      coveredCountryCodes: ['DE'],
+    });
+
+    await service.generateRulesForVersion('version-1');
+
+    expect(prisma.geoBlockRule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          countryCode: 'DE',
+          sourceFinalStatus: 'LICENSE_REQUIRED',
+        }),
+      }),
+    );
+  });
+
+  it('still generates a rule for an outright BLOCKED country even when a license covers it', async () => {
+    prisma.territoryDecision.findMany.mockResolvedValue([
+      createDecision({ countryCode: 'DE', finalStatus: 'BLOCKED', accessPolicy: 'BLOCK' }),
+    ]);
+    licenseCoverage.evaluateVersionCoverage.mockResolvedValue({
+      ...(await createLicenseCoverageStub().evaluateVersionCoverage()),
+      coveredCountryCodes: ['DE'],
+    });
+
+    await service.generateRulesForVersion('version-1');
+
+    expect(prisma.geoBlockRule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ countryCode: 'DE' }) }),
+    );
+  });
+
   // WP-2.3: the version keeps pointing at the profile it was created under, so reading
   // `rightsProfileId` regenerated the rules from a superseded clearance (R5-03).
   it('generates rules from the clearance in force, not from the version snapshot', async () => {
@@ -345,6 +422,178 @@ describe('GeoBlockRuleService', () => {
         scope: GeoBlockScope.TEXT_READER,
       }),
     ).rejects.toBeInstanceOf(HttpException);
+  });
+
+  // `LEGACY-029`: rule generation is admin-triggered, so a rule made before a license was bought
+  // stays active until someone re-runs it. Runtime access re-checks coverage live instead of
+  // waiting for that regeneration — the owner's decision was that the license opens the market
+  // on its own, immediately.
+  it('allows access when a LICENSE_REQUIRED rule matches but a license now covers the country', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({
+        scope: GeoBlockScope.TEXT_READER,
+        accessPolicy: 'BLOCK',
+        sourceFinalStatus: 'LICENSE_REQUIRED',
+      }),
+    ]);
+    licenseCoverage.evaluateVersionCoverage.mockResolvedValue({
+      ...(await createLicenseCoverageStub().evaluateVersionCoverage()),
+      coveredCountryCodes: ['GB'],
+    });
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'gb',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(licenseCoverage.evaluateVersionCoverage).toHaveBeenCalledTimes(1);
+    expect(licenseCoverage.evaluateVersionCoverage).toHaveBeenCalledWith('version-1');
+    expect(result.allowed).toBe(true);
+  });
+
+  /**
+   * Правило чужой версии покрытием не снимается вовсе. `ENTIRE_BOOK`-правило матчится
+   * по `bookId` и прилетает запросу на любую версию книги, а покрытие считается по языку
+   * и медиаформатам конкретной версии: иначе текстовая лицензия открыла бы аудиоверсию,
+   * а лицензия на `ru` — англоязычную. Чужое правило остаётся закрытым.
+   *
+   * Спека краснеет от снятия проверки принадлежности правила версии запроса.
+   */
+  it('never lifts a rule that belongs to another version of the same book', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({
+        scope: GeoBlockScope.ENTIRE_BOOK,
+        bookVersionId: 'version-source',
+        accessPolicy: 'BLOCK',
+        sourceFinalStatus: 'LICENSE_REQUIRED',
+      }),
+    ]);
+    licenseCoverage.evaluateVersionCoverage.mockResolvedValue({
+      ...(await createLicenseCoverageStub().evaluateVersionCoverage()),
+      coveredCountryCodes: ['GB'],
+    });
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'gb',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(licenseCoverage.evaluateVersionCoverage).not.toHaveBeenCalled();
+    expect(result.allowed).toBe(false);
+  });
+
+  /**
+   * Снятое правило выбывает **до** выбора победителя по скоупу. Иначе снятое правило широкого
+   * скоупа открывало бы доступ за всю пачку: `ENTIRE_BOOK` старше `LANGUAGE_EDITION` по рангу,
+   * и запрет по существу у второго правила не смотрел бы никто.
+   *
+   * Спека краснеет от возврата проверки покрытия на одном победителе вместо фильтра набора.
+   */
+  it('keeps denying when a superseded wide rule outranks a substantive narrow one', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({
+        id: 'rule-wide',
+        scope: GeoBlockScope.ENTIRE_BOOK,
+        accessPolicy: 'BLOCK',
+        sourceFinalStatus: 'LICENSE_REQUIRED',
+      }),
+      createRule({
+        id: 'rule-narrow',
+        scope: GeoBlockScope.LANGUAGE_EDITION,
+        accessPolicy: 'BLOCK',
+        sourceFinalStatus: 'BLOCKED',
+      }),
+    ]);
+    licenseCoverage.evaluateVersionCoverage.mockResolvedValue({
+      ...(await createLicenseCoverageStub().evaluateVersionCoverage()),
+      coveredCountryCodes: ['GB'],
+    });
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'gb',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.matchedRuleId).toBe('rule-narrow');
+  });
+
+  it('still denies access for a LICENSE_REQUIRED rule when no license covers the country', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({
+        scope: GeoBlockScope.TEXT_READER,
+        accessPolicy: 'BLOCK',
+        sourceFinalStatus: 'LICENSE_REQUIRED',
+      }),
+    ]);
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'gb',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(licenseCoverage.evaluateVersionCoverage).toHaveBeenCalledTimes(1);
+    expect(result.allowed).toBe(false);
+    expect(result.reasonCode).toBe('GEO_BLOCKED_BY_RIGHTS');
+  });
+
+  // A license covering the country must not excuse an outright BLOCKED rule — coverage only
+  // ever answers "is the license requirement met", never "is the country allowed regardless".
+  it('still denies access for an outright BLOCKED rule even when a license covers the country', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({ scope: GeoBlockScope.TEXT_READER, sourceFinalStatus: 'BLOCKED' }),
+    ]);
+    licenseCoverage.evaluateVersionCoverage.mockResolvedValue({
+      ...(await createLicenseCoverageStub().evaluateVersionCoverage()),
+      coveredCountryCodes: ['GB'],
+    });
+
+    const result = await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'gb',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+
+    expect(licenseCoverage.evaluateVersionCoverage).not.toHaveBeenCalled();
+    expect(result.allowed).toBe(false);
+  });
+
+  /**
+   * `LEGACY-029`. Сводка отвечает на тот же вопрос, что и `checkAccess`, — «кому сейчас закрыт
+   * доступ», поэтому снятая покрытием страна уходит и отсюда. Иначе панель показывала бы страну
+   * закрытой ровно там, где читателя пускают: расхождение, которое эта же правка и внесла бы.
+   */
+  it('оставляет снятую покрытием страну вне blockedCountries, не трогая счётчики', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({ id: 'rule-de', countryCode: 'DE', sourceFinalStatus: 'LICENSE_REQUIRED' }),
+      createRule({ id: 'rule-gb', countryCode: 'GB', sourceFinalStatus: 'BLOCKED' }),
+    ]);
+    licenseCoverage.evaluateVersionCoverage.mockResolvedValue({
+      ...(await createLicenseCoverageStub().evaluateVersionCoverage()),
+      coveredCountryCodes: ['DE'],
+    });
+
+    const res = await service.getRulesForVersion('version-1');
+
+    expect(res.summary.blockedCountries).toEqual(['GB']);
+    // Правило остаётся живым: покрытие кончится — страна закроется обратно, и гейт
+    // публикации по-прежнему обязан требовать его проверки.
+    expect(res.summary.activeRulesCount).toBe(2);
+    expect(res.rules).toHaveLength(2);
+  });
+
+  it('не ходит за покрытием, когда лицензионных правил у версии нет', async () => {
+    prisma.geoBlockRule.findMany.mockResolvedValue([
+      createRule({ countryCode: 'GB', sourceFinalStatus: 'BLOCKED' }),
+    ]);
+
+    await service.getRulesForVersion('version-1');
+
+    expect(licenseCoverage.evaluateVersionCoverage).not.toHaveBeenCalled();
   });
 
   it('allows access for a non-matching country', async () => {
@@ -659,6 +908,7 @@ describe('GeoBlockRuleService: версия читается узким select (
       createClaimEnforcementStub() as unknown as RightsClaimEnforcementService,
       createConfigStub() as unknown as ConfigService,
       createClearanceStub() as unknown as RightsClearanceResolverService,
+      createLicenseCoverageStub() as unknown as RightsLicenseCoverageService,
     );
   });
 

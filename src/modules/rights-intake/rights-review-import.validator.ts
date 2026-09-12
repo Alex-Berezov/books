@@ -661,8 +661,28 @@ export class RightsReviewImportValidator {
           );
         }
 
+        // `LEGACY-173`: решение владельца 12.09.2026 — разрешённый рынок с требованием
+        // гео-блокировки не форма записи, а ошибка ввода. Отказ стоит здесь, потому что это
+        // единственное место, где автор внешнего агента получает адресную претензию с путём
+        // до поля; материализация отвечает на ту же пару 422 `REPORT_NOT_MATERIALIZABLE`,
+        // но уже без указания, что именно чинить.
+        const allowWithGeoBlock = accessPolicy === 'ALLOW' && td['geoBlockRequired'] === true;
+        if (allowWithGeoBlock) {
+          addError(
+            errors,
+            `${prefix}.geoBlockRequired`,
+            `accessPolicy=ALLOW conflicts with geoBlockRequired=true for country "${cc}"`,
+            'ALLOW_GEO_BLOCK_CONFLICT',
+          );
+        }
+
         // WP-G.2: объяснение требуется только от ограничивающего решения — точно та же
         // граница, что во вложенном блоке `territoryAssessments[]`.
+        //
+        // Отклонённая пара (`allowWithGeoBlock`) из этой ветки намеренно **не** исключена, хотя
+        // и даёт вторую ошибку на той же записи. Убрать её значило бы сдвинуть границу WP-G.2,
+        // а она посажена спекой `rights-review-import.validator.soft.spec.ts` («разрешение
+        // с геоблокировкой по-прежнему требует объяснения») и стоит вне границ этой правки.
         if (accessPolicy !== 'ALLOW' || td['geoBlockRequired'] === true) {
           requireFields(
             td,

@@ -101,6 +101,8 @@ const isReportShapeError = (error: unknown): boolean =>
  *   новость, а наследство; ронять чужую транзакцию из-за него нельзя. Запись
  *   отбрасывается с предупреждением в лог.
  */
+// Имя осталось от `LEGACY-044`, где тип завёлся; `readGeoBlockRequired` (`LEGACY-173`) переиспользует
+// тот же режим для другого поля — граница reject/skip одна на оба валидатора отчёта.
 type InvalidCountryCode = 'reject' | 'skip';
 
 const readCountryCode = (
@@ -126,6 +128,50 @@ const readCountryCode = (
   if (mode === 'reject') throw new ReportShapeError(reason);
   logger.warn(`${reason}. Запись пропущена при пересчёте; исходные данные не менялись.`);
   return null;
+};
+
+/**
+ * `accessPolicy: 'ALLOW'` рядом с `geoBlockRequired: true` — противоречие двух проекций одного
+ * решения (`LEGACY-173`): `classifyTerritoryDecisions` кладёт такую страну в разрешённый рынок,
+ * а `generateRulesForVersion` — в активное блокирующее правило независимо от `accessPolicy`.
+ * Решение владельца 12.09.2026: пара — ошибка ввода отчёта, а не законная комбинация «рынок наш,
+ * но раздачу закрыть», и отклоняется здесь же, по образцу `readCountryCode` (`LEGACY-044`).
+ *
+ * Режим тот же, что и у кода страны: `reject` — разбор входящего отчёта, отчёт ещё не принят;
+ * `skip` — пересчёт по уже сохранённым данным, ронять чужую транзакцию из-за наследства нельзя,
+ * `geoBlockRequired` тихо сбрасывается в `false` — `accessPolicy` остаётся источником истины.
+ *
+ * Тип проверяется, а не приводится, и проверяется первым — как в `readCountryCode`. Прежний
+ * `as boolean` считал бы строку `"false"` за `true` (непустая строка истинна), и оператор читал бы
+ * отказ «агент прислал `true`» о значении `"false"`. Отсутствие значения — это `false` по умолчанию
+ * (флаг, а не идентичность записи), но значение **не того типа** — это форма отчёта, и на входящем
+ * отчёте она отвергается вместе с ним.
+ */
+const readGeoBlockRequired = (
+  accessPolicy: unknown,
+  rawGeoBlockRequired: unknown,
+  where: string,
+  mode: InvalidCountryCode,
+  logger: Logger,
+): boolean => {
+  if (rawGeoBlockRequired !== undefined && rawGeoBlockRequired !== null) {
+    if (typeof rawGeoBlockRequired !== 'boolean') {
+      const typeReason = `${where}: geoBlockRequired must be a boolean, got ${typeof rawGeoBlockRequired}`;
+      if (mode === 'reject') throw new ReportShapeError(typeReason);
+      logger.warn(`${typeReason}. Взято false при пересчёте; исходные данные не менялись.`);
+      return false;
+    }
+  }
+
+  const geoBlockRequired = rawGeoBlockRequired === true;
+  if (accessPolicy !== 'ALLOW' || !geoBlockRequired) return geoBlockRequired;
+
+  const reason = `${where}: accessPolicy ALLOW cannot carry geoBlockRequired true`;
+  if (mode === 'reject') throw new ReportShapeError(reason);
+  logger.warn(
+    `${reason}. geoBlockRequired сброшен в false при пересчёте; исходные данные не менялись.`,
+  );
+  return false;
 };
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
@@ -1365,7 +1411,13 @@ export class RightsMaterializationService {
             ? normalizeTerritoryFinalStatus(rawFinalStatus)
             : rawFinalStatus) as ComponentTerritoryFinalStatus,
           accessPolicy: territory['accessPolicy'] as ComponentTerritoryAccessPolicy,
-          geoBlockRequired: (territory['geoBlockRequired'] as boolean) ?? false,
+          geoBlockRequired: readGeoBlockRequired(
+            territory['accessPolicy'],
+            territory['geoBlockRequired'],
+            `territoryDecisions[${index}]`,
+            onInvalidCountryCode,
+            this.logger,
+          ),
           geoBlockScope: (territory['geoBlockScope'] as string) ?? null,
           reasonRu: agentReasonRu ?? TERRITORY_DECISION_DEFAULT_REASON_RU,
           legalBasisRu: (territory['legalBasisRu'] as string) ?? null,

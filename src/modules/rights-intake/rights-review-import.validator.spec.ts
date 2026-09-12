@@ -276,6 +276,23 @@ describe('RightsReviewImportValidator', () => {
     expect(errors.some((e) => e.code === 'ALLOW_BLOCK_CONFLICT')).toBe(true);
   });
 
+  // `LEGACY-173`: разрешённый рынок с требованием гео-блокировки — ошибка ввода, а не форма
+  // записи. Материализация отвечает на неё 422, но адресную претензию с путём до поля автор
+  // внешнего агента получает только здесь.
+  it('ALLOW + geoBlockRequired conflict fails', () => {
+    const payload = validPayload();
+    const decision = (payload.territoryDecisions as Array<Record<string, unknown>>)[0];
+    decision.accessPolicy = 'ALLOW';
+    decision.geoBlockRequired = true;
+    decision.geoBlockScope = 'LANGUAGE_EDITION';
+
+    const { errors } = validator.validate(payload, INTAKE_ID, TARGET_LANGUAGES, TARGET_COUNTRIES);
+
+    const conflict = errors.find((e) => e.code === 'ALLOW_GEO_BLOCK_CONFLICT');
+    expect(conflict).toBeDefined();
+    expect(conflict?.path).toContain('geoBlockRequired');
+  });
+
   it('missing nextReviewAt returns warning', () => {
     const payload = validPayload();
     delete payload.nextReviewAt;

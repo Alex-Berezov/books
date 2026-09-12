@@ -15,6 +15,7 @@ import {
   CLAIM_ACCESS_BLOCK_REASON_CODE,
 } from '../rights-claims/rights-claim.constants';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import {
   GeoAccessCheckResultDto,
   GeoBlockRuleDto,
@@ -70,6 +71,7 @@ export class GeoBlockRuleService {
     private readonly claimEnforcement: RightsClaimEnforcementService,
     private readonly config: ConfigService,
     private readonly clearanceResolver: RightsClearanceResolverService,
+    private readonly licenseCoverage: RightsLicenseCoverageService,
   ) {}
 
   async generateRulesForVersion(bookVersionId: string): Promise<GeoBlockRulesResponseDto> {
@@ -91,6 +93,14 @@ export class GeoBlockRuleService {
     const territoryDecisions = await this.prisma.territoryDecision.findMany({
       where: { rightsProfileId },
     });
+
+    // `LEGACY-029`: license coverage is deliberately **not** consulted here. It depends on the
+    // calendar (`expiresAt`, `effectiveFrom`, `revokedAt`), and generation writes a permanent row:
+    // a country covered at generation time would get no rule at all, and nothing would put one
+    // back when the license expires — `generateRulesForVersion` is only ever called by hand from
+    // `geo-block.controller.ts`. The market would stay open with no license, silently. The live
+    // re-check in `checkAccess` is what opens a covered market, and it re-reads coverage per
+    // request, so an expired license closes the country again by itself.
     const blockedDecisions = territoryDecisions.filter(
       (decision) =>
         decision.finalStatus === 'BLOCKED' ||
@@ -164,6 +174,14 @@ export class GeoBlockRuleService {
     const ruleDtos = rules.map((rule) => this.mapRule(rule));
     const activeRules = rules.filter((rule) => rule.isActive);
 
+    // `LEGACY-029`: `blockedCountries` — это ответ на вопрос «кому сейчас закрыт доступ»,
+    // и он обязан совпадать с тем, что отвечает `checkAccess`, поэтому считается тем же
+    // предикатом. Счётчики (`activeRulesCount`, `verifiedRulesCount`) и
+    // `getActiveRulesForVersion` намеренно не трогаются: по ним считает цепочку гейт
+    // публикации, и правило остаётся живой строкой, которую надо проверить, — покрытие может
+    // кончиться завтра.
+    const enforcingRules = await this.rulesStillEnforcing(activeRules, bookVersionId);
+
     return {
       bookVersionId,
       rules: ruleDtos,
@@ -175,7 +193,9 @@ export class GeoBlockRuleService {
         totalRulesCount: rules.length,
         activeRulesCount: activeRules.length,
         verifiedRulesCount: activeRules.filter((rule) => rule.verifiedAt !== null).length,
-        blockedCountries: Array.from(new Set(activeRules.map((rule) => rule.countryCode))).sort(),
+        blockedCountries: Array.from(
+          new Set(enforcingRules.map((rule) => rule.countryCode)),
+        ).sort(),
         scopes: Array.from(new Set(activeRules.map((rule) => this.toDtoScope(rule.scope)))).sort(),
       },
     };
@@ -257,7 +277,12 @@ export class GeoBlockRuleService {
         OR: conditions,
       },
     });
-    const matchedRule = matchedRules.sort(
+    // `LEGACY-029`: снятые покрытием правила выбывают **до** выбора победителя по скоупу,
+    // а не после. Иначе снятое правило широкого скоупа открывало бы доступ за всю пачку:
+    // `ENTIRE_BOOK`-правило одной версии перебивает по рангу `LANGUAGE_EDITION`-правило другой,
+    // и запрет по существу у второй версии просто не смотрел бы никто.
+    const enforceableRules = await this.rulesStillEnforcing(matchedRules, input.bookVersionId);
+    const matchedRule = enforceableRules.sort(
       (left, right) => this.scopeRank(right.scope) - this.scopeRank(left.scope),
     )[0];
     if (!matchedRule) return this.allowedResult(input, countryCode);
@@ -505,5 +530,50 @@ export class GeoBlockRuleService {
 
   private toIso(value: Date | null): string | null {
     return value ? value.toISOString() : null;
+  }
+  /**
+   * `LEGACY-029`: **единственное** место, где написано «это правило больше не закрывает страну».
+   * Решение владельца 12.09.2026 — купленная лицензия открывает рынок сама, немедленно; правило
+   * при этом остаётся в базе живым, потому что покрытие зависит от календаря (`expiresAt`,
+   * `revokedAt`) и завтра может кончиться, а `generateRulesForVersion` зовётся только руками.
+   *
+   * Правило снимается покрытием, только когда сошлись все три условия:
+   *
+   * - `sourceFinalStatus === 'LICENSE_REQUIRED'`. Всё остальное — запрет по существу, и никакая
+   *   лицензия его не отменяет: покрытие отвечает на вопрос «выполнено ли требование лицензии»,
+   *   а не «открыта ли страна вообще».
+   * - **Правило принадлежит той версии, к которой идёт запрос.** Правило со скоупом
+   *   `ENTIRE_BOOK` матчится по `bookId` (`buildRuleMatchConditions`) и прилетает запросам
+   *   на любую версию книги, а покрытие считается по языку и медиаформатам конкретной версии
+   *   (`RightsLicenseCoverageService`). Снимать чужое правило своим покрытием нельзя в обе
+   *   стороны: текстовая лицензия открыла бы аудиоверсию, а лицензия на `ru` — англоязычную.
+   *   Чужое правило остаётся закрытым, пока админ не перегенерирует правила.
+   * - Страна правила есть в покрытии этой версии.
+   *
+   * Возвращается **набор правил, которые всё ещё закрывают**, а не «снято ли первое»: снятое
+   * правило обязано выбыть до выбора победителя по скоупу. Иначе снятое правило широкого скоупа
+   * открывало бы доступ за всю пачку, и запрет по существу у другого правила никто бы не смотрел.
+   *
+   * Покрытие считается не больше одного раза на вызов: у всех кандидатов версия одна и та же.
+   */
+  private async rulesStillEnforcing(
+    rules: GeoBlockRule[],
+    requestedBookVersionId: string | null | undefined,
+  ): Promise<GeoBlockRule[]> {
+    if (!requestedBookVersionId) return rules;
+
+    const candidates = rules.filter(
+      (rule) =>
+        rule.sourceFinalStatus === 'LICENSE_REQUIRED' &&
+        rule.bookVersionId === requestedBookVersionId,
+    );
+    if (candidates.length === 0) return rules;
+
+    const coverage = await this.licenseCoverage.evaluateVersionCoverage(requestedBookVersionId);
+    const covered = new Set(coverage.coveredCountryCodes.map((code) => code.toUpperCase()));
+
+    return rules.filter(
+      (rule) => !candidates.includes(rule) || !covered.has(rule.countryCode.toUpperCase()),
+    );
   }
 }

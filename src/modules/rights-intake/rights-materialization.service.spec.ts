@@ -3,6 +3,7 @@ import { ComponentTerritoryAggregationService } from './component-territory-aggr
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RightsClaimEnforcementService } from '../rights-claims/rights-claim-enforcement.service';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
+import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import {
   PersonIdentityMissingError,
   PersonResolverService,
@@ -1295,6 +1296,20 @@ describe('RightsMaterializationService', () => {
         } as unknown as RightsClaimEnforcementService,
         { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService,
         new RightsClearanceResolverService(prisma as unknown as PrismaService),
+        {
+          evaluateVersionCoverage: jest.fn().mockResolvedValue({
+            status: 'NOT_REQUIRED',
+            checkedAt: new Date().toISOString(),
+            requiredCountryCodes: [],
+            coveredCountryCodes: [],
+            uncoveredCountryCodes: [],
+            countries: [],
+            licenseIds: [],
+            blockers: [],
+            warnings: [],
+            attributionTextsRu: [],
+          }),
+        } as unknown as RightsLicenseCoverageService,
       );
       (prisma['bookVersion'] as Record<string, jest.Mock>).findUnique.mockResolvedValue({
         id: 'v1',
@@ -2028,6 +2043,88 @@ describe('RightsMaterializationService', () => {
       });
     });
 
+    /**
+     * `LEGACY-173` на пересчёте: та же пара, что и на импорте, но данные уже
+     * сохранены. Ронять чужую транзакцию из-за наследства нельзя — режим
+     * `skip` тихо сбрасывает `geoBlockRequired` в `false`, `accessPolicy`
+     * остаётся источником истины.
+     *
+     * ⚠️ Первая редакция этой спеки ставила решение отчёта на ту же страну `GB`,
+     * что и компонентная оценка, и проверяла только «пересчёт не упал». Ревью
+     * показало, что она пустая: вердикт компонента (`BLOCK`, rank 2) перекрывает
+     * ALLOW-оверрайд целиком (`applyProfileOverride`), и сброшенный флаг до записи
+     * не доходил вовсе — возврат дефекта спеку не красил. Здесь страна взята
+     * такая, по которой компонентной оценки **нет**: решение агента обосновано
+     * (`reasonRu` от агента, `confidence: HIGH`), вердикт выведен только
+     * незаполненностью, поэтому побеждает решение отчёта — и в запись уходит
+     * именно то `geoBlockRequired`, которое вернул валидатор.
+     */
+    it('сбрасывает geoBlockRequired при пересчёте, когда решение отчёта побеждает', async () => {
+      // Действие открыто: компонент остаётся применимым к US, оценки по US у него нет,
+      // поэтому вердикт по стране выведен только незаполненностью — и обоснованное
+      // решение отчёта его перекрывает (WP-B.3). На закрытом действии компонент
+      // выбывает целиком, страна получает обычный ALLOW от агрегации, и решение
+      // отчёта до записи не доходит вовсе — на этом первая редакция спеки и была пустой.
+      setupRecompute({
+        actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'PENDING' }],
+      });
+      prisma.rightsIntake.findUnique.mockResolvedValue(
+        makeIntake({ targetCountryCodes: ['GB', 'US'] }),
+      );
+      (prisma['rightsReviewImport'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeImportRecord({
+          reportJson: {
+            ...makeValidReportJson(),
+            territoryDecisions: [
+              {
+                countryCode: 'US',
+                finalStatus: 'ALLOWED',
+                accessPolicy: 'ALLOW',
+                geoBlockRequired: true,
+                reasonRu: 'Public domain in US',
+                confidence: 'HIGH',
+              },
+            ],
+          },
+        }),
+      );
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findUnique = jest
+        .fn()
+        .mockImplementation((args: { where: Record<string, { countryCode: string }> }) =>
+          args.where['rightsProfileId_countryCode'].countryCode === 'GB'
+            ? {
+                id: 'decision-gb',
+                finalStatus: 'BLOCKED',
+                accessPolicy: 'BLOCK',
+                geoBlockRequired: true,
+                geoBlockScope: 'LANGUAGE_EDITION',
+                reasonRu: 'Блокирующие компоненты: «Иллюстрации».',
+                legalBasisRu: null,
+                confidence: 'HIGH',
+                nextReviewAt: null,
+              }
+            : null,
+        );
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).create = jest
+        .fn()
+        .mockResolvedValue({ id: 'decision-us' });
+
+      await service.recomputeTerritoryDecisionsFromComponents(
+        prisma as unknown as Record<string, unknown>,
+        'profile-1',
+      );
+
+      const created = (
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).create.mock.calls as Array<
+          [{ data: Record<string, unknown> }]
+        >
+      ).find((call) => call[0].data['countryCode'] === 'US');
+      expect(created).toBeDefined();
+      // Решение отчёта дошло до записи целиком — и флаг в нём сброшен.
+      expect(created?.[0].data['accessPolicy']).toBe('ALLOW');
+      expect(created?.[0].data['geoBlockRequired']).toBe(false);
+    });
+
     it('opens the country once the removal action is closed', async () => {
       setupRecompute({
         actions: [{ actionType: 'REPLACE_ILLUSTRATIONS', status: 'COMPLETED' }],
@@ -2217,6 +2314,51 @@ describe('RightsMaterializationService', () => {
       (report['territoryDecisions'] as Array<Record<string, unknown>>)[0]['countryCode'] = '  ';
 
       await expect422(report);
+    });
+
+    /**
+     * `LEGACY-173`. Решение владельца 12.09.2026: `accessPolicy: 'ALLOW'` рядом
+     * с `geoBlockRequired: true` — ошибка ввода отчёта, а не законная пара
+     * «рынок наш, но раздачу закрыть». Без отказа страна попадала одновременно
+     * в разрешённые рынки (`classifyTerritoryDecisions`) и под активное
+     * блокирующее правило (`generateRulesForVersion`). Свой хелпер, а не
+     * `expect422`: тот жёстко проверяет текст про `countryCode`, здесь причина
+     * другая.
+     */
+    it('173: accessPolicy ALLOW с geoBlockRequired true в решении — 422', async () => {
+      const report = makeValidReportJson();
+      (report['territoryDecisions'] as Array<Record<string, unknown>>)[0] = {
+        countryCode: 'US',
+        finalStatus: 'ALLOWED',
+        accessPolicy: 'ALLOW',
+        geoBlockRequired: true,
+        reasonRu: 'Public domain in US',
+        confidence: 'HIGH',
+      };
+      (prisma['rightsReviewImport'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeImportRecord({ reportJson: report }),
+      );
+      prisma.rightsIntake.findUnique.mockResolvedValue(makeIntake());
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findFirst.mockResolvedValue(null);
+      setupTransaction();
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).create.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const error = await service.materializeFromImport('import-1').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      const response = (error as UnprocessableEntityException).getResponse() as Record<
+        string,
+        unknown
+      >;
+      expect(response['code']).toBe('REPORT_NOT_MATERIALIZABLE');
+      expect(String(response['reason'])).toContain('territoryDecisions[0]');
+      expect(String(response['reason'])).toContain('accessPolicy ALLOW');
+      expect(String(response['reason'])).toContain('geoBlockRequired');
+      expect(
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).create,
+      ).not.toHaveBeenCalled();
     });
 
     it('G.6: отчёт без requiredActions и evidence материализуется без этих записей', async () => {

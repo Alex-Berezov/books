@@ -259,19 +259,29 @@ export const RIGHTS_REPORT_SCHEMA_1_0: RightsReportSchemaDocument = {
         additionalProperties: true,
         required: [...REQUIRED_REPORT_FIELDS.territoryDecisions],
         // WP-G.2: обоснование и уверенность требуются только от ограничивающего решения.
-        // Условие описано в схеме тем же списком, что применяет сервер.
+        // Список полей — тот же, что применяет сервер (`REQUIRED_REPORT_FIELDS`), а вот условие
+        // с 12.09.2026 у схемы короче: сервер по-прежнему считает ограничивающим и
+        // `geoBlockRequired: true`, но при `accessPolicy: 'ALLOW'` такая пара до этой проверки
+        // уже не доходит — её отклоняет `ALLOW_GEO_BLOCK_CONFLICT`.
+        //
+        // `LEGACY-173`: пары `accessPolicy: 'ALLOW'` + `geoBlockRequired: true` больше нет
+        // в ограничивающей ветке — она запрещена целиком (блок `not` ниже). Решение владельца
+        // 12.09.2026: разрешённый рынок с требованием гео-блокировки — это ошибка ввода, а не
+        // форма «рынок наш, но раздачу закрыть»; сервер отвечает на такой отчёт 422
+        // `REPORT_NOT_MATERIALIZABLE`, и описание приведено к тому, что он делает.
         allOf: [
           {
-            if: {
-              anyOf: [
-                { properties: { accessPolicy: { not: { const: 'ALLOW' } } } },
-                {
-                  properties: { geoBlockRequired: { const: true } },
-                  required: ['geoBlockRequired'],
-                },
-              ],
-            },
+            if: { properties: { accessPolicy: { not: { const: 'ALLOW' } } } },
             then: { required: [...REQUIRED_REPORT_FIELDS.territoryDecisionsWhenRestricted] },
+          },
+          {
+            not: {
+              properties: {
+                accessPolicy: { const: 'ALLOW' },
+                geoBlockRequired: { const: true },
+              },
+              required: ['accessPolicy', 'geoBlockRequired'],
+            },
           },
         ],
         properties: {
