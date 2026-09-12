@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminAuditAction,
+  AdminAuditTargetType,
   Prisma,
   RightsClaim,
   RightsClaimAccessBlock,
@@ -36,6 +38,12 @@ import {
   RightsClaimSummaryDto,
 } from './dto/rights-claim-response.dto';
 import { ReopenRightsClaimDto, ResolveRightsClaimDto } from './dto/resolve-rights-claim.dto';
+import {
+  CLEAR_LICENSE_SNAPSHOT,
+  licenseSnapshotPayload,
+  lockLicenseSnapshot,
+} from '../../shared/rights-license-snapshot/rights-license-snapshot';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import {
   ALLOWED_STATUS_TRANSITIONS,
   CLAIM_DEADLINE_WARNING_DAYS,
@@ -94,7 +102,12 @@ const failNotFound: (code: string, messageRu: string) => never = (code, messageR
 
 @Injectable()
 export class RightsClaimsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Обязателен: необязательный писатель журнала означал бы «снимок иногда
+    // не сохраняется», а колонки к тому моменту уже затёрты (`LEGACY-180`).
+    private readonly adminAudit: AdminAuditService,
+  ) {}
 
   // ---------------------------------------------------------------------------
   // Queries
@@ -677,67 +690,75 @@ export class RightsClaimsService {
 
     const targets: Array<string | null> = countryCodes.length > 0 ? countryCodes : [null];
 
-    const blocks = await this.prisma.$transaction(async (transaction) => {
-      const created: RightsClaimAccessBlock[] = [];
+    const blocks = await this.prisma.$transaction(
+      async (transaction) => {
+        const created: RightsClaimAccessBlock[] = [];
 
-      for (const countryCode of targets) {
-        // NULL country codes compare as distinct in PostgreSQL, so deduplication is done here
-        // rather than through a unique index.
-        const existing = await transaction.rightsClaimAccessBlock.findFirst({
-          where: {
-            rightsClaimId: id,
-            bookId: target.bookId,
-            bookVersionId: target.bookVersionId,
-            scope: dto.scope,
-            countryCode,
-            status: RightsClaimBlockStatus.ACTIVE,
-          },
-        });
-        if (existing) {
-          created.push(existing);
-          continue;
-        }
-
-        created.push(
-          await transaction.rightsClaimAccessBlock.create({
-            data: {
+        for (const countryCode of targets) {
+          // NULL country codes compare as distinct in PostgreSQL, so deduplication is done here
+          // rather than through a unique index.
+          const existing = await transaction.rightsClaimAccessBlock.findFirst({
+            where: {
               rightsClaimId: id,
               bookId: target.bookId,
               bookVersionId: target.bookVersionId,
               scope: dto.scope,
               countryCode,
               status: RightsClaimBlockStatus.ACTIVE,
-              reasonRu: dto.reasonRu,
-              appliedByUserId: userId,
-              expiresAt,
             },
-          }),
-        );
-      }
+          });
+          if (existing) {
+            created.push(existing);
+            continue;
+          }
 
-      if (dto.unpublishVersion === true) {
-        await this.unpublishTargetVersions(transaction, id, target, userId, claim.status);
-      }
+          created.push(
+            await transaction.rightsClaimAccessBlock.create({
+              data: {
+                rightsClaimId: id,
+                bookId: target.bookId,
+                bookVersionId: target.bookVersionId,
+                scope: dto.scope,
+                countryCode,
+                status: RightsClaimBlockStatus.ACTIVE,
+                reasonRu: dto.reasonRu,
+                appliedByUserId: userId,
+                expiresAt,
+              },
+            }),
+          );
+        }
 
-      await this.recomputeVersionClaimFlags(transaction, target.versionIdsToRecompute);
+        if (dto.unpublishVersion === true) {
+          await this.unpublishTargetVersions(transaction, id, target, userId, claim.status);
+        }
 
-      await this.recordEvent(transaction, id, RightsClaimEventType.BLOCK_APPLIED, {
-        currentStatus: claim.status,
-        notesRu: dto.reasonRu,
-        userId,
-        payload: {
-          scope: dto.scope,
-          countryCodes,
-          expiresAt: expiresAt ? expiresAt.toISOString() : null,
-          unpublishVersion: dto.unpublishVersion === true,
-          blockIds: created.map((block) => block.id),
-        },
-      });
+        await this.recomputeVersionClaimFlags(transaction, target.versionIdsToRecompute);
 
-      await this.advanceStatusAfterBlock(transaction, claim, dto.scope, countryCodes, userId);
+        await this.recordEvent(transaction, id, RightsClaimEventType.BLOCK_APPLIED, {
+          currentStatus: claim.status,
+          notesRu: dto.reasonRu,
+          userId,
+          payload: {
+            scope: dto.scope,
+            countryCodes,
+            expiresAt: expiresAt ? expiresAt.toISOString() : null,
+            unpublishVersion: dto.unpublishVersion === true,
+            blockIds: created.map((block) => block.id),
+          },
+        });
 
-      return created;
-    });
+        await this.advanceStatusAfterBlock(transaction, claim, dto.scope, countryCodes, userId);
+
+        return created;
+      },
+      // Границы заданы явно, как и у парного пути снятия с публикации. Дефолт Prisma
+      // (5000/2000 мс) рассчитан на пару операторов, а здесь список произвольной длины:
+      // на каждую версию партии приходится замок строки, запись, событие и пересчёт
+      // признака блокировки. Блокировка по книге с десятками версий выбивала бы потолок
+      // и рвала транзакцию `P2028` — претензия не применялась бы вовсе (`L-019`/`L-020`).
+      { timeout: 30_000, maxWait: 10_000 },
+    );
 
     return blocks.map((block) => this.mapBlock(block));
   }
@@ -895,18 +916,54 @@ export class RightsClaimsService {
     const versions = await tx.bookVersion.findMany({
       where: { id: { in: target.versionIdsToRecompute } },
       select: { id: true, bookId: true, status: true },
+      // Порядок замков задаётся явно: `findMany` без `orderBy` отдаёт строки в порядке
+      // кучи, и две встречные блокировки по одной книге взяли бы замки крест-накрест
+      // и поймали дедлок `40P01`. Тот же приём — в переборе участников версии
+      // (`book-version.service.ts`, `reorderVersionContributors`). Порядок по `id`
+      // обязан быть один и тот же у **каждого** цикла этой транзакции — второй такой
+      // цикл живёт в `recomputeVersionClaimFlags` ниже и упорядочен так же.
+      orderBy: { id: 'asc' },
     });
 
     for (const version of versions) {
-      if (version.status !== 'published') continue;
+      // `LEGACY-180`: блокировка по претензии гасит лицензионный снимок так же, как
+      // админское снятие с публикации. Иначе черновик остаётся с датой публикации
+      // и списком лицензий, то есть в дашборде прав выглядит опубликованным
+      // и залицензированным — ровно то состояние, против которого запись и заведена.
+      // Почему чтение идёт под замком — в доккомментарии общего модуля.
+      const snapshot = await lockLicenseSnapshot(tx, version.id);
+      // Версию удалили между выборкой и замком: гасить нечего, событие писать не о чем.
+      if (!snapshot) continue;
+      // Решение принимается **только** по статусу из-под замка, а не по прочитанному
+      // выборкой выше. Оба направления гонки иначе живые: версию успевает опубликовать
+      // чужой `publish` — и она осталась бы опубликованной под претензией, — либо снять
+      // админский `unpublish` — и событие претензии утверждало бы, что её сняли без даты
+      // публикации и без лицензионного основания вовсе.
+      if (snapshot.status !== 'published') continue;
+
       await tx.bookVersion.update({
         where: { id: version.id },
-        data: { status: 'draft' },
+        data: { status: 'draft', ...CLEAR_LICENSE_SNAPSHOT },
       });
+      // История претензии: строка о том, что версия снята этой блокировкой.
       await this.recordEvent(tx, claimId, RightsClaimEventType.VERSION_UNPUBLISHED, {
         currentStatus,
         userId,
         payload: { bookVersionId: version.id },
+      });
+
+      // Сам снимок уходит в журнал административных действий, тем же писателем и тем же
+      // событием, что у админского пути. Не в событие претензии: у `RightsClaimEvent`
+      // внешний ключ на `RightsClaim`, а у той — каскад от `BookVersion` и `Book`, поэтому
+      // `DELETE /versions/:id` снёс бы единственную копию затёртого снимка вместе
+      // с претензией. У `AdminAuditEvent` внешних ключей нет намеренно — запись
+      // о действии обязана пережить удаление объекта (ADR-009).
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.VERSION_UNPUBLISHED,
+        targetType: AdminAuditTargetType.BOOK_VERSION,
+        targetId: version.id,
+        actorUserId: userId,
+        payload: licenseSnapshotPayload(snapshot),
       });
     }
   }
@@ -962,6 +1019,10 @@ export class RightsClaimsService {
     const versions = await tx.bookVersion.findMany({
       where: { id: { in: unique } },
       select: { id: true, bookId: true, status: true },
+      // Второй цикл замков той же транзакции: обновление в цикле запирает строки так же,
+      // как явный `FOR UPDATE` выше, поэтому порядок обязан совпадать с ним. Без этого
+      // применение блокировки и её снятие берут замки крест-накрест и ловят `40P01`.
+      orderBy: { id: 'asc' },
     });
     const now = new Date();
 

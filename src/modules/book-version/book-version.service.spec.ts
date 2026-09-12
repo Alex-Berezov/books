@@ -171,12 +171,12 @@ const createPrismaStub = (): PrismaStub => {
     // Стенд отдаёт одну строку — иначе метод сочтёт версию удалённой.
     $queryRaw: jest.fn().mockResolvedValue([
       {
+        status: 'published',
         publishedAt: null,
         rightsLicenseIds: null,
         rightsLicenseCoverageStatus: null,
         rightsLicenseCheckedAt: null,
         rightsLicenseUncoveredCountryCodes: null,
-        rightsLicenseAttributionTextRu: null,
       },
     ]),
     $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
@@ -1310,12 +1310,12 @@ describe('BookVersionService', () => {
       // назвать то, что эта запись затирает, то есть замкнутый снимок.
       const txQueryRaw = jest.fn().mockResolvedValue([
         {
+          status: 'published',
           publishedAt: new Date('2026-09-02T10:00:00.000Z'),
           rightsLicenseIds: ['lic-C'],
           rightsLicenseCoverageStatus: 'PARTIAL',
           rightsLicenseCheckedAt: new Date('2026-09-02T09:59:00.000Z'),
           rightsLicenseUncoveredCountryCodes: ['MX'],
-          rightsLicenseAttributionTextRu: 'Переиздано по лицензии',
         },
       ]);
       const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
@@ -1345,7 +1345,6 @@ describe('BookVersionService', () => {
             rightsLicenseCoverageStatus: null,
             rightsLicenseCheckedAt: null,
             rightsLicenseUncoveredCountryCodes: Prisma.DbNull,
-            rightsLicenseAttributionTextRu: null,
           }),
         }),
       );
@@ -1365,7 +1364,6 @@ describe('BookVersionService', () => {
           rightsLicenseCoverageStatus: 'PARTIAL',
           rightsLicenseCheckedAt: '2026-09-02T09:59:00.000Z',
           rightsLicenseUncoveredCountryCodes: ['MX'],
-          rightsLicenseAttributionTextRu: 'Переиздано по лицензии',
         },
       });
       // Замок берётся первым оператором транзакции и именно на этой строке.
@@ -1402,12 +1400,12 @@ describe('BookVersionService', () => {
       const txUpdate = jest.fn().mockRejectedValue(notFound);
       const txQueryRaw = jest.fn().mockResolvedValue([
         {
+          status: 'draft',
           publishedAt: null,
           rightsLicenseIds: ['lic-A', 'lic-B'],
           rightsLicenseCoverageStatus: 'COVERED',
           rightsLicenseCheckedAt: new Date('2026-09-01T09:59:00.000Z'),
           rightsLicenseUncoveredCountryCodes: ['BR'],
-          rightsLicenseAttributionTextRu: 'Издано по лицензии',
         },
       ]);
       jest
@@ -1441,12 +1439,12 @@ describe('BookVersionService', () => {
         .mockResolvedValue({ id: 'v1', status: 'draft', publishedAt: null });
       const txQueryRaw = jest.fn().mockResolvedValue([
         {
+          status: 'draft',
           publishedAt: new Date('2026-09-01T10:00:00.000Z'),
           rightsLicenseIds: ['lic-A'],
           rightsLicenseCoverageStatus: 'COVERED',
           rightsLicenseCheckedAt: new Date('2026-09-01T09:59:00.000Z'),
           rightsLicenseUncoveredCountryCodes: [],
-          rightsLicenseAttributionTextRu: null,
         },
       ]);
       jest

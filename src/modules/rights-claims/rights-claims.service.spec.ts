@@ -1,9 +1,16 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { RightsClaim, RightsClaimAccessBlock } from '@prisma/client';
+import {
+  AdminAuditAction,
+  AdminAuditTargetType,
+  Prisma,
+  RightsClaim,
+  RightsClaimAccessBlock,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClaimComponentType } from './dto/link-claim-component.dto';
 import { CreateRightsClaimDto } from './dto/create-rights-claim.dto';
 import { RightsClaimsService } from './rights-claims.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import {
   ClaimBlockScope,
   RightsClaimAttachmentType,
@@ -109,6 +116,7 @@ interface PrismaStub {
   rightsComponent: Record<string, jest.Mock>;
   mediaAsset: Record<string, jest.Mock>;
   user: Record<string, jest.Mock>;
+  $queryRaw: jest.Mock;
   $transaction: <T>(callback: (transaction: PrismaStub) => Promise<T>) => Promise<T>;
 }
 
@@ -197,6 +205,19 @@ const createPrismaStub = (): PrismaStub => {
     },
     mediaAsset: { findUnique: jest.fn().mockResolvedValue({ id: 'asset-1', isDeleted: false }) },
     user: { findUnique: jest.fn().mockResolvedValue({ id: 'user-2' }) },
+    // `LEGACY-180`: блокировка читает лицензионный снимок под замком строки перед
+    // тем, как погасить его. Стенд отдаёт заполненный снимок — иначе проверять,
+    // что он ушёл в событие, было бы нечем.
+    $queryRaw: jest.fn().mockResolvedValue([
+      {
+        status: 'published',
+        publishedAt: new Date('2026-09-01T10:00:00.000Z'),
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'COVERED',
+        rightsLicenseCheckedAt: new Date('2026-09-01T09:59:00.000Z'),
+        rightsLicenseUncoveredCountryCodes: ['BR'],
+      },
+    ]),
     $transaction: async <T>(callback: (transaction: PrismaStub) => Promise<T>): Promise<T> =>
       callback(stub),
   };
@@ -218,12 +239,17 @@ const eventTypes = (prisma: PrismaStub): string[] =>
 
 describe('RightsClaimsService', () => {
   let prisma: PrismaStub;
+  let adminAudit: { record: jest.Mock };
   let service: RightsClaimsService;
 
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(NOW);
     prisma = createPrismaStub();
-    service = new RightsClaimsService(prisma as unknown as PrismaService);
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
+    service = new RightsClaimsService(
+      prisma as unknown as PrismaService,
+      adminAudit as unknown as AdminAuditService,
+    );
   });
 
   afterEach(() => {
@@ -411,10 +437,247 @@ describe('RightsClaimsService', () => {
       'user-1',
     );
 
+    // Гашение снимка обязано пройти по **каждой** версии партии, а не по одной из них:
+    // без счёта вызовов зелёным остался бы и случай, где часть версий ушла без гашения (L-005).
+    const unpublishWrites = prisma.bookVersion.update.mock.calls
+      .map((call) => call[0] as { where: { id: string }; data: Record<string, unknown> })
+      .filter((call) => call.data.status === 'draft');
+    expect(unpublishWrites).toHaveLength(1);
     expect(prisma.bookVersion.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'version-1' }, data: { status: 'draft' } }),
+      expect.objectContaining({
+        where: { id: 'version-1' },
+        // `LEGACY-180`: блокировка гасит лицензионный снимок тем же набором значений,
+        // что и админское снятие с публикации — общий `CLEAR_LICENSE_SNAPSHOT`.
+        // Атрибуция не гасится намеренно: её пишет создание книги из интейка,
+        // а `publish` непустое значение сохраняет — потерять её означало бы потерять
+        // то, чего публикация не создавала (`PRESERVED_LICENSE_COLUMNS`).
+        data: {
+          status: 'draft',
+          publishedAt: null,
+          rightsLicenseIds: Prisma.DbNull,
+          rightsLicenseCoverageStatus: null,
+          rightsLicenseCheckedAt: null,
+          rightsLicenseUncoveredCountryCodes: Prisma.DbNull,
+        },
+      }),
     );
     expect(eventTypes(prisma)).toContain(RightsClaimEventType.VERSION_UNPUBLISHED);
+  });
+
+  /**
+   * `LEGACY-180`. Колонки гасятся физически, поэтому снимок обязан уйти в событие
+   * той же транзакции — иначе ответить, на что опиралась публикация до блокировки,
+   * нечем (ADR-009). Журнал здесь свой, история претензии: у него другие читатели,
+   * чем у журнала административных действий.
+   */
+  it('carries the erased license snapshot into the claim event payload', async () => {
+    await service.applyBlock(
+      'claim-1',
+      {
+        scope: ClaimBlockScope.LANGUAGE_EDITION,
+        reasonRu: 'Претензия',
+        unpublishVersion: true,
+      },
+      'user-1',
+    );
+
+    // История претензии называет версию, снимок туда не кладётся: у `RightsClaimEvent`
+    // внешний ключ на претензию, а у той каскад от версии — `DELETE /versions/:id` снёс бы
+    // единственную копию затёртого снимка.
+    const unpublishEvent = prisma.rightsClaimEvent.create.mock.calls
+      .map((call) => call[0] as { data: { eventType: string; payload?: Record<string, unknown> } })
+      .find((call) => call.data.eventType === RightsClaimEventType.VERSION_UNPUBLISHED);
+    expect(unpublishEvent?.data.payload).toEqual({ bookVersionId: 'version-1' });
+
+    // Снимок уходит в журнал административных действий — он переживает удаление версии.
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(prisma, {
+      action: AdminAuditAction.VERSION_UNPUBLISHED,
+      targetType: AdminAuditTargetType.BOOK_VERSION,
+      targetId: 'version-1',
+      actorUserId: 'user-1',
+      payload: {
+        publishedAt: '2026-09-01T10:00:00.000Z',
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'COVERED',
+        rightsLicenseCheckedAt: '2026-09-01T09:59:00.000Z',
+        rightsLicenseUncoveredCountryCodes: ['BR'],
+      },
+    });
+
+    // Замок берётся на ту версию, которую снимают: без проверки аргумента опечатка
+    // в переборе партии (замок на одной версии, запись в другую) прошла бы молча.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRaw.mock.calls[0].slice(1)).toEqual(['version-1']);
+  });
+
+  /**
+   * Границы транзакции и порядок замков. Внутрь транзакции блокировки уехал
+   * `SELECT ... FOR UPDATE`, и обе вещи стали обязательными: без дедлайна замок держит
+   * строку до конца пула при повисшем вызывающем, без единого порядка две встречные
+   * блокировки по одной книге берут замки крест-накрест и ловят `40P01`. Порядок обязан
+   * совпадать у **каждого** цикла транзакции, поэтому проверяются оба `findMany`.
+   */
+  it('opens the transaction with explicit bounds and locks rows in one order', async () => {
+    let options: unknown;
+    const transactionSpy = jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementation((callback: unknown, passed?: unknown) => {
+        options = passed;
+        return (callback as (tx: unknown) => Promise<unknown>)(prisma);
+      });
+
+    await service.applyBlock(
+      'claim-1',
+      { scope: ClaimBlockScope.ENTIRE_BOOK, reasonRu: 'Претензия', unpublishVersion: true },
+      'user-1',
+    );
+
+    expect(options).toEqual({ timeout: 30_000, maxWait: 10_000 });
+
+    // Только выборки внутри транзакции, то есть те, что дальше запирают строки:
+    // сбор состава партии (`where: { bookId }`) замков не берёт и порядка не требует.
+    const orderings = prisma.bookVersion.findMany.mock.calls
+      .map((call) => call[0] as { where?: { id?: unknown }; orderBy?: unknown })
+      .filter((call) => call.where?.id !== undefined)
+      .map((call) => call.orderBy);
+    expect(orderings.length).toBeGreaterThan(1);
+    for (const ordering of orderings) {
+      expect(ordering).toEqual({ id: 'asc' });
+    }
+
+    transactionSpy.mockRestore();
+  });
+
+  /**
+   * Решение «снимать или нет» принимается только по статусу из-под замка. Здесь выборка
+   * партии видит версию опубликованной, а замок — уже черновиком: так выглядит админское
+   * снятие, успевшее между двумя чтениями. Событие претензии в этом случае утверждало бы,
+   * что версию сняли без даты публикации и без лицензионного основания вовсе.
+   */
+  it('trusts the status read under the lock, not the one read before it', async () => {
+    prisma.$queryRaw.mockReset().mockResolvedValue([
+      {
+        status: 'draft',
+        publishedAt: null,
+        rightsLicenseIds: null,
+        rightsLicenseCoverageStatus: null,
+        rightsLicenseCheckedAt: null,
+        rightsLicenseUncoveredCountryCodes: null,
+      },
+    ]);
+
+    await service.applyBlock(
+      'claim-1',
+      {
+        scope: ClaimBlockScope.LANGUAGE_EDITION,
+        reasonRu: 'Претензия',
+        unpublishVersion: true,
+      },
+      'user-1',
+    );
+
+    const unpublishWrites = prisma.bookVersion.update.mock.calls
+      .map((call) => call[0] as { data: Record<string, unknown> })
+      .filter((call) => call.data.status === 'draft');
+    expect(unpublishWrites).toEqual([]);
+    expect(adminAudit.record).not.toHaveBeenCalled();
+    expect(eventTypes(prisma)).not.toContain(RightsClaimEventType.VERSION_UNPUBLISHED);
+  });
+
+  /**
+   * Скоуп `ENTIRE_BOOK` снимает с публикации **все** версии книги, и у каждой снимок свой.
+   * До `LEGACY-180` цикл никогда не прогонялся больше чем на одной версии, поэтому «погасили
+   * первую, вторую забыли» и «в событие второй ушёл снимок первой» не поймал бы ни один тест.
+   */
+  it('clears the snapshot of every version in the batch, each with its own', async () => {
+    prisma.bookVersion.findMany.mockResolvedValue([
+      { id: 'version-1', bookId: 'book-1', status: 'published' },
+      { id: 'version-2', bookId: 'book-1', status: 'published' },
+    ]);
+    // Снимок отдаётся **по версии**, а не по порядку вызова: иначе «замок всегда
+    // на первой версии партии» дал бы те же payload'ы и прошёл бы молча.
+    const snapshotsByVersion: Record<string, unknown> = {
+      'version-1': {
+        status: 'published',
+        publishedAt: new Date('2026-09-01T10:00:00.000Z'),
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'COVERED',
+        rightsLicenseCheckedAt: new Date('2026-09-01T09:59:00.000Z'),
+        rightsLicenseUncoveredCountryCodes: ['BR'],
+      },
+      'version-2': {
+        status: 'published',
+        publishedAt: new Date('2026-09-05T10:00:00.000Z'),
+        rightsLicenseIds: ['lic-B'],
+        rightsLicenseCoverageStatus: 'PARTIAL',
+        rightsLicenseCheckedAt: new Date('2026-09-05T09:59:00.000Z'),
+        rightsLicenseUncoveredCountryCodes: ['MX'],
+      },
+    };
+    prisma.$queryRaw
+      .mockReset()
+      .mockImplementation((...args: unknown[]) => [snapshotsByVersion[args[1] as string]]);
+
+    await service.applyBlock(
+      'claim-1',
+      { scope: ClaimBlockScope.ENTIRE_BOOK, reasonRu: 'Претензия', unpublishVersion: true },
+      'user-1',
+    );
+
+    const unpublishWrites = prisma.bookVersion.update.mock.calls
+      .map((call) => call[0] as { where: { id: string }; data: Record<string, unknown> })
+      .filter((call) => call.data.status === 'draft');
+    expect(unpublishWrites.map((call) => call.where.id)).toEqual(['version-1', 'version-2']);
+
+    const recorded = adminAudit.record.mock.calls.map(
+      (call) => call[1] as { targetId: string; payload: Record<string, unknown> },
+    );
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        targetId: 'version-1',
+        payload: expect.objectContaining({ rightsLicenseIds: ['lic-A'] }),
+      }),
+      expect.objectContaining({
+        targetId: 'version-2',
+        payload: expect.objectContaining({ rightsLicenseIds: ['lic-B'] }),
+      }),
+    ]);
+    // Замок берётся на каждую версию партии, по одному разу и на свою.
+    const lockedIds = prisma.$queryRaw.mock.calls.map((call) => call[1] as string);
+    expect(lockedIds).toEqual(['version-1', 'version-2']);
+  });
+
+  /**
+   * Версию удалили между выборкой партии и замком строки: гасить нечего, событие
+   * писать не о чем, остальные версии партии обрабатываются дальше.
+   */
+  it('skips a version that is gone by the time the row is locked', async () => {
+    // Партия из двух: исчезла первая. Пропуск обязан быть именно пропуском - со `break`
+    // вторая версия осталась бы опубликованной, и это не поймал бы ни один тест на одной версии.
+    prisma.bookVersion.findMany.mockResolvedValue([
+      { id: 'version-gone', bookId: 'book-1', status: 'published' },
+      { id: 'version-1', bookId: 'book-1', status: 'published' },
+    ]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+
+    await service.applyBlock(
+      'claim-1',
+      {
+        scope: ClaimBlockScope.LANGUAGE_EDITION,
+        reasonRu: 'Претензия',
+        unpublishVersion: true,
+      },
+      'user-1',
+    );
+
+    // Признак блокировки версии ставится отдельной записью и здесь не при чём —
+    // проверяем именно то, какие версии были сняты с публикации.
+    const unpublishWrites = prisma.bookVersion.update.mock.calls
+      .map((call) => call[0] as { where: { id: string }; data: Record<string, unknown> })
+      .filter((call) => call.data.status === 'draft');
+    // Исчезнувшая пропущена, следующая за ней — снята: цикл не прерывается.
+    expect(unpublishWrites.map((call) => call.where.id)).toEqual(['version-1']);
   });
 
   it('sets rightsClaimBlockActive on the version', async () => {
@@ -733,7 +996,12 @@ describe('RightsClaimsService — атомарность аудита (WP-10.2)'
   };
 
   const buildService = (client: unknown): RightsClaimsService =>
-    new RightsClaimsService(client as PrismaService);
+    new RightsClaimsService(
+      client as PrismaService,
+      {
+        record: jest.fn().mockResolvedValue(undefined),
+      } as unknown as AdminAuditService,
+    );
 
   const eventsOf = (writes: Write[]): Array<Record<string, unknown>> =>
     writes.filter((write) => write.model === 'rightsClaimEvent.create').map((write) => write.data);

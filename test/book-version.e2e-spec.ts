@@ -143,7 +143,6 @@ describe('BookVersions e2e', () => {
     expect(afterUnpublish?.rightsLicenseCoverageStatus).toBeNull();
     expect(afterUnpublish?.rightsLicenseCheckedAt).toBeNull();
     expect(afterUnpublish?.rightsLicenseUncoveredCountryCodes).toBeNull();
-    expect(afterUnpublish?.rightsLicenseAttributionTextRu).toBeNull();
 
     const auditRows = await prisma.adminAuditEvent.findMany({
       where: { targetType: 'BOOK_VERSION', targetId: versionId },

@@ -24,6 +24,11 @@ import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import {
+  CLEAR_LICENSE_SNAPSHOT,
+  licenseSnapshotPayload,
+  lockLicenseSnapshot,
+} from '../../shared/rights-license-snapshot/rights-license-snapshot';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { CLAIM_SEVERITY_RANK } from '../rights-claims/rights-claim.constants';
 import { RightsClaimSeverity } from '../rights-claims/rights-claim-interface';
@@ -1267,35 +1272,13 @@ export class BookVersionService {
     try {
       const updated = await this.prisma.$transaction(
         async (tx) => {
-          // Снимок для события берётся под замком и **внутри** транзакции, а не из чтения
-          // выше: между тем чтением и этой записью проходит чужой `publish`, и он
-          // перезаписывает те же пять колонок. Событие тогда назвало бы лицензии,
-          // на которых публикация не стояла, а настоящие были бы уже стёрты — вернуть
-          // их неоткуда (ADR-009). Замок строки делает снимок и запись одним целым.
-          const locked = await tx.$queryRaw<
-            Array<{
-              publishedAt: Date | null;
-              rightsLicenseIds: Prisma.JsonValue | null;
-              rightsLicenseCoverageStatus: string | null;
-              rightsLicenseCheckedAt: Date | null;
-              rightsLicenseUncoveredCountryCodes: Prisma.JsonValue | null;
-              rightsLicenseAttributionTextRu: string | null;
-            }>
-          >`
-            SELECT "publishedAt",
-                   "rightsLicenseIds",
-                   "rightsLicenseCoverageStatus",
-                   "rightsLicenseCheckedAt",
-                   "rightsLicenseUncoveredCountryCodes",
-                   "rightsLicenseAttributionTextRu"
-              FROM "BookVersion"
-             WHERE "id" = ${id}
-               FOR UPDATE
-          `;
+          // Снимок читается под замком строки и **внутри** транзакции: между обычным
+          // чтением и записью проходит чужой `publish` и перезаписывает те же колонки.
+          // Список колонок и форма снимка — общие с блокировкой по претензии.
+          const snapshot = await lockLicenseSnapshot(tx, id);
           // Версию удалили между чтением и замком: снимать нечего и писать событие
           // не о чем. Тот же отказ, что и у чтения выше, — маршрут отвечает 404.
-          if (locked.length === 0) throw new NotFoundException('BookVersion not found');
-          const snapshot = locked[0];
+          if (!snapshot) throw new NotFoundException('BookVersion not found');
 
           const written = await tx.bookVersion.update({
             // Те же пять колонок несёт и версия, созданная из утверждённого интейка сразу
@@ -1304,15 +1287,7 @@ export class BookVersionService {
             // Условие стоит в самой записи, а не на прочитанном статусе: приём взят
             // с `publish` (условие на непустое содержимое), и проверяет его сама база.
             where: { id, OR: [{ status: 'published' }, { publishedAt: { not: null } }] },
-            data: {
-              status: 'draft',
-              publishedAt: null,
-              ...jsonField('rightsLicenseIds', null),
-              rightsLicenseCoverageStatus: null,
-              rightsLicenseCheckedAt: null,
-              ...jsonField('rightsLicenseUncoveredCountryCodes', null),
-              rightsLicenseAttributionTextRu: null,
-            },
+            data: { status: 'draft', ...CLEAR_LICENSE_SNAPSHOT },
             include: { seo: true },
           });
 
@@ -1326,17 +1301,7 @@ export class BookVersionService {
             // Снимок целиком — это и есть смысл события: колонки версии после этой
             // записи пусты. Ни почты, ни имени: журнал выката и выгрузку базы читает
             // кто угодно (инвариант из doc-комментария модели `AdminAuditEvent`).
-            payload: {
-              publishedAt: snapshot.publishedAt ? snapshot.publishedAt.toISOString() : null,
-              rightsLicenseIds: toJsonInput(snapshot.rightsLicenseIds) ?? null,
-              rightsLicenseCoverageStatus: snapshot.rightsLicenseCoverageStatus,
-              rightsLicenseCheckedAt: snapshot.rightsLicenseCheckedAt
-                ? snapshot.rightsLicenseCheckedAt.toISOString()
-                : null,
-              rightsLicenseUncoveredCountryCodes:
-                toJsonInput(snapshot.rightsLicenseUncoveredCountryCodes) ?? null,
-              rightsLicenseAttributionTextRu: snapshot.rightsLicenseAttributionTextRu,
-            },
+            payload: licenseSnapshotPayload(snapshot),
           });
 
           return written;

@@ -52,6 +52,15 @@ describe('Rights claims e2e', () => {
         type: 'text',
         isFree: true,
         status: 'published',
+        // `LEGACY-180`: у опубликованной версии есть дата публикации и лицензионный
+        // снимок — именно их обязана погасить блокировка по претензии. Без них
+        // проверка гашения ничего не стережёт: гасить было бы нечего.
+        publishedAt: new Date('2026-09-01T10:00:00.000Z'),
+        rightsLicenseIds: ['lic-e2e'],
+        rightsLicenseCoverageStatus: 'COVERED',
+        rightsLicenseCheckedAt: new Date('2026-09-01T09:59:00.000Z'),
+        rightsLicenseUncoveredCountryCodes: ['BR'],
+        rightsLicenseAttributionTextRu: 'Издано по лицензии',
         rightsProfileId: created.profile.id,
         approvedRightsReviewId: created.review.id,
         rightsStatus: 'APPROVED',
@@ -429,6 +438,17 @@ describe('Rights claims e2e', () => {
         expect(body.rightsClaimBlockActive).toBe(true);
       });
 
+    // `LEGACY-180`: блокировка по претензии гасит лицензионный снимок так же, как
+    // админское снятие с публикации, — иначе черновик остаётся с датой публикации
+    // и списком лицензий и в дашборде прав выглядит опубликованным. Проверяется
+    // на живой базе: гашение идёт под замком строки, и мок его не подтвердит.
+    const blocked = await prisma.bookVersion.findUnique({ where: { id: versionId } });
+    expect(blocked?.publishedAt).toBeNull();
+    expect(blocked?.rightsLicenseIds).toBeNull();
+    expect(blocked?.rightsLicenseCoverageStatus).toBeNull();
+    expect(blocked?.rightsLicenseCheckedAt).toBeNull();
+    expect(blocked?.rightsLicenseUncoveredCountryCodes).toBeNull();
+
     await request(http())
       .get(`/admin/rights/claims/${secondClaimId}`)
       .set('Authorization', `Bearer ${adminAccess}`)
@@ -440,6 +460,33 @@ describe('Rights claims e2e', () => {
           body.events.some((e: { eventType: string }) => e.eventType === 'VERSION_UNPUBLISHED'),
         ).toBe(true);
       });
+
+    // Снимок обязан пережить гашение колонок: после блокировки ответить, на что опиралась
+    // публикация, больше нечем (ADR-009). Он лежит в журнале административных действий,
+    // а не в событии претензии: у того внешний ключ на претензию, а у неё каскад от версии.
+    // Сверяются **значения**, а не имена ключей: пустой снимок с полным набором ключей —
+    // ровно тот дефект, от которого эта посадка и стоит.
+    const auditRow = await prisma.adminAuditEvent.findFirst({
+      where: { targetType: 'BOOK_VERSION', targetId: versionId, action: 'VERSION_UNPUBLISHED' },
+    });
+    expect(auditRow).not.toBeNull();
+    expect(auditRow?.payload).toEqual({
+      publishedAt: '2026-09-01T10:00:00.000Z',
+      rightsLicenseIds: ['lic-e2e'],
+      rightsLicenseCoverageStatus: 'COVERED',
+      rightsLicenseCheckedAt: '2026-09-01T09:59:00.000Z',
+      rightsLicenseUncoveredCountryCodes: ['BR'],
+    });
+
+    // История претензии называет снятую версию и снимка не несёт.
+    const unpublishEvent = await prisma.rightsClaimEvent.findFirst({
+      where: { rightsClaimId: secondClaimId, eventType: 'VERSION_UNPUBLISHED' },
+    });
+    expect(unpublishEvent).not.toBeNull();
+    expect(unpublishEvent?.payload).toEqual({ bookVersionId: versionId });
+
+    // Атрибуция лицензии публикации не принадлежит и остаётся на версии.
+    expect(blocked?.rightsLicenseAttributionTextRu).toBe('Издано по лицензии');
 
     // An unpublished version is not served publicly at all, so the answer is 404, not 451.
     await request(http()).get(`/chapters/${chapterId}`).set('X-Geo-Country', 'US').expect(404);
