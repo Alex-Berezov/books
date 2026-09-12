@@ -131,6 +131,38 @@ describe('BookVersions e2e', () => {
       .patch(`/versions/${versionId}/unpublish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
+
+    // `LEGACY-180`: снятие с публикации обнуляет лицензионный снимок и пишет о снятии
+    // строку в журнал административных действий — одной транзакцией. Условие записи
+    // (`status: 'published'` ИЛИ `publishedAt != null`) проверяет сама база, поэтому
+    // юнит-спека на моке его подтвердить не может, а эта проверка — может.
+    const afterUnpublish = await prisma.bookVersion.findUnique({ where: { id: versionId } });
+    expect(afterUnpublish?.status).toBe('draft');
+    expect(afterUnpublish?.publishedAt).toBeNull();
+    expect(afterUnpublish?.rightsLicenseIds).toBeNull();
+    expect(afterUnpublish?.rightsLicenseCoverageStatus).toBeNull();
+    expect(afterUnpublish?.rightsLicenseCheckedAt).toBeNull();
+    expect(afterUnpublish?.rightsLicenseUncoveredCountryCodes).toBeNull();
+    expect(afterUnpublish?.rightsLicenseAttributionTextRu).toBeNull();
+
+    const auditRows = await prisma.adminAuditEvent.findMany({
+      where: { targetType: 'BOOK_VERSION', targetId: versionId },
+    });
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0].action).toBe('VERSION_UNPUBLISHED');
+    expect(auditRows[0].actorUserId).not.toBeNull();
+
+    // Повторное снятие уже снятой версии строки не добавляет: снимать нечего,
+    // и событие «равно изменению состояния» (инвариант модели `AdminAuditEvent`).
+    await request(http())
+      .patch(`/versions/${versionId}/unpublish`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const auditRowsAfterRepeat = await prisma.adminAuditEvent.findMany({
+      where: { targetType: 'BOOK_VERSION', targetId: versionId },
+    });
+    expect(auditRowsAfterRepeat).toHaveLength(1);
+
     const listAfterUnpublish = await request(http()).get(`/books/${bookId}/versions`).expect(200);
     expect(listAfterUnpublish.body.length).toBe(0);
     await request(http()).get(`/versions/${versionId}`).expect(404);

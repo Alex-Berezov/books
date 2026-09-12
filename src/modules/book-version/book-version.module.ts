@@ -10,6 +10,7 @@ import { RightsClearanceModule } from '../rights-clearance/rights-clearance.modu
 import { RightsRecheckModule } from '../rights-recheck/rights-recheck.module';
 import { RightsLawyerModule } from '../rights-lawyer/rights-lawyer.module';
 import { TaxonomyIndexabilityModule } from '../seo/indexability/taxonomy-indexability.module';
+import { AdminAuditModule } from '../../shared/admin-audit/admin-audit.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { TaxonomyIndexabilityModule } from '../seo/indexability/taxonomy-indexab
     RightsClearanceModule,
     RightsRecheckModule,
     RightsLawyerModule,
+    AdminAuditModule,
   ],
   controllers: [BookVersionController],
   providers: [BookVersionService, PublicationGateService],

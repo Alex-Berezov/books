@@ -12,7 +12,7 @@ import {
 } from './publication-gate.constants';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
-import { Language, BookType, Prisma } from '@prisma/client';
+import { Language, BookType, Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { ContributorRole } from '../persons/person-interface';
 import { CreateBookVersionContributorDto } from './dto/create-version-contributor.dto';
 import { UpdateBookVersionContributorDto } from './dto/update-version-contributor.dto';
@@ -23,6 +23,7 @@ import { GeoBlockScope, GeoCountrySourceStatus } from '../geo-block/dto/geo-bloc
 import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { CLAIM_SEVERITY_RANK } from '../rights-claims/rights-claim.constants';
 import { RightsClaimSeverity } from '../rights-claims/rights-claim-interface';
@@ -95,6 +96,10 @@ export class BookVersionService {
     // необязательная зависимость здесь означала бы «история слагов иногда не
     // пишется», а отсутствие записи неотличимо от её ненадобности (LEGACY-062).
     private slugRedirects: SlugRedirectService,
+    // Обязателен по той же причине, что и история слагов: необязательный писатель
+    // журнала означал бы «событие иногда не пишется», а отсутствие строки в журнале
+    // неотличимо от того, что действия не было (`LEGACY-015`).
+    private adminAudit: AdminAuditService,
     private regionAggregationService?: TerritoryRegionAggregationService,
     // Optional so existing direct instantiations in unit tests keep working; a
     // missing counter only means the taxonomy state is refreshed by the admin
@@ -1239,19 +1244,128 @@ export class BookVersionService {
     return published;
   }
 
-  async unpublish(id: string) {
-    const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('BookVersion not found');
-    const updated = await this.prisma.bookVersion.update({
+  /**
+   * LEGACY-180. Снятие с публикации обнуляет лицензионный снимок, который `publish`
+   * записывает вместе со статусом (решение владельца процесса, 12.09.2026): иначе
+   * черновик продолжает выглядеть опубликованным и залицензированным по этим полям.
+   *
+   * Обнуление и событие снятия идут **одной транзакцией** (решение арбитра, 12.09.2026):
+   * колонки затираются физически, и `git revert` кода значения не вернёт, поэтому снимок
+   * целиком уходит в `payload` события — иначе на вопрос «каким покрытием обосновывалась
+   * выдача до снятия» не отвечает ничто (ADR-009).
+   *
+   * Базовый снимок контента (`finalizeBaselineOnPublish`) намеренно не трогается: окно
+   * наполнения черновика этим действием не открывается.
+   */
+  async unpublish(id: string, actorUserId: string | null) {
+    const existing = await this.prisma.bookVersion.findUnique({
       where: { id },
-      data: { status: 'draft', publishedAt: null },
       include: { seo: true },
     });
+    if (!existing) throw new NotFoundException('BookVersion not found');
 
-    // ...and close again when the count drops back to the hysteresis floor.
-    await this.taxonomyIndexabilityService?.recomputeForBookVersion(id);
+    try {
+      const updated = await this.prisma.$transaction(
+        async (tx) => {
+          // Снимок для события берётся под замком и **внутри** транзакции, а не из чтения
+          // выше: между тем чтением и этой записью проходит чужой `publish`, и он
+          // перезаписывает те же пять колонок. Событие тогда назвало бы лицензии,
+          // на которых публикация не стояла, а настоящие были бы уже стёрты — вернуть
+          // их неоткуда (ADR-009). Замок строки делает снимок и запись одним целым.
+          const locked = await tx.$queryRaw<
+            Array<{
+              publishedAt: Date | null;
+              rightsLicenseIds: Prisma.JsonValue | null;
+              rightsLicenseCoverageStatus: string | null;
+              rightsLicenseCheckedAt: Date | null;
+              rightsLicenseUncoveredCountryCodes: Prisma.JsonValue | null;
+              rightsLicenseAttributionTextRu: string | null;
+            }>
+          >`
+            SELECT "publishedAt",
+                   "rightsLicenseIds",
+                   "rightsLicenseCoverageStatus",
+                   "rightsLicenseCheckedAt",
+                   "rightsLicenseUncoveredCountryCodes",
+                   "rightsLicenseAttributionTextRu"
+              FROM "BookVersion"
+             WHERE "id" = ${id}
+               FOR UPDATE
+          `;
+          // Версию удалили между чтением и замком: снимать нечего и писать событие
+          // не о чем. Тот же отказ, что и у чтения выше, — маршрут отвечает 404.
+          if (locked.length === 0) throw new NotFoundException('BookVersion not found');
+          const snapshot = locked[0];
 
-    return updated;
+          const written = await tx.bookVersion.update({
+            // Те же пять колонок несёт и версия, созданная из утверждённого интейка сразу
+            // черновиком (`rights-book-creation.service.ts`): там снимок принадлежит не
+            // публикации, а интейку, и снятие с публикации его стирать не должно.
+            // Условие стоит в самой записи, а не на прочитанном статусе: приём взят
+            // с `publish` (условие на непустое содержимое), и проверяет его сама база.
+            where: { id, OR: [{ status: 'published' }, { publishedAt: { not: null } }] },
+            data: {
+              status: 'draft',
+              publishedAt: null,
+              ...jsonField('rightsLicenseIds', null),
+              rightsLicenseCoverageStatus: null,
+              rightsLicenseCheckedAt: null,
+              ...jsonField('rightsLicenseUncoveredCountryCodes', null),
+              rightsLicenseAttributionTextRu: null,
+            },
+            include: { seo: true },
+          });
+
+          // Пишется общим писателем, а не `tx.adminAuditEvent` по месту: копия записи
+          // в каждом модуле — это то, что запрещает дополнение к правилу `LEGACY-015`.
+          await this.adminAudit.record(tx, {
+            action: AdminAuditAction.VERSION_UNPUBLISHED,
+            targetType: AdminAuditTargetType.BOOK_VERSION,
+            targetId: id,
+            actorUserId,
+            // Снимок целиком — это и есть смысл события: колонки версии после этой
+            // записи пусты. Ни почты, ни имени: журнал выката и выгрузку базы читает
+            // кто угодно (инвариант из doc-комментария модели `AdminAuditEvent`).
+            payload: {
+              publishedAt: snapshot.publishedAt ? snapshot.publishedAt.toISOString() : null,
+              rightsLicenseIds: toJsonInput(snapshot.rightsLicenseIds) ?? null,
+              rightsLicenseCoverageStatus: snapshot.rightsLicenseCoverageStatus,
+              rightsLicenseCheckedAt: snapshot.rightsLicenseCheckedAt
+                ? snapshot.rightsLicenseCheckedAt.toISOString()
+                : null,
+              rightsLicenseUncoveredCountryCodes:
+                toJsonInput(snapshot.rightsLicenseUncoveredCountryCodes) ?? null,
+              rightsLicenseAttributionTextRu: snapshot.rightsLicenseAttributionTextRu,
+            },
+          });
+
+          return written;
+        },
+        // Границы как у соседей по правовому контуру: замок строки без дедлайна держит
+        // её до конца пула соединений, если вызывающий повис (`L-019`).
+        { timeout: 30_000, maxWait: 10_000 },
+      );
+
+      // ...and close again when the count drops back to the hysteresis floor.
+      await this.taxonomyIndexabilityService?.recomputeForBookVersion(id);
+
+      return updated;
+    } catch (e: unknown) {
+      // `P2025` под замком строки означает ровно одно: версия не опубликована и даты
+      // публикации не несёт, то есть снимать нечего — встречное снятие сюда попасть
+      // не может, оно ждёт замка. Ответ маршрута не меняется, но версия перечитывается:
+      // отдать прочитанное до транзакции значило бы назвать опубликованной строку,
+      // состояние которой к этому моменту уже другое.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+        const current = await this.prisma.bookVersion.findUnique({
+          where: { id },
+          include: { seo: true },
+        });
+        if (!current) throw new NotFoundException('BookVersion not found');
+        return current;
+      }
+      throw e;
+    }
   }
 
   // Админский листинг без фильтра по статусу

@@ -642,8 +642,10 @@ export class BookVersionController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  unpublish(@Param('id') id: string) {
-    return this.service.unpublish(id);
+  unpublish(@Param('id') id: string, @Req() request: { user: RequestUser }) {
+    // Актёр берётся из запроса, а не из тела: журнал административных действий должен
+    // отвечать «кто», а не «кто представился» (`LEGACY-015`, `LEGACY-180`).
+    return this.service.unpublish(id, request.user.userId);
   }
 
   @Get('admin/versions/:id/publication-gate')

@@ -27,6 +27,19 @@ const WRITE_RE = new RegExp(`adminAuditEvent\\.(?:${WRITE_OPS})\\b`, 'g');
 /** Клиент, на котором сделана запись: `tx.` — транзакционный, что угодно ещё — корневой. */
 const TX_RE = new RegExp(`tx\\.adminAuditEvent\\.(?:${WRITE_OPS})\\b`, 'g');
 
+/**
+ * Вызовы общего писателя (`LEGACY-180`). Перечень выше морозит обращения к модели, но
+ * с появлением `AdminAuditService` писать в журнал стало можно **не касаясь** модели,
+ * и на такие вызовы перечень не смотрел вовсе: `record(this.prisma, …)` компилируется
+ * (`Prisma.TransactionClient` — это `Omit<PrismaClient, ITXClientDenyList>`, и
+ * `PrismaService` ему структурно подходит), проходил бы оба теста зелёными и писал строку,
+ * переживающую откат своей транзакции — ровно тот отказ, ради которого перечень заморожен
+ * (`LEGACY-036`). Поэтому первый аргумент каждого вызова проверяется здесь отдельно.
+ */
+const RECORD_RE = /(?:this\.)?([A-Za-z_$][\w$]*)\.record\(\s*([A-Za-z_$][\w$.]*)/g;
+const AUDIT_FIELD_RE =
+  /\b(?:private|protected|public|readonly)?\s*(\w+)\s*:\s*AdminAuditService\b/g;
+
 type Site = { file: string; op: string };
 
 /**
@@ -39,13 +52,21 @@ const EXPECTED: Array<Site & { count: number; via: 'tx'; why: string }> = [
     op: 'createMany',
     count: 1,
     via: 'tx',
-    why: 'единственный писатель — приватный recordRoleAuditEvents, зовётся с четырёх путей смены ролей',
+    why: 'ролевой писатель — приватный recordRoleAuditEvents, зовётся с четырёх путей смены ролей; переезд на общий писатель ниже идёт остатком LEGACY-015',
+  },
+  {
+    file: 'shared/admin-audit/admin-audit.service.ts',
+    op: 'create',
+    count: 1,
+    via: 'tx',
+    why: 'общий писатель журнала (LEGACY-180): новые модули-писатели не копируют adminAuditEvent по месту, а зовут его — поэтому перечень больше не растёт',
   },
 ];
 
 describe('места записи в AdminAuditEvent заморожены (LEGACY-015)', () => {
   const found = new Map<string, number>();
   const viaRootClient: string[] = [];
+  const recordWithoutTx: string[] = [];
 
   beforeAll(() => {
     const sources = listFiles(
@@ -70,6 +91,21 @@ describe('места записи в AdminAuditEvent заморожены (LEGAC
       if (writes.length > viaTx) {
         viaRootClient.push(`${rel}: ${writes.length - viaTx} запись(ей) мимо клиента транзакции`);
       }
+
+      // Вызовы общего писателя: первым аргументом обязан идти клиент транзакции.
+      // Имя поля берётся из объявления зависимости, а не угадывается: назвать его
+      // можно как угодно, а тип у него один.
+      if (!text.includes('AdminAuditService')) continue;
+      const auditFields = new Set(
+        [...text.matchAll(AUDIT_FIELD_RE)].map((match) => match[1]).filter(Boolean),
+      );
+      if (auditFields.size === 0) continue;
+      for (const [, field, firstArg] of text.matchAll(RECORD_RE)) {
+        if (!auditFields.has(field)) continue;
+        if (firstArg !== 'tx') {
+          recordWithoutTx.push(`${rel}: record(${firstArg}, …) — первым аргументом не tx`);
+        }
+      }
     }
   });
 
@@ -86,6 +122,10 @@ describe('места записи в AdminAuditEvent заморожены (LEGAC
 
   it('ни одна запись не идёт мимо клиента транзакции', () => {
     expect(viaRootClient).toEqual([]);
+  });
+
+  it('общий писатель зовётся только с клиентом транзакции', () => {
+    expect(recordWithoutTx).toEqual([]);
   });
 
   it('у каждой записи перечня названа причина', () => {
