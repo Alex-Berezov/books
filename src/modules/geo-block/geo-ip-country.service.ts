@@ -30,12 +30,20 @@ export class GeoIpCountryService {
    * request that gets here. Drop those rules or add a second entry point and this method starts
    * believing whatever the client typed, silently — a header is just a string to types and tests.
    * Never add a header no proxy in front of the origin overwrites.
+   *
+   * LEGACY-208, half closed on 12.09.2026. `ENABLE_GEO_TEST_HEADERS` is gone: it switched
+   * `x-geo-country` on regardless of NODE_ENV, so one line in a deployment secret turned into
+   * "any reader names their own country", with nothing in the logs to tell that apart from an
+   * honest lookup. What is left in front of that header is NODE_ENV === 'test' — still an
+   * environment variable, and still the thing to check first when a production lookup starts
+   * believing the header — and `allowDebugHeader`, which is an argument. Do not put a second
+   * flag back in front of it.
+   *
+   * The `x-country-code` branch below is the same hole and is still open, for a reason that is
+   * not a technical one — see the remainder of LEGACY-208.
    */
   resolveCountry(headers: GeoRequestHeaders, allowDebugHeader = false): string | null {
-    const canUseGeoTestHeader =
-      this.config.get<string>('NODE_ENV') === 'test' ||
-      this.config.get<string>('ENABLE_GEO_TEST_HEADERS') === 'true' ||
-      allowDebugHeader;
+    const canUseGeoTestHeader = this.config.get<string>('NODE_ENV') === 'test' || allowDebugHeader;
 
     if (canUseGeoTestHeader) {
       const testCountry = this.normalize(this.getHeader(headers, 'x-geo-country'));

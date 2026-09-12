@@ -57,8 +57,6 @@ const SCAN_ROOTS = ['src', 'prisma'];
 const READ_BUT_NOT_IN_EXAMPLE = {
   SKIP_DB_CONNECT:
     'Test-only escape hatch that skips the database connection; offering it in the example would invite it into a real environment.',
-  ENABLE_GEO_TEST_HEADERS:
-    'Removed from the example on 15.08.2026 by LEGACY-172: it lets a client name its own country and must not be suggested for production. Still read by the code — see LEGACY-208.',
   APPLY:
     'Argument of a one-off maintenance script in prisma/scripts, passed on the command line of that run, not part of the service environment.',
   DRY_RUN:

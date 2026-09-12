@@ -73,25 +73,38 @@ describe('GeoIpCountryService', () => {
     ).toBeNull();
   });
 
-  // The debug header is gated by NODE_ENV/ENABLE_GEO_TEST_HEADERS; production sets neither.
+  // The debug header is gated by NODE_ENV and by `allowDebugHeader`; production sets neither.
   it('ignores X-Geo-Country in production when the test headers are not enabled', () => {
     const { service } = createService({ NODE_ENV: 'production' });
 
     expect(service.resolveCountry({ 'x-geo-country': 'US' })).toBeNull();
   });
 
-  // The other half of the same switch: outside tests the header works only while the flag is on,
-  // which is how a controlled staging debug is meant to happen. Without this the whole clause
-  // could be deleted and every spec would stay green.
-  it('uses X-Geo-Country outside tests only when the flag enables it', () => {
+  // LEGACY-208, half closed 12.09.2026. This expectation was the opposite until that day: the key
+  // switched the header on in any environment, and a deployment secret is not a place where "a
+  // client may name its own country" should be decidable. The case is kept — inverted — precisely
+  // because a green spec over an absent clause proves nothing: it turns red the moment the flag
+  // is read again.
+  it('ignores X-Geo-Country in production even when the retired flag is set', () => {
     const { service } = createService({ NODE_ENV: 'production', ENABLE_GEO_TEST_HEADERS: 'true' });
 
-    expect(service.resolveCountry({ 'x-geo-country': 'us' })).toBe('US');
+    expect(service.resolveCountry({ 'x-geo-country': 'us' })).toBeNull();
+  });
+
+  // The other half of the same switch, still live: `allowDebugHeader` is now the only way to name
+  // a country outside tests, so it needs a positive case of its own. Without one the whole
+  // `|| allowDebugHeader` can be deleted and every spec stays green — the two cases that pass
+  // `true` below assert that the counters do NOT move, which an always-null lookup satisfies too.
+  it('uses X-Geo-Country in production when the caller asks for a debug lookup', () => {
+    const { service } = createService({ NODE_ENV: 'production' });
+
+    expect(service.resolveCountry({ 'x-geo-country': 'gb' }, true)).toBe('GB');
   });
 
   // The other flag, pinned the same way in both positions. This half is a snapshot, not an intent:
   // nothing in this deployment overwrites `x-country-code`, so turning the flag on lets the client
-  // pick its own market (LEGACY-208). When that branch goes, this expectation becomes `null`.
+  // pick its own market. Why the branch is still here at all — remainder of LEGACY-208. When it
+  // goes, this expectation becomes `null`.
   it('uses X-Country-Code only while its own flag is on', () => {
     const { service: off } = createService({ NODE_ENV: 'production' });
     const { service: on } = createService({
@@ -248,10 +261,7 @@ describe('GeoIpCountryService', () => {
     // to `record` would produce a series under a name no dashboard queries, and every other spec
     // in this file would stay green.
     it('labels the staging debug header with its own name', async () => {
-      const { service, metrics } = createService({
-        NODE_ENV: 'production',
-        ENABLE_GEO_TEST_HEADERS: 'true',
-      });
+      const { service, metrics } = createService({ NODE_ENV: 'test' });
 
       service.resolveCountry({ 'x-geo-country': 'gb' });
 

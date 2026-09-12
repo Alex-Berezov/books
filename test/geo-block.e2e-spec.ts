@@ -27,7 +27,11 @@ describe('GeoIP market blocking e2e', () => {
 
   beforeAll(async () => {
     process.env.ADMIN_EMAILS = 'admin@example.com';
-    process.env.ENABLE_GEO_TEST_HEADERS = 'true';
+    // LEGACY-208 retired ENABLE_GEO_TEST_HEADERS, so `x-geo-country` below now rests on
+    // NODE_ENV alone. Jest sets it to 'test' only when the shell left it unset: run this
+    // suite from a shell with NODE_ENV=development and the geo cases fail as "expected 451,
+    // got 200" — a broken geo-block by the look of it, an unpinned environment in fact.
+    process.env.NODE_ENV = 'test';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
