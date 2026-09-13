@@ -132,14 +132,80 @@ describe('кэш-заголовки живых ответов', () => {
     });
 
     /**
-     * 🔴 `LEGACY-107`. Язык публичного ответа берётся из заголовка, когда его
-     * нет в запросе явно. Без этого поля первый пришедший определял бы язык
-     * разметки для всех остальных на 300 секунд.
+     * 🔴 `LEGACY-104`. `PublicCacheInterceptor` на публичной ветке `Vary`
+     * больше не дописывает — поле снято вместе с чтением заголовка: Cloudflare
+     * игнорирует его без custom cache key, а честный общий кэш расщепил бы
+     * по нему ключ на каждого посетителя.
+     *
+     * ⚠️ Утверждение именно «интерцептор ничего не добавил», а не «поля нет
+     * вовсе». Здесь приложение поднято голым `createNestApplication()` без
+     * CORS, поэтому `Vary` пуст; на проде `CORS_ORIGIN` — список источников,
+     * значит `origin` в `getCorsConfig` это функция, и пакет `cors` ставит
+     * `Vary: Origin` на каждом ответе. Форма `toBeUndefined()` была бы верна
+     * только для тестового приложения и покраснела бы в день, когда e2e
+     * начнут поднимать приложение через `setupSecurity`, ничего не изменив
+     * в кэш-контуре.
      */
-    it('публичный ответ объявляет Vary: Accept-Language', async () => {
+    it('публичный ответ не получает Vary от интерцептора', async () => {
       const response = await request(http()).get('/en/books/cards?limit=1').expect(200);
 
-      expect(String(response.headers['vary'])).toContain('Accept-Language');
+      const vary = response.headers['vary'];
+      expect(vary === undefined ? 'Origin' : String(vary)).toBe('Origin');
+    });
+
+    /**
+     * 🔴 `LEGACY-104`. То, ради чего снималась зависимость от заголовка: два
+     * запроса по одному URL с разными `Accept-Language` обязаны дать
+     * **одинаковое** тело.
+     *
+     * ⚠️ Маршрут выбран не любой публичный, а тот, где дефект жил.
+     * `GET /seo/resolve` — единственный из трёх починенных, у которого языка
+     * в пути нет вовсе, то есть до правки заголовок определял язык
+     * единолично: `title`, `description`, `canonical`, OG-разметку и крошки.
+     * Первая версия этого кейса ходила на `/en/books/cards`, а тот обработчик
+     * заголовок не читал **никогда** — кейс оставался бы зелёным и после
+     * полного отката правки, то есть не был посадкой вовсе (`L-004`).
+     *
+     * `type=catalog` взят потому, что эта ветка не читает базу совсем
+     * (`seo.service.ts:1152`) — кейс не зависит ни от сида, ни от фикстур.
+     */
+    it('тело /seo/resolve не зависит от Accept-Language', async () => {
+      const ru = await request(http())
+        .get('/seo/resolve?type=catalog&id=catalog')
+        .set('Accept-Language', 'ru-RU,ru;q=0.9')
+        .expect(200);
+      const es = await request(http())
+        .get('/seo/resolve?type=catalog&id=catalog')
+        .set('Accept-Language', 'es-ES,es;q=0.9')
+        .expect(200);
+
+      expect(JSON.stringify(ru.body)).toBe(JSON.stringify(es.body));
+
+      // И это тело — то же самое, что у запроса вовсе без заголовка:
+      // сравнение двух ответов между собой прошло бы и в случае, когда оба
+      // одинаково уехали на язык, взятый откуда-то ещё.
+      const bare = await request(http()).get('/seo/resolve?type=catalog&id=catalog').expect(200);
+      expect(JSON.stringify(bare.body)).toBe(JSON.stringify(ru.body));
+    });
+
+    /**
+     * 🔴 `LEGACY-104`. Второй из трёх починенных обработчиков — с языком
+     * в пути. Он зависел от заголовка не напрямую, а через фильтр `available`:
+     * язык пути отбрасывался, если сущность на нём не издана, и выбор уходил
+     * к заголовку (`seo.service.ts:444-451`). Проверяется, что и здесь тело
+     * определяется адресом.
+     */
+    it('тело /:lang/seo/resolve не зависит от Accept-Language', async () => {
+      const ru = await request(http())
+        .get('/en/seo/resolve?type=catalog&id=catalog')
+        .set('Accept-Language', 'ru-RU,ru;q=0.9')
+        .expect(200);
+      const es = await request(http())
+        .get('/en/seo/resolve?type=catalog&id=catalog')
+        .set('Accept-Language', 'es-ES,es;q=0.9')
+        .expect(200);
+
+      expect(JSON.stringify(ru.body)).toBe(JSON.stringify(es.body));
     });
 
     /**

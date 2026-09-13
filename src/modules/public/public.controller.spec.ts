@@ -45,15 +45,32 @@ describe('PublicController (unit)', () => {
     jest.clearAllMocks();
   });
 
-  it('overview: uses path language (ignores query/header for language), passes header to service', async () => {
+  /**
+   * 🔴 `LEGACY-104`. Маршрут объявлен `public, s-maxage=300`, а общий кэш
+   * ключует по URL — значит заголовок запроса до выбора языка доходить
+   * не должен вовсе. Проверяется именно **третий аргумент**: пока он
+   * доезжал до сервиса, язык тела зависел от заголовка, и первый пришедший
+   * определял его для всех на 300 секунд плюс час `stale-while-revalidate`.
+   *
+   * `toHaveBeenCalledWith` с двумя аргументами здесь строгое: лишний
+   * аргумент в вызове красит проверку, поэтому вернувшийся заголовок
+   * не пройдёт молча.
+   *
+   * ⚠️ `toHaveBeenCalledTimes(1)` обязателен рядом. `toHaveBeenCalledWith`
+   * засчитывает совпадение по **любому** вызову, то есть добавленный рядом
+   * второй `this.books.getOverview(slug, pathLang, acceptLanguage)` — ровно
+   * тот дефект, который эта спека сажает, — оставил бы её зелёной (`L-005`).
+   *
+   * ⚠️ Аргументов у обработчика два, а не три: вместе с заголовком снят
+   * и мёртвый `@Query('lang')` — он в сервис не уходил вовсе, а `@ApiQuery`
+   * рядом объявлял в OpenAPI поведение, которого нет.
+   */
+  it('overview: язык берётся из пути, заголовок в сервис не уходит', async () => {
     books.getOverview.mockResolvedValueOnce({ ok: true });
-    const res = await controller.overview(PrismaLanguage.en, 'some-slug', 'es', 'es-ES,fr;q=0.9');
+    const res = await controller.overview(PrismaLanguage.en, 'some-slug');
     expect(res).toEqual({ ok: true });
-    expect(books.getOverview).toHaveBeenCalledWith(
-      'some-slug',
-      PrismaLanguage.en,
-      'es-ES,fr;q=0.9',
-    );
+    expect(books.getOverview).toHaveBeenCalledTimes(1);
+    expect(books.getOverview).toHaveBeenCalledWith('some-slug', PrismaLanguage.en);
   });
 
   it('getPage: delegates to pages with path language', async () => {

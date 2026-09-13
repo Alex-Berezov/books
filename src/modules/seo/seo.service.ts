@@ -59,11 +59,24 @@ interface BookCategoryLink {
   category: CategoryWithParent;
 }
 
-/** Как запрошена страница: префикс пути, query, заголовок и слаг перевода. */
+/**
+ * Как запрошена страница: префикс пути, query и слаг перевода.
+ *
+ * 🔴 `acceptLanguage` здесь было и снято 13.09.2026 (`LEGACY-104`). Оба
+ * публичных резолвера (`seo.controller.ts → resolve`, `resolveWithLang`)
+ * объявлены `public, s-maxage=300`, а общий кэш ключует по URL — значит язык
+ * ответа обязан складываться только из адреса. Поле, оставленное «на всякий
+ * случай», было бы приглашением вернуть зависимость от заголовка: сторож
+ * `public-cache-no-language-header.spec.ts` смотрит контроллеры и такого
+ * возврата через сервис не поймал бы.
+ *
+ * Ветку `Accept-Language` в самой `resolveRequestedLanguage` это не трогает —
+ * её читают приватные маршруты (`private, no-store`) через свои сервисы.
+ * Решение арбитра 13.09.2026.
+ */
 interface ResolvePublicOptions {
   pathLang?: Language;
   queryLang?: string;
-  acceptLanguage?: string;
   slug?: string;
 }
 
@@ -430,7 +443,8 @@ export class SeoService {
    * Public resolver with language awareness.
    */
   /**
-   * Язык страницы: префикс пути важнее query, query важнее `Accept-Language`.
+   * Язык страницы: префикс пути важнее query, дальше `DEFAULT_LANGUAGE`.
+   * Заголовок запроса в выборе не участвует (`LEGACY-104`).
    *
    * ⚠️ Префикс берётся только если запрошенный язык реально есть у сущности:
    * иначе `/es/...` у книги без испанской версии отдал бы пустую страницу
@@ -446,7 +460,6 @@ export class SeoService {
     }
     const resolved = resolveRequestedLanguage({
       queryLang: opts?.queryLang,
-      acceptLanguage: opts?.acceptLanguage,
       available: availableArr,
     });
     return resolved ?? getDefaultLanguage();

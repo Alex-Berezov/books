@@ -331,12 +331,30 @@ export class BookService {
     // (e.g. requested slug is Portuguese but language context is English, or requested slug is legacy Book.slug)
     const targetVersion = versions.find((v) => v.language === preferredLang) || versions[0];
     if (targetVersion && targetVersion.slug && targetVersion.slug !== slug) {
+      // 🔴 `LEGACY-104`. Язык редиректа берётся у самой версии, если выбор
+      // не состоялся. `resolveRequestedLanguage` возвращает `undefined`, когда
+      // задан `available`, и в нём нет ни запрошенного языка, ни
+      // `DEFAULT_LANGUAGE` (`language.util.ts:66`): книга издана только на `es`
+      // и `fr`, дефолт `en`, запрошен `/pt/...`. Без подстановки в адрес
+      // уезжала строка `undefined` — `/api/undefined/books/<slug>/overview`, —
+      // и этот битый 301 объявлялся `public, s-maxage=300`.
+      //
+      // Исход был достижим и раньше, но редко: до снятия `Accept-Language`
+      // (13.09.2026) заголовок мог выручить. Теперь он на этом маршруте
+      // не читается, и случай стал постоянным для такой формы адреса.
+      //
+      // `targetVersion.language` по построению лежит в `available` и указывает
+      // на ту самую версию, на слаг которой ведёт редирект. Когда язык
+      // определился, значение совпадает с `preferredLang` — поведение
+      // не меняется ни на байт. Решение арбитра 13.09.2026, вариант B.
+      const redirectLang = preferredLang ?? targetVersion.language;
+
       // Perform 301 Redirect
       let redirectUrl = '';
       if (isPathLang) {
-        redirectUrl = `/api/${preferredLang}/books/${targetVersion.slug}/overview`;
+        redirectUrl = `/api/${redirectLang}/books/${targetVersion.slug}/overview`;
       } else {
-        redirectUrl = `/api/books/${targetVersion.slug}/overview?lang=${preferredLang}`;
+        redirectUrl = `/api/books/${targetVersion.slug}/overview?lang=${redirectLang}`;
       }
       throw new RedirectException(redirectUrl);
     }

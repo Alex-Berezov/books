@@ -58,26 +58,32 @@ describe('PublicCacheInterceptor', () => {
     });
 
     /**
-     * 🔴 `LEGACY-107`. Язык публичного ответа берётся из заголовка, когда его
-     * нет в запросе явно (`language.util.ts:55-62`), — и маршруты под `/:lang/`
-     * от этого не свободны: язык пути отбрасывается, если книга на нём не
-     * издана, и выбор снова уходит к заголовку (`book.service.ts:324-328`).
-     * Общий кэш ключует по URL, поэтому без этого поля первый пришедший
-     * определяет язык `title`, `description`, `canonical` и OG-разметки
-     * для всех остальных на 300 секунд и до часа `stale-while-revalidate`.
+     * 🔴 `LEGACY-104`. `Vary: Accept-Language` стоял здесь с 12.09.2026 и снят
+     * вместе с чтением заголовка на трёх обработчиках, которые его читали.
+     *
+     * Оставить его было нельзя. Целевой Cloudflare поле игнорирует без custom
+     * cache key (Enterprise), то есть защитой оно не было; а честный общий кэш
+     * (браузер, прокси, не-Cloudflare CDN) расщепил бы по нему ключ на каждую
+     * уникальную строку заголовка — строку, различающуюся почти на каждом
+     * посетителе. Получалось поле, которое ничего не защищает там, где на него
+     * рассчитывали, и выключает кэш там, где его соблюдают.
+     *
+     * Требование «тело публичного ответа не зависит от заголовка» переехало
+     * в `public-cache-no-language-header.spec.ts`, где оно проверяется разбором
+     * кода и умеет покраснеть. Решение арбитра 13.09.2026, вариант A.
      */
-    it('объявляет Vary: Accept-Language', () => {
+    it('не объявляет Vary вовсе', () => {
       const response = createResponseStub();
       run(false, response);
 
-      expect(response.headers['Vary']).toBe('Accept-Language');
+      expect(response.headers['Vary']).toBeUndefined();
     });
 
-    it('не затирает Vary, поставленный CORS', () => {
+    it('не трогает Vary, поставленный CORS', () => {
       const response = createResponseStub({ Vary: 'Origin' });
       run(false, response);
 
-      expect(response.headers['Vary']).toBe('Origin, Accept-Language');
+      expect(response.headers['Vary']).toBe('Origin');
     });
   });
 });

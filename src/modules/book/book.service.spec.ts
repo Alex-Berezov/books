@@ -3,6 +3,7 @@ import { BookService } from './book.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BookType, Language } from '@prisma/client';
 import { NotFoundException } from '@nestjs/common';
+import { RedirectException } from '../../common/exceptions/redirect.exception';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
@@ -195,6 +196,56 @@ describe('BookService.getOverview', () => {
 
     const res = await service.getOverview('book-3', 'es');
     expect(res.versionIds.text).toBe('v-text-es');
+  });
+
+  /**
+   * 🔴 `LEGACY-104`. Редирект не должен подставлять в адрес строку `undefined`.
+   *
+   * `resolveRequestedLanguage` отдаёт `undefined`, когда задан `available`
+   * и в нём нет ни запрошенного языка, ни `DEFAULT_LANGUAGE`
+   * (`language.util.ts:66`). Здесь ровно этот вход: книга издана на `es`
+   * и `fr`, дефолт `en`, запрошен путь `/pt/`. До правки адрес собирался как
+   * `/api/undefined/books/<slug>/overview` — и объявлялся `public, s-maxage=300`,
+   * то есть битый 301 уходил в общий кэш на 300 секунд плюс час
+   * `stale-while-revalidate`.
+   *
+   * Проверяется **цель редиректа целиком**, а не отсутствие подстроки
+   * `undefined`: вторая форма зелена и на адресе, собранном не тем языком.
+   */
+  it('редирект не подставляет undefined, когда язык не определился', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b4', slug: 'book-4' });
+    prisma.bookVersion.findMany.mockResolvedValue([
+      {
+        id: 'v-text-es',
+        slug: 'libro-4',
+        language: Language.es,
+        type: BookType.text,
+        isFree: true,
+        seoId: 1,
+        _count: { chapters: 3, audioChapters: 0, summaries: 0 },
+      },
+      {
+        id: 'v-text-fr',
+        slug: 'livre-4',
+        language: Language.fr,
+        type: BookType.text,
+        isFree: true,
+        seoId: 2,
+        _count: { chapters: 3, audioChapters: 0, summaries: 0 },
+      },
+    ]);
+    prisma.bookSummary.findFirst.mockResolvedValue(null);
+    prisma.seo.findMany.mockResolvedValue([]);
+
+    // `pt` — поддерживаемый язык, поэтому `isPathLang` внутри сервиса истинно
+    // (`book.service.ts:266`), и собирается ветка адреса с префиксом — та же,
+    // что у публичного кэшируемого `GET /:lang/books/:slug/overview`.
+    const url = await service
+      .getOverview('book-4', Language.pt)
+      .then(() => null)
+      .catch((error: RedirectException) => error.url);
+
+    expect(url).toBe('/api/es/books/libro-4/overview');
   });
 
   describe('rateBook', () => {

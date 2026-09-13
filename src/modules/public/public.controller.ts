@@ -12,7 +12,6 @@ import {
 import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
 import {
   ApiBearerAuth,
-  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -105,25 +104,43 @@ export class PublicController {
   @ApiOkResponse({ type: BookOverviewResponseDto })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiParam({ name: 'slug' })
-  @ApiQuery({
-    name: 'lang',
-    required: false,
-    description: 'Optional query lang (ignored when a path language is provided)',
-  })
-  @ApiHeader({
-    name: 'Accept-Language',
-    required: false,
-    description: 'RFC 7231 header. When a path language is present, this has lower priority.',
-  })
-  overview(
-    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
-    @Param('slug') slug: string,
-    @Query('lang') _queryLang?: string,
-    @Headers('accept-language') acceptLanguage?: string,
-  ) {
-    // The language from the path has the highest priority
-    // reqLanguage is also available if needed (resolved by guard)
-    return this.books.getOverview(slug, pathLang, acceptLanguage);
+  // 🔴 `LEGACY-104`. `Accept-Language` здесь больше не читается, и `@ApiHeader`
+  // про него снят вместе с параметром: маршрут объявлен `public, s-maxage=300`,
+  // а общий кэш ключует по URL. Cloudflare расщепляет ключ только по
+  // `Accept-Encoding` и прочие поля `Vary` игнорирует без custom cache key
+  // (Enterprise), которого на нашем тарифе нет. Пока заголовок участвовал
+  // в выборе языка, первый пришедший определял язык тела для всех на 300 секунд
+  // плюс час `stale-while-revalidate`.
+  //
+  // Язык берётся **только из префикса пути**, источник один.
+  //
+  // ⚠️ Вместе с заголовком снят и `@Query('lang')` с его `@ApiQuery`. Этот
+  // параметр не действовал и раньше: в сервис он не уходил вовсе —
+  // `getOverview(slug, pathLang)` занимает место аргумента `queryLang` самим
+  // префиксом. Пока рядом стоял читаемый `acceptLanguage`, линт молчал (правило
+  // `no-unused-vars` считает аргументы «после последнего использованного»),
+  // и параметр жил мёртвым, объявляя в OpenAPI поведение, которого нет.
+  //
+  // Тело от заголовков запроса не зависит. ⚠️ Именно так, а не «чистая функция
+  // адреса»: при языке, которого у книги нет, выбор падает на `versions[0]`
+  // из `findMany` без `orderBy` (`book.service.ts:296,332`) — это
+  // пре-существующий недетерминизм, вынесенный отдельной записью.
+  //
+  // ⚠️ Третий аргумент `getOverview` не удалён, а не передаётся: тот же метод
+  // зовёт `GET /books/:slug/overview` (`book.controller.ts:176`), который несёт
+  // `private, no-store` и в общий кэш не попадает — там заголовок остаётся
+  // законным источником языка. Решение арбитра 13.09.2026.
+  overview(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Param('slug') slug: string) {
+    // The language from the path has the highest priority.
+    //
+    // 🔴 `req.language` от `LanguageResolverGuard` здесь брать **нельзя**:
+    // гвард выводит его в том числе из `Accept-Language`
+    // (`language-resolver.guard.ts:28`), а маршрут объявлен
+    // `public, s-maxage=300`. Прежняя строка приглашала к этому прямо
+    // («reqLanguage is also available if needed») и убрана. Сторож
+    // `public-cache-no-language-header.spec.ts` ловит и `@Language()`,
+    // и `req.language`.
+    return this.books.getOverview(slug, pathLang);
   }
 
   // Localized books list

@@ -14,6 +14,7 @@ import {
   relativeToSrc,
   stripComments,
 } from './controller-decorators';
+import { PUBLIC_CACHE_HANDLERS } from './public-cache-handlers';
 
 /**
  * Сторож кэш-заголовков (`LEGACY-107`, `LEGACY-108`, `LEGACY-174`).
@@ -37,38 +38,6 @@ import {
 /** Ниже этих чисел обход считается сломанным, а не репозиторий — поредевшим. */
 const MIN_CONTROLLERS = 40;
 const MIN_HANDLERS = 250;
-
-/**
- * Обработчики, которым публичный кэш разрешён — обоими способами сразу:
- * под `PublicCacheInterceptor` без `@NoPublicCache()` либо с ручным
- * `@Header('Cache-Control', 'public, …')`. Формат — `<файл> → <метод>`.
- */
-const PUBLIC_CACHE_HANDLERS: readonly string[] = [
-  'modules/public/public.controller.ts → authorBookCards',
-  'modules/public/public.controller.ts → authorBySlug',
-  'modules/public/public.controller.ts → authorLetters',
-  'modules/public/public.controller.ts → authorsList',
-  'modules/public/public.controller.ts → bookCards',
-  'modules/public/public.controller.ts → categoriesBySlug',
-  'modules/public/public.controller.ts → categoriesList',
-  'modules/public/public.controller.ts → categoryBookCards',
-  'modules/public/public.controller.ts → findAll',
-  'modules/public/public.controller.ts → getPage',
-  'modules/public/public.controller.ts → getPageByKey',
-  'modules/public/public.controller.ts → overview',
-  'modules/public/public.controller.ts → related',
-  'modules/public/public.controller.ts → slugRedirect',
-  'modules/public/public.controller.ts → tagBookCards',
-  'modules/public/public.controller.ts → tagsBySlug',
-  'modules/public/public.controller.ts → tagsList',
-  // Второй способ: ручной `@Header('Cache-Control', 'public, max-age=3600')`.
-  // Обе схемы отчёта агента публичны по смыслу — это статические JSON Schema,
-  // одинаковые для всех, — и от заголовков запроса не зависят.
-  'modules/rights-agent/rights-agent.controller.ts → getLatestSchema',
-  'modules/rights-agent/rights-agent.controller.ts → getSchemaByVersion',
-  'modules/seo/seo.controller.ts → resolve',
-  'modules/seo/seo.controller.ts → resolveWithLang',
-];
 
 type Handler = { id: string; publicCache: boolean };
 

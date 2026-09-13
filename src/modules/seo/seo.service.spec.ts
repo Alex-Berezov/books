@@ -165,12 +165,22 @@ describe('SeoService (unit)', () => {
       expect(bundle.meta.title).toBe('T EN by A | Read & Listen Free | Bibliaris');
     });
 
-    it('falls back to Accept-Language if query missing', async () => {
-      const bundle = (await service.resolvePublic('book', 'book-slug', {
-        acceptLanguage: 'es;q=0.9,en;q=0.8',
-      })) as unknown as SeoBundle;
-      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/es/book/t-es');
-      expect(bundle.meta.title).toBe('T ES de A | Leer y escuchar gratis');
+    /**
+     * 🔴 `LEGACY-104`. `Accept-Language` в выборе языка не участвует вовсе:
+     * контроллер его не читает, а поле `acceptLanguage` снято и из
+     * `ResolvePublicOptions`. Оба резолвера объявлены `public, s-maxage=300`,
+     * а общий кэш ключует по URL — значит язык обязан складываться только
+     * из адреса.
+     *
+     * Здесь проверяется, что без пути и без query выбор кончается
+     * на `DEFAULT_LANGUAGE` (`en`): именно это делает тело чистой функцией
+     * адреса. Ветку `Accept-Language` в самой `resolveRequestedLanguage`
+     * правка не трогала — её читают приватные маршруты через свои сервисы.
+     */
+    it('без пути и query уходит на DEFAULT_LANGUAGE, а не на язык заголовка', async () => {
+      const bundle = (await service.resolvePublic('book', 'book-slug', {})) as unknown as SeoBundle;
+      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/t-en');
+      expect(bundle.meta.title).toBe('T EN by A | Read & Listen Free | Bibliaris');
     });
 
     it('handles no versions by using default language and book slug title', async () => {

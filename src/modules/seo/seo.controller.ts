@@ -9,7 +9,6 @@ import {
   UseGuards,
   UseInterceptors,
   Query,
-  Headers,
 } from '@nestjs/common';
 import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
 import {
@@ -39,7 +38,6 @@ import { SeoResponseDto } from './dto/seo-response.dto';
 import { SystemPagesStatusResponseDto } from './dto/system-pages-status-response.dto';
 import { TaxonomyIndexabilityStatusResponseDto } from './dto/taxonomy-indexability-status-response.dto';
 import { RecomputeTaxonomyIndexabilityResponseDto } from './dto/recompute-taxonomy-indexability-response.dto';
-import { ApiHeader } from '@nestjs/swagger';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
 
@@ -213,28 +211,38 @@ export class SeoController {
     description: 'Translation slug (for category/genre/tag)',
   })
   @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
-  @ApiHeader({ name: 'Accept-Language', required: false })
   @ApiResponse({
     status: 200,
     description: 'Resolved SEO bundle',
     type: SeoResolveResponseDto,
   })
+  // 🔴 `LEGACY-104`. Заголовок `Accept-Language` не читается, `@ApiHeader` снят
+  // вместе с параметром. Маршрут объявлен `public, s-maxage=300`, а общий кэш
+  // ключует по URL: Cloudflare расщепляет ключ только по `Accept-Encoding`
+  // и прочие поля `Vary` игнорирует без custom cache key (Enterprise).
+  // Здесь это било больнее всего — ответ несёт `title`, `description`,
+  // `canonical` и OG-разметку, то есть в чужом языке оказывалась вся видимая
+  // поисковику разметка страницы.
+  //
+  // Языка в пути у этого маршрута нет вовсе, поэтому без `?lang=` ответ теперь
+  // детерминированно приходит на `DEFAULT_LANGUAGE`. Фронт этот вариант ручки
+  // не зовёт ни разу — он всегда строит `/:lang/seo/resolve` через
+  // `buildLangPath` (`books-front/lib/http.ts:426-430`).
   resolve(
     @Query('type') typeRaw: string,
     @Query('id') idRaw: string,
     @Query('slug') slug?: string,
     @Query('lang') queryLang?: string,
-    @Headers('accept-language') acceptLanguage?: string,
   ): Promise<SeoResolveResponseDto> {
     const t = String(typeRaw);
     const id = String(idRaw);
     if (!isResolveSeoType(t)) {
       throw new BadRequestException('Invalid type');
     }
-    return asResolvedBundle(this.service.resolvePublic(t, id, { queryLang, acceptLanguage, slug }));
+    return asResolvedBundle(this.service.resolvePublic(t, id, { queryLang, slug }));
   }
 
-  // Language-prefixed public resolver (prefix has higher priority than query/header)
+  // Language-prefixed public resolver (prefix has higher priority than query)
   @Get(':lang/seo/resolve')
   @UseInterceptors(PublicCacheInterceptor)
   @ApiOperation({ summary: 'Resolve SEO bundle (public) for specific language (by path prefix)' })
@@ -249,27 +257,31 @@ export class SeoController {
     required: false,
     description: 'Translation slug (for category/genre/tag)',
   })
-  @ApiHeader({ name: 'Accept-Language', required: false })
   @ApiResponse({
     status: 200,
     description: 'Resolved SEO bundle',
     type: SeoResolveResponseDto,
   })
+  // 🔴 `LEGACY-104`. Заголовок не читается — см. причину у `resolve` выше.
+  //
+  // ⚠️ Язык пути сам по себе гарантией не был: `pickEffectiveLanguage`
+  // (`seo.service.ts:439-453`) берёт `pathLang`, только если сущность реально
+  // есть на этом языке, иначе уходил в резолвер и оттуда к заголовку. Теперь
+  // этот фолбэк кончается на `?lang=` и `DEFAULT_LANGUAGE` — оба входят
+  // в ключ кэша. Сам фильтр по доступным языкам не тронут: `/es/...` у книги
+  // без испанской версии по-прежнему отдаёт не пустую страницу, а фолбэк.
   resolveWithLang(
     @Param('lang', LangParamPipe) pathLang: Language,
     @Query('type') typeRaw: string,
     @Query('id') idRaw: string,
     @Query('slug') slug?: string,
     @Query('lang') queryLang?: string,
-    @Headers('accept-language') acceptLanguage?: string,
   ): Promise<SeoResolveResponseDto> {
     const t = String(typeRaw);
     const id = String(idRaw);
     if (!isResolveSeoType(t)) {
       throw new BadRequestException('Invalid type');
     }
-    return asResolvedBundle(
-      this.service.resolvePublic(t, id, { pathLang, queryLang, acceptLanguage, slug }),
-    );
+    return asResolvedBundle(this.service.resolvePublic(t, id, { pathLang, queryLang, slug }));
   }
 }
