@@ -248,6 +248,128 @@ describe('BookService.getOverview', () => {
     expect(url).toBe('/api/es/books/libro-4/overview');
   });
 
+  /**
+   * 🔴 `LEGACY-375`. Обе выборки версий читают один набор строк, и из него берётся
+   * `versions[0]` — запасная версия, когда язык не определился (`book.service.ts`, `targetVersion`);
+   * тот же массив уезжает наружу полем `versions`. `findMany` без `orderBy` не обещает
+   * никакого порядка: он меняется после `UPDATE`, после `VACUUM`, при смене плана,
+   * на реплике. С edge-кэшем, включённым 13.09.2026, первый пришедший заморозил бы
+   * случайную из двух целей 301 на 300 секунд плюс час `stale-while-revalidate`.
+   *
+   * ⚠️ Проверка идёт **по аргументам вызова**, а не по порядку возвращённых строк:
+   * `PrismaService` здесь заглушка, порядок задаёт мок, и наблюдать настоящую
+   * сортировку юнитом нечем. `toHaveBeenCalledTimes` рядом обязателен — без него
+   * `toHaveBeenNthCalledWith` зелен и тогда, когда одна из двух выборок исчезла.
+   */
+  it('обе выборки версий упорядочены по языку, иначе versions[0] недетерминирован', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b5', slug: 'book-5' });
+    prisma.bookVersion.findMany.mockResolvedValue([
+      {
+        id: 'v-text-en',
+        slug: 'book-5',
+        language: Language.en,
+        type: BookType.text,
+        isFree: true,
+        seoId: 1,
+        _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+      },
+    ]);
+    prisma.bookSummary.findFirst.mockResolvedValue(null);
+    prisma.seo.findMany.mockResolvedValue([]);
+
+    await service.getOverview('book-5', Language.en);
+
+    expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(2);
+    expect(prisma.bookVersion.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ orderBy: { language: 'asc' } }),
+    );
+    expect(prisma.bookVersion.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ orderBy: { language: 'asc' } }),
+    );
+  });
+
+  /**
+   * 🔴 `LEGACY-375`, вторая половина. Слаг версии уникален только в паре с языком
+   * (`@@unique([language, slug])`), поэтому один слаг законно принадлежит версиям разных
+   * книг на разных языках. Голый `findFirst` отдавал любую из них — и `bookId`, из которого
+   * собирается весь обзор и цель 301, выбирался произвольно.
+   *
+   * ⚠️ Как и в тесте выше, проверка идёт по аргументам вызова: `PrismaService` — заглушка,
+   * какую строку вернул бы Postgres, юнитом не наблюдаемо. `toHaveBeenCalledTimes` рядом
+   * обязателен (`L-005`).
+   */
+  it('слаг ищется сначала на языке пути — иначе bookId берётся у чужой книги', async () => {
+    prisma.bookVersion.findFirst.mockResolvedValue({
+      bookId: 'b-en',
+      language: Language.en,
+      id: 'v-en',
+    });
+    prisma.bookVersion.findMany.mockResolvedValue([
+      {
+        id: 'v-en',
+        slug: 'the-trial',
+        language: Language.en,
+        type: BookType.text,
+        isFree: true,
+        seoId: 1,
+        _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+      },
+    ]);
+    prisma.bookSummary.findFirst.mockResolvedValue(null);
+    prisma.seo.findMany.mockResolvedValue([]);
+
+    const result = await service.getOverview('the-trial', Language.en);
+
+    expect(result.id).toBe('b-en');
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.bookVersion.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { slug: 'the-trial', status: 'published', language: Language.en },
+      }),
+    );
+  });
+
+  /**
+   * Обратная сторона той же правки: язык пути **предпочитается, а не требуется**.
+   * Книга издана только на `es`, запрошен `/en/books/<es-slug>/overview` — точного
+   * совпадения по языку нет, и поиск обязан повториться без него. Безусловное сужение
+   * `where` языком отдало бы здесь 404 на живую книгу. Второй запрос при этом уже
+   * упорядочен — он тоже может встретить один слаг у двух книг.
+   */
+  it('промах по языку не даёт 404: поиск повторяется без языка, но с orderBy', async () => {
+    prisma.bookVersion.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ bookId: 'b-es', language: Language.es, id: 'v-es' });
+    prisma.bookVersion.findMany.mockResolvedValue([
+      {
+        id: 'v-es',
+        slug: 'el-proceso',
+        language: Language.es,
+        type: BookType.text,
+        isFree: true,
+        seoId: 1,
+        _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+      },
+    ]);
+    prisma.bookSummary.findFirst.mockResolvedValue(null);
+    prisma.seo.findMany.mockResolvedValue([]);
+
+    const result = await service.getOverview('el-proceso', Language.en);
+
+    expect(result.id).toBe('b-es');
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(2);
+    expect(prisma.bookVersion.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { slug: 'el-proceso', status: 'published' },
+        orderBy: { language: 'asc' },
+      }),
+    );
+  });
+
   describe('rateBook', () => {
     it('throws NotFoundException if book does not exist', async () => {
       prisma.book.findUnique.mockResolvedValue(null);
@@ -551,6 +673,38 @@ describe('BookService.getOverview', () => {
           _avg: { score: 4 },
           _count: { score: 1 },
         })),
+      );
+    });
+
+    /**
+     * 🔴 `LEGACY-375`, третье место того же класса. Когда версии на запрошенном языке нет,
+     * `findRelated` ищет книгу по слагу «на любом языке». Слаг версии уникален лишь в паре
+     * с языком, поэтому такой поиск без `orderBy` мог отдать версию **другой** книги —
+     * и подборка похожих собиралась бы вокруг неё. Маршрут `GET /:lang/books/:slug/related`
+     * кэшируется публично, то есть случайный исход замерзал бы на 300 секунд плюс час.
+     *
+     * ⚠️ Проверка по аргументам вызова: `PrismaService` — заглушка, настоящий порядок строк
+     * юнитом не наблюдаем. `toHaveBeenCalledTimes` рядом обязателен (`L-005`).
+     */
+    it('запасной поиск книги по слагу упорядочен по языку', async () => {
+      prisma.bookVersion.findFirst.mockReset();
+      prisma.bookVersion.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ bookId: 'cur' })
+        .mockResolvedValueOnce({ author: 'A', authorId: null })
+        .mockResolvedValueOnce({ id: 'v-cur' });
+      prisma.bookCategory.findMany.mockResolvedValue([]);
+      prisma.bookVersion.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce(shuffled());
+
+      await service.findRelated('cur-slug', Language.en);
+
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(4);
+      expect(prisma.bookVersion.findFirst).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: { slug: 'cur-slug', status: 'published' },
+          orderBy: { language: 'asc' },
+        }),
       );
     });
 

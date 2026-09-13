@@ -5,6 +5,12 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import {
+  TERM_NULL_CASES,
+  TRANSLATION_NULL_CASES,
+  taxonomyFixture,
+  uniqueMark,
+} from './helpers/taxonomy-null-cases';
 
 describe('Categories e2e', () => {
   let app: INestApplication;
@@ -154,5 +160,91 @@ describe('Categories e2e', () => {
       .delete(`/categories/${childId}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(204);
+  });
+  /**
+   * 🔴 `LEGACY-363`, вторая сущность. Правило `LEGACY-131` запрещает чинить два
+   * соседних пути порознь: у категории тот же вход, тот же строгий спред в сервисе
+   * и те же `NOT NULL`-колонки, что у тега — включая переводы. Оснастка общая
+   * (`test/helpers/taxonomy-null-cases.ts`), различаются только адрес и обязательный `type`.
+   *
+   * Отдельным кейсом закреплено, что `parentId: null` остался законным: колонка
+   * `Category.parentId` nullable, и `null` там значит «отвязать от родителя» —
+   * `category.service.ts` разбирает это состояние явно. Граница решения арбитра
+   * проведена именно так: `null` отвергается только на `NOT NULL`-колонке.
+   */
+  describe('явный null в опциональном поле на NOT NULL-колонке (LEGACY-363)', () => {
+    const category = taxonomyFixture(http, () => adminAccess, 'categories', { type: 'genre' });
+
+    /** У категории на `NOT NULL`-колонке лежит ещё и `type`. */
+    const categoryNullCases = [...TERM_NULL_CASES, ['type', { type: null }]] as const;
+
+    it.each(categoryNullCases)(
+      'POST /categories отвечает 400 на %s: null, а не 500',
+      async (_field, body) => {
+        const mark = uniqueMark('cat-null');
+        const res = await request(http())
+          .post('/categories')
+          .set('Authorization', `Bearer ${adminAccess}`)
+          .send({ type: 'genre', name: 'Null Case', slug: mark, key: mark, ...body });
+
+        expect(res.status).toBe(400);
+      },
+    );
+
+    it.each(categoryNullCases)(
+      'PATCH /categories/:id отвечает 400 на %s: null, а не 500',
+      async (_field, body) => {
+        const id = await category.create('cat-null-patch');
+
+        const res = await request(http())
+          .patch(`/categories/${id}`)
+          .set('Authorization', `Bearer ${adminAccess}`)
+          .send(body);
+
+        expect(res.status).toBe(400);
+
+        await category.drop(id);
+      },
+    );
+
+    it.each(TRANSLATION_NULL_CASES)(
+      'PATCH /categories/:id/translations/:language отвечает 400 на %s: null',
+      async (_field, body) => {
+        const id = await category.create('cat-null-tr');
+        await category.addTranslation(id);
+
+        const res = await request(http())
+          .patch(`/categories/${id}/translations/es`)
+          .set('Authorization', `Bearer ${adminAccess}`)
+          .send(body);
+
+        expect(res.status).toBe(400);
+
+        await category.drop(id);
+      },
+    );
+
+    it('parentId: null по-прежнему принимается — колонка nullable, это отвязка', async () => {
+      const parentId = await category.create('cat-null-parent');
+      const childId = await category.create('cat-null-child');
+
+      await request(http())
+        .patch(`/categories/${childId}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ parentId })
+        .expect(200);
+
+      const res = await request(http())
+        .patch(`/categories/${childId}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ parentId: null })
+        .expect(200);
+
+      expect(res.body.parentId).toBeNull();
+
+      for (const id of [childId, parentId]) {
+        await category.drop(id);
+      }
+    });
   });
 });

@@ -8,6 +8,7 @@ import {
   IsString,
   Matches,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -31,13 +32,24 @@ export class UpdateTagTranslationDto {
   language?: Language;
 
   @ApiPropertyOptional({ description: 'Localized tag name' })
-  @IsOptional()
+  // 🔴 `LEGACY-363`. Колонки `name` и `slug` перевода — `NOT NULL`
+  // (`prisma/schema.prisma`), а сервис кладёт значение в `data` без фильтра. Поэтому
+  // у этих двух полей нет `@IsOptional()`: он пропустил бы `null` мимо `@IsString()`,
+  // и `{"name": null}` уронил бы Prisma пятисотым вместо штатного 400. Остальные поля
+  // ниже — описательные (`description`, `h1`, `metaTitle`, `faq` и прочие) — стоят над
+  // nullable-колонками, и `null` в них валидатор пропускает.
+  // ⚠️ Очисткой это становится не везде: `TagsService.updateTranslation` кладёт в `data`
+  // только `name`, `slug`, `description`, четыре `related*Slugs` и `seoId` — остальные
+  // объявленные здесь поля не записываются вовсе, и присланное значение теряется молча
+  // (у категории те же поля пишутся). Отдельный долг, найден ревью 13.09.2026.
+  // Решение арбитра 13.09.2026.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   @MinLength(2)
   name?: string;
 
   @ApiPropertyOptional({ description: 'Localized tag slug', pattern: SLUG_PATTERN })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;
@@ -97,8 +109,12 @@ export class UpdateTagTranslationDto {
   @IsString()
   robots?: string;
 
+  // `TagTranslation.indexable` — тоже `NOT NULL` (`prisma/schema.prisma:782`), поэтому
+  // условие такое же, как у `name` и `slug` выше. Сегодня поле мёртвое —
+  // `TagsService.updateTranslation` его в `data` не переносит, — но `@IsOptional()` здесь
+  // был бы миной для того, кто начнёт его писать. Найдено ревью `books-tests` 13.09.2026.
   @ApiPropertyOptional({ description: 'Whether this tag should be indexed', default: true })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()
   indexable?: boolean;
 

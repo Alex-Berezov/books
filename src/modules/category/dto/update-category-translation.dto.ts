@@ -7,6 +7,7 @@ import {
   IsString,
   Matches,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -21,13 +22,19 @@ export class UpdateCategoryTranslationDto {
   language?: Language;
 
   @ApiPropertyOptional({ description: 'Localized category name' })
-  @IsOptional()
+  // 🔴 `LEGACY-363`. Колонки `name` и `slug` перевода — `NOT NULL`
+  // (`prisma/schema.prisma`), а сервис кладёт значение в `data` без фильтра. Поэтому
+  // у этих двух полей нет `@IsOptional()`: он пропустил бы `null` мимо `@IsString()`,
+  // и `{"name": null}` уронил бы Prisma пятисотым вместо штатного 400. Остальные поля
+  // ниже стоят над nullable-колонками — там `null` означает очистку и остаётся законным.
+  // Решение арбитра 13.09.2026.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   @MinLength(2)
   name?: string;
 
   @ApiPropertyOptional({ description: 'Localized category slug', pattern: SLUG_PATTERN })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;

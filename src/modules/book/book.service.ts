@@ -265,11 +265,38 @@ export class BookService {
     const prismaLangs = Object.values(Language);
     const isPathLang = lang && prismaLangs.includes(lang as Language);
 
-    // 1. Try to find the version by slug
-    const matchedVersion = await this.prisma.bookVersion.findFirst({
-      where: { slug, status: 'published' },
-      select: { bookId: true, language: true, id: true },
-    });
+    // 1. Try to find the version by slug.
+    //
+    // 🔴 `LEGACY-375`. Слаг версии уникален только в паре с языком
+    // (`@@unique([language, slug])` в `prisma/schema.prisma`, модель `BookVersion`),
+    // глобальной проверки нет нигде: создание версии сверяет лишь «версия на этот язык
+    // уже есть» (`BookVersionService`, поиск по `P2002` и по проверке дубля языка),
+    // а слаг кладёт как есть. Значит один слаг законно принадлежит версиям **разных книг**
+    // на разных языках — и голый `findFirst` отдавал любую из них, то есть `bookId`,
+    // а с ним всё тело обзора и цель 301, выбирались произвольно. Под `public, s-maxage=300`
+    // один из исходов замерзал.
+    //
+    // Язык пути **предпочитается, а не требуется**: безусловное сужение `where` убило бы
+    // штатный 301 при несовпадении слага и языка (ниже по методу) — запрос на чужой слаг
+    // перестал бы находить книгу и отдавал бы 404 вместо редиректа. Поэтому сначала точное
+    // совпадение по языку, затем прежний поиск, но уже с порядком. Запасная ветка написана
+    // один раз намеренно: две копии одного запроса разъезжаются на первой же правке
+    // `orderBy` или `select`, и тогда дефект вернётся ровно на той из них, которую забыли.
+    // Решение арбитра 13.09.2026, вариант A.
+    const versionBySlugAndLang = isPathLang
+      ? await this.prisma.bookVersion.findFirst({
+          where: { slug, status: 'published', language: lang as Language },
+          select: { bookId: true, language: true, id: true },
+        })
+      : null;
+
+    const matchedVersion =
+      versionBySlugAndLang ??
+      (await this.prisma.bookVersion.findFirst({
+        where: { slug, status: 'published' },
+        orderBy: { language: 'asc' },
+        select: { bookId: true, language: true, id: true },
+      }));
 
     let bookId: string | null = null;
     if (matchedVersion) {
@@ -293,8 +320,19 @@ export class BookService {
     //
     // 🔴 Раньше здесь стоял голый `include`, то есть наружу уезжала вся модель
     // версии — 66 полей, 29 из них правовые (`LEGACY-090`).
+    //
+    // 🔴 `LEGACY-375`. `orderBy` здесь обязателен. Ниже из этого массива берётся
+    // `versions[0]` как запасная версия (ниже по методу, `targetVersion`), и он же
+    // уезжает наружу целиком
+    // (`versions` в теле ответа) — а `findMany` без `orderBy` не обещает никакого
+    // порядка вовсе: он меняется после `UPDATE`, после `VACUUM`, при смене плана,
+    // на реплике. С включённым edge-кэшем (13.09.2026) первый пришедший замораживал
+    // бы случайную из двух целей 301 на 300 секунд плюс час `stale-while-revalidate`.
+    // `@@unique([bookId, language])` (модель `BookVersion` в `prisma/schema.prisma`)
+    // делает порядок по языку полным без тай-брейка. Решение арбитра 13.09.2026, вариант A.
     const versions = await this.prisma.bookVersion.findMany({
       where: { bookId, status: 'published' },
+      orderBy: { language: 'asc' },
       select: {
         ...PUBLIC_BOOK_VERSION_OVERVIEW_SELECT,
         _count: {
@@ -312,8 +350,11 @@ export class BookService {
     // версиями и вычесть перед ответом было бы на один запрос дешевле — и на
     // одну забытую строку опаснее: тогда «что выбрано, то и отдано» перестало
     // бы быть правдой, а именно на этом допущении дефект и держался.
+    // `orderBy` тот же, что у выборки выше (`LEGACY-375`): обе читают один и тот же
+    // набор строк, и расходиться в порядке им незачем.
     const internals = await this.prisma.bookVersion.findMany({
       where: { bookId, status: 'published' },
+      orderBy: { language: 'asc' },
       select: { id: true, seoId: true, primaryCategoryId: true },
     });
     const seoIdOf = new Map(internals.map((v) => [v.id, v.seoId]));
@@ -600,9 +641,16 @@ export class BookService {
     let currentCategoryIds: string[] = [];
 
     if (!currentBookId) {
-      // Fallback: find by slug across any language, then check a version for the requested lang
+      // Fallback: find by slug across any language, then check a version for the requested lang.
+      //
+      // 🔴 `LEGACY-375`, тот же класс, что у `getOverview` выше: слаг версии уникален лишь
+      // в паре с языком, поэтому один слаг законно принадлежит версиям **разных книг**,
+      // и без `orderBy` подборка похожих собиралась бы вокруг произвольной из них.
+      // Маршрут `GET /:lang/books/:slug/related` кэшируется публично, то есть случайный
+      // исход замерзал бы на 300 секунд плюс час. Решение арбитра 13.09.2026.
       const anyVersion = await this.prisma.bookVersion.findFirst({
         where: { slug, status: 'published' },
+        orderBy: { language: 'asc' },
         select: { bookId: true },
       });
       currentBookId = anyVersion?.bookId ?? null;

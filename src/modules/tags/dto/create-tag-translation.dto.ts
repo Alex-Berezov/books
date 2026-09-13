@@ -8,6 +8,7 @@ import {
   IsString,
   Matches,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -94,8 +95,12 @@ export class CreateTagTranslationDto {
   @IsString()
   robots?: string;
 
+  // `TagTranslation.indexable` — `NOT NULL` (`prisma/schema.prisma:782`), поэтому `null`
+  // отбивается валидатором, а не Prisma (`LEGACY-363`, `STYLE_GUIDE.md` §7). Сегодня поле
+  // мёртвое — `createTranslation` его в `data` не переносит, — но `@IsOptional()` здесь
+  // был бы миной для того, кто начнёт его писать.
   @ApiPropertyOptional({ description: 'Whether this tag should be indexed', default: true })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()
   indexable?: boolean;
 

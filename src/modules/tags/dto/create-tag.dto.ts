@@ -1,7 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsInt, IsString, Matches, Min, MinLength, ValidateIf } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
+/**
+ * 🔴 `LEGACY-363`. У полей на `NOT NULL`-колонках нет `@IsOptional()` — он пропустил бы
+ * `null` мимо проверки типа, и `{"isVisible": null}` уронил бы Prisma пятисотым вместо
+ * штатного 400. Правило и его форма — `STYLE_GUIDE.md`, §7, «Исключение — поле, за которым
+ * стоит колонка `NOT NULL`»; здесь ссылка, а не копия. Решение арбитра 13.09.2026.
+ */
 export class CreateTagDto {
   @ApiProperty({ description: 'Tag name', example: 'Motivation' })
   @IsString()
@@ -23,17 +29,17 @@ export class CreateTagDto {
     description: 'Whether the page is indexable by search engines',
     default: true,
   })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()
   indexable?: boolean;
 
   @ApiPropertyOptional({ description: 'Whether the tag is visible in public lists', default: true })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()
   isVisible?: boolean;
 
   @ApiPropertyOptional({ description: 'Sort order in lists', default: 0 })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsInt()
   @Min(0)
   sortOrder?: number;
