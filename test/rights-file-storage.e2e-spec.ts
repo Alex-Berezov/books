@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { withoutHeadersSentError } from './helpers/headers-sent';
 
 /**
  * WP-9 — файловое хранение системы прав: сквозная трассировка от HTTP-входа до эффекта в БД.
@@ -20,6 +21,14 @@ import { PrismaService } from '../src/prisma/prisma.service';
  *
  * Требует живой БД — локально `yarn test:e2e`, в CI job «Tests & Quality Checks».
  */
+/**
+ * ⚠️ Сторож `ERR_HTTP_HEADERS_SENT` лежит в `test/helpers/headers-sent.ts`: он про глобальный
+ * интерцептор, а не про эту спеку. Здесь им покрыты **две** выгрузки из трёх — `report-pdf`
+ * и `archive-copy`, те, у которых есть фикстуры. Третья,
+ * `GET /admin/rights/profiles/:profileId/source-file` (`rights-files.controller.ts:148`),
+ * этой спекой не вызывается вовсе и сторожем прогона не закрыта — так было и до переноса.
+ */
+
 describe('Rights file storage e2e', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -308,11 +317,13 @@ describe('Rights file storage e2e', () => {
   });
 
   it('returns exactly the uploaded bytes as a private attachment', async () => {
-    const downloaded = await request(http())
-      .get(`/admin/rights/review-imports/${importId}/report-pdf`)
-      .set('Authorization', `Bearer ${adminAccess}`)
-      .responseType('blob')
-      .expect(200);
+    const downloaded = await withoutHeadersSentError(() =>
+      request(http())
+        .get(`/admin/rights/review-imports/${importId}/report-pdf`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .responseType('blob')
+        .expect(200),
+    );
 
     const body = downloaded.body as Buffer;
     expect(Buffer.isBuffer(body)).toBe(true);
@@ -381,11 +392,13 @@ describe('Rights file storage e2e', () => {
   });
 
   it('returns exactly the uploaded evidence bytes and refuses to replace them', async () => {
-    const downloaded = await request(http())
-      .get(`/admin/rights/evidence/${evidenceId}/archive-copy`)
-      .set('Authorization', `Bearer ${adminAccess}`)
-      .responseType('blob')
-      .expect(200);
+    const downloaded = await withoutHeadersSentError(() =>
+      request(http())
+        .get(`/admin/rights/evidence/${evidenceId}/archive-copy`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .responseType('blob')
+        .expect(200),
+    );
 
     expect((downloaded.body as Buffer).equals(evidencePng)).toBe(true);
     expect(downloaded.headers['content-disposition']).toContain('attachment');

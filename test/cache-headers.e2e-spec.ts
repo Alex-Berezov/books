@@ -1,4 +1,4 @@
-import { INestApplication, Logger, ValidationPipe } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -118,73 +118,6 @@ describe('кэш-заголовки живых ответов', () => {
     });
   });
 
-  describe('обработчики, отдающие ответ сами (@Res без passthrough)', () => {
-    /**
-     * 🔴 `sitemap.controller.ts` и три выгрузки в `rights-files.controller.ts` —
-     * единственные шесть мест, где ответ закрывается вручную. Интерцепторы Nest
-     * при этом всё равно выполняются, поэтому любой глобальный интерцептор,
-     * трогающий заголовки в фазе «после», бросает на них
-     * `ERR_HTTP_HEADERS_SENT`.
-     *
-     * Проверяется именно лог ошибки, а не код ответа: тело уезжает клиенту
-     * до броска, поэтому `expect(200)` зелёный в обоих случаях — и с дефектом,
-     * и без него. Ровно поэтому дефект и не поймали ни `sitemap.e2e-spec.ts`,
-     * ни `rights-file-storage.e2e-spec.ts`.
-     */
-    /**
-     * 🔴 Публичный кэш здесь доказывается **прогоном**, а не чтением кода:
-     * обработчик отдаёт ответ сам, и вопрос «успевает ли интерцептор поставить
-     * заголовок до `res.send()`» решается только живым запросом.
-     * До 12.09.2026 своего `Cache-Control` у этих документов не было вовсе,
-     * а после инверсии умолчания они получали `private, no-store` — неверно
-     * по смыслу: карта сайта одинакова для всех.
-     */
-    it.each([['/robots.txt'], ['/sitemap.xml'], ['/sitemap-en.xml']])(
-      '%s объявлен публично кэшируемым',
-      async (path) => {
-        const response = await request(http()).get(path).expect(200);
-
-        expect(response.headers['cache-control']).toContain('public');
-        expect(String(response.headers['cache-control'])).not.toContain('no-store');
-      },
-    );
-
-    /**
-     * 🔴 Отказ публичного маршрута публичным кэшем не объявляется. Заголовок
-     * ставится в фазе «до», раньше пайпов, поэтому без снятия 404 уезжал бы
-     * с `public, s-maxage=300`, и общий кэш держал бы его пять минут плюс час
-     * `stale-while-revalidate`. Язык `de` в перечислении отсутствует, поэтому
-     * `LangParamPipe` отвечает отказом.
-     */
-    it('404 карты сайта не объявляется публично кэшируемым', async () => {
-      const response = await request(http()).get('/sitemap-de.xml');
-
-      expect(response.status).toBeGreaterThanOrEqual(400);
-      expect(String(response.headers['cache-control'])).not.toContain('public');
-    });
-
-    it.each([['/robots.txt'], ['/sitemap.xml'], ['/sitemap-en.xml']])(
-      '%s отдаётся без ошибки записи в закрытый ответ',
-      async (path) => {
-        const logged: string[] = [];
-        const spy = jest
-          .spyOn(Logger.prototype, 'error')
-          .mockImplementation((...args: unknown[]) => {
-            logged.push(args.map((a) => String(a)).join(' '));
-          });
-
-        try {
-          await request(http()).get(path).expect(200);
-        } finally {
-          spy.mockRestore();
-        }
-
-        expect(logged.join(' | ')).not.toContain('ERR_HTTP_HEADERS_SENT');
-        expect(logged.join(' | ')).not.toContain('Cannot set headers');
-      },
-    );
-  });
-
   describe('публичный кэш сохранён там, где он и был', () => {
     /**
      * Правка переворачивает умолчание, а не снимает публичный кэш: глобальный
@@ -207,6 +140,26 @@ describe('кэш-заголовки живых ответов', () => {
       const response = await request(http()).get('/en/books/cards?limit=1').expect(200);
 
       expect(String(response.headers['vary'])).toContain('Accept-Language');
+    });
+
+    /**
+     * 🔴 Отказ публичного маршрута публичным кэшем не объявляется. Заголовок
+     * ставится в фазе «до», раньше пайпов, поэтому без снятия в `catchError`
+     * (`public-cache.interceptor.ts:90`) 404 уезжал бы с `public, s-maxage=300`,
+     * и общий кэш держал бы его пять минут плюс час `stale-while-revalidate`.
+     * Язык `de` в перечислении отсутствует, поэтому `LangParamPipe` отвечает отказом.
+     *
+     * До 13.09.2026 то же самое доказывал `GET /sitemap-de.xml`; маршрут снят
+     * вместе с модулем карты сайта (`LEGACY-129`), а проверка осталась здесь —
+     * на живом публичном маршруте с тем же пайпом. Юнит на заглушке ответа
+     * (`public-cache.interceptor.spec.ts`) её не заменяет: в нём нет ни middleware,
+     * ни фильтра исключений, то есть порядок «интерцептор раньше пайпа» им не виден.
+     */
+    it('404 публичного маршрута не объявляется публично кэшируемым', async () => {
+      const response = await request(http()).get('/de/books/cards?limit=1');
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(String(response.headers['cache-control'])).not.toContain('public');
     });
   });
 });

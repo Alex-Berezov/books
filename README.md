@@ -456,7 +456,7 @@ make e2e-serial   # yarn test:e2e:serial
 - HOST — адрес прослушивания (по умолчанию 0.0.0.0)
 - DEFAULT_LANGUAGE — язык по умолчанию для i18n-политики (по умолчанию `en`)
 - LOCAL_UPLOADS_DIR — каталог для локальных загрузок (по умолчанию `var/uploads`)
-- PUBLIC_SITE_URL — публичный адрес сайта. **Единственный** источник хоста для canonical, hreflang, og:url, JSON-LD, robots.txt и sitemap. По умолчанию `https://bibliaris.com`. Приложение не стартует, если значение указывает на служебный хост (`api.`/`media.`/`cdn.`/`static.`/`assets.`) или совпадает с `LOCAL_PUBLIC_BASE_URL`/`R2_PUBLIC_BASE_URL` — см. `src/modules/seo/utils/publicSiteUrl.ts` и ADR-017.
+- PUBLIC_SITE_URL — публичный адрес сайта. **Единственный** источник хоста для canonical, hreflang, og:url и JSON-LD. По умолчанию `https://bibliaris.com`. Приложение не стартует, если значение указывает на служебный хост (`api.`/`media.`/`cdn.`/`static.`/`assets.`) или совпадает с `LOCAL_PUBLIC_BASE_URL`/`R2_PUBLIC_BASE_URL` — см. `src/modules/seo/utils/publicSiteUrl.ts` и ADR-017.
 - LOCAL_PUBLIC_BASE_URL — базовый адрес **для ссылок на файлы локального стораджа** (по умолчанию `http://localhost:5000`). В проде — `https://api.bibliaris.com`, потому что файлы отдаёт API. В SEO-метаданных использовать запрещено.
 - CORS_ORIGIN — разрешённый Origin для CORS (по умолчанию `*`).
 - BODY_LIMIT_JSON — лимит для JSON-тел (по умолчанию `1mb`).
@@ -466,7 +466,6 @@ make e2e-serial   # yarn test:e2e:serial
 - UPLOADS_PRESIGN_TTL_SEC — TTL для presign (по умолчанию 600)
 - UPLOADS_ALLOWED_IMAGE_CT — список разрешённых content-type изображений через запятую (по умолчанию `image/jpeg,image/png,image/webp`)
 - UPLOADS_ALLOWED_AUDIO_CT — список разрешённых content-type аудио (по умолчанию `audio/mpeg,audio/mp4,audio/aac,audio/ogg`)
-- SITEMAP_CACHE_TTL_MS — кэширование sitemap/robots (по умолчанию 60000)
 - SEO_CACHE_TTL_MS — кэш SEO-бандла (опц., по умолчанию выключено)
 - VIEWS_CACHE_TTL_MS — кэш агрегатов просмотров (по умолчанию 30000)
 - RATE_LIMIT_ENABLED — включение лимитов (0/1)
@@ -735,18 +734,15 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 
 - Sitemap/Robots per-language
 
-Добавлены SEO-эндпоинты для карт сайта и robots.txt с учётом языковых префиксов:
+Бэкенд карту сайта и `robots.txt` не отдаёт: маршруты `GET /api/sitemap.xml`,
+`GET /api/sitemap-:lang.xml` и `GET /api/robots.txt` сняты 13.09.2026 вместе с модулем
+(`LEGACY-129`) — живого потребителя у них не было. Их строит фронт
+(`books-front/app/sitemap.xml/route.ts`, `app/sitemaps/[filename]/route.ts`, `app/robots.ts`)
+из публичных ручек этого API. Неиндексируемость api-хоста держит заголовок
+`X-Robots-Tag: noindex` (`src/common/middleware/robots-header.middleware.ts`, ADR-017),
+а не `robots.txt`.
 
-- GET /api/sitemap.xml — индекс, содержит ссылки на per-language карты (`/sitemap-en.xml`, `/sitemap-es.xml`, ...)
-- GET /api/sitemap-:lang.xml — карта для конкретного языка; URL включают `/:lang` префикс (книги и страницы)
-- GET /api/robots.txt — базовый robots с ссылкой на `/sitemap.xml`
-
-Настройки:
-
-- PUBLIC_SITE_URL — публичный адрес сайта (по умолчанию `https://bibliaris.com`); из него строятся все URL в sitemap/robots
-- SITEMAP_CACHE_TTL_MS — TTL кэша генерации sitemap/robots (по умолчанию 60000 мс)
-
-Примечание: версии книг `/versions/:id` намеренно не включаются в sitemap; канонические публичные URL формируются для книг/страниц с языковым префиксом.
+Примечание: версии книг `/versions/:id` намеренно не включаются в sitemap фронта; канонические публичные URL формируются для книг/страниц с языковым префиксом.
 
 Базовые операции: CRUD и привязка категорий к версиям книг. Также поддерживается иерархия категорий (родитель/дети). Локализация реализована через переводы CategoryTranslation.
 

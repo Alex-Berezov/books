@@ -36219,21 +36219,6 @@
         ]
       }
     },
-    "/robots.txt": {
-      "get": {
-        "operationId": "SitemapController_robots",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Robots.txt",
-        "tags": [
-          "sitemap"
-        ]
-      }
-    },
     "/seo/resolve": {
       "get": {
         "operationId": "SeoController_resolve",
@@ -36315,52 +36300,6 @@
         "summary": "Resolve SEO bundle (meta/OG/Twitter/canonical) with fallbacks",
         "tags": [
           "seo"
-        ]
-      }
-    },
-    "/sitemap-{lang}.xml": {
-      "get": {
-        "operationId": "SitemapController_sitemapForLang",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "lang",
-            "required": true,
-            "schema": {
-              "enum": [
-                "en",
-                "es",
-                "fr",
-                "pt",
-                "ru"
-              ],
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Sitemap for specific language",
-        "tags": [
-          "sitemap"
-        ]
-      }
-    },
-    "/sitemap.xml": {
-      "get": {
-        "operationId": "SitemapController_sitemapIndex",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "summary": "Sitemap index (per-language)",
-        "tags": [
-          "sitemap"
         ]
       }
     },

@@ -28,7 +28,6 @@ import { TagsModule } from './modules/tags/tags.module';
 import { PagesModule } from './modules/pages/pages.module';
 import { MediaModule } from './modules/media/media.module';
 import { PublicModule } from './modules/public/public.module';
-import { SitemapModule } from './modules/sitemap/sitemap.module';
 import { AuthorModule } from './modules/author/author.module';
 import { ImportModule } from './modules/import/import.module';
 import { RightsIntakeModule } from './modules/rights-intake/rights-intake.module';
@@ -90,7 +89,6 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     TagsModule,
     PagesModule,
     MediaModule,
-    SitemapModule,
     HealthModule,
     MetricsModule,
     // Глобальный и объявлен до потребителей: механизмы регистрируются в реестре

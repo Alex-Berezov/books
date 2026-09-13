@@ -1320,57 +1320,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/sitemap.xml': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Sitemap index (per-language) */
-    get: operations['SitemapController_sitemapIndex'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/sitemap-{lang}.xml': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Sitemap for specific language */
-    get: operations['SitemapController_sitemapForLang'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/robots.txt': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Robots.txt */
-    get: operations['SitemapController_robots'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/health/liveness': {
     parameters: {
       query?: never;
@@ -4520,59 +4469,6 @@ export interface operations {
         lang: 'en' | 'es' | 'fr' | 'pt';
         slug: string;
       };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  SitemapController_sitemapIndex: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  SitemapController_sitemapForLang: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  SitemapController_robots: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
       cookie?: never;
     };
     requestBody?: never;

@@ -88,16 +88,15 @@ describe('PrivateVaryInterceptor', () => {
 
   describe('ответ, отданный обработчиком самостоятельно', () => {
     /**
-     * 🔴 Шесть обработчиков заканчивают ответ сами — `@Res()` без `passthrough`
-     * и синхронный `res.send()`/`res.end()`: `sitemap.controller.ts`
-     * (`robots.txt`, `sitemap.xml`, `sitemap-:lang.xml`) и три выгрузки
+     * 🔴 Три обработчика заканчивают ответ сами — `@Res()` без `passthrough`
+     * и синхронный `res.send()`/`res.end()`: это выгрузки
      * в `rights-files.controller.ts`. Nest выполняет интерцепторы и при уже
      * отданном ответе — пустым становится только `fnHandleResponse`.
      *
      * Без этой проверки `vary()` зовёт `setHeader` на закрытом ответе и бросает
      * `ERR_HTTP_HEADERS_SENT`. Клиент к тому моменту уже получил тело, поэтому
      * по коду ответа дефект невидим: он виден только потоком событий в Sentry
-     * с каждого захода краулера на `robots.txt`.
+     * с каждой выгрузки.
      */
     it('заголовков не трогает, когда ответ уже отдан', async () => {
       const response = createResponseStub({ 'Cache-Control': 'private, no-store' }, true);

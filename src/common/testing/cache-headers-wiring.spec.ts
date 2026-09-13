@@ -68,13 +68,6 @@ const PUBLIC_CACHE_HANDLERS: readonly string[] = [
   'modules/rights-agent/rights-agent.controller.ts → getSchemaByVersion',
   'modules/seo/seo.controller.ts → resolve',
   'modules/seo/seo.controller.ts → resolveWithLang',
-  // Карта сайта и `robots.txt` одинаковы для всех и от запрашивающего
-  // не зависят. Публичными их объявили 12.09.2026: до этого своего заголовка
-  // у них не было вовсе, а после инверсии умолчания они стали получать
-  // `private, no-store` — неверно по смыслу (решение арбитра, вариант A).
-  'modules/sitemap/sitemap.controller.ts → robots',
-  'modules/sitemap/sitemap.controller.ts → sitemapForLang',
-  'modules/sitemap/sitemap.controller.ts → sitemapIndex',
 ];
 
 type Handler = { id: string; publicCache: boolean };

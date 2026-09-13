@@ -43,16 +43,14 @@ export class PrivateVaryInterceptor implements NestInterceptor {
         //
         // К моменту `map` контроллерный интерцептор уже отработал, и
         // заголовок отражает итоговое решение о маршруте.
-        // 🔴 Шесть обработчиков заканчивают ответ сами — `@Res()` без
-        // `passthrough` и синхронный `res.send()`/`res.end()`:
-        // `sitemap.controller.ts` (`robots.txt`, `sitemap.xml`,
-        // `sitemap-:lang.xml`) и три выгрузки в `rights-files.controller.ts`.
-        // Nest выполняет интерцепторы и при уже отданном ответе — пустым
-        // становится только `fnHandleResponse`, — поэтому сюда мы попадаем
-        // с `headersSent === true`, а `vary()` внутри зовёт `setHeader` и
-        // бросает `ERR_HTTP_HEADERS_SENT`. Клиент при этом уже получил тело,
-        // так что дефект невидим по коду ответа: он виден только потоком
-        // событий в Sentry с каждого захода краулера на `robots.txt`.
+        // 🔴 Три обработчика заканчивают ответ сами — `@Res()` без
+        // `passthrough` и синхронный `res.send()`/`res.end()`: это выгрузки
+        // в `rights-files.controller.ts`. Nest выполняет интерцепторы и при
+        // уже отданном ответе — пустым становится только `fnHandleResponse`, —
+        // поэтому сюда мы попадаем с `headersSent === true`, а `vary()` внутри
+        // зовёт `setHeader` и бросает `ERR_HTTP_HEADERS_SENT`. Клиент при этом
+        // уже получил тело, так что дефект невидим по коду ответа: он виден
+        // только потоком событий в Sentry с каждой выгрузки.
         if (response.headersSent) return value;
 
         if (isPrivate(response.getHeader('Cache-Control'))) response.vary('Authorization');
