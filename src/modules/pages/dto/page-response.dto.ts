@@ -230,24 +230,9 @@ export class PageWithTranslationsResponse extends PageResponse {
   translations!: PageTranslation[];
 }
 
-export class PaginationMeta {
-  @ApiProperty({ type: Number, example: 1 })
-  page!: number;
-
-  @ApiProperty({ type: Number, example: 20 })
-  limit!: number;
-
-  @ApiProperty({ type: Number, example: 45 })
-  total!: number;
-
-  @ApiProperty({ type: Number, example: 3 })
-  totalPages!: number;
-}
-
-export class PaginatedPagesResponse {
-  @ApiProperty({ type: [PageResponse] })
-  data!: PageResponse[];
-
-  @ApiProperty({ type: PaginationMeta })
-  meta!: PaginationMeta;
-}
+/*
+ * `PaginationMeta` и `PaginatedPagesResponse` убраны вместе с формой `{data, meta}`
+ * (`LEGACY-177`): `GET /admin/:lang/pages` отдаёт `{items, pagination}`, которую
+ * описывают `paginatedSchema(PageResponse)` и `PaginationInfoDto`
+ * из `src/shared/dto/paginated-response.dto.ts`.
+ */

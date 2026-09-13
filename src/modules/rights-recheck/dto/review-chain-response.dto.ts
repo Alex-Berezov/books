@@ -28,8 +28,3 @@ export class ReviewChainItemDto {
   @ApiProperty({ type: ReviewChainDiffDto, nullable: true })
   diffFromPrevious!: ReviewChainDiffDto | null;
 }
-
-export class ReviewChainResponseDto {
-  @ApiProperty({ type: [ReviewChainItemDto] }) items!: ReviewChainItemDto[];
-  @ApiProperty() total!: number;
-}

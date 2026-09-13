@@ -129,7 +129,10 @@ describe('MediaService (unit)', () => {
       expect(fmArg.orderBy).toEqual({ createdAt: 'desc' });
       expect(fmArg.skip).toBe(0);
       expect(fmArg.take).toBe(20);
-      expect(res).toEqual({ items: [{ id: '1' }], total: 1, page: 1, limit: 20 });
+      expect(res).toEqual({
+        items: [{ id: '1' }],
+        pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
+      });
     });
 
     it('supports pagination', async () => {
@@ -139,8 +142,7 @@ describe('MediaService (unit)', () => {
       expect(prisma.mediaAsset.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ skip: 1, take: 1 }),
       );
-      expect(res.page).toBe(2);
-      expect(res.limit).toBe(1);
+      expect(res.pagination).toEqual({ page: 2, limit: 1, total: 3, totalPages: 3 });
     });
   });
 

@@ -2,11 +2,8 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RECHECK_ERROR_CODES } from './rights-recheck.constants';
 import { recheckError } from './rights-recheck.errors';
-import type {
-  ReviewChainDiffDto,
-  ReviewChainItemDto,
-  ReviewChainResponseDto,
-} from './dto/review-chain-response.dto';
+import { paginatedAll, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import type { ReviewChainDiffDto, ReviewChainItemDto } from './dto/review-chain-response.dto';
 import type {
   RecheckDatabaseClient,
   RecheckReviewRecord,
@@ -47,7 +44,7 @@ export class RightsReviewChainService {
     return this.prisma as unknown as RecheckDatabaseClient;
   }
 
-  async getChainForIntake(intakeId: string): Promise<ReviewChainResponseDto> {
+  async getChainForIntake(intakeId: string): Promise<PaginatedResult<ReviewChainItemDto>> {
     const database = this.getDatabase();
     const intake = await database.rightsIntake.findUnique({
       where: { id: intakeId },
@@ -66,7 +63,7 @@ export class RightsReviewChainService {
     return this.buildChain(database, reviews);
   }
 
-  async getChainForProfile(profileId: string): Promise<ReviewChainResponseDto> {
+  async getChainForProfile(profileId: string): Promise<PaginatedResult<ReviewChainItemDto>> {
     const database = this.getDatabase();
     const profile = await database.rightsProfile.findUnique({ where: { id: profileId } });
     if (!profile) {
@@ -117,9 +114,9 @@ export class RightsReviewChainService {
   private async buildChain(
     database: RecheckDatabaseClient,
     reviews: RecheckReviewRecord[],
-  ): Promise<ReviewChainResponseDto> {
+  ): Promise<PaginatedResult<ReviewChainItemDto>> {
     if (reviews.length === 0) {
-      return { items: [], total: 0 };
+      return paginatedAll<ReviewChainItemDto>([]);
     }
 
     const profileIds = Array.from(new Set(reviews.map((review) => review.rightsProfileId)));
@@ -158,7 +155,7 @@ export class RightsReviewChainService {
       };
     });
 
-    return { items, total: items.length };
+    return paginatedAll(items);
   }
 
   private buildDiff(

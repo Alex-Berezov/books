@@ -15,7 +15,12 @@ import {
 import * as argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { PagedUserActivitiesDto } from './dto/paged-user-activities.dto';
+import type { PagedUserActivities } from './dto/paged-user-activities.dto';
+import {
+  paginated,
+  paginatedWithNext,
+  PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import type { UsersStaffFilter } from './dto/list-users-query.dto';
 import { STAFF_ROLE_NAMES } from './users.constants';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
@@ -354,12 +359,7 @@ export class UsersService {
     // в `USERS_STAFF_FILTERS`, документ и контроллер приняли бы, а сигнатура —
     // нет, и оно молча ушло бы в ветку «ни то, ни другое» (`LEGACY-204`).
     staff?: UsersStaffFilter;
-  }): Promise<{
-    items: (PublicUser & { roles: RoleName[] })[];
-    total: number;
-    page: number;
-    limit: number;
-  }> {
+  }): Promise<PaginatedResult<PublicUser & { roles: RoleName[] }>> {
     const { page, limit, q, staff } = params;
 
     // Base search filter
@@ -440,7 +440,7 @@ export class UsersService {
       roles: rolesByUser.get(u.id) ?? this.withBaseRole(new Set()),
     }));
 
-    return { items, total, page, limit };
+    return paginated(items, { page, limit, total });
   }
 
   /**
@@ -621,7 +621,7 @@ export class UsersService {
   }
 
   /**
-   * ⚠️ Возвращаемый тип объявлен намеренно, а не выведен: `PagedUserActivitiesDto` —
+   * ⚠️ Возвращаемый тип объявлен намеренно, а не выведен: `PagedUserActivities` —
    * единственный источник формы этого ответа, и он же стоит в `@ApiOkResponse`
    * маршрута. Пока тип выводился из литерала, добавленное поле в OpenAPI
    * не попадало (`LEGACY-133`, дополнение от 04.09.2026); инлайновый литерал
@@ -633,7 +633,7 @@ export class UsersService {
    * после выборки (см. историю файла), что при появлении `take`/`skip` укоротило
    * бы страницы и оставило бы пустой хвост при непустом остатке.
    */
-  async getActivities(userId: string, page = 1, limit = 10): Promise<PagedUserActivitiesDto> {
+  async getActivities(userId: string, page = 1, limit = 10): Promise<PagedUserActivities> {
     const whereBase: Prisma.CommentWhereInput = {
       userId,
       isDeleted: false,
@@ -759,7 +759,10 @@ export class UsersService {
       };
     });
 
-    return { items, total, page, limit, hasNext: page * limit < total };
+    // `hasNext` считается от `total`, а не от длины текущего куска, и живёт
+    // внутри `pagination` (`LEGACY-177`): целевая обёртка его не несёт, но фронт
+    // строит по нему дозагрузку — см. doc-комментарий `UserActivitiesPaginationDto`.
+    return paginatedWithNext(items, { page, limit, total, hasNext: page * limit < total });
   }
 
   /**

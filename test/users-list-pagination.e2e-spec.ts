@@ -54,14 +54,21 @@ describe('Users list pagination e2e (LEGACY-118)', () => {
     }
   });
 
+  // `LEGACY-177`: обёртка списка сведена к `{items, pagination}`.
   const page = async (
     query: string,
-  ): Promise<{ items: Array<{ id: string }>; total: number; page: number; limit: number }> => {
+  ): Promise<{
+    items: Array<{ id: string }>;
+    pagination: { total: number; page: number; limit: number; totalPages: number };
+  }> => {
     const res = await request(httpServerOf(app))
       .get(`/users?${query}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    return res.body as { items: Array<{ id: string }>; total: number; page: number; limit: number };
+    return res.body as {
+      items: Array<{ id: string }>;
+      pagination: { total: number; page: number; limit: number; totalPages: number };
+    };
   };
 
   afterAll(async () => {
@@ -74,9 +81,9 @@ describe('Users list pagination e2e (LEGACY-118)', () => {
 
     // Числа, а не строки: иначе приведение не сработало, а маршрут просто
     // перестал валидировать вход.
-    expect(second.page).toBe(2);
-    expect(second.limit).toBe(5);
-    expect(first.total).toBeGreaterThan(5);
+    expect(second.pagination.page).toBe(2);
+    expect(second.pagination.limit).toBe(5);
+    expect(first.pagination.total).toBeGreaterThan(5);
 
     // 🔴 Эха параметров мало: `skip: 0` вместо `(page - 1) * limit` вернул бы
     // ту же первую страницу с правильными `page` и `limit` в теле. Проверяются

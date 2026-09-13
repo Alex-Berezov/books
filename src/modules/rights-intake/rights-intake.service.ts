@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma, RightsIntakeStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 import { CreateRightsIntakeDto } from './dto/create-rights-intake.dto';
 import { UpdateRightsIntakeDto } from './dto/update-rights-intake.dto';
 import { ListRightsIntakesDto } from './dto/list-rights-intakes.dto';
@@ -204,12 +205,7 @@ export class RightsIntakeService {
       };
     });
 
-    return {
-      items,
-      total,
-      page,
-      limit,
-    };
+    return paginated(items, { page, limit, total });
   }
 
   async create(dto: CreateRightsIntakeDto, userId: string) {

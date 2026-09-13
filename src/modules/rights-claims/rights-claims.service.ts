@@ -34,10 +34,14 @@ import {
   RightsClaimComponentDto,
   RightsClaimDetailDto,
   RightsClaimEventDto,
-  RightsClaimListResponseDto,
   RightsClaimSummaryDto,
 } from './dto/rights-claim-response.dto';
 import { ReopenRightsClaimDto, ResolveRightsClaimDto } from './dto/resolve-rights-claim.dto';
+import {
+  paginated,
+  paginatedAll,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import {
   CLEAR_LICENSE_SNAPSHOT,
   licenseSnapshotPayload,
@@ -113,7 +117,7 @@ export class RightsClaimsService {
   // Queries
   // ---------------------------------------------------------------------------
 
-  async findAll(query: QueryRightsClaimsDto): Promise<RightsClaimListResponseDto> {
+  async findAll(query: QueryRightsClaimsDto): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
 
@@ -161,14 +165,12 @@ export class RightsClaimsService {
     const sorted = this.sortClaims(filtered);
     const start = (page - 1) * limit;
 
-    return {
-      items: sorted
+    return paginated(
+      sorted
         .slice(start, start + limit)
         .map((claim) => this.mapSummary(claim, blocksByClaim.get(claim.id) ?? [])),
-      total: sorted.length,
-      page,
-      limit,
-    };
+      { page, limit, total: sorted.length },
+    );
   }
 
   /**
@@ -236,7 +238,7 @@ export class RightsClaimsService {
     return this.buildDetail(claim);
   }
 
-  async listForVersion(versionId: string): Promise<RightsClaimListResponseDto> {
+  async listForVersion(versionId: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     const version = await this.requireVersion(versionId);
     const claims = await this.prisma.rightsClaim.findMany({
       where: {
@@ -247,7 +249,7 @@ export class RightsClaimsService {
     return this.asListResponse(claims);
   }
 
-  async listForBook(bookId: string): Promise<RightsClaimListResponseDto> {
+  async listForBook(bookId: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     const claims = await this.prisma.rightsClaim.findMany({
       where: { bookId },
       orderBy: { receivedAt: 'desc' },
@@ -255,12 +257,15 @@ export class RightsClaimsService {
     return this.asListResponse(claims);
   }
 
-  private async asListResponse(claims: RightsClaim[]): Promise<RightsClaimListResponseDto> {
+  private async asListResponse(
+    claims: RightsClaim[],
+  ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     const blocksByClaim = await this.loadBlocksByClaim(claims.map((claim) => claim.id));
-    const items = this.sortClaims(claims).map((claim) =>
-      this.mapSummary(claim, blocksByClaim.get(claim.id) ?? []),
+    return paginatedAll(
+      this.sortClaims(claims).map((claim) =>
+        this.mapSummary(claim, blocksByClaim.get(claim.id) ?? []),
+      ),
     );
-    return { items, total: items.length, page: 1, limit: items.length };
   }
 
   // ---------------------------------------------------------------------------

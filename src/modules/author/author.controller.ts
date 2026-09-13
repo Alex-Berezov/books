@@ -14,6 +14,7 @@ import {
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -26,17 +27,15 @@ import { UpdateAuthorDto } from './dto/update-author.dto';
 import { ListAuthorsQueryDto } from './dto/list-authors-query.dto';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckAuthorSlugResponseDto } from './dto/check-slug-response.dto';
-import {
-  AdminAuthorItemDto,
-  AdminAuthorsListResponseDto,
-  AuthorResponseDto,
-} from './dto/author-response.dto';
+import { AdminAuthorItemDto, AuthorResponseDto } from './dto/author-response.dto';
+import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('authors')
 @ApiBearerAuth()
+@ApiExtraModels(AdminAuthorItemDto, PaginationInfoDto)
 @Controller()
 export class AuthorController {
   constructor(private readonly service: AuthorService) {}
@@ -71,7 +70,7 @@ export class AuthorController {
    */
   @Get('admin/authors')
   @ApiOperation({ summary: 'List authors for admin' })
-  @ApiOkResponse({ type: AdminAuthorsListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(AdminAuthorItemDto) })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   list(@Query() pagination: ListAuthorsQueryDto) {

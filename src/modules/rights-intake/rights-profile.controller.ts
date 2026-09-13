@@ -14,7 +14,13 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RightsMaterializationService } from './rights-materialization.service';
 import { RightsProfileService } from './rights-profile.service';
-import { RightsProfileDetailDto, RightsProfileListDto } from './dto/rights-profile-response.dto';
+import {
+  PaginationInfoDto,
+  paginatedAll,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
+import { RightsProfileDetailDto, RightsProfileSummaryDto } from './dto/rights-profile-response.dto';
 
 @ApiTags('Rights Profiles')
 @Controller('admin/rights')
@@ -39,12 +45,12 @@ export class RightsProfileController {
   @ApiOperation({ summary: 'Get rights profile(s) for an intake' })
   // Настоящий union: при `currentOnly` (по умолчанию) отдаётся один профиль,
   // при `currentOnly=false` — обёртка со списком.
-  @ApiExtraModels(RightsProfileDetailDto, RightsProfileListDto)
+  @ApiExtraModels(RightsProfileDetailDto, RightsProfileSummaryDto, PaginationInfoDto)
   @ApiOkResponse({
     schema: {
       oneOf: [
         { $ref: getSchemaPath(RightsProfileDetailDto) },
-        { $ref: getSchemaPath(RightsProfileListDto) },
+        paginatedSchema(RightsProfileSummaryDto),
       ],
     },
   })
@@ -58,13 +64,12 @@ export class RightsProfileController {
   async getByIntake(
     @Param('id') intakeId: string,
     @Query('currentOnly') currentOnly?: string,
-  ): Promise<RightsProfileDetailDto | RightsProfileListDto> {
+  ): Promise<RightsProfileDetailDto | PaginatedResult<RightsProfileSummaryDto>> {
     const isCurrentOnly = currentOnly !== 'false';
     if (isCurrentOnly) {
       return this.profileService.getCurrentByIntake(intakeId);
     }
-    const items = await this.profileService.listByIntake(intakeId);
-    return { items, total: items.length };
+    return paginatedAll(await this.profileService.listByIntake(intakeId));
   }
 
   @Get('profiles/:profileId')

@@ -109,18 +109,20 @@ describe('Admin comments moderation (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 
+    // Единая форма списка (`LEGACY-177`): `{items, pagination}` вместо `{data, meta}`.
     const body = res.body as {
-      data: { id: string; text: string; author: { email: string }; bookVersionId: string }[];
-      meta: { total: number; totalPages: number };
+      items: { id: string; text: string; author: { email: string }; bookVersionId: string }[];
+      pagination: { total: number; totalPages: number };
     };
-    const mine = body.data.find((c) => c.id === commentId);
+    expect(Object.keys(body).sort()).toEqual(['items', 'pagination']);
+    const mine = body.items.find((c) => c.id === commentId);
     expect(mine).toBeDefined();
     expect(mine?.text).toBe('Needs moderation');
     // Почта здесь уместна: маршрут под гвардом, модератору нужно отличать людей.
     expect(mine?.author.email).toContain('@example.com');
     // Без цели ответить нельзя — создание комментария требует её, а не parentId.
     expect(mine?.bookVersionId).toBe(versionId);
-    expect(body.meta.total).toBeGreaterThan(0);
+    expect(body.pagination.total).toBeGreaterThan(0);
   });
 
   it('фильтрует по статусу и находит по подстроке', async () => {
@@ -134,13 +136,15 @@ describe('Admin comments moderation (e2e)', () => {
       .get('/admin/comments?status=hidden&limit=100')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((hidden.body as { data: { id: string }[] }).data.map((c) => c.id)).toContain(commentId);
+    expect((hidden.body as { items: { id: string }[] }).items.map((c) => c.id)).toContain(
+      commentId,
+    );
 
     const visible = await request(http())
       .get('/admin/comments?status=visible&limit=100')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((visible.body as { data: { id: string }[] }).data.map((c) => c.id)).not.toContain(
+    expect((visible.body as { items: { id: string }[] }).items.map((c) => c.id)).not.toContain(
       commentId,
     );
 
@@ -148,7 +152,7 @@ describe('Admin comments moderation (e2e)', () => {
       .get('/admin/comments?search=Needs%20moderation&limit=100')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((found.body as { data: { id: string }[] }).data.map((c) => c.id)).toContain(commentId);
+    expect((found.body as { items: { id: string }[] }).items.map((c) => c.id)).toContain(commentId);
 
     // Возврат в исходное состояние — модерация обратима.
     await request(http())
@@ -172,7 +176,7 @@ describe('Admin comments moderation (e2e)', () => {
       .get('/admin/comments?limit=100')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const parent = (list.body as { data: { id: string; repliesCount: number }[] }).data.find(
+    const parent = (list.body as { items: { id: string; repliesCount: number }[] }).items.find(
       (c) => c.id === commentId,
     );
     expect(parent?.repliesCount).toBe(1);

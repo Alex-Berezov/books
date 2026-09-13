@@ -16,7 +16,8 @@ import {
   type RightsLawyerRecord,
 } from './rights-lawyer-interface';
 import type { CreateLawyerDto } from './dto/create-lawyer.dto';
-import type { LawyerDetailDto, LawyerDto, LawyersListResponseDto } from './dto/lawyer-response.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import type { LawyerDetailDto, LawyerDto } from './dto/lawyer-response.dto';
 import type { ListLawyersDto } from './dto/list-lawyers.dto';
 import type { DeactivateLawyerDto } from './dto/reason.dto';
 import type { UpdateLawyerDto } from './dto/update-lawyer.dto';
@@ -40,7 +41,7 @@ export class RightsLawyerService {
     return this.getDatabase().rightsLawyer;
   }
 
-  async list(query: ListLawyersDto): Promise<LawyersListResponseDto> {
+  async list(query: ListLawyersDto): Promise<PaginatedResult<LawyerDto>> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit =
       query.limit && query.limit > 0
@@ -74,12 +75,10 @@ export class RightsLawyerService {
       : rows;
 
     const start = (page - 1) * limit;
-    return {
-      items: filtered.slice(start, start + limit).map((row) => this.toDto(row)),
-      total: filtered.length,
-      page,
-      limit,
-    };
+    return paginated(
+      filtered.slice(start, start + limit).map((row) => this.toDto(row)),
+      { page, limit, total: filtered.length },
+    );
   }
 
   async getById(id: string): Promise<LawyerDetailDto> {

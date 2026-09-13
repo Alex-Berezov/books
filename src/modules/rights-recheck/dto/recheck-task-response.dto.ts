@@ -96,13 +96,6 @@ export class RecheckTaskDetailDto extends RecheckTaskDto {
   @ApiProperty({ type: RecheckTaskTargetsDto }) targets!: RecheckTaskTargetsDto;
 }
 
-export class RecheckTaskListResponseDto {
-  @ApiProperty({ type: [RecheckTaskDto] }) items!: RecheckTaskDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}
-
 export class RecheckScheduleDto {
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty({ enum: RightsRecheckPolicy }) recheckPolicy!: RightsRecheckPolicy;

@@ -40,9 +40,7 @@ describe('PersonsController', () => {
   it('should return paginated list of persons', async () => {
     const response = {
       items: [{ id: '1', canonicalName: 'Mark Twain', type: PersonType.NATURAL_PERSON }],
-      total: 1,
-      limit: 20,
-      offset: 0,
+      pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
     };
     serviceMock.findAll.mockResolvedValueOnce(response);
 
@@ -52,7 +50,7 @@ describe('PersonsController', () => {
   });
 
   it('should search persons by query', async () => {
-    const response = { items: [], total: 0, limit: 20, offset: 0 };
+    const response = { items: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } };
     serviceMock.search.mockResolvedValueOnce(response);
 
     const result = await controller.search('Twain');

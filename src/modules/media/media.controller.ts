@@ -22,11 +22,12 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
+  ApiExtraModels,
 } from '@nestjs/swagger';
 import { MediaService } from './media.service';
 import { ConfirmMediaDto, MediaListQueryDto } from './dto/create-media.dto';
 import { MediaAssetResponseDto } from './dto/media-asset-response.dto';
-import { PagedMediaAssetsDto } from './dto/paged-media-assets.dto';
+import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -42,6 +43,7 @@ import { PresignRequestDto, UploadType } from '../uploads/dto/presign.dto';
 type UploadedFileType = { buffer?: Buffer; mimetype?: string; size?: number; path?: string };
 
 @ApiTags('media')
+@ApiExtraModels(MediaAssetResponseDto, PaginationInfoDto)
 @Controller()
 export class MediaController {
   constructor(
@@ -63,7 +65,7 @@ export class MediaController {
 
   @Get('media')
   @ApiOperation({ summary: 'List media assets' })
-  @ApiOkResponse({ type: PagedMediaAssetsDto })
+  @ApiOkResponse({ schema: paginatedSchema(MediaAssetResponseDto) })
   @ApiQuery({ name: 'q', required: false })
   @ApiQuery({ name: 'type', required: false })
   @ApiQuery({ name: 'page', required: false })

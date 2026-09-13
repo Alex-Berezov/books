@@ -30,7 +30,12 @@ import { UpdateCommentDto } from './dto/update-comment.dto';
 import { ListCommentsQueryDto } from './dto/list-comments.dto';
 import { CommentListDto } from './dto/comment-list.dto';
 import { CommentBareDto, CommentDetailDto } from './dto/comment.dto';
-import { AdminCommentsQueryDto, AdminCommentsResponseDto } from './dto/admin-comments.dto';
+import { AdminCommentDto, AdminCommentsQueryDto } from './dto/admin-comments.dto';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -43,6 +48,7 @@ interface RequestUser {
 }
 
 @ApiTags('comments')
+@ApiExtraModels(AdminCommentDto, PaginationInfoDto)
 @Controller()
 export class CommentsController {
   constructor(private readonly service: CommentsService) {}
@@ -73,8 +79,8 @@ export class CommentsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'List all comments for moderation (admin)' })
-  @ApiOkResponse({ type: AdminCommentsResponseDto })
-  adminList(@Query() query: AdminCommentsQueryDto): Promise<AdminCommentsResponseDto> {
+  @ApiOkResponse({ schema: paginatedSchema(AdminCommentDto) })
+  adminList(@Query() query: AdminCommentsQueryDto): Promise<PaginatedResult<AdminCommentDto>> {
     return this.service.adminList({
       page: query.page ?? 1,
       limit: query.limit ?? 20,

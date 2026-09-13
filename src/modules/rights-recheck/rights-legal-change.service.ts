@@ -23,11 +23,8 @@ import {
 } from './rights-recheck-interface';
 import { addDays } from './rights-recheck.util';
 import type { CreateLegalChangeDto } from './dto/create-legal-change.dto';
-import type {
-  LegalChangeDetailDto,
-  LegalChangeDto,
-  LegalChangeListResponseDto,
-} from './dto/legal-change-response.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import type { LegalChangeDetailDto, LegalChangeDto } from './dto/legal-change-response.dto';
 import type { ListLegalChangesDto } from './dto/list-legal-changes.dto';
 import type { UpdateLegalChangeDto } from './dto/update-legal-change.dto';
 import type {
@@ -121,7 +118,7 @@ export class RightsLegalChangeService {
     return this.toDto(updated);
   }
 
-  async list(query: ListLegalChangesDto): Promise<LegalChangeListResponseDto> {
+  async list(query: ListLegalChangesDto): Promise<PaginatedResult<LegalChangeDto>> {
     const database = this.getDatabase();
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit =
@@ -154,7 +151,10 @@ export class RightsLegalChangeService {
         )
       : items;
 
-    return { items: filtered.map((item) => this.toDto(item)), total, page, limit };
+    return paginated(
+      filtered.map((item) => this.toDto(item)),
+      { page, limit, total },
+    );
   }
 
   async getById(id: string): Promise<LegalChangeDetailDto> {

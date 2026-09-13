@@ -68,7 +68,7 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .expect(200);
-    const foundEs = (listEs.body.data as Array<{ slug: string; language: string }>).some(
+    const foundEs = (listEs.body.items as Array<{ slug: string; language: string }>).some(
       (p) => p.slug === slug && p.language === 'es',
     );
     expect(foundEs).toBe(true);
@@ -79,7 +79,7 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.en)
       .expect(200);
-    const foundEn = (listEn.body.data as Array<{ slug: string; language: string }>).some(
+    const foundEn = (listEn.body.items as Array<{ slug: string; language: string }>).some(
       (p) => p.slug === slug && p.language === 'en',
     );
     expect(foundEn).toBe(false);
@@ -149,7 +149,7 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(
-      (listFr.body.data as Array<{ slug: string; language: string }>).some(
+      (listFr.body.items as Array<{ slug: string; language: string }>).some(
         (p) => p.slug === slug && p.language === 'fr',
       ),
     ).toBe(true);
@@ -158,7 +158,7 @@ describe('Admin language context (e2e)', () => {
       .get('/admin/en/pages')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listEn.body.data as Array<{ slug: string }>).some((p) => p.slug === slug)).toBe(false);
+    expect((listEn.body.items as Array<{ slug: string }>).some((p) => p.slug === slug)).toBe(false);
 
     // BookVersions
     const bookSlug = `admin-langs-book-path-${Date.now()}`;

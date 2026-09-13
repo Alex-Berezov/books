@@ -382,10 +382,3 @@ export class RightsProfileDetailDto {
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
-
-export class RightsProfileListDto {
-  @ApiProperty({ type: [RightsProfileSummaryDto] })
-  items!: RightsProfileSummaryDto[];
-
-  @ApiProperty() total!: number;
-}

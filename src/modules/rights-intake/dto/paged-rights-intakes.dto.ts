@@ -44,16 +44,3 @@ export class RightsIntakeListItemDto extends RightsIntakeResponseDto {
   @ApiPropertyOptional({ type: RightsIntakeRightsProfileSummaryDto, nullable: true })
   currentRightsProfile?: RightsIntakeRightsProfileSummaryDto | null;
 }
-
-/**
- * Ответ `GET /admin/rights/intakes`. Форма обёртки — `{items,total,page,limit}`, ровно та,
- * что собирает `RightsIntakeService.list`.
- */
-export class PagedRightsIntakesDto {
-  @ApiProperty({ type: RightsIntakeListItemDto, isArray: true })
-  items!: RightsIntakeListItemDto[];
-
-  @ApiProperty({ example: 42 }) total!: number;
-  @ApiProperty({ example: 1 }) page!: number;
-  @ApiProperty({ example: 20 }) limit!: number;
-}

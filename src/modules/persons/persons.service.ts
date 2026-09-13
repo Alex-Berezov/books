@@ -8,6 +8,7 @@ import { CreatePersonDto } from './dto/create-person.dto';
 import { QueryPersonsDto } from './dto/query-persons.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
 import type { Prisma } from '@prisma/client';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 
 @Injectable()
 export class PersonsService {
@@ -34,7 +35,16 @@ export class PersonsService {
   }
 
   public async findAll(query: QueryPersonsDto) {
-    const { q, role, type, language, limit = 20, offset = 0 } = query;
+    const { q, role, type, language, limit = 20, offset = 0, page: requestedPage } = query;
+
+    // Окно выдачи считается один раз и в одном месте (решение арбитра 13.09.2026).
+    // `page` приоритетнее `offset`; заданный в одиночку `offset` выравнивается
+    // вниз до границы страницы, иначе тело ответа сообщало бы `page`, под
+    // которым лежит другое окно строк: при `?offset=15&limit=10` вернулись бы
+    // строки 15-24, а `page: 2` по контракту обёртки означает 10-19, и клиент,
+    // идущий по `pagination.page`, терял бы пять строк.
+    const page = requestedPage ?? (limit > 0 ? Math.floor(offset / limit) + 1 : 1);
+    const skip = (page - 1) * limit;
 
     const where: Record<string, unknown> = {};
 
@@ -84,7 +94,7 @@ export class PersonsService {
       this.personModel.findMany({
         where,
         take: limit,
-        skip: offset,
+        skip,
         orderBy: { canonicalName: 'asc' },
         include: {
           translations: true,
@@ -93,12 +103,10 @@ export class PersonsService {
       this.personModel.count({ where }),
     ]);
 
-    return {
-      items,
-      total,
-      limit,
-      offset,
-    };
+    // `offset` остаётся во ВХОДЕ ручки (`QueryPersonsDto.offset`) — менять то,
+    // что шлёт клиент, задача `LEGACY-177` не разрешает. Наружу идёт единая
+    // обёртка, и `page` в ней точно описывает отданное окно.
+    return paginated(items, { page, limit, total });
   }
 
   public async findOne(id: string) {

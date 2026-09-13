@@ -1,3 +1,4 @@
+import { PaginationWithNextDto } from '../../shared/dto/paginated-response.dto';
 import {
   Controller,
   Get,
@@ -18,11 +19,12 @@ import {
   ApiTags,
   ApiOkResponse,
   ApiCreatedResponse,
+  ApiExtraModels,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { BookshelfService } from './bookshelf.service';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
-import { BookshelfListDto, BookshelfEntryDto } from './dto/bookshelf.dto';
+import { BookshelfEntryDto, BookshelfItemDto, pagedBookshelfSchema } from './dto/bookshelf.dto';
 
 interface RequestUser {
   userId: string;
@@ -30,6 +32,7 @@ interface RequestUser {
 }
 
 @ApiTags('bookshelf')
+@ApiExtraModels(BookshelfItemDto, PaginationWithNextDto)
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller()
@@ -40,7 +43,7 @@ export class BookshelfController {
   @ApiOperation({ summary: 'List my bookshelf' })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiOkResponse({ type: BookshelfListDto })
+  @ApiOkResponse({ schema: pagedBookshelfSchema() })
   list(@Req() req: { user: RequestUser }, @Query() pagination?: PaginationDto) {
     const page = pagination?.page ?? 1;
     const limit = pagination?.limit ?? 10;

@@ -2,10 +2,16 @@ import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -13,14 +19,11 @@ import { RightsLegalChangeService } from './rights-legal-change.service';
 import { CreateLegalChangeDto } from './dto/create-legal-change.dto';
 import { ListLegalChangesDto } from './dto/list-legal-changes.dto';
 import { UpdateLegalChangeDto } from './dto/update-legal-change.dto';
-import {
-  LegalChangeDetailDto,
-  LegalChangeDto,
-  LegalChangeListResponseDto,
-} from './dto/legal-change-response.dto';
+import { LegalChangeDetailDto, LegalChangeDto } from './dto/legal-change-response.dto';
 
 /** `apply` and `archive` touch the whole catalogue, so they are admin-only. */
 @ApiTags('rights-legal-changes')
+@ApiExtraModels(LegalChangeDto, PaginationInfoDto)
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager)
@@ -29,9 +32,9 @@ export class RightsLegalChangeController {
   constructor(private readonly legalChanges: RightsLegalChangeService) {}
 
   @Get('admin/rights/legal-changes')
-  @ApiOkResponse({ type: LegalChangeListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(LegalChangeDto) })
   @ApiOperation({ summary: 'List declared legal changes' })
-  list(@Query() query: ListLegalChangesDto): Promise<LegalChangeListResponseDto> {
+  list(@Query() query: ListLegalChangesDto): Promise<PaginatedResult<LegalChangeDto>> {
     return this.legalChanges.list(query);
   }
 

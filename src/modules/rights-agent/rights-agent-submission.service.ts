@@ -31,10 +31,8 @@ import type { ValidationIssue } from '../rights-intake/rights-review-import.vali
 import type { AgentSubmitReportDto } from './dto/agent-submit-report.dto';
 import type { AgentSubmitResponseDto } from './dto/agent-submit-response.dto';
 import type { ListAgentSubmissionsDto } from './dto/list-agent-submissions.dto';
-import type {
-  AgentSubmissionDto,
-  AgentSubmissionListResponseDto,
-} from './dto/agent-submission-response.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import type { AgentSubmissionDto } from './dto/agent-submission-response.dto';
 
 export interface AgentSubmissionMeta {
   ip: string | null;
@@ -249,7 +247,7 @@ export class RightsAgentSubmissionService {
   async listByIntake(
     intakeId: string,
     query: ListAgentSubmissionsDto,
-  ): Promise<AgentSubmissionListResponseDto> {
+  ): Promise<PaginatedResult<AgentSubmissionDto>> {
     const intake = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
     if (!intake) {
       throw agentError(HttpStatus.NOT_FOUND, AGENT_ERROR_CODES.INTAKE_NOT_FOUND);
@@ -257,7 +255,7 @@ export class RightsAgentSubmissionService {
     return this.query({ ...query, intakeId });
   }
 
-  async listAll(query: ListAgentSubmissionsDto): Promise<AgentSubmissionListResponseDto> {
+  async listAll(query: ListAgentSubmissionsDto): Promise<PaginatedResult<AgentSubmissionDto>> {
     return this.query(query);
   }
 
@@ -272,7 +270,9 @@ export class RightsAgentSubmissionService {
     return this.toDto(submission);
   }
 
-  private async query(query: ListAgentSubmissionsDto): Promise<AgentSubmissionListResponseDto> {
+  private async query(
+    query: ListAgentSubmissionsDto,
+  ): Promise<PaginatedResult<AgentSubmissionDto>> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? query.limit : 20;
     const skip = (page - 1) * limit;
@@ -296,7 +296,10 @@ export class RightsAgentSubmissionService {
       }),
     ]);
 
-    return { items: items.map((item) => this.toDto(item)), total, page, limit };
+    return paginated(
+      items.map((item) => this.toDto(item)),
+      { page, limit, total },
+    );
   }
 
   /** Bytes of everything the agent sent, measured independently of the express body limit. */

@@ -2,10 +2,16 @@ import { Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/com
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -13,12 +19,12 @@ import { RightsNotificationsService } from './rights-notifications.service';
 import { ListRightsNotificationsDto } from './dto/list-rights-notifications.dto';
 import {
   RightsNotificationDto,
-  RightsNotificationsListResponseDto,
   RightsNotificationsMarkAllReadDto,
   RightsNotificationsUnreadCountDto,
 } from './dto/rights-notification-response.dto';
 
 @ApiTags('rights-notifications')
+@ApiExtraModels(RightsNotificationDto, PaginationInfoDto)
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 // Phase 19: юрист должен видеть адресованные ему уведомления — иначе назначение проверки
@@ -29,12 +35,12 @@ export class RightsNotificationsController {
   constructor(private readonly service: RightsNotificationsService) {}
 
   @Get('admin/rights/notifications')
-  @ApiOkResponse({ type: RightsNotificationsListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(RightsNotificationDto) })
   @ApiOperation({ summary: 'List in-app rights notifications visible to the current user' })
   list(
     @Query() query: ListRightsNotificationsDto,
     @Req() req: { user: { userId: string } },
-  ): Promise<RightsNotificationsListResponseDto> {
+  ): Promise<PaginatedResult<RightsNotificationDto>> {
     return this.service.list(req.user.userId, query);
   }
 

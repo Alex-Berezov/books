@@ -245,7 +245,14 @@ describe('Rights agent import e2e', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
 
-    expect(submissions.body.total).toBeGreaterThanOrEqual(1);
-    expect(submissions.body.items[0].tokenPrefix).toBe(rawToken.slice(0, 12));
+    // `LEGACY-177`: единая обёртка `{items, pagination}`; счётчики живут в `pagination`.
+    const body = submissions.body as {
+      items: { tokenPrefix: string }[];
+      pagination: { total: number; totalPages: number };
+    };
+    expect(Object.keys(body).sort()).toEqual(['items', 'pagination']);
+    expect(body.pagination.total).toBeGreaterThanOrEqual(1);
+    expect(body.pagination.totalPages).toBeGreaterThanOrEqual(1);
+    expect(body.items[0].tokenPrefix).toBe(rawToken.slice(0, 12));
   });
 });

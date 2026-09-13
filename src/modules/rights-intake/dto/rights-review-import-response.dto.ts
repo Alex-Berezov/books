@@ -89,15 +89,6 @@ export class ListRightsReviewImportsRequestDto {
   status?: string;
 }
 
-export class RightsReviewImportsListResponseDto {
-  @ApiProperty({ type: [RightsReviewImportListItemDto] })
-  items!: RightsReviewImportListItemDto[];
-
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}
-
 /**
  * Запись импорта целиком — то, что отдаёт `POST /admin/rights/intakes/:id/review-imports`.
  *

@@ -16,7 +16,10 @@ describe('ContributorsController', () => {
 
   beforeEach(async () => {
     service = {
-      findAll: jest.fn().mockResolvedValue({ items: [mockContributor], total: 1 }),
+      findAll: jest.fn().mockResolvedValue({
+        items: [mockContributor],
+        pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
+      }),
       create: jest.fn().mockResolvedValue(mockContributor),
       findOne: jest.fn().mockResolvedValue(mockContributor),
       update: jest.fn().mockResolvedValue({ ...mockContributor, displayName: 'Homer 2' }),
@@ -51,7 +54,10 @@ describe('ContributorsController', () => {
 
   it('should call findAll', async () => {
     const res = await controller.findAll({});
-    expect(res).toEqual({ items: [mockContributor], total: 1 });
+    expect(res).toEqual({
+      items: [mockContributor],
+      pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    });
     expect(service['findAll']).toHaveBeenCalled();
   });
 

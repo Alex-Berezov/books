@@ -2,10 +2,16 @@ import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nest
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -15,17 +21,11 @@ import { CreateAgentTokenDto } from './dto/create-agent-token.dto';
 import { ListAgentSubmissionsDto } from './dto/list-agent-submissions.dto';
 import { ListAgentTokensDto } from './dto/list-agent-tokens.dto';
 import { RevokeAgentTokenDto } from './dto/revoke-agent-token.dto';
-import {
-  AgentSubmissionDto,
-  AgentSubmissionListResponseDto,
-} from './dto/agent-submission-response.dto';
-import {
-  AgentTokenDto,
-  AgentTokenIssuedDto,
-  AgentTokenListResponseDto,
-} from './dto/agent-token-response.dto';
+import { AgentSubmissionDto } from './dto/agent-submission-response.dto';
+import { AgentTokenDto, AgentTokenIssuedDto } from './dto/agent-token-response.dto';
 
 @ApiTags('rights-agent-admin')
+@ApiExtraModels(AgentTokenDto, AgentSubmissionDto, PaginationInfoDto)
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager)
@@ -50,12 +50,12 @@ export class RightsAgentAdminController {
   }
 
   @Get('admin/rights/intakes/:id/agent-tokens')
-  @ApiOkResponse({ type: AgentTokenListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(AgentTokenDto) })
   @ApiOperation({ summary: 'List upload tokens of an intake' })
   listTokens(
     @Param('id') id: string,
     @Query() query: ListAgentTokensDto,
-  ): Promise<AgentTokenListResponseDto> {
+  ): Promise<PaginatedResult<AgentTokenDto>> {
     return this.tokens.listByIntake(id, query);
   }
 
@@ -71,21 +71,21 @@ export class RightsAgentAdminController {
   }
 
   @Get('admin/rights/intakes/:id/agent-submissions')
-  @ApiOkResponse({ type: AgentSubmissionListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(AgentSubmissionDto) })
   @ApiOperation({ summary: 'Agent submission history of an intake' })
   listIntakeSubmissions(
     @Param('id') id: string,
     @Query() query: ListAgentSubmissionsDto,
-  ): Promise<AgentSubmissionListResponseDto> {
+  ): Promise<PaginatedResult<AgentSubmissionDto>> {
     return this.submissions.listByIntake(id, query);
   }
 
   @Get('admin/rights/agent-submissions')
-  @ApiOkResponse({ type: AgentSubmissionListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(AgentSubmissionDto) })
   @ApiOperation({ summary: 'Global agent submission log' })
   listSubmissions(
     @Query() query: ListAgentSubmissionsDto,
-  ): Promise<AgentSubmissionListResponseDto> {
+  ): Promise<PaginatedResult<AgentSubmissionDto>> {
     return this.submissions.listAll(query);
   }
 

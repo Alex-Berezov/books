@@ -38,11 +38,9 @@ import {
   severityRank,
   staleReasonToRecheckReason,
 } from './rights-recheck.util';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
 import type { ListScanRunsDto } from './dto/list-scan-runs.dto';
-import type {
-  RecheckScanRunDto,
-  RecheckScanRunListResponseDto,
-} from './dto/recheck-scan-response.dto';
+import type { RecheckScanRunDto } from './dto/recheck-scan-response.dto';
 import type {
   RecheckDatabaseClient,
   RightsRecheckScanRunRecord,
@@ -683,7 +681,7 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
   // Scan run history
   // ---------------------------------------------------------------------------
 
-  async listScanRuns(query: ListScanRunsDto): Promise<RecheckScanRunListResponseDto> {
+  async listScanRuns(query: ListScanRunsDto): Promise<PaginatedResult<RecheckScanRunDto>> {
     const database = this.getDatabase();
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit =
@@ -704,7 +702,10 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
       }),
     ]);
 
-    return { items: items.map((item) => this.toScanRunDto(item)), total, page, limit };
+    return paginated(
+      items.map((item) => this.toScanRunDto(item)),
+      { page, limit, total },
+    );
   }
 
   // ---------------------------------------------------------------------------

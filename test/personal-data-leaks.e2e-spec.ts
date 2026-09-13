@@ -429,25 +429,34 @@ describe('Personal data leaks (e2e)', () => {
         .set('Authorization', `Bearer ${readerToken}`)
         .expect(200);
 
+      // `LEGACY-177`: обёртка списка сведена к `{items, pagination}`;
+      // `hasNext` сохранён внутри `pagination` — по нему `useInfiniteQuery`
+      // во фронте строит `getNextPageParam`.
       const first = firstPage.body as {
         items: unknown[];
-        total: number;
-        page: number;
-        limit: number;
-        hasNext: boolean;
+        pagination: {
+          total: number;
+          page: number;
+          limit: number;
+          totalPages: number;
+          hasNext: boolean;
+        };
       };
       expect(first.items.length).toBe(2);
-      expect(first.limit).toBe(2);
-      expect(first.page).toBe(1);
-      expect(first.total).toBeGreaterThanOrEqual(3);
-      expect(first.hasNext).toBe(true);
+      expect(first.pagination.limit).toBe(2);
+      expect(first.pagination.page).toBe(1);
+      expect(first.pagination.total).toBeGreaterThanOrEqual(3);
+      expect(first.pagination.hasNext).toBe(true);
 
       const secondPage = await request(http())
         .get('/users/me/activities?page=2&limit=2')
         .set('Authorization', `Bearer ${readerToken}`)
         .expect(200);
 
-      const second = secondPage.body as { items: { id: string }[]; total: number };
+      const second = secondPage.body as {
+        items: { id: string }[];
+        pagination: { total: number };
+      };
       const firstIds = new Set((first.items as { id: string }[]).map((i) => i.id));
       // 🔴 Положительный контроль обязателен: `[].every(...)` истинно, и без
       // проверки длины регрессия «вторая страница пустая при непустом остатке»
@@ -465,11 +474,14 @@ describe('Personal data leaks (e2e)', () => {
           .get(`/users/me/activities?page=${page}&limit=2`)
           .set('Authorization', `Bearer ${readerToken}`)
           .expect(200);
-        const body = res.body as { items: { id: string }[]; hasNext: boolean };
+        const body = res.body as {
+          items: { id: string }[];
+          pagination: { hasNext: boolean };
+        };
         body.items.forEach((i) => seen.add(i.id));
-        if (!body.hasNext) break;
+        if (!body.pagination.hasNext) break;
       }
-      expect(seen.size).toBe(second.total);
+      expect(seen.size).toBe(second.pagination.total);
     });
   });
 

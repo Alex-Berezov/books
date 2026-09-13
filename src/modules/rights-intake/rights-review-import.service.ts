@@ -8,6 +8,7 @@ import { stableJsonStringify, sha256Hex } from './rights-review-import-hash';
 import { REVIEW_IMPORTABLE_INTAKE_STATUSES } from './rights-intake.constants';
 import { RIGHTS_REVIEW_IMPORT_SCHEMA_VERSION } from './rights-review-import.constants';
 import { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 import type { CreateRightsReviewImportDto } from './dto/create-rights-review-import.dto';
 import type { RightsReviewImportRecordDto } from './dto/rights-review-import-response.dto';
 
@@ -249,12 +250,7 @@ export class RightsReviewImportService {
       };
     });
 
-    return {
-      items: mapped,
-      total,
-      page,
-      limit,
-    };
+    return paginated(mapped, { page, limit, total });
   }
 
   async getById(importId: string) {

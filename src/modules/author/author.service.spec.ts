@@ -484,14 +484,19 @@ describe('AuthorService', () => {
 
       const res = await service.list(99, 20, Language.en);
 
-      expect(res.data).toEqual([]);
-      expect(res.meta).toEqual({ page: 99, limit: 20, total: 42, totalPages: 3 });
+      // Тело целиком, а не по полям (`LEGACY-177`): форма ответа сведена
+      // к `{items, pagination}`, и уцелевший рядом ключ `data` или `meta`
+      // обязан ронять спеку, а не проходить мимо точечных проверок.
+      expect(res).toEqual({
+        items: [],
+        pagination: { page: 99, limit: 20, total: 42, totalPages: 3 },
+      });
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
 
     // LEGACY-352: сервер отвечает за поиск, а не за фильтрацию клиентом.
     // Условие проверяется у ОБОИХ запросов: перенос `where` только на `count`
-    // оставил бы `meta.total: 0` рядом с полной страницей случайных авторов.
+    // оставил бы `pagination.total: 0` рядом с полной страницей случайных авторов.
     it('filters by translation name (case-insensitive) when search is given', async () => {
       prisma.$transaction.mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
       prisma.author.count.mockResolvedValue(0);
@@ -508,7 +513,10 @@ describe('AuthorService', () => {
       expect(prisma.author.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: expectedWhere }),
       );
-      expect(res.data).toEqual([]);
+      expect(res).toEqual({
+        items: [],
+        pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+      });
     });
 
     // `%` и `_` — символы запроса, а не подстановки: без экранирования

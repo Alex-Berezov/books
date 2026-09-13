@@ -38,7 +38,12 @@ import { RightsContentHashCheckDto } from '../rights-intake/dto/rights-content-h
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { LicenseCoverageResultDto } from '../rights-licenses/dto/rights-license-response.dto';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
-import { RightsClaimListResponseDto } from '../rights-claims/dto/rights-claim-response.dto';
+import { RightsClaimSummaryDto } from '../rights-claims/dto/rights-claim-response.dto';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -491,8 +496,9 @@ export class BookVersionController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  @ApiResponse({ status: 200, type: RightsClaimListResponseDto })
-  getVersionRightsClaims(@Param('id') id: string): Promise<RightsClaimListResponseDto> {
+  @ApiExtraModels(RightsClaimSummaryDto, PaginationInfoDto)
+  @ApiResponse({ status: 200, schema: paginatedSchema(RightsClaimSummaryDto) })
+  getVersionRightsClaims(@Param('id') id: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     return this.rightsClaimsService.listForVersion(id);
   }
 
@@ -504,8 +510,9 @@ export class BookVersionController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  @ApiResponse({ status: 200, type: RightsClaimListResponseDto })
-  getBookRightsClaims(@Param('id') id: string): Promise<RightsClaimListResponseDto> {
+  @ApiExtraModels(RightsClaimSummaryDto, PaginationInfoDto)
+  @ApiResponse({ status: 200, schema: paginatedSchema(RightsClaimSummaryDto) })
+  getBookRightsClaims(@Param('id') id: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     return this.rightsClaimsService.listForBook(id);
   }
 

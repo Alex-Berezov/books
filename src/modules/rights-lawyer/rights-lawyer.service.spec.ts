@@ -148,7 +148,7 @@ describe('RightsLawyerService', () => {
       const result = await service.list({ jurisdictionCode: 'us' });
 
       expect(result.items.map((item) => item.id)).toEqual(['b']);
-      expect(result.total).toBe(1);
+      expect(result.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
     });
   });
 

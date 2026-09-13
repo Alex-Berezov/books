@@ -214,7 +214,7 @@ describe('Pages e2e', () => {
       .expect(200);
 
     const groupIdsOf = (body: unknown): string[] =>
-      (body as { data: Array<{ translationGroupId: string }> }).data.map(
+      (body as { items: Array<{ translationGroupId: string }> }).items.map(
         (g) => g.translationGroupId,
       );
 
@@ -287,7 +287,7 @@ describe('Pages e2e', () => {
         .get(`/admin/pages?search=${encodeURIComponent(term)}&limit=100`)
         .set('Authorization', `Bearer ${adminAccess}`)
         .expect(200);
-      return (res.body as { data: Array<{ translationGroupId: string }> }).data.map(
+      return (res.body as { items: Array<{ translationGroupId: string }> }).items.map(
         (g) => g.translationGroupId,
       );
     };

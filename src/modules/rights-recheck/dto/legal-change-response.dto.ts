@@ -32,10 +32,3 @@ export class LegalChangeDetailDto extends LegalChangeDto {
   @ApiProperty({ type: [RecheckTaskDto] }) tasks!: RecheckTaskDto[];
   @ApiProperty() tasksCount!: number;
 }
-
-export class LegalChangeListResponseDto {
-  @ApiProperty({ type: [LegalChangeDto] }) items!: LegalChangeDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}

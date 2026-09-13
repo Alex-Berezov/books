@@ -25,13 +25,6 @@ export class RightsNotificationDto {
   @ApiProperty() createdAt!: string;
 }
 
-export class RightsNotificationsListResponseDto {
-  @ApiProperty({ type: [RightsNotificationDto] }) items!: RightsNotificationDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}
-
 export class RightsNotificationsUnreadCountDto {
   @ApiProperty() unreadCount!: number;
 }

@@ -10,10 +10,8 @@ import {
   type RightsNotificationType,
 } from './rights-agent-interface';
 import type { ListRightsNotificationsDto } from './dto/list-rights-notifications.dto';
-import type {
-  RightsNotificationDto,
-  RightsNotificationsListResponseDto,
-} from './dto/rights-notification-response.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import type { RightsNotificationDto } from './dto/rights-notification-response.dto';
 
 export interface CreateRightsNotificationInput {
   type: RightsNotificationType;
@@ -72,7 +70,7 @@ export class RightsNotificationsService {
   async list(
     userId: string,
     query: ListRightsNotificationsDto,
-  ): Promise<RightsNotificationsListResponseDto> {
+  ): Promise<PaginatedResult<RightsNotificationDto>> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, MAX_LIMIT) : 20;
     const skip = (page - 1) * limit;
@@ -84,7 +82,10 @@ export class RightsNotificationsService {
       this.delegate.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit }),
     ]);
 
-    return { items: items.map((item) => this.toDto(item)), total, page, limit };
+    return paginated(
+      items.map((item) => this.toDto(item)),
+      { page, limit, total },
+    );
   }
 
   async unreadCount(userId: string): Promise<{ unreadCount: number }> {

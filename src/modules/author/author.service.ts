@@ -16,6 +16,7 @@ import {
   AuthorFaqDto as AuthorFaq,
 } from './dto/author-translation.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 import {
   PUBLIC_AUTHOR_PAGE_TRANSLATION_SELECT,
   PUBLIC_AUTHOR_SELECT,
@@ -312,15 +313,14 @@ export class AuthorService {
       lang,
     );
 
-    return {
-      data: items.map((item) => this.toAuthorItem(item, booksCounts.get(item.id) ?? 0, lang)),
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    // Единая форма списка (`LEGACY-177`). Метод обслуживает **только** админский
+    // `GET /admin/authors` (`author.controller.ts`): публичная выдача авторов идёт
+    // отдельным `listPublic`, поэтому форму можно менять здесь, а не обёрткой
+    // в контроллере, и ни один кэшируемый публичный ответ этим не задет.
+    return paginated(
+      items.map((item) => this.toAuthorItem(item, booksCounts.get(item.id) ?? 0, lang)),
+      { page, limit, total },
+    );
   }
 
   /**

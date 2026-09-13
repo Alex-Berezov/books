@@ -133,17 +133,3 @@ export class ContributorResponseDto {
   @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
 }
-
-export class ContributorListResponseDto {
-  @ApiProperty({ type: [ContributorResponseDto] })
-  items!: ContributorResponseDto[];
-
-  @ApiProperty({ type: Number })
-  total!: number;
-
-  @ApiProperty({ type: Number })
-  page!: number;
-
-  @ApiProperty({ type: Number })
-  limit!: number;
-}

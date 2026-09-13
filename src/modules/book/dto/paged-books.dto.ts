@@ -61,7 +61,15 @@ export class BookListItemDto {
   hasSummary!: boolean;
 }
 
-/** Response of `GET /books` and `GET /:lang/books` (`BookService.findAll`). */
+/**
+ * Response of the **public** `GET /:lang/books` (`BookService.findAll`).
+ *
+ * ⚠️ Админское зеркало `GET /books` этим DTO больше не описывается: с `LEGACY-177`
+ * оно отдаёт единую форму `{items, pagination}` (`BookController.findAll` оборачивает
+ * результат сервиса). Публичный ответ остался `{data, meta}` намеренно — он лежит
+ * в edge-кэше Cloudflare, и смена его формы требует сброса кэша на боевом домене
+ * (решение арбитра 13.09.2026). Класс поэтому не удалён, а сужен до одного маршрута.
+ */
 export class PaginatedBooksResponseDto {
   @ApiProperty({ type: BookListItemDto, isArray: true })
   data!: BookListItemDto[];

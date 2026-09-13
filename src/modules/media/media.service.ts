@@ -13,6 +13,7 @@ import { Inject } from '@nestjs/common';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
 import { MediaProbeService } from '../media-jobs/media-probe.service';
 import { findMediaReferenceDescriptors } from './media-references';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 
 @Injectable()
 export class MediaService {
@@ -104,7 +105,7 @@ export class MediaService {
       }),
       this.prisma.mediaAsset.count({ where }),
     ]);
-    return { items, total, page, limit };
+    return paginated(items, { page, limit, total });
   }
 
   async remove(id: string) {

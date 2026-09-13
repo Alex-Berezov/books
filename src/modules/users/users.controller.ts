@@ -17,6 +17,7 @@ import {
   ApiOperation,
   ApiTags,
   ApiParam,
+  ApiExtraModels,
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -28,10 +29,15 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { PublicUserDto, PublicUserWithRolesDto } from './dto/public-user.dto';
 import { UserRoleDto } from './dto/user-role.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
-import { PagedUsersDto } from './dto/paged-users.dto';
 import { UpdateMeDto } from './dto/update-me.dto';
-import { PagedUserActivitiesDto } from './dto/paged-user-activities.dto';
+import { UserActivityDto } from './dto/user-activity.dto';
+import { pagedUserActivitiesSchema } from './dto/paged-user-activities.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
+import {
+  PaginationInfoDto,
+  PaginationWithNextDto,
+  paginatedSchema,
+} from '../../shared/dto/paginated-response.dto';
 
 interface RequestUser {
   userId: string;
@@ -39,6 +45,7 @@ interface RequestUser {
 }
 
 @ApiTags('users')
+@ApiExtraModels(UserActivityDto, PaginationWithNextDto, PublicUserWithRolesDto, PaginationInfoDto)
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('users')
@@ -54,7 +61,7 @@ export class UsersController {
 
   @ApiOperation({ summary: 'Get current user activities (comments & replies)' })
   @Get('me/activities')
-  @ApiOkResponse({ type: PagedUserActivitiesDto })
+  @ApiOkResponse({ schema: pagedUserActivitiesSchema() })
   meActivities(@Req() req: { user: RequestUser }, @Query() query: PaginationDto) {
     return this.users.getActivities(req.user.userId, query.page, query.limit);
   }
@@ -64,7 +71,7 @@ export class UsersController {
   // и два описания одного параметра — это два источника формы, из кода
   // неразличимые (`LEGACY-133`; найдено ревью в этом заходе).
   @ApiOperation({ summary: 'List users (admin only)' })
-  @ApiOkResponse({ type: PagedUsersDto })
+  @ApiOkResponse({ schema: paginatedSchema(PublicUserWithRolesDto) })
   @Roles(Role.Admin)
   @Get()
   list(@Query() query: ListUsersQueryDto) {

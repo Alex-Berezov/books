@@ -34,17 +34,15 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
-import {
-  PageResponse,
-  PageWithTranslationsResponse,
-  PaginatedPagesResponse,
-} from './dto/page-response.dto';
+import { PageResponse, PageWithTranslationsResponse } from './dto/page-response.dto';
 import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
-import { PaginatedPageGroupsResponse } from './dto/page-group-response.dto';
+import { PageGroupResponse } from './dto/page-group-response.dto';
 import { ListPagesQueryDto } from './dto/list-pages-query.dto';
+import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 
 @ApiTags('pages')
+@ApiExtraModels(PageResponse, PageGroupResponse, PaginationInfoDto)
 @Controller()
 export class PagesController {
   constructor(private readonly service: PagesService) {}
@@ -121,10 +119,9 @@ export class PagesController {
 
   @Get('admin/pages')
   @ApiOperation({ summary: 'Get all pages grouped by translation group (language agnostic)' })
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'List of page groups',
-    type: PaginatedPageGroupsResponse,
+    schema: paginatedSchema(PageGroupResponse),
   })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -178,7 +175,7 @@ export class PagesController {
     required: false,
     description: 'Takes precedence over path language',
   })
-  @ApiResponse({ status: 200, type: PaginatedPagesResponse })
+  @ApiOkResponse({ schema: paginatedSchema(PageResponse) })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

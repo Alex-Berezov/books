@@ -153,10 +153,3 @@ export class LawyerReviewDetailDto extends LawyerReviewDto {
   @ApiProperty({ type: [LawyerReviewEventDto] }) events!: LawyerReviewEventDto[];
   @ApiProperty({ type: [RiskFactorDto] }) riskFactors!: RiskFactorDto[];
 }
-
-export class LawyerReviewListResponseDto {
-  @ApiProperty({ type: [LawyerReviewDto] }) items!: LawyerReviewDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}

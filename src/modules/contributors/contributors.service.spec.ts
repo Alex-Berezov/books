@@ -30,7 +30,10 @@ describe('ContributorsService', () => {
 
   const mockPersonsService = {
     create: jest.fn().mockResolvedValue(mockPerson),
-    findAll: jest.fn().mockResolvedValue({ items: [mockPerson], total: 1 }),
+    findAll: jest.fn().mockResolvedValue({
+      items: [mockPerson],
+      pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    }),
     findOne: jest.fn().mockResolvedValue(mockPerson),
     update: jest.fn().mockResolvedValue(mockPerson),
     remove: jest.fn().mockResolvedValue({ id: 'person-1' }),
@@ -89,6 +92,9 @@ describe('ContributorsService', () => {
     const res = await service.findAll({});
     expect(res.items.length).toBe(1);
     expect(res.items[0].displayName).toBe('Homer');
+    // `total` берётся из `pagination` делегата, а `page`/`limit` — из запроса
+    // этой ручки (`LEGACY-177`): сверяется тело обёртки целиком.
+    expect(res.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
   });
 
   it('should expose person fields the admin UI relies on', async () => {

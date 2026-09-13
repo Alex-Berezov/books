@@ -1,25 +1,26 @@
-import { ApiProperty } from '@nestjs/swagger';
+import type {
+  ReferenceObject,
+  SchemaObject,
+} from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
 import { UserActivityDto } from './user-activity.dto';
+import {
+  PaginationWithNextDto,
+  PaginatedResult,
+  paginatedSchema,
+} from '../../../shared/dto/paginated-response.dto';
 
 /**
- * Ответ `GET /users/me/activities`. Форма обёртки — `{items,total,page,limit,hasNext}`,
- * та же, что у `CommentListDto` (`comments/dto/comment-list.dto.ts`): страница
- * собирается тем же приёмом ($transaction findMany+count), и `books-front`
- * уже умеет читать эту форму («load more» в `BookReviews.tsx`).
+ * Ответ `GET /users/me/activities`: строки плюс пагинация с `hasNext`.
+ *
+ * ⚠️ Признак **не выброшен** при сведении формы: его читает фронт —
+ * `books-front/api/hooks/useAuth.ts:105` строит по нему `getNextPageParam`
+ * у `useInfiniteQuery`. Снятое поле там означало бы «активности кончились»
+ * на первой же странице, то есть молчаливую пропажу данных у автора.
  */
-export class PagedUserActivitiesDto {
-  @ApiProperty({ type: UserActivityDto, isArray: true })
-  items!: UserActivityDto[];
-
-  @ApiProperty({ type: Number })
-  total!: number;
-
-  @ApiProperty({ type: Number })
-  page!: number;
-
-  @ApiProperty({ type: Number })
-  limit!: number;
-
-  @ApiProperty({ type: Boolean })
-  hasNext!: boolean;
+export interface PagedUserActivities extends PaginatedResult<UserActivityDto> {
+  pagination: PaginationWithNextDto;
 }
+
+/** Схема ответа для `@ApiOkResponse` — общая обёртка с пагинацией, несущей `hasNext`. */
+export const pagedUserActivitiesSchema = (): SchemaObject & Partial<ReferenceObject> =>
+  paginatedSchema(UserActivityDto, PaginationWithNextDto);

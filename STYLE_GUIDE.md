@@ -275,7 +275,19 @@ export class BookService {
 ### Паттерны
 
 - **Early return/throw** — проверка в начале метода, не вложенность
-- **Пагинация**: `Promise<{ items: T[]; total: number; page: number; limit: number }>`
+- **Пагинация** (с 13.09.2026, `LEGACY-177`): `Promise<PaginatedResult<T>>` — форма
+  `{ items: T[]; pagination: { page, limit, total, totalPages } }`. Обёртка собирается
+  хелпером `paginated(items, { page, limit, total })` из `src/shared/dto/paginated-response.dto.ts`,
+  своей формы заводить нельзя; `totalPages` считает хелпер (при `limit = 0` — ноль, не `Infinity`).
+  Для маршрута без пагинации, отдающего всё одной страницей, — `paginatedAll(items)`.
+  В `@ApiOkResponse` схема ставится через `paginatedSchema(ItemDto)`, а `ItemDto`
+  и `PaginationInfoDto` объявляются в `@ApiExtraModels` контроллера.
+  ⚠️ **Публичные маршруты на прежних формах** (`{data, meta}` у `/:lang/books`, `/:lang/tags`
+  и соседей; `{items, total, page, limit, hasNext}` у `GET /comments`): их ответы лежат
+  в edge-кэше Cloudflare, и смена формы требует сброса кэша на боевом домене — это решение
+  владельца, а не недоделка. Форму маршрута смотреть в
+  `books-app-docs/ai-context/api-contracts.md`, раздел «Форма списочного ответа»,
+  а не по соседней ручке.
 - **`$transaction`** для мульти-мутаций
 - **`Promise.all`** для параллельных независимых запросов
 - **Идемпотентность**: если существует — вернуть существующее

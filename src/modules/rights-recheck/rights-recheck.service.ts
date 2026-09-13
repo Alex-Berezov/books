@@ -45,6 +45,7 @@ import {
   parsePositiveInt,
   type RecheckDateConfig,
 } from './rights-recheck.util';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
 import type { CompleteRecheckTaskDto } from './dto/complete-recheck-task.dto';
 import type { CreateRecheckTaskDto } from './dto/create-recheck-task.dto';
 import type { DismissRecheckTaskDto } from './dto/dismiss-recheck-task.dto';
@@ -55,7 +56,6 @@ import type {
   RecheckTaskDetailDto,
   RecheckTaskDto,
   RecheckTaskEventDto,
-  RecheckTaskListResponseDto,
 } from './dto/recheck-task-response.dto';
 import type { SnoozeRecheckTaskDto } from './dto/snooze-recheck-task.dto';
 import type { UpdateRecheckScheduleDto } from './dto/update-recheck-schedule.dto';
@@ -304,7 +304,7 @@ export class RightsRecheckService {
   // Queries
   // ---------------------------------------------------------------------------
 
-  async list(query: ListRecheckTasksDto): Promise<RecheckTaskListResponseDto> {
+  async list(query: ListRecheckTasksDto): Promise<PaginatedResult<RecheckTaskDto>> {
     const database = this.getDatabase();
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit =
@@ -326,12 +326,10 @@ export class RightsRecheckService {
 
     const now = new Date();
     const config = this.getRuntimeConfig();
-    return {
-      items: items.map((item) => this.toTaskDto(item, now, config)),
-      total,
-      page,
-      limit,
-    };
+    return paginated(
+      items.map((item) => this.toTaskDto(item, now, config)),
+      { page, limit, total },
+    );
   }
 
   private buildListWhere(query: ListRecheckTasksDto, now: Date): Record<string, unknown> {
@@ -380,7 +378,7 @@ export class RightsRecheckService {
   async listByIntake(
     intakeId: string,
     query: ListRecheckTasksDto,
-  ): Promise<RecheckTaskListResponseDto> {
+  ): Promise<PaginatedResult<RecheckTaskDto>> {
     await this.assertIntakeExists(intakeId);
     return this.list({ ...query, rightsIntakeId: intakeId });
   }

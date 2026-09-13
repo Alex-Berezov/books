@@ -29,10 +29,3 @@ export class LawyerDetailDto extends LawyerDto {
   @ApiProperty() decidedReviewsCount!: number;
   @ApiProperty() opinionsCount!: number;
 }
-
-export class LawyersListResponseDto {
-  @ApiProperty({ type: [LawyerDto] }) items!: LawyerDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}

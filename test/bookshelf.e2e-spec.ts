@@ -74,10 +74,13 @@ describe('Bookshelf e2e', () => {
       .expect(200);
     expect(Array.isArray(list.body.items)).toBe(true);
     expect(list.body.items.length).toBeGreaterThanOrEqual(1);
-    expect(list.body.page).toBe(1);
-    expect(list.body.limit).toBe(10);
-    expect(typeof list.body.total).toBe('number');
-    expect(typeof list.body.hasNext).toBe('boolean');
+    // Единая обёртка `{items, pagination}` (`LEGACY-177`); `hasNext` остался
+    // внутри `pagination` — его читает ручная схема фронта.
+    expect(list.body.pagination.page).toBe(1);
+    expect(list.body.pagination.limit).toBe(10);
+    expect(typeof list.body.pagination.total).toBe('number');
+    expect(typeof list.body.pagination.totalPages).toBe('number');
+    expect(typeof list.body.pagination.hasNext).toBe('boolean');
 
     // remove (204 even if already removed)
     await request(http())

@@ -354,20 +354,6 @@ export class RightsClaimDetailDto extends RightsClaimSummaryDto {
   events!: RightsClaimEventDto[];
 }
 
-export class RightsClaimListResponseDto {
-  @ApiProperty({ type: [RightsClaimSummaryDto] })
-  items!: RightsClaimSummaryDto[];
-
-  @ApiProperty({ type: Number })
-  total!: number;
-
-  @ApiProperty({ type: Number })
-  page!: number;
-
-  @ApiProperty({ type: Number })
-  limit!: number;
-}
-
 export class ClaimIssueDto {
   @ApiProperty({ type: String, example: 'ACTIVE_RIGHTS_CLAIM' })
   code!: string;

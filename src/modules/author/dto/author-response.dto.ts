@@ -236,29 +236,10 @@ export class AdminAuthorItemDto {
   booksCount!: number;
 }
 
-/**
- * Обёртка страницы админского списка авторов — форма `{ data, meta }`,
- * которую возвращает `AuthorService.list` (`author.service.ts:314-323`).
+/*
+ * Обёртки страницы (`AdminAuthorsListResponseDto`/`AdminAuthorsListMetaDto`) здесь больше
+ * нет: `GET /admin/authors` отдаёт единую форму `{items, pagination}` (`LEGACY-177`),
+ * которую описывают `paginatedSchema(AdminAuthorItemDto)` и `PaginationInfoDto`
+ * из `src/shared/dto/paginated-response.dto.ts`. Собственный класс на каждую страницу
+ * снова развёл бы четвёрку `page/limit/total/totalPages` по девяти копиям.
  */
-export class AdminAuthorsListMetaDto {
-  @ApiProperty({ type: Number })
-  page!: number;
-
-  @ApiProperty({ type: Number })
-  limit!: number;
-
-  @ApiProperty({ type: Number })
-  total!: number;
-
-  @ApiProperty({ type: Number })
-  totalPages!: number;
-}
-
-/** Ответ `GET /admin/authors` (`AuthorController.list`). */
-export class AdminAuthorsListResponseDto {
-  @ApiProperty({ type: AdminAuthorItemDto, isArray: true })
-  data!: AdminAuthorItemDto[];
-
-  @ApiProperty({ type: AdminAuthorsListMetaDto })
-  meta!: AdminAuthorsListMetaDto;
-}

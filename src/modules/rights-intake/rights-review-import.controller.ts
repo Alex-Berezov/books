@@ -2,23 +2,26 @@ import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nest
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { RightsReviewImportService } from './rights-review-import.service';
 import { CreateRightsReviewImportDto } from './dto/create-rights-review-import.dto';
 import {
   ListRightsReviewImportsRequestDto,
   RightsReviewImportDetailDto,
+  RightsReviewImportListItemDto,
   RightsReviewImportRecordDto,
-  RightsReviewImportsListResponseDto,
 } from './dto/rights-review-import-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('rights-review-imports')
+@ApiExtraModels(RightsReviewImportListItemDto, PaginationInfoDto)
 @ApiBearerAuth()
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -39,7 +42,7 @@ export class RightsReviewImportController {
 
   @Get('admin/rights/intakes/:id/review-imports')
   @ApiOperation({ summary: 'List review imports for a rights intake' })
-  @ApiOkResponse({ type: RightsReviewImportsListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(RightsReviewImportListItemDto) })
   listByIntake(@Param('id') id: string, @Query() query: ListRightsReviewImportsRequestDto) {
     return this.service.listByIntake(id, query);
   }

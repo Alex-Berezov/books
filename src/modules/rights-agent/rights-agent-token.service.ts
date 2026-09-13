@@ -34,11 +34,8 @@ import {
 import type { CreateAgentTokenDto } from './dto/create-agent-token.dto';
 import type { ListAgentTokensDto } from './dto/list-agent-tokens.dto';
 import type { RevokeAgentTokenDto } from './dto/revoke-agent-token.dto';
-import type {
-  AgentTokenDto,
-  AgentTokenIssuedDto,
-  AgentTokenListResponseDto,
-} from './dto/agent-token-response.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import type { AgentTokenDto, AgentTokenIssuedDto } from './dto/agent-token-response.dto';
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 
@@ -172,7 +169,7 @@ export class RightsAgentTokenService {
   async listByIntake(
     intakeId: string,
     query: ListAgentTokensDto,
-  ): Promise<AgentTokenListResponseDto> {
+  ): Promise<PaginatedResult<AgentTokenDto>> {
     const intake = await this.prisma.rightsIntake.findUnique({ where: { id: intakeId } });
     if (!intake) {
       throw agentError(HttpStatus.NOT_FOUND, AGENT_ERROR_CODES.INTAKE_NOT_FOUND);
@@ -192,7 +189,10 @@ export class RightsAgentTokenService {
       this.tokenDelegate.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit }),
     ]);
 
-    return { items: items.map((item) => this.toDto(item)), total, page, limit };
+    return paginated(
+      items.map((item) => this.toDto(item)),
+      { page, limit, total },
+    );
   }
 
   async getById(tokenId: string): Promise<AgentTokenDto> {

@@ -18,6 +18,13 @@ import { BookService } from '../src/modules/book/book.service';
  * `Test.createTestingModule` и их не подключает. Здесь доказано, что тело не
  * содержит текста драйвера **до** этих фильтров; сами они тело ответа не
  * меняют — `SentryExceptionFilter` всегда завершает `super.catch()`.
+ *
+ * 13.09.2026 (`LEGACY-179`, решение владельца) контроллер перестал ловить
+ * исключения: тело неожиданного отказа формирует стандартный фильтр Nest.
+ * Было `{message: 'Failed to get book overview'}`, стало
+ * `{statusCode: 500, message: 'Internal server error'}` — одна форма на все
+ * контроллеры. Утечки текста драйвера не было и нет, и проверка на неё здесь
+ * остаётся главной: раньше его резал `internalFailure`, теперь — фильтр Nest.
  */
 
 const DRIVER_TEXT =
@@ -50,9 +57,9 @@ describe('Books (e2e) — тело ошибки 500 не несёт текст �
     app.getHttpServer() as unknown as Parameters<typeof request>[0];
 
   it.each([
-    ['GET /books/:slug/overview', '/books/harry-potter/overview', 'Failed to get book overview'],
-    ['GET /books/slug/:slug', '/books/slug/harry-potter', 'Failed to get book by slug'],
-  ])('%s отвечает анониму 500 без текста драйвера', async (_name, path, message) => {
+    ['GET /books/:slug/overview', '/books/harry-potter/overview'],
+    ['GET /books/slug/:slug', '/books/slug/harry-potter'],
+  ])('%s отвечает анониму 500 без текста драйвера', async (_name, path) => {
     const res = await request(server()).get(path);
 
     expect(res.status).toBe(500);
@@ -60,7 +67,9 @@ describe('Books (e2e) — тело ошибки 500 не несёт текст �
     expect(body).not.toContain('prisma');
     expect(body).not.toContain('rights_holder_email');
     expect(body).not.toContain('bookVersion');
-    expect((res.body as { message?: string }).message).toBe(message);
-    expect((res.body as { details?: unknown }).details).toBeUndefined();
+    // Сравнение тела целиком, а не поля: собственная форма контроллера
+    // (`{message: 'Failed to ...'}`) обязана ронять эту спеку, даже если
+    // текста драйвера в ней нет.
+    expect(res.body).toEqual({ statusCode: 500, message: 'Internal server error' });
   });
 });

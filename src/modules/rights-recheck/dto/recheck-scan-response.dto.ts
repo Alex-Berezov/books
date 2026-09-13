@@ -17,10 +17,3 @@ export class RecheckScanRunDto {
   @ApiProperty({ type: String, nullable: true }) errorMessage!: string | null;
   @ApiProperty({ type: String, nullable: true }) triggeredByUserId!: string | null;
 }
-
-export class RecheckScanRunListResponseDto {
-  @ApiProperty({ type: [RecheckScanRunDto] }) items!: RecheckScanRunDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}

@@ -16,6 +16,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiExtraModels,
 } from '@nestjs/swagger';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -26,14 +27,12 @@ import { LinkRightsComponentContributorDto } from './dto/link-rights-component-c
 import { LinkSourceEditionContributorDto } from './dto/link-source-edition-contributor.dto';
 import { QueryContributorsDto } from './dto/query-contributors.dto';
 import { UpdateContributorDto } from './dto/update-contributor.dto';
-import {
-  ContributorLinkResponseDto,
-  ContributorListResponseDto,
-  ContributorResponseDto,
-} from './dto/contributor-response.dto';
+import { ContributorLinkResponseDto, ContributorResponseDto } from './dto/contributor-response.dto';
 import { DeleteContributorResponseDto } from './dto/delete-contributor-response.dto';
+import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 
 @ApiTags('Contributors')
+@ApiExtraModels(ContributorResponseDto, PaginationInfoDto)
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
@@ -41,7 +40,7 @@ export class ContributorsController {
   constructor(private readonly contributorsService: ContributorsService) {}
 
   @Get('contributors')
-  @ApiOkResponse({ type: ContributorListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(ContributorResponseDto) })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'List contributors with search and filters' })
   async findAll(@Query() query: QueryContributorsDto) {

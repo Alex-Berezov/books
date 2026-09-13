@@ -34,13 +34,6 @@ export class AgentTokenIssuedDto extends AgentTokenDto {
   token!: string;
 }
 
-export class AgentTokenListResponseDto {
-  @ApiProperty({ type: [AgentTokenDto] }) items!: AgentTokenDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}
-
 export class AgentTokenDetailResponseDto extends AgentTokenDto {
   @ApiProperty({ type: String, nullable: true }) lastUsedIp!: string | null;
 }

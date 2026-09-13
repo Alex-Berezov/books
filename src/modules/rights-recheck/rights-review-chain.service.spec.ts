@@ -69,8 +69,11 @@ describe('RightsReviewChainService', () => {
   it('returns an empty chain for an intake without reviews', async () => {
     const result = await service.getChainForIntake('intake-1');
 
-    expect(result.items).toEqual([]);
-    expect(result.total).toBe(0);
+    // Тело целиком: пустая цепочка — это `paginatedAll([])`, а не `{items,total}`.
+    expect(result).toEqual({
+      items: [],
+      pagination: { page: 1, limit: 0, total: 0, totalPages: 0 },
+    });
   });
 
   it('fails with RECHECK_INTAKE_NOT_FOUND for an unknown intake', async () => {

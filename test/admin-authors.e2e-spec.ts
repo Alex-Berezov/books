@@ -80,18 +80,21 @@ describe('Admin authors routing (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 
+      // Единая форма списка (`LEGACY-177`): `{items, pagination}`, ключей
+      // `data`/`meta` в теле больше нет.
       const body = response.body as {
-        data: unknown[];
-        meta: { page: number; limit: number; total: number; totalPages: number };
+        items: unknown[];
+        pagination: { page: number; limit: number; total: number; totalPages: number };
       };
-      expect(Array.isArray(body.data)).toBe(true);
-      expect(body.meta.page).toBe(1);
+      expect(Array.isArray(body.items)).toBe(true);
+      expect(Object.keys(body).sort()).toEqual(['items', 'pagination']);
+      expect(body.pagination.page).toBe(1);
       // Размер страницы задан дефолтом `PaginationDto` (`limit = 10`), а не
       // запасным значением контроллера (`20`), до которого дело не доходит:
       // `transform: true` подставляет дефолт DTO раньше. Пинится точным
       // значением — «больше нуля» пропустило бы дефолт в тысячу строк.
-      expect(body.meta.limit).toBe(10);
-      expect(body.data.length).toBeLessThanOrEqual(10);
+      expect(body.pagination.limit).toBe(10);
+      expect(body.items.length).toBeLessThanOrEqual(10);
     });
 
     /**
@@ -122,8 +125,8 @@ describe('Admin authors routing (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 
-      const body = response.body as { meta: { limit: number } };
-      expect(body.meta.limit).toBe(PAGINATION_MAX_LIMIT);
+      const body = response.body as { pagination: { limit: number } };
+      expect(body.pagination.limit).toBe(PAGINATION_MAX_LIMIT);
     });
 
     it('без токена отвечает 401 от гварда, а не 404 от чужого маршрута', async () => {
@@ -157,8 +160,8 @@ describe('Admin authors routing (e2e)', () => {
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200);
 
-        const body = response.body as { data: Array<{ id: string }> };
-        expect(body.data.some((a) => a.id === authorId)).toBe(true);
+        const body = response.body as { items: Array<{ id: string }> };
+        expect(body.items.some((a) => a.id === authorId)).toBe(true);
 
         const miss = await request(http())
           .get('/admin/authors')
@@ -166,8 +169,8 @@ describe('Admin authors routing (e2e)', () => {
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200);
 
-        const missBody = miss.body as { data: Array<{ id: string }> };
-        expect(missBody.data.some((a) => a.id === authorId)).toBe(false);
+        const missBody = miss.body as { items: Array<{ id: string }> };
+        expect(missBody.items.some((a) => a.id === authorId)).toBe(false);
       } finally {
         await request(http())
           .delete(`/admin/authors/${authorId}`)

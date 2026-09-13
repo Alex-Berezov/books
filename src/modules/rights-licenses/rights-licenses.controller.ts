@@ -10,7 +10,19 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiExtraModels,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -22,7 +34,7 @@ import {
   LicenseCoverageResultDto,
   RightsLicenseDetailDto,
   RightsLicenseLinkDto,
-  RightsLicenseListResponseDto,
+  RightsLicenseSummaryDto,
   UnlinkRightsLicenseResponseDto,
 } from './dto/rights-license-response.dto';
 import { UpdateRightsLicenseDto } from './dto/update-rights-license.dto';
@@ -30,6 +42,7 @@ import { RightsLicenseCoverageService } from './rights-license-coverage.service'
 import { RightsLicensesService } from './rights-licenses.service';
 
 @ApiTags('Rights Licenses')
+@ApiExtraModels(RightsLicenseSummaryDto, PaginationInfoDto)
 @ApiBearerAuth()
 @Controller('admin/rights')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -42,8 +55,10 @@ export class RightsLicensesController {
   @Get('licenses')
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'List rights licenses' })
-  @ApiResponse({ status: 200, type: RightsLicenseListResponseDto })
-  findAll(@Query() query: QueryRightsLicensesDto): Promise<RightsLicenseListResponseDto> {
+  @ApiResponse({ status: 200, schema: paginatedSchema(RightsLicenseSummaryDto) })
+  findAll(
+    @Query() query: QueryRightsLicensesDto,
+  ): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
     return this.service.findAll(query);
   }
 
@@ -124,8 +139,10 @@ export class RightsLicensesController {
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'List licenses reachable from a rights profile' })
   @ApiParam({ name: 'profileId' })
-  @ApiResponse({ status: 200, type: RightsLicenseListResponseDto })
-  listForProfile(@Param('profileId') profileId: string): Promise<RightsLicenseListResponseDto> {
+  @ApiResponse({ status: 200, schema: paginatedSchema(RightsLicenseSummaryDto) })
+  listForProfile(
+    @Param('profileId') profileId: string,
+  ): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
     return this.service.listForProfile(profileId);
   }
 

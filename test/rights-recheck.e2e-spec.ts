@@ -380,7 +380,14 @@ describe('Rights recheck e2e', () => {
       .set(...auth())
       .expect(200);
 
-    expect(chain.body.total).toBeGreaterThanOrEqual(1);
+    // `LEGACY-177`: цепочка отдаётся одной страницей в единой обёртке.
+    const chainBody = chain.body as {
+      items: unknown[];
+      pagination: { total: number; totalPages: number };
+    };
+    expect(Object.keys(chainBody).sort()).toEqual(['items', 'pagination']);
+    expect(chainBody.pagination.total).toBeGreaterThanOrEqual(1);
+    expect(chainBody.pagination.totalPages).toBe(1);
     expect(chain.body.items[0].revisionNumber).toBe(1);
     expect(chain.body.items[0].diffFromPrevious).toBeNull();
     expect(chain.body.items[0].id).toBe(reviewId);

@@ -15,10 +15,12 @@ import {
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { RightsIntakeService } from './rights-intake.service';
 import { RightsIntakeManifestService } from './rights-intake-manifest.service';
 import { RightsApprovalService } from './rights-approval.service';
@@ -32,7 +34,7 @@ import { RejectRightsReviewDto } from './dto/reject-rights-review.dto';
 import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 import { RightsProfileDetailDto } from './dto/rights-profile-response.dto';
 import { RightsIntakeResponseDto } from './dto/rights-intake-response.dto';
-import { PagedRightsIntakesDto } from './dto/paged-rights-intakes.dto';
+import { RightsIntakeListItemDto } from './dto/paged-rights-intakes.dto';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { CreateBookFromClearanceResponseDto } from './dto/create-book-from-clearance-response.dto';
 import { RightsIntakeReadinessDto } from './dto/rights-intake-readiness.dto';
@@ -42,6 +44,7 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { RightsAgentManifestDto } from './dto/rights-agent-manifest.dto';
 
 @ApiTags('rights-intakes')
+@ApiExtraModels(RightsIntakeListItemDto, PaginationInfoDto)
 @ApiBearerAuth()
 @Controller('admin/rights/intakes')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -56,7 +59,7 @@ export class RightsIntakeController {
 
   @Get()
   @ApiOperation({ summary: 'List rights intakes' })
-  @ApiOkResponse({ type: PagedRightsIntakesDto })
+  @ApiOkResponse({ schema: paginatedSchema(RightsIntakeListItemDto) })
   list(@Query() dto: ListRightsIntakesDto) {
     return this.service.list(dto);
   }

@@ -10,6 +10,7 @@ import { QueryContributorsDto } from './dto/query-contributors.dto';
 import { UpdateContributorDto } from './dto/update-contributor.dto';
 import type { ContributorResponseDto } from './dto/contributor-response.dto';
 import type { PersonRecord } from '../persons/person-interface';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 
 /**
  * Снимок связи для события журнала. Формы две, и обе — сгенерированные типы, а не рукописный
@@ -95,14 +96,10 @@ export class ContributorsService {
       offset: (page - 1) * limit,
     });
 
-    return {
-      items: (res.items as unknown as PersonRecord[]).map((person) =>
-        this.toContributorResponse(person),
-      ),
-      total: res.total,
-      page,
-      limit,
-    };
+    return paginated(
+      (res.items as unknown as PersonRecord[]).map((person) => this.toContributorResponse(person)),
+      { page, limit, total: res.pagination.total },
+    );
   }
 
   async findOne(id: string): Promise<ContributorResponseDto> {

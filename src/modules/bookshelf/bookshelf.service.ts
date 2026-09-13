@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { paginatedWithNext } from '../../shared/dto/paginated-response.dto';
+import { PagedBookshelf } from './dto/bookshelf.dto';
 
 // Полке нужны карточка версии и адрес книги — и ничего больше. Выборка перечисляет поля
 // поимённо не для красоты: `include` тянул всю строку `BookVersion`, включая 29 правовых
@@ -22,26 +24,11 @@ const BOOKSHELF_VERSION_SELECT = {
   _count: { select: { chapters: true } },
 } satisfies Prisma.BookVersionSelect;
 
-type BookshelfBookVersion = Omit<
-  Prisma.BookVersionGetPayload<{ select: typeof BOOKSHELF_VERSION_SELECT }>,
-  '_count'
-> & { chaptersCount: number };
-
 @Injectable()
 export class BookshelfService {
   constructor(private prisma: PrismaService) {}
 
-  async list(
-    userId: string,
-    page = 1,
-    limit = 10,
-  ): Promise<{
-    items: { id: string; addedAt: Date; bookVersion: BookshelfBookVersion }[];
-    page: number;
-    limit: number;
-    total: number;
-    hasNext: boolean;
-  }> {
+  async list(userId: string, page = 1, limit = 10): Promise<PagedBookshelf> {
     const skip = (page - 1) * limit;
     const [itemsRaw, total] = await this.prisma.$transaction([
       this.prisma.bookshelf.findMany({
@@ -68,7 +55,10 @@ export class BookshelfService {
         },
       };
     });
-    return { items, page, limit, total, hasNext };
+    // `hasNext` живёт внутри `pagination` (`LEGACY-177`): целевая обёртка его
+    // не несёт, но считается он здесь `take: limit + 1` и потому остаётся —
+    // см. doc-комментарий `BookshelfPaginationDto`.
+    return paginatedWithNext(items, { page, limit, total, hasNext });
   }
 
   async add(userId: string, versionId: string) {

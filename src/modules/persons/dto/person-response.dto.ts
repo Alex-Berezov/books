@@ -96,17 +96,3 @@ export class PersonDetailDto extends PersonListItemDto {
   @ApiProperty({ type: [PersonTranslationResponseDto] })
   translations!: PersonTranslationResponseDto[];
 }
-
-export class PersonListResponseDto {
-  @ApiProperty({ type: [PersonListItemDto] })
-  items!: PersonListItemDto[];
-
-  @ApiProperty({ type: Number })
-  total!: number;
-
-  @ApiProperty({ type: Number })
-  limit!: number;
-
-  @ApiProperty({ type: Number })
-  offset!: number;
-}

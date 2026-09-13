@@ -7,6 +7,7 @@ import { UpdatePageDto } from './dto/update-page.dto';
 import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/reserved-slugs';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 
 /**
  * Точная форма, которую реально возвращает Prisma с `include: { seo: true }` — используется как
@@ -112,15 +113,11 @@ export class PagesService {
       this.prisma.page.count({ where }),
     ]);
 
-    return {
-      data,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    // Единая форма списка (`LEGACY-177`): метод зовёт только админский
+    // `GET /admin/:lang/pages` (`pages.controller.ts`), публичная страница
+    // отдаётся поштучно `getPublicBySlugWithPolicy` — кэшируемых ответов
+    // эта замена не касается.
+    return paginated(data, { page, limit, total });
   }
 
   async adminListGrouped(page = 1, limit = 20, search?: string, status?: PublicationStatus) {
@@ -187,15 +184,9 @@ export class PagesService {
       pages: pages.filter((p) => p.translationGroupId === groupId),
     }));
 
-    return {
-      data: groupedData,
-      meta: {
-        page,
-        limit,
-        total: totalGroups,
-        totalPages: Math.ceil(totalGroups / limit),
-      },
-    };
+    // Единая форма списка (`LEGACY-177`); как и `adminList`, метод обслуживает
+    // один-единственный админский маршрут `GET /admin/pages`.
+    return paginated(groupedData, { page, limit, total: totalGroups });
   }
 
   async findById(id: string) {

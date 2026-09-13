@@ -129,6 +129,37 @@ describe('RightsLicensesService', () => {
     service = new RightsLicensesService(prisma as unknown as PrismaService, coverage);
   });
 
+  // --- списочная обёртка (`LEGACY-177`) ------------------------------------
+
+  describe('list shape', () => {
+    it('findAll answers {items, pagination} with the applied page', async () => {
+      prisma.rightsLicense.findMany.mockResolvedValue([makeRecord()]);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      // Тело целиком: возврат плоской `{items,total,page,limit}` красит эту строку.
+      expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
+      expect(result.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
+      expect(result.items).toHaveLength(1);
+    });
+
+    it('listForProfile answers one page over everything found, totalPages 1', async () => {
+      prisma.rightsLicenseLink.findMany.mockResolvedValue([
+        { rightsLicenseId: 'lic-1' },
+        { rightsLicenseId: 'lic-2' },
+      ]);
+      prisma.rightsLicense.findMany.mockResolvedValue([
+        makeRecord(),
+        makeRecord({ id: 'lic-2', licenseKey: 'key-2' }),
+      ]);
+
+      const result = await service.listForProfile('profile-1');
+
+      expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
+      expect(result.pagination).toEqual({ page: 1, limit: 2, total: 2, totalPages: 1 });
+    });
+  });
+
   describe('create', () => {
     it('creates a license and records a CREATED event', async () => {
       prisma.rightsLicense.create.mockResolvedValue(makeRecord());

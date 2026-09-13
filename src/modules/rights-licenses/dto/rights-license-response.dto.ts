@@ -226,20 +226,6 @@ export class RightsLicenseDetailDto extends RightsLicenseSummaryDto {
   warnings!: string[];
 }
 
-export class RightsLicenseListResponseDto {
-  @ApiProperty({ type: [RightsLicenseSummaryDto] })
-  items!: RightsLicenseSummaryDto[];
-
-  @ApiProperty({ type: Number })
-  total!: number;
-
-  @ApiProperty({ type: Number })
-  page!: number;
-
-  @ApiProperty({ type: Number })
-  limit!: number;
-}
-
 export class LicenseIssueDto {
   @ApiProperty({ type: String, example: 'LICENSE_MISSING_FOR_COUNTRY' })
   code!: string;

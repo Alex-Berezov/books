@@ -797,8 +797,9 @@ describe('UsersService (unit)', () => {
     prismaMock.userRole.findMany.mockResolvedValue([]);
 
     const res = await service.list({ page: 1, limit: 1, staff: 'exclude' });
-    expect(res.page).toBe(1);
-    expect(res.limit).toBe(1);
+    // Тело обёртки сверяется целиком (`LEGACY-177`): выпавшее или лишнее поле
+    // пагинации поштучные `toBe` пропускали бы.
+    expect(res.pagination).toEqual({ page: 1, limit: 1, total: 2, totalPages: 2 });
     expect(Array.isArray(res.items)).toBe(true);
     // Условие проверяется целиком: снятое `NOT` тест обязан заметить, иначе
     // «не сотрудники» начнут включать админов.
@@ -977,7 +978,13 @@ describe('UsersService (unit)', () => {
       prismaMock.comment.count.mockResolvedValueOnce(1);
       const res = await service.getActivities('u1');
       expect(res.items.length).toBe(1);
-      expect(res.total).toBe(1);
+      expect(res.pagination).toEqual({
+        page: 1,
+        limit: 10,
+        total: 1,
+        totalPages: 1,
+        hasNext: false,
+      });
       expect(res.items[0].text).toBe('hello');
       expect(res.items[0].bookVersion).toEqual({
         id: 'v1',
@@ -1005,10 +1012,15 @@ describe('UsersService (unit)', () => {
       };
       expect(args.skip).toBe(10);
       expect(args.take).toBe(10);
-      expect(res.page).toBe(2);
-      expect(res.limit).toBe(10);
-      expect(res.total).toBe(25);
-      expect(res.hasNext).toBe(true);
+      // `hasNext` остался, но переехал внутрь `pagination` (`LEGACY-177`):
+      // сверка идёт телом целиком, а не по одному полю.
+      expect(res.pagination).toEqual({
+        page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3,
+        hasNext: true,
+      });
     });
 
     it('hasNext ложно на последней странице (LEGACY-218)', async () => {
@@ -1017,7 +1029,13 @@ describe('UsersService (unit)', () => {
 
       const res = await service.getActivities('u1', 2, 10);
 
-      expect(res.hasNext).toBe(false);
+      expect(res.pagination).toEqual({
+        page: 2,
+        limit: 10,
+        total: 20,
+        totalPages: 2,
+        hasNext: false,
+      });
     });
 
     // 🔴 Главная половина LEGACY-218: текст главы не читается вовсе. Проверяется

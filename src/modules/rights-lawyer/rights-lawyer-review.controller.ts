@@ -2,10 +2,16 @@ import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nest
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -25,7 +31,7 @@ import {
 import { RequestLawyerReviewDto, RequireLawyerReviewDto } from './dto/request-lawyer-review.dto';
 import {
   LawyerReviewDetailDto,
-  LawyerReviewListResponseDto,
+  LawyerReviewDto,
   LegalOpinionDto,
 } from './dto/lawyer-review-response.dto';
 import { RiskAssessmentSnapshotDto } from './dto/risk-assessment-response.dto';
@@ -39,6 +45,7 @@ import {
  * `lawyer-reviews/:id`) so Nest never matches `expiry-scan` as a review id.
  */
 @ApiTags('rights-lawyer-reviews')
+@ApiExtraModels(LawyerReviewDto, PaginationInfoDto)
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager, Role.Lawyer)
@@ -50,12 +57,12 @@ export class RightsLawyerReviewController {
   ) {}
 
   @Get('admin/rights/lawyer-reviews')
-  @ApiOkResponse({ type: LawyerReviewListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(LawyerReviewDto) })
   @ApiOperation({ summary: 'Legal review inbox' })
   list(
     @Query() query: ListLawyerReviewsDto,
     @Req() req: { user: { userId: string } },
-  ): Promise<LawyerReviewListResponseDto> {
+  ): Promise<PaginatedResult<LawyerReviewDto>> {
     return this.reviews.list(query, req.user.userId);
   }
 
@@ -224,12 +231,12 @@ export class RightsLawyerReviewController {
   }
 
   @Get('admin/rights/intakes/:id/lawyer-reviews')
-  @ApiOkResponse({ type: LawyerReviewListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(LawyerReviewDto) })
   @ApiOperation({ summary: 'Legal reviews of an intake' })
   listByIntake(
     @Param('id') id: string,
     @Query() query: ListLawyerReviewsDto,
-  ): Promise<LawyerReviewListResponseDto> {
+  ): Promise<PaginatedResult<LawyerReviewDto>> {
     return this.reviews.listByIntake(id, query);
   }
 

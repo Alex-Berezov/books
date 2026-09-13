@@ -15,11 +15,11 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiParam,
-  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { ChapterService } from './chapter.service';
+import { ListChaptersQueryDto } from './dto/list-chapters-query.dto';
 import { ChapterResponseDto } from './dto/chapter-response.dto';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
@@ -44,21 +44,16 @@ export class ChapterController {
       'List chapters by book version (returns all by default; pass page & limit for pagination)',
   })
   @ApiParam({ name: 'bookVersionId' })
-  @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiOkResponse({ type: ChapterResponseDto, isArray: true })
   list(
     @Param('bookVersionId') bookVersionId: string,
-    @Query('page') rawPage?: string,
-    @Query('limit') rawLimit?: string,
+    @Query() query: ListChaptersQueryDto,
     @Headers() headers?: GeoRequestHeaders,
   ) {
-    const page = rawPage ? parseInt(rawPage, 10) : undefined;
-    const limit = rawLimit ? parseInt(rawLimit, 10) : undefined;
     return this.service.listByVersion(
       bookVersionId,
-      page,
-      limit,
+      query.page,
+      query.limit,
       this.geoIpCountryService.resolveCountry(headers ?? {}),
     );
   }
@@ -68,20 +63,12 @@ export class ChapterController {
     summary: 'Admin: list chapters by book version (any status, including drafts)',
   })
   @ApiParam({ name: 'bookVersionId' })
-  @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiOkResponse({ type: ChapterResponseDto, isArray: true })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  listAdmin(
-    @Param('bookVersionId') bookVersionId: string,
-    @Query('page') rawPage?: string,
-    @Query('limit') rawLimit?: string,
-  ) {
-    const page = rawPage ? parseInt(rawPage, 10) : undefined;
-    const limit = rawLimit ? parseInt(rawLimit, 10) : undefined;
-    return this.service.listAdminByVersion(bookVersionId, page, limit);
+  listAdmin(@Param('bookVersionId') bookVersionId: string, @Query() query: ListChaptersQueryDto) {
+    return this.service.listAdminByVersion(bookVersionId, query.page, query.limit);
   }
 
   @Post('versions/:bookVersionId/chapters')

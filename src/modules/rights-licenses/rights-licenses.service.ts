@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  paginated,
+  paginatedAll,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { CreateRightsLicenseDto } from './dto/create-rights-license.dto';
 import { LinkRightsLicenseDto } from './dto/link-rights-license.dto';
 import { QueryRightsLicensesDto } from './dto/query-rights-licenses.dto';
@@ -8,7 +13,6 @@ import {
   RightsLicenseDetailDto,
   RightsLicenseEventDto,
   RightsLicenseLinkDto,
-  RightsLicenseListResponseDto,
   RightsLicenseSummaryDto,
 } from './dto/rights-license-response.dto';
 import { UpdateRightsLicenseDto } from './dto/update-rights-license.dto';
@@ -104,7 +108,7 @@ export class RightsLicensesService {
   // Queries
   // ---------------------------------------------------------------------------
 
-  async findAll(query: QueryRightsLicensesDto): Promise<RightsLicenseListResponseDto> {
+  async findAll(query: QueryRightsLicensesDto): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
 
@@ -138,12 +142,10 @@ export class RightsLicensesService {
     const filtered = await this.applyInMemoryFilters(licenses, query);
     const start = (page - 1) * limit;
 
-    return {
-      items: filtered.slice(start, start + limit).map((license) => this.mapSummary(license)),
-      total: filtered.length,
-      page,
-      limit,
-    };
+    return paginated(
+      filtered.slice(start, start + limit).map((license) => this.mapSummary(license)),
+      { page, limit, total: filtered.length },
+    );
   }
 
   /**
@@ -196,19 +198,20 @@ export class RightsLicensesService {
     return this.buildDetail(license);
   }
 
-  async listForProfile(rightsProfileId: string): Promise<RightsLicenseListResponseDto> {
+  async listForProfile(rightsProfileId: string): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
     const licenses = await this.coverageService.loadLicensesForProfile(rightsProfileId);
     return this.asListResponse(licenses);
   }
 
-  async listForVersion(bookVersionId: string): Promise<RightsLicenseListResponseDto> {
+  async listForVersion(bookVersionId: string): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
     const licenses = await this.coverageService.loadLicensesForVersion(bookVersionId);
     return this.asListResponse(licenses);
   }
 
-  private asListResponse(licenses: RightsLicenseRecord[]): RightsLicenseListResponseDto {
-    const items = licenses.map((license) => this.mapSummary(license));
-    return { items, total: items.length, page: 1, limit: items.length };
+  private asListResponse(
+    licenses: RightsLicenseRecord[],
+  ): PaginatedResult<RightsLicenseSummaryDto> {
+    return paginatedAll(licenses.map((license) => this.mapSummary(license)));
   }
 
   // ---------------------------------------------------------------------------

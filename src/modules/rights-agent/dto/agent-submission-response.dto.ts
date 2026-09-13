@@ -29,10 +29,3 @@ export class AgentSubmissionDto {
   @ApiProperty({ type: String, nullable: true }) processedAt!: string | null;
   @ApiProperty() createdAt!: string;
 }
-
-export class AgentSubmissionListResponseDto {
-  @ApiProperty({ type: [AgentSubmissionDto] }) items!: AgentSubmissionDto[];
-  @ApiProperty() total!: number;
-  @ApiProperty() page!: number;
-  @ApiProperty() limit!: number;
-}

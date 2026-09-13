@@ -131,47 +131,6 @@
         ],
         "type": "object"
       },
-      "AdminAuthorsListMetaDto": {
-        "properties": {
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          },
-          "totalPages": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "page",
-          "limit",
-          "total",
-          "totalPages"
-        ],
-        "type": "object"
-      },
-      "AdminAuthorsListResponseDto": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/AdminAuthorItemDto"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/AdminAuthorsListMetaDto"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
-        ],
-        "type": "object"
-      },
       "AdminCommentAuthorDto": {
         "properties": {
           "avatarUrl": {
@@ -244,52 +203,6 @@
           "createdAt",
           "author",
           "repliesCount"
-        ],
-        "type": "object"
-      },
-      "AdminCommentsMetaDto": {
-        "properties": {
-          "limit": {
-            "example": 20,
-            "type": "number"
-          },
-          "page": {
-            "example": 1,
-            "type": "number"
-          },
-          "total": {
-            "example": 45,
-            "type": "number"
-          },
-          "totalPages": {
-            "description": "Math.ceil(total / limit)",
-            "example": 3,
-            "type": "number"
-          }
-        },
-        "required": [
-          "page",
-          "limit",
-          "total",
-          "totalPages"
-        ],
-        "type": "object"
-      },
-      "AdminCommentsResponseDto": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/AdminCommentDto"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/AdminCommentsMetaDto"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
         ],
         "type": "object"
       },
@@ -409,32 +322,6 @@
           "materializedProfileId",
           "processedAt",
           "createdAt"
-        ],
-        "type": "object"
-      },
-      "AgentSubmissionListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/AgentSubmissionDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
         ],
         "type": "object"
       },
@@ -791,32 +678,6 @@
           "createdAt",
           "updatedAt",
           "token"
-        ],
-        "type": "object"
-      },
-      "AgentTokenListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/AgentTokenDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
         ],
         "type": "object"
       },
@@ -4207,6 +4068,7 @@
           },
           "slug": {
             "example": "portret-doriana-greya",
+            "nullable": true,
             "type": "string"
           },
           "title": {
@@ -4722,40 +4584,6 @@
           "id",
           "addedAt",
           "bookVersion"
-        ],
-        "type": "object"
-      },
-      "BookshelfListDto": {
-        "properties": {
-          "hasNext": {
-            "example": false,
-            "type": "boolean"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/BookshelfItemDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "example": 10,
-            "type": "number"
-          },
-          "page": {
-            "example": 1,
-            "type": "number"
-          },
-          "total": {
-            "example": 1,
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "page",
-          "limit",
-          "total",
-          "hasNext"
         ],
         "type": "object"
       },
@@ -6719,32 +6547,6 @@
           "notesRu",
           "createdAt",
           "updatedAt"
-        ],
-        "type": "object"
-      },
-      "ContributorListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ContributorResponseDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
         ],
         "type": "object"
       },
@@ -10827,58 +10629,6 @@
         ],
         "type": "object"
       },
-      "LawyerReviewListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/LawyerReviewDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
-      "LawyersListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/LawyerDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
       "LegalChangeDetailDto": {
         "properties": {
           "affectedProfilesCount": {
@@ -11113,32 +10863,6 @@
           "createdByUserId",
           "createdAt",
           "updatedAt"
-        ],
-        "type": "object"
-      },
-      "LegalChangeListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/LegalChangeDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
         ],
         "type": "object"
       },
@@ -12356,123 +12080,6 @@
         ],
         "type": "object"
       },
-      "PagedMediaAssetsDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/MediaAssetResponseDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "example": 20,
-            "type": "number"
-          },
-          "page": {
-            "example": 1,
-            "type": "number"
-          },
-          "total": {
-            "example": 42,
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
-      "PagedRightsIntakesDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RightsIntakeListItemDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "example": 20,
-            "type": "number"
-          },
-          "page": {
-            "example": 1,
-            "type": "number"
-          },
-          "total": {
-            "example": 42,
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
-      "PagedUserActivitiesDto": {
-        "properties": {
-          "hasNext": {
-            "type": "boolean"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/UserActivityDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit",
-          "hasNext"
-        ],
-        "type": "object"
-      },
-      "PagedUsersDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/PublicUserWithRolesDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "example": 20,
-            "type": "number"
-          },
-          "page": {
-            "example": 1,
-            "type": "number"
-          },
-          "total": {
-            "example": 42,
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
       "PaginatedBooksResponseDto": {
         "properties": {
           "data": {
@@ -12509,42 +12116,6 @@
         ],
         "type": "object"
       },
-      "PaginatedPageGroupsResponse": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/PageGroupResponse"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/PaginationMeta"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
-        ],
-        "type": "object"
-      },
-      "PaginatedPagesResponse": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/PageResponse"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/PaginationMeta"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
-        ],
-        "type": "object"
-      },
       "PaginatedTagsResponse": {
         "properties": {
           "data": {
@@ -12560,6 +12131,33 @@
         "required": [
           "data",
           "meta"
+        ],
+        "type": "object"
+      },
+      "PaginationInfoDto": {
+        "properties": {
+          "limit": {
+            "description": "Applied page size",
+            "type": "number"
+          },
+          "page": {
+            "description": "Applied page number, 1-based",
+            "type": "number"
+          },
+          "total": {
+            "description": "Total number of rows matching the query",
+            "type": "number"
+          },
+          "totalPages": {
+            "description": "Total number of pages at this page size",
+            "type": "number"
+          }
+        },
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "totalPages"
         ],
         "type": "object"
       },
@@ -12583,6 +12181,39 @@
           "limit",
           "total",
           "totalPages"
+        ],
+        "type": "object"
+      },
+      "PaginationWithNextDto": {
+        "properties": {
+          "hasNext": {
+            "description": "Whether a next page exists",
+            "example": false,
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Applied page size",
+            "type": "number"
+          },
+          "page": {
+            "description": "Applied page number, 1-based",
+            "type": "number"
+          },
+          "total": {
+            "description": "Total number of rows matching the query",
+            "type": "number"
+          },
+          "totalPages": {
+            "description": "Total number of pages at this page size",
+            "type": "number"
+          }
+        },
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "totalPages",
+          "hasNext"
         ],
         "type": "object"
       },
@@ -12762,32 +12393,6 @@
           "canonicalName",
           "createdAt",
           "updatedAt"
-        ],
-        "type": "object"
-      },
-      "PersonListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/PersonListItemDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "offset": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "limit",
-          "offset"
         ],
         "type": "object"
       },
@@ -14910,32 +14515,6 @@
         ],
         "type": "object"
       },
-      "RecheckScanRunListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecheckScanRunDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
       "RecheckScheduleDto": {
         "properties": {
           "computedDueAt": {
@@ -15630,32 +15209,6 @@
         ],
         "type": "object"
       },
-      "RecheckTaskListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecheckTaskDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
       "RecheckTaskTargetsDto": {
         "properties": {
           "intakeStatus": {
@@ -16213,24 +15766,6 @@
           "isCurrent",
           "createdAt",
           "diffFromPrevious"
-        ],
-        "type": "object"
-      },
-      "ReviewChainResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewChainItemDto"
-            },
-            "type": "array"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total"
         ],
         "type": "object"
       },
@@ -17023,32 +16558,6 @@
           "id",
           "eventType",
           "createdAt"
-        ],
-        "type": "object"
-      },
-      "RightsClaimListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RightsClaimSummaryDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
         ],
         "type": "object"
       },
@@ -18521,32 +18030,6 @@
         ],
         "type": "object"
       },
-      "RightsLicenseListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RightsLicenseSummaryDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
-        ],
-        "type": "object"
-      },
       "RightsLicenseSummaryDto": {
         "properties": {
           "attributionRequired": {
@@ -18846,32 +18329,6 @@
           "isRead",
           "readAt",
           "createdAt"
-        ],
-        "type": "object"
-      },
-      "RightsNotificationsListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RightsNotificationDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
         ],
         "type": "object"
       },
@@ -19264,24 +18721,6 @@
           "archivedAt",
           "createdAt",
           "updatedAt"
-        ],
-        "type": "object"
-      },
-      "RightsProfileListDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RightsProfileSummaryDto"
-            },
-            "type": "array"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total"
         ],
         "type": "object"
       },
@@ -20004,32 +19443,6 @@
           "supersededAt",
           "createdAt",
           "updatedAt"
-        ],
-        "type": "object"
-      },
-      "RightsReviewImportsListResponseDto": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RightsReviewImportListItemDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit"
         ],
         "type": "object"
       },
@@ -24701,7 +24114,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdminAuthorsListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AdminAuthorItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -24977,7 +24405,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RightsClaimListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsClaimSummaryDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -25058,7 +24501,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdminCommentsResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AdminCommentDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -25140,7 +24598,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContributorListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/ContributorResponseDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -25505,7 +24978,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedPageGroupsResponse"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/PageGroupResponse"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -25749,6 +25237,15 @@
               "default": 0,
               "type": "number"
             }
+          },
+          {
+            "description": "Page number, 1-based; takes priority over `offset`",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "number"
+            }
           }
         ],
         "responses": {
@@ -25756,7 +25253,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PersonListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/PersonListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -25827,7 +25339,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PersonListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/PersonListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -26148,7 +25675,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentSubmissionListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AgentSubmissionDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -26500,7 +26042,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RightsClaimListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsClaimSummaryDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -27449,7 +27006,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PagedRightsIntakesDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsIntakeListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -27712,7 +27284,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentSubmissionListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AgentSubmissionDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -27780,7 +27367,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentTokenListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AgentTokenDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -28113,7 +27715,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LawyerReviewListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/LawyerReviewDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -28323,7 +27940,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecheckTaskListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RecheckTaskDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -28359,7 +27991,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReviewChainResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/ReviewChainItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -28424,7 +28071,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RightsReviewImportsListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsReviewImportListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -28518,7 +28180,22 @@
                       "$ref": "#/components/schemas/RightsProfileDetailDto"
                     },
                     {
-                      "$ref": "#/components/schemas/RightsProfileListDto"
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/RightsProfileSummaryDto"
+                          },
+                          "type": "array"
+                        },
+                        "pagination": {
+                          "$ref": "#/components/schemas/PaginationInfoDto"
+                        }
+                      },
+                      "required": [
+                        "items",
+                        "pagination"
+                      ],
+                      "type": "object"
                     }
                   ]
                 }
@@ -28912,7 +28589,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LawyerReviewListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/LawyerReviewDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -29643,7 +29335,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LawyersListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/LawyerDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -29939,7 +29646,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LegalChangeListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/LegalChangeDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -30290,7 +30012,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RightsLicenseListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsLicenseSummaryDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -30648,7 +30385,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RightsNotificationsListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsNotificationDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -31008,7 +30760,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RightsLicenseListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsLicenseSummaryDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -31177,7 +30944,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecheckScanRunListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RecheckScanRunDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -31343,7 +31125,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecheckTaskListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RecheckTaskDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -32055,21 +31852,26 @@
             }
           },
           {
+            "description": "Page number, 1-based; required together with `limit`",
             "in": "query",
             "name": "page",
             "required": false,
             "schema": {
+              "example": 1,
               "minimum": 1,
-              "type": "integer"
+              "type": "number"
             }
           },
           {
+            "description": "Page size; required together with `page`. Omit both to get every chapter at once",
             "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
+              "example": 20,
+              "maximum": 100,
               "minimum": 1,
-              "type": "integer"
+              "type": "number"
             }
           }
         ],
@@ -32711,7 +32513,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RightsClaimListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsClaimSummaryDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -33115,7 +32932,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedPagesResponse"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/PageResponse"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -33699,7 +33531,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedBooksResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/BookListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -35617,7 +35464,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookshelfListDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/BookshelfItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationWithNextDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -35826,7 +35688,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PagedMediaAssetsDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/MediaAssetResponseDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -37028,7 +36905,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PagedUsersDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/PublicUserWithRolesDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -37176,7 +37068,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PagedUserActivitiesDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/UserActivityDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationWithNextDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -37652,21 +37559,26 @@
             }
           },
           {
+            "description": "Page number, 1-based; required together with `limit`",
             "in": "query",
             "name": "page",
             "required": false,
             "schema": {
+              "example": 1,
               "minimum": 1,
-              "type": "integer"
+              "type": "number"
             }
           },
           {
+            "description": "Page size; required together with `page`. Omit both to get every chapter at once",
             "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
+              "example": 20,
+              "maximum": 100,
               "minimum": 1,
-              "type": "integer"
+              "type": "number"
             }
           }
         ],

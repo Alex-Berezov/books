@@ -2,10 +2,16 @@ import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import {
+  PaginationInfoDto,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -14,13 +20,14 @@ import { CreateLawyerDto } from './dto/create-lawyer.dto';
 import { ListLawyersDto } from './dto/list-lawyers.dto';
 import { DeactivateLawyerDto } from './dto/reason.dto';
 import { UpdateLawyerDto } from './dto/update-lawyer.dto';
-import { LawyerDetailDto, LawyersListResponseDto } from './dto/lawyer-response.dto';
+import { LawyerDetailDto, LawyerDto } from './dto/lawyer-response.dto';
 
 /**
  * Directory of lawyers. Reading is open to every role that touches the legal workflow;
  * writing is admin-only — a lawyer must never be able to invent a colleague for themselves.
  */
 @ApiTags('rights-lawyer')
+@ApiExtraModels(LawyerDto, PaginationInfoDto)
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager, Role.Lawyer)
@@ -29,9 +36,9 @@ export class RightsLawyerController {
   constructor(private readonly lawyers: RightsLawyerService) {}
 
   @Get('admin/rights/lawyers')
-  @ApiOkResponse({ type: LawyersListResponseDto })
+  @ApiOkResponse({ schema: paginatedSchema(LawyerDto) })
   @ApiOperation({ summary: 'List lawyers' })
-  list(@Query() query: ListLawyersDto): Promise<LawyersListResponseDto> {
+  list(@Query() query: ListLawyersDto): Promise<PaginatedResult<LawyerDto>> {
     return this.lawyers.list(query);
   }
 

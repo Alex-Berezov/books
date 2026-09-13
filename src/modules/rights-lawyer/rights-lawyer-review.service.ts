@@ -51,12 +51,12 @@ import {
 import { addDays, daysUntil, parseBooleanFlag, parsePositiveIntOption } from './rights-risk.util';
 import type { AssignLawyerReviewDto } from './dto/assign-lawyer-review.dto';
 import type { CreateConditionDto, DecideLawyerReviewDto } from './dto/decide-lawyer-review.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
 import type {
   LawyerConditionDto,
   LawyerReviewDetailDto,
   LawyerReviewDto,
   LawyerReviewEventDto,
-  LawyerReviewListResponseDto,
   LegalOpinionDto,
   RiskFactorDto,
 } from './dto/lawyer-review-response.dto';
@@ -161,7 +161,7 @@ export class RightsLawyerReviewService {
   async list(
     query: ListLawyerReviewsDto,
     actorUserId: string,
-  ): Promise<LawyerReviewListResponseDto> {
+  ): Promise<PaginatedResult<LawyerReviewDto>> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit =
       query.limit && query.limit > 0
@@ -195,7 +195,7 @@ export class RightsLawyerReviewService {
       const lawyer = await this.lawyers.findByUserId(actorUserId);
       // Не-юрист по фильтру «только мои» получает пустой список, а не чужие проверки.
       if (!lawyer) {
-        return { items: [], total: 0, page, limit };
+        return paginated<LawyerReviewDto>([], { page, limit, total: 0 });
       }
       where['assignedLawyerId'] = lawyer.id;
     }
@@ -214,12 +214,10 @@ export class RightsLawyerReviewService {
 
     const counters = await this.loadCounters(rows.map((row) => row.id));
 
-    return {
-      items: rows.map((row) => this.toDto(row, counters, now)),
-      total,
-      page,
-      limit,
-    };
+    return paginated(
+      rows.map((row) => this.toDto(row, counters, now)),
+      { page, limit, total },
+    );
   }
 
   async getById(id: string): Promise<LawyerReviewDetailDto> {
@@ -230,7 +228,7 @@ export class RightsLawyerReviewService {
   async listByIntake(
     intakeId: string,
     query: ListLawyerReviewsDto,
-  ): Promise<LawyerReviewListResponseDto> {
+  ): Promise<PaginatedResult<LawyerReviewDto>> {
     const database = this.getDatabase();
     const intake = await database.rightsIntake.findUnique({ where: { id: intakeId } });
     if (!intake) {
@@ -261,7 +259,10 @@ export class RightsLawyerReviewService {
 
     const now = new Date();
     const counters = await this.loadCounters(rows.map((row) => row.id));
-    return { items: rows.map((row) => this.toDto(row, counters, now)), total, page, limit };
+    return paginated(
+      rows.map((row) => this.toDto(row, counters, now)),
+      { page, limit, total },
+    );
   }
 
   /** Risk snapshot of a profile enriched with the currently open lawyer review. */

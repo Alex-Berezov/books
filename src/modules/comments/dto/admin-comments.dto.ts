@@ -99,35 +99,17 @@ export class AdminCommentDto {
   repliesCount!: number;
 }
 
-/**
- * Страница выдачи модерации — та же четвёрка, что собирает `comments.service.ts`
- * в `adminList()` (блок `meta`, строки 319-324).
+/*
+ * `AdminCommentsMetaDto` и `AdminCommentsResponseDto` убраны вместе с формой `{data, meta}`
+ * (`LEGACY-177`): `GET /admin/comments` отдаёт `{items, pagination}`, и её описывают
+ * `paginatedSchema(AdminCommentDto)` плюс `PaginationInfoDto` из
+ * `src/shared/dto/paginated-response.dto.ts`.
  *
- * 🔴 Отдельный класс, а не встроенный литерал у поля. Плагина swagger в проекте нет
- * (`nest-cli.json` без `plugins`), схема строится только из декораторов: `@ApiProperty()`
- * над полем с типом-литералом даёт в OpenAPI голый `type: object` без единого свойства.
- * `CommentsList.tsx` на фронте читает `meta.totalPages`, а рукописный тип сверяется
- * со схемой машинно (`yarn check:type-sync`) — пустой объект в схеме толкает фронт
- * удалить верное поле из своего типа (`LEGACY-374`).
+ * 🔴 Причина, по которой четвёрка `page/limit/total/totalPages` обязана оставаться
+ * отдельным КЛАССОМ, а не литералом у поля, никуда не делась: плагина swagger в проекте нет
+ * (`nest-cli.json` без `plugins`), и `@ApiProperty()` над полем с типом-литералом даёт
+ * в OpenAPI голый `type: object` без единого свойства. `CommentsList.tsx` на фронте читает
+ * `totalPages`, а рукописный тип сверяется со схемой машинно (`yarn check:type-sync`) —
+ * пустой объект в схеме толкает фронт удалить верное поле из своего типа (`LEGACY-374`).
+ * Теперь этот класс один на все списки — `PaginationInfoDto`.
  */
-export class AdminCommentsMetaDto {
-  @ApiProperty({ type: Number, example: 1 })
-  page!: number;
-
-  @ApiProperty({ type: Number, example: 20 })
-  limit!: number;
-
-  @ApiProperty({ type: Number, example: 45 })
-  total!: number;
-
-  @ApiProperty({ type: Number, description: 'Math.ceil(total / limit)', example: 3 })
-  totalPages!: number;
-}
-
-export class AdminCommentsResponseDto {
-  @ApiProperty({ type: [AdminCommentDto] })
-  data!: AdminCommentDto[];
-
-  @ApiProperty({ type: AdminCommentsMetaDto })
-  meta!: AdminCommentsMetaDto;
-}

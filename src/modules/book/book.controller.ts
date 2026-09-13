@@ -8,7 +8,6 @@ import {
   Delete,
   HttpException,
   HttpStatus,
-  Logger,
   Query,
   UseGuards,
   UseInterceptors,
@@ -20,6 +19,7 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
+  ApiExtraModels,
   ApiOkResponse,
   ApiParam,
   ApiQuery,
@@ -43,7 +43,12 @@ import { BookDetailResponseDto } from './dto/book-detail-response.dto';
 import { BookEntityDto } from './dto/book-entity.dto';
 import { BookRatingDto, BookRatingScoreDto } from './dto/book-rating.dto';
 import { BookOverviewResponseDto } from './dto/book-overview-response.dto';
-import { PaginatedBooksResponseDto } from './dto/paged-books.dto';
+import { BookListItemDto } from './dto/paged-books.dto';
+import {
+  PaginationInfoDto,
+  paginated,
+  paginatedSchema,
+} from '../../shared/dto/paginated-response.dto';
 
 interface RequestUser {
   userId: string;
@@ -51,10 +56,9 @@ interface RequestUser {
 }
 
 @ApiTags('books')
+@ApiExtraModels(BookListItemDto, PaginationInfoDto)
 @Controller('books')
 export class BookController {
-  private readonly logger = new Logger(BookController.name);
-
   constructor(private readonly bookService: BookService) {}
 
   // ⚠️ CRITICAL: check-slug must be the FIRST GET route
@@ -78,31 +82,26 @@ export class BookController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkSlug(@Query() query: CheckBookSlugQueryDto): Promise<CheckBookSlugResponseDto> {
-    try {
-      const existingBook = await this.bookService.checkSlugExists(query.slug, query.excludeId);
+    const existingBook = await this.bookService.checkSlugExists(query.slug, query.excludeId);
 
-      if (!existingBook) {
-        // Slug is available
-        return {
-          exists: false,
-        };
-      }
-
-      // Slug is taken - generate suggestion
-      const suggestedSlug = await this.bookService.generateUniqueSuggestedSlug(query.slug);
-
+    if (!existingBook) {
+      // Slug is available
       return {
-        exists: true,
-        suggestedSlug,
-        existingBook: {
-          id: existingBook.id,
-          slug: existingBook.slug,
-        },
+        exists: false,
       };
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to check slug', err);
     }
+
+    // Slug is taken - generate suggestion
+    const suggestedSlug = await this.bookService.generateUniqueSuggestedSlug(query.slug);
+
+    return {
+      exists: true,
+      suggestedSlug,
+      existingBook: {
+        id: existingBook.id,
+        slug: existingBook.slug,
+      },
+    };
   }
 
   @Post()
@@ -144,12 +143,7 @@ export class BookController {
   })
   @ApiOkResponse({ description: 'List of themes returned', type: String, isArray: true })
   async getThemes() {
-    try {
-      return await this.bookService.getAllThemes();
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to retrieve themes list', err);
-    }
+    return this.bookService.getAllThemes();
   }
 
   @Get(':slug/overview')
@@ -172,12 +166,7 @@ export class BookController {
     @Query('lang') lang?: string,
     @Headers('accept-language') acceptLanguage?: string,
   ) {
-    try {
-      return await this.bookService.getOverview(slug, lang, acceptLanguage);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to get book overview', err);
-    }
+    return this.bookService.getOverview(slug, lang, acceptLanguage);
   }
 
   /**
@@ -200,16 +189,18 @@ export class BookController {
   @ApiOperation({ summary: 'Get all books with pagination (admin: includes drafts)' })
   @ApiOkResponse({
     description: 'Books list successfully retrieved',
-    type: PaginatedBooksResponseDto,
+    schema: paginatedSchema(BookListItemDto),
   })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findAll(@Query() paginationDto: PaginationDto) {
-    try {
-      return await this.bookService.findAll(paginationDto);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to retrieve books list', err);
-    }
+    // 🔴 Форму меняет контроллер, а не `BookService.findAll` (`LEGACY-177`).
+    // Тот же метод обслуживает публичный `GET /:lang/books`
+    // (`public.controller.ts`), чей ответ лежит в edge-кэше Cloudflare: смена
+    // формы там потребовала бы сброса кэша на боевом домене и остаётся за
+    // владельцем (решение арбитра 13.09.2026). Поэтому `{data, meta}` сервиса
+    // сохраняется как есть, а единую обёртку получает только админское зеркало.
+    const { data, meta } = await this.bookService.findAll(paginationDto);
+    return paginated(data, meta);
   }
 
   /**
@@ -233,12 +224,7 @@ export class BookController {
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findBySlug(@Param('slug') slug: string, @Req() req?: { user?: RequestUser }) {
-    try {
-      return await this.bookService.findBySlug(slug, req?.user);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to get book by slug', err);
-    }
+    return this.bookService.findBySlug(slug, req?.user);
   }
 
   /** Как и `slug/:slug`: черновики — только держателю токена модератора. */
@@ -253,12 +239,7 @@ export class BookController {
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findOne(@Param('id') id: string, @Req() req?: { user?: RequestUser }) {
-    try {
-      return await this.bookService.findOne(id, req?.user);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to get book', err);
-    }
+    return this.bookService.findOne(id, req?.user);
   }
 
   @Patch(':id')
@@ -271,12 +252,7 @@ export class BookController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async update(@Param('id') id: string, @Body() updateBookDto: UpdateBookDto) {
-    try {
-      return await this.bookService.update(id, updateBookDto);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to update book', err);
-    }
+    return this.bookService.update(id, updateBookDto);
   }
 
   @Delete(':id')
@@ -289,13 +265,8 @@ export class BookController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async remove(@Param('id') id: string) {
-    try {
-      await this.bookService.remove(id);
-      return { success: true };
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to delete book', err);
-    }
+    await this.bookService.remove(id);
+    return { success: true };
   }
 
   @Post(':id/rate')
@@ -313,12 +284,7 @@ export class BookController {
     @Req() req: { user: RequestUser },
     @Body() dto: RateBookDto,
   ) {
-    try {
-      return await this.bookService.rateBook(req.user.userId, bookId, dto.score);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to rate book', err);
-    }
+    return this.bookService.rateBook(req.user.userId, bookId, dto.score);
   }
 
   @Get(':id/my-rating')
@@ -333,47 +299,6 @@ export class BookController {
     @Param('id') bookId: string,
     @Req() req: { user: RequestUser },
   ): Promise<{ score: number | null }> {
-    try {
-      return await this.bookService.getUserRating(req.user.userId, bookId);
-    } catch (err: unknown) {
-      if (err instanceof HttpException) throw err;
-      throw this.internalFailure('Failed to get user rating', err);
-    }
-  }
-
-  /**
-   * Ответ на неожиданную ошибку (`LEGACY-114`).
-   *
-   * 🔴 Текст исключения наружу не уходит. Для Prisma это сообщение драйвера
-   * с именем модели, именем колонки, текстом ограничения и иногда фрагментом
-   * запроса, а часть маршрутов этого контроллера публична: `GET /books/slug/:slug`
-   * и `GET /books/:slug/overview` отвечают анониму. Раньше он лежал в поле
-   * `details` рядом с `message`, и ни один механизм его не резал —
-   * `SentryExceptionFilter` маскирует тело **запроса**, а тело ответа не трогает
-   * вовсе.
-   *
-   * ⚠️ Диагностика не теряется в двух местах сразу, и оба обязательны. В лог
-   * идут текст и стек. В `cause` идёт само исходное исключение: без него
-   * `Sentry.captureException` получает только фразу-заглушку со стеком этого
-   * метода, и десять разных отказов выглядят в Sentry одинаково.
-   *
-   * ⚠️ Статус и поле `message` не меняются — их разбирает фронт.
-   */
-  private internalFailure(message: string, err: unknown): HttpException {
-    // Отказ не-`Error` объектом (например, `Promise.reject({ code: 'P2024' })`)
-    // иначе превращается в `[object Object]` и не оставляет ничего нигде.
-    const cause = err instanceof Error ? err : new Error(BookController.describeCause(err));
-    this.logger.error(`${message}: ${cause.message}`, cause.stack);
-    return new HttpException({ message }, HttpStatus.INTERNAL_SERVER_ERROR, { cause });
-  }
-
-  private static describeCause(err: unknown): string {
-    if (typeof err === 'string') return err;
-    try {
-      return JSON.stringify(err) ?? String(err);
-    } catch {
-      // Циклическая ссылка в отброшенном объекте.
-      return String(err);
-    }
+    return this.bookService.getUserRating(req.user.userId, bookId);
   }
 }

@@ -310,10 +310,11 @@ describe('RightsIntakeService', () => {
       mockTransactionArray();
 
       const result = await service.list({ page: 1, limit: 20 });
-      expect(result.items).toEqual(items);
-      expect(result.total).toBe(2);
-      expect(result.page).toBe(1);
-      expect(result.limit).toBe(20);
+      // Тело целиком: старая плоская обёртка `{items,total,page,limit}` не пройдёт.
+      expect(result).toEqual({
+        items,
+        pagination: { page: 1, limit: 20, total: 2, totalPages: 1 },
+      });
     });
 
     it('filters by status', async () => {
@@ -367,7 +368,7 @@ describe('RightsIntakeService', () => {
       expect(prisma.rightsIntake.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { workflowStatus: RightsIntakeStatus.ARCHIVED } }),
       );
-      expect(result.total).toBe(1);
+      expect(result.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
     });
 
     it('filters by targetLanguage using array_contains', async () => {

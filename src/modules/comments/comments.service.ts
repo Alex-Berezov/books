@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { PrismaService } from '../../prisma/prisma.service';
+import { paginated } from '../../shared/dto/paginated-response.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 
@@ -303,8 +304,11 @@ export class CommentsService {
       this.prisma.comment.count({ where }),
     ]);
 
-    return {
-      data: items.map((item) => ({
+    // Единая форма списка (`LEGACY-177`). Публичный `GET /comments` идёт через
+    // отдельный `list()` и своей формы не меняет — этот метод обслуживает только
+    // закрытый гвардом `GET /admin/comments`.
+    return paginated(
+      items.map((item) => ({
         id: item.id,
         text: item.text,
         isHidden: item.isHidden,
@@ -316,13 +320,8 @@ export class CommentsService {
         parentId: item.parentId,
         repliesCount: item._count.children,
       })),
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+      { page, limit, total },
+    );
   }
 
   // Та же проверка нужна `book-summary`, поэтому логика переехала в

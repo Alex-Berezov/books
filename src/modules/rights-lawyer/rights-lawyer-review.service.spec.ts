@@ -1030,7 +1030,10 @@ describe('RightsLawyerReviewService', () => {
     it('returns an empty page for `mine` when the user is not a lawyer', async () => {
       jest.spyOn(lawyers, 'findByUserId').mockResolvedValue(null);
       const result = await service.list({ mine: true }, 'user-1');
-      expect(result).toEqual({ items: [], total: 0, page: 1, limit: 20 });
+      expect(result).toEqual({
+        items: [],
+        pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+      });
       expect(reviewDelegate().findMany).not.toHaveBeenCalled();
     });
 

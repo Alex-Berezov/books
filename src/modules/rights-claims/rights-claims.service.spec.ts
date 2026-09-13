@@ -256,6 +256,28 @@ describe('RightsClaimsService', () => {
     jest.useRealTimers();
   });
 
+  // --- списочная обёртка (`LEGACY-177`) ------------------------------------
+
+  it('findAll answers in the single list shape {items, pagination}', async () => {
+    prisma.rightsClaim.findMany.mockResolvedValue([createClaim()]);
+
+    const result = await service.findAll({ page: 1, limit: 20 });
+
+    // Тело целиком: возврат плоской `{items,total,page,limit}` красит эту строку.
+    expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
+    expect(result.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
+    expect(result.items).toHaveLength(1);
+  });
+
+  it('listForVersion answers one page over everything found, totalPages 1', async () => {
+    prisma.rightsClaim.findMany.mockResolvedValue([createClaim(), createClaim({ id: 'claim-2' })]);
+
+    const result = await service.listForVersion('version-1');
+
+    expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
+    expect(result.pagination).toEqual({ page: 1, limit: 2, total: 2, totalPages: 1 });
+  });
+
   // --- create -------------------------------------------------------------
 
   it('generates a claim number of the form CLM-<year>-000001', async () => {
