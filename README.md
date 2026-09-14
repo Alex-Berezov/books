@@ -528,7 +528,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 - Реализация:
   - Резолвер языка из префикса пути (request-scoped контекст) + утилита `src/shared/language/language.util.ts` для fallback.
   - Применяется в публичных ручках: `GET /:lang/books/:slug/overview`, `GET /:lang/categories/:slug/books`, `GET /:lang/tags/:slug/books`, `GET /:lang/books/:bookId/versions`.
-  - Совместимость категорий/тегов: дополнительно доступны legacy-маршруты без префикса языка — `GET /categories/:slug/books` и `GET /tags/:slug/books`. Они выбирают язык по `?lang` (приоритетнее) или `Accept-Language` и возвращают `availableLanguages`.
+  - ⚠️ Безъязыких двойников этих ручек больше нет: `GET /categories/:slug/books`, `GET /tags/:slug/books` и `GET /pages/:slug` сняты 14.09.2026 решением владельца (`LEGACY-010`). Один и тот же контент по двум адресам давал дубль в поисковой выдаче, а язык у безъязыкой версии выбирался по `?lang`/`Accept-Language`, то есть один адрес отдавал разное тело разным запросам. Публичный доступ — только с префиксом языка.
 - E2E: добавлены сценарии с префиксом языка; тесты приоритезации префикса над заголовками.
 
   ### SEO resolve и i18n

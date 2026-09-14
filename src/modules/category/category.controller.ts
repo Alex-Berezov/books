@@ -10,12 +10,10 @@ import {
   Post,
   Query,
   UseGuards,
-  Headers,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
-  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -41,7 +39,6 @@ import { PaginatedCategoriesResponse } from './dto/category-response.dto';
 import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
 import { CategoryEntityDto } from './dto/category-entity.dto';
 import { CategoryAncestorDto } from './dto/category-ancestor.dto';
-import { CategoryBooksResponseDto } from './dto/category-books-response.dto';
 import { CategoryTranslationEntityDto } from './dto/category-translation-entity.dto';
 import { VersionCategoryLinkDto } from './dto/version-category-link.dto';
 
@@ -170,21 +167,6 @@ export class CategoryController {
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
-  }
-
-  // Public route without language prefix (for backward compatibility)
-  @Get('categories/:slug/books')
-  @ApiOperation({ summary: 'Public list of book versions by category (without language prefix)' })
-  @ApiOkResponse({ type: CategoryBooksResponseDto })
-  @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Optional language (?lang=...)' })
-  @ApiHeader({ name: 'Accept-Language', required: false })
-  publicBySlug(
-    @Param('slug') slug: string,
-    @Query('lang') queryLang?: string,
-    @Headers('accept-language') acceptLanguage?: string,
-  ) {
-    return this.service.getBySlugWithBooks(slug, queryLang, acceptLanguage);
   }
 
   /**

@@ -250,6 +250,51 @@ describe('AuthorService', () => {
     });
 
     /**
+     * `LEGACY-085`, характеризующий тест — третья сущность класса, рядом с
+     * категорией и тегом. Фиксирует **сегодняшнее** поведение, а не желаемое.
+     *
+     * Язык, выпавший из `dto.translations`, теряет адрес: его перевод сносит
+     * общий `deleteMany`, а `record()` по нему не зовётся — цикл идёт по
+     * `dto.translations`, где этого языка уже нет. Переименование при этом
+     * редирект пишет: два языка в одном вызове ведут себя по-разному, и тест
+     * проверяет обе половины сразу, иначе «не позвали» ничего не доказывает.
+     *
+     * Владелец 14.09.2026 выбрал редирект, форму выбора вернул арбитр
+     * (`decisions-log.md`). Красное здесь означает «политика изменилась».
+     */
+    it('LEGACY-085: выпавший из dto язык не получает редиректа, переименованный получает', async () => {
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.update.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { seoId: null, photoUrl: null, language: Language.en, slug: 'oscar-wilde' },
+        { seoId: null, photoUrl: null, language: Language.ru, slug: 'oskar-uaild' },
+      ]);
+
+      // `ru` в dto нет вовсе — его адрес умирает. `en` переименован — у него преемник есть.
+      const dto = {
+        translations: [{ language: Language.en, name: 'Oscar Wilde', slug: 'wilde' }],
+      };
+
+      await service.update('auth1', dto);
+
+      expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+      expect(slugRedirects.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityType: 'author',
+          language: Language.en,
+          oldSlug: 'oscar-wilde',
+          newSlug: 'wilde',
+        }),
+        expect.anything(),
+      );
+      expect(slugRedirects.record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ language: Language.ru }),
+        expect.anything(),
+      );
+    });
+
+    /**
      * `LEGACY-196`, вторая точка. `update` заворачивал отказ `$transaction`
      * в тот же 400 с текстом драйвера. Проверка нужна отдельно от `create`:
      * это разные блоки `catch`, и починка одного оставила бы второй как был.

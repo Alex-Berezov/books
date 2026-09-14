@@ -10,12 +10,10 @@ import {
   Post,
   Query,
   UseGuards,
-  Headers,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
-  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -41,7 +39,6 @@ import { CheckTagSlugResponseDto } from './dto/check-slug-response.dto';
 import { TagEntityDto } from './dto/tag-entity.dto';
 import { TagTranslationEntityDto } from './dto/tag-translation-entity.dto';
 import { VersionTagLinkDto } from './dto/version-tag-link.dto';
-import { TagBooksBySlugResponseDto } from './dto/tag-books-by-slug-response.dto';
 
 @ApiTags('tags')
 @Controller()
@@ -125,22 +122,6 @@ export class TagsController {
   @Roles(Role.Admin, Role.ContentManager)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
-  }
-
-  // Note: the public path is now handled in PublicController (/:lang/tags/:slug/books)
-  // Public path without language prefix (backward compatibility)
-  @Get('tags/:slug/books')
-  @ApiOperation({ summary: 'Public list of book versions by tag (without language prefix)' })
-  @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Optional language (?lang=...)' })
-  @ApiHeader({ name: 'Accept-Language', required: false })
-  @ApiOkResponse({ type: TagBooksBySlugResponseDto })
-  publicBySlug(
-    @Param('slug') slug: string,
-    @Query('lang') queryLang?: string,
-    @Headers('accept-language') acceptLanguage?: string,
-  ) {
-    return this.service.versionsByTagSlug(slug, queryLang, acceptLanguage);
   }
 
   @Post('versions/:id/tags')

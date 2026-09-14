@@ -4,7 +4,6 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
-import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/reserved-slugs';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { paginated } from '../../shared/dto/paginated-response.dto';
@@ -69,35 +68,6 @@ export class PagesService {
     return page;
   }
 
-  /**
-   * Public resolver with language policy: prefers query lang, then Accept-Language, then default.
-   * If a language is resolved but no page exists in that language, falls back to any published page with the slug.
-   */
-  async getPublicBySlugWithPolicy(
-    slug: string,
-    queryLang?: string,
-    acceptLanguage?: string,
-  ): Promise<PageWithSeo | null> {
-    const candidates = await this.prisma.page.findMany({
-      where: { slug, status: 'published' },
-      select: { id: true, language: true },
-    });
-    if (candidates.length === 0) throw new NotFoundException('Page not found');
-    const available = candidates.map((c) => c.language);
-    const preferred = resolveRequestedLanguage({
-      queryLang: queryLang || undefined,
-      acceptLanguage: acceptLanguage || undefined,
-      available,
-    });
-    const pick = preferred
-      ? (candidates.find((c) => c.language === preferred) ?? candidates[0])
-      : candidates[0];
-    return this.prisma.page.findUnique({
-      where: { id: pick.id },
-      include: { seo: true },
-    });
-  }
-
   async adminList(page = 1, limit = 20, language?: Language) {
     const skip = (page - 1) * limit;
     const where = language ? { language } : undefined;
@@ -115,8 +85,8 @@ export class PagesService {
 
     // Единая форма списка (`LEGACY-177`): метод зовёт только админский
     // `GET /admin/:lang/pages` (`pages.controller.ts`), публичная страница
-    // отдаётся поштучно `getPublicBySlugWithPolicy` — кэшируемых ответов
-    // эта замена не касается.
+    // отдаётся поштучно `getPublicBySlug` из `PublicController`
+    // (`GET /:lang/pages/:slug`) — кэшируемых ответов эта замена не касается.
     return paginated(data, { page, limit, total });
   }
 

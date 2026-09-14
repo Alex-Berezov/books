@@ -110,7 +110,7 @@ describe('Tags e2e', () => {
     // get books by tag slug
     const tag = await prisma.tag.findUnique({ where: { id: tagId } });
     await request(http())
-      .get(`/tags/${tag?.slug as string}/books`)
+      .get(`/en/tags/${tag?.slug as string}/books`)
       .expect(200);
 
     // detach

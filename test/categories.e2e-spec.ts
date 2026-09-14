@@ -110,7 +110,7 @@ describe('Categories e2e', () => {
 
     // get books by category slug
     const cat = await prisma.category.findUnique({ where: { id: categoryId } });
-    await request(http()).get(`/categories/${cat?.slug}/books`).expect(200);
+    await request(http()).get(`/en/categories/${cat?.slug}/books`).expect(200);
 
     // create child category
     const childRes = await request(http())

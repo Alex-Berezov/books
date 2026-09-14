@@ -9,7 +9,6 @@ import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexa
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
-import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { PUBLIC_TAG_BOOKS_MAX_LIMIT } from './tag-books-listing.constants';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
@@ -204,96 +203,6 @@ export class TagsService {
     await this.prisma.tagTranslation.deleteMany({ where: { tagId: id } });
 
     return this.prisma.tag.delete({ where: { id } });
-  }
-
-  async versionsByTagSlug(
-    slug: string,
-    queryLang?: string,
-    acceptLanguageHeader?: string,
-  ): Promise<{
-    tag: Tag & { translation: TagTranslation | null; description: string | null };
-    seo: Record<string, unknown> | null;
-    versions: (PublicBookVersion & {
-      rating: number | null;
-      seo: { metaTitle: string | null; metaDescription: string | null } | null;
-    })[];
-    availableLanguages: Language[];
-  }> {
-    const headerLang = acceptLanguageHeader || null;
-    const preferred = resolveRequestedLanguage({
-      queryLang,
-      acceptLanguage: headerLang,
-      available: [],
-    });
-    const trans = await this.prisma.tagTranslation.findUnique({
-      where: { language_slug: { language: preferred ?? Language.en, slug } },
-      include: { tag: true, seo: true },
-    });
-    let tagId: string | null = null;
-    let baseTag: Tag | null = null;
-    if (trans?.tag && trans.tag.isVisible !== false) {
-      tagId = trans.tag.id;
-      baseTag = trans.tag;
-    }
-    if (!tagId) {
-      // Fallback to base Tag by slug for backward compatibility
-      const found = await this.prisma.tag.findFirst({
-        where: { slug, isVisible: true },
-      });
-      if (!found) throw new NotFoundException('Tag not found');
-      tagId = found.id;
-      baseTag = found;
-    }
-    // public only: published versions with this tag
-    //
-    // ⚠️ Фильтр статуса здесь был и раньше — черновики не утекали. Утекало
-    // другое: `findMany` без выборки полей отдаёт модель целиком, то есть 29
-    // правовых полей вместе с ней (`LEGACY-090`). Два разных дефекта одного
-    // класса: один про то, **какие строки** отдавать, другой — **какие поля**.
-    const versions = await this.prisma.bookVersion.findMany({
-      where: { status: 'published', tags: { some: { tagId } } },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        ...PUBLIC_BOOK_VERSION_SELECT,
-        seo: { select: { metaTitle: true, metaDescription: true } },
-      },
-    });
-    const availableLanguages: Language[] = Array.from(new Set(versions.map((v) => v.language)));
-    const effective = resolveRequestedLanguage({
-      queryLang,
-      acceptLanguage: headerLang,
-      available: availableLanguages,
-    });
-    const filtered = effective ? versions.filter((v) => v.language === effective) : versions;
-
-    const bookIds = [...new Set(filtered.map((v) => v.bookId))];
-    const ratings = await this.prisma.bookRating.groupBy({
-      by: ['bookId'],
-      where: { bookId: { in: bookIds } },
-      _avg: { score: true },
-    });
-    const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));
-    const enriched = filtered.map((v) => ({
-      ...v,
-      rating: ratingMap.get(v.bookId) ?? null,
-    }));
-
-    return {
-      tag: {
-        id: baseTag!.id,
-        name: baseTag!.name,
-        slug: baseTag!.slug,
-        key: baseTag!.key,
-        indexable: baseTag!.indexable,
-        isVisible: baseTag!.isVisible,
-        sortOrder: baseTag!.sortOrder,
-        translation: (trans as TagTranslation) ?? null,
-        description: trans?.description ?? null,
-      } as Tag & { translation: TagTranslation | null; description: string | null },
-      seo: trans?.seo ?? null,
-      versions: enriched,
-      availableLanguages,
-    };
   }
 
   async versionsByTagLangSlug(

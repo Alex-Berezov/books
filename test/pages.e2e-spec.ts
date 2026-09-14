@@ -62,7 +62,7 @@ describe('Pages e2e', () => {
     pageId = createRes.body.id as string;
 
     // public get should be 404 while draft
-    await request(http()).get(`/pages/${slug}`).expect(404);
+    await request(http()).get(`/en/pages/${slug}`).expect(404);
 
     // publish
     await request(http())
@@ -71,7 +71,7 @@ describe('Pages e2e', () => {
       .expect(200);
 
     // public get should return the page
-    const pub = await request(http()).get(`/pages/${slug}`).expect(200);
+    const pub = await request(http()).get(`/en/pages/${slug}`).expect(200);
     expect(pub.body.slug).toBe(slug);
 
     // update title
@@ -93,7 +93,7 @@ describe('Pages e2e', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
 
-    await request(http()).get(`/pages/${slug}`).expect(404);
+    await request(http()).get(`/en/pages/${slug}`).expect(404);
 
     // delete
     await request(http())

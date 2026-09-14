@@ -170,21 +170,6 @@ describe('Draft and rights exposure (e2e)', () => {
       expect(rightsKeys(res.body)).toEqual([]);
     });
 
-    /**
-     * ⚠️ Отдельный тест, а не дубль предыдущего: `/categories/:slug/books` без
-     * языкового префикса обслуживается **другим методом**
-     * (`getBySlugWithBooks`), объявлен в `CategoryController` как
-     * backward-compatible и живёт своей жизнью. Первая мутационная проверка это
-     * и показала: правка второго метода не роняла ни одного теста, потому что
-     * ни один туда не ходил.
-     */
-    it('категория без языкового префикса тоже не отдаёт правовых полей', async () => {
-      const res = await request(http()).get(`/categories/${categorySlug}/books`).expect(200);
-
-      expect(rightsKeys(res.body)).toEqual([]);
-      expect(JSON.stringify(res.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
-    });
-
     it('список книг не отдаёт ни одного правового поля', async () => {
       const res = await request(http()).get('/en/books?limit=5').expect(200);
 

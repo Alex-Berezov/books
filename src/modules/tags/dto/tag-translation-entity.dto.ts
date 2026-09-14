@@ -8,11 +8,12 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
  * Поля зеркалят скалярные колонки модели `TagTranslation`
  * (`prisma/schema.prisma`) один в один, БЕЗ связей `tag`/`seo`.
  *
- * Это форма, в которой перевод попадает в `tag.translation` на
- * `GET /tags/:slug/books` (`TagsService.versionsByTagSlug` берёт запись через
- * `trans as TagTranslation` — приведение к базовой модели специально режет
- * связи, которые в этот момент фактически загружены). Если нужен перевод со
- * связью `seo`, см. `TagTranslationEntityDto` ниже.
+ * ⚠️ Это **не** форма поля `tag.translation` в ответе `GET /:lang/tags/:slug/books`.
+ * `TagsService.versionsByTagLangSlug` приводит запись к базовой модели (`tags.service.ts`),
+ * но приведение компиляторное: в теле ответа связи `tag` и `seo` остаются, и Swagger
+ * описывает то поле классом `TagTranslationWithRelationsDto`
+ * (`tag-books-by-slug-response.dto.ts`), а не этим. Здесь — голые скалярные колонки.
+ * Если нужен перевод со связью `seo`, см. `TagTranslationEntityDto` ниже.
  */
 export class TagTranslationDto {
   @ApiProperty({ type: String })

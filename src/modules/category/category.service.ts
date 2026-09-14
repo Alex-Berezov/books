@@ -10,7 +10,6 @@ import { CategoryTreeService, type PrismaLike } from './category-tree.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
-import { resolveRequestedLanguage } from '../../shared/language/language.util';
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 
@@ -492,106 +491,6 @@ export class CategoryService {
 
       return tx.category.delete({ where: { id } });
     });
-  }
-
-  async getBySlugWithBooks(slug: string, queryLang?: string, acceptLanguageHeader?: string) {
-    const headerLang = acceptLanguageHeader || null;
-    const preferred = resolveRequestedLanguage({
-      queryLang,
-      acceptLanguage: headerLang,
-      available: [],
-    });
-
-    const trans = await this.prisma.categoryTranslation.findUnique({
-      where: { language_slug: { language: preferred ?? Language.en, slug } },
-      include: { category: true, seo: true },
-    });
-    let category: PrismaCategory | null =
-      trans && 'category' in trans ? ((trans.category as PrismaCategory | null) ?? null) : null;
-    if (!category) {
-      // Fallback to base category by slug for backward compatibility
-      category = await this.prisma.category.findFirst({ where: { slug } });
-      if (!category) throw new NotFoundException('Category not found');
-    }
-
-    // Public endpoint: only published versions
-    //
-    // ⚠️ Комментарий выше стоял здесь и до 10.08.2026 — но описывал намерение,
-    // а не код: `status` проверялся только в `where`, отбирая книгу, тогда как
-    // `include` тянул все её версии целиком (`LEGACY-090`). Комментарий,
-    // утверждающий то, чего рядом не делается, вреднее его отсутствия.
-    const books = await this.prisma.book.findMany({
-      where: {
-        versions: {
-          some: {
-            status: 'published',
-            categories: { some: { categoryId: category.id } },
-          },
-        },
-      },
-      select: {
-        ...PUBLIC_BOOK_SELECT,
-        versions: {
-          where: { status: 'published' },
-          select: {
-            ...PUBLIC_BOOK_VERSION_SELECT,
-            tags: {
-              select: {
-                tag: {
-                  include: {
-                    translations: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const allVersions = books.flatMap((b) => b.versions);
-    const availableLanguages: Language[] = Array.from(new Set(allVersions.map((v) => v.language)));
-    const effective = resolveRequestedLanguage({
-      queryLang,
-      acceptLanguage: acceptLanguageHeader || null,
-      available: availableLanguages,
-    });
-
-    const filteredBooks = effective
-      ? books.filter((b) => b.versions.some((v) => v.language === effective))
-      : books;
-
-    // `where` ограничивает агрегат книгами этой страницы (`LEGACY-351`): без него
-    // запрос считал среднюю оценку по всей таблице `BookRating`, а страница брала
-    // из ответа только свою горстку значений.
-    const ratings = await this.prisma.bookRating.groupBy({
-      by: ['bookId'],
-      where: { bookId: { in: filteredBooks.map((b) => b.id) } },
-      _avg: { score: true },
-    });
-    const ratingMap = new Map(ratings.map((r) => [r.bookId, r._avg.score]));
-    const data = filteredBooks.map((book) => ({
-      ...book,
-      rating: ratingMap.get(book.id) ?? null,
-    }));
-
-    return {
-      category: {
-        ...category,
-        translation: trans ?? null,
-        description: trans?.description ?? null,
-      },
-      seo: trans?.seo ?? null,
-      data,
-      meta: {
-        total: filteredBooks.length,
-        page: 1,
-        limit: 100,
-        totalPages: 1,
-      },
-      availableLanguages,
-    };
   }
 
   // Public resolver by path language and translation slug (/:lang/categories/:slug/books)

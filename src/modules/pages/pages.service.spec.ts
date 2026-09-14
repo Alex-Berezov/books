@@ -146,45 +146,6 @@ describe('PagesService (unit)', () => {
     });
   });
 
-  describe('getPublicBySlugWithPolicy', () => {
-    it('prefers queryLang, then Accept-Language, then default', async () => {
-      prisma.page.findMany.mockResolvedValueOnce([
-        { id: 'p-en', language: 'en' },
-        { id: 'p-es', language: 'es' },
-      ]);
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p-es', slug: 'about', language: 'es' });
-
-      const chosenEs = await service.getPublicBySlugWithPolicy('about', 'es', undefined);
-      expect(chosenEs).toEqual({ id: 'p-es', slug: 'about', language: 'es' });
-
-      // Accept-Language fallback
-      prisma.page.findMany.mockResolvedValueOnce([
-        { id: 'p-en', language: 'en' },
-        { id: 'p-es', language: 'es' },
-      ]);
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p-en', slug: 'about', language: 'en' });
-      const chosenEn = await service.getPublicBySlugWithPolicy(
-        'about',
-        undefined,
-        'en-GB,en;q=0.9',
-      );
-      expect(chosenEn).toEqual({ id: 'p-en', slug: 'about', language: 'en' });
-
-      // Default fallback to first candidate when nothing matches
-      prisma.page.findMany.mockResolvedValueOnce([{ id: 'p-en', language: 'en' }]);
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p-en', slug: 'about', language: 'en' });
-      const chosenDefault = await service.getPublicBySlugWithPolicy('about');
-      expect(chosenDefault).toEqual({ id: 'p-en', slug: 'about', language: 'en' });
-    });
-
-    it('throws when no published pages with slug', async () => {
-      prisma.page.findMany.mockResolvedValueOnce([]);
-      await expect(service.getPublicBySlugWithPolicy('missing')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
-    });
-  });
-
   describe('setStatus (publish/unpublish)', () => {
     it('updates status when page exists', async () => {
       prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1' });

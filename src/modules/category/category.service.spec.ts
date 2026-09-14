@@ -82,6 +82,7 @@ describe('CategoryService', () => {
   let service: CategoryService;
   let prisma: PrismaStub;
   let indexability: { recomputeForTerms: jest.Mock };
+  let slugRedirects: { record: jest.Mock; resolve: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -89,12 +90,13 @@ describe('CategoryService', () => {
       .fn()
       .mockImplementation((cb: (tx: PrismaStub) => unknown) => cb(prisma as unknown as PrismaStub));
     indexability = { recomputeForTerms: jest.fn().mockResolvedValue(undefined) };
+    slugRedirects = {
+      record: jest.fn().mockResolvedValue(undefined),
+      resolve: jest.fn().mockResolvedValue(null),
+    };
     service = new CategoryService(
       prisma as unknown as PrismaService,
-      {
-        record: jest.fn().mockResolvedValue(undefined),
-        resolve: jest.fn().mockResolvedValue(null),
-      } as unknown as SlugRedirectService,
+      slugRedirects as unknown as SlugRedirectService,
       new CategoryTreeService(prisma as unknown as PrismaService),
       indexability as unknown as TaxonomyIndexabilityService,
     );
@@ -690,88 +692,6 @@ describe('CategoryService', () => {
     await expect(service.remove('A')).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('getBySlugWithBooks filters versions by effective language and falls back to base slug', async () => {
-    prisma.categoryTranslation.findUnique.mockResolvedValue(null);
-    prisma.category.findFirst.mockResolvedValue({ id: 'cat1', name: 'Cat', slug: 'cat' });
-    const now = new Date();
-
-    prisma.book = {
-      findMany: jest.fn().mockResolvedValue([
-        {
-          id: 'b1',
-          slug: 'b1',
-          createdAt: now,
-          updatedAt: now,
-          versions: [
-            {
-              id: 'v-es',
-              bookId: 'b1',
-              language: Language.es,
-              title: 'T2',
-              author: 'A',
-              description: 'D',
-              coverImageUrl: 'u',
-              type: 'text',
-              isFree: true,
-              referralUrl: null,
-              createdAt: now,
-              updatedAt: now,
-              status: 'published',
-              publishedAt: now,
-              seoId: undefined,
-              seo: null,
-            },
-          ],
-        },
-        {
-          id: 'b2',
-          slug: 'b2',
-          createdAt: now,
-          updatedAt: now,
-          versions: [
-            {
-              id: 'v-en',
-              bookId: 'b2',
-              language: Language.en,
-              title: 'T',
-              author: 'A',
-              description: 'D',
-              coverImageUrl: 'u',
-              type: 'text',
-              isFree: true,
-              referralUrl: null,
-              createdAt: now,
-              updatedAt: now,
-              status: 'published',
-              publishedAt: now,
-              seoId: undefined,
-              seo: null,
-            },
-          ],
-        },
-      ]),
-    };
-    prisma.bookVersion.findMany.mockResolvedValue([
-      { language: Language.en },
-      { language: Language.es },
-    ]);
-    prisma.bookRating.groupBy.mockResolvedValue([]);
-
-    const res = await service.getBySlugWithBooks('cat', undefined, 'es, en;q=0.8');
-    expect(res.availableLanguages.sort()).toEqual([Language.en, Language.es].sort());
-    expect(res.data).toHaveLength(1);
-    expect(res.data[0].versions[0].language).toBe(Language.es);
-    expect(res.category.translation).toBeNull();
-    // `LEGACY-351`: агрегат средней оценки ограничен книгами **этой страницы**
-    // (после фильтра по языку — только `b1`), а не всей таблицей `BookRating`.
-    // `toHaveBeenCalledTimes(1)` — не только «был вызов с таким where», но и что
-    // второго, более широкого вызова (например, без where) в этом пути не было.
-    expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(1);
-    expect(prisma.bookRating.groupBy).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { bookId: { in: ['b1'] } } }),
-    );
-  });
-
   it('LEGACY-351: getByLangSlugWithBooks ограничивает groupBy книгами своей страницы', async () => {
     prisma.categoryTranslation.findUnique.mockResolvedValue({
       category: { id: 'cat1', name: 'Cat', slug: 'cat' },
@@ -985,5 +905,31 @@ describe('CategoryService', () => {
         data: expect.objectContaining({ bookCount: 0, autoIndexable: false }),
       }),
     );
+  });
+
+  /**
+   * `LEGACY-085`, характеризующий тест. Фиксирует **сегодняшнее** поведение, а не
+   * желаемое: удаление перевода не пишет в историю слагов ничего, и адрес умирает
+   * в 404. Владелец 14.09.2026 выбрал редирект, но форму выбора вернул арбитр —
+   * ни один из трёх вариантов не исполняет это слово без нового решения о том,
+   * какой адрес отдаётся наружу (`decisions-log.md`).
+   *
+   * Тест стоит здесь, чтобы правка политики не прошла молча: как только в этот путь
+   * добавят запись редиректа, он покраснеет и потребует переписать себя вместе
+   * с решением. Красное здесь — это «политика изменилась», а не «сломалось».
+   */
+  it('LEGACY-085: удаление перевода не пишет редиректа — адрес умирает в 404', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      categoryId: 'cat1',
+      language: Language.ru,
+      slug: 'roman',
+      seoId: null,
+    });
+    prisma.categoryTranslation.delete.mockResolvedValue({});
+
+    await service.deleteTranslation('cat1', Language.ru);
+
+    expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).not.toHaveBeenCalled();
   });
 });

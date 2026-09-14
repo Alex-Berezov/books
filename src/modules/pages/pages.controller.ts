@@ -22,7 +22,6 @@ import {
   ApiQuery,
   ApiResponse,
   ApiTags,
-  getSchemaPath,
   ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { PagesService } from './pages.service';
@@ -129,28 +128,6 @@ export class PagesController {
   @Roles(Role.Admin, Role.ContentManager)
   async findAllGrouped(@Query() query: ListPagesQueryDto) {
     return this.service.adminListGrouped(query.page, query.limit, query.search, query.status);
-  }
-
-  // Public: get page by slug (only published)
-  @Get('pages/:slug')
-  @ApiOperation({ summary: 'Public page by slug (published only)' })
-  @ApiParam({ name: 'slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
-  @ApiHeader({ name: 'Accept-Language', required: false })
-  // Возврат объявлен как `Promise<PageWithSeo | null>` (`pages.service.ts`,
-  // `getPublicBySlugWithPolicy`): голый `type: PageResponse` обещал бы объект всегда,
-  // и сгенерированный по схеме клиент не знал бы про пустое тело.
-  @ApiExtraModels(PageResponse)
-  @ApiOkResponse({
-    schema: { allOf: [{ $ref: getSchemaPath(PageResponse) }], nullable: true },
-    description: 'Published page for the resolved language, or null when the row is gone',
-  })
-  getPublic(
-    @Param('slug') slug: string,
-    @Query('lang') lang?: string,
-    @Headers('accept-language') acceptLanguage?: string,
-  ): ReturnType<PagesService['getPublicBySlugWithPolicy']> {
-    return this.service.getPublicBySlugWithPolicy(slug, lang, acceptLanguage);
   }
 
   @Get('admin/pages/:id')

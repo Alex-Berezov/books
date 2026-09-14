@@ -9,7 +9,7 @@ interface PrismaStub {
   $transaction: jest.Mock;
   $queryRaw: jest.Mock;
   tag: { findUnique: jest.Mock; findFirst: jest.Mock; count: jest.Mock; findMany: jest.Mock };
-  tagTranslation: { findUnique: jest.Mock; create: jest.Mock };
+  tagTranslation: { findUnique: jest.Mock; create: jest.Mock; delete: jest.Mock };
   bookVersion: { findMany: jest.Mock; findUnique: jest.Mock; count: jest.Mock };
   bookTag: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock };
   bookRating: { groupBy: jest.Mock };
@@ -19,7 +19,7 @@ const createPrismaStub = (): PrismaStub => ({
   $transaction: jest.fn(),
   $queryRaw: jest.fn(),
   tag: { findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn(), findMany: jest.fn() },
-  tagTranslation: { findUnique: jest.fn(), create: jest.fn() },
+  tagTranslation: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
   bookVersion: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn() },
   bookTag: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
   bookRating: { groupBy: jest.fn() },
@@ -29,6 +29,7 @@ describe('TagsService', () => {
   let service: TagsService;
   let prisma: PrismaStub;
   let indexability: { recomputeForTerms: jest.Mock };
+  let slugRedirects: { record: jest.Mock; resolve: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -36,66 +37,16 @@ describe('TagsService', () => {
       .fn()
       .mockImplementation((cb: (tx: PrismaStub) => unknown) => cb(prisma as unknown as PrismaStub));
     indexability = { recomputeForTerms: jest.fn().mockResolvedValue(undefined) };
+    slugRedirects = {
+      record: jest.fn().mockResolvedValue(undefined),
+      resolve: jest.fn().mockResolvedValue(null),
+    };
     service = new TagsService(
       prisma as unknown as PrismaService,
-      {
-        record: jest.fn().mockResolvedValue(undefined),
-        resolve: jest.fn().mockResolvedValue(null),
-      } as unknown as SlugRedirectService,
+      slugRedirects as unknown as SlugRedirectService,
       new TagLockService(prisma as unknown as PrismaService),
       indexability as unknown as TaxonomyIndexabilityService,
     );
-  });
-
-  it('versionsByTagSlug filters by effective language and falls back to base slug', async () => {
-    prisma.tagTranslation.findUnique.mockResolvedValue(null);
-    prisma.tag.findFirst.mockResolvedValue({ id: 't1', name: 'Tag', slug: 'tag' });
-    const now = new Date();
-    prisma.bookVersion.findMany.mockResolvedValue([
-      {
-        id: 'v-en',
-        bookId: 'b1',
-        language: Language.en,
-        title: 'T',
-        author: 'A',
-        description: 'D',
-        coverImageUrl: 'u',
-        type: 'text',
-        isFree: true,
-        referralUrl: null,
-        createdAt: now,
-        updatedAt: now,
-        status: 'published',
-        publishedAt: now,
-        seoId: undefined,
-        seo: null,
-      },
-      {
-        id: 'v-es',
-        bookId: 'b1',
-        language: Language.es,
-        title: 'T2',
-        author: 'A',
-        description: 'D',
-        coverImageUrl: 'u',
-        type: 'text',
-        isFree: true,
-        referralUrl: null,
-        createdAt: now,
-        updatedAt: now,
-        status: 'published',
-        publishedAt: now,
-        seoId: undefined,
-        seo: null,
-      },
-    ]);
-    prisma.bookRating.groupBy.mockResolvedValue([]);
-
-    const res = await service.versionsByTagSlug('tag', undefined, 'es, en;q=0.8');
-    expect(res.availableLanguages.sort()).toEqual([Language.en, Language.es].sort());
-    expect(res.versions).toHaveLength(1);
-    expect(res.versions[0].language).toBe(Language.es);
-    expect(res.tag.translation).toBeNull();
   });
 
   describe('list projects per-language indexability', () => {
@@ -348,5 +299,26 @@ describe('TagsService', () => {
         data: expect.objectContaining({ bookCount: 0, autoIndexable: false }),
       }),
     );
+  });
+
+  /**
+   * `LEGACY-085`, характеризующий тест — близнец такого же в `category.service.spec.ts`.
+   * Фиксирует сегодняшнее поведение: удаление перевода тега не пишет в историю слагов,
+   * адрес умирает в 404. Политику выбирает владелец (тема №3), форму вернул арбитр
+   * 14.09.2026. Красное здесь означает «политика изменилась», а не «сломалось».
+   */
+  it('LEGACY-085: удаление перевода не пишет редиректа — адрес умирает в 404', async () => {
+    prisma.tagTranslation.findUnique.mockResolvedValue({
+      tagId: 't1',
+      language: Language.ru,
+      slug: 'prikliucheniya',
+      seoId: null,
+    });
+    prisma.tagTranslation.delete.mockResolvedValue({});
+
+    await service.deleteTranslation('t1', Language.ru);
+
+    expect(prisma.tagTranslation.delete).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).not.toHaveBeenCalled();
   });
 });
