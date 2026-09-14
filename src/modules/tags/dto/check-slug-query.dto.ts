@@ -3,7 +3,7 @@ import { IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validato
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
 /**
- * Повторяет `CheckSlugQueryDto` категорий по форме, но живёт отдельно намеренно:
+ * Повторяет `CheckCategorySlugQueryDto` по форме, но живёт отдельно намеренно:
  * описания полей попадают в Swagger, и «Category ID to exclude» в разделе тегов
  * вводило бы в заблуждение. Правила валидации при этом общие — `SLUG_PATTERN`.
  */

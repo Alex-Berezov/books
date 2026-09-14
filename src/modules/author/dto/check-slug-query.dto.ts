@@ -8,7 +8,7 @@ import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug
  * уникален в пределах языка (`AuthorTranslation`), а не глобально — без языка проверка
  * находит совпадение в чужом переводе и ложно блокирует свободный слаг.
  */
-export class CheckSlugQueryDto {
+export class CheckAuthorSlugQueryDto {
   @ApiProperty({
     description: 'Slug to check for uniqueness',
     example: 'leo-tolstoy',

@@ -3,6 +3,7 @@ import {
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiOkResponse,
+  ApiServiceUnavailableResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
@@ -11,6 +12,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { QueueStatusResponseDto } from './dto/queue-status-response.dto';
+import { QueueDemoStatsResponseDto } from './dto/queue-demo-stats-response.dto';
 import { EnqueueDemoResponseDto } from './dto/enqueue-demo-response.dto';
 
 @ApiTags('queues')
@@ -30,6 +32,10 @@ export class QueueController {
 
   @Get('demo/stats')
   @ApiOperation({ summary: 'Demo queue stats' })
+  @ApiOkResponse({ type: QueueDemoStatsResponseDto })
+  @ApiServiceUnavailableResponse({
+    description: 'Очередь не сконфигурирована (нет Redis) — тот же отказ, что у enqueue',
+  })
   async stats() {
     return this.queues.getDemoStats();
   }

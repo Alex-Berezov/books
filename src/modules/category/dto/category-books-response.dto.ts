@@ -6,7 +6,7 @@ import { TagEntityDto } from '../../tags/dto/tag-entity.dto';
 import { TagTranslationDto } from '../../tags/dto/tag-translation-entity.dto';
 import { CategoryEntityDto } from './category-entity.dto';
 import { CategoryTranslationEntityDto } from './category-translation-entity.dto';
-import { PaginationMeta } from './category-response.dto';
+import { PaginationMeta } from '../../../shared/dto/pagination-meta.dto';
 
 /**
  * Response DTO — только Swagger, без `class-validator` (`STYLE_GUIDE.md` §7).

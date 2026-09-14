@@ -22,6 +22,7 @@ import {
   ApiQuery,
   ApiResponse,
   ApiTags,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { CategoryType, Language, Prisma } from '@prisma/client';
 import { CategoryTreeNodeDto } from './dto/category-tree-node.dto';
@@ -34,7 +35,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
-import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckCategorySlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
 import { PaginatedCategoriesResponse } from './dto/category-response.dto';
 import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
@@ -67,7 +68,9 @@ export class CategoryController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckCategorySlugResponseDto> {
+  async checkSlug(
+    @Query() query: CheckCategorySlugQueryDto,
+  ): Promise<CheckCategorySlugResponseDto> {
     const existingCategory = await this.service.checkSlugExists(query.slug, query.excludeId);
 
     if (!existingCategory) {
@@ -158,6 +161,7 @@ export class CategoryController {
   }
 
   @Delete('categories/:id')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete category' })
   @ApiParam({ name: 'id' })
@@ -246,6 +250,7 @@ export class CategoryController {
   }
 
   @Delete('categories/:id/translations/:language')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete category translation (admin)' })
   @ApiParam({ name: 'id' })
@@ -269,6 +274,7 @@ export class CategoryController {
   }
 
   @Delete('versions/:id/categories/:categoryId')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Detach category from a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })

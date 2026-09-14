@@ -33,6 +33,7 @@ import { CreateBookVersionContributorDto } from './dto/create-version-contributo
 import { UpdateBookVersionContributorDto } from './dto/update-version-contributor.dto';
 import { ReorderBookVersionContributorsDto } from './dto/reorder-version-contributors.dto';
 import { BookVersionContributorResponseDto } from './dto/version-contributor-response.dto';
+import { RemoveVersionContributorResponseDto } from './dto/remove-version-contributor-response.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsContentHashCheckDto } from '../rights-intake/dto/rights-content-hash.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
@@ -58,6 +59,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
   getSchemaPath,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { Language, BookType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -568,6 +570,7 @@ export class BookVersionController {
   }
 
   @Delete('versions/:id')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete version by id' })
   @ApiBearerAuth()
@@ -775,6 +778,7 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Remove a contributor from a book version' })
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'contributorId' })
+  @ApiResponse({ status: 200, type: RemoveVersionContributorResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

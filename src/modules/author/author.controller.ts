@@ -20,12 +20,13 @@ import {
   ApiParam,
   ApiResponse,
   ApiTags,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { AuthorService } from './author.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
 import { ListAuthorsQueryDto } from './dto/list-authors-query.dto';
-import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckAuthorSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckAuthorSlugResponseDto } from './dto/check-slug-response.dto';
 import { AdminAuthorItemDto, AuthorResponseDto } from './dto/author-response.dto';
 import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
@@ -45,7 +46,7 @@ export class AuthorController {
   @ApiOkResponse({ type: CheckAuthorSlugResponseDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckAuthorSlugResponseDto> {
+  async checkSlug(@Query() query: CheckAuthorSlugQueryDto): Promise<CheckAuthorSlugResponseDto> {
     const existing = await this.service.checkSlugExists(query.slug, query.lang, query.excludeId);
     if (!existing) {
       return { exists: false };
@@ -115,6 +116,7 @@ export class AuthorController {
   }
 
   @Delete('admin/authors/:id')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete author' })
   @UseGuards(JwtAuthGuard, RolesGuard)

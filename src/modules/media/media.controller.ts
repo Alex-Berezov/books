@@ -27,6 +27,7 @@ import {
 import { MediaService } from './media.service';
 import { ConfirmMediaDto, MediaListQueryDto } from './dto/create-media.dto';
 import { MediaAssetResponseDto } from './dto/media-asset-response.dto';
+import { DeleteMediaResponseDto } from './dto/delete-media-response.dto';
 import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
@@ -161,6 +162,7 @@ export class MediaController {
   @Delete('media/:id')
   @ApiOperation({ summary: 'Soft-delete media asset and try to remove file' })
   @ApiParam({ name: 'id' })
+  @ApiOkResponse({ type: DeleteMediaResponseDto })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

@@ -40,6 +40,7 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CheckBookSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckBookSlugResponseDto } from './dto/check-slug-response.dto';
 import { BookDetailResponseDto } from './dto/book-detail-response.dto';
+import { DeleteBookResponseDto } from './dto/delete-book-response.dto';
 import { BookEntityDto } from './dto/book-entity.dto';
 import { BookRatingDto, BookRatingScoreDto } from './dto/book-rating.dto';
 import { BookOverviewResponseDto } from './dto/book-overview-response.dto';
@@ -258,7 +259,11 @@ export class BookController {
   @Delete(':id')
   @ApiOperation({ summary: 'Delete book' })
   @ApiParam({ name: 'id', description: 'Unique book ID' })
-  @ApiResponse({ status: 200, description: 'Book successfully deleted' })
+  @ApiResponse({
+    status: 200,
+    description: 'Book successfully deleted',
+    type: DeleteBookResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Book not found' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   @ApiBearerAuth()

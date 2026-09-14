@@ -22,6 +22,7 @@ import {
   ApiQuery,
   ApiResponse,
   ApiTags,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { TagsService } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
@@ -115,6 +116,7 @@ export class TagsController {
   }
 
   @Delete('tags/:id')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tag' })
   @ApiParam({ name: 'id' })
@@ -153,6 +155,7 @@ export class TagsController {
   }
 
   @Delete('versions/:id/tags/:tagId')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Detach tag from a book version' })
   @ApiParam({ name: 'id', description: 'BookVersion id' })
@@ -204,6 +207,7 @@ export class TagsController {
   }
 
   @Delete('tags/:id/translations/:language')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tag translation (admin)' })
   @ApiParam({ name: 'id' })

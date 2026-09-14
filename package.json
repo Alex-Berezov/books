@@ -26,6 +26,7 @@
     "check-migration-compat:self-test": "node scripts/check-migration-compat.mjs --self-test",
     "check:response-schema": "node scripts/check-response-schema.mjs",
     "check:response-schema:self-test": "node scripts/check-response-schema.mjs --self-test",
+    "check:response-schema:snapshot": "node scripts/check-response-schema.mjs --update",
     "check:env": "node scripts/check-env.mjs",
     "check:env:self-test": "node scripts/check-env.mjs --self-test",
     "test": "jest --maxWorkers=50%",

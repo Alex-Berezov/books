@@ -51,13 +51,38 @@ describe('Queues (BullMQ) e2e', () => {
     expect(res.body.enabled).toBe(queuesEnabled);
   });
 
-  it('GET /queues/demo/stats (admin) works w/ or w/o Redis', async () => {
+  it('GET /queues/demo/stats (admin) answers by Redis availability', async () => {
     const token = await getAdminToken();
+
+    // Выключенный контур отвечает тем же отказом, что и enqueue (решение арбитра 14.09.2026):
+    // нули были бы неотличимы от живой пустой очереди.
+    if (!queuesEnabled) {
+      const refused = await request(http())
+        .get('/queues/demo/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(503);
+      expect(String((refused.body as { message?: string }).message)).toContain('no Redis config');
+      return;
+    }
+
     const res = await request(http())
       .get('/queues/demo/stats')
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
-    expect(res.body).toBeDefined();
+    // Форма одна на обе ветки: и с Redis, и без него ручка отдаёт все шесть счётчиков числами
+    // (`LEGACY-016`, 14.09.2026). Прежнее `toBeDefined()` пропускало любое тело, включая пустое,
+    // и смену формы не заметило бы вовсе.
+    expect(Object.keys(res.body as Record<string, unknown>).sort()).toEqual([
+      'active',
+      'completed',
+      'delayed',
+      'failed',
+      'paused',
+      'waiting',
+    ]);
+    for (const value of Object.values(res.body as Record<string, unknown>)) {
+      expect(typeof value).toBe('number');
+    }
   });
 
   it('POST /queues/demo/enqueue behaves depending on Redis availability', async () => {

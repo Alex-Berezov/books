@@ -23,6 +23,7 @@ import {
   ApiResponse,
   ApiTags,
   getSchemaPath,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { PagesService } from './pages.service';
 import { CreatePageDto } from './dto/create-page.dto';
@@ -35,7 +36,7 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
 import { PageResponse, PageWithTranslationsResponse } from './dto/page-response.dto';
-import { CheckSlugQueryDto } from './dto/check-slug-query.dto';
+import { CheckPageSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
 import { PageGroupResponse } from './dto/page-group-response.dto';
 import { ListPagesQueryDto } from './dto/list-pages-query.dto';
@@ -73,8 +74,8 @@ export class PagesController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async checkSlug(@Query() query: CheckSlugQueryDto): Promise<CheckPageSlugResponseDto> {
-    // lang is already validated by class-validator in CheckSlugQueryDto
+  async checkSlug(@Query() query: CheckPageSlugQueryDto): Promise<CheckPageSlugResponseDto> {
+    // lang is already validated by class-validator in CheckPageSlugQueryDto
     const lang = query.lang as Language;
 
     // A reserved slug is unavailable no matter what the Page table says, and the
@@ -234,6 +235,7 @@ export class PagesController {
   }
 
   @Delete('admin/:lang/pages/:id')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete page (admin)' })
   @ApiParam({ name: 'id' })

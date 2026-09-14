@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsOptional, IsUUID, Matches, MaxLength } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
-export class CheckSlugQueryDto {
+export class CheckCategorySlugQueryDto {
   @ApiProperty({
     description: 'Slug to check for uniqueness',
     example: 'fantasy',

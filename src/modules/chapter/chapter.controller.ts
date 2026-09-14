@@ -17,6 +17,7 @@ import {
   ApiParam,
   ApiResponse,
   ApiTags,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { ChapterService } from './chapter.service';
 import { ListChaptersQueryDto } from './dto/list-chapters-query.dto';
@@ -101,6 +102,7 @@ export class ChapterController {
   }
 
   @Delete('chapters/:id')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete chapter by id' })
   @ApiBearerAuth()

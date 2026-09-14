@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import {
   IsArray,
@@ -14,16 +14,9 @@ import {
 import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
-
-export class TagFaqDto {
-  @ApiProperty({ description: 'Question text' })
-  @IsString()
-  question!: string;
-
-  @ApiProperty({ description: 'Answer text' })
-  @IsString()
-  answer!: string;
-}
+// Один класс на оба DTO: Swagger именует схему по имени класса, и второе объявление
+// с тем же именем молча вытесняло первое из `components.schemas` (`LEGACY-016`).
+import { TagFaqDto } from './create-tag-translation.dto';
 
 export class UpdateTagTranslationDto {
   @ApiPropertyOptional({ enum: Object.values(Language) })

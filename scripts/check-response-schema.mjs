@@ -19,23 +19,43 @@
 // Verdict per route:
 //   ok            — schema present and covers every field the code returns (nested too);
 //   poor          — schema present but MISSES fields the code returns  -> exit 1;
-//   undocumented  — no response schema at all (backfill candidate, not red here: the ratchet
-//                   for those lives in books-front/scripts/type-sync/surface.json);
-//   unverifiable  — the return type cannot be read (any/unknown/union of objects/no signature);
-//   no-body       — the handler answers with nothing or a primitive;
+//   undocumented  — the handler answers with a body and no schema describes it       -> exit 1;
+//   unverifiable  — the return type cannot be read (any/unknown/union of objects/no signature)
+//                                                                                    -> exit 1;
+//   no-body       — the handler answers with nothing, a primitive, or 204;
 //   not-in-snapshot — the code declares the route, the snapshot does not know it.
 //
 // `unverifiable` is printed, never swallowed: a check that cannot say "I did not look at this"
-// is indistinguishable from a check that passed (L-015, L-017).
+// is indistinguishable from a check that passed (L-015, L-017). Until 14.09.2026 it was printed
+// AND ignored by the exit code, together with `undocumented` and with the partial `unverified`
+// list — 123 routes out of 314 went unchecked under a green verdict. Now the first two are red
+// outright, and the third one is held by a ratchet (see RATCHET below): its causes are Json
+// columns, recursion and depth, i.e. places where the handler's type is wider than any schema
+// by construction, so a blanket red there would only ask for the check to be weakened back.
+//
+// RATCHET (`scripts/response-schema-unverified.json`): counts of partially verified routes by
+// cause. Any deviation is red, in BOTH directions — growth means a new unchecked place, a drop
+// without re-snapshotting means the baseline stopped describing reality. Counts by class, never
+// a list of routes: a list is the baseline forbidden by `C19`. Re-snapshot with
+// `yarn check:response-schema:snapshot`; under `CI=true` the flag is ignored, so a red pipeline
+// cannot be talked into agreeing with itself.
+//
+// What the ratchet does NOT catch, stated plainly because a guard that overclaims is worse than
+// one that admits its limit: an equal-size swap. Narrow one `union of object types` on route A
+// and introduce one on route B in the same commit, and every count lands where it was — the gate
+// stays green while a newly unchecked route ships. Closing that needs a per-route list, i.e. the
+// baseline `C19` forbids, so the cost is accepted and named rather than papered over.
 //
 // Pure Node (>= 20) plus the already-installed `typescript`. Reads the repo; writes only
-// when `--report <path>` is given explicitly (used to regenerate the queue list for `Q6`).
+// when `--report <path>` or `--update` is given explicitly.
 //
 // Usage:
-//   node scripts/check-response-schema.mjs [repoDir] [--report <path>]
+//   node scripts/check-response-schema.mjs [repoDir] [--report <path>] [--update]
 //   node scripts/check-response-schema.mjs --self-test
 //
-// Exit code: 0 — no route is documented poorer than it answers; 1 — at least one is.
+// Exit code: 0 — every route is either fully checked or honestly declared body-less;
+//            1 — a schema is poorer than the answer, a body is undocumented, a return type is
+//                unreadable, or the ratchet moved.
 
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -45,6 +65,12 @@ import ts from 'typescript';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = resolve(SCRIPT_DIR, '..');
+
+// Снимок счёта частично проверенного. Лежит рядом со сторожем, а не в `libs/`: это его
+// собственное состояние, а не часть контракта API.
+const RATCHET_FILE = 'scripts/response-schema-unverified.json';
+const RATCHET_PATH = join(SCRIPT_DIR, 'response-schema-unverified.json');
+let UPDATE_RATCHET = false;
 
 // Глаголы держатся ОДНИМ списком на репозиторий: `src/common/testing/controller-decorators.ts`
 // объявляет `VERBS`, и там же написано, почему копии обязаны совпадать — обработчик под `@All`
@@ -195,6 +221,38 @@ function collectRoutes(program, repoDir) {
   return { routes, skipped };
 }
 
+// Имена `HttpStatus`, которыми в этом репозитории перекрывают умолчание Nest. Список закрытый
+// и короткий намеренно: незнакомое имя не превращается в «наверное 200», а поднимает
+// `unverifiable` — сторож обязан уметь сказать «этого я не прочитал».
+const HTTP_STATUS_NAMES = new Map([
+  ['OK', 200],
+  ['CREATED', 201],
+  ['ACCEPTED', 202],
+  ['NON_AUTHORITATIVE_INFORMATION', 203],
+  ['NO_CONTENT', 204],
+  ['RESET_CONTENT', 205],
+  ['PARTIAL_CONTENT', 206],
+]);
+
+// Объявленный успешный код ответа. Nest отвечает 201 на POST и 200 на всём остальном,
+// `@HttpCode(...)` это умолчание перекрывает. Код нужен обеим сторонам сверки: по нему берётся
+// ветка `responses` в снимке — без этого `POST` под `@HttpCode(202)` сверялся бы с отсутствующим
+// `responses['200']` и уезжал в `undocumented` при живом `@ApiResponse({ status: 202, type })`
+// (два маршрута `media-jobs` висели так до 14.09.2026) — и по нему же 204 отделяется от «тела
+// нет по типу возврата».
+function declaredStatus(verb, decorators) {
+  const httpCode = decorators.find((d) => d.name === 'HttpCode');
+  const arg = httpCode?.args[0];
+  if (!httpCode) return { code: verb === 'POST' ? 201 : 200, explicit: false };
+  if (arg && ts.isNumericLiteral(arg)) return { code: Number(arg.text), explicit: true };
+  if (arg && ts.isPropertyAccessExpression(arg) && ts.isIdentifier(arg.name)) {
+    const code = HTTP_STATUS_NAMES.get(arg.name.text);
+    if (code) return { code, explicit: true };
+    return { code: null, explicit: true, why: `HttpStatus.${arg.name.text} — имя не в списке` };
+  }
+  return { code: null, explicit: true, why: 'аргумент не разобран' };
+}
+
 // A handler that declares a non-JSON content type answers with a body this check cannot read.
 function declaredNonJson(decorators) {
   for (const d of decorators) {
@@ -260,7 +318,11 @@ function describeActual(checker, type, location) {
       return described.kind === 'leaf';
     });
     if (allLeaf) return { kind: 'leaf', why: 'union of primitives' };
-    return { kind: 'unverifiable', why: 'union of object types' };
+    // Члены объединения отдаются наружу: если схема описывает тот же выбор через `oneOf`,
+    // сверка идёт по членам (см. `compareVariants`), и объединение перестаёт быть
+    // непроверяемым. Вердикт остаётся `unverifiable` для всех остальных случаев —
+    // объединение против одной объектной схемы читать нечем.
+    return { kind: 'unverifiable', why: 'union of object types', members };
   }
   const single = members[0];
 
@@ -305,7 +367,9 @@ function resolveSchema(snapshot, schema, seenRefs = new Set()) {
     for (const part of parts) Object.assign(properties, part.properties ?? {});
     return { kind: 'object', properties, free: parts.some((p) => p.free) };
   }
-  if (schema.oneOf || schema.anyOf) return { kind: 'variant' };
+  // Варианты отдаются наружу, а не схлопываются в «непроверяемо»: `oneOf` — это описанный
+  // выбор форм, и сверять его есть с чем, если тот же выбор есть и в типе возврата.
+  if (schema.oneOf || schema.anyOf) return { kind: 'variant', variants: schema.oneOf ?? schema.anyOf };
   if (schema.type === 'array') {
     return { kind: 'array', items: schema.items ?? null };
   }
@@ -325,14 +389,17 @@ function resolveSchema(snapshot, schema, seenRefs = new Set()) {
   return { kind: 'leaf' };
 }
 
-function responseSchemaOf(snapshot, verb, route) {
+function responseSchemaOf(snapshot, verb, route, status) {
   const pathItem = snapshot.paths?.[route];
   if (!pathItem) return { inSnapshot: false };
   const operation = pathItem[verb.toLowerCase()];
   if (!operation) return { inSnapshot: false };
-  // Берётся тот успешный код, у которого схема есть. `['200'] ?? ['201']` прятал бы схему
-  // из `@ApiCreatedResponse` за описательным `@ApiResponse({ status: 200 })` без тела.
-  const candidates = ['200', '201'].map((code) => operation.responses?.[code]).filter(Boolean);
+  // Код объявлен явно — ищем ровно его ветку. Умолчание Nest неизвестно точно (200 или 201),
+  // поэтому при отсутствии `@HttpCode` берётся тот из двух, у кого схема есть:
+  // `['200'] ?? ['201']` прятал бы схему из `@ApiCreatedResponse` за описательным
+  // `@ApiResponse({ status: 200 })` без тела.
+  const codes = status.explicit ? [String(status.code)] : ['200', '201'];
+  const candidates = codes.map((code) => operation.responses?.[code]).filter(Boolean);
   const withSchema = candidates.find((r) => r?.content?.['application/json']?.schema);
   // Маршрут в снимке есть, но успешного ответа с телом у него не описано (обычное дело
   // для 204 и 202) — это «схемы нет», а не «снимок не знает маршрута». Путать нельзя:
@@ -342,6 +409,57 @@ function responseSchemaOf(snapshot, verb, route) {
 }
 
 /* ---------------- comparison ---------------- */
+
+// Сверка выбора форм с выбором форм.
+//
+// Правило одно и строгое: член объединения считается покрытым, только если ХОТЯ БЫ ОДИН вариант
+// схемы описывает его **без единой недостачи**. Вариант, который «описывает всё» (`type: object`
+// без `properties` или `additionalProperties: true`), покрывающим не считается — иначе один
+// свободный вариант в `oneOf` закрывал бы собой любую форму и делал бы сверку декорацией.
+// Не покрытый ни одним вариантом член — это `poor` с именем члена и недостачами того варианта,
+// который подошёл ближе всех: иначе отчёт назвал бы проблему, но не место.
+function compareVariants(context, { actual, actualType }, documented, path, depth, seen) {
+  const { checker } = context;
+  const gaps = [];
+  const unverified = [];
+
+  const members = actual.members ?? [actualType];
+  const variants = documented.variants;
+
+  for (const member of members) {
+    const name = members.length > 1 ? checker.typeToString(member) : null;
+    const memberPath = name ? `${path}<${name}>` : path;
+    let covered = null;
+    let closest = null;
+
+    for (const variant of variants) {
+      const resolved = resolveSchema(context.snapshot, variant);
+      // Свободный вариант не покрывает: он ничего не утверждает о полях.
+      if (!resolved || resolved.kind === 'opaque' || resolved.free) continue;
+      const attempt = compareShape(context, member, variant, memberPath, depth + 1, new Set(seen));
+      if (!attempt.gaps.length) {
+        covered = attempt;
+        break;
+      }
+      if (!closest || attempt.gaps.length < closest.gaps.length) closest = attempt;
+    }
+
+    if (covered) {
+      // Непроверенное внутри подошедшего варианта не теряется — оно и есть честный остаток.
+      unverified.push(...covered.unverified);
+      continue;
+    }
+    if (closest) {
+      gaps.push(...closest.gaps);
+      unverified.push(...closest.unverified);
+      continue;
+    }
+    // Ни один вариант не читается: покрыт ли член — неизвестно, и это не «покрыт».
+    unverified.push({ path: memberPath, why: 'no readable variant in schema oneOf/anyOf' });
+  }
+
+  return { gaps, unverified };
+}
 
 // Walks the handler's type and the documented schema together. Collects every field the code
 // returns and the schema does not describe, at any depth.
@@ -357,20 +475,33 @@ export function compareShape(context, actualType, schema, path, depth, seen) {
 
   const actual = describeActual(checker, actualType, location);
   if (actual.kind === 'leaf') return { gaps, unverified };
-  if (actual.kind === 'unverifiable') {
-    unverified.push({ path, why: actual.why });
-    return { gaps, unverified };
-  }
 
   const documented = resolveSchema(snapshot, schema);
   if (!documented) {
     unverified.push({ path, why: 'schema not resolvable' });
     return { gaps, unverified };
   }
-  if (documented.kind === 'cycle' || documented.kind === 'variant' || documented.kind === 'opaque') {
+
+  // Выбор форм сверяется с выбором форм — и только с ним. Сюда попадают два случая:
+  // объединение типов против `oneOf` и один тип против `oneOf` (так описан элемент массива
+  // у `GET /books/{id}/versions`). Разбор — в `compareVariants`.
+  //
+  // 🔴 Объединение против ОДНОЙ объектной схемы сюда не входит, и это не упрощение.
+  // Самый частый такой случай — колонка Prisma `Json`: её тип `JsonValue` объединяет объект,
+  // массив, строку, число и `null`, тогда как схема описывает одну конкретную форму. Тип шире
+  // схемы по устройству, а не по недосмотру, и сверка по членам объявила бы `poor` у 49
+  // маршрутов, где недостачи нет. Такое остаётся в `unverified` и держится храповиком.
+  if (documented.kind === 'variant') {
+    return compareVariants(context, { actual, actualType }, documented, path, depth, seen);
+  }
+
+  if (actual.kind === 'unverifiable') {
+    unverified.push({ path, why: actual.why });
+    return { gaps, unverified };
+  }
+  if (documented.kind === 'cycle' || documented.kind === 'opaque') {
     const why = {
       cycle: 'schema is recursive',
-      variant: 'schema is oneOf/anyOf',
       opaque: 'schema says `type: object` without properties',
     }[documented.kind];
     unverified.push({ path, why });
@@ -477,9 +608,30 @@ export function analyse(repoDir, { snapshotPath, tsconfigName, skipVerbCheck } =
       continue;
     }
 
-    const found = responseSchemaOf(snapshot, route.verb, route.route);
+    const status = declaredStatus(route.verb, route.decorators);
+    if (status.code === null) {
+      results.push({ ...base, verdict: 'unverifiable', why: `@HttpCode: ${status.why}` });
+      continue;
+    }
+    const found = responseSchemaOf(snapshot, route.verb, route.route, status);
+    // Снимок спрашивается ДО разбора кода ответа, в том числе у 204. Иначе маршрут под 204,
+    // которого в снимке больше нет (путь переименован, контроллер переехал, снимок устарел),
+    // молча уходил бы в `no-body` и пропадал из списка «НЕТ В СНИМКЕ» — единственного сигнала
+    // расхождения кода со снимком для этих путей.
     if (!found.inSnapshot) {
       results.push({ ...base, verdict: 'not-in-snapshot' });
+      continue;
+    }
+
+    // 🔴 204 тела не несёт физически, а не по соглашению: Express обнуляет его вместе
+    // с `Content-Type` и `Content-Length` (`node_modules/express/lib/response.js:199-204`),
+    // поэтому объект, который сервис вернул обработчику, до клиента не доходит. Сверять
+    // схему ответа тут не с чем, и «схемы нет» здесь означает «тела нет», а не недостачу.
+    // Так снята премисса `LEGACY-373` («объявлены 204, но отдают тело»): на проводе тела нет
+    // у одиннадцати маршрутов из четырнадцати, а три оставшихся отвечают 200, потому что
+    // `@HttpCode` у них нет вовсе — их тело и правда уезжает и теперь требует схемы.
+    if (status.code === 204) {
+      results.push({ ...base, verdict: 'no-body', why: '204 (@HttpCode)' });
       continue;
     }
 
@@ -491,7 +643,13 @@ export function analyse(repoDir, { snapshotPath, tsconfigName, skipVerbCheck } =
     const returnType = unwrapPromise(checker, checker.getReturnTypeOfSignature(signature));
     const actual = describeActual(checker, returnType, route.declaration);
 
-    if (actual.kind === 'unverifiable') {
+    // Объединение на верхнем уровне непроверяемо не всегда: если схема маршрута описывает
+    // тот же выбор через `oneOf`, сверять есть с чем — `compareShape` уводит такой случай
+    // в `compareVariants`. Отбивать его здесь значило бы объявить непроверяемыми две ручки,
+    // чей union описан осознанно и подписан в схеме (`PATCH /comments/{id}`,
+    // `GET /admin/rights/intakes/{id}/rights-profile`).
+    const schemaIsVariant = Boolean(found.schema?.oneOf || found.schema?.anyOf);
+    if (actual.kind === 'unverifiable' && !(actual.members && schemaIsVariant)) {
       results.push({ ...base, verdict: 'unverifiable', why: `return type is ${actual.why}` });
       continue;
     }
@@ -531,7 +689,79 @@ function summarise(results) {
   return counts;
 }
 
-function report(results) {
+/* ---------------- ratchet ---------------- */
+
+// Причина сводится к КЛАССУ, а не берётся дословно: `depth limit 6` несёт в себе число, и снимок
+// с ним ломался бы от правки константы, а не от новой непроверенной ветки.
+function unverifiedClass(why) {
+  if (why.startsWith('depth limit')) return 'depth limit';
+  return why;
+}
+
+function unverifiedCounts(partly) {
+  const byReason = {};
+  for (const route of partly) {
+    for (const item of route.unverified) {
+      const key = unverifiedClass(item.why);
+      byReason[key] = (byReason[key] ?? 0) + 1;
+    }
+  }
+  return {
+    routes: partly.length,
+    byReason: Object.fromEntries(Object.entries(byReason).sort(([a], [b]) => a.localeCompare(b))),
+  };
+}
+
+// 🔴 Храповик, а не baseline. В снимок идут ЧИСЛА по классам, не список маршрутов: список
+// разрешал бы конкретные места навсегда, и это ровно тот baseline, что запрещён пачкой `C19`.
+// Расхождение красное в ОБЕ стороны. Рост — новое непроверенное место. Снижение без пересъёмки —
+// снимок перестал описывать действительность, и следующий рост будет мерить от неверного нуля.
+function ratchetHolds(partly, ratchetPath = RATCHET_PATH) {
+  const actual = unverifiedCounts(partly);
+
+  // `--update` под CI игнорируется намеренно: иначе красный конвейер уговаривал бы сам себя,
+  // переписывая ожидание под то, что получилось.
+  if (UPDATE_RATCHET && process.env.CI !== 'true') {
+    writeFileSync(ratchetPath, JSON.stringify(actual, null, 2) + '\n');
+    console.log(`\n[response-schema] снимок частично проверенного пересобран: ${RATCHET_FILE}`);
+    return true;
+  }
+
+  let expected;
+  try {
+    expected = JSON.parse(readFileSync(ratchetPath, 'utf8'));
+  } catch {
+    console.log(
+      `\n[response-schema] 🔴 снимка частично проверенного нет (${RATCHET_FILE}).\n` +
+        'Без него счёт непроверенного не с чем сравнить. Собери: yarn check:response-schema:snapshot',
+    );
+    return false;
+  }
+
+  const keys = [...new Set([...Object.keys(expected.byReason ?? {}), ...Object.keys(actual.byReason)])];
+  const moved = [];
+  if (expected.routes !== actual.routes) {
+    moved.push(`маршрутов с непроверенным: было ${expected.routes}, стало ${actual.routes}`);
+  }
+  for (const key of keys.sort()) {
+    const was = expected.byReason?.[key] ?? 0;
+    const now = actual.byReason[key] ?? 0;
+    if (was !== now) moved.push(`${key}: было ${was}, стало ${now}`);
+  }
+
+  if (!moved.length) return true;
+
+  console.log(`\n[response-schema] 🔴 счёт частично проверенного сдвинулся (${RATCHET_FILE}):`);
+  for (const line of moved) console.log(`  ${line}`);
+  console.log(
+    '\nРост — новое место, которое сторож прочитать не смог: сузь тип возврата или опиши схему.\n' +
+      'Снижение — тоже красное: непроверенного стало меньше, а снимок остался прежним,\n' +
+      'и следующий рост мерился бы от неверного нуля. Пересними: yarn check:response-schema:snapshot',
+  );
+  return false;
+}
+
+function report(results, ratchetPath = RATCHET_PATH) {
   const poor = results.filter((r) => r.verdict === 'poor');
   const unverifiable = results.filter((r) => r.verdict === 'unverifiable');
   const notInSnapshot = results.filter((r) => r.verdict === 'not-in-snapshot');
@@ -579,9 +809,64 @@ function report(results) {
     return false;
   }
 
+  let red = false;
+
+  // 🔴 «Не разобрано» и «нет в снимке» краснеют наравне с «не проверено»: это те же вёдра
+  // «я не смотрела», только причина в обходе, а не в типе. Контроллер под вычисляемым префиксом
+  // уезжает в `skipped` целиком — до трёх десятков маршрутов разом, — и при зелёном итоге
+  // обработчик, отдающий строку Prisma спредом, прошёл бы гейт. Порог `MIN_ROUTES` этого
+  // не ловит: он срабатывает, только если пропала треть маршрутов.
+  if (skipped.length) {
+    console.log(
+      `\n[response-schema] 🔴 не разобрано маршрутов ${skipped.length} (список выше).\n` +
+        'Адрес контроллера или маршрута собран не строковым литералом, и сверить его не с чем.\n' +
+        'Приведи путь к литералу — иначе маршрут не виден проверке вовсе.',
+    );
+    red = true;
+  }
+
+  if (notInSnapshot.length) {
+    console.log(
+      `\n[response-schema] 🔴 нет в снимке OpenAPI: ${notInSnapshot.length} (список выше).\n` +
+        'Либо снимок устарел — пересобери `yarn openapi:snapshot`, — либо путь в снимке собран\n' +
+        'иначе, чем его строит Nest. В обоих случаях маршрут не сверяется ни с чем.',
+    );
+    red = true;
+  }
+
+  // 🔴 Вердикт «я не смотрел» краснеет наравне с «схема беднее». До 14.09.2026 оба печатались
+  // и оба игнорировались кодом возврата: 123 маршрута из 314 уходили непроверенными под
+  // зелёным итогом. Тип возврата, который сторож прочитать не может, — это не свойство
+  // сторожа, а работа, которую никто не сделал.
+  if (unverifiable.length) {
+    console.log(
+      `\n[response-schema] 🔴 непроверяемых маршрутов ${unverifiable.length} (список выше).\n` +
+        'Сузь тип возврата обработчика: назови форму DTO или Prisma-типом вместо `any`,\n' +
+        '`unknown`, словаря и объединения. Объединение, описанное в схеме через `oneOf`,\n' +
+        'сверяется по членам и непроверяемым не считается.',
+    );
+    red = true;
+  }
+
+  const undocumented = results.filter((r) => r.verdict === 'undocumented');
+  if (undocumented.length) {
+    console.log(
+      `\n[response-schema] 🔴 тело есть, схемы ответа нет (${undocumented.length}):`,
+    );
+    for (const r of undocumented) console.log(`  ${r.verb} ${r.route} (${r.file}:${r.line})`);
+    console.log(
+      '\nОбработчик отвечает телом, которого не описывает ни одна схема. Повесь\n' +
+        '@ApiResponse({ type }) с верным DTO — или, если тела быть не должно, объяви\n' +
+        '@HttpCode(HttpStatus.NO_CONTENT): на 204 тело срезает транспорт.',
+    );
+    red = true;
+  }
+
+  if (!ratchetHolds(partly, ratchetPath)) red = true;
+
   if (!poor.length) {
-    console.log('\n[response-schema] ни одна схема ответа не беднее того, что отдаёт код.');
-    return true;
+    if (!red) console.log('\n[response-schema] ни одна схема ответа не беднее того, что отдаёт код.');
+    return !red;
   }
 
   console.log(`\n[response-schema] 🔴 схема беднее ответа (${poor.length}):`);
@@ -619,7 +904,10 @@ const FIXTURE_DECORATORS = `
 export function Controller(prefix?: string): ClassDecorator { return () => undefined; }
 export function Get(path?: string): MethodDecorator { return () => undefined; }
 export function Post(path?: string): MethodDecorator { return () => undefined; }
+export function Delete(path?: string): MethodDecorator { return () => undefined; }
 export function Header(name: string, value: string): MethodDecorator { return () => undefined; }
+export function HttpCode(code: number): MethodDecorator { return () => undefined; }
+export const HttpStatus = { OK: 200, CREATED: 201, ACCEPTED: 202, NO_CONTENT: 204 } as const;
 `;
 
 function writeFixture(dir, files) {
@@ -692,7 +980,8 @@ function selfTest() {
     record(name, true);
   };
 
-  const controller = (body) => `import { Controller, Get, Post, Header } from './nest';\n${body}\n`;
+  const controller = (body) =>
+    `import { Controller, Get, Post, Delete, Header, HttpCode, HttpStatus } from './nest';\n${body}\n`;
 
   run(
     'complete schema is green',
@@ -998,6 +1287,173 @@ export class ItemsController {
     );
   }
 
+  // --- 204 и 202: объявленный код решает, есть ли тело вообще ---
+
+  run(
+    '204 by @HttpCode is no-body even when the service returns a row',
+    {
+      'src/x.controller.ts': controller(`
+@Controller('items')
+export class C {
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(): Promise<{ id: string; title: string }> { return null as any; }
+}`),
+    },
+    fixtureSnapshot({ '/items/{id}': { delete: { responses: { 204: { description: '' } } } } }),
+    { verb: 'DELETE', route: '/items/{id}', verdict: 'no-body', why: '204' },
+  );
+
+  run(
+    'the same handler without @HttpCode answers 200 and is undocumented',
+    {
+      'src/x.controller.ts': controller(`
+@Controller('items')
+export class C {
+  @Delete(':id')
+  remove(): Promise<{ id: string; title: string }> { return null as any; }
+}`),
+    },
+    fixtureSnapshot({ '/items/{id}': { delete: { responses: { 200: { description: '' } } } } }),
+    { verb: 'DELETE', route: '/items/{id}', verdict: 'undocumented' },
+  );
+
+  run(
+    'schema is looked up under the declared status, not only 200/201',
+    {
+      'src/x.controller.ts': controller(`
+@Controller('items')
+export class C {
+  @Post('probe')
+  @HttpCode(HttpStatus.ACCEPTED)
+  probe(): Promise<{ enqueued: number }> { return null as any; }
+}`),
+    },
+    fixtureSnapshot({ '/items/probe': { post: { responses: { 202: objectSchema({ enqueued: {} }) } } } }),
+    { verb: 'POST', route: '/items/probe', verdict: 'ok' },
+  );
+
+  // --- объединение против oneOf ---
+
+  const variantSnapshot = (variants) =>
+    fixtureSnapshot({
+      '/items/{id}': {
+        get: { responses: { 200: { content: { 'application/json': { schema: { oneOf: variants } } } } } },
+      },
+    });
+
+  run(
+    'union of object types is verified against schema oneOf',
+    {
+      'src/x.controller.ts': controller(`
+@Controller('items')
+export class C {
+  @Get(':id')
+  one(): Promise<{ id: string; full: string } | { id: string }> { return null as any; }
+}`),
+    },
+    variantSnapshot([
+      { type: 'object', properties: { id: {}, full: {} } },
+      { type: 'object', properties: { id: {} } },
+    ]),
+    { verb: 'GET', route: '/items/{id}', verdict: 'ok' },
+  );
+
+  run(
+    'a union member no variant covers is poor, not silently verified',
+    {
+      'src/x.controller.ts': controller(`
+@Controller('items')
+export class C {
+  @Get(':id')
+  one(): Promise<{ id: string; secret: string } | { id: string }> { return null as any; }
+}`),
+    },
+    variantSnapshot([
+      { type: 'object', properties: { id: {} } },
+      { type: 'object', properties: { id: {} } },
+    ]),
+    { verb: 'GET', route: '/items/{id}', verdict: 'poor' },
+  );
+
+  run(
+    'a free variant does not count as covering',
+    {
+      'src/x.controller.ts': controller(`
+@Controller('items')
+export class C {
+  @Get(':id')
+  one(): Promise<{ id: string; secret: string } | { id: string }> { return null as any; }
+}`),
+    },
+    variantSnapshot([
+      { type: 'object', properties: { id: {} }, additionalProperties: true },
+      { type: 'object', properties: { id: {} } },
+    ]),
+    { verb: 'GET', route: '/items/{id}', verdict: 'poor' },
+  );
+
+  // --- код возврата: непроверенное краснеет ---
+
+  {
+    const filler = Array.from({ length: MIN_ROUTES }, (_, i) => ({
+      verb: 'GET',
+      route: `/x${i}`,
+      file: 'f',
+      line: 1,
+      verdict: 'ok',
+      gaps: [],
+      unverified: [],
+    }));
+    const emptyRatchet = join(root, 'ratchet-ok.json');
+    writeFileSync(emptyRatchet, JSON.stringify({ routes: 0, byReason: {} }));
+
+    const withUnverifiable = [
+      ...filler,
+      { verb: 'GET', route: '/u', file: 'f', line: 1, verdict: 'unverifiable', why: 'return type is any' },
+    ];
+    const a = report(withUnverifiable, emptyRatchet) === false;
+    record('unverifiable route makes the run red', a, a ? '' : 'вышло зелёным');
+
+    const withUndocumented = [
+      ...filler,
+      { verb: 'DELETE', route: '/d', file: 'f', line: 1, verdict: 'undocumented' },
+    ];
+    const b = report(withUndocumented, emptyRatchet) === false;
+    record('undocumented body makes the run red', b, b ? '' : 'вышло зелёным');
+
+    const partly = [
+      {
+        verb: 'GET',
+        route: '/p',
+        file: 'f',
+        line: 1,
+        verdict: 'ok',
+        gaps: [],
+        unverified: [{ path: 'a', why: 'unknown' }],
+      },
+    ];
+
+    const grew = join(root, 'ratchet-grew.json');
+    writeFileSync(grew, JSON.stringify({ routes: 0, byReason: {} }));
+    const c = report([...filler, ...partly], grew) === false;
+    record('ratchet growth is red', c, c ? '' : 'рост непроверенного пропущен');
+
+    const dropped = join(root, 'ratchet-dropped.json');
+    writeFileSync(dropped, JSON.stringify({ routes: 5, byReason: { unknown: 9 } }));
+    const d = report([...filler, ...partly], dropped) === false;
+    record('ratchet drop without re-snapshot is red too', d, d ? '' : 'снижение пропущено');
+
+    const exact = join(root, 'ratchet-exact.json');
+    writeFileSync(exact, JSON.stringify({ routes: 1, byReason: { unknown: 1 } }));
+    const e = report([...filler, ...partly], exact) === true;
+    record('ratchet that matches reality is green', e, e ? '' : 'совпадение не прошло');
+
+    const missing = join(root, 'ratchet-missing.json');
+    const f = report(filler, missing) === false;
+    record('missing ratchet snapshot is red, not assumed empty', f, f ? '' : 'отсутствие снимка пропущено');
+  }
+
   {
     const few = [{ verb: 'GET', route: '/x', file: 'f', line: 1, verdict: 'ok', gaps: [], unverified: [] }];
     const passed = report(few) === false;
@@ -1019,6 +1475,8 @@ function main(argv) {
     console.log('[response-schema self-test] проверка сама себя на подложенных дефектах:');
     return selfTest() ? 0 : 1;
   }
+
+  UPDATE_RATCHET = args.includes('--update');
 
   const reportIndex = args.indexOf('--report');
   const reportPath = reportIndex >= 0 ? args[reportIndex + 1] : null;

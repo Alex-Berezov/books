@@ -11,14 +11,14 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CreatePersonDto } from './dto/create-person.dto';
-import { PersonDetailDto, PersonListItemDto } from './dto/person-response.dto';
+import { PersonDetailDto } from './dto/person-response.dto';
 import { QueryPersonsDto } from './dto/query-persons.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
 import { PersonsService } from './persons.service';
 import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 
 @ApiTags('admin/persons')
-@ApiExtraModels(PersonListItemDto, PaginationInfoDto)
+@ApiExtraModels(PersonDetailDto, PaginationInfoDto)
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin, Role.ContentManager)
@@ -28,14 +28,18 @@ export class PersonsController {
 
   @Get()
   @ApiOperation({ summary: 'Get list of persons with filters' })
-  @ApiOkResponse({ schema: paginatedSchema(PersonListItemDto) })
+  // Список отдаёт ту же строку, что и карточка: `findAll` грузит `include: { translations: true }`,
+  // поэтому схемой стоит `PersonDetailDto`, а не базовый `PersonListItemDto` без переводов
+  // (`LEGACY-016`, 14.09.2026 — расхождение вскрылось, как только тип возврата сервиса
+  // перестал быть `Record<string, unknown>`).
+  @ApiOkResponse({ schema: paginatedSchema(PersonDetailDto) })
   public async findAll(@Query() query: QueryPersonsDto) {
     return this.personsService.findAll(query);
   }
 
   @Get('search')
   @ApiOperation({ summary: 'Search persons by query' })
-  @ApiOkResponse({ schema: paginatedSchema(PersonListItemDto) })
+  @ApiOkResponse({ schema: paginatedSchema(PersonDetailDto) })
   public async search(@Query('q') q: string) {
     return this.personsService.search(q || '');
   }

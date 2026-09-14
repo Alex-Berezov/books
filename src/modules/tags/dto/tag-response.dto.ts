@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
+import { PaginationMeta } from '../../../shared/dto/pagination-meta.dto';
 import { Language } from '@prisma/client';
 
 export class TagTranslationResponse {
@@ -135,20 +136,6 @@ export class TagResponse {
       'Automatic indexability (hysteresis state) for the requested ?lang. Mirrors what meta robots and the sitemap decide. Undefined when lang is not passed or the tag has no translation for it.',
   })
   autoIndexable?: boolean;
-}
-
-export class PaginationMeta {
-  @ApiProperty({ type: Number })
-  page: number;
-
-  @ApiProperty({ type: Number })
-  limit: number;
-
-  @ApiProperty({ type: Number })
-  total: number;
-
-  @ApiProperty({ type: Number })
-  totalPages: number;
 }
 
 export class PaginatedTagsResponse {

@@ -79,6 +79,14 @@ const jsonField = <K extends string>(
   return { [key]: written } as Record<K, JsonFieldInput>;
 };
 
+/**
+ * Форма, которой отвечают `publish` и `unpublish`: строка версии вместе с блоком SEO.
+ * Названа один раз, потому что на ней стоит сверка схемы ответа: разойдись две копии
+ * `include`, сторож сверил бы маршрут с формой, которой метод уже не отдаёт
+ * (`LEGACY-016`, 14.09.2026).
+ */
+type BookVersionWithSeo = Prisma.BookVersionGetPayload<{ include: { seo: true } }>;
+
 @Injectable()
 export class BookVersionService {
   private readonly logger = new Logger(BookVersionService.name);
@@ -259,7 +267,7 @@ export class BookVersionService {
     // any», и всё, что читается из него ниже (`rightsProfileId`, `id`,
     // `approvedRightsReviewId`), проверку типов не проходит вовсе. Пока файл был
     // выведен из-под unsafe-правил ESLint, этого не было видно (`LEGACY-038`).
-    let version: Prisma.BookVersionGetPayload<{ include: { seo: true } }>;
+    let version: BookVersionWithSeo;
     try {
       version = await this.prisma.$transaction(async (tx) => {
         let seoId: number | undefined;
@@ -1262,7 +1270,11 @@ export class BookVersionService {
    * Базовый снимок контента (`finalizeBaselineOnPublish`) намеренно не трогается: окно
    * наполнения черновика этим действием не открывается.
    */
-  async unpublish(id: string, actorUserId: string | null) {
+  // Тип возврата назван, а не выведен: обе ветки (запись в транзакции и перечитывание
+  // версии после `P2025`) дают одну и ту же форму, но вывод складывает их в объединение,
+  // и сторож схемы ответа отвечает на объединение `unverifiable` — схема маршрута
+  // не сверяется ни с чем (`LEGACY-016`, 14.09.2026). Та же форма уже названа строкой 262.
+  async unpublish(id: string, actorUserId: string | null): Promise<BookVersionWithSeo> {
     // Только на отказ 404: содержимое версии здесь не нужно — снимок читается под замком
     // внутри транзакции, а ответ собирает сама запись.
     const existing = await this.prisma.bookVersion.findUnique({

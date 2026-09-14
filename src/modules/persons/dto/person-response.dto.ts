@@ -32,6 +32,19 @@ export class PersonTranslationResponseDto {
 
   @ApiPropertyOptional({ type: String, nullable: true })
   photoUrl?: string | null;
+
+  // Перевод приходит связью без `select` (`persons.service.ts`: `include: { translations: true }`),
+  // то есть строкой целиком — служебные поля в ответе есть. До 14.09.2026 схема их не называла,
+  // и сторож схемы ответа этого не видел: тип возврата сервиса был `Record<string, unknown>`
+  // (`LEGACY-016`).
+  @ApiPropertyOptional({ type: Number, nullable: true })
+  seoId?: number | null;
+
+  @ApiProperty({ type: Date })
+  createdAt!: Date;
+
+  @ApiProperty({ type: Date })
+  updatedAt!: Date;
 }
 
 export class PersonListItemDto {

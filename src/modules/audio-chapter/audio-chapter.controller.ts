@@ -20,6 +20,7 @@ import {
   ApiQuery,
   ApiResponse,
   ApiTags,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { AudioChapterService } from './audio-chapter.service';
 import { AudioChapterResponseDto } from './dto/audio-chapter-response.dto';
@@ -142,6 +143,7 @@ export class AudioChapterController {
   }
 
   @Delete('audio-chapters/:id')
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete audio chapter by id' })
   @ApiBearerAuth()

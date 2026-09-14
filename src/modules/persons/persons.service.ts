@@ -17,21 +17,24 @@ export class PersonsService {
     private readonly rightsContentHashService: RightsContentHashService,
   ) {}
 
+  /**
+   * Делегат берётся у сгенерированного клиента напрямую. До 14.09.2026 здесь стояли ручные
+   * интерфейсы поверх `Record<string, unknown>` — тот же приём, что снят в модуле претензий
+   * (`LEGACY-344`). Цена была не в стиле: `Record<string, unknown>` непрозрачен для сторожа
+   * схемы ответа, и три маршрута персон (`GET`, `POST`, `PATCH /admin/persons*`) висели
+   * в вердикте `unverifiable` — схему ответа им сверять было не с чем
+   * (`scripts/check-response-schema.mjs`, `LEGACY-016`).
+   *
+   * ⚠️ Снят приём здесь **не весь**: `remove()` ниже по файлу и соседний
+   * `person-resolver.service.ts` держат его до сих пор, причём в `remove()` он вдобавок
+   * падает открыто — проверка связей пропускается, если делегат не нашёлся (`LEGACY-384`).
+   */
   private personModelOf(client: Prisma.TransactionClient | PrismaService) {
-    return (client as unknown as Record<string, unknown>)['person'] as {
-      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    };
+    return client.person;
   }
 
   private get personModel() {
-    return (this.prisma as unknown as Record<string, unknown>)['person'] as {
-      findMany: (args: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
-      count: (args: Record<string, unknown>) => Promise<number>;
-      findUnique: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
-      create: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      update: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      delete: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-    };
+    return this.prisma.person;
   }
 
   public async findAll(query: QueryPersonsDto) {

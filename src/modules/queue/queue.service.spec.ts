@@ -1,3 +1,4 @@
+import { ServiceUnavailableException } from '@nestjs/common';
 import { QueueService } from './queue.service';
 import type { Queue, Job } from 'bullmq';
 
@@ -6,6 +7,39 @@ describe('QueueService', () => {
     const svc = new QueueService(undefined);
     expect(svc.isEnabled()).toBe(false);
     expect(svc.status()).toEqual({ enabled: false });
+  });
+
+  /**
+   * Выключенный контур отвечает отказом, а не нулями (решение арбитра 14.09.2026). Нули
+   * совпадали бы байт в байт с ответом живой пустой очереди, и «подсистемы нет» стало бы
+   * неотличимо от «падений не было». Возврат любых счётчиков в этой ветке роняет кейс.
+   */
+  it('refuses instead of reporting zeros when no queue is provided', async () => {
+    const svc = new QueueService(undefined);
+
+    await expect(svc.getDemoStats()).rejects.toThrow(ServiceUnavailableException);
+    await expect(svc.getDemoStats()).rejects.toThrow('no Redis config');
+  });
+
+  it('fills a missing counter with zero rather than dropping the key', async () => {
+    // BullMQ типизует `getJobCounts` словарём, и отсутствующий ключ раньше уехал бы в ответ
+    // как `undefined`: форма сохраняется, а поле пропадает.
+    type MinimalQueue = Pick<Queue, 'add' | 'getJobCounts'>;
+    const partialQueue: MinimalQueue = {
+      add: () => Promise.resolve({ id: 'job-x' } as unknown as Job),
+      getJobCounts: () => Promise.resolve({ completed: 3 } as unknown as Record<string, number>),
+    };
+
+    const svc = new QueueService(partialQueue as unknown as Queue);
+
+    await expect(svc.getDemoStats()).resolves.toEqual({
+      waiting: 0,
+      active: 0,
+      completed: 3,
+      failed: 0,
+      delayed: 0,
+      paused: 0,
+    });
   });
 
   it('should enqueue and return stats when queue is provided', async () => {

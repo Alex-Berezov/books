@@ -8906,6 +8906,18 @@
         ],
         "type": "object"
       },
+      "DeleteBookResponseDto": {
+        "properties": {
+          "success": {
+            "description": "Книга удалена",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
       "DeleteContributorResponseDto": {
         "properties": {
           "id": {
@@ -8914,6 +8926,23 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "DeleteMediaResponseDto": {
+        "properties": {
+          "storageDeleted": {
+            "description": "Объект удалён и из хранилища. `false` — запись удалена, а объект остался сиротой и требует ручной уборки.",
+            "type": "boolean"
+          },
+          "success": {
+            "description": "Запись помечена удалённой",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "storageDeleted"
         ],
         "type": "object"
       },
@@ -12466,6 +12495,10 @@
             "nullable": true,
             "type": "string"
           },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "displayName": {
             "type": "string"
           },
@@ -12489,11 +12522,19 @@
             "nullable": true,
             "type": "string"
           },
+          "seoId": {
+            "nullable": true,
+            "type": "number"
+          },
           "shortDescription": {
             "nullable": true,
             "type": "string"
           },
           "slug": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
             "type": "string"
           },
           "wikidataUrl": {
@@ -12510,7 +12551,9 @@
           "personId",
           "language",
           "slug",
-          "displayName"
+          "displayName",
+          "createdAt",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -14166,6 +14209,43 @@
         ],
         "type": "object"
       },
+      "QueueDemoStatsResponseDto": {
+        "properties": {
+          "active": {
+            "description": "Задачи в работе",
+            "type": "number"
+          },
+          "completed": {
+            "description": "Успешно завершённые задачи",
+            "type": "number"
+          },
+          "delayed": {
+            "description": "Задачи, отложенные до срока",
+            "type": "number"
+          },
+          "failed": {
+            "description": "Задачи, упавшие после всех попыток",
+            "type": "number"
+          },
+          "paused": {
+            "description": "Задачи в приостановленной очереди",
+            "type": "number"
+          },
+          "waiting": {
+            "description": "Задачи, ожидающие исполнителя",
+            "type": "number"
+          }
+        },
+        "required": [
+          "waiting",
+          "active",
+          "completed",
+          "failed",
+          "delayed",
+          "paused"
+        ],
+        "type": "object"
+      },
       "QueueStatusResponseDto": {
         "properties": {
           "enabled": {
@@ -15450,6 +15530,22 @@
           "genres",
           "categories",
           "collections"
+        ],
+        "type": "object"
+      },
+      "RemoveVersionContributorResponseDto": {
+        "properties": {
+          "success": {
+            "description": "Связь с контрибьютором снята",
+            "type": "boolean"
+          },
+          "warning": {
+            "description": "Предупреждение: снят основной AUTHOR и авторов у версии не осталось. Приходит только в этой ветке.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "success"
         ],
         "type": "object"
       },
@@ -24263,7 +24359,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -25256,7 +25352,7 @@
                   "properties": {
                     "items": {
                       "items": {
-                        "$ref": "#/components/schemas/PersonListItemDto"
+                        "$ref": "#/components/schemas/PersonDetailDto"
                       },
                       "type": "array"
                     },
@@ -25342,7 +25438,7 @@
                   "properties": {
                     "items": {
                       "items": {
-                        "$ref": "#/components/schemas/PersonListItemDto"
+                        "$ref": "#/components/schemas/PersonDetailDto"
                       },
                       "type": "array"
                     },
@@ -32118,6 +32214,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveVersionContributorResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -33063,7 +33166,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -33253,7 +33356,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -33946,6 +34049,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteBookResponseDto"
+                }
+              }
+            },
             "description": "Book successfully deleted"
           },
           "404": {
@@ -34443,7 +34553,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -34682,7 +34792,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -34826,7 +34936,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -35826,6 +35936,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMediaResponseDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -35948,7 +36065,17 @@
         "parameters": [],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueDemoStatsResponseDto"
+                }
+              }
+            },
             "description": ""
+          },
+          "503": {
+            "description": "Очередь не сконфигурирована (нет Redis) — тот же отказ, что у enqueue"
           }
         },
         "security": [
@@ -36382,7 +36509,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -36553,7 +36680,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -37850,7 +37977,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -38070,7 +38197,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
@@ -38264,7 +38391,7 @@
         ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Deleted; no body"
           }
         },
         "security": [
