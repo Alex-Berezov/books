@@ -25,9 +25,10 @@ export class PersonsService {
    * в вердикте `unverifiable` — схему ответа им сверять было не с чем
    * (`scripts/check-response-schema.mjs`, `LEGACY-016`).
    *
-   * ⚠️ Снят приём здесь **не весь**: `remove()` ниже по файлу и соседний
-   * `person-resolver.service.ts` держат его до сих пор, причём в `remove()` он вдобавок
-   * падает открыто — проверка связей пропускается, если делегат не нашёлся (`LEGACY-384`).
+   * ⚠️ Снят приём здесь **не весь**: соседний `person-resolver.service.ts` держит его
+   * до сих пор — это место числится за ведущей записью класса `LEGACY-345` и правится
+   * целиком своим коммитом, без изменения поведения. В `remove()` приём снят 14.09.2026
+   * вместе с открытым отказом (`LEGACY-384`).
    */
   private personModelOf(client: Prisma.TransactionClient | PrismaService) {
     return client.person;
@@ -228,30 +229,34 @@ export class PersonsService {
   public async remove(id: string): Promise<{ id: string }> {
     await this.findOne(id);
 
-    const bvcModel = (this.prisma as unknown as Record<string, unknown>)[
-      'bookVersionContributor'
-    ] as { count?: (args: Record<string, unknown>) => Promise<number> } | undefined;
-
-    if (bvcModel && typeof bvcModel.count === 'function') {
-      const bvcCount = await bvcModel.count({ where: { personId: id } });
-      if (bvcCount > 0) {
-        throw new BadRequestException(
-          `Cannot delete Person: linked to ${bvcCount} book version contributor records. Unlink them first.`,
-        );
-      }
+    // Проверка связей идёт по сгенерированному делегату и **безусловно** (`LEGACY-384`).
+    // До 14.09.2026 оба обращения шли через `Record<string, unknown>` под условием
+    // `if (model && typeof model.count === 'function')`, то есть при ненайденном делегате
+    // проверка не отказывала, а пропускалась, и персона удалялась. Теряются при этом
+    // **чужие** связи, и двумя разными способами: `BookVersionContributor.person` стоит под
+    // `onDelete: Cascade` (`prisma/schema.prisma:1915`) — строка привязки к версии книги
+    // исчезает целиком; `RightsProfileContributor.person` стоит под `onDelete: SetNull`
+    // (`:1950`) — строка остаётся с `personId = NULL` и осиротевшим `displayName`.
+    // `PersonTranslation.person` тоже каскадный (`:1884`), но это собственные переводы имени
+    // персоны — они и должны уходить вместе с ней, поэтому здесь не считаются.
+    // Условия вокруг проверки быть не должно: нечем проверить целостность — падать,
+    // а не удалять.
+    const versionContributorLinks = await this.prisma.bookVersionContributor.count({
+      where: { personId: id },
+    });
+    if (versionContributorLinks > 0) {
+      throw new BadRequestException(
+        `Cannot delete Person: linked to ${versionContributorLinks} book version contributor records. Unlink them first.`,
+      );
     }
 
-    const rpcModel = (this.prisma as unknown as Record<string, unknown>)[
-      'rightsProfileContributor'
-    ] as { count?: (args: Record<string, unknown>) => Promise<number> } | undefined;
-
-    if (rpcModel && typeof rpcModel.count === 'function') {
-      const rpcCount = await rpcModel.count({ where: { personId: id } });
-      if (rpcCount > 0) {
-        throw new BadRequestException(
-          `Cannot delete Person: linked to ${rpcCount} rights profile contributor records. Unlink them first.`,
-        );
-      }
+    const rightsProfileLinks = await this.prisma.rightsProfileContributor.count({
+      where: { personId: id },
+    });
+    if (rightsProfileLinks > 0) {
+      throw new BadRequestException(
+        `Cannot delete Person: linked to ${rightsProfileLinks} rights profile contributor records. Unlink them first.`,
+      );
     }
 
     await this.personModel.delete({ where: { id } });

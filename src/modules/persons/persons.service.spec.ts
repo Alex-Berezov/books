@@ -144,3 +144,89 @@ describe('PersonsService.findAll — обёртка ответа', () => {
     expect(res.pagination).toEqual({ page: 1, limit: 20, total: 42, totalPages: 3 });
   });
 });
+
+/**
+ * `LEGACY-384`. Проверка связей перед удалением персоны стояла под условием
+ * `if (model && typeof model.count === 'function')` поверх `Record<string, unknown>`:
+ * делегат не нашёлся — проверка **пропускалась**, а не отказывала, и персона удалялась.
+ * У `BookVersionContributor.person` в схеме стоит `onDelete: Cascade`
+ * (`prisma/schema.prisma:1915`), поэтому вместо 400 «unlink them first» строка привязки
+ * к версии книги снималась целиком, а участники входят в content hash правового клиренса.
+ * У `RightsProfileContributor.person` стоит `onDelete: SetNull` (`:1950`): там строка
+ * остаётся, но теряет привязку к персоне.
+ *
+ * 🔴 Кейс с пустым клиентом — не формальность: именно он краснеет от возврата условия.
+ * Клиент без `bookVersionContributor`/`rightsProfileContributor` повторяет ровно тот
+ * случай, ради которого условие и стояло, и требует отказа, а не молчаливого удаления.
+ */
+describe('PersonsService.remove — проверка связей падает закрыто', () => {
+  const person = { id: 'person-1', canonicalName: 'Иванов Иван', translations: [] };
+
+  function build(client: Record<string, unknown>) {
+    return new PersonsService(
+      client as unknown as PrismaService,
+      { checkStalenessForPerson: jest.fn() } as unknown as RightsContentHashService,
+    );
+  }
+
+  function personDelegate() {
+    return {
+      findUnique: jest.fn().mockResolvedValue(person),
+      delete: jest.fn().mockResolvedValue(person),
+    };
+  }
+
+  it('отказывает 400 и не удаляет, когда персона связана с версией книги', async () => {
+    const client = {
+      person: personDelegate(),
+      bookVersionContributor: { count: jest.fn().mockResolvedValue(2) },
+      rightsProfileContributor: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const service = build(client);
+
+    await expect(service.remove('person-1')).rejects.toThrow(
+      /linked to 2 book version contributor records/,
+    );
+    expect(client.person.delete).not.toHaveBeenCalled();
+  });
+
+  it('отказывает 400 и не удаляет, когда персона связана с правовым профилем', async () => {
+    const client = {
+      person: personDelegate(),
+      bookVersionContributor: { count: jest.fn().mockResolvedValue(0) },
+      rightsProfileContributor: { count: jest.fn().mockResolvedValue(3) },
+    };
+    const service = build(client);
+
+    await expect(service.remove('person-1')).rejects.toThrow(
+      /linked to 3 rights profile contributor records/,
+    );
+    expect(client.person.delete).not.toHaveBeenCalled();
+  });
+
+  it('не удаляет персону, когда проверить связи нечем: делегатов в клиенте нет', async () => {
+    const client = { person: personDelegate() };
+    const service = build(client);
+
+    // 🔴 Отказ сверяется классом и текстом, а не голым `toThrow()`. Голая форма зеленела бы
+    // на любом исключении — в том числе на `NotFoundException` из `findOne()`, если фикстура
+    // `findUnique` однажды вернёт `null`: до проверки связей дело бы не дошло вовсе,
+    // а сторож возврата `LEGACY-384` замолчал бы, оставшись зелёным.
+    await expect(service.remove('person-1')).rejects.toThrow(TypeError);
+    await expect(service.remove('person-1')).rejects.toThrow(/count/);
+    expect(client.person.delete).not.toHaveBeenCalled();
+  });
+
+  it('удаляет персону без связей', async () => {
+    const client = {
+      person: personDelegate(),
+      bookVersionContributor: { count: jest.fn().mockResolvedValue(0) },
+      rightsProfileContributor: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const service = build(client);
+
+    await expect(service.remove('person-1')).resolves.toEqual({ id: 'person-1' });
+    expect(client.person.delete).toHaveBeenCalledTimes(1);
+    expect(client.person.delete).toHaveBeenCalledWith({ where: { id: 'person-1' } });
+  });
+});
