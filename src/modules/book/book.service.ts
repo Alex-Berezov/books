@@ -11,7 +11,10 @@ import { BookCardDto } from './dto/book-card.dto';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { BookType, Language, Category, CategoryTranslation, Prisma } from '@prisma/client';
-import { resolveRequestedLanguage } from '../../shared/language/language.util';
+import {
+  resolveRequestedLanguage,
+  getSupportedLanguages,
+} from '../../shared/language/language.util';
 import { cleanDescription } from '../seo/utils/cleanDescription';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
@@ -26,6 +29,14 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
  */
 const toSlugArray = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+
+/**
+ * `remove()` каскадом сносит все версии книги вместе с их главами и
+ * статистикой чтения — тот же дедлайн, что у `TAG_TX_OPTIONS`
+ * и `CATEGORY_TREE_TX_OPTIONS`, и по той же причине (`L-020`): дефолт
+ * Prisma (5000/2000 мс) отдал бы `P2028` на книге с большой историей.
+ */
+const BOOK_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 @Injectable()
 export class BookService {
@@ -1487,13 +1498,66 @@ export class BookService {
     });
   }
 
+  /**
+   * `LEGACY-395`. `Book.slug` — фолбэк публичного резолва (см. `update()` выше),
+   * и он **языконезависим**: при промахе по паре (слаг, язык) `getOverview`
+   * берёт `bookVersion.findFirst({slug, status:'published'})` без фильтра
+   * по языку, и лишь если не нашла ничего — падает на `Book.slug`. Значит одна
+   * живая опубликованная версия с этим слагом держит адрес живым **во всех
+   * пяти языках сразу**, а не только в своём — ответ здесь бинарный (жив
+   * везде / мёртв везде), как у базового `Category.slug`, а не «по языкам»,
+   * как у перевода. Решать это по каждому языку отдельно (прежняя редакция
+   * правки) было ошибкой ревью: дефект внесён этим же заходом, починен здесь
+   * же, а не новой записью.
+   *
+   * Преемника (как родитель у категории) у книги нет — только уборка.
+   * Транзакция получает тот же явный дедлайн, что у соседей по этой задаче
+   * (`TAG_TX_OPTIONS`, `CATEGORY_TREE_TX_OPTIONS`, `L-020`): каскад тянет
+   * версии со всеми главами и статистикой чтения, и голая `$transaction`
+   * укладывается в дефолтные 5 секунд не на каждой книге.
+   */
   async remove(id: string) {
-    const book = await this.prisma.book.findUnique({ where: { id } });
-    if (!book) {
-      throw new NotFoundException(`Book with ID ${id} not found`);
-    }
+    return this.prisma.$transaction(async (tx) => {
+      const book = await tx.book.findUnique({ where: { id } });
+      if (!book) {
+        throw new NotFoundException(`Book with ID ${id} not found`);
+      }
 
-    return this.prisma.book.delete({ where: { id } });
+      // `onDelete: Cascade` снимает версии книги вместе с ней — до запроса
+      // живости слага ниже, поэтому свои же версии в нём уже не участвуют.
+      const removed = await tx.book.delete({ where: { id } });
+
+      const stillLive = await this.isBookSlugLive(tx, removed.slug);
+      if (!stillLive) {
+        await this.slugRedirects.cleanupDeadRedirects(
+          'book',
+          getSupportedLanguages(),
+          removed.slug,
+          tx,
+        );
+      }
+
+      return removed;
+    }, BOOK_REMOVE_TX_OPTIONS);
+  }
+
+  /**
+   * Жив ли ещё бывший базовый слаг удалённой книги — тем же запросом, каким
+   * решает `getOverview` (см. докблок `remove()` выше): любая опубликованная
+   * версия с этим слагом, чья угодно.
+   */
+  private async isBookSlugLive(tx: Prisma.TransactionClient, slug: string): Promise<boolean> {
+    // 🔴 `language: { in: ... }` — находка второго круга ревью: у `BookVersion`
+    // нет индекса с ведущим `slug`, только `@@unique([language, slug])`. Без
+    // языка запрос читает таблицу целиком внутри транзакции, держащей
+    // блокировки на каскадно удалённых версиях (тот же приём, что у
+    // `CategoryService.deadLanguagesForSlug`). Значений не сужает —
+    // `getSupportedLanguages()` возвращает весь enum.
+    const liveVersion = await tx.bookVersion.findFirst({
+      where: { slug, status: 'published', language: { in: getSupportedLanguages() } },
+      select: { id: true },
+    });
+    return !!liveVersion;
   }
 
   /**

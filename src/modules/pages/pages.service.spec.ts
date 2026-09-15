@@ -49,6 +49,7 @@ const createSlugRedirectStub = () => ({
   record: jest.fn().mockResolvedValue(undefined),
   recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
   resolve: jest.fn().mockResolvedValue(null),
+  cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
 });
 
 describe('PagesService (unit)', () => {
@@ -279,6 +280,36 @@ describe('PagesService (unit)', () => {
           seoId: 5,
         } as unknown as import('./dto/update-page.dto').UpdatePageDto),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('remove (LEGACY-395)', () => {
+    it('deletes the page and cleans up the redirect history on its own (language, slug)', async () => {
+      prisma.page.findUnique.mockResolvedValue({
+        id: 'p1',
+        language: Language.en,
+        slug: 'old-terms',
+      });
+      prisma.page.delete.mockResolvedValue({ id: 'p1' });
+
+      const res = await service.remove('p1');
+
+      expect(res).toEqual({ success: true });
+      expect(prisma.page.delete).toHaveBeenCalledWith({ where: { id: 'p1' } });
+      expect(slugRedirects.cleanupDeadRedirects).toHaveBeenCalledWith(
+        'page',
+        [Language.en],
+        'old-terms',
+        prisma,
+      );
+    });
+
+    it('throws NotFoundException and touches no redirect when the page does not exist', async () => {
+      prisma.page.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove('missing')).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.page.delete).not.toHaveBeenCalled();
+      expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
     });
   });
 });

@@ -27,6 +27,13 @@ function escapeLikeWildcards(term: string): string {
   return term.replace(/([\\%_])/g, '\\$1');
 }
 
+/**
+ * `remove()` (`LEGACY-395`) идёт в явной транзакции — тот же дедлайн, что
+ * у `TAG_TX_OPTIONS`/`CATEGORY_TREE_TX_OPTIONS`/`BOOK_REMOVE_TX_OPTIONS`,
+ * для единообразия с остальными тремя `remove()` этой же записи (`L-020`).
+ */
+const PAGE_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
 @Injectable()
 export class PagesService {
   constructor(
@@ -371,11 +378,26 @@ export class PagesService {
     });
   }
 
+  /**
+   * `LEGACY-395`. У страницы нет ни родителя, ни базового слага отдельно
+   * от перевода — сама строка `Page` это и есть один публичный адрес
+   * (`language`+`slug`, `getPublicBySlug` выше ищет ровно эту пару и без
+   * фоллбэка). Значит вопрос "жив ли адрес ещё" не нужен: `@@unique([language,
+   * slug])` не даёт другой живой странице занять ту же пару, пока эта не
+   * удалена, а после удаления адрес мёртв безусловно — преемника тоже
+   * нет, писать некому (см. тело записи `LEGACY-395`).
+   */
   async remove(id: string): Promise<{ success: boolean }> {
-    const exists = await this.prisma.page.findUnique({ where: { id } });
-    if (!exists) throw new NotFoundException('Page not found');
-    await this.prisma.page.delete({ where: { id } });
-    return { success: true };
+    return this.prisma.$transaction(async (tx) => {
+      const exists = await tx.page.findUnique({ where: { id } });
+      if (!exists) throw new NotFoundException('Page not found');
+
+      await tx.page.delete({ where: { id } });
+
+      await this.slugRedirects.cleanupDeadRedirects('page', [exists.language], exists.slug, tx);
+
+      return { success: true };
+    }, PAGE_REMOVE_TX_OPTIONS);
   }
 
   /**

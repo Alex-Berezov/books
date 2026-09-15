@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PUBLIC_BOOK_VERSION_SELECT } from '../../common/selects/public-book.select';
+import { getSupportedLanguages } from '../../shared/language/language.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
@@ -86,6 +87,14 @@ const jsonField = <K extends string>(
  * (`LEGACY-016`, 14.09.2026).
  */
 type BookVersionWithSeo = Prisma.BookVersionGetPayload<{ include: { seo: true } }>;
+
+/**
+ * `remove()` (`LEGACY-395`) каскадом сносит главы, аудио-главы и статистику
+ * чтения версии — тот же явный дедлайн, что у `TAG_TX_OPTIONS`
+ * и `CATEGORY_TREE_TX_OPTIONS`, и по той же причине (`L-020`): дефолт Prisma
+ * (5000/2000 мс) не гарантирован на версии с большой историей.
+ */
+const BOOK_VERSION_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 @Injectable()
 export class BookVersionService {
@@ -1176,13 +1185,78 @@ export class BookVersionService {
     };
   }
 
+  /**
+   * `LEGACY-395`. `BookVersion.slug` живёт в одном языке, преемника у версии
+   * нет (родителя-книги в смысле фоллбэка на другой публичный адрес не
+   * существует: `getOverview` падает на `Book.slug` только когда ни одна
+   * версия не совпала, а не потому что эта версия назначила его преемником).
+   *
+   * 🔴 Живость адреса проверяется **двумя** запросами, а не одним, — находка
+   * ревью (дефект внесён этим же заходом, починен здесь же). Первая редакция
+   * спрашивала только `Book.slug`, а `getOverview` перед фоллбэком на него
+   * сперва ищет **любую** опубликованную версию с этим слагом без фильтра
+   * по языку (`bookVersion.findFirst({slug, status:'published'})` без
+   * `language` — та же причина, что у `deadLanguages` в `book.service.ts`).
+   * `@@unique([language, slug])` исключает только версию в **этом же**
+   * языке — версия того же слага в другом языке (у любой книги) свободна
+   * держать адрес живым и после удаления этой строки.
+   */
   async remove(id: string) {
-    const existing = await this.prisma.bookVersion.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('BookVersion not found');
-    return this.prisma.bookVersion.delete({
-      where: { id },
-      include: { seo: true },
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.bookVersion.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException('BookVersion not found');
+
+      const removed = await tx.bookVersion.delete({
+        where: { id },
+        include: { seo: true },
+      });
+
+      if (removed.slug) {
+        const stillLive = await this.isBookSlugStillLive(tx, removed.slug);
+        if (!stillLive) {
+          // Найдено во втором круге ревью и починено здесь же: ответ
+          // `isBookSlugStillLive` бинарный и языконезависимый (та же причина,
+          // что у `isBookSlugLive` в `book.service.ts`) — мёртвый слаг снимает
+          // записи во всех пяти языках, а не только в языке удалённой версии.
+          // Иначе редирект от смены слага СОСЕДНЕЙ версии на этот же слаг
+          // остаётся висеть, хотя цель мертва так же, как и для языка,
+          // который здесь снят.
+          await this.slugRedirects.cleanupDeadRedirects(
+            'book',
+            getSupportedLanguages(),
+            removed.slug,
+            tx,
+          );
+        }
+      }
+
+      return removed;
+    }, BOOK_VERSION_REMOVE_TX_OPTIONS);
+  }
+
+  /**
+   * Жив ли ещё умерший слаг версии — тем же запросом, каким его находит
+   * `getOverview` перед фоллбэком на `Book.slug`: любая опубликованная
+   * версия с этим слагом, в любом языке, любой книги. Найдена — адрес жив,
+   * и `Book.slug` уже спрашивать не нужно (он не может оживить то, что
+   * версия ещё не оживила). Не найдена — спрашиваем `Book.slug` отдельно:
+   * фоллбэк `getOverview` срабатывает и без единой живой версии.
+   */
+  private async isBookSlugStillLive(tx: Prisma.TransactionClient, slug: string): Promise<boolean> {
+    // 🔴 `language: { in: ... }` — находка второго круга ревью: у `BookVersion`
+    // нет индекса с ведущим `slug`, есть только `@@unique([language, slug])`
+    // (`prisma/schema.prisma`). Без языка запрос читает таблицу целиком внутри
+    // транзакции, которая уже держит блокировки на каскадно удалённых строках
+    // (см. `category.service.ts:deadLanguagesForSlug` — тот же приём и та же
+    // причина). Значений не сужает: `getSupportedLanguages()` — весь enum.
+    const liveVersion = await tx.bookVersion.findFirst({
+      where: { slug, status: 'published', language: { in: getSupportedLanguages() } },
+      select: { id: true },
     });
+    if (liveVersion) return true;
+
+    const liveBook = await tx.book.findFirst({ where: { slug }, select: { id: true } });
+    return !!liveBook;
   }
 
   async publish(id: string) {

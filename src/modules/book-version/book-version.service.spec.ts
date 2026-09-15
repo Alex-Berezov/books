@@ -36,6 +36,9 @@ interface PrismaStub {
       currentRightsProfileId: string | null;
       approvedRightsReviewId: string | null;
     } | null>;
+    // `remove()` спрашивает, не жив ли слаг умершей версии как `Book.slug`
+    // (`LEGACY-395`) — отдельно от `findUnique` выше, который читает по `id`.
+    findFirst: (args?: { where?: { slug?: string } }) => Promise<{ id: string } | null>;
   };
   rightsIntake: {
     findUnique: (args: { where: { id: string }; select: Record<string, boolean> }) => Promise<{
@@ -112,6 +115,7 @@ const createPrismaStub = (): PrismaStub => {
   const stub = {
     book: {
       findUnique: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     rightsIntake: {
       findUnique: jest.fn(),
@@ -207,6 +211,12 @@ describe('BookVersionService', () => {
     getVersionRecheck: jest.Mock;
   };
   let geoIpCountryService: { getSourceHealth: jest.Mock };
+  let slugRedirects: {
+    record: jest.Mock;
+    recordBaseSlugChange: jest.Mock;
+    resolve: jest.Mock;
+    cleanupDeadRedirects: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -301,6 +311,12 @@ describe('BookVersionService', () => {
       }),
     };
     adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
+    slugRedirects = {
+      record: jest.fn().mockResolvedValue(undefined),
+      recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+      resolve: jest.fn().mockResolvedValue(null),
+      cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
+    };
     service = new BookVersionService(
       prisma as unknown as PrismaService,
       gateService as unknown as PublicationGateService,
@@ -313,11 +329,7 @@ describe('BookVersionService', () => {
       rightsRecheckService as unknown as RightsRecheckService,
       rightsLawyerReviewService as unknown as RightsLawyerReviewService,
       geoIpCountryService as unknown as GeoIpCountryService,
-      {
-        record: jest.fn().mockResolvedValue(undefined),
-        recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
-        resolve: jest.fn().mockResolvedValue(null),
-      } as unknown as SlugRedirectService,
+      slugRedirects as unknown as SlugRedirectService,
       adminAudit as unknown as AdminAuditService,
       new TerritoryRegionAggregationService(),
     );
@@ -1134,7 +1146,7 @@ describe('BookVersionService', () => {
     expect(prisma.seo.create).not.toHaveBeenCalled();
   });
 
-  it('removes version', async () => {
+  it('removes version and cleans up the dead redirect on its own slug (LEGACY-395)', async () => {
     const now = new Date();
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
       id: 'v3',
@@ -1155,6 +1167,7 @@ describe('BookVersionService', () => {
       id: 'v3',
       bookId: 'b1',
       language: Language.en,
+      slug: 'karamazovy-brothers',
       title: 'T',
       author: 'A',
       description: 'D',
@@ -1167,9 +1180,95 @@ describe('BookVersionService', () => {
       seoId: undefined,
       seo: null,
     });
+    // Ни другой живой версии с этим слагом, ни чьего-то `Book.slug` — адрес
+    // мёртв, уборка идёт.
+    (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.book.findFirst as jest.Mock).mockResolvedValue(null);
+
     const res = await service.remove('v3');
+
     expect(res.id).toBe('v3');
     expect(prisma.bookVersion.delete).toHaveBeenCalled();
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith({
+      where: {
+        slug: 'karamazovy-brothers',
+        status: 'published',
+        language: { in: Object.values(Language) },
+      },
+      select: { id: true },
+    });
+    expect(prisma.book.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'karamazovy-brothers' },
+      select: { id: true },
+    });
+    // Мёртв во всех языках сразу — уборка на весь набор, а не только на
+    // язык удалённой версии (LEGACY-395, находка второго круга ревью).
+    expect(slugRedirects.cleanupDeadRedirects).toHaveBeenCalledWith(
+      'book',
+      Object.values(Language),
+      'karamazovy-brothers',
+      prisma,
+    );
+  });
+
+  it('does not clean up the redirect when the dying slug is still a live Book.slug (LEGACY-395)', async () => {
+    const now = new Date();
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v4',
+      bookId: 'b1',
+      language: Language.en,
+      slug: 'karamazovy-brothers',
+      createdAt: now,
+      updatedAt: now,
+    });
+    (prisma.bookVersion.delete as jest.Mock).mockResolvedValue({
+      id: 'v4',
+      bookId: 'b1',
+      language: Language.en,
+      slug: 'karamazovy-brothers',
+      createdAt: now,
+      updatedAt: now,
+      seo: null,
+    });
+    // Ни одной живой версии с этим слагом нигде, но другая книга держит его
+    // как базовый — старый редирект на него по-прежнему верен, снимать нельзя.
+    (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.book.findFirst as jest.Mock).mockResolvedValue({ id: 'other-book' });
+
+    await service.remove('v4');
+
+    expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
+  });
+
+  it('does not clean up the redirect when another live published version in a different language still holds the slug (LEGACY-395)', async () => {
+    const now = new Date();
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v5',
+      bookId: 'b1',
+      language: Language.en,
+      slug: 'karamazovy-brothers',
+      createdAt: now,
+      updatedAt: now,
+    });
+    (prisma.bookVersion.delete as jest.Mock).mockResolvedValue({
+      id: 'v5',
+      bookId: 'b1',
+      language: Language.en,
+      slug: 'karamazovy-brothers',
+      createdAt: now,
+      updatedAt: now,
+      seo: null,
+    });
+    // `@@unique([language, slug])` не мешает версии другой книги на другом
+    // языке держать тот же слаг — `getOverview` находит её без фильтра
+    // по языку и оживляет адрес и в `en` тоже. `Book.slug` в этом случае
+    // проверять уже не нужно.
+    (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue({ id: 'ru-version' });
+
+    await service.remove('v5');
+
+    expect(prisma.book.findFirst).not.toHaveBeenCalled();
+    expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
   });
 
   it('list applies Accept-Language when language not specified', async () => {

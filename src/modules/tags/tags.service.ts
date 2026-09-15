@@ -13,6 +13,7 @@ import { PUBLIC_TAG_BOOKS_MAX_LIMIT } from './tag-books-listing.constants';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { TagLockService } from './tag-lock.service';
+import { getSupportedLanguages } from '../../shared/language/language.util';
 
 @Injectable()
 export class TagsService {
@@ -192,17 +193,103 @@ export class TagsService {
     });
   }
 
+  /**
+   * `LEGACY-395`. Уборка истории слагов повторяет `CategoryService.remove`
+   * (`LEGACY-390`/`LEGACY-394`) один в один по форме — у тега та же пара
+   * базовый слаг + переводы по языкам, — с одной разницей: у тега нет
+   * родителя, преемника редиректу писать некуда, поэтому шага, аналогичного
+   * `retireCategoryAddress`, здесь только половина — сама уборка, без записи
+   * нового звена цепочки.
+   */
   async remove(id: string) {
-    const exists = await this.prisma.tag.findUnique({ where: { id } });
-    if (!exists) throw new NotFoundException('Tag not found');
+    return this.tagLock.runInLockedTag({ id }, async (tx) => {
+      const exists = await tx.tag.findUnique({ where: { id } });
+      if (!exists) throw new NotFoundException('Tag not found');
 
-    // Detach from books
-    await this.prisma.bookTag.deleteMany({ where: { tagId: id } });
+      // Умирающие переводы читаются до удаления: после `deleteMany` взять их
+      // слаги уже неоткуда.
+      const dying = await tx.tagTranslation.findMany({
+        where: { tagId: id },
+        select: { language: true, slug: true },
+      });
 
-    // Delete translations
-    await this.prisma.tagTranslation.deleteMany({ where: { tagId: id } });
+      await tx.bookTag.deleteMany({ where: { tagId: id } });
+      await tx.tagTranslation.deleteMany({ where: { tagId: id } });
 
-    return this.prisma.tag.delete({ where: { id } });
+      const removed = await tx.tag.delete({ where: { id } });
+
+      for (const dyingTranslation of dying) {
+        // Адрес пережил удаление, если слаг перевода совпал с чьим-то ещё
+        // живым базовым слагом (`versionsByTagLangSlug` фоллбэком найдёт его) —
+        // тогда снимать записи, ведущие на него, нельзя: они по-прежнему верны.
+        const takenAsBase = await this.isTagBaseSlugTaken(tx, dyingTranslation.slug);
+        if (!takenAsBase) {
+          await this.slugRedirects.cleanupDeadRedirects(
+            'tag',
+            [dyingTranslation.language],
+            dyingTranslation.slug,
+            tx,
+          );
+        }
+      }
+
+      // Базовый слаг тоже умер — живость решается по языкам (`LEGACY-394`),
+      // как и у категории.
+      const deadLanguages = await this.deadLanguagesForTagSlug(tx, removed.slug);
+      if (deadLanguages.length > 0) {
+        await this.slugRedirects.cleanupDeadRedirects('tag', deadLanguages, removed.slug, tx);
+      }
+
+      return removed;
+    });
+  }
+
+  /**
+   * Держит ли слаг чей-то живой базовый `Tag.slug` (см.
+   * `CategoryService.isBaseSlugTaken`, тот же вопрос для категорий). Тег,
+   * о который спотыкаются здесь, к этому моменту уже удалён — исключать
+   * себя не из чего.
+   *
+   * 🔴 `isVisible: true` — находка ревью, дефект внесён этим же заходом
+   * и починен здесь же: резолвер (`versionsByTagLangSlug`, фоллбэк на базовый
+   * слаг) сам берёт только `tag.findFirst({slug, isVisible: true})` — скрытый
+   * тег адрес не оживляет, и без этого условия здесь уборка ошибочно
+   * пропускалась бы на слаге, который публично уже 404.
+   */
+  private async isTagBaseSlugTaken(tx: Prisma.TransactionClient, slug: string): Promise<boolean> {
+    const taken = await tx.tag.findFirst({
+      where: { slug, isVisible: true },
+      select: { id: true },
+    });
+    return !!taken;
+  }
+
+  /**
+   * Языки, в которых адрес по этому слагу (бывшему базовому слагу удалённого
+   * тега) мёртв (см. `CategoryService.deadLanguagesForSlug`, `LEGACY-394`):
+   * базовый `Tag.slug` живого тега оживляет адрес во всех языках сразу
+   * (`versionsByTagLangSlug` при промахе перевода падает на `tag.findFirst({slug})`
+   * без учёта языка), слаг перевода — только в своём.
+   *
+   * 🔴 `tag: { isVisible: true }` — та же находка, что у `isTagBaseSlugTaken`:
+   * резолвер принимает перевод только когда `trans.tag.isVisible !== false`
+   * (`versionsByTagLangSlug:229`), а `isVisible` в схеме не бывает `null`
+   * (`Boolean @default(true)`), так что это ровно `isVisible === true`.
+   */
+  private async deadLanguagesForTagSlug(
+    tx: Prisma.TransactionClient,
+    slug: string,
+  ): Promise<Language[]> {
+    if (await this.isTagBaseSlugTaken(tx, slug)) return [];
+
+    const languages = getSupportedLanguages();
+    const liveTranslations = await tx.tagTranslation.findMany({
+      where: { slug, language: { in: languages }, tag: { isVisible: true } },
+      select: { language: true },
+      take: languages.length,
+    });
+    const live = new Set(liveTranslations.map((t) => t.language));
+    return languages.filter((language) => !live.has(language));
   }
 
   async versionsByTagLangSlug(

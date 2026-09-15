@@ -9,7 +9,7 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 
 interface PrismaStub {
-  book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock };
+  book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock; delete: jest.Mock };
   bookVersion: { findMany: jest.Mock; findFirst: jest.Mock; groupBy: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -23,28 +23,36 @@ interface PrismaStub {
   };
   authorTranslation: { findMany: jest.Mock };
   $queryRaw: jest.Mock;
+  // `remove()` (LEGACY-395) читает после `book.delete` внутри той же
+  // транзакции, чтобы своя же (уже удалённая) книга не мешала проверке.
+  $transaction: jest.Mock;
 }
 
-const createPrismaStub = (): PrismaStub => ({
-  book: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
-  bookVersion: {
-    findMany: jest.fn(),
-    findFirst: jest.fn().mockResolvedValue(null),
-    groupBy: jest.fn(),
-  },
-  bookSummary: { findFirst: jest.fn() },
-  seo: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
-  bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
-  bookTag: { findMany: jest.fn().mockResolvedValue([]) },
-  bookRating: {
-    aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }),
-    upsert: jest.fn(),
-    findUnique: jest.fn(),
-    groupBy: jest.fn().mockResolvedValue([]),
-  },
-  authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
-  $queryRaw: jest.fn().mockResolvedValue([]),
-});
+const createPrismaStub = (): PrismaStub => {
+  const stub: PrismaStub = {
+    book: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), delete: jest.fn() },
+    bookVersion: {
+      findMany: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+      groupBy: jest.fn(),
+    },
+    bookSummary: { findFirst: jest.fn() },
+    seo: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
+    bookTag: { findMany: jest.fn().mockResolvedValue([]) },
+    bookRating: {
+      aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }),
+      upsert: jest.fn(),
+      findUnique: jest.fn(),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+    authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    $transaction: jest.fn(),
+  };
+  stub.$transaction.mockImplementation((fn: (tx: PrismaStub) => unknown) => fn(stub));
+  return stub;
+};
 
 /**
  * Текст запроса из тегированного шаблона: куски литерала плюс подставленные фрагменты
@@ -76,6 +84,7 @@ const createSlugRedirectStub = (): SlugRedirectService =>
     record: jest.fn().mockResolvedValue(undefined),
     recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
     resolve: jest.fn().mockResolvedValue(null),
+    cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
   }) as unknown as SlugRedirectService;
 
 /**
@@ -749,5 +758,75 @@ describe('BookService.getOverview', () => {
       expect(res.similar.map((card) => card.slug)).toEqual(['newer', 'older', 'undated']);
       expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe('BookService.remove (LEGACY-395)', () => {
+  let service: BookService;
+  let prisma: PrismaStub;
+  let slugRedirects: {
+    record: jest.Mock;
+    recordBaseSlugChange: jest.Mock;
+    resolve: jest.Mock;
+    cleanupDeadRedirects: jest.Mock;
+  };
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    slugRedirects = createSlugRedirectStub() as unknown as typeof slugRedirects;
+    service = new BookService(
+      prisma as unknown as PrismaService,
+      createGeoBlockRuleServiceStub(),
+      new RelatedTaxonomyService(prisma as unknown as PrismaService),
+      slugRedirects as unknown as SlugRedirectService,
+      createModeratorRolesStub(),
+    );
+  });
+
+  it('cleans up the redirect in every language when no live version holds the slug anywhere', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    // Ни одной опубликованной версии с этим слагом не осталось нигде — адрес
+    // мёртв во всех языках (фоллбэк `getOverview` языконезависим).
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+
+    const res = await service.remove('b1');
+
+    expect(res.id).toBe('b1');
+    expect(prisma.book.delete).toHaveBeenCalledWith({ where: { id: 'b1' } });
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith({
+      where: {
+        slug: 'karamazovy',
+        status: 'published',
+        language: { in: Object.values(Language) },
+      },
+      select: { id: true },
+    });
+    expect(slugRedirects.cleanupDeadRedirects).toHaveBeenCalledTimes(1);
+    const [entityType, deadLanguages, deadSlug] = slugRedirects.cleanupDeadRedirects.mock.calls[0];
+    expect(entityType).toBe('book');
+    expect(deadSlug).toBe('karamazovy');
+    expect(deadLanguages).toEqual(Object.values(Language));
+  });
+
+  it('skips cleanup in every language when another live published version anywhere still holds the slug', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    // Версия другой книги в любом (здесь — английском) языке по-прежнему
+    // отвечает по этому слову: `getOverview` находит её без фильтра по языку
+    // и оживляет адрес сразу во всех пяти — не только в `en`.
+    prisma.bookVersion.findFirst.mockResolvedValue({ id: 'other-version' });
+
+    await service.remove('b1');
+
+    expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundException and cleans up nothing when the book does not exist', async () => {
+    prisma.book.findUnique.mockResolvedValue(null);
+
+    await expect(service.remove('missing')).rejects.toThrow(NotFoundException);
+    expect(prisma.book.delete).not.toHaveBeenCalled();
+    expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
   });
 });

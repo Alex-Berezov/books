@@ -8,20 +8,44 @@ import { Language } from '@prisma/client';
 interface PrismaStub {
   $transaction: jest.Mock;
   $queryRaw: jest.Mock;
-  tag: { findUnique: jest.Mock; findFirst: jest.Mock; count: jest.Mock; findMany: jest.Mock };
-  tagTranslation: { findUnique: jest.Mock; create: jest.Mock; delete: jest.Mock };
+  tag: {
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    count: jest.Mock;
+    findMany: jest.Mock;
+    delete: jest.Mock;
+  };
+  tagTranslation: {
+    findUnique: jest.Mock;
+    findMany: jest.Mock;
+    create: jest.Mock;
+    delete: jest.Mock;
+    deleteMany: jest.Mock;
+  };
   bookVersion: { findMany: jest.Mock; findUnique: jest.Mock; count: jest.Mock };
-  bookTag: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock };
+  bookTag: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock; deleteMany: jest.Mock };
   bookRating: { groupBy: jest.Mock };
 }
 
 const createPrismaStub = (): PrismaStub => ({
   $transaction: jest.fn(),
   $queryRaw: jest.fn(),
-  tag: { findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn(), findMany: jest.fn() },
-  tagTranslation: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
+  tag: {
+    findUnique: jest.fn(),
+    findFirst: jest.fn(),
+    count: jest.fn(),
+    findMany: jest.fn(),
+    delete: jest.fn(),
+  },
+  tagTranslation: {
+    findUnique: jest.fn(),
+    findMany: jest.fn().mockResolvedValue([]),
+    create: jest.fn(),
+    delete: jest.fn(),
+    deleteMany: jest.fn(),
+  },
   bookVersion: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn() },
-  bookTag: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn() },
+  bookTag: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
   bookRating: { groupBy: jest.fn() },
 });
 
@@ -29,7 +53,12 @@ describe('TagsService', () => {
   let service: TagsService;
   let prisma: PrismaStub;
   let indexability: { recomputeForTerms: jest.Mock };
-  let slugRedirects: { record: jest.Mock; resolve: jest.Mock };
+  let slugRedirects: {
+    record: jest.Mock;
+    resolve: jest.Mock;
+    recordBaseSlugChange: jest.Mock;
+    cleanupDeadRedirects: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -40,6 +69,8 @@ describe('TagsService', () => {
     slugRedirects = {
       record: jest.fn().mockResolvedValue(undefined),
       resolve: jest.fn().mockResolvedValue(null),
+      recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
+      cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
     };
     service = new TagsService(
       prisma as unknown as PrismaService,
@@ -325,5 +356,100 @@ describe('TagsService', () => {
 
     expect(prisma.tagTranslation.delete).toHaveBeenCalledTimes(1);
     expect(slugRedirects.record).not.toHaveBeenCalled();
+  });
+
+  describe('remove (LEGACY-395)', () => {
+    beforeEach(() => {
+      prisma.tag.findUnique.mockResolvedValue({ id: 't1', slug: 'classics' });
+      prisma.tag.delete.mockResolvedValue({ id: 't1', slug: 'classics' });
+    });
+
+    it('cleans up both the dying translations and the dead-language base slug', async () => {
+      // 1-й вызов — умирающие переводы, читаются до удаления; 2-й —
+      // `deadLanguagesForTagSlug`, ищет живые переводы с базовым слагом
+      // ('classics') у чужих тегов: таких нет.
+      prisma.tagTranslation.findMany
+        .mockResolvedValueOnce([
+          { language: Language.en, slug: 'classic-books' },
+          { language: Language.ru, slug: 'klassika' },
+        ])
+        .mockResolvedValueOnce([]);
+      // Ни умирающие слаги переводов, ни бывший базовый слаг не заняты
+      // чужим живым базовым слагом.
+      prisma.tag.findFirst.mockResolvedValue(null);
+
+      const res = await service.remove('t1');
+
+      expect(res.id).toBe('t1');
+      expect(prisma.bookTag.deleteMany).toHaveBeenCalledWith({ where: { tagId: 't1' } });
+      expect(prisma.tagTranslation.deleteMany).toHaveBeenCalledWith({ where: { tagId: 't1' } });
+      expect(prisma.tag.delete).toHaveBeenCalledWith({ where: { id: 't1' } });
+
+      expect(slugRedirects.cleanupDeadRedirects).toHaveBeenCalledWith(
+        'tag',
+        [Language.en],
+        'classic-books',
+        prisma,
+      );
+      expect(slugRedirects.cleanupDeadRedirects).toHaveBeenCalledWith(
+        'tag',
+        [Language.ru],
+        'klassika',
+        prisma,
+      );
+      const baseCall = slugRedirects.cleanupDeadRedirects.mock.calls.find(
+        (call) => call[2] === 'classics',
+      );
+      expect(baseCall?.[0]).toBe('tag');
+      expect(baseCall?.[1]).toEqual(Object.values(Language));
+    });
+
+    it("does not clean up a dying translation slug that is still someone else's live base slug", async () => {
+      prisma.tagTranslation.findMany
+        .mockResolvedValueOnce([{ language: Language.en, slug: 'fiction' }])
+        .mockResolvedValueOnce([]);
+      // 'fiction' — базовый слаг другого живого тега: адрес пережил удаление.
+      // Базовый слаг удалённого тега ('classics') не занят никем.
+      prisma.tag.findFirst.mockResolvedValueOnce({ id: 'other-tag' }).mockResolvedValueOnce(null);
+
+      await service.remove('t1');
+
+      expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalledWith(
+        'tag',
+        [Language.en],
+        'fiction',
+        prisma,
+      );
+    });
+
+    it('throws NotFoundException and touches nothing when the tag does not exist', async () => {
+      prisma.tag.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove('missing')).rejects.toThrow('Tag not found');
+      expect(prisma.tag.delete).not.toHaveBeenCalled();
+      expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
+    });
+
+    // `LEGACY-395` (находка ревью): `versionsByTagLangSlug` считает базовый
+    // слаг живым только у видимого тега (`isVisible: true`) — скрытый тег
+    // адрес не оживляет. Без этого условия в запросе уборка ошибочно решила
+    // бы, что слаг занят, и пропустила бы её на уже мёртвом публично адресе.
+    it('asks liveness only about visible tags, matching the public resolver', async () => {
+      prisma.tagTranslation.findMany
+        .mockResolvedValueOnce([{ language: Language.en, slug: 'fiction' }])
+        .mockResolvedValueOnce([]);
+      prisma.tag.findFirst.mockResolvedValue(null);
+
+      await service.remove('t1');
+
+      for (const call of prisma.tag.findFirst.mock.calls) {
+        expect((call[0] as { where: { isVisible?: boolean } }).where.isVisible).toBe(true);
+      }
+      expect(prisma.tagTranslation.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ tag: { isVisible: true } }),
+        }),
+      );
+    });
   });
 });
