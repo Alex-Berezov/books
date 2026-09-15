@@ -196,10 +196,12 @@ export class ImportService {
           // 🔴 `LEGACY-320` + `LEGACY-131`. Та же ветка, что у тега, и по тому же
           // поводу: правило запрещает держать эти два метода разными.
           //
-          // Достижимо и здесь, хотя `upsertCategory` держит блокировку дерева:
-          // `CategoryService.deleteTranslation` ходит голой `$transaction`
-          // **без** `runInLockedTree`, то есть блокировка его не останавливает,
-          // и `tx.categoryTranslation.update` получает `P2025` при живом термине.
+          // Достижимо и здесь, хотя `upsertCategory` держит блокировку дерева.
+          // С 15.09.2026 оба пути удаления (`CategoryService.remove`
+          // и `deleteTranslation`) идут через `runInLockedTree` и с импортом
+          // за замок не спорят (`LEGACY-390`), но ветка остаётся: замок берут
+          // не все писатели этих таблиц, и `tx.categoryTranslation.update`
+          // по-прежнему может получить `P2025` при живом термине.
           result.errors.push({
             key: item.key,
             message:

@@ -475,21 +475,76 @@ export class CategoryService {
    * оператором: проверка «есть дети» шла на пуле до записей, и ребёнок,
    * заведённый между ней и `delete`, оставался с `parentId` на удалённую
    * строку. Порядок держит `runInLockedTree` (`LEGACY-310`).
+   *
+   * 🔴 `LEGACY-390`. Второй путь смерти публичного адреса, и политика на нём та же,
+   * что в `deleteTranslation`: до пяти языковых адресов уходят на перевод прямого
+   * родителя, а не в 404. Условие (1) здесь строже, чем там, и это не описка.
+   * `deleteTranslation` оставляет категорию жить, поэтому слаг, равный её базовому
+   * `Category.slug`, продолжает отвечать 200 через фоллбэк `getByLangSlugWithBooks`
+   * и редиректа не получает. Здесь строка категории исчезает (`category.delete`
+   * ниже), фоллбэк не срабатывает, адрес мёртв — исключается только **чужая** живая
+   * категория с тем же базовым слагом (решение арбитра 15.09.2026, `decisions-log.md`).
    */
   async remove(id: string) {
     return this.categoryTree.runInLockedTree(async (tx) => {
-      const exists = await tx.category.findUnique({ where: { id }, select: { id: true } });
-      if (!exists) throw new NotFoundException('Category not found');
+      // Родитель читается тем же запросом, что и проверка существования: политике
+      // редиректов нужен его перевод на каждом языке, а отдельный `findUnique`
+      // удлинил бы транзакцию, которая держит блокировку всего дерева.
+      const existing = await tx.category.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          parent: { select: { translations: { select: { language: true, slug: true } } } },
+        },
+      });
+      if (!existing) throw new NotFoundException('Category not found');
 
       const childrenCount = await tx.category.count({ where: { parentId: id } });
       if (childrenCount > 0) {
         throw new BadRequestException('Cannot delete category with children');
       }
 
+      // Умирающие адреса читаются до удаления: после `deleteMany` взять их уже неоткуда.
+      const dying = await tx.categoryTranslation.findMany({
+        where: { categoryId: id },
+        select: { language: true, slug: true },
+      });
+
       await tx.bookCategory.deleteMany({ where: { categoryId: id } });
       await tx.categoryTranslation.deleteMany({ where: { categoryId: id } });
 
-      return tx.category.delete({ where: { id } });
+      const removed = await tx.category.delete({ where: { id } });
+
+      const parentSlugByLanguage = new Map(
+        (existing.parent?.translations ?? []).map((t) => [t.language, t.slug] as const),
+      );
+
+      for (const tr of dying) {
+        await this.retireCategoryAddress(tx, {
+          language: tr.language,
+          dyingSlug: tr.slug,
+          parentSlug: parentSlugByLanguage.get(tr.language),
+          // Собственная строка из отбора исключается: базовый слаг умер вместе
+          // с категорией, фоллбэк `getByLangSlugWithBooks` по нему не сработает,
+          // и 308 дойдёт до посетителя. В `deleteTranslation` категория остаётся
+          // жить, и там исключать себя нельзя — ровно этим флаг и отличается.
+          excludeCategoryId: id,
+        });
+      }
+
+      // Базовый слаг тоже умер, и записи, которые вели НА него, теперь ведут в 404.
+      // Их пишет `recordBaseSlugChange` сразу на пять языков, поэтому и снимаются они
+      // без отбора по языку. Условие обязательно: тот же слаг может держать живая
+      // категория или живой перевод, и тогда адрес остаётся рабочим, а 308 на него —
+      // верным (решение арбитра 15.09.2026, `LEGACY-390`).
+      const baseSlugStillLives = await this.categorySlugIsLive(tx, removed.slug);
+      if (!baseSlugStillLives) {
+        await tx.slugRedirect.deleteMany({
+          where: { entityType: 'category', newSlug: removed.slug },
+        });
+      }
+
+      return removed;
     });
   }
 
@@ -786,64 +841,150 @@ export class CategoryService {
    *    дефект, ради запрета которого арбитр отклонил вариант D3. Теперь такой адрес
    *    возвращается к честному 404.
    *
-   * ⚠️ **Политика живёт в одном из двух путей смерти адреса.** `remove()` ниже сносит
-   * переводы по всем языкам и редиректов не пишет — это отдельная запись, а не недосмотр.
+   * ⚠️ **Путей смерти адреса два, и политика с 15.09.2026 исполнена на обоих.** Второй —
+   * `remove()` выше: он сносит переводы по всем языкам и пишет редирект на родителя
+   * для каждого из них (`LEGACY-390`). Правка одного пути без второго — тот самый
+   * разъезд, из-за которого запись и заводилась.
    */
   async deleteTranslation(categoryId: string, language: Language) {
-    const tr = await this.prisma.categoryTranslation.findUnique({
-      where: { categoryId_language: { categoryId, language } },
+    // 🔴 Замок дерева здесь взят не ради границ транзакции, а против гонки
+    // (`LEGACY-390`, решение арбитра 15.09.2026). `runInTree` дал бы те же
+    // `CATEGORY_TREE_TX_OPTIONS`, но без блокировки — и тогда удаление перевода
+    // родителя шло бы параллельно удалению ребёнка (`remove()`), который читает
+    // этот перевод и пишет на него редирект: в базе оставался бы 308 на адрес,
+    // которого уже нет. Второй повод — импорт: `import.service.ts` держит те же
+    // таблицы под своим замком и без этого получал `P2025` при живом термине.
+    // Поэтому здесь именно `runInLockedTree`, а не `runInTree`, хотя рёбер дерева
+    // этот метод не пишет.
+    //
+    // Границы транзакции больше не пишутся литералом: те же
+    // `{ timeout: 30_000, maxWait: 10_000 }` приходят из `CATEGORY_TREE_TX_OPTIONS`,
+    // под которые и подбирались — операторов внутри до шести, `record` делает три
+    // запроса, а дефолтные 5000 мс дали бы `P2028` (`L-020`).
+    await this.categoryTree.runInLockedTree(async (tx) => {
+      // Снимок перевода читается ТЕМ ЖЕ `tx` и уже под замком. Прежде он читался
+      // на пуле до транзакции, и по нему же принимались решения внутри: параллельный
+      // `PATCH` успевал переименовать слаг между чтением и замком, после чего редирект
+      // писался для адреса, который никуда не девался, а живой новый адрес умирал
+      // без записи в истории. Замок, поставленный вокруг устаревшего снимка, гонку
+      // не закрывает (`L-019`).
+      const tr = await tx.categoryTranslation.findUnique({
+        where: { categoryId_language: { categoryId, language } },
+      });
+      if (!tr) return;
+
+      await tx.categoryTranslation.delete({
+        where: { categoryId_language: { categoryId, language } },
+      });
+      if (tr.seoId) {
+        await tx.seo.delete({ where: { id: tr.seoId } });
+      }
+
+      // Преемник — перевод прямого родителя на том же языке. Читается тем же `tx`
+      // и после удаления: иначе есть момент, когда слаг уже мёртв, а редиректа ещё
+      // нет (докстринг `SlugRedirectService.record`).
+      const withParent = await tx.category.findUnique({
+        where: { id: categoryId },
+        select: {
+          parent: { select: { translations: { where: { language }, select: { slug: true } } } },
+        },
+      });
+
+      await this.retireCategoryAddress(tx, {
+        language,
+        dyingSlug: tr.slug,
+        parentSlug: withParent?.parent?.translations[0]?.slug,
+        // Категория остаётся жить, поэтому слаг, равный её базовому `Category.slug`,
+        // продолжает резолвиться публично — исключать себя из отбора здесь нельзя.
+        excludeCategoryId: undefined,
+      });
     });
-    if (!tr) return { success: true };
-
-    await this.prisma.$transaction(
-      async (tx) => {
-        await tx.categoryTranslation.delete({
-          where: { categoryId_language: { categoryId, language } },
-        });
-        if (tr.seoId) {
-          await tx.seo.delete({ where: { id: tr.seoId } });
-        }
-
-        // (2) Записи, которые вели на исчезающий слаг, снимаются первыми: их цель
-        // перестала существовать, и 308 на неё увёл бы в 404. Индекс под этот запрос
-        // есть — `@@index([entityType, language, newSlug])` в схеме.
-        await tx.slugRedirect.deleteMany({
-          where: { entityType: 'category', language, newSlug: tr.slug },
-        });
-
-        // (1) Слаг, который занимает чей-то базовый `Category.slug`, продолжает
-        // резолвиться публично (200 с `translation: null`), поэтому редиректа
-        // не получает — иначе запись была бы, а перехода нет.
-        const takenAsBaseSlug = await tx.category.findFirst({
-          where: { slug: tr.slug },
-          select: { id: true },
-        });
-        if (takenAsBaseSlug) return;
-
-        // Преемник — перевод прямого родителя на том же языке. Читается тем же `tx`
-        // и после удаления: иначе есть момент, когда слаг уже мёртв, а редиректа ещё
-        // нет (докстринг `SlugRedirectService.record`).
-        const withParent = await tx.category.findUnique({
-          where: { id: categoryId },
-          select: {
-            parent: { select: { translations: { where: { language }, select: { slug: true } } } },
-          },
-        });
-        const parentSlug = withParent?.parent?.translations[0]?.slug;
-        if (parentSlug) {
-          await this.slugRedirects.record(
-            { entityType: 'category', language, oldSlug: tr.slug, newSlug: parentSlug },
-            tx,
-          );
-        }
-      },
-      // Операторов внутри стало до шести (`record` делает три запроса), а соседний
-      // `import.service.ts` держит те же таблицы под своей транзакцией — дефолтные
-      // 5000 мс дали бы `P2028` и откат всего удаления (`L-020`).
-      { timeout: 30_000, maxWait: 10_000 },
-    );
 
     return { success: true };
+  }
+
+  /**
+   * Политика ухода публичного адреса термина — **одна на оба пути его смерти**
+   * (`LEGACY-390`, решение арбитра 15.09.2026).
+   *
+   * Путей два: удаление одного перевода (`deleteTranslation`) и удаление категории
+   * целиком (`remove`). Пока политика жила копией в каждом, копии успели разойтись
+   * за один заход — ровно тот разъезд, ради запрета которого запись и заведена.
+   *
+   * Порядок операторов — предмет, а не оформление:
+   *
+   * 1. **Сначала занятость слага — и это выход, а не только отказ от редиректа.** Слаг,
+   *    который держит базовый `Category.slug` живой категории, продолжает резолвиться
+   *    публично: `getByLangSlugWithBooks` падает на фоллбэк по базовому слагу и отвечает
+   *    200. Значит адрес не умер, и делать здесь нечего вовсе: редирект не дошёл бы
+   *    до посетителя, а уборка снесла бы записи, которые ведут на живую страницу
+   *    и работают. `@@unique([language, slug])` делает этот ответ полным — после удаления
+   *    этого перевода никакой другой не может держать ту же пару языка и слага, поэтому
+   *    чужой базовый слаг остаётся единственным живым источником адреса в этом языке.
+   * 2. **Потом `record`, и только потом уборка.** `SlugRedirectService.record`
+   *    переписывает цепочки (`updateMany` по `newSlug = oldSlug`), поэтому прежние
+   *    адреса того же термина уезжают на нового преемника сами. При обратном порядке
+   *    уборка сносила бы их раньше, чем `record` успевал их подобрать: слаг,
+   *    переименованный до удаления, отвечал бы 404 вместо 308 (находка ревью
+   *    15.09.2026).
+   * 3. **Уборка — и когда преемник записан, и когда его нет.** В обоих случаях цель
+   *    мертва: записи, дожившие сюда с `newSlug` = исчезающему слагу, вели бы 308
+   *    в 404, а он из поискового индекса не отзывается. Индекс под запрос есть —
+   *    `@@index([entityType, language, newSlug])` в схеме.
+   *
+   * `excludeCategoryId` — единственное, чем два пути различаются, и различие
+   * не косметическое: в `remove()` строка категории исчезает, её базовый слаг
+   * перестаёт резолвиться, и 308 с него обязан выдаться; в `deleteTranslation`
+   * категория остаётся жить, и тот же слаг по-прежнему отвечает 200.
+   */
+  private async retireCategoryAddress(
+    tx: Prisma.TransactionClient,
+    params: {
+      language: Language;
+      dyingSlug: string;
+      parentSlug: string | undefined;
+      excludeCategoryId: string | undefined;
+    },
+  ): Promise<void> {
+    const { language, dyingSlug, parentSlug, excludeCategoryId } = params;
+
+    const takenAsBaseSlug = await tx.category.findFirst({
+      where: excludeCategoryId
+        ? { slug: dyingSlug, id: { not: excludeCategoryId } }
+        : { slug: dyingSlug },
+      select: { id: true },
+    });
+
+    // Адрес пережил удаление — здесь не делается **ничего**. Ни редиректа (он никогда
+    // не дошёл бы до посетителя), ни уборки: записи, которые ведут на этот слаг, ведут
+    // на живую страницу и работают. Снести их значило бы превратить рабочий 308 в 404
+    // по индексированному адресу, а выданный 404 из индекса не отзывается.
+    if (takenAsBaseSlug) return;
+
+    if (parentSlug) {
+      await this.slugRedirects.record(
+        { entityType: 'category', language, oldSlug: dyingSlug, newSlug: parentSlug },
+        tx,
+      );
+    }
+
+    await tx.slugRedirect.deleteMany({
+      where: { entityType: 'category', language, newSlug: dyingSlug },
+    });
+  }
+
+  /**
+   * Отвечает ли адрес по этому слагу после удаления. Публичный резолв ищет сначала
+   * перевод, затем падает на базовый `Category.slug`, поэтому живым слаг делает любая
+   * из двух строк. Нужно там, где решается судьба записей, ведущих НА исчезнувший слаг:
+   * снимать их можно только тогда, когда цель действительно мертва.
+   */
+  private async categorySlugIsLive(tx: Prisma.TransactionClient, slug: string): Promise<boolean> {
+    const [asBase, asTranslation] = await Promise.all([
+      tx.category.findFirst({ where: { slug }, select: { id: true } }),
+      tx.categoryTranslation.findFirst({ where: { slug }, select: { id: true } }),
+    ]);
+    return Boolean(asBase ?? asTranslation);
   }
 
   async attachCategoryToVersion(versionId: string, categoryId: string) {

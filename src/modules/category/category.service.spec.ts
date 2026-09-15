@@ -20,6 +20,7 @@ interface PrismaStub {
   };
   categoryTranslation: {
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
     findMany: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
@@ -65,6 +66,7 @@ const createPrismaStub = (): PrismaStub => ({
   },
   categoryTranslation: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
@@ -618,13 +620,17 @@ describe('CategoryService', () => {
           order.push('tx.read');
           return Promise.resolve({ id: 'A' });
         }),
+        findFirst: jest.fn(() => {
+          order.push('tx.category.findFirst');
+          return Promise.resolve(null);
+        }),
         count: jest.fn(() => {
           order.push('tx.count');
           return Promise.resolve(0);
         }),
         delete: jest.fn(() => {
           order.push('tx.category.delete');
-          return Promise.resolve({ id: 'A' });
+          return Promise.resolve({ id: 'A', slug: 'a' });
         }),
       },
       bookCategory: {
@@ -634,8 +640,22 @@ describe('CategoryService', () => {
         }),
       },
       categoryTranslation: {
+        findMany: jest.fn(() => {
+          order.push('tx.categoryTranslation.findMany');
+          return Promise.resolve([]);
+        }),
+        findFirst: jest.fn(() => {
+          order.push('tx.categoryTranslation.findFirst');
+          return Promise.resolve(null);
+        }),
         deleteMany: jest.fn(() => {
           order.push('tx.categoryTranslation.deleteMany');
+          return Promise.resolve({ count: 0 });
+        }),
+      },
+      slugRedirect: {
+        deleteMany: jest.fn(() => {
+          order.push('tx.slugRedirect.deleteMany');
           return Promise.resolve({ count: 0 });
         }),
       },
@@ -655,9 +675,17 @@ describe('CategoryService', () => {
       'lock',
       'tx.read',
       'tx.count',
+      // `LEGACY-390`: умирающие адреса читаются ДО удаления — после `deleteMany`
+      // взять их уже неоткуда.
+      'tx.categoryTranslation.findMany',
       'tx.bookCategory.deleteMany',
       'tx.categoryTranslation.deleteMany',
       'tx.category.delete',
+      // Судьба записей, ведущих на исчезнувший базовый слаг, решается после удаления:
+      // до него слаг ещё живой и уборка была бы неверной.
+      'tx.category.findFirst',
+      'tx.categoryTranslation.findFirst',
+      'tx.slugRedirect.deleteMany',
     ]);
     expect(prisma.bookCategory.deleteMany).not.toHaveBeenCalled();
     expect(prisma.categoryTranslation.deleteMany).not.toHaveBeenCalled();
@@ -679,6 +707,7 @@ describe('CategoryService', () => {
       },
       bookCategory: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       categoryTranslation: {
+        findMany: jest.fn().mockResolvedValue([]),
         deleteMany: jest.fn().mockRejectedValue(new Error('db is down')),
       },
     };
@@ -694,6 +723,238 @@ describe('CategoryService', () => {
     prisma.category.findUnique.mockResolvedValue({ id: 'A' });
     prisma.category.count.mockResolvedValue(1);
     await expect(service.remove('A')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  /**
+   * `LEGACY-390`, утверждающие тесты. До 15.09.2026 политика владельца («адрес термина
+   * уходит на родителя, а не в 404») жила в одном из двух путей смерти адреса:
+   * `deleteTranslation` редирект писал, а `remove()` сносил переводы по всем языкам
+   * и не писал ничего. Админ удалял листовую категорию — до пяти языковых адресов
+   * уходили в 404 при живом родителе.
+   *
+   * Случаи ниже покрывают обе половины политики и её отличие от `deleteTranslation`:
+   * «пишется на каждый язык», «не пишется, когда адрес остался живым у чужой категории»
+   * и «своя собственная строка из проверки исключена» — последнее и есть то, чем эти
+   * два пути обязаны различаться (решение арбитра 15.09.2026).
+   */
+  const arrangeRemove = (
+    dying: { language: Language; slug: string }[],
+    parentTranslations: { language: Language; slug: string }[] | null,
+  ) => {
+    prisma.category.findUnique.mockResolvedValue({
+      id: 'cat1',
+      parent: parentTranslations === null ? null : { translations: parentTranslations },
+    });
+    prisma.category.count.mockResolvedValue(0);
+    prisma.categoryTranslation.findMany.mockResolvedValue(dying);
+    prisma.bookCategory.deleteMany.mockResolvedValue({ count: 0 });
+    prisma.categoryTranslation.deleteMany.mockResolvedValue({ count: dying.length });
+    prisma.category.delete.mockResolvedValue({ id: 'cat1', slug: 'fiction' });
+    prisma.slugRedirect.deleteMany.mockResolvedValue({ count: 0 });
+    prisma.category.findFirst.mockResolvedValue(null);
+    // Базовый слаг удалённой категории по умолчанию никем не занят: записи, ведущие
+    // на него, подлежат уборке.
+    prisma.categoryTranslation.findFirst.mockResolvedValue(null);
+  };
+
+  it('LEGACY-390: удаление категории уводит на родителя каждый язык, а не только первый', async () => {
+    arrangeRemove(
+      [
+        { language: Language.ru, slug: 'roman' },
+        { language: Language.en, slug: 'novel' },
+      ],
+      [
+        { language: Language.ru, slug: 'hudozhestvennaya-literatura' },
+        { language: Language.en, slug: 'fiction' },
+      ],
+    );
+
+    await service.remove('cat1');
+
+    expect(slugRedirects.record).toHaveBeenCalledTimes(2);
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      {
+        entityType: 'category',
+        language: Language.ru,
+        oldSlug: 'roman',
+        newSlug: 'hudozhestvennaya-literatura',
+      },
+      expect.anything(),
+    );
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      { entityType: 'category', language: Language.en, oldSlug: 'novel', newSlug: 'fiction' },
+      expect.anything(),
+    );
+  });
+
+  /**
+   * 🔴 Отличие от `deleteTranslation`, ради которого заведён отдельный кейс.
+   * Там категория остаётся жить, и слаг, равный её базовому `Category.slug`,
+   * продолжает отвечать 200 через фоллбэк `getByLangSlugWithBooks` — редиректа
+   * он не получает. Здесь строка категории исчезает, фоллбэка нет, адрес мёртв:
+   * из проверки исключается только ЧУЖАЯ живая категория. Проверяется форма
+   * запроса, потому что иначе «свой» слаг молча терял бы 308.
+   */
+  it('LEGACY-390: собственный базовый слаг из проверки исключён — редирект выдаётся', async () => {
+    arrangeRemove(
+      [{ language: Language.ru, slug: 'roman' }],
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+
+    await service.remove('cat1');
+
+    // Два вызова: отбор занятости исчезающего слага перевода и проверка того,
+    // жив ли ещё базовый слаг удалённой категории.
+    expect(prisma.category.findFirst).toHaveBeenCalledTimes(2);
+    expect(prisma.category.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'roman', id: { not: 'cat1' } },
+      select: { id: true },
+    });
+    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('LEGACY-390: слаг, занятый живой чужой категорией, редиректа не получает', async () => {
+    arrangeRemove(
+      [{ language: Language.ru, slug: 'roman' }],
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+    // Тот же слаг — базовый у другой, остающейся жить категории: публичный резолв
+    // ответит по ней 200, и 308 не дошёл бы до посетителя никогда.
+    prisma.category.findFirst.mockResolvedValue({ id: 'other' });
+
+    await service.remove('cat1');
+
+    expect(slugRedirects.record).not.toHaveBeenCalled();
+  });
+
+  it('LEGACY-390: записи, ведущие на исчезающие слаги, снимаются по каждому языку', async () => {
+    arrangeRemove(
+      [
+        { language: Language.ru, slug: 'roman' },
+        { language: Language.en, slug: 'novel' },
+      ],
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+
+    await service.remove('cat1');
+
+    // Иначе адрес, который вёл сюда 308-м, после исчезновения цели указывал бы в 404.
+    // Счётчик обязателен рядом с `toHaveBeenCalledWith` (`L-005`): без него уборка,
+    // расширенная до `deleteMany({ entityType, language })` без `newSlug`, снесла бы
+    // историю всех категорий языка и оставила обе проверки зелёными.
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledTimes(3);
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'category', language: Language.ru, newSlug: 'roman' },
+    });
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'category', language: Language.en, newSlug: 'novel' },
+    });
+    // Третий вызов — записи, ведущие на исчезнувший БАЗОВЫЙ слаг: их пишет
+    // `recordBaseSlugChange` сразу на пять языков, поэтому отбора по языку здесь нет.
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'category', newSlug: 'fiction' },
+    });
+  });
+
+  it('LEGACY-390: язык, которого нет у родителя, остаётся 404 — остальные уводятся', async () => {
+    arrangeRemove(
+      [
+        { language: Language.ru, slug: 'roman' },
+        { language: Language.en, slug: 'novel' },
+      ],
+      // У родителя переведён только `ru`.
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+
+    await service.remove('cat1');
+
+    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      expect.objectContaining({ language: Language.ru }),
+      expect.anything(),
+    );
+    // Уборка идёт по каждому языку независимо от того, нашёлся ли преемник,
+    // плюс отдельный вызов на базовый слаг удалённой категории.
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledTimes(3);
+  });
+
+  /**
+   * 🔴 Порядок, а не оформление. `SlugRedirectService.record` переписывает цепочки
+   * (`updateMany` по `newSlug = oldSlug`), поэтому прежние адреса того же термина
+   * уезжают на нового преемника сами — но только если `record` идёт ДО уборки.
+   * При обратном порядке уборка сносит их раньше: слаг, переименованный до удаления,
+   * отвечает 404 вместо 308, а выданный когда-то 308 из индекса не отзывается.
+   */
+  it('LEGACY-390: преемник записывается до уборки — цепочка прежних слагов уцелевает', async () => {
+    const order: string[] = [];
+    arrangeRemove(
+      [{ language: Language.ru, slug: 'roman' }],
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+    slugRedirects.record.mockImplementation(() => {
+      order.push('record');
+      return Promise.resolve(undefined);
+    });
+    prisma.slugRedirect.deleteMany.mockImplementation(() => {
+      order.push('deleteMany');
+      return Promise.resolve({ count: 0 });
+    });
+
+    await service.remove('cat1');
+
+    expect(order[0]).toBe('record');
+    expect(order).toContain('deleteMany');
+  });
+
+  /**
+   * Обратная половина уборки базового слага: слаг, который держит живой перевод,
+   * продолжает резолвиться публично, и 308 на него — верный. Снести такие записи
+   * значило бы превратить рабочий редирект в 404.
+   */
+  it('LEGACY-390: базовый слаг, оставшийся живым, записи на себя сохраняет', async () => {
+    arrangeRemove([{ language: Language.ru, slug: 'roman' }], null);
+    // Тот же базовый слаг носит перевод другой, остающейся жить категории.
+    prisma.categoryTranslation.findFirst.mockResolvedValue({ id: 'tr-other' });
+
+    await service.remove('cat1');
+
+    expect(prisma.slugRedirect.deleteMany).not.toHaveBeenCalledWith({
+      where: { entityType: 'category', newSlug: 'fiction' },
+    });
+  });
+
+  /**
+   * 🔴 Ветка живого адреса на пути удаления категории целиком. Слаг держит базовый
+   * `Category.slug` чужой живой категории, значит публичный резолв по нему по-прежнему
+   * отвечает 200 через фоллбэк. Записи, которые вели сюда 308-м, ведут на работающую
+   * страницу — снести их значит выдать 404 по индексированному адресу, а он
+   * не отзывается (решение арбитра 15.09.2026).
+   */
+  it('LEGACY-390: при живом чужом базовом слаге записи на него не снимаются', async () => {
+    arrangeRemove(
+      [{ language: Language.ru, slug: 'roman' }],
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+    prisma.category.findFirst.mockResolvedValue({ id: 'other' });
+
+    await service.remove('cat1');
+
+    expect(slugRedirects.record).not.toHaveBeenCalled();
+    expect(prisma.slugRedirect.deleteMany).not.toHaveBeenCalledWith({
+      where: { entityType: 'category', language: Language.ru, newSlug: 'roman' },
+    });
+  });
+
+  it('LEGACY-390: у корневой категории родителя нет — редиректов не пишется', async () => {
+    arrangeRemove([{ language: Language.ru, slug: 'roman' }], null);
+
+    await service.remove('cat1');
+
+    expect(slugRedirects.record).not.toHaveBeenCalled();
+    // Адрес всё равно обязан перестать вести в никуда.
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'category', language: Language.ru, newSlug: 'roman' },
+    });
   });
 
   it('LEGACY-351: getByLangSlugWithBooks ограничивает groupBy книгами своей страницы', async () => {
@@ -987,8 +1248,14 @@ describe('CategoryService', () => {
     await service.deleteTranslation('cat1', Language.ru);
 
     expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
-    expect(prisma.category.findUnique).not.toHaveBeenCalled();
     expect(slugRedirects.record).not.toHaveBeenCalled();
+    // 🔴 И уборки тоже нет: адрес пережил удаление перевода, записи на него ведут
+    // на живую страницу и работают. Снести их значило бы выдать 404 по индексированному
+    // адресу, а он не отзывается (решение арбитра 15.09.2026). Прежде здесь стояло
+    // ещё и `category.findUnique).not.toHaveBeenCalled()` — проверка экономии запроса;
+    // с переходом обоих путей на общий метод родитель читается до отбора, и это
+    // ожидание описывало бы устройство, а не политику.
+    expect(prisma.slugRedirect.deleteMany).not.toHaveBeenCalled();
   });
 
   it('LEGACY-085: записи, ведущие на исчезающий слаг, снимаются', async () => {
@@ -1008,6 +1275,38 @@ describe('CategoryService', () => {
     expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
       where: { entityType: 'category', language: Language.ru, newSlug: 'roman' },
     });
+  });
+
+  /**
+   * Тот же порядок на втором пути смерти адреса. Оба пути зовут общий
+   * `retireCategoryAddress`, и этот кейс держит их вместе: разойдутся — покраснеет
+   * ровно он, а не абстрактное «политика разъехалась» (`LEGACY-390`).
+   */
+  it('LEGACY-085: преемник записывается до уборки — цепочка прежних слагов уцелевает', async () => {
+    const order: string[] = [];
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      categoryId: 'cat1',
+      language: Language.ru,
+      slug: 'roman',
+      seoId: null,
+    });
+    prisma.categoryTranslation.delete.mockResolvedValue({});
+    prisma.category.findFirst.mockResolvedValue(null);
+    prisma.category.findUnique.mockResolvedValue({
+      parent: { translations: [{ slug: 'hudozhestvennaya-literatura' }] },
+    });
+    slugRedirects.record.mockImplementation(() => {
+      order.push('record');
+      return Promise.resolve(undefined);
+    });
+    prisma.slugRedirect.deleteMany.mockImplementation(() => {
+      order.push('deleteMany');
+      return Promise.resolve({ count: 0 });
+    });
+
+    await service.deleteTranslation('cat1', Language.ru);
+
+    expect(order).toEqual(['record', 'deleteMany']);
   });
 
   it('LEGACY-085: у корневой категории родителя нет — остаётся 404', async () => {
