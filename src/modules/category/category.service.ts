@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CategoryTreeService, type PrismaLike } from './category-tree.service';
+import { getSupportedLanguages } from '../../shared/language/language.util';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
@@ -533,14 +534,23 @@ export class CategoryService {
       }
 
       // Базовый слаг тоже умер, и записи, которые вели НА него, теперь ведут в 404.
-      // Их пишет `recordBaseSlugChange` сразу на пять языков, поэтому и снимаются они
-      // без отбора по языку. Условие обязательно: тот же слаг может держать живая
-      // категория или живой перевод, и тогда адрес остаётся рабочим, а 308 на него —
-      // верным (решение арбитра 15.09.2026, `LEGACY-390`).
-      const baseSlugStillLives = await this.categorySlugIsLive(tx, removed.slug);
-      if (!baseSlugStillLives) {
+      // Их пишет `recordBaseSlugChange` сразу на пять языков — но живость адреса
+      // решается **в каждом языке отдельно** (`LEGACY-394`), поэтому отбор несёт
+      // список мёртвых языков, а не один слаг на всю историю.
+      //
+      // Одним запросом, а не циклом по языкам: `language: { in: [...] }` ложится
+      // на тот же `@@index([entityType, language, newSlug])`, что и пять отдельных
+      // `deleteMany`, но стоит один round-trip вместо пяти — а идут они внутри
+      // транзакции, держащей **глобальный** advisory-замок дерева категорий,
+      // то есть каждый лишний обмен ждут и параллельные правки дерева, и импорт.
+      const deadLanguages = await this.deadLanguagesForSlug(tx, removed.slug);
+      if (deadLanguages.length > 0) {
         await tx.slugRedirect.deleteMany({
-          where: { entityType: 'category', newSlug: removed.slug },
+          where: {
+            entityType: 'category',
+            language: { in: deadLanguages },
+            newSlug: removed.slug,
+          },
         });
       }
 
@@ -948,12 +958,7 @@ export class CategoryService {
   ): Promise<void> {
     const { language, dyingSlug, parentSlug, excludeCategoryId } = params;
 
-    const takenAsBaseSlug = await tx.category.findFirst({
-      where: excludeCategoryId
-        ? { slug: dyingSlug, id: { not: excludeCategoryId } }
-        : { slug: dyingSlug },
-      select: { id: true },
-    });
+    const takenAsBaseSlug = await this.isBaseSlugTaken(tx, dyingSlug, excludeCategoryId);
 
     // Адрес пережил удаление — здесь не делается **ничего**. Ни редиректа (он никогда
     // не дошёл бы до посетителя), ни уборки: записи, которые ведут на этот слаг, ведут
@@ -974,17 +979,108 @@ export class CategoryService {
   }
 
   /**
-   * Отвечает ли адрес по этому слагу после удаления. Публичный резолв ищет сначала
-   * перевод, затем падает на базовый `Category.slug`, поэтому живым слаг делает любая
-   * из двух строк. Нужно там, где решается судьба записей, ведущих НА исчезнувший слаг:
-   * снимать их можно только тогда, когда цель действительно мертва.
+   * Языки, в которых адрес по этому слагу **мёртв**. Нужно там, где решается судьба
+   * записей, ведущих НА исчезнувший слаг: снимать их можно только там, где цель
+   * действительно мертва.
+   *
+   * 🔴 **«Жив ли адрес» — вопрос про язык, а не про слаг вообще** (`LEGACY-394`).
+   * Прежний хелпер спрашивал `categoryTranslation.findFirst({ slug })` без отбора
+   * по языку и на любом чужом переводе объявлял адрес живым во всех пяти языках сразу.
+   * Публичный резолв (`getByLangSlugWithBooks`) устроен иначе: сначала пара
+   * `language_slug`, и лишь при промахе — фоллбэк на базовый `Category.slug`. Отсюда
+   * два разных источника жизни:
+   *
+   * - **базовый `Category.slug` живой категории** оживляет адрес во **всех** языках —
+   *   фоллбэк языка не спрашивает, поэтому мёртвых языков не остаётся вовсе;
+   * - **слаг перевода** оживляет адрес **только в своём** языке.
+   *
+   * Сценарий, ради которого это переписано: у удаляемой категории базовый слаг
+   * `fiction`, у другой живой категории есть **en**-перевод со слагом `fiction`.
+   * Прежний ответ «жив» оставлял строки `… → fiction` в `ru`, `es`, `fr` и `pt`
+   * висеть 308-м на адрес, который отвечает 404, — ровно то, ради запрета чего
+   * уборка и написана.
+   *
+   * Второе следствие формы ответа — запрос уборки. Отбор с `language` ложится
+   * на `@@index([entityType, language, newSlug])`; прежний, без языка, вёл ведущим
+   * столбцом `entityType`, который у всех строк один и тот же (`'category'`),
+   * и сканировал таблицу целиком — внутри транзакции, держащей **глобальный**
+   * advisory-замок дерева категорий.
    */
-  private async categorySlugIsLive(tx: Prisma.TransactionClient, slug: string): Promise<boolean> {
-    const [asBase, asTranslation] = await Promise.all([
-      tx.category.findFirst({ where: { slug }, select: { id: true } }),
-      tx.categoryTranslation.findFirst({ where: { slug }, select: { id: true } }),
-    ]);
-    return Boolean(asBase ?? asTranslation);
+  private async deadLanguagesForSlug(
+    tx: Prisma.TransactionClient,
+    slug: string,
+  ): Promise<Language[]> {
+    // Сначала базовый слаг: он оживляет адрес во всех языках, и тогда второй запрос
+    // не нужен вовсе — транзакция под глобальным замком короче на один round-trip.
+    // Запрос тот же, что в ветке 1 `retireCategoryAddress`, и живёт он одним местом:
+    // признак живости адреса обязан меняться сразу на обоих путях смерти адреса,
+    // иначе они разойдутся в решении по одному и тому же слагу (`LEGACY-390`).
+    if (await this.isBaseSlugTaken(tx, slug, undefined)) return [];
+
+    // 🔴 `language: { in: ... }` здесь не украшение, а единственный способ попасть
+    // в индекс. У `CategoryTranslation` нет ни одного индекса с ведущим `slug`:
+    // есть `@@unique([language, slug])`, `@@unique([categoryId, language])`,
+    // `@@index([categoryId])`, `@@index([language])`. Отбор по голому `slug` идёт
+    // полным проходом по таблице — внутри транзакции, держащей глобальный
+    // advisory-замок дерева, то есть этот проход ждут и параллельные правки дерева,
+    // и импорт. С перечнем языков тот же вопрос ложится на `@@unique([language, slug])`
+    // точными обращениями по паре.
+    //
+    // `take` записывает уже существующий потолок, а не страхует от роста: та же
+    // уникальность не даёт одному слагу больше одной строки на язык.
+    const languages = getSupportedLanguages();
+    const liveTranslations = await tx.categoryTranslation.findMany({
+      where: { slug, language: { in: languages } },
+      select: { language: true },
+      take: languages.length,
+    });
+    const live = new Set(liveTranslations.map((t) => t.language));
+
+    // Перебор идёт по всему набору языков, а не по языкам умерших переводов: записи
+    // на этот слаг пишет `recordBaseSlugChange` сразу на все языки, в том числе на те,
+    // перевода на которые у категории не было никогда.
+    //
+    // 🔴 Инвариант: **уборка обязана перебирать то же множество, по которому идёт
+    // запись.** Возьми она набор уже — строки на не перебранный язык не снялись бы
+    // никогда и остались 308-м в 404. Сегодня множества совпадают:
+    // `getSupportedLanguages()` возвращает ровно `Object.values(Language)`
+    // (`shared/language/language.util.ts:71-73`, закреплено спекой
+    // `language.util.spec.ts:118-124`), а `recordBaseSlugChange`
+    // (`slug-redirect.service.ts:108`) перебирает enum напрямую. Набор здесь взят
+    // через общий хелпер: он для того и заведён, чтобы ввод или вывод языка правился
+    // одним местом.
+    return languages.filter((language) => !live.has(language));
+  }
+
+  /**
+   * Держит ли этот слаг базовый `Category.slug` живой категории — то есть отвечает ли
+   * публичный резолв по нему 200 через фоллбэк `getByLangSlugWithBooks`.
+   *
+   * Одно место на оба пути смерти адреса (`LEGACY-390`): `retireCategoryAddress`
+   * спрашивает это про слаг умирающего перевода, `deadLanguagesForSlug` — про базовый
+   * слаг удалённой категории. Пока запрос стоял двумя копиями, следующая правка
+   * признака живости легла бы в одну из них, и на одном и том же слаге один путь
+   * снимал бы записи, а другой сохранял.
+   *
+   * `excludeCategoryId` — единственное, чем вызовы различаются. В `deleteTranslation`
+   * категория остаётся жить, и её собственный базовый слаг продолжает отвечать 200 —
+   * исключать себя там нельзя. В `remove()` строка категории к этому моменту уже
+   * снята (`tx.category.delete` выше), поэтому исключение ничего не меняет: ветка 1
+   * `retireCategoryAddress` передаёт `id` ради формы условия, а `deadLanguagesForSlug`
+   * не передаёт ничего — исключать нечего. Форму условия в `retireCategoryAddress`
+   * держит юнит, на живой базе она не проверяема (докблок
+   * `test/category-remove-redirect.e2e-spec.ts`).
+   */
+  private async isBaseSlugTaken(
+    tx: Prisma.TransactionClient,
+    slug: string,
+    excludeCategoryId: string | undefined,
+  ): Promise<boolean> {
+    const taken = await tx.category.findFirst({
+      where: excludeCategoryId ? { slug, id: { not: excludeCategoryId } } : { slug },
+      select: { id: true },
+    });
+    return Boolean(taken);
   }
 
   async attachCategoryToVersion(versionId: string, categoryId: string) {

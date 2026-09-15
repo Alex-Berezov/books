@@ -178,4 +178,50 @@ describe('LEGACY-390: удаление категории целиком и ис
     // Строка обязана уцелеть: её цель по-прежнему отвечает 200.
     expect(await redirectsTo(staryj)).toBe(occupied);
   });
+
+  /**
+   * 🔴 `LEGACY-394` на настоящей базе. Дефект, внесённый правкой `LEGACY-390`
+   * и уехавший на прод в `v1.0.77`: живость адреса спрашивалась без отбора
+   * по языку, и один чужой перевод объявлял слаг живым сразу во всех пяти.
+   *
+   * Почему кейс нужен здесь, а не только юнитом: юнит сажает форму запроса,
+   * а мок отвечает по форме вызова, а не по значениям — то есть подтвердит любую
+   * выборку, которую в него заложили. Здесь `categoryTranslation.findMany`
+   * отбирает по правде, и проверяется результат: какие строки истории остались,
+   * а какие снялись. Тем самым путём дефект в прод и уехал.
+   *
+   * Сценарий. Базовый слаг умирающей категории переименован, поэтому в истории
+   * лежат строки `staryj → zanjat` **на все пять языков** (их пишет
+   * `recordBaseSlugChange`). Тот же `zanjat` носит **en**-перевод другой, живой
+   * категории. Значит `/en/categories/zanjat` отвечает 200, а `/ru/categories/zanjat`
+   * после удаления — 404: строка `staryj → zanjat` обязана уцелеть в `en`
+   * и сняться в `ru`.
+   */
+  it('LEGACY-394: чужой перевод держит адрес только в своём языке', async () => {
+    // Чужая живая категория: базовый слаг у неё свой, а вот en-перевод занимает
+    // тот слаг, на который умирающая категория переименуется ниже.
+    const zanjat = uniqueMark('l394-zanjat');
+    const otherId = await categories.create(uniqueMark('l394-other'), {
+      slug: uniqueMark('l394-other-base'),
+      key: uniqueMark('l394-other-key'),
+    });
+    await categories.addTranslation(otherId, Language.en, zanjat);
+
+    // Умирающая категория: переводов нет вовсе, работает только уборка базового слага.
+    const staryj = uniqueMark('l394-staryj');
+    const dyingId = await categories.create(staryj, { slug: staryj, key: staryj });
+    await categories.renameBase(dyingId, zanjat);
+
+    // История заведена на оба языка сразу — это и есть то, что уборка обязана
+    // разобрать по языкам, а не одним махом.
+    expect(await redirectsTo(staryj)).toBe(zanjat);
+    expect(await readSlugRedirect(prisma, 'category', Language.en, staryj)).toBe(zanjat);
+
+    await categories.drop(dyingId);
+
+    // `ru`: адрес мёртв — чужой en-перевод его здесь не оживляет, строка снята.
+    expect(await redirectsTo(staryj)).toBeNull();
+    // `en`: адрес жив чужим переводом — 308 ведёт на работающую страницу и уцелел.
+    expect(await readSlugRedirect(prisma, 'category', Language.en, staryj)).toBe(zanjat);
+  });
 });

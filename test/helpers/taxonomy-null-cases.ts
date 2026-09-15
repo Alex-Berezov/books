@@ -99,5 +99,19 @@ export const taxonomyFixture = (
       .expect(200);
   };
 
-  return { create, drop, addTranslation, renameTranslation };
+  /**
+   * Сменить **базовый** слаг термина. Отличается от `renameTranslation` не только
+   * адресом: базовый слаг резолвится во всех языках через фоллбэк, поэтому
+   * `SlugRedirectService.recordBaseSlugChange` заводит запись сразу на каждый язык.
+   * Наборам про языковую половину уборки нужна именно такая история.
+   */
+  const renameBase = async (id: string, slug: string): Promise<void> => {
+    await request(http())
+      .patch(`/${route}/${id}`)
+      .set('Authorization', `Bearer ${token()}`)
+      .send({ slug })
+      .expect(200);
+  };
+
+  return { create, drop, addTranslation, renameTranslation, renameBase };
 };
