@@ -260,11 +260,17 @@ export class BookService {
     };
   }
 
-  // Overview aggregation for frontend
-  async getOverview(slug: string, lang?: string, acceptLanguageHeader?: string) {
-    const prismaLangs = Object.values(Language);
-    const isPathLang = lang && prismaLangs.includes(lang as Language);
-
+  /**
+   * Overview aggregation for frontend.
+   *
+   * ⚠️ Третьего аргумента (`acceptLanguageHeader`) здесь больше нет, и это не упрощение.
+   * До 15.09.2026 метод обслуживал два маршрута: языковой `GET /:lang/books/:slug/overview`
+   * передавал язык префиксом, а безъязыкий `GET /books/:slug/overview` — заголовком
+   * `Accept-Language` и `?lang`. Безъязыкий снят вместе с этим поведением
+   * (`LEGACY-387`, решение арбитра 15.09.2026, вариант A), и читать заголовок стало
+   * некому: единственный оставшийся вызов передаёт язык пути вторым аргументом.
+   */
+  async getOverview(slug: string, lang: Language) {
     // 1. Try to find the version by slug.
     //
     // 🔴 `LEGACY-375`. Слаг версии уникален только в паре с языком
@@ -283,12 +289,14 @@ export class BookService {
     // один раз намеренно: две копии одного запроса разъезжаются на первой же правке
     // `orderBy` или `select`, и тогда дефект вернётся ровно на той из них, которую забыли.
     // Решение арбитра 13.09.2026, вариант A.
-    const versionBySlugAndLang = isPathLang
-      ? await this.prisma.bookVersion.findFirst({
-          where: { slug, status: 'published', language: lang as Language },
-          select: { bookId: true, language: true, id: true },
-        })
-      : null;
+    // ⚠️ Проверки «а язык ли это вообще» здесь больше нет: с 15.09.2026 аргумент
+    // объявлен `Language`, и оба зова передают значение, прошедшее `LangParamPipe`.
+    // Прежний `isPathLang` дублировал пайп и существовал ради безъязыкого маршрута,
+    // где язык приходил строкой из `?lang` (`LEGACY-387`).
+    const versionBySlugAndLang = await this.prisma.bookVersion.findFirst({
+      where: { slug, status: 'published', language: lang },
+      select: { bookId: true, language: true, id: true },
+    });
 
     const matchedVersion =
       versionBySlugAndLang ??
@@ -364,7 +372,6 @@ export class BookService {
 
     const preferredLang = resolveRequestedLanguage({
       queryLang: lang,
-      acceptLanguage: acceptLanguageHeader || null,
       available: availableLanguages,
     });
 
@@ -390,14 +397,12 @@ export class BookService {
       // не меняется ни на байт. Решение арбитра 13.09.2026, вариант B.
       const redirectLang = preferredLang ?? targetVersion.language;
 
-      // Perform 301 Redirect
-      let redirectUrl = '';
-      if (isPathLang) {
-        redirectUrl = `/api/${redirectLang}/books/${targetVersion.slug}/overview`;
-      } else {
-        redirectUrl = `/api/books/${targetVersion.slug}/overview?lang=${redirectLang}`;
-      }
-      throw new RedirectException(redirectUrl);
+      // ⚠️ Ветки «язык не из пути» здесь больше нет. Она строила адрес
+      // `/api/books/<slug>/overview?lang=<x>` — безъязыкий маршрут, снятый
+      // 15.09.2026 (`LEGACY-387`), то есть 301 вёл бы в 404. Оба живых зова
+      // передают язык, прошедший `LangParamPipe` (`public.controller.ts` и
+      // `getReaderBootstrap` ниже), так что выбора не осталось.
+      throw new RedirectException(`/api/${redirectLang}/books/${targetVersion.slug}/overview`);
     }
 
     // We can read it if it is preferredLang and has chapters OR has type text, or fallback to first version with chapters/text
@@ -1565,7 +1570,7 @@ export class BookService {
    */
   async getReaderBootstrap(
     slug: string,
-    lang: string,
+    lang: Language,
     userId?: string,
     countryCode: string | null = null,
   ) {
@@ -1574,7 +1579,8 @@ export class BookService {
       overview = await this.getOverview(slug, lang);
     } catch (err) {
       if (err instanceof RedirectException) {
-        // The RedirectException url has format: /api/[lang]/books/[targetSlug]/overview or /api/books/[targetSlug]/overview?lang=...
+        // The RedirectException url has format: /api/[lang]/books/[targetSlug]/overview —
+        // единственная с 15.09.2026, безъязыкая форма снята вместе с маршрутом (`LEGACY-387`).
         // We can extract the target slug from the URL to bypass redirection
         const match = err.url.match(/\/books\/([^/]+)\/overview/);
         if (match && match[1]) {

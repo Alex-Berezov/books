@@ -57,7 +57,7 @@ describe('Books (e2e) — тело ошибки 500 не несёт текст �
     app.getHttpServer() as unknown as Parameters<typeof request>[0];
 
   it.each([
-    ['GET /books/:slug/overview', '/books/harry-potter/overview'],
+    ['GET /:lang/books/:slug/overview', '/en/books/harry-potter/overview'],
     ['GET /books/slug/:slug', '/books/slug/harry-potter'],
   ])('%s отвечает анониму 500 без текста драйвера', async (_name, path) => {
     const res = await request(server()).get(path);

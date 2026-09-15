@@ -534,13 +534,19 @@ export class CategoryService {
       },
       select: {
         ...PUBLIC_BOOK_SELECT,
-        // 🔴 `status: 'published'` выше отбирает **книгу**, а не её версии. Пока
-        // здесь стоял голый `include`, к опубликованной книге прицеплялись все
+        // 🔴 `status: 'published'` и `language` выше отбирают **книгу**, а не её версии.
+        // Пока здесь стоял голый `include`, к опубликованной книге прицеплялись все
         // её версии подряд — черновой перевод уезжал наружу и выглядел частью
         // живой книги (`LEGACY-090`). Фильтр нужен на каждом уровне, а не
         // только в `where` верхнего.
+        //
+        // 🔴 `language` здесь по той же причине и появился позже (`LEGACY-389`): один
+        // `status` отсекал черновики, но не чужие языки, и книга, прошедшая отбор
+        // по своей английской версии, отдавала наружу ещё и русскую. Соседний
+        // `TagsService.versionsByTagLangSlug` фильтровал язык с самого начала — два
+        // публичных списка отвечали на один вопрос по-разному.
         versions: {
-          where: { status: 'published' },
+          where: { status: 'published', language: pathLang },
           select: {
             ...PUBLIC_BOOK_VERSION_SELECT,
             tags: {
@@ -742,20 +748,100 @@ export class CategoryService {
     });
   }
 
+  /**
+   * Удалить перевод категории.
+   *
+   * 🔴 `LEGACY-085`. Удаление перевода убивает индексируемый адрес так же необратимо,
+   * как переименование, но преемника у него нет: нового слага не существует.
+   * Владелец 15.09.2026 выбрал редирект на родительский термин там, где родитель
+   * есть, и 404 там, где его нет; у `Tag` и `Author` родителя нет по построению
+   * схемы, поэтому политика применяется только здесь.
+   *
+   * Форму краевого случая выбрал арбитр 15.09.2026 (`decisions-log.md`), вариант D1:
+   * редирект пишется **только на прямого родителя и только при наличии у него
+   * перевода на том же языке**. Вверх по цепочке предков не поднимаемся — это увело бы
+   * на всё более общий термин, то есть в «нерелевантный хаб», отклонённый доводом
+   * в `books-front/app/[lang]/catalog/[categorySlug]/page.tsx`. На базовый
+   * `Category.slug` не редиректим — публичным адресом в этом языке он не является,
+   * и 308 вёл бы в 404, а из индекса он не отзывается.
+   *
+   * Видимость родителя (`isVisible`, `indexable`) намеренно не проверяется: страница
+   * термина резолвится независимо от них, и фильтр превратил бы живой адрес
+   * в необоснованный 404.
+   *
+   * 🔴 **Два условия ниже добавлены решением арбитра 15.09.2026 после ревью** — без них
+   * правка не исполняла решение владельца, а в одном случае и ухудшала положение:
+   *
+   * 1. **Слаг, занятый чьим-то базовым `Category.slug`, редиректа не получает.** Публичный
+   *    резолв (`getByLangSlugWithBooks` ниже) при ненайденном переводе падает на поиск
+   *    по базовому слагу и отдаёт **200 с `translation: null`**, а не 404. Фронт на это
+   *    уходит в `isUnaddressableInLanguage → notFound()` **до** обращения к истории слагов,
+   *    то есть 308 не выдаётся никогда. Запись в таком случае — расхождение «строка есть,
+   *    поведения нет»; в сиде это норма для `en` (`prisma/seed.ts` заводит категорию
+   *    и её en-перевод одним и тем же `key`).
+   * 2. **Записи, ведущие на исчезающий слаг, снимаются здесь же.** Переписывание цепочек
+   *    в `SlugRedirectService.record` срабатывает на смену слага, но не на его исчезновение.
+   *    Без уборки последовательность «удалили перевод ребёнка, затем перевод родителя»
+   *    оставляла прежний адрес ребёнка с 308 на адрес, которого больше нет, — ровно тот
+   *    дефект, ради запрета которого арбитр отклонил вариант D3. Теперь такой адрес
+   *    возвращается к честному 404.
+   *
+   * ⚠️ **Политика живёт в одном из двух путей смерти адреса.** `remove()` ниже сносит
+   * переводы по всем языкам и редиректов не пишет — это отдельная запись, а не недосмотр.
+   */
   async deleteTranslation(categoryId: string, language: Language) {
     const tr = await this.prisma.categoryTranslation.findUnique({
       where: { categoryId_language: { categoryId, language } },
     });
     if (!tr) return { success: true };
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.categoryTranslation.delete({
-        where: { categoryId_language: { categoryId, language } },
-      });
-      if (tr.seoId) {
-        await tx.seo.delete({ where: { id: tr.seoId } });
-      }
-    });
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.categoryTranslation.delete({
+          where: { categoryId_language: { categoryId, language } },
+        });
+        if (tr.seoId) {
+          await tx.seo.delete({ where: { id: tr.seoId } });
+        }
+
+        // (2) Записи, которые вели на исчезающий слаг, снимаются первыми: их цель
+        // перестала существовать, и 308 на неё увёл бы в 404. Индекс под этот запрос
+        // есть — `@@index([entityType, language, newSlug])` в схеме.
+        await tx.slugRedirect.deleteMany({
+          where: { entityType: 'category', language, newSlug: tr.slug },
+        });
+
+        // (1) Слаг, который занимает чей-то базовый `Category.slug`, продолжает
+        // резолвиться публично (200 с `translation: null`), поэтому редиректа
+        // не получает — иначе запись была бы, а перехода нет.
+        const takenAsBaseSlug = await tx.category.findFirst({
+          where: { slug: tr.slug },
+          select: { id: true },
+        });
+        if (takenAsBaseSlug) return;
+
+        // Преемник — перевод прямого родителя на том же языке. Читается тем же `tx`
+        // и после удаления: иначе есть момент, когда слаг уже мёртв, а редиректа ещё
+        // нет (докстринг `SlugRedirectService.record`).
+        const withParent = await tx.category.findUnique({
+          where: { id: categoryId },
+          select: {
+            parent: { select: { translations: { where: { language }, select: { slug: true } } } },
+          },
+        });
+        const parentSlug = withParent?.parent?.translations[0]?.slug;
+        if (parentSlug) {
+          await this.slugRedirects.record(
+            { entityType: 'category', language, oldSlug: tr.slug, newSlug: parentSlug },
+            tx,
+          );
+        }
+      },
+      // Операторов внутри стало до шести (`record` делает три запроса), а соседний
+      // `import.service.ts` держит те же таблицы под своей транзакцией — дефолтные
+      // 5000 мс дали бы `P2028` и откат всего удаления (`L-020`).
+      { timeout: 30_000, maxWait: 10_000 },
+    );
 
     return { success: true };
   }

@@ -148,13 +148,14 @@ describe('Языковая политика списков категорий и
     // на нём держится переключатель языка на странице.
     expect(catENbody.availableLanguages).toEqual(expect.arrayContaining(['en', 'es']));
 
-    // ⚠️ Характеризующая половина, фиксирует **сегодняшнее** поведение, а не желаемое.
-    // Отбор по языку пути стоит только на уровне книги (`where.versions.some.language`),
-    // а вложенная выборка версий фильтрует один `status` — поэтому внутри книги
-    // приезжают и версии чужих языков. Заведено `LEGACY-388`; красное здесь будет
-    // означать, что запись починили, и тест нужно переписать вместе с ней.
+    // `LEGACY-389`, утверждающая половина. Раньше здесь стояло характеризующее
+    // ожидание «чужие языки приезжают»: отбор по языку пути стоял только на уровне
+    // книги (`where.versions.some.language`), а вложенная выборка версий фильтровала
+    // один `status`. Теперь фильтр стоит на обоих уровнях, и внутри книги нет ничего,
+    // кроме языка пути, — ровно как у соседнего маршрута тега ниже.
     const catENversions = catENbooks.flatMap((b) => b.versions);
-    expect(catENversions.some((v) => v.language !== 'en')).toBe(true);
+    expect(catENversions.length).toBeGreaterThan(0);
+    expect(catENversions.every((v) => v.language === 'en')).toBe(true);
 
     // Та же категория под `es` — отбор идёт по языку пути, а не по порядку строк в базе.
     const catES = await request(http()).get(`/es/categories/${category.slug}/books`).expect(200);

@@ -126,10 +126,12 @@ export class PublicController {
   // вместе с закрытием `LEGACY-375` — обе выборки версий и поиск версии по слагу
   // упорядочены, язык пути предпочитается при поиске.
   //
-  // ⚠️ Третий аргумент `getOverview` не удалён, а не передаётся: тот же метод
-  // зовёт `GET /books/:slug/overview` (`book.controller.ts:176`), который несёт
-  // `private, no-store` и в общий кэш не попадает — там заголовок остаётся
-  // законным источником языка. Решение арбитра 13.09.2026.
+  // ⚠️ С 15.09.2026 третьего аргумента у `getOverview` нет вовсе. Прежде он там
+  // оставался ради безъязыкого `GET /books/:slug/overview`, который нёс
+  // `private, no-store`, в общий кэш не попадал и потому законно читал
+  // `Accept-Language` (решение арбитра 13.09.2026). Тот маршрут снят вместе
+  // с этим поведением (`LEGACY-387`, решение арбитра 15.09.2026), и метод
+  // остался с одним потребителем — этим.
   overview(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Param('slug') slug: string) {
     // The language from the path has the highest priority.
     //

@@ -139,7 +139,10 @@ describe('BookService.getOverview', () => {
       { id: 2, metaTitle: 'T-audio', metaDescription: 'D-audio' },
     ]);
 
-    const res = await service.getOverview('slug-1', undefined, 'es');
+    // ⚠️ Язык приходит вторым аргументом, а не заголовком третьим: третьего
+    // у метода больше нет — он читался только снятым `GET /books/:slug/overview`
+    // (`LEGACY-387`, 15.09.2026). Выбор `es` и все ожидания ниже те же.
+    const res = await service.getOverview('slug-1', 'es');
 
     expect(res.book.slug).toBe('slug-1');
     expect(new Set(res.availableLanguages)).toEqual(
@@ -159,7 +162,7 @@ describe('BookService.getOverview', () => {
     prisma.book.findUnique.mockResolvedValue({ id: 'b2', slug: 'book-2' });
     prisma.bookVersion.findMany.mockResolvedValue([]);
 
-    const res = await service.getOverview('book-2');
+    const res = await service.getOverview('book-2', Language.en);
     expect(res.availableLanguages).toEqual([]);
     expect(res.hasText).toBe(false);
     expect(res.hasAudio).toBe(false);

@@ -53,8 +53,8 @@ export type PublicBookVersion = Prisma.BookVersionGetPayload<{
 }>;
 
 /**
- * Поля версии для страницы книги — `GET /books/:slug/overview` и её языковой
- * близнец `GET /:lang/books/:slug/overview`.
+ * Поля версии для страницы книги — `GET /:lang/books/:slug/overview`. Безъязыкий
+ * близнец снят 15.09.2026 (`LEGACY-387`), маршрут остался один.
  *
  * 🔴 Эта константа появилась 11.08.2026, когда сверка выката нашла, что
  * `PUBLIC_BOOK_VERSION_SELECT` наложен не везде: `getOverview` продолжал грузить

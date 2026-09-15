@@ -319,7 +319,7 @@ describe('Rights clearance to geo-block e2e', () => {
     await request(http()).get(`/books/slug/${book!.slug}`).set('X-Geo-Country', 'GB').expect(200);
 
     await request(http())
-      .get(`/books/${book!.slug}/overview`)
+      .get(`/en/books/${book!.slug}/overview`)
       .set('X-Geo-Country', 'GB')
       .expect(200);
 

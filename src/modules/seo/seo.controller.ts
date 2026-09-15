@@ -42,7 +42,7 @@ import { LangParamPipe } from '../../common/pipes/lang-param.pipe';
 import { Language } from '@prisma/client';
 
 /**
- * Единственный список типов страниц, которые принимает `/seo/resolve`.
+ * Единственный список типов страниц, которые принимает `/:lang/seo/resolve`.
  *
  * `LEGACY-319`. До 30.08.2026 он был выписан руками четырежды: по `@ApiQuery`
  * и по массиву `allowed` на каждый из двух обработчиков. Копии разъехались -
@@ -70,14 +70,17 @@ const isResolveSeoType = (val: string): val is ResolveSeoTypeValue =>
  * ⚠️ Приведение, а не проверка: рантайм не трогается ни на инструкцию. Сервис
  * объявлен `Promise<Record<string, unknown>>`, потому что диспетчер собирает
  * шесть резолверов в одну таблицу; такой тип для гейта `check:response-schema`
- * нечитаем, и оба маршрута числились у него `unverifiable` — то есть ни одно
+ * нечитаем, и оба маршрута (пока их было два) числились у него `unverifiable` — то есть ни одно
  * поле ответа не стереглось. Конверт при этом общий и зафиксирован спекой
  * `resolvePublic: форма ответа каждой ветки (LEGACY-317)` в `seo.service.spec.ts`:
  * она сверяет набор полей верхнего уровня у каждой из шести веток.
  *
  * Сузить сам сервис нельзя, не переписав `buildTermBundle` и все шесть
- * резолверов, — это отдельная правка. До неё точка расхождения одна и она здесь,
- * а не рассыпана по обоим обработчикам.
+ * резолверов, — это отдельная правка. До неё точка расхождения одна и она здесь.
+ *
+ * ⚠️ Обработчик с 15.09.2026 остался один — безъязыкий `GET /seo/resolve` снят
+ * (`LEGACY-387`), — но обёртка не убирается: она и была задумана как единственная
+ * точка приведения, а не как способ не повторять каст дважды.
  */
 const asResolvedBundle = (
   bundle: Promise<Record<string, unknown>>,
@@ -197,51 +200,6 @@ export class SeoController {
     return this.service.upsertForVersion(bookVersionId, dto);
   }
 
-  @Get('seo/resolve')
-  @UseInterceptors(PublicCacheInterceptor)
-  @ApiOperation({ summary: 'Resolve SEO bundle (meta/OG/Twitter/canonical) with fallbacks' })
-  @ApiQuery({ name: 'type', enum: RESOLVE_SEO_TYPES })
-  @ApiQuery({
-    name: 'id',
-    description: 'Entity identifier or slug (book/page). For version: id only.',
-  })
-  @ApiQuery({
-    name: 'slug',
-    required: false,
-    description: 'Translation slug (for category/genre/tag)',
-  })
-  @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Resolved SEO bundle',
-    type: SeoResolveResponseDto,
-  })
-  // 🔴 `LEGACY-104`. Заголовок `Accept-Language` не читается, `@ApiHeader` снят
-  // вместе с параметром. Маршрут объявлен `public, s-maxage=300`, а общий кэш
-  // ключует по URL: Cloudflare расщепляет ключ только по `Accept-Encoding`
-  // и прочие поля `Vary` игнорирует без custom cache key (Enterprise).
-  // Здесь это било больнее всего — ответ несёт `title`, `description`,
-  // `canonical` и OG-разметку, то есть в чужом языке оказывалась вся видимая
-  // поисковику разметка страницы.
-  //
-  // Языка в пути у этого маршрута нет вовсе, поэтому без `?lang=` ответ теперь
-  // детерминированно приходит на `DEFAULT_LANGUAGE`. Фронт этот вариант ручки
-  // не зовёт ни разу — он всегда строит `/:lang/seo/resolve` через
-  // `buildLangPath` (`books-front/lib/http.ts:426-430`).
-  resolve(
-    @Query('type') typeRaw: string,
-    @Query('id') idRaw: string,
-    @Query('slug') slug?: string,
-    @Query('lang') queryLang?: string,
-  ): Promise<SeoResolveResponseDto> {
-    const t = String(typeRaw);
-    const id = String(idRaw);
-    if (!isResolveSeoType(t)) {
-      throw new BadRequestException('Invalid type');
-    }
-    return asResolvedBundle(this.service.resolvePublic(t, id, { queryLang, slug }));
-  }
-
   // Language-prefixed public resolver (prefix has higher priority than query)
   @Get(':lang/seo/resolve')
   @UseInterceptors(PublicCacheInterceptor)
@@ -262,7 +220,17 @@ export class SeoController {
     description: 'Resolved SEO bundle',
     type: SeoResolveResponseDto,
   })
-  // 🔴 `LEGACY-104`. Заголовок не читается — см. причину у `resolve` выше.
+  // 🔴 `LEGACY-104`. Заголовок `Accept-Language` не читается, `@ApiHeader` про него
+  // снят вместе с параметром. Маршрут объявлен `public, s-maxage=300`, а общий кэш
+  // ключует по URL: Cloudflare расщепляет ключ только по `Accept-Encoding` и прочие
+  // поля `Vary` игнорирует без custom cache key (Enterprise), которого на нашем тарифе
+  // нет. Здесь это било больнее всего — ответ несёт `title`, `description`, `canonical`
+  // и OG-разметку, то есть в чужом языке оказывалась вся видимая поисковику разметка.
+  //
+  // ⚠️ Разбор перенесён сюда 15.09.2026 целиком. Прежде эта строка отсылала «к причине
+  // у `resolve` выше», а тот обработчик снят вместе с безъязыким маршрутом
+  // (`LEGACY-387`) — ссылка повисла бы в никуда, и первый, кто решит вернуть
+  // `@Headers('accept-language')`, не нашёл бы в файле ни слова о том, почему нельзя.
   //
   // ⚠️ Язык пути сам по себе гарантией не был: `pickEffectiveLanguage`
   // (`seo.service.ts:439-453`) берёт `pathLang`, только если сущность реально

@@ -39,6 +39,9 @@ interface PrismaStub {
   bookRating: {
     groupBy: jest.Mock;
   };
+  slugRedirect: {
+    deleteMany: jest.Mock;
+  };
   /**
    * Модель `book` общая заглушка не заводит: её подставляют точечно те тесты,
    * которым нужен обход книг каталога. Отсюда необязательность поля.
@@ -76,6 +79,7 @@ const createPrismaStub = (): PrismaStub => ({
     deleteMany: jest.fn(),
   },
   bookRating: { groupBy: jest.fn() },
+  slugRedirect: { deleteMany: jest.fn() },
 });
 
 describe('CategoryService', () => {
@@ -908,17 +912,17 @@ describe('CategoryService', () => {
   });
 
   /**
-   * `LEGACY-085`, характеризующий тест. Фиксирует **сегодняшнее** поведение, а не
-   * желаемое: удаление перевода не пишет в историю слагов ничего, и адрес умирает
-   * в 404. Владелец 14.09.2026 выбрал редирект, но форму выбора вернул арбитр —
-   * ни один из трёх вариантов не исполняет это слово без нового решения о том,
-   * какой адрес отдаётся наружу (`decisions-log.md`).
+   * `LEGACY-085`, утверждающие тесты. До 15.09.2026 здесь стоял характеризующий:
+   * удаление перевода не писало в историю слагов ничего, и адрес умирал в 404.
+   * Владелец выбрал редирект на родителя там, где родитель есть (вариант D),
+   * форму краевого случая выбрал арбитр (D1, `decisions-log.md` 15.09.2026):
+   * только прямой родитель и только при наличии у него перевода на том же языке.
    *
-   * Тест стоит здесь, чтобы правка политики не прошла молча: как только в этот путь
-   * добавят запись редиректа, он покраснеет и потребует переписать себя вместе
-   * с решением. Красное здесь — это «политика изменилась», а не «сломалось».
+   * Три случая ниже покрывают обе половины решения. Одного мало: «редирект пишется»
+   * без «и не пишется, когда писать некуда» не отличает исполненную политику
+   * от безусловной записи на что попало.
    */
-  it('LEGACY-085: удаление перевода не пишет редиректа — адрес умирает в 404', async () => {
+  it('LEGACY-085: удаление перевода уводит на родителя того же языка', async () => {
     prisma.categoryTranslation.findUnique.mockResolvedValue({
       categoryId: 'cat1',
       language: Language.ru,
@@ -926,6 +930,96 @@ describe('CategoryService', () => {
       seoId: null,
     });
     prisma.categoryTranslation.delete.mockResolvedValue({});
+    // Слаг не занят ничьим базовым `Category.slug` — публичный резолв на него ответит 404,
+    // значит 308 действительно дойдёт до посетителя.
+    prisma.category.findFirst.mockResolvedValue(null);
+    prisma.category.findUnique.mockResolvedValue({
+      parent: { translations: [{ slug: 'hudozhestvennaya-literatura' }] },
+    });
+
+    await service.deleteTranslation('cat1', Language.ru);
+
+    expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      {
+        entityType: 'category',
+        language: Language.ru,
+        oldSlug: 'roman',
+        newSlug: 'hudozhestvennaya-literatura',
+      },
+      expect.anything(),
+    );
+  });
+
+  it('LEGACY-085: родитель без перевода на этот язык редиректа не даёт — остаётся 404', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      categoryId: 'cat1',
+      language: Language.ru,
+      slug: 'roman',
+      seoId: null,
+    });
+    prisma.categoryTranslation.delete.mockResolvedValue({});
+    prisma.category.findFirst.mockResolvedValue(null);
+    // Родитель есть, но переводов на `ru` у него нет — `where: { language }` вернул пусто.
+    prisma.category.findUnique.mockResolvedValue({ parent: { translations: [] } });
+
+    await service.deleteTranslation('cat1', Language.ru);
+
+    expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).not.toHaveBeenCalled();
+  });
+
+  it('LEGACY-085: слаг, занятый базовым Category.slug, редиректа не получает', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      categoryId: 'cat1',
+      language: Language.ru,
+      slug: 'roman',
+      seoId: null,
+    });
+    prisma.categoryTranslation.delete.mockResolvedValue({});
+    // Тот же слаг — базовый у какой-то категории: публичный резолв на него ответит
+    // 200 с `translation: null`, фронт сделает 404 мимо истории слагов, и 308
+    // не выдастся никогда. Писать запись в такой ситуации — заводить строку,
+    // которой ничто не соответствует.
+    prisma.category.findFirst.mockResolvedValue({ id: 'cat1' });
+
+    await service.deleteTranslation('cat1', Language.ru);
+
+    expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
+    expect(prisma.category.findUnique).not.toHaveBeenCalled();
+    expect(slugRedirects.record).not.toHaveBeenCalled();
+  });
+
+  it('LEGACY-085: записи, ведущие на исчезающий слаг, снимаются', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      categoryId: 'cat1',
+      language: Language.ru,
+      slug: 'roman',
+      seoId: null,
+    });
+    prisma.categoryTranslation.delete.mockResolvedValue({});
+    prisma.category.findFirst.mockResolvedValue(null);
+    prisma.category.findUnique.mockResolvedValue({ parent: null });
+
+    await service.deleteTranslation('cat1', Language.ru);
+
+    // Иначе адрес, который вёл сюда 308-м, после исчезновения цели указывал бы в 404.
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'category', language: Language.ru, newSlug: 'roman' },
+    });
+  });
+
+  it('LEGACY-085: у корневой категории родителя нет — остаётся 404', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      categoryId: 'cat1',
+      language: Language.ru,
+      slug: 'roman',
+      seoId: null,
+    });
+    prisma.categoryTranslation.delete.mockResolvedValue({});
+    prisma.category.findFirst.mockResolvedValue(null);
+    prisma.category.findUnique.mockResolvedValue({ parent: null });
 
     await service.deleteTranslation('cat1', Language.ru);
 

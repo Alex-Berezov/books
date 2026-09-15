@@ -16,9 +16,10 @@ import {
 /**
  * Response DTO — Swagger only, no `class-validator` (`STYLE_GUIDE.md` §7).
  *
- * Describes `BookService.getOverview`, served by `GET /books/:slug/overview` and its
- * language-prefixed twin `GET /:lang/books/:slug/overview`. Both call the same method
- * with the same arguments, so one DTO covers both.
+ * Describes `BookService.getOverview`, served by `GET /:lang/books/:slug/overview`.
+ * Its langless twin `GET /books/:slug/overview` was removed on 15.09.2026
+ * (`LEGACY-387`) together with the third argument of the method, so there is
+ * one route and one caller now.
  */
 
 /**
@@ -172,7 +173,7 @@ export class BookOverviewBookRefDto {
   slug!: string;
 }
 
-/** Response of `GET /books/:slug/overview` and `GET /:lang/books/:slug/overview`. */
+/** Response of `GET /:lang/books/:slug/overview`. */
 export class BookOverviewResponseDto {
   @ApiProperty({ type: String, description: 'Canonical `Book.id`' })
   id!: string;

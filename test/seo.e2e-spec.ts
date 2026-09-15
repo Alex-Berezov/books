@@ -138,10 +138,10 @@ describe('Seo e2e', () => {
     expect(get2.body.ogDescription).toBe('OG Desc');
   });
 
-  it('GET /seo/resolve returns bundle for version and book (fallback)', async () => {
+  it('GET /:lang/seo/resolve returns bundle for version and book (fallback)', async () => {
     // Version resolve
     const r1 = await request(http())
-      .get('/seo/resolve')
+      .get('/en/seo/resolve')
       .query({ type: 'version', id: versionId })
       .expect(200);
     expect(r1.body.meta.title).toBeDefined();
@@ -187,7 +187,7 @@ describe('Seo e2e', () => {
       .send({ categoryId: sub.body.id as string })
       .expect(201);
     const r2 = await request(http())
-      .get('/seo/resolve')
+      .get('/en/seo/resolve')
       .query({ type: 'book', id: book.slug })
       .expect(200);
     expect(typeof r2.body.meta.title).toBe('string');

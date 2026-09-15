@@ -528,13 +528,14 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 - Реализация:
   - Резолвер языка из префикса пути (request-scoped контекст) + утилита `src/shared/language/language.util.ts` для fallback.
   - Применяется в публичных ручках: `GET /:lang/books/:slug/overview`, `GET /:lang/categories/:slug/books`, `GET /:lang/tags/:slug/books`, `GET /:lang/books/:bookId/versions`.
-  - ⚠️ Безъязыких двойников этих ручек больше нет: `GET /categories/:slug/books`, `GET /tags/:slug/books` и `GET /pages/:slug` сняты 14.09.2026 решением владельца (`LEGACY-010`). Один и тот же контент по двум адресам давал дубль в поисковой выдаче, а язык у безъязыкой версии выбирался по `?lang`/`Accept-Language`, то есть один адрес отдавал разное тело разным запросам. Публичный доступ — только с префиксом языка.
+  - ⚠️ Безъязыких двойников этих ручек больше нет: `GET /categories/:slug/books`, `GET /tags/:slug/books` и `GET /pages/:slug` сняты 14.09.2026 решением владельца (`LEGACY-010`), а `GET /books/:slug/overview` и `GET /seo/resolve` — 15.09.2026 (`LEGACY-387`). Один и тот же контент по двум адресам давал дубль в поисковой выдаче, а язык у безъязыкой версии выбирался по `?lang`/`Accept-Language`, то есть один адрес отдавал разное тело разным запросам. Публичный доступ — только с префиксом языка.
+  - ⚠️ Три безъязыких маршрута ещё живы и в `LEGACY-387` остались открытыми: `GET /categories` и `GET /tags` зовёт генератор карты сайта на фронте, снятие без его перевода опустошит `sitemap`; `GET /books` закрыт `JwtAuthGuard` с ролями `Admin`/`ContentManager` (`LEGACY-093`) и публичным адресом не является.
 - E2E: добавлены сценарии с префиксом языка; тесты приоритезации префикса над заголовками.
 
   ### SEO resolve и i18n
   - Публичные резолверы SEO учитывают язык:
-    - `GET /seo/resolve?type=book|version|page&id=...&lang=xx` + заголовок `Accept-Language`.
-    - `GET /:lang/seo/resolve?type=...&id=...` — язык пути имеет приоритет над query/header.
+    - `GET /:lang/seo/resolve?type=...&id=...` — язык берётся из префикса пути; `?lang` остаётся запасным для случая, когда сущность на языке пути не издана.
+    - ⚠️ Безъязыкий `GET /seo/resolve` снят 15.09.2026 (`LEGACY-387`). Вместе с ним снято и поведение «`?lang` важнее `Accept-Language`»: заголовок не читается ни одним из резолверов с 13.09.2026 (`LEGACY-104`).
   - Канонический URL:
     - Для `version` фиксируется без префикса: `/versions/:id`.
     - Для `book`/`page` включает префикс языка: `/:lang/books/:slug`, `/:lang/pages/:slug`.

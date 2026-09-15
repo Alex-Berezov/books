@@ -118,7 +118,7 @@ describe('Book Overview (e2e)', () => {
       .expect(200);
 
     // Overview should show only text-related flags as true
-    const res1 = await request(http()).get(`/books/${bookSlug}/overview`).expect(200);
+    const res1 = await request(http()).get(`/en/books/${bookSlug}/overview`).expect(200);
     expect(res1.body.book.slug).toBe(bookSlug);
     expect(res1.body.hasText).toBe(true);
     expect(res1.body.hasAudio).toBe(false);
@@ -135,7 +135,7 @@ describe('Book Overview (e2e)', () => {
       .patch(`/versions/${versionAudioId}/publish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const res2 = await request(http()).get(`/books/${bookSlug}/overview?lang=es`).expect(200);
+    const res2 = await request(http()).get(`/es/books/${bookSlug}/overview`).expect(200);
     const langs = (res2.body.availableLanguages as string[]) || [];
     expect(new Set(langs)).toEqual(new Set([Language.en, Language.es]));
     expect(res2.body.hasAudio).toBe(true);

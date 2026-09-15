@@ -39,6 +39,5 @@ export const PUBLIC_CACHE_HANDLERS: readonly string[] = [
   // одинаковые для всех, — и от заголовков запроса не зависят.
   'modules/rights-agent/rights-agent.controller.ts → getLatestSchema',
   'modules/rights-agent/rights-agent.controller.ts → getSchemaByVersion',
-  'modules/seo/seo.controller.ts → resolve',
   'modules/seo/seo.controller.ts → resolveWithLang',
 ];

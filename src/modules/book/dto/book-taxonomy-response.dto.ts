@@ -6,7 +6,7 @@ import { TagTranslationDto } from '../../tags/dto/tag-translation-entity.dto';
 
 /**
  * Building blocks shared by the routes that attach taxonomy **with its translations**
- * to a book: `GET /books/:slug/overview`, `GET /books`, `GET /:lang/books` and
+ * to a book: `GET /:lang/books/:slug/overview`, `GET /books`, `GET /:lang/books` and
  * `GET /:lang/categories/:slug/books`.
  *
  * They are deliberately separate from `book-detail-response.dto.ts`'s `BookCategoryDto` /

@@ -11,7 +11,6 @@ import {
   Query,
   UseGuards,
   UseInterceptors,
-  Headers,
   Req,
   HttpCode,
 } from '@nestjs/common';
@@ -22,8 +21,6 @@ import {
   ApiExtraModels,
   ApiOkResponse,
   ApiParam,
-  ApiQuery,
-  ApiHeader,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { BookService } from './book.service';
@@ -43,7 +40,6 @@ import { BookDetailResponseDto } from './dto/book-detail-response.dto';
 import { DeleteBookResponseDto } from './dto/delete-book-response.dto';
 import { BookEntityDto } from './dto/book-entity.dto';
 import { BookRatingDto, BookRatingScoreDto } from './dto/book-rating.dto';
-import { BookOverviewResponseDto } from './dto/book-overview-response.dto';
 import { BookListItemDto } from './dto/paged-books.dto';
 import {
   PaginationInfoDto,
@@ -145,29 +141,6 @@ export class BookController {
   @ApiOkResponse({ description: 'List of themes returned', type: String, isArray: true })
   async getThemes() {
     return this.bookService.getAllThemes();
-  }
-
-  @Get(':slug/overview')
-  @ApiOperation({
-    summary: 'Get book overview by slug',
-    description:
-      'Aggregated overview of a book: available languages, presence of text/audio/summary, version IDs, and an SEO bundle. Only published versions are shown publicly.',
-  })
-  @ApiOkResponse({ description: 'Overview returned', type: BookOverviewResponseDto })
-  @ApiParam({ name: 'slug', description: 'Unique book slug' })
-  @ApiQuery({ name: 'lang', required: false, description: 'Requested language (en|es|fr|pt)' })
-  @ApiHeader({
-    name: 'Accept-Language',
-    required: false,
-    description: 'RFC 7231 header, e.g. en-US,en;q=0.9,es;q=0.8',
-  })
-  @ApiResponse({ status: 404, description: 'Book not found' })
-  async overview(
-    @Param('slug') slug: string,
-    @Query('lang') lang?: string,
-    @Headers('accept-language') acceptLanguage?: string,
-  ) {
-    return this.bookService.getOverview(slug, lang, acceptLanguage);
   }
 
   /**

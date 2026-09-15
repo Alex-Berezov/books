@@ -222,13 +222,13 @@ describe('Draft and rights exposure (e2e)', () => {
      * `include: versions` в сервисах книг и таксономий, а `getOverview` в тот
      * перечень не попал.
      */
+    /**
+     * ⚠️ До 15.09.2026 здесь стояло два кейса: этот на безъязыком
+     * `GET /books/:slug/overview` и его зеркало на языковом. Безъязыкий маршрут
+     * снят (`LEGACY-387`), и зеркало перестало быть зеркалом — осталась одна
+     * проверка на единственной живой форме.
+     */
     it('страница книги не отдаёт ни одного правового поля', async () => {
-      const res = await request(http()).get(`/books/${publishedVersionSlug}/overview`).expect(200);
-
-      expect(rightsKeys(res.body)).toEqual([]);
-    });
-
-    it('языковая форма того же маршрута тоже чиста', async () => {
       const res = await request(http())
         .get(`/en/books/${publishedVersionSlug}/overview`)
         .expect(200);
@@ -239,7 +239,9 @@ describe('Draft and rights exposure (e2e)', () => {
     // Служебные ключи выбираются ради работы метода и обязаны сниматься на
     // выходе: иначе белый список превращается в «почти белый».
     it('страница книги не отдаёт внутренних ключей версии', async () => {
-      const res = await request(http()).get(`/books/${publishedVersionSlug}/overview`).expect(200);
+      const res = await request(http())
+        .get(`/en/books/${publishedVersionSlug}/overview`)
+        .expect(200);
 
       const version = (res.body as { versions: Record<string, unknown>[] }).versions[0];
       expect(version).not.toHaveProperty('seoId');
@@ -253,7 +255,9 @@ describe('Draft and rights exposure (e2e)', () => {
      * упавшим тестом.
      */
     it('страница книги сохраняет поля, ради которых она и существует', async () => {
-      const res = await request(http()).get(`/books/${publishedVersionSlug}/overview`).expect(200);
+      const res = await request(http())
+        .get(`/en/books/${publishedVersionSlug}/overview`)
+        .expect(200);
 
       const version = (res.body as { versions: Record<string, unknown>[] }).versions[0];
       for (const field of [

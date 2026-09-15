@@ -227,9 +227,15 @@ export class BooksApiClient {
       return response.data;
     },
 
-    getOverview: async (slug: string, lang?: string) => {
-      const url = lang ? `/api/${lang}/books/${slug}/overview` : `/api/books/${slug}/overview`;
-      const response = await this.get(url);
+    /**
+     * Язык обязателен: безъязыкий `GET /api/books/:slug/overview` снят 15.09.2026
+     * (`LEGACY-387`). Раньше вызов без второго аргумента уходил на него и работал —
+     * теперь такой адрес отвечает 404, поэтому параметр стал обязательным, а не
+     * необязательным с молчаливым падением на мёртвую ветку. Та же правка, что
+     * у `getBooksBySlug` при снятии `LEGACY-010` 14.09.2026.
+     */
+    getOverview: async (slug: string, lang: string) => {
+      const response = await this.get(`/api/${lang}/books/${slug}/overview`);
       return response.data;
     },
 

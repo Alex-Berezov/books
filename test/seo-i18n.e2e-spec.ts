@@ -113,22 +113,12 @@ describe('SEO resolve i18n (/:lang prefix) (e2e)', () => {
       .expect(200);
     expect(r.body.meta.canonicalUrl).toMatch(new RegExp(`/es/pages/${slug}$`));
 
-    // If no path lang, prefer query lang over Accept-Language
-    const r2 = await request(http())
-      .get(`/seo/resolve`)
-      .query({ type: 'page', id: slug, lang: 'en' })
-      .set('Accept-Language', 'es-ES,es;q=0.9')
-      .expect(200);
-    expect(r2.body.meta.canonicalUrl).toMatch(new RegExp(`/en/pages/${slug}$`));
-
-    // If neither query nor header match, fall back to default language; canonical still prefixed
-    const r3 = await request(http())
-      .get(`/seo/resolve`)
-      .query({ type: 'page', id: slug })
-      .set('Accept-Language', 'de-DE,de;q=0.9')
-      .expect(200);
-    // default is en in dev env, so expect /en prefix
-    expect(r3.body.meta.canonicalUrl).toMatch(new RegExp(`/en/pages/${slug}$`));
+    // ⚠️ Здесь стояло ещё два случая, и оба сняты 15.09.2026 вместе с маршрутом
+    // `GET /seo/resolve` (`LEGACY-387`): «без языка в пути `?lang` важнее
+    // `Accept-Language`» и «не совпало ни то, ни другое — берём язык по умолчанию».
+    // Оба описывали выбор языка **в отсутствие префикса** и на языковом двойнике
+    // невоспроизводимы: там язык задан путём и спорить не с чем. Это снятие
+    // поведения, а не потеря покрытия.
 
     // Use created variables to avoid TS unused warnings
     expect([pageEn.id, pageEs.id].length).toBeGreaterThan(0);
