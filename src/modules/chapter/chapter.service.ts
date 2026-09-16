@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { Prisma } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
@@ -13,6 +14,7 @@ export class ChapterService {
     private prisma: PrismaService,
     private rightsContentHashService: RightsContentHashService,
     private geoBlockRuleService: GeoBlockRuleService,
+    private clearanceLock: RightsClearanceLockService,
   ) {}
 
   async listByVersion(
@@ -78,7 +80,7 @@ export class ChapterService {
       throw new BadRequestException('Chapter number must be unique within a version');
     }
     try {
-      const chapter = await this.prisma.$transaction(async (tx) => {
+      const chapter = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
         const created = await tx.chapter.create({
           data: { bookVersionId, number: chapterNumber, title: dto.title, content: dto.content },
         });
@@ -124,17 +126,20 @@ export class ChapterService {
       if (dup) throw new BadRequestException('Chapter number must be unique within a version');
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.chapter.update({ where: { id }, data: dto });
-      await this.rightsContentHashService.checkVersionStaleness(
-        chapter.bookVersionId,
-        'CHAPTER_UPDATED',
-        null,
-        true,
-        tx,
-      );
-      return result;
-    });
+    const updated = await this.clearanceLock.runInLockedClearance(
+      chapter.bookVersionId,
+      async (tx) => {
+        const result = await tx.chapter.update({ where: { id }, data: dto });
+        await this.rightsContentHashService.checkVersionStaleness(
+          chapter.bookVersionId,
+          'CHAPTER_UPDATED',
+          null,
+          true,
+          tx,
+        );
+        return result;
+      },
+    );
     return updated;
   }
 
@@ -142,7 +147,7 @@ export class ChapterService {
     const chapter = await this.prisma.chapter.findUnique({ where: { id } });
     if (!chapter) throw new NotFoundException('Chapter not found');
     const bookVersionId = chapter.bookVersionId;
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
       const deleted = await tx.chapter.delete({ where: { id } });
       await this.rightsContentHashService.checkVersionStaleness(
         bookVersionId,

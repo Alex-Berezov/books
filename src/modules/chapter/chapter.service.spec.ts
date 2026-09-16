@@ -1,5 +1,9 @@
 import { ChapterService } from './chapter.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import {
+  ClearanceLockFake,
+  createClearanceLockFake,
+} from '../../common/testing/clearance-lock-fake';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Chapter, Prisma } from '@prisma/client';
@@ -42,6 +46,7 @@ describe('ChapterService', () => {
   let service: ChapterService;
   let prisma: PrismaStub;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
+  let clearanceLock: ClearanceLockFake;
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -51,9 +56,62 @@ describe('ChapterService', () => {
       checkVersionStaleness: jest.fn(),
       markVersionAndClearanceStale: jest.fn(),
     } as unknown as jest.Mocked<RightsContentHashService>;
-    service = new ChapterService(prisma as unknown as PrismaService, mockRightsContentHashService, {
-      assertAccess: jest.fn(),
-    } as unknown as GeoBlockRuleService);
+    clearanceLock = createClearanceLockFake(prisma);
+    service = new ChapterService(
+      prisma as unknown as PrismaService,
+      mockRightsContentHashService,
+      { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
+      clearanceLock.service,
+    );
+  });
+
+  /**
+   * `LEGACY-368`: запись главы идёт внутри транзакции под замком группы клиренса. Запись
+   * мимо обёртки снова даёт 40P01 со встречной правкой главы соседней версии.
+   */
+  describe('writes run under the clearance lock', () => {
+    const underLock = (write: jest.Mock, result: unknown): boolean[] => {
+      const seen: boolean[] = [];
+      write.mockImplementation(() => {
+        seen.push(clearanceLock.isLocked());
+        return Promise.resolve(result);
+      });
+      return seen;
+    };
+
+    it('create', async () => {
+      (prisma.chapter.findFirst as jest.Mock).mockResolvedValue(null);
+      const seen = underLock(prisma.chapter.create as jest.Mock, { id: 'c1' });
+
+      await service.create('v1', { number: 1, title: 'T', content: 'C' });
+
+      expect(seen).toEqual([true]);
+      expect(clearanceLock.lockedVersions).toEqual(['v1']);
+    });
+
+    it('update', async () => {
+      (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({
+        id: 'c1',
+        bookVersionId: 'v1',
+        number: 1,
+      });
+      const seen = underLock(prisma.chapter.update as jest.Mock, { id: 'c1' });
+
+      await service.update('c1', { title: 'T2' });
+
+      expect(seen).toEqual([true]);
+      expect(clearanceLock.lockedVersions).toEqual(['v1']);
+    });
+
+    it('remove', async () => {
+      (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({ id: 'c1', bookVersionId: 'v1' });
+      const seen = underLock(prisma.chapter.delete as jest.Mock, { id: 'c1' });
+
+      await service.remove('c1');
+
+      expect(seen).toEqual([true]);
+      expect(clearanceLock.lockedVersions).toEqual(['v1']);
+    });
   });
 
   it('lists all chapters by version when no pagination', async () => {

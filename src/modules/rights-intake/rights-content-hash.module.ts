@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RightsClearanceLockService } from './rights-clearance-lock.service';
 import { RightsContentHashService } from './rights-content-hash.service';
 
 /**
@@ -10,10 +11,14 @@ import { RightsContentHashService } from './rights-content-hash.service';
  * вынесен только модуль; `RightsIntakeModule` реэкспортирует его целиком, поэтому
  * потребители, импортирующие интейк, не изменились.
  *
+ * Второй провайдер — `RightsClearanceLockService` (`LEGACY-368`): замок группы клиренса,
+ * под которым главы, аудиоглавы и версии пишут строки и помечают stale. Живёт здесь же,
+ * потому что зависит от того же и одного `PrismaService`.
+ *
  * **Импортировать ничего не должен** — любой импорт вернёт цикл, ради которого модуль и создан.
  */
 @Module({
-  providers: [RightsContentHashService],
-  exports: [RightsContentHashService],
+  providers: [RightsContentHashService, RightsClearanceLockService],
+  exports: [RightsContentHashService, RightsClearanceLockService],
 })
 export class RightsContentHashModule {}

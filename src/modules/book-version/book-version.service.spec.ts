@@ -1,6 +1,10 @@
 import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import {
+  ClearanceLockFake,
+  createClearanceLockFake,
+} from '../../common/testing/clearance-lock-fake';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
@@ -196,6 +200,7 @@ describe('BookVersionService', () => {
     Pick<PublicationGateService, 'assertVersionCanPublish' | 'checkVersionCanPublish'>
   >;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
+  let clearanceLock: ClearanceLockFake;
   let finalizeBaselineOnPublish: jest.Mock;
   let licenseCoverageService: {
     loadLicensesForProfile: jest.Mock;
@@ -220,6 +225,7 @@ describe('BookVersionService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    clearanceLock = createClearanceLockFake(prisma);
     geoIpCountryService = {
       getSourceHealth: jest.fn().mockReturnValue({
         status: 'HEALTHY',
@@ -331,6 +337,7 @@ describe('BookVersionService', () => {
       geoIpCountryService as unknown as GeoIpCountryService,
       slugRedirects as unknown as SlugRedirectService,
       adminAudit as unknown as AdminAuditService,
+      clearanceLock.service,
       new TerritoryRegionAggregationService(),
     );
   });
@@ -1527,6 +1534,7 @@ describe('BookVersionService', () => {
           resolve: jest.fn().mockResolvedValue(null),
         } as unknown as SlugRedirectService,
         adminAudit as unknown as AdminAuditService,
+        clearanceLock.service,
         new TerritoryRegionAggregationService(),
         {
           // Отказ **однократный**: иначе тест проходил бы и при широком обработчике —
@@ -2410,6 +2418,85 @@ describe('BookVersionService', () => {
       expect(res.currentProfile?.['licenses'] as unknown[]).toHaveLength(1);
       expect(res.currentVersion.rightsLicenseCoverageStatus).toBe('COVERED');
       expect(res.currentVersion.rightsLicenseIds).toEqual(['lic-1']);
+    });
+  });
+
+  /**
+   * `LEGACY-368`: запись версии и участников идёт внутри транзакции под замком группы клиренса.
+   * Строка версии, тронутая мимо обёртки, снова даёт 40P01 со встречной правкой соседней версии.
+   */
+  describe('writes run under the clearance lock', () => {
+    const underLock = (write: jest.Mock, result: unknown): boolean[] => {
+      const seen: boolean[] = [];
+      write.mockImplementation(() => {
+        seen.push(clearanceLock.isLocked());
+        return Promise.resolve(result);
+      });
+      return seen;
+    };
+    const expectLockedOnce = (seen: boolean[]) => {
+      expect(seen).toEqual([true]);
+      expect(clearanceLock.lockedVersions).toEqual(['v1']);
+    };
+
+    beforeEach(() => {
+      prisma.person.findUnique.mockResolvedValue({ id: 'person-1' });
+      prisma.bookVersionContributor.findFirst.mockResolvedValue({
+        id: 'bvc-1',
+        bookVersionId: 'v1',
+        role: 'TRANSLATOR',
+        isPrimary: false,
+      });
+    });
+
+    it('update writes the version and marks staleness under the lock', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        id: 'v1',
+        seoId: null,
+        status: 'draft',
+        description: 'D',
+        coverImageUrl: 'https://cdn.example.com/cover.jpg',
+        language: Language.en,
+        author: 'A',
+        slug: 'karamazovy',
+      } as unknown as BookVersion);
+      const seen = underLock(prisma.bookVersion.update as jest.Mock, { id: 'v1', seo: null });
+      const staleness = jest.fn();
+      Object.assign(mockRightsContentHashService, { checkVersionStaleness: staleness });
+      const stalenessSeen = underLock(staleness, undefined);
+
+      await service.update('v1', { isFree: false });
+
+      expectLockedOnce(seen);
+      expect(stalenessSeen).toEqual([true]);
+    });
+
+    it('addVersionContributor', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
+      const seen = underLock(prisma.bookVersionContributor.create, { id: 'bvc-1' });
+
+      await service.addVersionContributor('v1', {
+        personId: 'person-1',
+        role: 'TRANSLATOR',
+      } as never);
+
+      expectLockedOnce(seen);
+    });
+
+    it('updateVersionContributor', async () => {
+      const seen = underLock(prisma.bookVersionContributor.update, { id: 'bvc-1' });
+
+      await service.updateVersionContributor('v1', 'bvc-1', { creditedName: 'Новый' } as never);
+
+      expectLockedOnce(seen);
+    });
+
+    it('removeVersionContributor', async () => {
+      const seen = underLock(prisma.bookVersionContributor.delete, { id: 'bvc-1' });
+
+      await service.removeVersionContributor('v1', 'bvc-1');
+
+      expectLockedOnce(seen);
     });
   });
 

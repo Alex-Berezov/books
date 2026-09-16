@@ -113,15 +113,19 @@ export const DRAFT_FILL_WINDOW_OPENED_REASON_CODE = 'DRAFT_FILL_WINDOW_OPENED';
 export const SOURCE_FILE_FIRST_UPLOAD_REASON_CODE = 'SOURCE_FILE_FIRST_UPLOAD';
 
 /**
- * Границы транзакций этого сервиса. Циклов внутри них нет: пометка соседних версий вынесена
- * за транзакцию решением арбитра от 04.09.2026 (`decisions-log.md`), самая большая транзакция —
- * `markSelf` с четырьмя записями, остальные пишут по две. Запас против дефолтов Prisma
+ * Границы транзакций, которые этот сервис открывает сам. Пометка соседних версий в них не входит:
+ * без переданного `tx` она вынесена за транзакцию решением арбитра от 04.09.2026
+ * (`decisions-log.md`); с переданным `tx` фан-аут идёт внутри транзакции вызывающего. Самая
+ * большая своя транзакция — `markSelf` с четырьмя записями, остальные пишут по две. Запас против дефолтов Prisma
  * (5000/2000 мс) взят у соседа с тем же контуром — `contributors.service.ts`
  * (`{ timeout: 30_000, maxWait: 10_000 }`) — и снижать его незачем: он про ожидание
  * соединения в пуле, а не про объём записи.
  *
- * ⚠️ Возврат фан-аута под `inTransaction` оживит дедлок 40P01, ради снятия которого решение
- * и принималось (`LEGACY-368`).
+ * ⚠️ Возврат фан-аута под `inTransaction` оживит дедлок 40P01 на путях без своего `tx`:
+ * замок группы (`RightsClearanceLockService`, `LEGACY-368`) берут только 11 писателей через
+ * `runInLockedClearance`. Путь без `tx` цикла не лишён: `markSelf` ручной проверки хеша
+ * (`POST admin/versions/:id/rights-content-hash/check`) пишет свою версию, затем проверку
+ * прав и профиль, и встречается с фан-аутом запертой правки главы (тело `LEGACY-368`).
  */
 const CONTENT_HASH_TRANSACTION_TIMEOUT_MS = 30_000;
 const CONTENT_HASH_TRANSACTION_MAX_WAIT_MS = 10_000;
@@ -982,8 +986,10 @@ export class RightsContentHashService {
     // аудит-пара — своя версия, статусы клиренса и событие. Пометка родственных версий
     // (`SHARED_CLEARANCE_STALE`) вынесена за транзакцию и идёт после её коммита: держа чужие
     // строки версий, новая транзакция путей без своего `tx` брала их крест-накрест со встречной
-    // правкой главы. Дедлок `tx`-против-`tx` этим не закрыт — он состояние `main` и живёт
-    // записью техдолга; `orderBy` ниже окно сужает, но по `L-019` закрытием не считается.
+    // правкой главы. Дедлок `tx`-против-`tx` (`LEGACY-368`) снимают двое вместе: замок группы,
+    // который `RightsClearanceLockService.runInLockedClearance` берёт первым оператором
+    // транзакции вызывающего, и фан-аут ниже — одним списком обеих групп по `id`.
+    // Писатель со своим `tx` мимо обёртки цикл возвращает.
     const markSelf = async (client: Prisma.TransactionClient): Promise<void> => {
       await client.bookVersion.update({
         where: { id: versionId },
@@ -1041,41 +1047,41 @@ export class RightsContentHashService {
     // а на путях без `tx` идёт по строке — прежним поведением до LEGACY-036.
     const fanOutClient = tx ?? this.prisma;
 
-    const markRelated = async (
-      where: Prisma.BookVersionWhereInput,
-      reasonRuText: string,
-    ): Promise<void> => {
-      const relatedVersions = await fanOutClient.bookVersion.findMany({
-        where: { ...where, id: { not: versionId }, rightsStaleDetectedAt: null },
-        select: { id: true },
-        orderBy: { id: 'asc' },
-      });
-
-      for (const relatedVersion of relatedVersions) {
-        await fanOutClient.bookVersion.update({
-          where: { id: relatedVersion.id },
-          data: {
-            rightsRecheckRequired: true,
-            rightsStaleDetectedAt: now,
-            rightsStaleReasonCode: 'SHARED_CLEARANCE_STALE',
-            rightsStaleReasonRu: reasonRuText,
-          },
-        });
-      }
-    };
-
+    const groups: Prisma.BookVersionWhereInput[] = [];
     if (version.approvedRightsReviewId) {
-      await markRelated(
-        { approvedRightsReviewId: version.approvedRightsReviewId },
-        'Изменение контента в другой версии той же проверки прав. Требуется повторная проверка.',
-      );
+      groups.push({ approvedRightsReviewId: version.approvedRightsReviewId });
     }
-
     if (version.rightsProfileId) {
-      await markRelated(
-        { rightsProfileId: version.rightsProfileId },
-        'Изменение контента в другой версии того же профиля прав. Требуется повторная проверка.',
-      );
+      groups.push({ rightsProfileId: version.rightsProfileId });
+    }
+    if (groups.length === 0) return;
+
+    // LEGACY-368, решение арбитра от 16.09.2026: обе группы — **одним** списком по `id`.
+    // Два отдельных обхода брали общие чужие версии в разном порядке у транзакций
+    // с непересекающимися ключами замка (A(P1,R1) и B(P2,R2) через X(P1,R2), Y(P2,R1)) — 40P01.
+    const relatedVersions = await fanOutClient.bookVersion.findMany({
+      where: { OR: groups, id: { not: versionId }, rightsStaleDetectedAt: null },
+      select: { id: true, approvedRightsReviewId: true },
+      orderBy: { id: 'asc' },
+    });
+
+    for (const relatedVersion of relatedVersions) {
+      // Версия из обеих групп получает текст проверки прав — как и при двух обходах, где
+      // второй её уже не находил из-за `rightsStaleDetectedAt: null`.
+      const viaReview =
+        version.approvedRightsReviewId !== null &&
+        relatedVersion.approvedRightsReviewId === version.approvedRightsReviewId;
+      await fanOutClient.bookVersion.update({
+        where: { id: relatedVersion.id },
+        data: {
+          rightsRecheckRequired: true,
+          rightsStaleDetectedAt: now,
+          rightsStaleReasonCode: 'SHARED_CLEARANCE_STALE',
+          rightsStaleReasonRu: viaReview
+            ? 'Изменение контента в другой версии той же проверки прав. Требуется повторная проверка.'
+            : 'Изменение контента в другой версии того же профиля прав. Требуется повторная проверка.',
+        },
+      });
     }
   }
 

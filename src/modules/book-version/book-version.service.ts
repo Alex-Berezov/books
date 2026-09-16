@@ -12,6 +12,7 @@ import {
   type VersionContentField,
 } from './publication-gate.constants';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { Language, BookType, Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { ContributorRole } from '../persons/person-interface';
@@ -122,6 +123,8 @@ export class BookVersionService {
     // журнала означал бы «событие иногда не пишется», а отсутствие строки в журнале
     // неотличимо от того, что действия не было (`LEGACY-015`).
     private adminAudit: AdminAuditService,
+    // LEGACY-368: без замка группы параллельные правки версий одного клиренса ловят 40P01.
+    private clearanceLock: RightsClearanceLockService,
     private regionAggregationService?: TerritoryRegionAggregationService,
     // Optional so existing direct instantiations in unit tests keep working; a
     // missing counter only means the taxonomy state is refreshed by the admin
@@ -1015,7 +1018,7 @@ export class BookVersionService {
     );
 
     try {
-      const updated = await this.prisma.$transaction(async (tx) => {
+      const updated = await this.clearanceLock.runInLockedClearance(id, async (tx) => {
         // Одно чтение строки на всю правку, и оно внутри транзакции: снаружи между проверкой
         // и записью успевает пройти `publish`, и правка, отправленная как черновиковая,
         // дописала бы пустое описание уже в живую карточку.
@@ -1467,7 +1470,7 @@ export class BookVersionService {
 
     // WP-8.1: участник входит в content hash, поэтому смена состава участников проверяется
     // на устаревание клиренса в той же транзакции, что и сама запись.
-    return this.prisma.$transaction(async (tx) => {
+    return this.clearanceLock.runInLockedClearance(versionId, async (tx) => {
       const created = await tx.bookVersionContributor.create({
         data: {
           bookVersionId: versionId,
@@ -1512,7 +1515,7 @@ export class BookVersionService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.clearanceLock.runInLockedClearance(versionId, async (tx) => {
       const updated = await tx.bookVersionContributor.update({
         where: { id: contributorId },
         data: {
@@ -1556,7 +1559,7 @@ export class BookVersionService {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.clearanceLock.runInLockedClearance(versionId, async (tx) => {
       await tx.bookVersionContributor.delete({
         where: { id: contributorId },
       });

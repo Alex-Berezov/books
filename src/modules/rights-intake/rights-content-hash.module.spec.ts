@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsContentHashModule } from './rights-content-hash.module';
 import { RightsContentHashService } from './rights-content-hash.service';
+import { RightsClearanceLockService } from './rights-clearance-lock.service';
 import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
@@ -19,6 +20,8 @@ describe('RightsContentHashModule', () => {
       .compile();
 
     expect(moduleRef.get(RightsContentHashService)).toBeDefined();
+    // LEGACY-368: главы и версии получают замок группы через реэкспорт этого листа.
+    expect(moduleRef.get(RightsClearanceLockService)).toBeInstanceOf(RightsClearanceLockService);
 
     await moduleRef.close();
   });

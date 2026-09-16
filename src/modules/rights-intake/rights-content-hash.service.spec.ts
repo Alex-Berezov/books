@@ -1912,3 +1912,112 @@ describe('RightsContentHashService — атомарность аудита (LEGA
     expect(double.committed).toHaveLength(0);
   });
 });
+
+/**
+ * `LEGACY-368`, решение арбитра от 16.09.2026: соседи по проверке прав и по профилю помечаются
+ * **одним** списком по `id`. Два отдельных обхода брали общие чужие версии в разном порядке
+ * у транзакций с непересекающимися ключами замка — A(P1,R1) и B(P2,R2) через X(P1,R2),
+ * Y(P2,R1) — и ловили 40P01.
+ */
+describe('RightsContentHashService — фан-аут одним списком (LEGACY-368)', () => {
+  const REVIEW_TEXT =
+    'Изменение контента в другой версии той же проверки прав. Требуется повторная проверка.';
+  const PROFILE_TEXT =
+    'Изменение контента в другой версии того же профиля прав. Требуется повторная проверка.';
+
+  const createTx = (
+    version: { rightsProfileId: string | null; approvedRightsReviewId: string | null },
+    related: Array<{ id: string; approvedRightsReviewId: string | null }>,
+  ) => {
+    const staleWrites: Array<{ id: string; reason: unknown }> = [];
+    const tx = {
+      bookVersion: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'A', rightsStaleDetectedAt: null, ...version }),
+        findMany: jest.fn().mockResolvedValue(related),
+        update: jest.fn((args: { where: { id: string }; data: Record<string, unknown> }) => {
+          if (args.data.rightsStaleReasonCode === 'SHARED_CLEARANCE_STALE') {
+            staleWrites.push({ id: args.where.id, reason: args.data.rightsStaleReasonRu });
+          }
+          return Promise.resolve({});
+        }),
+      },
+      rightsReview: { update: jest.fn().mockResolvedValue({}) },
+      rightsProfile: { update: jest.fn().mockResolvedValue({}) },
+      rightsContentHashEvent: { create: jest.fn().mockResolvedValue({}) },
+    };
+    return { tx, staleWrites };
+  };
+
+  const mark = async (tx: unknown) => {
+    const root = { $transaction: jest.fn() };
+    const service = new RightsContentHashService(root as unknown as PrismaService);
+    await service.markVersionAndClearanceStale(
+      'A',
+      'CHAPTER_UPDATED',
+      'new-hash',
+      'old-hash',
+      null,
+      tx as Parameters<RightsContentHashService['markVersionAndClearanceStale']>[5],
+    );
+    expect(root.$transaction).not.toHaveBeenCalled();
+  };
+
+  it('ищет соседей обеих групп одним запросом, отсортированным по id', async () => {
+    const { tx } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, []);
+
+    await mark(tx);
+
+    expect(tx.bookVersion.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.bookVersion.findMany).toHaveBeenCalledWith({
+      where: {
+        OR: [{ approvedRightsReviewId: 'R1' }, { rightsProfileId: 'P1' }],
+        id: { not: 'A' },
+        rightsStaleDetectedAt: null,
+      },
+      select: { id: true, approvedRightsReviewId: true },
+      orderBy: { id: 'asc' },
+    });
+  });
+
+  it('пишет соседей в порядке выдачи, текст — по группе, через которую версия попала', async () => {
+    const { tx, staleWrites } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, [
+      { id: 'X', approvedRightsReviewId: 'R2' },
+      { id: 'Y', approvedRightsReviewId: 'R1' },
+      { id: 'Z', approvedRightsReviewId: 'R1' },
+    ]);
+
+    await mark(tx);
+
+    // X — только по профилю; Y — только по проверке прав или по обеим: текст проверки прав.
+    expect(staleWrites).toEqual([
+      { id: 'X', reason: PROFILE_TEXT },
+      { id: 'Y', reason: REVIEW_TEXT },
+      { id: 'Z', reason: REVIEW_TEXT },
+    ]);
+  });
+
+  it('без проверки прав ищет только по профилю и пишет текст профиля', async () => {
+    const { tx, staleWrites } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: null }, [
+      { id: 'X', approvedRightsReviewId: null },
+    ]);
+
+    await mark(tx);
+
+    expect(tx.bookVersion.findMany.mock.calls[0][0].where.OR).toEqual([{ rightsProfileId: 'P1' }]);
+    expect(staleWrites).toEqual([{ id: 'X', reason: PROFILE_TEXT }]);
+  });
+
+  it('без групп соседей не ищет', async () => {
+    const { tx, staleWrites } = createTx(
+      { rightsProfileId: null, approvedRightsReviewId: null },
+      [],
+    );
+
+    await mark(tx);
+
+    expect(tx.bookVersion.findMany).not.toHaveBeenCalled();
+    expect(staleWrites).toEqual([]);
+  });
+});

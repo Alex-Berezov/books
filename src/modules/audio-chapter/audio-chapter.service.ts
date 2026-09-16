@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAudioChapterDto } from './dto/create-audio-chapter.dto';
 import { UpdateAudioChapterDto } from './dto/update-audio-chapter.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { Prisma } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
@@ -26,6 +27,7 @@ export class AudioChapterService {
     private prisma: PrismaService,
     private rightsContentHashService: RightsContentHashService,
     private geoBlockRuleService: GeoBlockRuleService,
+    private clearanceLock: RightsClearanceLockService,
   ) {}
 
   private normalizePage(page = 1, limit = 50) {
@@ -132,7 +134,7 @@ export class AudioChapterService {
     if (exists) throw this.conflict(dto.number);
 
     try {
-      const item = await this.prisma.$transaction(async (tx) => {
+      const item = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
         const created = await tx.audioChapter.create({
           data: {
             bookVersionId,
@@ -204,17 +206,20 @@ export class AudioChapterService {
     }
 
     try {
-      const updated = await this.prisma.$transaction(async (tx) => {
-        const result = await tx.audioChapter.update({ where: { id }, data: dto });
-        await this.rightsContentHashService.checkVersionStaleness(
-          item.bookVersionId,
-          'AUDIO_CHAPTER_UPDATED',
-          null,
-          true,
-          tx,
-        );
-        return result;
-      });
+      const updated = await this.clearanceLock.runInLockedClearance(
+        item.bookVersionId,
+        async (tx) => {
+          const result = await tx.audioChapter.update({ where: { id }, data: dto });
+          await this.rightsContentHashService.checkVersionStaleness(
+            item.bookVersionId,
+            'AUDIO_CHAPTER_UPDATED',
+            null,
+            true,
+            tx,
+          );
+          return result;
+        },
+      );
       return updated;
     } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
@@ -228,7 +233,7 @@ export class AudioChapterService {
     const item = await this.prisma.audioChapter.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Audio chapter not found');
     const bookVersionId = item.bookVersionId;
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
       const deleted = await tx.audioChapter.delete({ where: { id } });
       await this.rightsContentHashService.checkVersionStaleness(
         bookVersionId,
@@ -264,7 +269,7 @@ export class AudioChapterService {
 
     // Two-step renumber to avoid unique constraint collisions.
     const OFFSET = 1_000_000;
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
       for (let i = 0; i < audioChapterIds.length; i++) {
         await tx.audioChapter.update({
           where: { id: audioChapterIds[i] },
