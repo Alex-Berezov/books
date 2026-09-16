@@ -229,37 +229,70 @@ export class PersonsService {
   public async remove(id: string): Promise<{ id: string }> {
     await this.findOne(id);
 
-    // Проверка связей идёт по сгенерированному делегату и **безусловно** (`LEGACY-384`).
-    // До 14.09.2026 оба обращения шли через `Record<string, unknown>` под условием
-    // `if (model && typeof model.count === 'function')`, то есть при ненайденном делегате
-    // проверка не отказывала, а пропускалась, и персона удалялась. Теряются при этом
-    // **чужие** связи, и двумя разными способами: `BookVersionContributor.person` стоит под
-    // `onDelete: Cascade` (`prisma/schema.prisma:1915`) — строка привязки к версии книги
-    // исчезает целиком; `RightsProfileContributor.person` стоит под `onDelete: SetNull`
-    // (`:1950`) — строка остаётся с `personId = NULL` и осиротевшим `displayName`.
-    // `PersonTranslation.person` тоже каскадный (`:1884`), но это собственные переводы имени
-    // персоны — они и должны уходить вместе с ней, поэтому здесь не считаются.
-    // Условия вокруг проверки быть не должно: нечем проверить целостность — падать,
-    // а не удалять.
-    const versionContributorLinks = await this.prisma.bookVersionContributor.count({
-      where: { personId: id },
-    });
-    if (versionContributorLinks > 0) {
-      throw new BadRequestException(
-        `Cannot delete Person: linked to ${versionContributorLinks} book version contributor records. Unlink them first.`,
-      );
-    }
+    // Проверка связей идёт по сгенерированному делегату и **безусловно** (`LEGACY-384`),
+    // список связей ведётся по схеме, а не по памяти (`LEGACY-385`): у `Person` пять входящих
+    // связей. `PersonTranslation.person` тоже каскадный (`prisma/schema.prisma:1884`), но это
+    // собственные переводы имени персоны — они и должны уходить вместе с ней, поэтому здесь
+    // не считаются. Остальные четыре — чужие связи, и теряются они тремя разными способами:
+    // `BookVersionContributor.person` стоит под `onDelete: Cascade` (`:1915`) — строка привязки
+    // к версии книги исчезает целиком; `RightsProfileContributor.person` (`:1950`) и
+    // `Author.person` (`:624`) стоят под `onDelete: SetNull` — строка остаётся с `personId =
+    // NULL`; `RightsClaim.claimantPerson` (`:2547`) тоже `SetNull` — структурная привязка
+    // претензии к персоне теряется, остаются только текстовые `claimantName`/`claimantEmail`.
+    // Условия вокруг проверки быть не должно: нечем проверить целостность — падать, а не удалять.
+    //
+    // Проверка и удаление идут в одной транзакции с блокировкой строки персоны первым
+    // оператором (`LEGACY-386`, образец — `TagLockService`, `tags/tag-lock.service.ts`): иначе
+    // проверка и запись видят разные снимки `read committed`, и связь, созданная в окне между
+    // `count` и `delete`, уезжает каскадом незамеченной.
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
 
-    const rightsProfileLinks = await this.prisma.rightsProfileContributor.count({
-      where: { personId: id },
-    });
-    if (rightsProfileLinks > 0) {
-      throw new BadRequestException(
-        `Cannot delete Person: linked to ${rightsProfileLinks} rights profile contributor records. Unlink them first.`,
-      );
-    }
+        const [versionContributorLinks, rightsProfileLinks, authorLinks, rightsClaimLinks] =
+          await Promise.all([
+            tx.bookVersionContributor.count({ where: { personId: id } }),
+            tx.rightsProfileContributor.count({ where: { personId: id } }),
+            tx.author.count({ where: { personId: id } }),
+            tx.rightsClaim.count({ where: { claimantPersonId: id } }),
+          ]);
 
-    await this.personModel.delete({ where: { id } });
-    return { id };
+        // Отказ собирает все найденные связи одним сообщением, а не первую попавшуюся
+        // (`LEGACY-385`, «Recommended future action»): иначе разбор идёт по одной связи
+        // за обращение.
+        //
+        // ⚠️ Текст отказа **не обещает ручки снятия**, и это решение арбитра от 16.09.2026
+        // (`books-app-docs/ai-context/decisions-log.md`). Прежнее «Unlink them first» было
+        // ложью для двух связей из четырёх: `Author.personId` в API не обнуляет никто
+        // (`contributors.service.ts:62` только присваивает, поля нет в `UpdateAuthorDto`),
+        // а `RightsClaim.claimantPersonId` снимается `PATCH`-ем только у незакрытой
+        // претензии — закрытая неизменна (`rights-claims.service.ts:352-360`). Обнулять их
+        // отсюда нельзя: это правило чужого модуля и правовая семантика, а не механика
+        // удаления. Отсутствие путей снятия вынесено записью `LEGACY-396`.
+        const blockers: string[] = [];
+        if (versionContributorLinks > 0) {
+          blockers.push(`${versionContributorLinks} book version contributor records`);
+        }
+        if (rightsProfileLinks > 0) {
+          blockers.push(`${rightsProfileLinks} rights profile contributor records`);
+        }
+        if (authorLinks > 0) {
+          blockers.push(`${authorLinks} legacy author records`);
+        }
+        if (rightsClaimLinks > 0) {
+          blockers.push(`${rightsClaimLinks} rights claim records as claimant`);
+        }
+        if (blockers.length > 0) {
+          throw new BadRequestException(
+            `Cannot delete Person: still linked to ${blockers.join(', ')}. ` +
+              'Remove or reassign these links before deleting the person.',
+          );
+        }
+
+        await this.personModelOf(tx).delete({ where: { id } });
+        return { id };
+      },
+      { timeout: 30_000, maxWait: 10_000 },
+    );
   }
 }
