@@ -1,8 +1,6 @@
 import { CreateBookFromClearanceVersionDto } from './create-book-from-clearance-version.dto';
-import {
-  contentFieldErrors,
-  versionPayload,
-} from '../../book-version/dto/version-content-fields.fixture';
+import { dtoFieldErrors } from '../../../common/testing/dto-field-errors';
+import { versionPayload } from '../../book-version/dto/version-content-fields.fixture';
 
 /**
  * Канал создания книги из клиренса принимает те же тела, что и обычное создание версии: разная
@@ -11,7 +9,7 @@ import {
 describe('CreateBookFromClearanceVersionDto: описание и обложка', () => {
   it('принимает пустые описание и обложку', () => {
     expect(
-      contentFieldErrors(
+      dtoFieldErrors(
         CreateBookFromClearanceVersionDto,
         versionPayload({ description: '', coverImageUrl: '' }),
       ),
@@ -20,25 +18,22 @@ describe('CreateBookFromClearanceVersionDto: описание и обложка'
 
   it('отбивает нестроковую обложку', () => {
     expect(
-      contentFieldErrors(CreateBookFromClearanceVersionDto, versionPayload({ coverImageUrl: 123 })),
+      dtoFieldErrors(CreateBookFromClearanceVersionDto, versionPayload({ coverImageUrl: 123 })),
     ).toContain('coverImageUrl');
   });
 
   it('отбивает `null` там же, где его отбивает канал версий', () => {
     expect(
-      contentFieldErrors(CreateBookFromClearanceVersionDto, versionPayload({ description: null })),
+      dtoFieldErrors(CreateBookFromClearanceVersionDto, versionPayload({ description: null })),
     ).toContain('description');
     expect(
-      contentFieldErrors(
-        CreateBookFromClearanceVersionDto,
-        versionPayload({ coverImageUrl: null }),
-      ),
+      dtoFieldErrors(CreateBookFromClearanceVersionDto, versionPayload({ coverImageUrl: null })),
     ).toContain('coverImageUrl');
   });
 
   it('по-прежнему требует настоящий адрес у заполненной обложки', () => {
     expect(
-      contentFieldErrors(
+      dtoFieldErrors(
         CreateBookFromClearanceVersionDto,
         versionPayload({ coverImageUrl: 'not-a-url' }),
       ),

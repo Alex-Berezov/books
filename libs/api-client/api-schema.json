@@ -7394,7 +7394,7 @@
           "faq": {
             "description": "FAQ structured data as JSON array of {question, answer}",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "type": "array"
           },
@@ -22200,8 +22200,11 @@
           },
           "faq": {
             "description": "FAQ structured data as JSON array of {question, answer}",
+            "items": {
+              "$ref": "#/components/schemas/FaqItemDto"
+            },
             "nullable": true,
-            "type": "object"
+            "type": "array"
           },
           "h1": {
             "description": "SEO H1 heading (overrides title for display purposes)",

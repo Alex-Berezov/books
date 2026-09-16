@@ -1,7 +1,17 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsOptional, IsString, Matches, MinLength, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SeoInputDto } from './seo-input.dto';
 
 export class UpdatePageDto {
@@ -46,9 +56,14 @@ export class UpdatePageDto {
   @ApiPropertyOptional({
     description: 'FAQ structured data as JSON array of {question, answer}',
     nullable: true,
+    type: [FaqItemDto],
   })
   @IsOptional()
-  faq?: Array<{ question: string; answer: string }> | null;
+  @IsArray()
+  @IsObject({ each: true })
+  @ValidateNested({ each: true })
+  @Type(() => FaqItemDto)
+  faq?: FaqItemDto[] | null;
 
   @ApiPropertyOptional({ enum: ['en', 'es', 'fr', 'pt', 'ru'] })
   @IsOptional()
@@ -73,6 +88,7 @@ export class UpdatePageDto {
     description: 'Homepage sections configuration (JSON object with block data)',
   })
   @IsOptional()
+  @IsObject()
   sections?: Record<string, unknown>;
 
   @ApiPropertyOptional({ description: 'Publication status', enum: ['draft', 'published'] })

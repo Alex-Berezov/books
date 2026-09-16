@@ -228,7 +228,9 @@ export class PagesService {
         content: dto.content,
         h1: dto.h1 ?? null,
         shortDescription: dto.shortDescription ?? null,
-        faq: dto.faq ?? Prisma.JsonNull,
+        // `FaqItemDto[]` из DTO — экземпляры класса, а не `InputJsonObject`; та же граница,
+        // что у `sections` строкой ниже.
+        faq: (dto.faq as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
         // `Record<string, unknown>` из DTO описывает произвольный объект блоков, а Prisma ждёт
         // `InputJsonValue`: значения `unknown` в неё не проходят. Граница ровно здесь.
         sections: (dto.sections as Prisma.InputJsonValue) ?? Prisma.JsonNull,

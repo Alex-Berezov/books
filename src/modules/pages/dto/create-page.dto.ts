@@ -1,7 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -10,6 +12,7 @@ import {
   IsUUID,
 } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SeoInputDto } from './seo-input.dto';
 
 export class CreatePageDto {
@@ -43,9 +46,14 @@ export class CreatePageDto {
 
   @ApiPropertyOptional({
     description: 'FAQ structured data as JSON array of {question, answer}',
+    type: [FaqItemDto],
   })
   @IsOptional()
-  faq?: Array<{ question: string; answer: string }>;
+  @IsArray()
+  @IsObject({ each: true })
+  @ValidateNested({ each: true })
+  @Type(() => FaqItemDto)
+  faq?: FaqItemDto[];
 
   // Note: language for admin endpoints is derived from admin context (/:lang or X-Admin-Language)
   // The field remains optional for backward compatibility, but the controller ignores it.
@@ -75,6 +83,7 @@ export class CreatePageDto {
     description: 'Homepage sections configuration (JSON object with block data)',
   })
   @IsOptional()
+  @IsObject()
   sections?: Record<string, unknown>;
 
   @ApiPropertyOptional({ description: 'Translation Group ID (UUID) to link translations' })
