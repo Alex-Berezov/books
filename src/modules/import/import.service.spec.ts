@@ -74,13 +74,18 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
     // разбирает вид «клиент, точка, имя» как обращение к делегату Prisma
     // и печатает заведомо ложную строку — за ней прячется настоящая находка.
     // ⚠️ Метка берётся из текста запроса, а не пишется одной строкой на все:
-    // с 03.09.2026 сырым SQL в этих путях идут ДВА разных замка — блокировка
-    // дерева категорий (`pg_advisory_xact_lock`) и замок строки тега
-    // (`FOR UPDATE`). Общая метка сделала бы спеку, проверяющую порядок
-    // операторов на теге, зелёной и на блокировке дерева.
+    // сырым SQL в этих путях идут ТРИ разных замка — блокировка дерева
+    // категорий, замок строки тега (`FOR UPDATE`) и с 16.09.2026 advisory-замок
+    // ключа тега (`hashtext`). Общая метка сделала бы спеку, проверяющую порядок
+    // операторов, зелёной на чужом замке.
     $queryRaw: jest.fn().mockImplementation((parts?: { raw?: readonly string[] }) => {
       const sql = (parts?.raw ?? []).join(' ');
-      log.push(`${label}:${sql.includes('FOR UPDATE') ? 'lockTagRow' : 'lockTree'}`);
+      const lock = sql.includes('FOR UPDATE')
+        ? 'lockTagRow'
+        : sql.includes('hashtext')
+          ? 'lockTagKey'
+          : 'lockTree';
+      log.push(`${label}:${lock}`);
       return Promise.resolve([]);
     }),
     category: model('category', { id: 'cat-1' }),
@@ -315,6 +320,12 @@ describe('ImportService — создание термина и переводо�
       'tx.tag.create',
       'tx.tagTranslation.create',
       'tx.tagTranslation.create',
+    ]);
+    // `LEGACY-320`: замок ключа — первым, затем проба строки; блокировки
+    // дерева категорий на пути тега нет.
+    expect(log.filter((call) => call.startsWith('tx:'))).toEqual([
+      'tx:lockTagKey',
+      'tx:lockTagRow',
     ]);
 
     expect(tx.tag.create).toHaveBeenCalledWith({
@@ -1158,9 +1169,8 @@ describe('ImportService — импорт не переписывает поля,
 /**
  * 🔴 `LEGACY-320`, третий пункт. Отказ `P2025` из транзакции термина означает,
  * что строку удалили между тем, как её увидел этот импорт, и тем, как он в неё
- * написал. Замок строки тега такое не закрывает и закрыть не может:
- * `TagsService.remove` ходит вообще без транзакции, а переводы адресуются парой
- * `(tagId, language)` и запираются не строкой `Tag` (`LEGACY-360`).
+ * написал. С 16.09.2026 удаление тега и ручки переводов берут тот же замок
+ * (`LEGACY-395`, `LEGACY-360`), и ветка остаётся для писателя мимо него.
  *
  * ⚠️ Проверяется **диагноз**, а не факт строки в отчёте. Прежде `P2025` уходил
  * общей веткой и печатался сырым текстом Prisma: оператор читал сообщение про

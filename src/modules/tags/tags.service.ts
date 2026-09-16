@@ -12,7 +12,7 @@ import { UpdateTagDto } from './dto/update-tag.dto';
 import { PUBLIC_TAG_BOOKS_MAX_LIMIT } from './tag-books-listing.constants';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
-import { TagLockService } from './tag-lock.service';
+import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 
 @Injectable()
@@ -129,17 +129,25 @@ export class TagsService {
     };
   }
 
+  /**
+   * `LEGACY-320`. Создание берёт замок ключа: иначе импорт того же `key`,
+   * не нашедший строки на пробе, видел её следующим чтением и шёл веткой
+   * обновления по строке, которую не запирал.
+   */
   async create(dto: CreateTagDto) {
-    return this.prisma.tag.create({
-      data: {
-        name: dto.name,
-        slug: dto.slug,
-        key: dto.key || dto.slug,
-        ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
-        ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
-        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
-      },
-    });
+    const key = dto.key || dto.slug;
+    return this.tagLock.runInLockedTag({ key }, (tx) =>
+      tx.tag.create({
+        data: {
+          name: dto.name,
+          slug: dto.slug,
+          key,
+          ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+          ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        },
+      }),
+    );
   }
 
   /**
@@ -415,92 +423,100 @@ export class TagsService {
     });
   }
 
+  /**
+   * 🔴 `LEGACY-360`. Три ручки переводов идут под замком строки тега: импорт
+   * решает «создать или обновить перевод» по снимку `TagTranslation`, и запись
+   * мимо замка давала ему `P2002`/`P2025` при `updated: 1`. Запись `Seo`
+   * и перевода — одна транзакция: прежняя компенсация в `catch` сама могла
+   * упасть и оставляла `Seo` сиротой.
+   */
   async createTranslation(tagId: string, dto: CreateTagTranslationDto) {
-    const exists = await this.prisma.tag.findUnique({ where: { id: tagId } });
-    if (!exists) throw new NotFoundException('Tag not found');
+    return this.tagLock.runInLockedTag({ id: tagId }, async (tx) => {
+      const exists = await tx.tag.findUnique({ where: { id: tagId } });
+      if (!exists) throw new NotFoundException('Tag not found');
 
-    let seoId: number | undefined;
-    if (dto.seo) {
-      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
-      if (hasSeoData) {
-        const newSeo = await this.prisma.seo.create({ data: dto.seo });
-        seoId = newSeo.id;
+      let seoId: number | undefined;
+      if (dto.seo) {
+        const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+        if (hasSeoData) {
+          const newSeo = await tx.seo.create({ data: dto.seo });
+          seoId = newSeo.id;
+        }
       }
-    }
 
-    try {
-      return await this.prisma.tagTranslation.create({
-        data: {
-          tagId,
-          language: dto.language,
-          name: dto.name,
-          slug: dto.slug,
-          description: dto.description ?? null,
-          // See CategoryService.createTranslation — a new term is not indexable
-          // until the recompute says otherwise.
-          bookCount: 0,
-          autoIndexable: false,
-          ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
-          ...(dto.relatedGenreSlugs !== undefined
-            ? { relatedGenreSlugs: dto.relatedGenreSlugs }
-            : {}),
-          ...(dto.relatedCategorySlugs !== undefined
-            ? { relatedCategorySlugs: dto.relatedCategorySlugs }
-            : {}),
-          ...(dto.relatedCollectionSlugs !== undefined
-            ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
-            : {}),
-          ...(seoId !== undefined ? { seoId } : {}),
-        },
-        include: { seo: true },
-      });
-    } catch (e: unknown) {
-      if (seoId) {
-        await this.prisma.seo.delete({ where: { id: seoId } }).catch(() => {});
+      // После отказа оператора транзакция Postgres прервана: к `tx` больше
+      // не обращаемся, откат снимает и `Seo`.
+      try {
+        return await tx.tagTranslation.create({
+          data: {
+            tagId,
+            language: dto.language,
+            name: dto.name,
+            slug: dto.slug,
+            description: dto.description ?? null,
+            // See CategoryService.createTranslation — a new term is not indexable
+            // until the recompute says otherwise.
+            bookCount: 0,
+            autoIndexable: false,
+            ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
+            ...(dto.relatedGenreSlugs !== undefined
+              ? { relatedGenreSlugs: dto.relatedGenreSlugs }
+              : {}),
+            ...(dto.relatedCategorySlugs !== undefined
+              ? { relatedCategorySlugs: dto.relatedCategorySlugs }
+              : {}),
+            ...(dto.relatedCollectionSlugs !== undefined
+              ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
+              : {}),
+            ...(seoId !== undefined ? { seoId } : {}),
+          },
+          include: { seo: true },
+        });
+      } catch (e: unknown) {
+        if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
+          throw new BadRequestException('Translation with same (language, slug) already exists');
+        }
+        throw e;
       }
-      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-        throw new BadRequestException('Translation with same (language, slug) already exists');
-      }
-      throw e;
-    }
+    });
   }
 
   async updateTranslation(tagId: string, language: Language, dto: UpdateTagTranslationDto) {
-    const tr = await this.prisma.tagTranslation.findUnique({
-      where: { tagId_language: { tagId, language } },
-    });
-    if (!tr) throw new NotFoundException('Translation not found');
-
-    if (dto.slug) {
-      const dup = await this.prisma.tagTranslation.findFirst({
-        where: { language, slug: dto.slug, NOT: { id: tr.id } },
+    return this.tagLock.runInLockedTag({ id: tagId }, async (tx) => {
+      const tr = await tx.tagTranslation.findUnique({
+        where: { tagId_language: { tagId, language } },
       });
-      if (dup)
-        throw new BadRequestException('Translation with same (language, slug) already exists');
-    }
+      if (!tr) throw new NotFoundException('Translation not found');
 
-    let finalSeoId: number | null | undefined = undefined;
-    if (dto.seo) {
-      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
-      if (hasSeoData) {
-        if (tr.seoId) {
-          await this.prisma.seo.update({ where: { id: tr.seoId }, data: dto.seo });
-          finalSeoId = tr.seoId;
-        } else {
-          const newSeo = await this.prisma.seo.create({ data: dto.seo });
-          finalSeoId = newSeo.id;
-        }
-      } else if (tr.seoId) {
-        finalSeoId = null;
-        await this.prisma.seo.delete({ where: { id: tr.seoId } });
+      if (dto.slug) {
+        const dup = await tx.tagTranslation.findFirst({
+          where: { language, slug: dto.slug, NOT: { id: tr.id } },
+        });
+        if (dup)
+          throw new BadRequestException('Translation with same (language, slug) already exists');
       }
-    }
 
-    // Та же транзакция, что и смена слага (LEGACY-062): порознь существовал бы
-    // момент, когда слаг уже новый, а старый адрес ведёт в 404.
-    const slugChanged = !!dto.slug && dto.slug !== tr.slug;
+      let finalSeoId: number | null | undefined = undefined;
+      if (dto.seo) {
+        const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+        if (hasSeoData) {
+          if (tr.seoId) {
+            await tx.seo.update({ where: { id: tr.seoId }, data: dto.seo });
+            finalSeoId = tr.seoId;
+          } else {
+            const newSeo = await tx.seo.create({ data: dto.seo });
+            finalSeoId = newSeo.id;
+          }
+        } else if (tr.seoId) {
+          finalSeoId = null;
+          await tx.seo.delete({ where: { id: tr.seoId } });
+        }
+      }
 
-    return this.prisma.$transaction(async (tx) => {
+      // Та же транзакция, что и смена слага (LEGACY-062): порознь существовал бы
+      // момент, когда слаг уже новый, а старый адрес ведёт в 404.
+      const slugChanged = !!dto.slug && dto.slug !== tr.slug;
+
       if (slugChanged && dto.slug) {
         await this.slugRedirects.record(
           { entityType: 'tag', language, oldSlug: tr.slug, newSlug: dto.slug },
@@ -532,12 +548,12 @@ export class TagsService {
   }
 
   async deleteTranslation(tagId: string, language: Language) {
-    const tr = await this.prisma.tagTranslation.findUnique({
-      where: { tagId_language: { tagId, language } },
-    });
-    if (!tr) return { success: true };
+    await this.tagLock.runInLockedTag({ id: tagId }, async (tx) => {
+      const tr = await tx.tagTranslation.findUnique({
+        where: { tagId_language: { tagId, language } },
+      });
+      if (!tr) return;
 
-    await this.prisma.$transaction(async (tx) => {
       await tx.tagTranslation.delete({
         where: { tagId_language: { tagId, language } },
       });
@@ -575,7 +591,7 @@ export class TagsService {
           await tx.bookTag.create({ data: { bookVersionId: sibling.id, tagId } });
         }
       }
-    });
+    }, TAG_TX_OPTIONS);
 
     // The link now exists for every language of the book, so every language's
     // counter for this term is stale.
@@ -607,7 +623,7 @@ export class TagsService {
           await tx.bookTag.delete({ where: { id: link.id } });
         }
       }
-    });
+    }, TAG_TX_OPTIONS);
 
     // Must run after the delete and by term id: the version no longer points at
     // this tag, so a version-scoped recompute would miss exactly it.

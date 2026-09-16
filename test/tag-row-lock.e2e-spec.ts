@@ -78,6 +78,7 @@ describe('LEGACY-320 — строка тега запирается на пут�
       await prisma?.tagTranslation.deleteMany({
         where: { tag: { key: { startsWith: prefix } } },
       });
+      await prisma?.seo.deleteMany({ where: { metaTitle: { startsWith: prefix } } });
       await prisma?.tag.deleteMany({ where: { key: { startsWith: prefix } } });
     } finally {
       await moduleRef?.close();
@@ -209,5 +210,165 @@ describe('LEGACY-320 — строка тега запирается на пут�
     // тем же клиентом, что и сама смена.
     const after = await prisma.tag.findUnique({ where: { key: tag.key } });
     expect(after?.slug).toBe(`${prefix}-import-new`);
+  }, 120_000);
+
+  /**
+   * Держит замок `target`, пока не вызван `release`, и проверяет, что `write`
+   * до этого не закончился — ни успехом, ни отказом. `inside` исполняется
+   * держателем уже после `release`, но до коммита.
+   */
+  const expectWaitsForLock = async (
+    target: { key: string } | { id: string },
+    write: () => Promise<unknown>,
+    inside?: (
+      tx: Parameters<Parameters<TagLockService['runInLockedTag']>[1]>[0],
+    ) => Promise<unknown>,
+    whileHeld?: () => Promise<void>,
+  ) => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const first = tagLock.runInLockedTag(target, async (tx) => {
+      await gate;
+      if (inside) await inside(tx);
+    });
+
+    await sleep(500);
+
+    let finished = false;
+    const second = write().finally(() => {
+      finished = true;
+    });
+    // Упавшая проверка ниже бросает раньше, чем кто-то дождётся `second`:
+    // без обработчика его отказ всплыл бы необработанным в соседнем тесте.
+    second.catch(() => undefined);
+
+    try {
+      await sleep(1000);
+      expect(finished).toBe(false);
+      if (whileHeld) await whileHeld();
+    } finally {
+      release();
+    }
+
+    await first;
+    return second;
+  };
+
+  // 🔴 `LEGACY-360`. Ручки переводов писали мимо замка строки тега, и импорт,
+  // решивший «создать или обновить перевод» по снимку, получал `P2002`/`P2025`.
+  // ⚠️ Одна вставка перевода ждала бы и без замка: внешний ключ на `Tag` берёт
+  // `FOR KEY SHARE`, а он конфликтует с `FOR UPDATE`. Поэтому проверяется `Seo`:
+  // до правки он писался на пуле и появлялся в базе, пока строка тега заперта.
+  it('создание перевода ждёт замка строки тега, и Seo не пишется раньше', async () => {
+    const tag = await makeTag('tr-create');
+    const metaTitle = `${prefix}-tr-create-seo`;
+
+    const created = await expectWaitsForLock(
+      { id: tag.id },
+      () =>
+        tags.createTranslation(tag.id, {
+          language: 'en',
+          name: 'Created under lock',
+          slug: `${prefix}-tr-create-en`,
+          seo: { metaTitle },
+        }),
+      undefined,
+      async () => {
+        expect(await prisma.seo.count({ where: { metaTitle } })).toBe(0);
+      },
+    );
+
+    expect(created).toMatchObject({ tagId: tag.id, language: 'en' });
+    expect(await prisma.seo.count({ where: { metaTitle } })).toBe(1);
+  }, 120_000);
+
+  // `LEGACY-360`, п.2. Прежде `Seo` снимала ручная компенсация в `catch`, теперь —
+  // откат транзакции. Мок отката не показывает, поэтому проверка на живой базе.
+  it('конфликт слага при создании перевода не оставляет Seo-сироту', async () => {
+    const owner = await makeTag('tr-conflict-owner');
+    const other = await makeTag('tr-conflict-other');
+    const slug = `${prefix}-tr-conflict-en`;
+    await prisma.tagTranslation.create({
+      data: { tagId: owner.id, language: 'en', name: 'Taken', slug },
+    });
+    const metaTitle = `${prefix}-tr-conflict-seo`;
+
+    await expect(
+      tags.createTranslation(other.id, {
+        language: 'en',
+        name: 'Conflicting',
+        slug,
+        seo: { metaTitle },
+      }),
+    ).rejects.toThrow('Translation with same (language, slug) already exists');
+
+    expect(await prisma.seo.count({ where: { metaTitle } })).toBe(0);
+    expect(await prisma.tagTranslation.count({ where: { tagId: other.id } })).toBe(0);
+  }, 120_000);
+
+  it('правка перевода ждёт замка строки тега', async () => {
+    const tag = await makeTag('tr-update');
+    await prisma.tagTranslation.create({
+      data: { tagId: tag.id, language: 'en', name: 'Before', slug: `${prefix}-tr-update-en` },
+    });
+
+    await expectWaitsForLock({ id: tag.id }, () =>
+      tags.updateTranslation(tag.id, 'en', { name: 'After' }),
+    );
+
+    const after = await prisma.tagTranslation.findUnique({
+      where: { tagId_language: { tagId: tag.id, language: 'en' } },
+    });
+    expect(after?.name).toBe('After');
+  }, 120_000);
+
+  it('удаление перевода ждёт замка строки тега', async () => {
+    const tag = await makeTag('tr-delete');
+    await prisma.tagTranslation.create({
+      data: { tagId: tag.id, language: 'en', name: 'Doomed', slug: `${prefix}-tr-delete-en` },
+    });
+
+    await expectWaitsForLock({ id: tag.id }, () => tags.deleteTranslation(tag.id, 'en'));
+
+    const after = await prisma.tagTranslation.findUnique({
+      where: { tagId_language: { tagId: tag.id, language: 'en' } },
+    });
+    expect(after).toBeNull();
+  }, 120_000);
+
+  // 🔴 `LEGACY-320`, остаток. `FOR UPDATE` по ключу, которого ещё нет в базе,
+  // не запирал ничего: сосед создавал строку между пробой и `findUnique`.
+  it('POST /tags ждёт замка ключа, строки которого ещё нет', async () => {
+    const key = `${prefix}-new-by-admin`;
+
+    await expect(
+      expectWaitsForLock({ key }, () => tags.create({ name: 'Admin new', slug: key, key })),
+    ).resolves.toMatchObject({ key });
+  }, 120_000);
+
+  it('импорт нового ключа ждёт встречного создателя и идёт веткой обновления', async () => {
+    const key = `${prefix}-new-by-import`;
+
+    const report = await expectWaitsForLock(
+      { key },
+      () =>
+        imports.importTags([
+          {
+            key,
+            name: 'Imported second',
+            slug: `${key}-imported`,
+            translations: { en: { name: 'Imported second', slug: `${key}-en` } },
+          },
+        ]),
+      (tx) => tx.tag.create({ data: { name: 'Created first', slug: key, key } }),
+    );
+
+    // Строку создал держатель замка; импорт увидел её уже после его коммита.
+    expect(report).toMatchObject({ imported: 0, updated: 1, errors: [] });
+    const after = await prisma.tag.findUnique({ where: { key } });
+    expect(after?.slug).toBe(`${key}-imported`);
   }, 120_000);
 });

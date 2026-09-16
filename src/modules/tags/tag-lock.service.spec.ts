@@ -47,18 +47,30 @@ describe('TagLockService.runInLockedTag', () => {
    * шаблон первым аргументом и вложенный `Prisma.Sql` вторым. Поэтому и читать
    * надо оба: текст замка — из шаблона, адресацию — из фрагмента.
    */
-  const templateOf = (tx: LockedClient): string => {
-    const calls = tx.$queryRaw.mock.calls as unknown as Array<[{ raw?: readonly string[] }]>;
-    expect(calls).toHaveLength(1);
-    return (calls[0][0]?.raw ?? []).join(' ');
+  type RawCall = [{ raw?: readonly string[] }, ...unknown[]];
+  const rawCalls = (tx: LockedClient) => tx.$queryRaw.mock.calls as unknown as RawCall[];
+  const textOf = (call: RawCall) => (call[0]?.raw ?? []).join(' ');
+
+  /** Замок строки — ровно один вызов с `FOR UPDATE`, и он последний. */
+  const rowLockOf = (tx: LockedClient): RawCall => {
+    const calls = rawCalls(tx);
+    const rowLocks = calls.filter((call) => textOf(call).includes('FOR UPDATE'));
+    expect(rowLocks).toHaveLength(1);
+    expect(calls[calls.length - 1]).toBe(rowLocks[0]);
+    return rowLocks[0];
   };
 
+  const templateOf = (tx: LockedClient): string => textOf(rowLockOf(tx));
+
   const conditionOf = (tx: LockedClient): { sql: string; values: unknown[] } => {
-    const calls = tx.$queryRaw.mock.calls as unknown as Array<[unknown, ...unknown[]]>;
-    expect(calls[0]).toHaveLength(2);
-    const fragment = calls[0][1] as { sql: string; values: unknown[] };
+    const call = rowLockOf(tx);
+    expect(call).toHaveLength(2);
+    const fragment = call[1] as { sql: string; values: unknown[] };
     return { sql: fragment.sql, values: fragment.values };
   };
+
+  const advisoryOf = (tx: LockedClient): RawCall[] =>
+    rawCalls(tx).filter((call) => textOf(call).includes('pg_advisory_xact_lock'));
 
   it('тело получает tx уже после замка, а не до него', async () => {
     const order: string[] = [];
@@ -70,7 +82,36 @@ describe('TagLockService.runInLockedTag', () => {
       return null;
     });
 
-    expect(order.map((step) => step.split(':')[0])).toEqual(['lock', 'read']);
+    expect(order.map((step) => step.split(':')[0])).toEqual(['lock', 'lock', 'read']);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * 🔴 `LEGACY-320`, остаток. `FOR UPDATE` по ключу, которого ещё нет, не запирает
+   * ничего; путь по ключу первым берёт advisory-замок на хеш ключа.
+   */
+  it('путь по ключу первым берёт advisory-замок, ключ — параметром', async () => {
+    const { prisma, tx } = makePrisma([]);
+    const service = new TagLockService(prisma);
+
+    await service.runInLockedTag({ key: "it's a tag" }, () => Promise.resolve(null));
+
+    const advisory = advisoryOf(tx);
+    expect(advisory).toHaveLength(1);
+    expect(rawCalls(tx)[0]).toBe(advisory[0]);
+    // Двухаргументная форма: пространство имён и хеш ключа, посчитанный в SQL.
+    expect(textOf(advisory[0])).toContain('::int4, hashtext(');
+    expect(advisory[0].slice(1)).toEqual([expect.any(Number), "it's a tag"]);
+    expect(textOf(advisory[0])).not.toContain("it's a tag");
+  });
+
+  it('путь по id advisory-замка не берёт', async () => {
+    const { prisma, tx } = makePrisma([]);
+    const service = new TagLockService(prisma);
+
+    await service.runInLockedTag({ id: 'tag-1' }, () => Promise.resolve(null));
+
+    expect(advisoryOf(tx)).toEqual([]);
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
   });
 

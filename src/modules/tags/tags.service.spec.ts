@@ -1,5 +1,5 @@
 import { TagsService } from './tags.service';
-import { TagLockService } from './tag-lock.service';
+import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
@@ -430,6 +430,14 @@ describe('TagsService', () => {
       expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
     });
 
+    it('runs inside the tag lock with explicit bounds', async () => {
+      prisma.tag.findFirst.mockResolvedValue(null);
+
+      await service.remove('t1');
+
+      expect(prisma.$transaction.mock.calls).toEqual([[expect.any(Function), TAG_TX_OPTIONS]]);
+    });
+
     // `LEGACY-395` (находка ревью): `versionsByTagLangSlug` считает базовый
     // слаг живым только у видимого тега (`isVisible: true`) — скрытый тег
     // адрес не оживляет. Без этого условия в запросе уборка ошибочно решила
@@ -451,5 +459,234 @@ describe('TagsService', () => {
         }),
       );
     });
+  });
+});
+
+/**
+ * 🔴 `LEGACY-360`, `LEGACY-320`. Каким клиентом сделано каждое обращение:
+ * `root` — клиент пула, `tx` — клиент транзакции, открытой `runInLockedTag`.
+ * Журнал проверяет и порядок: замок — первым оператором.
+ */
+describe('TagsService — писатели тега идут под замком (LEGACY-360)', () => {
+  type Handler = (...args: unknown[]) => unknown;
+  type FakeClient = Record<string, unknown>;
+
+  const makeClient = (label: 'root' | 'tx', log: string[], impl: Record<string, Handler>) => {
+    const cache: FakeClient = {};
+    return new Proxy(cache, {
+      get(target, model: string) {
+        if (model in target) return target[model];
+        if (model === '$queryRaw') {
+          target[model] = jest.fn((strings: TemplateStringsArray) => {
+            // Метка ставится только по признаку замка, а не «всё остальное»:
+            // запрос без `FOR UPDATE` не должен сходить за замок строки.
+            const sql = strings.join('?');
+            const lock = sql.includes('FOR UPDATE')
+              ? 'forUpdate'
+              : sql.includes('pg_advisory_xact_lock') && sql.includes('hashtext')
+                ? 'advisory'
+                : 'rawUnknown';
+            log.push(`${label}.${lock}`);
+            return Promise.resolve([]);
+          });
+        } else {
+          const ops: Record<string, jest.Mock> = {};
+          target[model] = new Proxy(ops, {
+            get(opsTarget, op: string) {
+              opsTarget[op] ??= jest.fn((...args: unknown[]) => {
+                log.push(`${label}.${model}.${op}`);
+                const fn = impl[`${model}.${op}`];
+                return Promise.resolve().then(() => (fn ? fn(...args) : null));
+              });
+              return opsTarget[op];
+            },
+          });
+        }
+        return target[model];
+      },
+    });
+  };
+
+  const setup = (impl: Record<string, Handler> = {}) => {
+    const log: string[] = [];
+    const tx = makeClient('tx', log, impl);
+    const root = makeClient('root', log, impl);
+    const $transaction = jest.fn((cb: (client: FakeClient) => unknown) => cb(tx));
+    const prismaClient = new Proxy(root, {
+      get: (target, prop: string) => (prop === '$transaction' ? $transaction : target[prop]),
+    });
+    const redirects = { record: jest.fn(), recordBaseSlugChange: jest.fn() };
+    const tagsService = new TagsService(
+      prismaClient as unknown as PrismaService,
+      redirects as unknown as SlugRedirectService,
+      new TagLockService(prismaClient as unknown as PrismaService),
+      { recomputeForTerms: jest.fn() } as unknown as TaxonomyIndexabilityService,
+    );
+    return { tagsService, log, tx, $transaction, redirects };
+  };
+
+  const rootCalls = (log: string[]) => log.filter((call) => call.startsWith('root.'));
+
+  it('createTranslation: Seo и перевод пишутся одной транзакцией под замком строки', async () => {
+    const { tagsService, log, $transaction } = setup({
+      'tag.findUnique': () => ({ id: 't1' }),
+      'seo.create': () => ({ id: 7 }),
+      'tagTranslation.create': () => ({ id: 'tr1' }),
+    });
+
+    await tagsService.createTranslation('t1', {
+      language: Language.en,
+      name: 'N',
+      slug: 'n',
+      seo: { metaTitle: 'T' },
+    });
+
+    expect($transaction.mock.calls).toEqual([[expect.any(Function), TAG_TX_OPTIONS]]);
+    expect(log).toEqual([
+      'tx.forUpdate',
+      'tx.tag.findUnique',
+      'tx.seo.create',
+      'tx.tagTranslation.create',
+    ]);
+  });
+
+  it('createTranslation: P2002 — 400 без ручной уборки Seo', async () => {
+    const { tagsService, log } = setup({
+      'tag.findUnique': () => ({ id: 't1' }),
+      'seo.create': () => ({ id: 7 }),
+      'tagTranslation.create': () => {
+        throw Object.assign(new Error('dup'), { code: 'P2002' });
+      },
+    });
+
+    await expect(
+      tagsService.createTranslation('t1', {
+        language: Language.en,
+        name: 'N',
+        slug: 'n',
+        seo: { metaTitle: 'T' },
+      }),
+    ).rejects.toThrow('Translation with same (language, slug) already exists');
+    expect(rootCalls(log)).toEqual([]);
+    expect(log).not.toContain('tx.seo.delete');
+  });
+
+  it('createTranslation: тега нет — 404 до всякой записи', async () => {
+    const { tagsService, log } = setup();
+
+    await expect(
+      tagsService.createTranslation('missing', { language: Language.en, name: 'N', slug: 'n' }),
+    ).rejects.toThrow('Tag not found');
+    expect(log).toEqual(['tx.forUpdate', 'tx.tag.findUnique']);
+  });
+
+  it('updateTranslation: чтения, Seo, редирект и запись — под замком через tx', async () => {
+    const { tagsService, log, $transaction, tx, redirects } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+    });
+
+    await tagsService.updateTranslation('t1', Language.en, {
+      slug: 'new',
+      seo: { metaTitle: 'T' },
+    });
+
+    expect($transaction.mock.calls).toEqual([[expect.any(Function), TAG_TX_OPTIONS]]);
+    expect(log).toEqual([
+      'tx.forUpdate',
+      'tx.tagTranslation.findUnique',
+      'tx.tagTranslation.findFirst',
+      'tx.seo.update',
+      'tx.tagTranslation.update',
+    ]);
+    expect(redirects.record).toHaveBeenCalledTimes(1);
+    const [redirect, client] = redirects.record.mock.calls[0] as [unknown, unknown];
+    expect(redirect).toEqual({
+      entityType: 'tag',
+      language: Language.en,
+      oldSlug: 'old',
+      newSlug: 'new',
+    });
+    // Прокси-клиент сравнивается по ссылке: глубокое сравнение jest его не обходит.
+    expect(client === tx).toBe(true);
+  });
+
+  it('updateTranslation: новый Seo и снятие Seo тоже идут через tx', async () => {
+    const created = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: null }),
+      'seo.create': () => ({ id: 9 }),
+    });
+    await created.tagsService.updateTranslation('t1', Language.en, { seo: { metaTitle: 'T' } });
+    expect(created.log).toContain('tx.seo.create');
+    expect(rootCalls(created.log)).toEqual([]);
+
+    const dropped = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+    });
+    await dropped.tagsService.updateTranslation('t1', Language.en, { seo: { metaTitle: null } });
+    expect(dropped.log).toContain('tx.seo.delete');
+    expect(rootCalls(dropped.log)).toEqual([]);
+  });
+
+  it('deleteTranslation: чтение и удаление — под замком через tx', async () => {
+    const { tagsService, log, $transaction } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', seoId: 5 }),
+    });
+
+    await expect(tagsService.deleteTranslation('t1', Language.en)).resolves.toEqual({
+      success: true,
+    });
+
+    expect($transaction.mock.calls).toEqual([[expect.any(Function), TAG_TX_OPTIONS]]);
+    expect(log).toEqual([
+      'tx.forUpdate',
+      'tx.tagTranslation.findUnique',
+      'tx.tagTranslation.delete',
+      'tx.seo.delete',
+    ]);
+  });
+
+  it('deleteTranslation: перевода нет — успех без записей', async () => {
+    const { tagsService, log } = setup();
+
+    await expect(tagsService.deleteTranslation('t1', Language.en)).resolves.toEqual({
+      success: true,
+    });
+    expect(log).toEqual(['tx.forUpdate', 'tx.tagTranslation.findUnique']);
+  });
+
+  it('create: advisory-замок ключа первым, затем проба строки, затем запись', async () => {
+    const { tagsService, log, $transaction, tx } = setup();
+
+    await tagsService.create({ name: 'N', slug: 'n-slug', key: 'n-key' });
+
+    expect($transaction.mock.calls).toEqual([[expect.any(Function), TAG_TX_OPTIONS]]);
+    expect(log).toEqual(['tx.advisory', 'tx.forUpdate', 'tx.tag.create']);
+    const advisoryArgs = (tx.$queryRaw as jest.Mock).mock.calls[0] as unknown[];
+    expect(advisoryArgs.slice(1)).toEqual([expect.any(Number), 'n-key']);
+  });
+
+  it('путь по id advisory-замка не берёт', async () => {
+    const { tagsService, log } = setup({ 'tag.findUnique': () => ({ id: 't1', slug: 's' }) });
+
+    await tagsService.update('t1', { name: 'N' });
+
+    expect(log).not.toContain('tx.advisory');
+    expect(log[0]).toBe('tx.forUpdate');
+  });
+
+  it('attach и detach открывают транзакцию с явными границами', async () => {
+    const { tagsService, $transaction } = setup({
+      'bookVersion.findUnique': () => ({ id: 'v1', bookId: 'b1' }),
+      'tag.findUnique': () => ({ id: 't1' }),
+      'bookVersion.findMany': () => [{ id: 'v1' }],
+    });
+
+    await tagsService.attach('v1', 't1');
+    await tagsService.detach('v1', 't1');
+
+    expect($transaction).toHaveBeenCalledTimes(2);
+    for (const call of $transaction.mock.calls as unknown[][]) {
+      expect(call[1]).toEqual(TAG_TX_OPTIONS);
+    }
   });
 });
