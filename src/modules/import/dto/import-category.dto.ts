@@ -14,7 +14,7 @@ import {
 import { CategoryType } from '@prisma/client';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
-class ImportCategoryTranslationDto {
+export class ImportCategoryTranslationDto {
   @ApiProperty()
   @IsString()
   @MinLength(2)

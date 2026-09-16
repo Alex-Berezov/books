@@ -3,14 +3,14 @@ import { CategoryType, Language, Prisma } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { ValidationError, validateSync } from 'class-validator';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ImportCategoryDto } from './dto/import-category.dto';
-import { ImportTagDto } from './dto/import-tag.dto';
-import { SLUG_REGEX } from '../../shared/validators/slug';
+import { ImportCategoryDto, ImportCategoryTranslationDto } from './dto/import-category.dto';
+import { ImportTagDto, ImportTagTranslationDto } from './dto/import-tag.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CategoryTreeService, MismatchedChildEdge } from '../category/category-tree.service';
 import { TagLockService } from '../tags/tag-lock.service';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
+const SUPPORTED_LANGS_TEXT = Object.values(Language).join(', ');
 
 /**
  * Клиент транзакции или обычный. Методы записи принимают его параметром, а не
@@ -102,6 +102,36 @@ function flattenValidationErrors(errors: ValidationError[], prefix = ''): string
   ]);
 }
 
+type PlainCheck<T> =
+  | { kind: 'ok'; instance: T }
+  | { kind: 'not-object' }
+  | { kind: 'invalid'; message: string };
+
+/**
+ * Проверить одно сырое значение декораторами класса — общий шаг для элемента
+ * партии (`validateItems`) и значения словаря переводов (`validateTranslations`).
+ *
+ * 🔴 Не-объект (`null`, примитив, массив) бракуется **до** `validateSync`:
+ * `plainToInstance` на нём возвращает то же значение, а `validateSync`
+ * разыменовывает `constructor` и бросает `TypeError` мимо любого `catch` —
+ * партия падала бы целиком, то есть ровно тем отказом «всё или ничего»,
+ * ради отмены которого `ParseArrayPipe` и был отклонён (`LEGACY-323`).
+ *
+ * Наружу отдаётся экземпляр, а не сырое значение: `whitelist` вырезает лишнее
+ * из экземпляра, а не из присланного объекта.
+ */
+function checkPlain<T extends object>(cls: new () => T, raw: unknown): PlainCheck<T> {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { kind: 'not-object' };
+  }
+  const instance = plainToInstance(cls, raw);
+  const errors = validateSync(instance, IMPORT_VALIDATOR_OPTIONS);
+  if (errors.length > 0) {
+    return { kind: 'invalid', message: flattenValidationErrors(errors).join('; ') };
+  }
+  return { kind: 'ok', instance };
+}
+
 @Injectable()
 export class ImportService {
   private readonly logger = new Logger(ImportService.name);
@@ -117,14 +147,27 @@ export class ImportService {
     const result: ImportResult = { imported: 0, updated: 0, errors: [] };
     const checked = this.validateItems(ImportCategoryDto, items, result);
 
+    // 🔴 `LEGACY-362`. Отбраковка идёт по ссылке на объект, а не по `key`:
+    // ключ в присланной партии не уникален (`orderByParent` ниже ловит это
+    // отдельно строкой «повторённый ключ»), и сопоставление `errors.find((e)
+    // => e.key === item.key)` находило чужую ошибку у однофамильца — годный
+    // элемент с тем же `key`, что и негодный, терялся молча вместе с ним.
+    const invalid = new Set<ImportCategoryDto>();
+
     for (const item of checked) {
-      const langError = this.validateTranslations(item.translations);
-      if (langError) {
-        result.errors.push({ key: item.key, message: langError });
+      const checkedTranslations = this.validateTranslations(
+        ImportCategoryTranslationDto,
+        item.translations,
+      );
+      if ('error' in checkedTranslations) {
+        result.errors.push({ key: item.key, message: checkedTranslations.error });
+        invalid.add(item);
+      } else {
+        item.translations = checkedTranslations.translations;
       }
     }
 
-    const validItems = checked.filter((item) => !result.errors.find((e) => e.key === item.key));
+    const validItems = checked.filter((item) => !invalid.has(item));
 
     const allKeys = new Set(validItems.map((i) => i.key));
     for (const item of validItems) {
@@ -138,12 +181,13 @@ export class ImportService {
             key: item.key,
             message: `parentKey "${item.parentKey}" not found in database or current batch`,
           });
+          invalid.add(item);
         }
       }
     }
 
     const batch = this.orderByParent(
-      validItems.filter((item) => !result.errors.find((e) => e.key === item.key)),
+      validItems.filter((item) => !invalid.has(item)),
       result,
     );
 
@@ -224,11 +268,15 @@ export class ImportService {
     const checked = this.validateItems(ImportTagDto, items, result);
 
     for (const item of checked) {
-      const langError = this.validateTranslations(item.translations);
-      if (langError) {
-        result.errors.push({ key: item.key, message: langError });
+      const checkedTranslations = this.validateTranslations(
+        ImportTagTranslationDto,
+        item.translations,
+      );
+      if ('error' in checkedTranslations) {
+        result.errors.push({ key: item.key, message: checkedTranslations.error });
         continue;
       }
+      item.translations = checkedTranslations.translations;
 
       try {
         // 🔴 `LEGACY-313`. Счётчик считается по тому, что действительно сделала
@@ -397,14 +445,13 @@ export class ImportService {
 
     const valid: T[] = [];
     items.forEach((raw: unknown, index: number) => {
-      // 🔴 Элемент, который не объект, отбраковывается **до** `validateSync`.
-      // `plainToInstance` на `null`, числе или строке возвращает то же значение
-      // без изменений, а `validateSync` разыменовывает у него `constructor` —
-      // и `[null, {годный тег}]` роняет всю партию `TypeError` мимо любого
-      // `catch`, то есть ровно тем отказом «всё или ничего», ради отмены
-      // которого `ParseArrayPipe` и был отклонён. Массив здесь тоже не объект:
-      // элемент партии — термин, а не вложенная партия.
-      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      // Массив здесь тоже не объект: элемент партии — термин, а не вложенная партия.
+      const check = checkPlain(cls, raw);
+      if (check.kind === 'ok') {
+        valid.push(check.instance);
+        return;
+      }
+      if (check.kind === 'not-object') {
         result.errors.push({
           key: importItemKey(index),
           message: 'Item must be a JSON object',
@@ -412,45 +459,62 @@ export class ImportService {
         return;
       }
 
-      const instance = plainToInstance(cls, raw);
-      const errors = validateSync(instance, IMPORT_VALIDATOR_OPTIONS);
-      if (errors.length === 0) {
-        valid.push(instance);
-        return;
-      }
-
       // Ключ берётся из сырого элемента, а не из экземпляра: `whitelist` мог
       // его уже вырезать, а негодный `key` — ровно тот случай, ради которого
       // нужен запасной ключ строки отчёта.
-      const rawKey = (raw as { key?: unknown } | null)?.key;
+      const rawKey = (raw as { key?: unknown }).key;
       result.errors.push({
         key: typeof rawKey === 'string' && rawKey.length > 0 ? rawKey : importItemKey(index),
-        message: flattenValidationErrors(errors).join('; '),
+        message: check.message,
       });
     });
 
     return valid;
   }
 
-  private validateTranslations(translations: Record<string, TranslationInput>): string | null {
+  /**
+   * 🔴 `LEGACY-361`. Раньше здесь вручную проверялись только `name` и `slug`,
+   * а остальные поля перевода доезжали до записи любой формы: `@ValidateNested`
+   * у `translations: Record<string, T>` нет, словарь для `class-validator`
+   * не составной тип, и декораторы `ImportTagTranslationDto` /
+   * `ImportCategoryTranslationDto` не срабатывали никогда.
+   *
+   * Решение арбитра 16.09.2026 (`decisions-log.md`, `T4 | LEGACY-361`): форму
+   * поля не менять и второй копии правил не писать, а прогнать каждое значение
+   * словаря через уже объявленный класс перевода (`checkPlain`).
+   *
+   * ⚠️ Проверено ровно то, что объявлено декораторами, и не больше. `faq`
+   * проверяется только как массив (`@IsArray()`), его элементы — нет. Перевод
+   * категории с полями тега (`canonicalUrl`, `robots`, `indexable`,
+   * `related*Slugs`) теперь отвергается `forbidNonWhitelisted`, а не молча
+   * теряет эти поля: у `ImportCategoryTranslationDto` их нет.
+   */
+  private validateTranslations<T extends TranslationInput>(
+    cls: new () => T,
+    translations: Record<string, unknown>,
+  ): { error: string } | { translations: Record<string, T> } {
     const langs = Object.keys(translations);
-    if (langs.length === 0) return 'At least one translation required';
+    if (langs.length === 0) {
+      return { error: 'At least one translation required' };
+    }
+
+    const validated: Record<string, T> = {};
     for (const lang of langs) {
       if (!SUPPORTED_LANGS.has(lang as Language)) {
-        return `Unsupported language "${lang}". Supported: ${Object.values(Language).join(', ')}`;
+        return { error: `Unsupported language "${lang}". Supported: ${SUPPORTED_LANGS_TEXT}` };
       }
-      const tr = translations[lang] as TranslationInput | undefined;
-      if (!tr || typeof tr !== 'object') {
-        return `Translation for "${lang}" must be an object`;
+
+      const check = checkPlain(cls, translations[lang]);
+      if (check.kind === 'not-object') {
+        return { error: `Translation for "${lang}" must be an object` };
       }
-      if (!tr.name || typeof tr.name !== 'string' || tr.name.length < 2) {
-        return `Translation "${lang}" name: min 2 chars`;
+      if (check.kind === 'invalid') {
+        return { error: `Translation "${lang}": ${check.message}` };
       }
-      if (!tr.slug || !SLUG_REGEX.test(tr.slug)) {
-        return `Translation "${lang}" slug: invalid kebab-case format`;
-      }
+      validated[lang] = check.instance;
     }
-    return null;
+
+    return { translations: validated };
   }
 
   /**

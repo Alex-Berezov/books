@@ -12,7 +12,7 @@ import {
 } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
-class ImportTagTranslationDto {
+export class ImportTagTranslationDto {
   @ApiProperty()
   @IsString()
   @MinLength(2)

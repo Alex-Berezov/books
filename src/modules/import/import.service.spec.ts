@@ -167,6 +167,19 @@ const tagDto = (): ImportTagDto =>
     },
   }) as ImportTagDto;
 
+/** Все поиски по ключу отвечают «нет такой строки»: партия идёт веткой создания. */
+const seedEmpty = (log: WriteLog, root: FakeClient, tx: FakeClient) => {
+  const empty = (label: 'root' | 'tx', model: 'category' | 'tag') =>
+    jest.fn().mockImplementation(() => {
+      log.push(`${label}.${model}.findUnique`);
+      return Promise.resolve(null);
+    });
+  root.category.findUnique = empty('root', 'category');
+  tx.category.findUnique = empty('tx', 'category');
+  root.tag.findUnique = empty('root', 'tag');
+  tx.tag.findUnique = empty('tx', 'tag');
+};
+
 describe('ImportService — блокировка дерева категорий (LEGACY-274)', () => {
   /**
    * 🔴 Блокировка обязана быть **первым** оператором транзакции. Транзакция,
@@ -1312,18 +1325,6 @@ describe('ImportService — отказ по удалённой в окне ст�
  * назван в `errors` — годный записан», а не один только отказ.
  */
 describe('ImportService — тело партии проверяется поэлементно (LEGACY-323)', () => {
-  const seedEmpty = (log: WriteLog, root: FakeClient, tx: FakeClient) => {
-    const empty = (label: 'root' | 'tx', model: 'category' | 'tag') =>
-      jest.fn().mockImplementation(() => {
-        log.push(`${label}.${model}.findUnique`);
-        return Promise.resolve(null);
-      });
-    root.category.findUnique = empty('root', 'category');
-    tx.category.findUnique = empty('tx', 'category');
-    root.tag.findUnique = empty('root', 'tag');
-    tx.tag.findUnique = empty('tx', 'tag');
-  };
-
   it('негодный слаг тега назван в errors, а годный сосед импортируется', async () => {
     const log: WriteLog = [];
     const { service, root, tx } = makeService(log);
@@ -2063,5 +2064,201 @@ describe('ImportService — перетипизация поддерева одн
     expect(result.errors[0]?.message).toContain('Child category type mismatch');
     // Термин в тексте назван ключом, а не UUID: в файле оператора UUID нет.
     expect(result.errors[0]?.message).toContain('stranger-key');
+  });
+});
+
+/**
+ * 🔴 `LEGACY-361`. `@ValidateNested` у `translations: Record<string, T>` не
+ * стоит, а словарь для `class-validator` не составной тип вовсе — декораторы
+ * `ImportTagTranslationDto`/`ImportCategoryTranslationDto` не срабатывали
+ * никогда. Раньше вручную проверялись только `name` и `slug`; поля вроде
+ * `canonicalUrl`, `faq`, `relatedTagSlugs` доезжали до записи любой формы.
+ *
+ * Решение арбитра 16.09.2026 (`decisions-log.md`, `T4 | LEGACY-361`): прогнать
+ * каждое значение словаря через уже объявленный класс перевода той же
+ * техникой, что `validateItems` применяет к элементам партии.
+ */
+describe('ImportService — переводы партии проверяются декораторами (LEGACY-361)', () => {
+  it('негодный canonicalUrl перевода тега назван в errors, а годный сосед импортируется', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([
+      {
+        ...tagDto(),
+        key: 'broken',
+        translations: {
+          [Language.en]: { name: 'Broken', slug: 'broken', canonicalUrl: 42 },
+        },
+      } as unknown as ImportTagDto,
+      { ...tagDto(), key: 'fine' } as ImportTagDto,
+    ]);
+
+    expect(result.imported).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].key).toBe('broken');
+    expect(tx.tag.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('faq не массивом у перевода категории отвергается, а не уезжает в запись', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importCategories([
+      {
+        ...categoryDto(),
+        translations: {
+          [Language.en]: {
+            name: 'Victorian Literature',
+            slug: 'victorian-literature',
+            faq: 'nope',
+          },
+        },
+      } as unknown as ImportCategoryDto,
+    ]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(tx.category.create).not.toHaveBeenCalled();
+  });
+
+  it('лишнее поле в переводе отвергается, а не уезжает дальше в объекте', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([
+      {
+        ...tagDto(),
+        translations: {
+          [Language.en]: { name: 'Aestheticism', slug: 'aestheticism', notAField: 1 },
+        },
+      } as unknown as ImportTagDto,
+    ]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(tx.tag.create).not.toHaveBeenCalled();
+  });
+
+  it('relatedTagSlugs со строкой вместо массива отвергается', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([
+      {
+        ...tagDto(),
+        translations: {
+          [Language.en]: {
+            name: 'Aestheticism',
+            slug: 'aestheticism',
+            relatedTagSlugs: 'not-an-array',
+          },
+        },
+      } as unknown as ImportTagDto,
+    ]);
+
+    expect(result.errors).toHaveLength(1);
+    expect(tx.tag.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ `@IsObject()` на словаре пропускает `{ en: null }`, а `validateSync` на
+   * не-объекте бросает `TypeError` мимо `catch` — вся партия ответила бы 500.
+   */
+  it('перевод null, массивом или числом назван в errors, а годный сосед импортируется', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const broken = (key: string, value: unknown) =>
+      ({ ...tagDto(), key, translations: { [Language.en]: value } }) as unknown as ImportTagDto;
+
+    const result = await service.importTags([
+      broken('as-null', null),
+      broken('as-array', [{ name: 'Aestheticism', slug: 'aestheticism' }]),
+      broken('as-number', 42),
+      { ...tagDto(), key: 'fine' } as ImportTagDto,
+    ]);
+
+    expect(result.imported).toBe(1);
+    expect(result.errors).toEqual(
+      ['as-null', 'as-array', 'as-number'].map((key) => ({
+        key,
+        message: `Translation for "${Language.en}" must be an object`,
+      })),
+    );
+    expect(tx.tag.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('годный перевод с полным набором SEO-полей по-прежнему проходит и пишется', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([
+      {
+        ...tagDto(),
+        translations: {
+          [Language.en]: {
+            name: 'Aestheticism',
+            slug: 'aestheticism',
+            canonicalUrl: 'https://example.com/aestheticism',
+            robots: 'index, follow',
+            indexable: true,
+            faq: [{ question: 'Q', answer: 'A' }],
+            relatedTagSlugs: ['romanticism'],
+          },
+        },
+      } as unknown as ImportTagDto,
+    ]);
+
+    expect(result).toEqual({ imported: 1, updated: 0, errors: [] });
+    expect(tx.tag.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 🔴 `LEGACY-362`. Отбор годных элементов сопоставлял элемент со строкой
+ * отчёта по `key`, а ключ в присланной партии не уникален. Два элемента
+ * с одним ключом, где негоден только первый, раньше терялись оба.
+ */
+describe('ImportService — годный однофамилец партии не теряется (LEGACY-362)', () => {
+  it('второй элемент с тем же key, что и негодный первый, всё равно импортируется', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importCategories([
+      {
+        ...categoryDto(),
+        key: 'dup',
+        translations: { [Language.en]: { name: 'A', slug: 'not slug!' } },
+      } as unknown as ImportCategoryDto,
+      { ...categoryDto(), key: 'dup' } as ImportCategoryDto,
+    ]);
+
+    expect(result.imported).toBe(1);
+    expect(result.errors.some((e) => e.key === 'dup')).toBe(true);
+    expect(tx.category.create).toHaveBeenCalledTimes(1);
+  });
+
+  /** Второе из двух мест записи: отбраковка по `parentKey`, которого нет ни в базе, ни в партии. */
+  it('однофамилец негодного по parentKey элемента всё равно импортируется', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importCategories([
+      { ...categoryDto('missing-parent'), key: 'dup' } as ImportCategoryDto,
+      { ...categoryDto(), key: 'dup' } as ImportCategoryDto,
+    ]);
+
+    expect(result.imported).toBe(1);
+    expect(result.errors).toEqual([
+      { key: 'dup', message: 'parentKey "missing-parent" not found in database or current batch' },
+    ]);
+    expect(tx.category.create).toHaveBeenCalledTimes(1);
   });
 });
