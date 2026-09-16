@@ -664,11 +664,17 @@ export class UsersService {
           // Образец — `commentChildren` в модуле комментариев, но переносить её
           // сюда нельзя: она завязана на `canModerate`, которого у этого маршрута
           // нет вовсе.
+          //
+          // Свои скрытые ответы выбираются тоже (`LEGACY-366`): под скрытым корнем
+          // они больше нигде не видны. Чужие скрытые не выбираются никогда; свои
+          // под видимым корнем выбрасываются в маппере — они уже приходят
+          // отдельным элементом, и в ветке были бы дублем.
           children: {
-            where: { isDeleted: false, isHidden: false },
+            where: { isDeleted: false, OR: [{ isHidden: false }, { userId }] },
             select: {
               id: true,
               text: true,
+              isHidden: true,
               createdAt: true,
               user: { select: PUBLIC_COMMENT_USER_SELECT },
             },
@@ -749,10 +755,11 @@ export class UsersService {
           : null,
         replies: (isHidden
           ? comment.children.filter((child) => child.user.id === userId)
-          : comment.children
+          : comment.children.filter((child) => !child.isHidden)
         ).map((child) => ({
           id: child.id,
           text: child.text,
+          isHidden: child.isHidden,
           createdAt: child.createdAt,
           user: child.user,
         })),

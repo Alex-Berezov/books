@@ -151,6 +151,9 @@ const PUBLISHED_BOOKS_JOIN = Prisma.sql`
  AND bv.status = 'published'
  AND (bv."authorId" = t."authorId" OR bv.author = t.name)`;
 
+/** Сколько кандидатов `<slug>-N` проверяет один запрос подсказки (LEGACY-370). */
+const SLUG_SUGGESTION_BATCH = 20;
+
 @Injectable()
 export class AuthorService {
   private readonly logger = new Logger(AuthorService.name);
@@ -772,12 +775,38 @@ export class AuthorService {
   }
 
   async checkSlugExists(slug: string, language: Language, excludeId?: string) {
-    const where: Prisma.AuthorTranslationWhereInput = { slug, language };
-    if (excludeId) {
-      where.NOT = { authorId: excludeId };
-    }
-    const authorTrans = await this.prisma.authorTranslation.findFirst({ where });
+    const authorTrans = await this.prisma.authorTranslation.findFirst({
+      where: this.buildTakenSlugWhere(slug, language, excludeId),
+    });
     return authorTrans;
+  }
+
+  /**
+   * Первый свободный слаг вида `<base>-2`, `<base>-3`, … в языке перевода (LEGACY-370).
+   * Кандидаты проверяются пачками по точному списку: префиксный поиск тянул бы в память
+   * всех однофамильцев (`ivan-bunin`, `ivan-turgenev`), ни один из которых ответом не станет.
+   */
+  async generateUniqueSuggestedSlug(
+    baseSlug: string,
+    language: Language,
+    excludeId?: string,
+  ): Promise<string> {
+    for (let start = 2; ; start += SLUG_SUGGESTION_BATCH) {
+      const candidates = Array.from(
+        { length: SLUG_SUGGESTION_BATCH },
+        (_, i) => `${baseSlug}-${start + i}`,
+      );
+      const taken = await this.prisma.authorTranslation.findMany({
+        where: this.buildTakenSlugWhere({ in: candidates }, language, excludeId),
+        select: { slug: true },
+        take: SLUG_SUGGESTION_BATCH,
+      });
+      const takenSlugs = new Set(taken.map((row) => row.slug));
+      const free = candidates.find((candidate) => !takenSlugs.has(candidate));
+      if (free) {
+        return free;
+      }
+    }
   }
 
   async getPublicBySlug(slug: string, language: Language) {
@@ -925,5 +954,18 @@ export class AuthorService {
       // Циклическая ссылка в отброшенном объекте.
       return String(err);
     }
+  }
+
+  /** Условие «слаг занят» — одно на проверку и на подсказку (LEGACY-215, LEGACY-370). */
+  private buildTakenSlugWhere(
+    slug: string | Prisma.StringFilter,
+    language: Language,
+    excludeId?: string,
+  ): Prisma.AuthorTranslationWhereInput {
+    const where: Prisma.AuthorTranslationWhereInput = { slug, language };
+    if (excludeId) {
+      where.NOT = { authorId: excludeId };
+    }
+    return where;
   }
 }

@@ -1132,7 +1132,11 @@ describe('UsersService (unit)', () => {
         select: { children: { where: Record<string, unknown> } };
       };
 
-      expect(args.select.children.where).toEqual({ isDeleted: false, isHidden: false });
+      // `LEGACY-366`: свои скрытые ответы выбираются, чужие скрытые — нет.
+      expect(args.select.children.where).toEqual({
+        isDeleted: false,
+        OR: [{ isHidden: false }, { userId: 'u1' }],
+      });
     });
 
     // Вторая половина той же записи: скрытый и удалённый родитель отсеиваются
@@ -1211,6 +1215,74 @@ describe('UsersService (unit)', () => {
       const res = await service.getActivities('u1');
 
       expect(res.items[0].replies.map((r) => r.id)).toEqual(['own']);
+    });
+
+    // Посадка LEGACY-366 (решение арбитра 16.09.2026, вариант A). Выборка теперь
+    // отдаёт и свои скрытые ответы, поэтому маппер решает, где они видны.
+    describe('скрытые собственные ответы (LEGACY-366)', () => {
+      const row = (id: string, isHidden: boolean, children: unknown[]) => ({
+        id,
+        text: 'root',
+        isHidden,
+        createdAt: new Date(),
+        parentId: null,
+        parent: null,
+        bookVersion: null,
+        chapter: null,
+        audioChapter: null,
+        children,
+      });
+      const reply = (id: string, userId: string, isHidden: boolean) => ({
+        id,
+        text: id,
+        isHidden,
+        createdAt: new Date(),
+        user: { id: userId },
+      });
+
+      it('под скрытым корнем свой скрытый ответ приходит в replies с признаком', async () => {
+        prismaMock.comment.findMany.mockResolvedValueOnce([
+          row('R', true, [reply('Q', 'u1', true), reply('own', 'u1', false)]),
+        ]);
+
+        const res = await service.getActivities('u1');
+
+        expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+        expect(res.items[0].replies.map((r) => [r.id, r.isHidden])).toEqual([
+          ['Q', true],
+          ['own', false],
+        ]);
+      });
+
+      // Под видимым корнем свой скрытый ответ уже приходит отдельным элементом
+      // (`whereBase` его пропускает), в ветке он был бы дублем.
+      it('под видимым корнем свой скрытый ответ приходит только отдельным элементом', async () => {
+        prismaMock.comment.findMany.mockResolvedValueOnce([
+          row('Q', true, []),
+          row('R', false, [reply('Q', 'u1', true), reply('ok', 'u2', false)]),
+        ]);
+
+        const res = await service.getActivities('u1');
+
+        expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+        const ids = res.items.flatMap((item) => [item.id, ...item.replies.map((r) => r.id)]);
+        expect(ids.filter((id) => id === 'Q')).toHaveLength(1);
+        expect(res.items[1].replies.map((r) => [r.id, r.isHidden])).toEqual([['ok', false]]);
+      });
+
+      // Выборка чужие скрытые не отдаёт, но маппер не должен на это полагаться:
+      // вход подаётся напрямую.
+      it('чужой скрытый ответ не приходит ни под каким корнем', async () => {
+        prismaMock.comment.findMany.mockResolvedValueOnce([
+          row('R1', false, [reply('F1', 'u2', true)]),
+          row('R2', true, [reply('F2', 'u2', true)]),
+        ]);
+
+        const res = await service.getActivities('u1');
+
+        expect(prismaMock.comment.findMany).toHaveBeenCalledTimes(1);
+        expect(res.items.map((item) => item.replies)).toEqual([[], []]);
+      });
     });
 
     it('у скрытой записи отдаёт флаг, а чужие ответы убирает (LEGACY-212)', async () => {

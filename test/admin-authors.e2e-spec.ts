@@ -212,8 +212,10 @@ describe('Admin authors routing (e2e)', () => {
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200);
 
+        // LEGACY-370: занятый слаг отдаёт и подсказку — первый свободный `-N` в том же языке.
         expect(response.body).toEqual({
           exists: true,
+          suggestedSlug: `${slug}-2`,
           existingAuthor: { id: authorId, slug },
         });
 
@@ -254,6 +256,7 @@ describe('Admin authors routing (e2e)', () => {
           .expect(200);
         expect(ruCheck.body).toEqual({
           exists: true,
+          suggestedSlug: `${slug}-2`,
           existingAuthor: { id: authorId, slug },
         });
 

@@ -396,6 +396,68 @@ describe('AuthorService', () => {
     });
   });
 
+  describe('generateUniqueSuggestedSlug (LEGACY-370)', () => {
+    const batch = (base: string, from: number) =>
+      Array.from({ length: 20 }, (_, i) => `${base}-${from + i}`);
+
+    it('asks only for exact candidates and skips taken suffixes with one query', async () => {
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { slug: 'leo-tolstoy-2' },
+        { slug: 'leo-tolstoy-3' },
+        { slug: 'leo-tolstoy-5' },
+      ]);
+
+      const result = await service.generateUniqueSuggestedSlug('leo-tolstoy', 'ru' as Language);
+
+      expect(result).toBe('leo-tolstoy-4');
+      // Точный список, а не `startsWith`: однофамильцы `leo-tolstoy-junior` в память не едут.
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledWith({
+        where: { language: 'ru', slug: { in: batch('leo-tolstoy', 2) } },
+        select: { slug: true },
+        take: 20,
+      });
+    });
+
+    it('starts from -2 and excludes the edited author', async () => {
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+
+      const result = await service.generateUniqueSuggestedSlug(
+        'leo-tolstoy',
+        'en' as Language,
+        'auth1',
+      );
+
+      expect(result).toBe('leo-tolstoy-2');
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledWith({
+        where: {
+          language: 'en',
+          slug: { in: batch('leo-tolstoy', 2) },
+          NOT: { authorId: 'auth1' },
+        },
+        select: { slug: true },
+        take: 20,
+      });
+    });
+
+    it('moves to the next batch when the whole first one is taken', async () => {
+      prisma.authorTranslation.findMany
+        .mockResolvedValueOnce(batch('leo', 2).map((slug) => ({ slug })))
+        .mockResolvedValueOnce([{ slug: 'leo-22' }]);
+
+      const result = await service.generateUniqueSuggestedSlug('leo', 'en' as Language);
+
+      expect(result).toBe('leo-23');
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledTimes(2);
+      expect(prisma.authorTranslation.findMany).toHaveBeenLastCalledWith({
+        where: { language: 'en', slug: { in: batch('leo', 22) } },
+        select: { slug: true },
+        take: 20,
+      });
+    });
+  });
+
   describe('getPublicBySlug', () => {
     it('returns author public view data with translated books', async () => {
       prisma.authorTranslation.findFirst.mockResolvedValue({

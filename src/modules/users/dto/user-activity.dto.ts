@@ -61,6 +61,16 @@ export class ActivityCommentDto {
   user!: CommentUserDto;
 }
 
+/**
+ * Ответ в ветке — родительский класс плюс признак скрытия (`LEGACY-366`, решение
+ * арбитра 16.09.2026). У родителя признака нет: скрытый родитель в выдачу не попадает.
+ * `true` приходит только у собственного ответа автора под его же скрытым корнем.
+ */
+export class ActivityReplyDto extends ActivityCommentDto {
+  @ApiProperty({ type: Boolean })
+  isHidden!: boolean;
+}
+
 export class UserActivityDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
@@ -94,7 +104,10 @@ export class UserActivityDto {
   @ApiProperty({ type: ActivityCommentDto, nullable: true })
   parent!: ActivityCommentDto | null;
 
-  /** Под скрытым корнем — только собственные ответы автора (`LEGACY-212`). */
-  @ApiProperty({ type: ActivityCommentDto, isArray: true })
-  replies!: ActivityCommentDto[];
+  /**
+   * Под скрытым корнем — только собственные ответы автора, включая скрытые
+   * (`LEGACY-212`, `LEGACY-366`); под видимым — только не скрытые.
+   */
+  @ApiProperty({ type: ActivityReplyDto, isArray: true })
+  replies!: ActivityReplyDto[];
 }

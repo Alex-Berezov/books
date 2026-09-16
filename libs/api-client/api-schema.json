@@ -57,6 +57,35 @@
         ],
         "type": "object"
       },
+      "ActivityReplyDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "isHidden": {
+            "type": "boolean"
+          },
+          "text": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/CommentUserDto"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "createdAt",
+          "user",
+          "isHidden"
+        ],
+        "type": "object"
+      },
       "AddLawyerReviewNoteDto": {
         "properties": {
           "messageRu": {
@@ -5317,6 +5346,11 @@
             "description": "true if the slug is already taken",
             "example": false,
             "type": "boolean"
+          },
+          "suggestedSlug": {
+            "description": "First free slug in the same language (if exists = true)",
+            "example": "stephen-king-2",
+            "type": "string"
           }
         },
         "required": [
@@ -23302,7 +23336,7 @@
           },
           "replies": {
             "items": {
-              "$ref": "#/components/schemas/ActivityCommentDto"
+              "$ref": "#/components/schemas/ActivityReplyDto"
             },
             "type": "array"
           },

@@ -53,8 +53,14 @@ export class AuthorController {
     }
     const authorId: string = existing.authorId;
     const authorSlug: string = existing.slug;
+    const suggestedSlug = await this.service.generateUniqueSuggestedSlug(
+      query.slug,
+      query.lang,
+      query.excludeId,
+    );
     return {
       exists: true,
+      suggestedSlug,
       existingAuthor: {
         id: authorId,
         slug: authorSlug,

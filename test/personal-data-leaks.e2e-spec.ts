@@ -406,6 +406,81 @@ describe('Personal data leaks (e2e)', () => {
       expect(body).toContain('My own reply under my hidden root');
       expect(body).toContain('Stranger reply under my visible root');
     });
+
+    /**
+     * `LEGACY-366`. Скрыты и свой корень, и свой ответ под ним — ответ остаётся
+     * в ветке корня с признаком. Свой скрытый ответ под видимым чужим корнем
+     * приходит ровно один раз, отдельным элементом.
+     */
+    it('свой скрытый ответ виден автору ровно один раз и с признаком', async () => {
+      const root = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({ bookVersionId: versionId, text: 'Double hidden root text' })
+        .expect(201);
+      const reply = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({
+          parentId: (root.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'Double hidden reply text',
+        })
+        .expect(201);
+
+      const foreignRoot = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ bookVersionId: versionId, text: 'Visible foreign root text' })
+        .expect(201);
+      const ownUnderVisible = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .send({
+          parentId: (foreignRoot.body as { id: string }).id,
+          bookVersionId: versionId,
+          text: 'Own hidden reply under visible root',
+        })
+        .expect(201);
+
+      for (const id of [
+        (reply.body as { id: string }).id,
+        (root.body as { id: string }).id,
+        (ownUnderVisible.body as { id: string }).id,
+      ]) {
+        await request(http())
+          .patch(`/comments/${id}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ isHidden: true })
+          .expect(200);
+      }
+
+      const activities = await request(http())
+        .get('/users/me/activities')
+        .set('Authorization', `Bearer ${readerToken}`)
+        .expect(200);
+
+      const items = (
+        activities.body as {
+          items: {
+            text: string;
+            isHidden: boolean;
+            replies: { text: string; isHidden: boolean }[];
+          }[];
+        }
+      ).items;
+      const hiddenRoot = items.find((i) => i.text === 'Double hidden root text');
+      expect(hiddenRoot?.isHidden).toBe(true);
+      expect(hiddenRoot?.replies).toEqual([
+        expect.objectContaining({ text: 'Double hidden reply text', isHidden: true }),
+      ]);
+
+      const body = JSON.stringify(activities.body);
+      expect(body.split('Own hidden reply under visible root')).toHaveLength(2);
+      expect(items.find((i) => i.text === 'Own hidden reply under visible root')?.isHidden).toBe(
+        true,
+      );
+    });
   });
 
   /**
