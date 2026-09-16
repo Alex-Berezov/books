@@ -50,7 +50,7 @@ yarn test:e2e                          # all test/**/*.e2e-spec.ts (sentry self-
 
 Two consequences worth using:
 
-- **A hand-written migration is now testable before the VPS.** A full e2e run replays all migrations onto an empty database, so a broken one fails locally. `yarn drift-check` compares names only — the e2e run is what catches bad types, constraints and FK targets.
+- **A hand-written migration is now testable before the VPS.** A full e2e run replays all migrations onto an empty database, so a broken one fails locally. `yarn drift-check` compares names (tables, columns, enums) and indexes (LEGACY-367), not column types, nullability, defaults, CHECK or FK targets — the e2e run is what catches those.
 - **A failing trace test can be shown to fail.** The landing rule (`books-app-docs/ai-context/tech-debt-autopilot.md`, «Посадка на каждую правку») requires a test that goes red when the defect comes back; without a database that was impossible for anything touching rights. The old address for that protocol — books-app-docs/tasks/fixes/PLAN.md, written here without backticks because it no longer resolves — has not existed for a long time: `tasks/` holds `authors-hub.md` and `relaxation/`, and the fixes stage was archived as `books-app-docs/history/rights-clearance-fixes.md` (`LEGACY-169`).
 
 ⚠️ **`.env.test` must point at localhost.** The harness runs `CREATE DATABASE` / `DROP DATABASE` against whatever `DATABASE_URL` it finds there. Never edit that file to point anywhere else, and never run e2e if you cannot confirm it is local.

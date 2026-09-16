@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Drift check: does the sum of hand-written SQL migrations equal prisma/schema.prisma —
-// and do the raw SQL templates in src/ still name tables and columns that exist there?
+// Drift check: does the sum of hand-written SQL migrations equal prisma/schema.prisma — tables,
+// columns, enums and indexes (LEGACY-367) — and do the raw SQL templates in src/ still name
+// tables and columns that exist there?
 //
-// There is no local database (ADR-011): `prisma migrate` never runs here, migrations are
-// written by hand and applied by a human on the VPS. Nothing else compares the two sources,
-// and a divergence surfaces only as a runtime failure in production while typecheck stays green.
+// Migrations are written by hand (ADR-011) and reach the VPS through the tag pipeline. This is the
+// only static comparison of the two sources: e2e replays the migrations but never reads the
+// schema's declarations, and a divergence otherwise surfaces as a runtime failure while
+// typecheck stays green.
 //
 // Pure Node (>= 20), no dependencies, read-only.
 //
@@ -92,16 +94,19 @@ function parseSchema(text) {
   // LEGACY-252: this is the map the third pass (raw SQL) needs to tell an enum-typed column
   // from any other, so a string literal compared against it can be checked against real values.
   const colEnumTypes = new Map();
+  // LEGACY-367: table -> Map(colKey -> {cols, unique}), the schema side of the index pass.
+  // colKey mirrors the migration side: ordered column list + uniqueness, so a `@@index` and a
+  // `@@unique` over the same columns are distinct declarations.
+  const modelIndexes = new Map();
+  const unparsedIndexDecls = [];
   for (const [name, fieldLines] of models) {
     const cols = new Set();
     const enumCols = new Map();
+    const fieldToCol = new Map();
+    const indexDecls = new Map();
     let table = name;
     for (const line of fieldLines) {
-      if (line.startsWith('@@')) {
-        const tm = /^@@map\(\s*"([^"]+)"\s*\)/.exec(line);
-        if (tm) table = tm[1];
-        continue;
-      }
+      if (line.startsWith('@@')) continue; // block attributes: second pass below, once @map is known
       if (line.startsWith('@')) continue;
       const m = /^(\w+)\s+([\w.]+)(\[\])?(\?)?/.exec(line);
       if (!m) continue;
@@ -127,12 +132,56 @@ function parseSchema(text) {
       const mapped = /@map\(\s*"([^"]+)"\s*\)/.exec(line);
       const col = mapped ? mapped[1] : field;
       cols.add(col);
+      fieldToCol.set(field, col);
       if (isEnum && !isList) enumCols.set(col, base);
+      // A field-level `@unique` builds its own single-column unique index. `@id` fields get a
+      // PRIMARY KEY constraint instead (different DDL, out of scope here), so they are excluded
+      // even though `@id @unique` never occurs together in practice.
+      if (/(^|[\s(])@unique(\(|[\s]|$)/.test(line) && !/(^|[\s(])@id(\(|[\s]|$)/.test(line)) {
+        indexDecls.set(indexKey([col], true), { cols: [col], unique: true });
+      }
+    }
+    // second pass: @@map (table name) and @@index/@@unique, now that every field's column is known
+    for (const line of fieldLines) {
+      if (!line.startsWith('@@')) continue;
+      const tm = /^@@map\(\s*"([^"]+)"\s*\)/.exec(line);
+      if (tm) {
+        table = tm[1];
+        continue;
+      }
+      if (!/^@@(index|unique)\b/.test(line)) continue;
+      // Both the positional `@@index([a, b])` and the named `@@index(fields: [a, b])` form.
+      const im = /^@@(index|unique)\(\s*(?:fields\s*:\s*)?\[([^\]]+)\]/.exec(line);
+      if (!im) {
+        unparsedIndexDecls.push(`${name}: ${line.slice(0, 90)}`);
+        continue;
+      }
+      // A field can carry `(sort: Desc)` or `(ops: ...)` — Prisma's per-field index modifiers.
+      // They change how the index is built, not which column it is on, and are stripped for
+      // the same reason `DESC`/`NULLS LAST` are stripped on the migration side below.
+      const fields = splitTopLevelCommas(im[2]).map((f) => f.replace(/\(.*$/, '').trim());
+      const idxCols = fields.map((f) => fieldToCol.get(f) || f);
+      const unique = im[1] === 'unique';
+      indexDecls.set(indexKey(idxCols, unique), { cols: idxCols, unique });
     }
     modelCols.set(table, cols);
     colEnumTypes.set(table, enumCols);
+    modelIndexes.set(table, indexDecls);
   }
-  return { models: modelCols, enums, colEnumTypes };
+  // An index Prisma cannot describe (a partial one, for instance) is declared by name in a
+  // comment of the schema itself — `drift-check: sql-only index "Name"` — so the exception sits
+  // next to the model it concerns instead of in a list nobody reads (LEGACY-367).
+  const sqlOnlyIndexes = new Set(
+    [...text.matchAll(/drift-check:\s*sql-only index\s+"(\w+)"/g)].map((x) => x[1]),
+  );
+  return {
+    models: modelCols,
+    enums,
+    colEnumTypes,
+    indexes: modelIndexes,
+    sqlOnlyIndexes,
+    unparsedIndexDecls,
+  };
 }
 
 /* ---------------- parse migrations ---------------- */
@@ -163,6 +212,20 @@ function stripSqlComments(sql) {
   return out;
 }
 
+// LEGACY-367: the index statements the pass knows. applyMigrations dispatches on each head, and
+// inlineDoBlocks recognises the same heads inside a DO block, so a form added here reaches both.
+// CONDITIONAL is read back by applyMigrations; UNREADABLE only makes the statement match nothing
+// there, so it lands in UNPARSED.
+const INDEX_HEADS = {
+  create: String.raw`CREATE\s+(?:UNIQUE\s+)?INDEX\b`,
+  drop: String.raw`DROP\s+INDEX\b`,
+  alter: String.raw`ALTER\s+INDEX\b`,
+};
+const INDEX_DDL_HEAD = `(?:${Object.values(INDEX_HEADS).join('|')})`;
+const startsWithHead = (head, s) => new RegExp(`^${head}`, 'i').test(s);
+const CONDITIONAL_MARK = 'CONDITIONAL ';
+const UNREADABLE_MARK = 'UNREADABLE ';
+
 // Rights migrations wrap idempotent DDL in `DO $$ BEGIN IF NOT EXISTS (...) THEN ... END IF; END $$;`.
 // Inline those bodies as plain SQL so the DDL inside them is seen.
 function inlineDoBlocks(sql) {
@@ -175,7 +238,31 @@ function inlineDoBlocks(sql) {
     b = b.replace(/\bEXCEPTION\s+WHEN\b[^;]*;/gi, ' ');
     b = b.replace(/\bRAISE\s+(NOTICE|WARNING|EXCEPTION)\b[^;]*;/gi, ' ');
     b = b.replace(/\bDECLARE\b[^;]*;/gi, ' ');
-    b = b.replace(/\bEXECUTE\b[^;]*;/gi, ' ');
+    // LEGACY-367: index DDL written directly in a DO block — an index statement, a UNIQUE
+    // constraint or DROP CONSTRAINT — runs under a guard that is stripped below and cannot be read.
+    // It is not modelled: it is reported (arbiter decision 16.09.2026). String literals are masked
+    // first, so the EXECUTE literal form (the one exception, handled next) is left untouched.
+    const literals = [];
+    b = b
+      .replace(/'(?:[^']|'')*'/g, (x) => `\u0000${literals.push(x) - 1}\u0000`)
+      .replace(
+        new RegExp(String.raw`\b(?:${INDEX_DDL_HEAD}|DROP\s+CONSTRAINT\b|UNIQUE\b)`, 'gi'),
+        (x) => `${UNREADABLE_MARK}${x}`,
+      )
+      .replace(/\u0000(\d+)\u0000/g, (_m, i) => literals[Number(i)]);
+    // LEGACY-367: a conditional `EXECUTE 'DROP INDEX ...'` (guarded by `IF EXISTS (SELECT ...
+    // FROM pg_indexes)`) is how this codebase retires an index inside a DO block. The generic
+    // EXECUTE strip below would erase it — the index pass never learns the index is gone and
+    // reports it as still live. Unwrap the literal DDL string before the generic strip runs.
+    b = b.replace(
+      new RegExp(String.raw`\bEXECUTE\s+'(${INDEX_DDL_HEAD}(?:[^']|'')*)'\s*;`, 'gi'),
+      (_m, inner) => `\n${CONDITIONAL_MARK}${inner.replace(/''/g, "'")};\n`,
+    );
+    // Index or constraint DDL still behind EXECUTE (built by concatenation, say) cannot be read. It is
+    // turned into a statement nothing recognises, so it lands in UNPARSED instead of vanishing.
+    b = b.replace(/\bEXECUTE\b[^;]*;/gi, (x) =>
+      /\b(?:INDEX|UNIQUE|CONSTRAINT)\b/i.test(x) ? `\n${UNREADABLE_MARK}${x.replace(/;$/, '').replace(/\s+/g, ' ')};\n` : ' ',
+    );
     // `[^;]*?` keeps guard conditions from crossing a statement boundary
     b = b.replace(/\bELSIF\b[^;]*?\bTHEN\b/gi, ' ');
     b = b.replace(/\bIF\b[^;]*?\bTHEN\b/gi, ' ');
@@ -250,22 +337,79 @@ function splitTopLevelCommas(s) {
 
 const CONSTRAINT_START = /^(CONSTRAINT|PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|EXCLUDE|LIKE)\b/i;
 
+// LEGACY-367: what makes two indexes "the same" on both sides of the comparison — the ordered
+// column list plus uniqueness. Built here only, so the schema and migration sides cannot drift.
+const indexKey = (cols, unique) => `${cols.join(',')}::${unique ? 'unique' : 'plain'}`;
+
+// Column names of an index column list. A trailing `ASC|DESC [NULLS FIRST|LAST]` changes read
+// order, not the column (LEGACY-300's index needs `NULLS LAST`, which `@@index` cannot express),
+// so only the leading quoted identifier counts. Null when any entry is an expression: such an
+// index cannot be compared to a Prisma field list honestly.
+function simpleIndexColumns(list) {
+  const parts = splitTopLevelCommas(list);
+  const cols = parts.map((c) => (/^"([^"]+)"/.exec(c) || [])[1]).filter(Boolean);
+  return cols.length && cols.length === parts.length ? cols : null;
+}
+
 function applyMigrations(migDir) {
   const tables = new Map(); // name -> Set(columns)
   const enums = new Map(); // name -> Set(values)
+  // LEGACY-367: index name -> {table, cols, unique, partial, constraint, dir}, the indexes the
+  // migrations leave behind. Keyed by name because that is how Postgres addresses them: names are
+  // unique per schema, `IF NOT EXISTS` is a no-op on a taken name, and DROP/RENAME go by name.
+  // `constraint` marks an index that backs a UNIQUE constraint: only DROP CONSTRAINT removes it.
+  const indexes = new Map();
+  const putIndex = (name, entry, ifNotExists) => {
+    if (ifNotExists && indexes.has(name)) return;
+    indexes.set(name, entry);
+  };
+  const onTable = (table) => [...indexes].filter(([, e]) => e.table === table);
   const dirs = existsSync(migDir)
     ? readdirSync(migDir)
         .filter((d) => existsSync(join(migDir, d, 'migration.sql')))
         .sort()
     : [];
   const unhandled = [];
+  // A UNIQUE constraint — table-level `[CONSTRAINT x] UNIQUE (...)` or a column's `UNIQUE` — and
+  // the index Postgres builds for it. Unnamed, it gets `<table>_<cols>_key`; past 63 bytes
+  // Postgres shortens that name by its own rule, which is not reproduced here, so it is reported.
+  const addUniqueConstraint = (dir, table, name, cols, source) => {
+    const finalName = name || `${table}_${cols.join('_')}_key`;
+    if (!name && Buffer.byteLength(finalName) > 63) {
+      unhandled.push(`${dir}: ${table} :: default constraint name over 63 bytes :: ${source.slice(0, 80)}`);
+      return;
+    }
+    // Postgres fails on a taken name; the registry must not pretend the constraint replaced it.
+    if (indexes.has(finalName)) {
+      unhandled.push(`${dir}: ${table} :: UNIQUE constraint over a taken name :: ${source.slice(0, 80)}`);
+      return;
+    }
+    putIndex(finalName, { table, cols, unique: true, partial: false, constraint: true, dir }, false);
+  };
+  const tableUnique = (dir, table, spec) => {
+    const u = /^(?:ADD\s+)?(?:CONSTRAINT\s+"?(\w+)"?\s+)?UNIQUE\s*\(([^()]*)\)$/i.exec(spec);
+    const cols = u && simpleIndexColumns(u[2]);
+    if (cols) addUniqueConstraint(dir, table, u[1], cols, spec);
+    else unhandled.push(`${dir}: ${table} :: ${spec.slice(0, 90)}`);
+  };
+  // `"col" TYPE ... UNIQUE` in CREATE TABLE or ADD COLUMN. Literals and quoted identifiers are
+  // removed first, so neither DEFAULT 'unique' nor a column named "unique" reads as the keyword.
+  // A named column constraint (`CONSTRAINT x UNIQUE`) is not modelled but reported.
+  const columnUnique = (dir, table, col, spec) => {
+    const bare = spec.replace(/'(?:[^']|'')*'/g, "''").replace(/"[^"]*"/g, '""');
+    if (!/\bUNIQUE\b/i.test(bare)) return;
+    if (/\bCONSTRAINT\b/i.test(bare)) unhandled.push(`${dir}: ${table} :: ${spec.slice(0, 90)}`);
+    else addUniqueConstraint(dir, table, null, [col], spec);
+  };
 
   for (const dir of dirs) {
     const sql = inlineDoBlocks(
       stripSqlComments(readFileSync(join(migDir, dir, 'migration.sql'), 'utf8')),
     );
     for (const stmt of splitStatements(sql)) {
-      const s = stmt.replace(/\s+/g, ' ').trim();
+      const raw = stmt.replace(/\s+/g, ' ').trim();
+      const conditional = raw.startsWith(CONDITIONAL_MARK);
+      const s = conditional ? raw.slice(CONDITIONAL_MARK.length) : raw;
       let m;
 
       if ((m = /^CREATE\s+TYPE\s+(?:"?\w+"?\.)?"?(\w+)"?\s+AS\s+ENUM\s*\(([\s\S]*)\)$/i.exec(s))) {
@@ -321,15 +465,32 @@ function applyMigrations(migDir) {
       ) {
         const cols = new Set();
         for (const part of splitTopLevelCommas(m[2])) {
-          if (CONSTRAINT_START.test(part)) continue;
+          if (part.includes(UNREADABLE_MARK)) {
+            unhandled.push(`${dir}: CREATE TABLE ${m[1]} :: ${part.slice(0, 90)}`);
+            // The column itself exists either way; only its UNIQUE is left unread.
+            const clean = part.split(UNREADABLE_MARK).join('');
+            const cn = !CONSTRAINT_START.test(clean) && (/^"([^"]+)"/.exec(clean) || /^(\w+)/.exec(clean));
+            if (cn) cols.add(cn[1]);
+            continue;
+          }
+          if (CONSTRAINT_START.test(part)) {
+            // A table-level UNIQUE builds an index like CREATE UNIQUE INDEX does (LEGACY-367).
+            // Any constraint name (`\S+`) is let in here, so one the parser cannot read is reported.
+            if (/^(?:CONSTRAINT\s+\S+\s+)?UNIQUE\b/i.test(part)) tableUnique(dir, m[1], part);
+            continue;
+          }
           const cm = /^"([^"]+)"/.exec(part) || /^(\w+)/.exec(part);
-          if (cm) cols.add(cm[1]);
+          if (cm) {
+            cols.add(cm[1]);
+            columnUnique(dir, m[1], cm[1], part);
+          }
         }
         tables.set(m[1], cols);
         continue;
       }
       if ((m = /^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:"?\w+"?\.)?"?(\w+)"?/i.exec(s))) {
         tables.delete(m[1]);
+        for (const [name] of onTable(m[1])) indexes.delete(name);
         continue;
       }
 
@@ -341,25 +502,61 @@ function applyMigrations(migDir) {
         if (rename) {
           tables.set(rename[1], cols);
           tables.delete(table);
+          for (const [, e] of onTable(table)) e.table = rename[1];
           continue;
         }
         for (const action of splitTopLevelCommas(m[2])) {
           let a;
+          if (action.includes(UNREADABLE_MARK)) {
+            unhandled.push(`${dir}: ALTER TABLE ${table} :: ${action.slice(0, 90)}`);
+            continue;
+          }
           if ((a = /^ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?/i.exec(action))) {
             cols.add(a[1]);
+            columnUnique(dir, table, a[1], action);
             continue;
           }
           if ((a = /^DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(action))) {
             cols.delete(a[1]);
+            // Postgres drops every index that uses the column together with it. A column used only
+            // in a partial index's predicate is not modelled: that drop is reported.
+            const colRef = new RegExp(`"${a[1]}"`);
+            if (onTable(table).some(([, e]) => e.partial && colRef.test(e.where) && !e.cols.includes(a[1]))) {
+              unhandled.push(`${dir}: ALTER TABLE ${table} :: ${action.slice(0, 60)} :: column used in a partial index predicate`);
+            }
+            for (const [name, e] of onTable(table)) if (e.cols.includes(a[1])) indexes.delete(name);
             continue;
           }
           if ((a = /^RENAME\s+COLUMN\s+"?(\w+)"?\s+TO\s+"?(\w+)"?/i.exec(action))) {
             cols.delete(a[1]);
             cols.add(a[2]);
+            // A predicate keeps its text; a rename inside it is not modelled but reported.
+            const oldRef = new RegExp(`"${a[1]}"`);
+            if (onTable(table).some(([, e]) => e.partial && oldRef.test(e.where))) {
+              unhandled.push(`${dir}: ALTER TABLE ${table} :: ${action.slice(0, 60)} :: column used in a partial index predicate`);
+            }
+            for (const [, e] of onTable(table)) e.cols = e.cols.map((c) => (c === a[1] ? a[2] : c));
+            continue;
+          }
+          // LEGACY-367: `ADD [CONSTRAINT x] UNIQUE (...)` builds a unique index just like
+          // `CREATE UNIQUE INDEX` (RightsIntake_createdBookId_key, 20260724180000). Unnamed, it
+          // gets Postgres' default `<table>_<cols>_key`.
+          if (/^ADD\s+(?:CONSTRAINT\s+\S+\s+)?UNIQUE\b/i.test(action)) {
+            tableUnique(dir, table, action);
+            continue;
+          }
+          if (/^DROP\s+CONSTRAINT\b/i.test(action)) {
+            a = /^DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?(?:\s+(?:CASCADE|RESTRICT))?$/i.exec(
+              action,
+            );
+            if (!a) unhandled.push(`${dir}: ALTER TABLE ${table} :: ${action.slice(0, 90)}`);
+            // Only a constraint's own index goes; a plain index of the same name is not a
+            // constraint, and Postgres leaves it alone (or fails without IF EXISTS).
+            else if (indexes.get(a[1])?.constraint) indexes.delete(a[1]);
             continue;
           }
           if (
-            /^(ALTER|ADD\s+CONSTRAINT|DROP\s+CONSTRAINT|ENABLE|DISABLE|VALIDATE|ADD\s+PRIMARY|ADD\s+FOREIGN|ADD\s+UNIQUE|ADD\s+CHECK|OWNER|SET|REPLICA)/i.test(
+            /^(ALTER|ADD\s+CONSTRAINT|ENABLE|DISABLE|VALIDATE|ADD\s+PRIMARY|ADD\s+FOREIGN|ADD\s+CHECK|OWNER|SET|REPLICA)/i.test(
               action,
             )
           )
@@ -369,18 +566,79 @@ function applyMigrations(migDir) {
         continue;
       }
 
-      if (/^(CREATE|DROP)\s+(UNIQUE\s+)?INDEX/i.test(s)) continue;
+      // LEGACY-367: every index statement is either understood or reported — a skipped one
+      // leaves the registry describing a database that does not exist. A statement unwrapped
+      // from `EXECUTE` in a DO block ran under a guard that is gone now (see inlineDoBlocks):
+      // it is treated as conditional — it may or may not have run.
+      if (startsWithHead(INDEX_HEADS.create, s)) {
+        m =
+          /^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?\s+ON\s+(?:ONLY\s+)?(?:"?\w+"?\.)?"?(\w+)"?\s*(?:USING\s+\w+\s*)?\(([^()]*)\)(\s+WHERE\s+[\s\S]*)?$/i.exec(
+            s,
+          );
+        const cols = m && simpleIndexColumns(m[5]);
+        // A name that is already taken: with a readable guard gone (conditional) nobody knows
+        // which index is live, and without IF NOT EXISTS Postgres fails the statement.
+        if (!cols || (indexes.has(m[3]) && (conditional || !m[2]))) {
+          unhandled.push(`${dir}: ${raw.slice(0, 110)}`);
+          continue;
+        }
+        const entry = {
+          table: m[4],
+          cols,
+          unique: !!m[1],
+          partial: !!m[6],
+          where: m[6] || '',
+          constraint: false,
+          dir,
+        };
+        putIndex(m[3], entry, !!m[2]);
+        continue;
+      }
+      if (startsWithHead(INDEX_HEADS.drop, s)) {
+        m =
+          /^DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(IF\s+EXISTS\s+)?([\s\S]+?)(?:\s+(?:CASCADE|RESTRICT))?$/i.exec(
+            s,
+          );
+        const names = m && splitTopLevelCommas(m[2]).map((n) => (/^(?:"?\w+"?\.)?"?(\w+)"?$/.exec(n) || [])[1]);
+        const mayBeAbsent = m && (!!m[1] || conditional);
+        // Postgres refuses to drop an index that backs a constraint, and fails on an unknown
+        // name without IF EXISTS — either way the registry and the database would part.
+        if (
+          !names ||
+          names.some((n) => !n || indexes.get(n)?.constraint || (!indexes.has(n) && !mayBeAbsent))
+        ) {
+          unhandled.push(`${dir}: ${raw.slice(0, 110)}`);
+          continue;
+        }
+        for (const n of names) indexes.delete(n);
+        continue;
+      }
+      if (startsWithHead(INDEX_HEADS.alter, s)) {
+        m =
+          /^ALTER\s+INDEX\s+(IF\s+EXISTS\s+)?(?:"?\w+"?\.)?"?(\w+)"?\s+RENAME\s+TO\s+"?(\w+)"?$/i.exec(
+            s,
+          );
+        if (!m || (!indexes.has(m[2]) && !m[1] && !conditional)) {
+          unhandled.push(`${dir}: ${raw.slice(0, 110)}`);
+          continue;
+        }
+        if (indexes.has(m[2])) {
+          indexes.set(m[3], indexes.get(m[2]));
+          indexes.delete(m[2]);
+        }
+        continue;
+      }
       if (
         /^(INSERT|UPDATE|DELETE|SELECT|WITH|COMMENT|SET|BEGIN|COMMIT|DO|GRANT|CREATE\s+(EXTENSION|SCHEMA|FUNCTION|TRIGGER|SEQUENCE|VIEW))/i.test(
           s,
         )
       )
         continue;
-      if (/^(DROP\s+(INDEX|FUNCTION|TRIGGER|SEQUENCE|VIEW|CONSTRAINT))/i.test(s)) continue;
+      if (/^(DROP\s+(FUNCTION|TRIGGER|SEQUENCE|VIEW|CONSTRAINT))/i.test(s)) continue;
       unhandled.push(`${dir}: ${s.slice(0, 110)}`);
     }
   }
-  return { tables, enums, unhandled, count: dirs.length };
+  return { tables, enums, unhandled, count: dirs.length, indexes };
 }
 
 /* ---------------- diff ---------------- */
@@ -396,6 +654,13 @@ function compare(schema, mig, { allowUnparsed = false } = {}) {
   out.push(`schema.prisma : ${schema.models.size} models, ${schema.enums.size} enums`);
   out.push(
     `migrations    : ${mig.count} dirs -> ${mig.tables.size} tables, ${mig.enums.size} enums`,
+  );
+  // LEGACY-367: the index pass says how much it compared — "agree" over zero indexes read on
+  // either side would otherwise look exactly like a real check.
+  const declaredCount = [...schema.indexes.values()].reduce((n, d) => n + d.size, 0);
+  const partialCount = [...mig.indexes.values()].filter((e) => e.partial).length;
+  out.push(
+    `indexes       : ${declaredCount} declared in schema, ${mig.indexes.size} left by migrations (${partialCount} partial, ${schema.sqlOnlyIndexes.size} sql-only markers)`,
   );
   out.push('');
 
@@ -472,6 +737,72 @@ function compare(schema, mig, { allowUnparsed = false } = {}) {
     out.push('');
   }
 
+  // indexes (LEGACY-367, fourth pass: @@index/@@unique/@unique vs the indexes migrations leave)
+  const createdFull = new Map(); // table -> Map(indexKey -> {name, entry}) of non-partial indexes
+  const extraByTable = new Map(); // table -> [{name, entry}]
+  const addExtra = (table, name, entry) => {
+    if (!extraByTable.has(table)) extraByTable.set(table, []);
+    extraByTable.get(table).push({ name, entry });
+  };
+  for (const [name, e] of mig.indexes) {
+    if (e.table.startsWith('_') || schema.sqlOnlyIndexes.has(name)) continue;
+    // A partial index never satisfies a declaration: Prisma has no predicate, and a full
+    // @@unique over a partial index is exactly the Like case — the client offers a compound
+    // key that `ON CONFLICT` cannot infer. SQL-only indexes are declared by name instead.
+    if (e.partial) {
+      addExtra(e.table, name, e);
+      continue;
+    }
+    if (!createdFull.has(e.table)) createdFull.set(e.table, new Map());
+    const byKey = createdFull.get(e.table);
+    const key = indexKey(e.cols, e.unique);
+    // A second index over the same columns is a duplicate the schema cannot declare: extra.
+    if (byKey.has(key)) addExtra(e.table, name, e);
+    else byKey.set(key, { name, entry: e });
+  }
+  const indexIssues = [];
+  const idxTables = new Set([...schema.indexes.keys(), ...createdFull.keys(), ...extraByTable.keys()]);
+  for (const table of idxTables) {
+    const declared = schema.indexes.get(table) || new Map();
+    const created = createdFull.get(table) || new Map();
+    const missing = [...declared].filter(([k]) => !created.has(k)).map(([, d]) => d);
+    const extra = [
+      ...[...created].filter(([k]) => !declared.has(k)).map(([, x]) => x),
+      ...(extraByTable.get(table) || []),
+    ];
+    if (missing.length || extra.length) indexIssues.push({ table, missing, extra });
+  }
+  const describe = (cols, unique) => `${unique ? 'UNIQUE ' : ''}(${cols.join(', ')})`;
+  if (indexIssues.length) {
+    problems.push('index drift');
+    out.push(`## INDEX DRIFT (${indexIssues.length} tables)`);
+    for (const { table, missing, extra } of indexIssues) {
+      out.push(`  ${table}`);
+      missing.forEach((d) => out.push(`    MISSING in migrations : ${describe(d.cols, d.unique)}`));
+      extra.forEach(({ name, entry: e }) =>
+        out.push(
+          `    EXTRA   in migrations : "${name}" ${describe(e.cols, e.unique)}${e.partial ? ' partial' : ''} [${e.dir}]`,
+        ),
+      );
+    }
+    out.push('');
+  }
+  // A marker covers only an index Prisma cannot describe. On a missing index, or on one that is
+  // no longer partial (replaced by a full index under the same name), it would hide real drift.
+  const staleSqlOnly = [...schema.sqlOnlyIndexes].filter((n) => !mig.indexes.get(n)?.partial);
+  if (staleSqlOnly.length) {
+    problems.push('index drift');
+    out.push(`## SQL-ONLY INDEX MARKERS WITHOUT A PARTIAL INDEX BEHIND THEM (${staleSqlOnly.length})`);
+    staleSqlOnly.forEach((n) => out.push(`  - ${n}`));
+    out.push('');
+  }
+  if (schema.unparsedIndexDecls.length) {
+    problems.push('unparsed index declarations');
+    out.push(`## UNPARSED @@index/@@unique DECLARATIONS (${schema.unparsedIndexDecls.length})`);
+    schema.unparsedIndexDecls.forEach((u) => out.push(`  ! ${u}`));
+    out.push('');
+  }
+
   if (mig.unhandled.length) {
     // Unparsed DDL is not cosmetic: whatever it did to the database is invisible to this
     // comparison, so "agree" would be a claim the script cannot back up.
@@ -503,7 +834,7 @@ function checkRepo(repo, options) {
 // `tsc` does not look inside the template and `prisma generate` types delegates, not raw SQL, so a
 // column renamed by a hand-written migration keeps typecheck, lint and tests green and fails at
 // runtime on a public route. This pass resolves every identifier of those templates against
-// schema.prisma — the same source the two passes above already agree on.
+// schema.prisma — the same source the schema-vs-migrations comparison above checks.
 //
 // What is checked, and what deliberately is not:
 //   checked     — quoted table names after FROM/JOIN/INTO/UPDATE, qualified references
@@ -1834,6 +2165,478 @@ END $$;`,
     name: 'statement the parser does not understand is reported, not ignored',
     extraMigration: 'TRUNCATE TABLE "Book" RESTART IDENTITY;',
     expect: ['unparsed statements'],
+  },
+  {
+    // LEGACY-367, fourth pass. Without it this case reports [] — removing the pass is the
+    // regression this case exists to catch.
+    name: 'index declared in schema, never migrated',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index([title])\n}'),
+    expect: ['index drift'],
+  },
+  {
+    name: 'index created by migration, absent from schema',
+    extraMigration: 'CREATE INDEX "Book_title_idx" ON "Book"("title");',
+    expect: ['index drift'],
+  },
+  {
+    name: 'schema index and migration index agree',
+    expectReport: 'indexes       : 1 declared in schema, 1 left by migrations (0 partial, 0 sql-only markers)',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index([title])\n}'),
+    extraMigration: 'CREATE INDEX "Book_title_idx" ON "Book"("title");',
+    expect: [],
+  },
+  {
+    // LEGACY-367: RightsIntake_createdBookId_key is a real unique index in prod, built through
+    // `ADD CONSTRAINT ... UNIQUE` rather than `CREATE UNIQUE INDEX`. Without this recognized,
+    // a field-level `@unique` matching it would read as permanently missing.
+    name: 'unique index built via ADD CONSTRAINT ... UNIQUE is seen',
+    schema: (s) => mustReplace(s, '  title     String', '  title     String @unique'),
+    extraMigration: 'ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title");',
+    expect: [],
+  },
+  {
+    // LEGACY-367: this codebase retires an index with `EXECUTE 'DROP INDEX ...'` guarded by
+    // `IF EXISTS (SELECT ... FROM pg_indexes)` inside a DO block (see 20250830151000). The
+    // generic EXECUTE strip in inlineDoBlocks would erase that DROP silently, and the index
+    // would read as still live forever.
+    name: 'index dropped via EXECUTE inside a DO-block is seen',
+    extraMigration: `CREATE INDEX "Book_title_idx" ON "Book"("title");
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'Book_title_idx') THEN
+    EXECUTE 'DROP INDEX "Book_title_idx"';
+  END IF;
+END $$;`,
+    expect: [],
+  },
+  {
+    // LEGACY-367, the Like case: `IF NOT EXISTS` on a taken name is a no-op in Postgres, so the
+    // partial index stays, and a partial index never satisfies a full declaration.
+    name: 'index: IF NOT EXISTS under a taken name leaves the partial index in place',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@unique([title, pageCount])\n}'),
+    extraMigration: `CREATE UNIQUE INDEX IF NOT EXISTS "Book_title_pageCount_key" ON "Book"("title", "pageCount") WHERE "title" IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS "Book_title_pageCount_key" ON "Book"("title", "pageCount");`,
+    expect: ['index drift'],
+    expectReport: '"Book_title_pageCount_key" UNIQUE (title, pageCount) partial',
+  },
+  {
+    // The fix the Like migration applies: full index under a temporary name, drop the partial
+    // one, rename. The pass must follow ALTER INDEX ... RENAME to see the result.
+    name: 'index: partial replaced by full through ALTER INDEX RENAME agrees',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@unique([title, pageCount])\n}'),
+    extraMigration: `CREATE UNIQUE INDEX IF NOT EXISTS "Book_title_pageCount_key" ON "Book"("title", "pageCount") WHERE "title" IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS "Book_title_pageCount_key_full" ON "Book"("title", "pageCount");
+DROP INDEX IF EXISTS "Book_title_pageCount_key";
+ALTER INDEX IF EXISTS "Book_title_pageCount_key_full" RENAME TO "Book_title_pageCount_key";`,
+    expect: [],
+  },
+  {
+    // A rename is only visible through the name: the index must be found under it afterwards.
+    name: 'index: an index renamed by ALTER INDEX is dropped by its new name',
+    extraMigration: `CREATE INDEX "Book_title_tmp" ON "Book"("title");
+ALTER INDEX "Book_title_tmp" RENAME TO "Book_title_idx";
+DROP INDEX "Book_title_idx";`,
+    expect: [],
+  },
+  {
+    name: 'index: a unique declaration is not satisfied by a plain index on the same columns',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@unique([title])\n}'),
+    extraMigration: 'CREATE INDEX "Book_title_idx" ON "Book"("title");',
+    expect: ['index drift'],
+  },
+  {
+    // BookCategory_bookVersionId_isPrimary_key: Prisma cannot describe a partial index, so the
+    // schema names it in a comment. Without the marker the same index is EXTRA (next case).
+    name: 'index: a partial index named by a sql-only marker is accounted for',
+    schema: (s) => `/// drift-check: sql-only index "Book_title_live_key"\n${s}`,
+    extraMigration:
+      'CREATE UNIQUE INDEX "Book_title_live_key" ON "Book"("title") WHERE "pageCount" > 0;',
+    expect: [],
+  },
+  {
+    name: 'index: a partial index without a marker is reported',
+    extraMigration:
+      'CREATE UNIQUE INDEX "Book_title_live_key" ON "Book"("title") WHERE "pageCount" > 0;',
+    expect: ['index drift'],
+  },
+  {
+    name: 'index: a sql-only marker for an index no migration leaves is reported',
+    schema: (s) => `/// drift-check: sql-only index "Book_title_live_key"\n${s}`,
+    expect: ['index drift'],
+    expectReport: 'Book_title_live_key',
+  },
+  {
+    // Postgres drops the indexes of a dropped column; the schema lost the field and its index.
+    name: 'index: DROP COLUMN takes the column indexes with it',
+    extraMigration: `ALTER TABLE "Book" ADD COLUMN "subtitle" TEXT;
+CREATE INDEX "Book_subtitle_idx" ON "Book"("subtitle");
+ALTER TABLE "Book" DROP COLUMN "subtitle";`,
+    expect: [],
+  },
+  {
+    // ...and a column re-added afterwards comes back without its index.
+    name: 'index: a column dropped and re-added has lost its index',
+    schema: (s) =>
+      mustReplace(
+        s,
+        '  chapters  Chapter[]\n}',
+        '  chapters  Chapter[]\n  subtitle  String?\n\n  @@index([subtitle])\n}',
+      ),
+    extraMigration: `ALTER TABLE "Book" ADD COLUMN "subtitle" TEXT;
+CREATE INDEX "Book_subtitle_idx" ON "Book"("subtitle");
+ALTER TABLE "Book" DROP COLUMN "subtitle";
+ALTER TABLE "Book" ADD COLUMN "subtitle" TEXT;`,
+    expect: ['index drift'],
+  },
+  {
+    name: 'index: RENAME COLUMN carries the index to the new name',
+    schema: (s) =>
+      mustReplace(
+        s,
+        '  chapters  Chapter[]\n}',
+        '  chapters  Chapter[]\n  headline  String?\n\n  @@index([headline])\n}',
+      ),
+    extraMigration: `ALTER TABLE "Book" ADD COLUMN "subtitle" TEXT;
+CREATE INDEX "Book_subtitle_idx" ON "Book"("subtitle");
+ALTER TABLE "Book" RENAME COLUMN "subtitle" TO "headline";`,
+    expect: [],
+  },
+  {
+    name: 'index: DROP TABLE takes its indexes with it',
+    extraMigration: `CREATE TABLE "Scratch" ("id" TEXT NOT NULL, "note" TEXT);
+CREATE INDEX "Scratch_note_idx" ON "Scratch"("note");
+DROP TABLE "Scratch";`,
+    expect: [],
+  },
+  {
+    // Two indexes on the same columns are two indexes: dropping one leaves the other.
+    name: 'index: dropping one of two indexes on the same columns keeps the other',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index([title])\n}'),
+    extraMigration: `CREATE INDEX "Book_title_idx" ON "Book"("title");
+CREATE INDEX "Book_title_idx2" ON "Book"("title");
+DROP INDEX "Book_title_idx2";`,
+    expect: [],
+  },
+  {
+    name: 'index: DROP INDEX with CASCADE and a name list is understood',
+    extraMigration: `CREATE INDEX "Book_title_idx" ON "Book"("title");
+CREATE INDEX "Book_pageCount_idx" ON "Book"("pageCount");
+DROP INDEX IF EXISTS "public"."Book_title_idx", "Book_pageCount_idx" CASCADE;`,
+    expect: [],
+  },
+  {
+    name: 'index: an index over an expression is reported, not guessed',
+    extraMigration: 'CREATE INDEX "Book_title_lower_idx" ON "Book"(lower("title"));',
+    expect: ['unparsed statements'],
+  },
+  {
+    name: 'index: ADD CONSTRAINT UNIQUE with a trailing clause is reported, not skipped',
+    extraMigration:
+      'ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title") DEFERRABLE;',
+    expect: ['unparsed statements'],
+  },
+  {
+    name: 'index: unnamed ADD UNIQUE and UNIQUE inside CREATE TABLE are indexes',
+    schema: (s) =>
+      `${mustReplace(s, '  title     String', '  title     String @unique')}\nmodel Note {\n  id   String @id\n  code String @unique\n}\n`,
+    extraMigration: `ALTER TABLE "Book" ADD UNIQUE ("title");
+CREATE TABLE "Note" ("id" TEXT NOT NULL, "code" TEXT NOT NULL UNIQUE, CONSTRAINT "Note_pkey" PRIMARY KEY ("id"));`,
+    expect: [],
+  },
+  {
+    // The form pg_dump writes: a named table-level constraint inside CREATE TABLE.
+    name: 'index: a named CONSTRAINT ... UNIQUE inside CREATE TABLE is an index',
+    schema: (s) => `${s}\nmodel Note {\n  id   String @id\n  code String\n\n  @@unique([code])\n}\n`,
+    extraMigration: `CREATE TABLE "Note" ("id" TEXT NOT NULL, "code" TEXT NOT NULL, CONSTRAINT "Note_pkey" PRIMARY KEY ("id"), CONSTRAINT "Note_code_key" UNIQUE ("code"));`,
+    expect: [],
+  },
+  {
+    name: 'index: the named form @@index(fields: [...]) is read',
+    schema: (s) =>
+      mustReplace(
+        s,
+        '  chapters  Chapter[]\n}',
+        '  chapters  Chapter[]\n\n  @@index(fields: [title])\n}',
+      ),
+    expect: ['index drift'],
+  },
+  {
+    name: 'index: a field modifier with a comma inside does not split the field',
+    schema: (s) =>
+      mustReplace(
+        s,
+        '  chapters  Chapter[]\n}',
+        '  chapters  Chapter[]\n\n  @@index([title(ops: raw("a, b"), sort: Desc), pageCount])\n}',
+      ),
+    extraMigration:
+      'CREATE INDEX "Book_title_pageCount_idx" ON "Book"("title" DESC, "pageCount");',
+    expect: [],
+  },
+  {
+    name: 'index: a declaration the parser cannot read is reported',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index(title)\n}'),
+    expect: ['unparsed index declarations'],
+  },
+  {
+    name: 'index: EXECUTE with an escaped quote is still unwrapped',
+    schema: (s) => `/// drift-check: sql-only index "Book_title_live_key"\n${s}`,
+    extraMigration: `DO $$
+BEGIN
+  EXECUTE 'CREATE UNIQUE INDEX "Book_title_live_key" ON "Book"("title") WHERE "status" = ''PUBLISHED''';
+END $$;`,
+    expect: [],
+  },
+  {
+    name: 'index: index DDL behind EXECUTE that cannot be read is reported',
+    extraMigration: `DO $$
+BEGIN
+  EXECUTE format('DROP INDEX %I', 'Book_title_idx');
+END $$;`,
+    expect: ['unparsed statements'],
+    expectReport: "UNREADABLE EXECUTE format('DROP INDEX %I'",
+  },
+  {
+    name: 'index: a second index on the same columns is a duplicate the schema cannot declare',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index([title])\n}'),
+    extraMigration: `CREATE INDEX "Book_title_idx" ON "Book"("title");
+CREATE INDEX "Book_title_idx2" ON "Book"("title");`,
+    expect: ['index drift'],
+    expectReport: '"Book_title_idx2" (title)',
+  },
+  {
+    // DROP CONSTRAINT removes a constraint's index only; a plain index of that name stays.
+    name: 'index: DROP CONSTRAINT leaves a plain index of the same name alone',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index([title])\n}'),
+    extraMigration: `CREATE INDEX "Book_title_idx" ON "Book"("title");
+ALTER TABLE "Book" DROP CONSTRAINT IF EXISTS "Book_title_idx";`,
+    expect: [],
+  },
+  {
+    name: 'index: DROP CONSTRAINT removes the index of a UNIQUE constraint',
+    extraMigration: `ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title");
+ALTER TABLE "Book" DROP CONSTRAINT "Book_title_key";`,
+    expect: [],
+  },
+  {
+    // Postgres refuses: the index belongs to the constraint.
+    name: 'index: DROP INDEX on a constraint index is reported',
+    schema: (s) => mustReplace(s, '  title     String', '  title     String @unique'),
+    extraMigration: `ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title");
+DROP INDEX "Book_title_key";`,
+    expect: ['unparsed statements'],
+  },
+  {
+    name: 'index: DROP INDEX of an unknown name without IF EXISTS is reported',
+    extraMigration: 'DROP INDEX "Book_ghost_idx";',
+    expect: ['unparsed statements'],
+  },
+  {
+    name: 'index: DROP INDEX IF EXISTS of an unknown name is a no-op',
+    extraMigration: 'DROP INDEX IF EXISTS "Book_ghost_idx";',
+    expect: [],
+  },
+  {
+    name: 'index: ALTER INDEX RENAME of an unknown name without IF EXISTS is reported',
+    extraMigration: 'ALTER INDEX "Book_ghost_idx" RENAME TO "Book_other_idx";',
+    expect: ['unparsed statements'],
+  },
+  {
+    // The guard of an EXECUTE is gone after unwrapping: whether the full index replaced the
+    // partial one cannot be known, so it is not guessed.
+    name: 'index: a guarded CREATE INDEX over an existing name is reported',
+    extraMigration: `CREATE UNIQUE INDEX "Book_title_key" ON "Book"("title") WHERE "pageCount" > 0;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'Book_title_key') THEN
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS "Book_title_key" ON "Book"("title")';
+  END IF;
+END $$;`,
+    expect: ['index drift', 'unparsed statements'],
+  },
+  {
+    name: 'index: ADD COLUMN ... UNIQUE builds an index',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n  isbn      String? @unique\n}'),
+    extraMigration: 'ALTER TABLE "Book" ADD COLUMN "isbn" TEXT UNIQUE;',
+    expect: [],
+  },
+  {
+    name: "index: DEFAULT 'unique' is not the UNIQUE keyword",
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n  kind      String  @default("unique")\n}'),
+    extraMigration: `ALTER TABLE "Book" ADD COLUMN "kind" TEXT NOT NULL DEFAULT 'unique';`,
+    expect: [],
+  },
+  {
+    // Postgres shortens a default name past 63 bytes by its own rule; it is not guessed.
+    name: 'index: an unnamed UNIQUE whose default name exceeds 63 bytes is reported',
+    extraMigration: `ALTER TABLE "Book" ADD COLUMN "aVeryLongColumnNameThatKeepsGoingAndGoingAndGoingOnAndOn" TEXT;
+ALTER TABLE "Book" ADD UNIQUE ("aVeryLongColumnNameThatKeepsGoingAndGoingAndGoingOnAndOn");`,
+    expect: ['column drift', 'unparsed statements'],
+  },
+  {
+    // Arbiter decision 16.09.2026: index DDL written directly in a DO block runs under a guard
+    // the pass cannot read, so it is reported rather than modelled.
+    name: 'index: CREATE INDEX written directly in a DO-block is reported',
+    extraMigration: `DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'Book_title_idx') THEN
+    CREATE INDEX "Book_title_idx" ON "Book"("title");
+  END IF;
+END $$;`,
+    expect: ['unparsed statements'],
+    expectReport: 'UNREADABLE CREATE INDEX "Book_title_idx"',
+  },
+  {
+    name: 'index: CREATE INDEX over a taken name without IF NOT EXISTS is reported',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index([title])\n}'),
+    extraMigration: `CREATE INDEX "Book_title_idx" ON "Book"("title");
+CREATE INDEX "Book_title_idx" ON "Book"("pageCount");`,
+    expect: ['unparsed statements'],
+  },
+  {
+    name: 'index: a named column constraint UNIQUE is reported',
+    extraMigration: 'ALTER TABLE "Book" ADD COLUMN "isbn" TEXT CONSTRAINT "Book_isbn_uq" UNIQUE;',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n  isbn      String? @unique\n}'),
+    expect: ['index drift', 'unparsed statements'],
+  },
+  {
+    // A column named "unique" is not the keyword.
+    name: 'index: a column named "unique" is not a UNIQUE column',
+    schema: (s) =>
+      mustReplace(
+        s,
+        '  chapters  Chapter[]\n}',
+        '  chapters  Chapter[]\n  isUnique  Boolean @default(false) @map("unique")\n}',
+      ),
+    extraMigration: 'ALTER TABLE "Book" ADD COLUMN "unique" BOOLEAN NOT NULL DEFAULT false;',
+    expect: [],
+  },
+  {
+    name: 'index: a constraint name the parser cannot read is reported, not skipped',
+    extraMigration: 'ALTER TABLE "Book" ADD CONSTRAINT "Book-title_key" UNIQUE ("title");',
+    schema: (s) => mustReplace(s, '  title     String', '  title     String @unique'),
+    expect: ['index drift', 'unparsed statements'],
+  },
+  {
+    name: 'index: the same unreadable name inside CREATE TABLE is reported',
+    schema: (s) => `${s}\nmodel Note {\n  id   String @id\n  code String @unique\n}\n`,
+    extraMigration:
+      'CREATE TABLE "Note" ("id" TEXT NOT NULL, "code" TEXT NOT NULL, CONSTRAINT "Note-code_key" UNIQUE ("code"));',
+    expect: ['index drift', 'unparsed statements'],
+  },
+  {
+    name: 'index: a UNIQUE constraint over a taken index name is reported',
+    extraMigration: `CREATE UNIQUE INDEX "Book_title_key" ON "Book"("title") WHERE "pageCount" > 0;
+ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title");`,
+    schema: (s) => mustReplace(s, '  title     String', '  title     String @unique'),
+    expect: ['index drift', 'unparsed statements'],
+  },
+  {
+    // Postgres drops a partial index whose predicate names the dropped column; not modelled.
+    name: 'index: DROP COLUMN of a column used only in a partial predicate is reported',
+    schema: (s) => `/// drift-check: sql-only index "Book_title_live_key"\n${s}`,
+    extraMigration: `ALTER TABLE "Book" ADD COLUMN "live" BOOLEAN;
+CREATE UNIQUE INDEX "Book_title_live_key" ON "Book"("title") WHERE "live" = true;
+ALTER TABLE "Book" DROP COLUMN "live";`,
+    expect: ['unparsed statements'],
+  },
+  {
+    // A marker must not hide a full index that took the partial one's name.
+    name: 'index: a sql-only marker on a full index is reported',
+    schema: (s) => `/// drift-check: sql-only index "Book_title_live_key"\n${s}`,
+    extraMigration: 'CREATE UNIQUE INDEX "Book_title_live_key" ON "Book"("title");',
+    expect: ['index drift'],
+    expectReport: 'SQL-ONLY INDEX MARKERS WITHOUT A PARTIAL INDEX BEHIND THEM',
+  },
+  {
+    // The index follows its table through ALTER TABLE ... RENAME TO.
+    name: 'index: an index follows its table through RENAME TO',
+    schema: (s) => `${s}\nmodel Note {\n  id   String @id\n  code String\n\n  @@index([code])\n}\n`,
+    extraMigration: `CREATE TABLE "Scratch" ("id" TEXT NOT NULL, "code" TEXT NOT NULL);
+CREATE INDEX "Note_code_idx" ON "Scratch"("code");
+ALTER TABLE "Scratch" RENAME TO "Note";`,
+    expect: [],
+  },
+  {
+    // @@index names Prisma fields; the migration names columns (@map), as on Page.systemKey.
+    name: 'index: @@index fields are compared through @map to their columns',
+    schema: (s) =>
+      mustReplace(s, '  chapters  Chapter[]\n}', '  chapters  Chapter[]\n\n  @@index([createdAt])\n}'),
+    extraMigration: 'CREATE INDEX "Book_created_at_idx" ON "Book"("created_at");',
+    expect: [],
+  },
+  {
+    // A guarded rename of a name the registry does not know is taken as not having run.
+    name: 'index: a guarded ALTER INDEX RENAME of an unknown name is a no-op',
+    extraMigration: `DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'Book_ghost_idx') THEN
+    EXECUTE 'ALTER INDEX "Book_ghost_idx" RENAME TO "Book_other_idx"';
+  END IF;
+END $$;`,
+    expect: [],
+  },
+  {
+    // A predicate keeps its text after RENAME COLUMN; a later DROP would miss it. Reported.
+    name: 'index: RENAME COLUMN of a column used in a partial predicate is reported',
+    schema: (s) => `/// drift-check: sql-only index "Book_title_live_key"\n${s}`,
+    extraMigration: `ALTER TABLE "Book" ADD COLUMN "live" BOOLEAN;
+CREATE UNIQUE INDEX "Book_title_live_key" ON "Book"("title") WHERE "live" = true;
+ALTER TABLE "Book" RENAME COLUMN "live" TO "isLive";`,
+    expect: ['column drift', 'unparsed statements'],
+  },
+  {
+    name: 'index: a UNIQUE constraint added directly in a DO-block is reported',
+    schema: (s) => mustReplace(s, '  title     String', '  title     String @unique'),
+    extraMigration: `DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Book_title_key') THEN
+    ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title");
+  END IF;
+END $$;`,
+    expect: ['index drift', 'unparsed statements'],
+  },
+  {
+    name: 'index: DROP CONSTRAINT directly in a DO-block is reported',
+    extraMigration: `ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title");
+DO $$
+BEGIN
+  ALTER TABLE "Book" DROP CONSTRAINT "Book_title_key";
+END $$;`,
+    schema: (s) => mustReplace(s, '  title     String', '  title     String @unique'),
+    expect: ['unparsed statements'],
+  },
+  {
+    name: 'index: a UNIQUE column in a CREATE TABLE inside a DO-block is reported',
+    schema: (s) => `${s}\nmodel Note {\n  id   String @id\n  code String @unique\n}\n`,
+    extraMigration: `DO $$
+BEGIN
+  CREATE TABLE IF NOT EXISTS "Note" ("id" TEXT NOT NULL, "code" TEXT NOT NULL UNIQUE);
+END $$;`,
+    expect: ['index drift', 'unparsed statements'],
+  },
+  {
+    name: 'index: constraint DDL behind EXECUTE is reported, not erased',
+    extraMigration: `ALTER TABLE "Book" ADD CONSTRAINT "Book_title_key" UNIQUE ("title");
+DO $$
+BEGIN
+  EXECUTE 'ALTER TABLE "Book" DROP CONSTRAINT "Book_title_key"';
+END $$;`,
+    schema: (s) => mustReplace(s, '  title     String', '  title     String @unique'),
+    expect: ['unparsed statements'],
+    expectReport: 'UNREADABLE EXECUTE',
   },
   {
     // The failure LEGACY-123 is about: schema and migrations agree with each other, and the raw

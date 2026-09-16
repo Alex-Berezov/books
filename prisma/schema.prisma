@@ -394,14 +394,17 @@ model Category {
   primaryCategoryVersions BookVersion[] @relation("BookVersionPrimaryCategory")
 
   @@index([parentId])
+  // LEGACY-367: documents an index that already lives on the VPS (migration
+  // 20260630000000_taxonomy_restructure) — CategoryService.list() filters by `type` directly.
+  @@index([type])
 }
 
 /// ⚠️ На этой модели есть ограничение, которого нет в схеме: частичный уникальный индекс
 /// `BookCategory_bookVersionId_isPrimary_key` — `ON ("bookVersionId") WHERE "isPrimary" = true`
 /// (миграция `20260908120000_legacy_004_005_...`, LEGACY-005). Prisma предикат `WHERE`
-/// в `@@unique` не выражает, а `scripts/drift-check.mjs` индексы не сверяет вовсе — то есть
-/// снятие индекса не заметит ни один гейт, кроме детектора `DROP INDEX`
-/// в `scripts/check-migration-compat.mjs`. Индекс не снимать.
+/// в `@@unique` не выражает, поэтому индекс объявлен для `scripts/drift-check.mjs` строкой ниже
+/// (LEGACY-367): снятие индекса миграцией сторож покажет как маркер без индекса. Индекс не снимать.
+/// drift-check: sql-only index "BookCategory_bookVersionId_isPrimary_key"
 /// Выразить его как `@@unique([bookVersionId, isPrimary])` нельзя: это другое ограничение
 /// (пара, а не «одна главная категория на версию»), и Prisma сгенерирует индекс с тем же
 /// именем — `migrate deploy` упадёт на `42P07` и заблокирует остаток пачки.
@@ -416,8 +419,9 @@ model BookCategory {
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   category      Category    @relation(fields: [categoryId], references: [id])
 
+  // Отдельного индекса по `bookVersionId` нет намеренно: чтение по нему обслуживает ведущая
+  // колонка уникального индекса ниже (решение арбитра 16.09.2026, LEGACY-367).
   @@unique([bookVersionId, categoryId])
-  @@index([bookVersionId])
   @@index([categoryId])
 }
 
