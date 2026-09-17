@@ -559,7 +559,7 @@ export class CategoryService {
   }
 
   // Public resolver by path language and translation slug (/:lang/categories/:slug/books)
-  async getByLangSlugWithBooks(pathLang: Language, slug: string) {
+  async getByLangSlugWithBooks(pathLang: Language, slug: string, page = 1, limit = 10) {
     let trans = await this.prisma.categoryTranslation.findUnique({
       where: { language_slug: { language: pathLang, slug } },
       include: { category: true, seo: true },
@@ -587,47 +587,60 @@ export class CategoryService {
       });
     }
 
-    const books = await this.prisma.book.findMany({
-      where: {
-        versions: {
-          some: {
-            status: 'published',
-            language: pathLang,
-            categories: { some: { categoryId: category.id } },
-          },
+    // Выдача растёт вместе с каталогом, поэтому страница задаётся явно (`LEGACY-377`):
+    // до пагинации маршрут отдавал все книги категории разом, а `meta` обещал
+    // `page: 1, limit: 100`, которых в запросе не было.
+    const booksWhere: Prisma.BookWhereInput = {
+      versions: {
+        some: {
+          status: 'published',
+          language: pathLang,
+          categories: { some: { categoryId: category.id } },
         },
       },
-      select: {
-        ...PUBLIC_BOOK_SELECT,
-        // 🔴 `status: 'published'` и `language` выше отбирают **книгу**, а не её версии.
-        // Пока здесь стоял голый `include`, к опубликованной книге прицеплялись все
-        // её версии подряд — черновой перевод уезжал наружу и выглядел частью
-        // живой книги (`LEGACY-090`). Фильтр нужен на каждом уровне, а не
-        // только в `where` верхнего.
-        //
-        // 🔴 `language` здесь по той же причине и появился позже (`LEGACY-389`): один
-        // `status` отсекал черновики, но не чужие языки, и книга, прошедшая отбор
-        // по своей английской версии, отдавала наружу ещё и русскую. Соседний
-        // `TagsService.versionsByTagLangSlug` фильтровал язык с самого начала — два
-        // публичных списка отвечали на один вопрос по-разному.
-        versions: {
-          where: { status: 'published', language: pathLang },
-          select: {
-            ...PUBLIC_BOOK_VERSION_SELECT,
-            tags: {
-              select: {
-                tag: {
-                  include: {
-                    translations: true,
+    };
+    const total = await this.prisma.book.count({ where: booksWhere });
+    const skip = (page - 1) * limit;
+    // Страница за пределами выдачи в базу не ходит: пустой список и честный `total`.
+    const books =
+      skip >= total
+        ? []
+        : await this.prisma.book.findMany({
+            where: booksWhere,
+            skip,
+            take: limit,
+            select: {
+              ...PUBLIC_BOOK_SELECT,
+              // 🔴 `status: 'published'` и `language` выше отбирают **книгу**, а не её версии.
+              // Пока здесь стоял голый `include`, к опубликованной книге прицеплялись все
+              // её версии подряд — черновой перевод уезжал наружу и выглядел частью
+              // живой книги (`LEGACY-090`). Фильтр нужен на каждом уровне, а не
+              // только в `where` верхнего.
+              //
+              // 🔴 `language` здесь по той же причине и появился позже (`LEGACY-389`): один
+              // `status` отсекал черновики, но не чужие языки, и книга, прошедшая отбор
+              // по своей английской версии, отдавала наружу ещё и русскую. Соседний
+              // `TagsService.versionsByTagLangSlug` фильтровал язык с самого начала — два
+              // публичных списка отвечали на один вопрос по-разному.
+              versions: {
+                where: { status: 'published', language: pathLang },
+                select: {
+                  ...PUBLIC_BOOK_VERSION_SELECT,
+                  tags: {
+                    select: {
+                      tag: {
+                        include: {
+                          translations: true,
+                        },
+                      },
+                    },
                   },
                 },
               },
             },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+            // `id` вторым ключом: при равном `createdAt` страницы иначе пересекаются.
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          });
 
     const availableLanguages: Language[] = Array.from(
       new Set(
@@ -675,10 +688,10 @@ export class CategoryService {
       seo: trans?.seo ?? null,
       data,
       meta: {
-        total: books.length,
-        page: 1,
-        limit: 100,
-        totalPages: 1,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
       availableLanguages,
     };

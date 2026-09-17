@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PAGINATION_MAX_LIMIT } from '../../../shared/dto/pagination.dto';
 
 export class ConfirmMediaDto {
   @ApiProperty({
@@ -64,10 +65,11 @@ export class MediaListQueryDto {
   @Min(1)
   page?: number = 1;
 
-  @ApiPropertyOptional({ description: 'Limit', default: 20 })
+  @ApiPropertyOptional({ description: 'Limit', default: 20, maximum: PAGINATION_MAX_LIMIT })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(PAGINATION_MAX_LIMIT)
   limit?: number = 20;
 }

@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { CategoryType } from '@prisma/client';
 
 /**
@@ -36,14 +36,16 @@ export class PublicCategoriesQueryDto {
   page?: number = 1;
 
   @ApiPropertyOptional({
-    description: `Rows per page. Values above ${PUBLIC_CATEGORIES_MAX_LIMIT} are capped, and meta.limit reports the applied value.`,
+    description: `Rows per page. Values above ${PUBLIC_CATEGORIES_MAX_LIMIT} are rejected with 400.`,
     minimum: 1,
+    maximum: PUBLIC_CATEGORIES_MAX_LIMIT,
     default: PUBLIC_CATEGORIES_DEFAULT_LIMIT,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(PUBLIC_CATEGORIES_MAX_LIMIT)
   limit?: number = PUBLIC_CATEGORIES_DEFAULT_LIMIT;
 
   @ApiPropertyOptional({ enum: CategoryType, description: 'Filter by term type' })

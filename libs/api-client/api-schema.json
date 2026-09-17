@@ -35242,6 +35242,7 @@
             "required": false,
             "schema": {
               "default": 20,
+              "maximum": 100,
               "type": "number"
             }
           }
@@ -38589,12 +38590,13 @@
             }
           },
           {
-            "description": "Rows per page. Values above 200 are capped, and meta.limit reports the applied value.",
+            "description": "Rows per page. Values above 200 are rejected with 400.",
             "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
               "default": 50,
+              "maximum": 200,
               "minimum": 1,
               "type": "number"
             }
@@ -38658,6 +38660,29 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Page number",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Books per page. Values above 100 are rejected with 400.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
             }
           }
         ],

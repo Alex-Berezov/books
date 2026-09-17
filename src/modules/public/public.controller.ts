@@ -39,7 +39,6 @@ import {
 } from '../seo/system-pages/system-pages.constants';
 import {
   PUBLIC_CATEGORIES_DEFAULT_LIMIT,
-  PUBLIC_CATEGORIES_MAX_LIMIT,
   PublicCategoriesQueryDto,
 } from './dto/public-categories-query.dto';
 import { PublicAuthorLettersQueryDto, PublicAuthorsQueryDto } from './dto/public-authors-query.dto';
@@ -57,6 +56,7 @@ import { BookOverviewResponseDto } from '../book/dto/book-overview-response.dto'
 import { PaginatedBooksResponseDto } from '../book/dto/paged-books.dto';
 import { ReaderBootstrapResponseDto } from '../book/dto/reader-bootstrap-response.dto';
 import { PublicCategoryBooksResponseDto } from './dto/public-category-books-response.dto';
+import { PublicCategoryBooksQueryDto } from './dto/public-category-books-query.dto';
 import { PublicAuthorDetailResponseDto } from './dto/public-author-detail-response.dto';
 import { PaginatedCategoriesResponse } from '../category/dto/category-response.dto';
 import { PaginatedTagsResponse } from '../tags/dto/tag-response.dto';
@@ -288,8 +288,9 @@ export class PublicController {
   categoriesBySlug(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Param('slug') slug: string,
+    @Query() query: PublicCategoryBooksQueryDto,
   ) {
-    return this.categories.getByLangSlugWithBooks(pathLang, slug);
+    return this.categories.getByLangSlugWithBooks(pathLang, slug, query.page, query.limit);
   }
 
   // Compact paginated book cards for a category (or genre/collection)
@@ -317,20 +318,15 @@ export class PublicController {
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query() query: PublicCategoriesQueryDto,
   ) {
-    // Потолок зажимается **здесь**, а не в сервисе: сервис общий с админским
-    // маршрутом, на котором sitemap ходит с `limit=1000`, и потолок там означал бы
-    // молчаливое усечение карты сайта (LEGACY-056).
-    //
-    // В сервис уходит уже зажатое значение — тогда `meta.limit` собирается из
-    // применённого, а не из запрошенного. Разница не косметическая: потребитель
-    // делит `total` на `meta.limit`, и при молчаливом урезании получает неверное
-    // число страниц, не узнав об этом.
-    const limit = Math.min(
+    // Потолок стоит в `PublicCategoriesQueryDto` (`@Max`, `LEGACY-377`): запрос сверх
+    // него получает 400, а не 200 с урезанной страницей. Сервис общий с админским
+    // `GET /categories`, у которого свой DTO и свой потолок, — его это не задевает.
+    return this.categories.list(
+      query.page ?? 1,
       query.limit ?? PUBLIC_CATEGORIES_DEFAULT_LIMIT,
-      PUBLIC_CATEGORIES_MAX_LIMIT,
+      query.type,
+      pathLang,
     );
-
-    return this.categories.list(query.page ?? 1, limit, query.type, pathLang);
   }
 
   // Localized tags by translation slug

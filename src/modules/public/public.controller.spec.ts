@@ -82,11 +82,12 @@ describe('PublicController (unit)', () => {
     expect(pages.getPublicBySlug).toHaveBeenCalledWith('p-slug', PrismaLanguage.fr);
   });
 
-  it('categoriesBySlug: delegates to category service with path language', async () => {
+  it('categoriesBySlug: delegates to category service with path language and page', async () => {
     categories.getByLangSlugWithBooks.mockResolvedValueOnce({ items: [] });
-    const res = await controller.categoriesBySlug(PrismaLanguage.es, 'cat');
+    const res = await controller.categoriesBySlug(PrismaLanguage.es, 'cat', { page: 2, limit: 5 });
     expect(res).toEqual({ items: [] });
-    expect(categories.getByLangSlugWithBooks).toHaveBeenCalledWith(PrismaLanguage.es, 'cat');
+    expect(categories.getByLangSlugWithBooks).toHaveBeenCalledTimes(1);
+    expect(categories.getByLangSlugWithBooks).toHaveBeenCalledWith(PrismaLanguage.es, 'cat', 2, 5);
   });
 
   it('tagsBySlug: delegates to tags service with path language', async () => {

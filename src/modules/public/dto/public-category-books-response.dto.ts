@@ -78,8 +78,7 @@ export class PublicCategoryBookDto {
 /**
  * Response of `GET /:lang/categories/:slug/books`.
  *
- * ⚠️ `meta` is fixed at `page: 1, limit: 100` — the handler does not paginate; the
- * envelope exists so the shape matches the neighbouring list routes.
+ * `meta` carries the applied `page`/`limit` and the real `total` (`LEGACY-377`).
  */
 export class PublicCategoryBooksResponseDto {
   @ApiProperty({ type: PublicCategoryInfoDto })

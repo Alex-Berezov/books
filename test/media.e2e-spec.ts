@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 import { createBookFixture } from './helpers/book-fixture';
 
 // Smoke e2e for Media library: confirm -> list -> delete
@@ -77,6 +78,17 @@ describe('Media e2e', () => {
     // Delete
     await request(http())
       .delete(`/media/${id}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+  });
+
+  it('LEGACY-377: rejects a limit above the ceiling with 400 instead of an unbounded take', async () => {
+    await request(http())
+      .get('/media?limit=100000')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400);
+    await request(http())
+      .get(`/media?limit=${PAGINATION_MAX_LIMIT}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
   });

@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { PUBLIC_CATEGORIES_MAX_LIMIT } from '../src/modules/public/dto/public-categories-query.dto';
 
 /**
  * LEGACY-056. Публичный `GET /:lang/categories` звал сервис как `list(1, 50, …)` —
@@ -96,13 +97,16 @@ describe('Public categories pagination (LEGACY-056) e2e', () => {
     expect(head.meta.totalPages).toBe(pages);
   });
 
-  it('caps the limit out loud: meta reports the applied value, not the requested one', async () => {
-    const res = await list('?type=collection&limit=1000');
+  it('LEGACY-377: refuses a limit above the ceiling with 400 instead of capping it silently', async () => {
+    // Потолок в DTO, а не `Math.min` в контроллере: урезанная страница с кодом 200
+    // выдавала запрос за исполненный.
+    await request(http())
+      .get(`/en/categories?type=collection&limit=${PUBLIC_CATEGORIES_MAX_LIMIT + 1}`)
+      .expect(400);
+    await request(http()).get('/en/categories?limit=100000').expect(400);
 
-    // Молчаливое урезание — тот же дефект, что чиним: потребитель поделил бы
-    // total на запрошенный limit и получил неверное число страниц.
-    expect(res.meta.limit).toBe(200);
-    expect(res.data.length).toBeLessThanOrEqual(200);
+    const res = await list(`?type=collection&limit=${PUBLIC_CATEGORIES_MAX_LIMIT}`);
+    expect(res.meta.limit).toBe(PUBLIC_CATEGORIES_MAX_LIMIT);
   });
 
   it('keeps the default at 50 — five storefronts depend on it', async () => {

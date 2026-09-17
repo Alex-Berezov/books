@@ -48,6 +48,7 @@ interface PrismaStub {
    * которым нужен обход книг каталога. Отсюда необязательность поля.
    */
   book?: {
+    count?: jest.Mock;
     findMany: jest.Mock;
   };
 }
@@ -1105,6 +1106,7 @@ describe('CategoryService', () => {
       description: null,
     });
     prisma.book = {
+      count: jest.fn().mockResolvedValue(2),
       findMany: jest.fn().mockResolvedValue([
         { id: 'b1', slug: 'b1', versions: [] },
         { id: 'b2', slug: 'b2', versions: [] },
@@ -1119,6 +1121,48 @@ describe('CategoryService', () => {
     expect(prisma.bookRating.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({ where: { bookId: { in: ['b1', 'b2'] } } }),
     );
+  });
+
+  it('LEGACY-377: getByLangSlugWithBooks выбирает страницу и отдаёт честный meta', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      category: { id: 'cat1', name: 'Cat', slug: 'cat' },
+      seo: null,
+      description: null,
+    });
+    const findMany = jest.fn().mockResolvedValue([{ id: 'b3', slug: 'b3', versions: [] }]);
+    prisma.book = { count: jest.fn().mockResolvedValue(7), findMany };
+    prisma.bookVersion.findMany.mockResolvedValue([]);
+    prisma.bookRating.groupBy.mockResolvedValue([]);
+
+    const res = await service.getByLangSlugWithBooks(Language.en, 'cat', 2, 3);
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 3,
+        take: 3,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      }),
+    );
+    expect(res.meta).toEqual({ total: 7, page: 2, limit: 3, totalPages: 3 });
+  });
+
+  it('LEGACY-377: getByLangSlugWithBooks не ходит за страницей за пределами выдачи', async () => {
+    prisma.categoryTranslation.findUnique.mockResolvedValue({
+      category: { id: 'cat1', name: 'Cat', slug: 'cat' },
+      seo: null,
+      description: null,
+    });
+    const findMany = jest.fn();
+    prisma.book = { count: jest.fn().mockResolvedValue(2), findMany };
+    prisma.bookVersion.findMany.mockResolvedValue([]);
+    prisma.bookRating.groupBy.mockResolvedValue([]);
+
+    const res = await service.getByLangSlugWithBooks(Language.en, 'cat', 5, 10);
+
+    expect(findMany).not.toHaveBeenCalled();
+    expect(res.data).toEqual([]);
+    expect(res.meta.total).toBe(2);
   });
 
   it('list exposes per-translation indexability (source of truth for the sitemap)', async () => {
