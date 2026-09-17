@@ -750,8 +750,10 @@ export class BookVersionService {
     ).length;
 
     // Phase 16: claims filed against this version or against the whole book
-    const claimList = await this.rightsClaimsService.listForVersion(versionId);
-    const claims = claimList.items.slice(0, 50);
+    const { items: claims } = await this.rightsClaimsService.listForVersion(versionId, {
+      page: 1,
+      limit: 50,
+    });
     const openClaims = claims.filter((claim) => claim.isOpen);
     const claimBlockedCountries = new Set<string>();
     for (const claim of claims) {

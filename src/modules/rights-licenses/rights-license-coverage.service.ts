@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import {
@@ -10,6 +11,7 @@ import {
   RightsLicenseTerritoryScope,
   toStringArray,
 } from './rights-license-interface';
+import type { ChildListPage } from '../../shared/dto/child-list-query.dto';
 
 export type LicenseCoverageStatus = 'NOT_REQUIRED' | 'COVERED' | 'PARTIAL' | 'NOT_COVERED';
 
@@ -429,18 +431,31 @@ export class RightsLicenseCoverageService {
    */
   async loadLicensesForProfile(rightsProfileId: string): Promise<RightsLicenseRecord[]> {
     const links = await this.linkDelegate.findMany({
-      where: {
-        OR: [
-          { rightsProfileId },
-          { rightsComponent: { rightsProfileId } },
-          { componentTerritoryAssessment: { rightsComponent: { rightsProfileId } } },
-          { territoryDecision: { rightsProfileId } },
-          { sourceEdition: { rightsProfileId } },
-        ],
-      },
+      where: this.buildProfileLinkWhere(rightsProfileId),
       select: { rightsLicenseId: true },
     });
     return this.loadLicensesByIds(links.map((link) => link.rightsLicenseId));
+  }
+
+  /** Тот же набор, что `loadLicensesForProfile`, одной страницей: новые первыми. */
+  async loadLicensePageForProfile(
+    rightsProfileId: string,
+    { page, limit }: ChildListPage,
+  ): Promise<{ total: number; licenses: RightsLicenseRecord[] }> {
+    const where: Prisma.RightsLicenseWhereInput = {
+      links: { some: this.buildProfileLinkWhere(rightsProfileId) },
+    };
+    const [total, licenses] = await Promise.all([
+      this.prisma.rightsLicense.count({ where }),
+      this.prisma.rightsLicense.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+    // Ручной `RightsLicenseRecord` уже схемы (`licenseType` без `OTHER`) - приведение как у соседних выборок файла.
+    return { total, licenses: licenses as unknown as RightsLicenseRecord[] };
   }
 
   /** Licenses linked directly to the version plus everything reachable from its profile. */
@@ -549,5 +564,17 @@ export class RightsLicenseCoverageService {
       select: { componentType: true },
     })) as unknown as RightsComponentRow[];
     return components.length > 0;
+  }
+
+  private buildProfileLinkWhere(rightsProfileId: string): Prisma.RightsLicenseLinkWhereInput {
+    return {
+      OR: [
+        { rightsProfileId },
+        { rightsComponent: { rightsProfileId } },
+        { componentTerritoryAssessment: { rightsComponent: { rightsProfileId } } },
+        { territoryDecision: { rightsProfileId } },
+        { sourceEdition: { rightsProfileId } },
+      ],
+    };
   }
 }

@@ -2072,6 +2072,10 @@ describe('BookVersionService', () => {
 
       const res = await service.getRightsDashboard('v1');
 
+      // Сводка берёт первые 50 претензий в порядке списка, а не весь набор.
+      expect(rightsClaimsService.listForVersion).toHaveBeenCalledTimes(1);
+      expect(rightsClaimsService.listForVersion).toHaveBeenCalledWith('v1', { page: 1, limit: 50 });
+
       expect(res.claims).toHaveLength(2);
       expect(res.summary.claimsCount).toBe(2);
       expect(res.summary.activeClaimsCount).toBe(1);

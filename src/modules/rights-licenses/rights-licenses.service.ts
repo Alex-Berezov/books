@@ -17,6 +17,7 @@ import {
 } from './dto/rights-license-response.dto';
 import { UpdateRightsLicenseDto } from './dto/update-rights-license.dto';
 import { RightsLicenseCoverageService } from './rights-license-coverage.service';
+import type { ChildListPage } from '../../shared/dto/child-list-query.dto';
 import {
   RightsLicenseDatabaseClient,
   RightsLicenseDelegate,
@@ -198,9 +199,18 @@ export class RightsLicensesService {
     return this.buildDetail(license);
   }
 
-  async listForProfile(rightsProfileId: string): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
-    const licenses = await this.coverageService.loadLicensesForProfile(rightsProfileId);
-    return this.asListResponse(licenses);
+  async listForProfile(
+    rightsProfileId: string,
+    page: ChildListPage,
+  ): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
+    const { total, licenses } = await this.coverageService.loadLicensePageForProfile(
+      rightsProfileId,
+      page,
+    );
+    return paginated(
+      licenses.map((license) => this.mapSummary(license)),
+      { ...page, total },
+    );
   }
 
   async listForVersion(bookVersionId: string): Promise<PaginatedResult<RightsLicenseSummaryDto>> {

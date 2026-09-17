@@ -269,13 +269,40 @@ describe('RightsClaimsService', () => {
     expect(result.items).toHaveLength(1);
   });
 
-  it('listForVersion answers one page over everything found, totalPages 1', async () => {
+  it('listForVersion reads one page in the database and reports the real total (LEGACY-377)', async () => {
+    prisma.rightsClaim.count.mockResolvedValue(45);
     prisma.rightsClaim.findMany.mockResolvedValue([createClaim(), createClaim({ id: 'claim-2' })]);
 
-    const result = await service.listForVersion('version-1');
+    const result = await service.listForVersion('version-1', { page: 3, limit: 20 });
 
     expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
-    expect(result.pagination).toEqual({ page: 1, limit: 2, total: 2, totalPages: 1 });
+    expect(result.pagination).toEqual({ page: 3, limit: 20, total: 45, totalPages: 3 });
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 40,
+        take: 20,
+        orderBy: [
+          { severity: 'desc' },
+          { deadlineAt: { sort: 'asc', nulls: 'last' } },
+          { receivedAt: 'desc' },
+          { id: 'asc' },
+        ],
+      }),
+    );
+  });
+
+  it('listForBook reads one page in the database (LEGACY-377)', async () => {
+    prisma.rightsClaim.count.mockResolvedValue(1);
+    prisma.rightsClaim.findMany.mockResolvedValue([createClaim()]);
+
+    const result = await service.listForBook('book-1', { page: 1, limit: 5 });
+
+    expect(result.pagination).toEqual({ page: 1, limit: 5, total: 1, totalPages: 1 });
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookId: 'book-1' }, skip: 0, take: 5 }),
+    );
   });
 
   // --- create -------------------------------------------------------------

@@ -37,11 +37,8 @@ import {
   RightsClaimSummaryDto,
 } from './dto/rights-claim-response.dto';
 import { ReopenRightsClaimDto, ResolveRightsClaimDto } from './dto/resolve-rights-claim.dto';
-import {
-  paginated,
-  paginatedAll,
-  type PaginatedResult,
-} from '../../shared/dto/paginated-response.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import type { ChildListPage } from '../../shared/dto/child-list-query.dto';
 import {
   CLEAR_LICENSE_SNAPSHOT,
   licenseSnapshotPayload,
@@ -238,33 +235,47 @@ export class RightsClaimsService {
     return this.buildDetail(claim);
   }
 
-  async listForVersion(versionId: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
-    const version = await this.requireVersion(versionId);
-    const claims = await this.prisma.rightsClaim.findMany({
-      where: {
-        OR: [{ bookVersionId: versionId }, { bookId: version.bookId, bookVersionId: null }],
-      },
-      orderBy: { receivedAt: 'desc' },
-    });
-    return this.asListResponse(claims);
-  }
-
-  async listForBook(bookId: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
-    const claims = await this.prisma.rightsClaim.findMany({
-      where: { bookId },
-      orderBy: { receivedAt: 'desc' },
-    });
-    return this.asListResponse(claims);
-  }
-
-  private async asListResponse(
-    claims: RightsClaim[],
+  async listForVersion(
+    versionId: string,
+    page: ChildListPage,
   ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
+    const version = await this.requireVersion(versionId);
+    return this.listPage(
+      { OR: [{ bookVersionId: versionId }, { bookId: version.bookId, bookVersionId: null }] },
+      page,
+    );
+  }
+
+  async listForBook(
+    bookId: string,
+    page: ChildListPage,
+  ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
+    return this.listPage({ bookId }, page);
+  }
+
+  /** Порядок в базе повторяет `sortClaims`; совпадение enum `RightsClaimSeverity` с рангом сторожит `test/admin-rights-lists-pagination.e2e-spec.ts`. */
+  private async listPage(
+    where: Prisma.RightsClaimWhereInput,
+    { page, limit }: ChildListPage,
+  ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
+    const [total, claims] = await Promise.all([
+      this.prisma.rightsClaim.count({ where }),
+      this.prisma.rightsClaim.findMany({
+        where,
+        orderBy: [
+          { severity: 'desc' },
+          { deadlineAt: { sort: 'asc', nulls: 'last' } },
+          { receivedAt: 'desc' },
+          { id: 'asc' },
+        ],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
     const blocksByClaim = await this.loadBlocksByClaim(claims.map((claim) => claim.id));
-    return paginatedAll(
-      this.sortClaims(claims).map((claim) =>
-        this.mapSummary(claim, blocksByClaim.get(claim.id) ?? []),
-      ),
+    return paginated(
+      claims.map((claim) => this.mapSummary(claim, blocksByClaim.get(claim.id) ?? [])),
+      { page, limit, total },
     );
   }
 

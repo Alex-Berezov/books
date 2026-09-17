@@ -29,6 +29,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { CreateRightsLicenseDto } from './dto/create-rights-license.dto';
 import { LinkRightsLicenseDto } from './dto/link-rights-license.dto';
 import { QueryRightsLicensesDto } from './dto/query-rights-licenses.dto';
+import { ChildListQueryDto } from '../../shared/dto/child-list-query.dto';
 import { RevokeRightsLicenseDto } from './dto/revoke-rights-license.dto';
 import {
   LicenseCoverageResultDto,
@@ -142,8 +143,9 @@ export class RightsLicensesController {
   @ApiResponse({ status: 200, schema: paginatedSchema(RightsLicenseSummaryDto) })
   listForProfile(
     @Param('profileId') profileId: string,
+    @Query() query: ChildListQueryDto,
   ): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
-    return this.service.listForProfile(profileId);
+    return this.service.listForProfile(profileId, query);
   }
 
   @Get('profiles/:profileId/license-coverage')

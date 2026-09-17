@@ -40,6 +40,7 @@ import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-
 import { LicenseCoverageResultDto } from '../rights-licenses/dto/rights-license-response.dto';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsClaimSummaryDto } from '../rights-claims/dto/rights-claim-response.dto';
+import { ChildListQueryDto } from '../../shared/dto/child-list-query.dto';
 import {
   PaginationInfoDto,
   paginatedSchema,
@@ -500,8 +501,11 @@ export class BookVersionController {
   @Roles(Role.Admin, Role.ContentManager)
   @ApiExtraModels(RightsClaimSummaryDto, PaginationInfoDto)
   @ApiResponse({ status: 200, schema: paginatedSchema(RightsClaimSummaryDto) })
-  getVersionRightsClaims(@Param('id') id: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
-    return this.rightsClaimsService.listForVersion(id);
+  getVersionRightsClaims(
+    @Param('id') id: string,
+    @Query() query: ChildListQueryDto,
+  ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
+    return this.rightsClaimsService.listForVersion(id, query);
   }
 
   @Get('admin/books/:id/rights-claims')
@@ -514,8 +518,11 @@ export class BookVersionController {
   @Roles(Role.Admin, Role.ContentManager)
   @ApiExtraModels(RightsClaimSummaryDto, PaginationInfoDto)
   @ApiResponse({ status: 200, schema: paginatedSchema(RightsClaimSummaryDto) })
-  getBookRightsClaims(@Param('id') id: string): Promise<PaginatedResult<RightsClaimSummaryDto>> {
-    return this.rightsClaimsService.listForBook(id);
+  getBookRightsClaims(
+    @Param('id') id: string,
+    @Query() query: ChildListQueryDto,
+  ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
+    return this.rightsClaimsService.listForBook(id, query);
   }
 
   @Patch('versions/:id')

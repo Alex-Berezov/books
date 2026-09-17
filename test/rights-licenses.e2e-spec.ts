@@ -278,10 +278,10 @@ describe('Rights licenses e2e', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200)
       .expect(({ body }) => {
-        // `LEGACY-177`: маршрут пагинацию не принимает и отдаёт всё одной страницей.
+        // `LEGACY-377`: маршрут пагинирован, без query - первая страница по 20.
         expect(body).toEqual({
           items: [expect.objectContaining({ licenseKey: 'license:imported' })],
-          pagination: { page: 1, limit: 1, total: 1, totalPages: 1 },
+          pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
         });
       });
   });

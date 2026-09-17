@@ -143,20 +143,27 @@ describe('RightsLicensesService', () => {
       expect(result.items).toHaveLength(1);
     });
 
-    it('listForProfile answers one page over everything found, totalPages 1', async () => {
-      prisma.rightsLicenseLink.findMany.mockResolvedValue([
-        { rightsLicenseId: 'lic-1' },
-        { rightsLicenseId: 'lic-2' },
-      ]);
+    it('listForProfile reads one page of licenses in the database (LEGACY-377)', async () => {
+      prisma.rightsLicense.count.mockResolvedValue(7);
       prisma.rightsLicense.findMany.mockResolvedValue([
         makeRecord(),
         makeRecord({ id: 'lic-2', licenseKey: 'key-2' }),
       ]);
 
-      const result = await service.listForProfile('profile-1');
+      const result = await service.listForProfile('profile-1', { page: 2, limit: 5 });
 
       expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
-      expect(result.pagination).toEqual({ page: 1, limit: 2, total: 2, totalPages: 1 });
+      expect(result.pagination).toEqual({ page: 2, limit: 5, total: 7, totalPages: 2 });
+      expect(prisma.rightsLicense.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.rightsLicense.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 5,
+          take: 5,
+          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          where: { links: { some: expect.objectContaining({ OR: expect.any(Array) }) } },
+        }),
+      );
+      expect(prisma.rightsLicenseLink.findMany).not.toHaveBeenCalled();
     });
   });
 
