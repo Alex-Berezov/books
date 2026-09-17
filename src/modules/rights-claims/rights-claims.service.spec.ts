@@ -259,14 +259,20 @@ describe('RightsClaimsService', () => {
   // --- списочная обёртка (`LEGACY-177`) ------------------------------------
 
   it('findAll answers in the single list shape {items, pagination}', async () => {
+    prisma.rightsClaim.count.mockResolvedValue(41);
     prisma.rightsClaim.findMany.mockResolvedValue([createClaim()]);
 
-    const result = await service.findAll({ page: 1, limit: 20 });
+    const result = await service.findAll({ page: 3, limit: 20 });
 
     // Тело целиком: возврат плоской `{items,total,page,limit}` красит эту строку.
     expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
-    expect(result.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
+    expect(result.pagination).toEqual({ page: 3, limit: 20, total: 41, totalPages: 3 });
     expect(result.items).toHaveLength(1);
+    // Страница режется в базе (LEGACY-377), а не срезом выборки без `take`.
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 40, take: 20 }),
+    );
   });
 
   it('listForVersion reads one page in the database and reports the real total (LEGACY-377)', async () => {
@@ -303,6 +309,60 @@ describe('RightsClaimsService', () => {
     expect(prisma.rightsClaim.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { bookId: 'book-1' }, skip: 0, take: 5 }),
     );
+  });
+
+  it('listForBook answers 404 for a missing book, like listForVersion (LEGACY-377)', async () => {
+    prisma.book.findUnique.mockResolvedValueOnce(null);
+
+    await expect(service.listForBook('missing', { page: 1, limit: 5 })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(prisma.rightsClaim.findMany).not.toHaveBeenCalled();
+  });
+
+  it('summarizeForVersion counts in one batch and groups active blocks by country in the database (LEGACY-377)', async () => {
+    const batch = jest.fn((queries: Array<Promise<unknown>>) => Promise.all(queries));
+    const groupBy = jest.fn().mockResolvedValue([
+      { countryCode: null, _count: { _all: 1 } },
+      { countryCode: 'DE', _count: { _all: 2 } },
+    ]);
+    Object.assign(prisma, { $transaction: batch });
+    Object.assign(prisma.rightsClaimAccessBlock, { groupBy });
+    const openBySeverity: Record<string, number> = { LOW: 2, MEDIUM: 1, HIGH: 1, CRITICAL: 0 };
+    prisma.rightsClaim.count.mockImplementation(
+      ({ where }: { where: Prisma.RightsClaimWhereInput }) => {
+        if (typeof where.severity === 'string')
+          return Promise.resolve(openBySeverity[where.severity]);
+        if (where.blocksPublication) return Promise.resolve(1);
+        if (where.deadlineAt) return Promise.resolve(1);
+        return Promise.resolve(56);
+      },
+    );
+    // Порядок enum в базе не участвует: `findFirst` вернул бы ложную худшую серьёзность.
+    prisma.rightsClaim.findFirst.mockResolvedValue({ severity: 'CRITICAL' });
+
+    const summary = await service.summarizeForVersion({ id: 'version-1', bookId: 'book-1' });
+
+    expect(summary).toEqual({
+      claimsCount: 56,
+      activeClaimsCount: 4,
+      blockingClaimsCount: 1,
+      criticalClaimsCount: 0,
+      overdueClaimsCount: 1,
+      activeClaimBlocksCount: 3,
+      claimBlockedCountriesCount: 1,
+      hasWorldwideClaimBlock: true,
+      worstClaimSeverity: 'HIGH',
+    });
+    // Счётчики занимают одно соединение пула: три общих и по одному на каждую серьёзность.
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(batch.mock.calls[0][0]).toHaveLength(7);
+    expect(prisma.rightsClaim.findFirst).not.toHaveBeenCalled();
+    // Страны считаются группировкой в базе, а не выборкой всех блокировок в память.
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    expect(groupBy).toHaveBeenCalledWith(expect.objectContaining({ by: ['countryCode'] }));
+    expect(prisma.rightsClaimAccessBlock.findMany).not.toHaveBeenCalled();
+    expect(prisma.bookVersion.findUnique).not.toHaveBeenCalled();
   });
 
   // --- create -------------------------------------------------------------

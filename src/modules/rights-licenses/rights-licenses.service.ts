@@ -1,10 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  paginated,
-  paginatedAll,
-  type PaginatedResult,
-} from '../../shared/dto/paginated-response.dto';
+import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
 import { CreateRightsLicenseDto } from './dto/create-rights-license.dto';
 import { LinkRightsLicenseDto } from './dto/link-rights-license.dto';
 import { QueryRightsLicensesDto } from './dto/query-rights-licenses.dto';
@@ -16,7 +13,10 @@ import {
   RightsLicenseSummaryDto,
 } from './dto/rights-license-response.dto';
 import { UpdateRightsLicenseDto } from './dto/update-rights-license.dto';
-import { RightsLicenseCoverageService } from './rights-license-coverage.service';
+import {
+  LICENSE_LIST_ORDER,
+  RightsLicenseCoverageService,
+} from './rights-license-coverage.service';
 import type { ChildListPage } from '../../shared/dto/child-list-query.dto';
 import {
   RightsLicenseDatabaseClient,
@@ -113,84 +113,21 @@ export class RightsLicensesService {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
 
-    const where: Record<string, unknown> = {};
-    if (query.status) where.status = query.status;
-    if (query.licenseType) where.licenseType = query.licenseType;
-    if (query.territoryScope) where.territoryScope = query.territoryScope;
-    if (query.q) {
-      const contains = { contains: query.q, mode: 'insensitive' };
-      where.OR = [
-        { title: contains },
-        { licensor: contains },
-        { licensee: contains },
-        { rightsHolder: contains },
-        { referenceNumber: contains },
-        { licenseKey: contains },
-      ];
-    }
-    if (query.expiringInDays) {
-      where.expiresAt = {
-        gte: new Date(),
-        lte: new Date(Date.now() + query.expiringInDays * MS_PER_DAY),
-      };
-    }
-
-    const licenses = await this.licenseDelegate.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const filtered = await this.applyInMemoryFilters(licenses, query);
-    const start = (page - 1) * limit;
+    const where = await this.buildListWhere(query);
+    const [total, licenses] = await Promise.all([
+      this.prisma.rightsLicense.count({ where }),
+      this.prisma.rightsLicense.findMany({
+        where,
+        orderBy: LICENSE_LIST_ORDER,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
 
     return paginated(
-      filtered.slice(start, start + limit).map((license) => this.mapSummary(license)),
-      { page, limit, total: filtered.length },
+      (licenses as unknown as RightsLicenseRecord[]).map((license) => this.mapSummary(license)),
+      { page, limit, total },
     );
-  }
-
-  /**
-   * JSON scope columns and link relations cannot be filtered in SQL with the dynamic
-   * delegates, so these predicates are applied after the query and before paging.
-   */
-  private async applyInMemoryFilters(
-    licenses: RightsLicenseRecord[],
-    query: QueryRightsLicensesDto,
-  ): Promise<RightsLicenseRecord[]> {
-    let result = licenses;
-
-    if (query.countryCode) {
-      const code = query.countryCode;
-      result = result.filter((license) => this.coverageService.coversCountry(license, code));
-    }
-    if (query.languageCode) {
-      const language = query.languageCode;
-      result = result.filter((license) => this.coverageService.coversLanguage(license, language));
-    }
-    if (query.mediaFormat) {
-      const format = query.mediaFormat;
-      result = result.filter((license) =>
-        this.coverageService.coversMediaFormats(license, [format]),
-      );
-    }
-    if (query.rightsProfileId) {
-      const allowed = new Set(
-        (await this.coverageService.loadLicensesForProfile(query.rightsProfileId)).map(
-          (license) => license.id,
-        ),
-      );
-      result = result.filter((license) => allowed.has(license.id));
-    }
-    if (query.bookVersionId) {
-      const allowed = new Set(
-        (await this.coverageService.loadLicensesForVersion(query.bookVersionId)).map(
-          (license) => license.id,
-        ),
-      );
-      result = result.filter((license) => allowed.has(license.id));
-    }
-
-    return result;
   }
 
   async findOne(id: string): Promise<RightsLicenseDetailDto> {
@@ -211,17 +148,6 @@ export class RightsLicensesService {
       licenses.map((license) => this.mapSummary(license)),
       { ...page, total },
     );
-  }
-
-  async listForVersion(bookVersionId: string): Promise<PaginatedResult<RightsLicenseSummaryDto>> {
-    const licenses = await this.coverageService.loadLicensesForVersion(bookVersionId);
-    return this.asListResponse(licenses);
-  }
-
-  private asListResponse(
-    licenses: RightsLicenseRecord[],
-  ): PaginatedResult<RightsLicenseSummaryDto> {
-    return paginatedAll(licenses.map((license) => this.mapSummary(license)));
   }
 
   // ---------------------------------------------------------------------------
@@ -819,5 +745,42 @@ export class RightsLicensesService {
   private resolveDate(value: string | undefined, fallback: Date | null | undefined): Date | null {
     if (value !== undefined) return new Date(value);
     return fallback ?? null;
+  }
+
+  private async buildListWhere(
+    query: QueryRightsLicensesDto,
+  ): Promise<Prisma.RightsLicenseWhereInput> {
+    const where: Prisma.RightsLicenseWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (query.licenseType) where.licenseType = query.licenseType;
+    if (query.territoryScope) where.territoryScope = query.territoryScope;
+    if (query.q) {
+      const contains: Prisma.StringFilter = { contains: query.q, mode: 'insensitive' };
+      where.OR = [
+        { title: contains },
+        { licensor: contains },
+        { licensee: contains },
+        { rightsHolder: contains },
+        { referenceNumber: contains },
+        { licenseKey: contains },
+      ];
+    }
+    if (query.expiringInDays) {
+      where.expiresAt = {
+        gte: new Date(),
+        lte: new Date(Date.now() + query.expiringInDays * MS_PER_DAY),
+      };
+    }
+
+    const and = this.coverageService.buildCoverageWhere(query);
+    if (query.rightsProfileId) {
+      and.push(this.coverageService.buildProfileLicenseWhere(query.rightsProfileId));
+    }
+    if (query.bookVersionId) {
+      and.push(await this.coverageService.buildVersionLicenseWhere(query.bookVersionId));
+    }
+    if (and.length > 0) where.AND = and;
+
+    return where;
   }
 }

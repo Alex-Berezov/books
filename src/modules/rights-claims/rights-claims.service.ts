@@ -38,6 +38,7 @@ import {
 } from './dto/rights-claim-response.dto';
 import { ReopenRightsClaimDto, ResolveRightsClaimDto } from './dto/resolve-rights-claim.dto';
 import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
+import { jsonListAbsentOrContains } from '../../shared/prisma/json-list-filter';
 import type { ChildListPage } from '../../shared/dto/child-list-query.dto';
 import {
   CLEAR_LICENSE_SNAPSHOT,
@@ -71,6 +72,43 @@ const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CLAIM_NUMBER_MAX_ATTEMPTS = 5;
+
+/**
+ * Порядок всех списков претензий: серьёзность по убыванию, срок по возрастанию с пустыми
+ * в конце, свежие первыми. Сортировка по enum идёт по его порядку в базе - равенство
+ * с `CLAIM_SEVERITY_RANK` сторожит `test/admin-rights-lists-pagination.e2e-spec.ts`.
+ */
+const CLAIM_LIST_ORDER: Prisma.RightsClaimOrderByWithRelationInput[] = [
+  { severity: 'desc' },
+  { deadlineAt: { sort: 'asc', nulls: 'last' } },
+  { receivedAt: 'desc' },
+  { id: 'asc' },
+];
+
+const OPEN_CLAIM_WHERE: Prisma.RightsClaimWhereInput = {
+  status: { in: [...OPEN_CLAIM_STATUSES] },
+};
+
+/** Активная блокировка - как `activeBlocks`: действует и не истекла к `now`. */
+const activeBlockWhere = (now: Date): Prisma.RightsClaimAccessBlockWhereInput => ({
+  status: RightsClaimBlockStatus.ACTIVE,
+  OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+});
+
+/** Сводка претензий версии для дашборда прав: по всем претензиям, поля - как в `mapSummary`. */
+export interface RightsClaimsVersionSummary {
+  claimsCount: number;
+  activeClaimsCount: number;
+  blockingClaimsCount: number;
+  criticalClaimsCount: number;
+  overdueClaimsCount: number;
+  /** Число активных блокировок, а не претензий с ними. */
+  activeClaimBlocksCount: number;
+  claimBlockedCountriesCount: number;
+  hasWorldwideClaimBlock: boolean;
+  /** Только среди открытых претензий. */
+  worstClaimSeverity: RightsClaimSeverity | null;
+}
 
 interface RecordEventOptions {
   previousStatus?: RightsClaimStatus | null;
@@ -117,117 +155,7 @@ export class RightsClaimsService {
   async findAll(query: QueryRightsClaimsDto): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
-
-    const where: Prisma.RightsClaimWhereInput = {};
-    if (query.status) where.status = query.status;
-    if (query.claimType) where.claimType = query.claimType;
-    if (query.severity) where.severity = query.severity;
-    if (query.resolution) where.resolution = query.resolution;
-    if (query.channel) where.channel = query.channel;
-    if (query.claimantType) where.claimantType = query.claimantType;
-    if (query.assignedToUserId) where.assignedToUserId = query.assignedToUserId;
-    if (query.bookId) where.bookId = query.bookId;
-    if (query.bookVersionId) where.bookVersionId = query.bookVersionId;
-    if (query.rightsProfileId) where.rightsProfileId = query.rightsProfileId;
-    if (query.requiresLawyerReview !== undefined) {
-      where.requiresLawyerReview = query.requiresLawyerReview;
-    }
-    if (query.openOnly) where.status = { in: [...OPEN_CLAIM_STATUSES] };
-    if (query.q) {
-      const contains: Prisma.StringFilter = { contains: query.q, mode: 'insensitive' };
-      where.OR = [
-        { claimNumber: contains },
-        { claimantName: contains },
-        { claimantOrganization: contains },
-        { claimantEmail: contains },
-        { claimedWorkTitle: contains },
-        { claimedWorkAuthor: contains },
-        { descriptionRu: contains },
-      ];
-    }
-    if (query.receivedFrom || query.receivedTo) {
-      const range: Prisma.DateTimeFilter = {};
-      if (query.receivedFrom) range.gte = new Date(query.receivedFrom);
-      if (query.receivedTo) range.lte = new Date(query.receivedTo);
-      where.receivedAt = range;
-    }
-
-    const claims = await this.prisma.rightsClaim.findMany({
-      where,
-      orderBy: { receivedAt: 'desc' },
-    });
-    const blocksByClaim = await this.loadBlocksByClaim(claims.map((claim) => claim.id));
-
-    const filtered = this.applyInMemoryFilters(claims, blocksByClaim, query);
-    const sorted = this.sortClaims(filtered);
-    const start = (page - 1) * limit;
-
-    return paginated(
-      sorted
-        .slice(start, start + limit)
-        .map((claim) => this.mapSummary(claim, blocksByClaim.get(claim.id) ?? [])),
-      { page, limit, total: sorted.length },
-    );
-  }
-
-  /**
-   * JSON columns and access-block aggregates cannot be filtered in SQL through the dynamic
-   * delegates, so these predicates run after the query and before paging.
-   */
-  private applyInMemoryFilters(
-    claims: RightsClaim[],
-    blocksByClaim: Map<string, RightsClaimAccessBlock[]>,
-    query: QueryRightsClaimsDto,
-  ): RightsClaim[] {
-    const now = new Date();
-    let result = claims;
-
-    if (query.countryCode) {
-      const code = query.countryCode.toUpperCase();
-      result = result.filter((claim) => {
-        const codes = toStringArray(claim.affectedCountryCodes);
-        // An empty list means the claim applies in every country.
-        return codes.length === 0 || codes.some((item) => item.toUpperCase() === code);
-      });
-    }
-    if (query.overdueOnly) {
-      result = result.filter(
-        (claim) =>
-          isOpenClaimStatus(claim.status) &&
-          claim.deadlineAt !== null &&
-          claim.deadlineAt.getTime() < now.getTime(),
-      );
-    }
-    if (query.hasActiveBlock) {
-      result = result.filter(
-        (claim) => this.activeBlocks(blocksByClaim.get(claim.id) ?? [], now).length > 0,
-      );
-    }
-    if (query.deadlineWithinDays !== undefined) {
-      const horizon = now.getTime() + query.deadlineWithinDays * MS_PER_DAY;
-      result = result.filter(
-        (claim) => claim.deadlineAt !== null && claim.deadlineAt.getTime() <= horizon,
-      );
-    }
-
-    return result;
-  }
-
-  /** Severity desc, then deadline asc with nulls last, then most recently received first. */
-  private sortClaims(claims: RightsClaim[]): RightsClaim[] {
-    return [...claims].sort((left, right) => {
-      const severity =
-        (CLAIM_SEVERITY_RANK[right.severity] ?? 0) - (CLAIM_SEVERITY_RANK[left.severity] ?? 0);
-      if (severity !== 0) return severity;
-
-      const leftDeadline = left.deadlineAt ? left.deadlineAt.getTime() : Number.POSITIVE_INFINITY;
-      const rightDeadline = right.deadlineAt
-        ? right.deadlineAt.getTime()
-        : Number.POSITIVE_INFINITY;
-      if (leftDeadline !== rightDeadline) return leftDeadline - rightDeadline;
-
-      return right.receivedAt.getTime() - left.receivedAt.getTime();
-    });
+    return this.listPage(this.buildListWhere(query, new Date()), { page, limit });
   }
 
   async findOne(id: string): Promise<RightsClaimDetailDto> {
@@ -240,20 +168,71 @@ export class RightsClaimsService {
     page: ChildListPage,
   ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
     const version = await this.requireVersion(versionId);
-    return this.listPage(
-      { OR: [{ bookVersionId: versionId }, { bookId: version.bookId, bookVersionId: null }] },
-      page,
-    );
+    return this.listPage(this.buildVersionClaimsWhere(version), page);
+  }
+
+  /**
+   * Считает в базе по всем претензиям версии, без страницы: те же определения, что в `mapSummary`.
+   * Два запроса к пулу: пакетная транзакция со счётчиками и `groupBy` блокировок рядом с ней.
+   * Худшая серьёзность - по `CLAIM_SEVERITY_RANK`, как в гейте (`worstSeverity`).
+   */
+  async summarizeForVersion(
+    version: { id: string; bookId: string },
+    now: Date = new Date(),
+  ): Promise<RightsClaimsVersionSummary> {
+    const where = this.buildVersionClaimsWhere(version);
+    const open: Prisma.RightsClaimWhereInput = { ...where, ...OPEN_CLAIM_WHERE };
+    const severities = Object.values(RightsClaimSeverity);
+
+    const [
+      [claimsCount, blockingClaimsCount, overdueClaimsCount, ...openBySeverity],
+      blocksByCountry,
+    ] = await Promise.all([
+      this.prisma.$transaction([
+        this.prisma.rightsClaim.count({ where }),
+        this.prisma.rightsClaim.count({ where: { ...open, blocksPublication: true } }),
+        this.prisma.rightsClaim.count({ where: { ...open, deadlineAt: { lt: now } } }),
+        ...severities.map((severity) =>
+          this.prisma.rightsClaim.count({ where: { ...open, severity } }),
+        ),
+      ]),
+      // `groupBy` внутри пакета теряет тип `_count`; строк не больше, чем стран, плюс всемирные.
+      this.prisma.rightsClaimAccessBlock.groupBy({
+        by: ['countryCode'],
+        where: { ...activeBlockWhere(now), rightsClaim: where },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const openSeverities = severities.filter((_, index) => openBySeverity[index] > 0);
+    return {
+      claimsCount,
+      activeClaimsCount: openBySeverity.reduce((sum, count) => sum + count, 0),
+      blockingClaimsCount,
+      criticalClaimsCount: openBySeverity[severities.indexOf(RightsClaimSeverity.CRITICAL)] ?? 0,
+      overdueClaimsCount,
+      activeClaimBlocksCount: blocksByCountry.reduce((sum, group) => sum + group._count._all, 0),
+      claimBlockedCountriesCount: blocksByCountry.filter((group) => group.countryCode !== null)
+        .length,
+      hasWorldwideClaimBlock: blocksByCountry.some((group) => group.countryCode === null),
+      worstClaimSeverity: openSeverities.reduce<RightsClaimSeverity | null>(
+        (worst, severity) =>
+          worst === null || CLAIM_SEVERITY_RANK[severity] > CLAIM_SEVERITY_RANK[worst]
+            ? severity
+            : worst,
+        null,
+      ),
+    };
   }
 
   async listForBook(
     bookId: string,
     page: ChildListPage,
   ): Promise<PaginatedResult<RightsClaimSummaryDto>> {
+    await this.requireBook(bookId);
     return this.listPage({ bookId }, page);
   }
 
-  /** Порядок в базе повторяет `sortClaims`; совпадение enum `RightsClaimSeverity` с рангом сторожит `test/admin-rights-lists-pagination.e2e-spec.ts`. */
   private async listPage(
     where: Prisma.RightsClaimWhereInput,
     { page, limit }: ChildListPage,
@@ -262,12 +241,7 @@ export class RightsClaimsService {
       this.prisma.rightsClaim.count({ where }),
       this.prisma.rightsClaim.findMany({
         where,
-        orderBy: [
-          { severity: 'desc' },
-          { deadlineAt: { sort: 'asc', nulls: 'last' } },
-          { receivedAt: 'desc' },
-          { id: 'asc' },
-        ],
+        orderBy: CLAIM_LIST_ORDER,
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -1622,6 +1596,76 @@ export class RightsClaimsService {
     const claim = await this.prisma.rightsClaim.findUnique({ where: { id } });
     if (!claim) throw new NotFoundException('RightsClaim not found');
     return claim;
+  }
+
+  private buildListWhere(query: QueryRightsClaimsDto, now: Date): Prisma.RightsClaimWhereInput {
+    const where: Prisma.RightsClaimWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (query.claimType) where.claimType = query.claimType;
+    if (query.severity) where.severity = query.severity;
+    if (query.resolution) where.resolution = query.resolution;
+    if (query.channel) where.channel = query.channel;
+    if (query.claimantType) where.claimantType = query.claimantType;
+    if (query.assignedToUserId) where.assignedToUserId = query.assignedToUserId;
+    if (query.bookId) where.bookId = query.bookId;
+    if (query.bookVersionId) where.bookVersionId = query.bookVersionId;
+    if (query.rightsProfileId) where.rightsProfileId = query.rightsProfileId;
+    if (query.requiresLawyerReview !== undefined) {
+      where.requiresLawyerReview = query.requiresLawyerReview;
+    }
+    if (query.openOnly) where.status = { in: [...OPEN_CLAIM_STATUSES] };
+    if (query.q) {
+      const contains: Prisma.StringFilter = { contains: query.q, mode: 'insensitive' };
+      where.OR = [
+        { claimNumber: contains },
+        { claimantName: contains },
+        { claimantOrganization: contains },
+        { claimantEmail: contains },
+        { claimedWorkTitle: contains },
+        { claimedWorkAuthor: contains },
+        { descriptionRu: contains },
+      ];
+    }
+    if (query.receivedFrom || query.receivedTo) {
+      const range: Prisma.DateTimeFilter = {};
+      if (query.receivedFrom) range.gte = new Date(query.receivedFrom);
+      if (query.receivedTo) range.lte = new Date(query.receivedTo);
+      where.receivedAt = range;
+    }
+
+    const and: Prisma.RightsClaimWhereInput[] = [];
+    if (query.countryCode) {
+      // Пустой или отсутствующий список - претензия во всех странах; коды пишутся в верхнем регистре.
+      const code = query.countryCode.toUpperCase();
+      and.push({
+        OR: jsonListAbsentOrContains(code).map((filter) => ({ affectedCountryCodes: filter })),
+      });
+    }
+    if (query.overdueOnly) and.push({ ...OPEN_CLAIM_WHERE, deadlineAt: { lt: now } });
+    if (query.hasActiveBlock) and.push({ accessBlocks: { some: activeBlockWhere(now) } });
+    if (query.deadlineWithinDays !== undefined) {
+      and.push({
+        deadlineAt: { lte: new Date(now.getTime() + query.deadlineWithinDays * MS_PER_DAY) },
+      });
+    }
+    if (and.length > 0) where.AND = and;
+
+    return where;
+  }
+
+  /** Претензии самой версии и претензии на всю книгу без версии. */
+  private buildVersionClaimsWhere(version: {
+    id: string;
+    bookId: string;
+  }): Prisma.RightsClaimWhereInput {
+    return {
+      OR: [{ bookVersionId: version.id }, { bookId: version.bookId, bookVersionId: null }],
+    };
+  }
+
+  private async requireBook(bookId: string): Promise<void> {
+    const book = await this.prisma.book.findUnique({ where: { id: bookId }, select: { id: true } });
+    if (!book) throw new NotFoundException('Book not found');
   }
 
   private async requireVersion(versionId: string): Promise<{ id: string; bookId: string }> {

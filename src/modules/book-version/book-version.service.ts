@@ -32,8 +32,6 @@ import {
   lockLicenseSnapshot,
 } from '../../shared/rights-license-snapshot/rights-license-snapshot';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
-import { CLAIM_SEVERITY_RANK } from '../rights-claims/rights-claim.constants';
-import { RightsClaimSeverity } from '../rights-claims/rights-claim-interface';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 import type { VersionLawyerReviewDto } from '../rights-lawyer/dto/version-lawyer-review-response.dto';
@@ -749,26 +747,12 @@ export class BookVersionService {
       (l) => l.attributionRequired,
     ).length;
 
-    // Phase 16: claims filed against this version or against the whole book
-    const { items: claims } = await this.rightsClaimsService.listForVersion(versionId, {
-      page: 1,
-      limit: 50,
-    });
-    const openClaims = claims.filter((claim) => claim.isOpen);
-    const claimBlockedCountries = new Set<string>();
-    for (const claim of claims) {
-      for (const code of claim.blockedCountryCodes) claimBlockedCountries.add(code);
-    }
-    const activeClaimBlocksCount = claims.reduce(
-      (total, claim) => total + claim.activeBlocksCount,
-      0,
-    );
-    const worstClaimSeverity =
-      openClaims.reduce<string | null>((worst, claim) => {
-        const rank = CLAIM_SEVERITY_RANK[claim.severity] ?? 0;
-        const worstRank = worst ? (CLAIM_SEVERITY_RANK[worst] ?? 0) : -1;
-        return rank > worstRank ? claim.severity : worst;
-      }, null) ?? null;
+    // Phase 16: claims filed against this version or against the whole book. The list is one
+    // page for display; the counters are computed in the database over every claim (LEGACY-377).
+    const [{ items: claims }, claimsSummary] = await Promise.all([
+      this.rightsClaimsService.listForVersion(versionId, { page: 1, limit: 50 }),
+      this.rightsClaimsService.summarizeForVersion({ id: version.id, bookId: version.bookId }),
+    ]);
 
     // Phase 18: recheck tasks and schedule of this version and its rights profile.
     // Phase 8's `isStale` / `recheckRequired` above stay untouched — they describe content hash.
@@ -942,17 +926,7 @@ export class BookVersionService {
         licenseCoverageStatus: licenseCoverage.status,
         licenseCoveredCountriesCount: licenseCoverage.coveredCountryCodes.length,
         licenseUncoveredCountriesCount: licenseCoverage.uncoveredCountryCodes.length,
-        claimsCount: claims.length,
-        activeClaimsCount: openClaims.length,
-        blockingClaimsCount: openClaims.filter((claim) => claim.blocksPublication).length,
-        criticalClaimsCount: openClaims.filter(
-          (claim) => claim.severity === RightsClaimSeverity.CRITICAL,
-        ).length,
-        overdueClaimsCount: openClaims.filter((claim) => claim.isOverdue).length,
-        activeClaimBlocksCount,
-        claimBlockedCountriesCount: claimBlockedCountries.size,
-        hasWorldwideClaimBlock: claims.some((claim) => claim.hasWorldwideBlock),
-        worstClaimSeverity,
+        ...claimsSummary,
         openRecheckTasksCount: versionRecheck.openTasksCount,
         overdueRecheckTasksCount: versionRecheck.overdueTasksCount,
         blockingRecheckTasksCount: versionRecheck.blockingTasksCount,

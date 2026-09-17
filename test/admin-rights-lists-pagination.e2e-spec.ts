@@ -164,7 +164,7 @@ describe('Admin rights lists pagination (LEGACY-377) e2e', () => {
   });
 
   it('keeps the physical order of RightsClaimSeverity equal to CLAIM_SEVERITY_RANK', async () => {
-    // `orderBy: { severity }` сортирует по порядку значений enum в базе, `sortClaims` - по рангу.
+    // `CLAIM_LIST_ORDER` сортирует по порядку значений enum в базе, сводки и гейт - по рангу.
     const rows = await prisma.$queryRaw<Array<{ value: string }>>`
       SELECT unnest(enum_range(NULL::"RightsClaimSeverity"))::text AS value
     `;

@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, RightsLicenseTerritoryScope as DbTerritoryScope } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { jsonListAbsentOrContains } from '../../shared/prisma/json-list-filter';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import {
-  RightsLicenseDelegate,
-  RightsLicenseLinkDelegate,
   RightsLicenseMediaFormat,
   RightsLicenseRecord,
   RightsLicenseStatus,
@@ -12,6 +11,12 @@ import {
   toStringArray,
 } from './rights-license-interface';
 import type { ChildListPage } from '../../shared/dto/child-list-query.dto';
+
+/** Порядок списков лицензий: новые первыми, `id` - для устойчивых страниц. */
+export const LICENSE_LIST_ORDER: Prisma.RightsLicenseOrderByWithRelationInput[] = [
+  { createdAt: 'desc' },
+  { id: 'asc' },
+];
 
 export type LicenseCoverageStatus = 'NOT_REQUIRED' | 'COVERED' | 'PARTIAL' | 'NOT_COVERED';
 
@@ -100,18 +105,6 @@ export class RightsLicenseCoverageService {
     private readonly clearanceResolver: RightsClearanceResolverService,
   ) {}
 
-  private get licenseDelegate(): RightsLicenseDelegate {
-    return (this.prisma as unknown as Record<string, unknown>)[
-      'rightsLicense'
-    ] as RightsLicenseDelegate;
-  }
-
-  private get linkDelegate(): RightsLicenseLinkDelegate {
-    return (this.prisma as unknown as Record<string, unknown>)[
-      'rightsLicenseLink'
-    ] as RightsLicenseLinkDelegate;
-  }
-
   // ---------------------------------------------------------------------------
   // Pure scope helpers
   // ---------------------------------------------------------------------------
@@ -171,6 +164,52 @@ export class RightsLicenseCoverageService {
     if (formats.length === 0) return true;
     if (required.length === 0) return true;
     return required.some((format) => formats.includes(format));
+  }
+
+  /**
+   * Условие на лицензию, равное `coversCountry` / `coversLanguage` / `coversMediaFormats`.
+   * Опирается на нормализацию при записи: страны в верхнем регистре, языки в нижнем.
+   */
+  buildCoverageWhere(filter: {
+    countryCode?: string;
+    languageCode?: string;
+    mediaFormat?: RightsLicenseMediaFormat;
+  }): Prisma.RightsLicenseWhereInput[] {
+    const conditions: Prisma.RightsLicenseWhereInput[] = [];
+    if (filter.countryCode) {
+      const code = filter.countryCode.toUpperCase();
+      conditions.push({
+        OR: [
+          { territoryScope: DbTerritoryScope.WORLDWIDE },
+          {
+            territoryScope: DbTerritoryScope.COUNTRY_LIST,
+            countryCodes: { array_contains: [code] },
+          },
+          {
+            territoryScope: DbTerritoryScope.EXCEPT_COUNTRY_LIST,
+            OR: [
+              { excludedCountryCodes: { equals: Prisma.AnyNull } },
+              { NOT: { excludedCountryCodes: { array_contains: [code] } } },
+            ],
+          },
+        ],
+      });
+    }
+    if (filter.languageCode) {
+      conditions.push(this.emptyOrContains('languageCodes', filter.languageCode.toLowerCase()));
+    }
+    if (filter.mediaFormat) {
+      conditions.push(this.emptyOrContains('mediaFormats', filter.mediaFormat));
+    }
+    return conditions;
+  }
+
+  /** Пустой или отсутствующий список JSON значит «без ограничения». */
+  private emptyOrContains(
+    column: 'languageCodes' | 'mediaFormats',
+    value: string,
+  ): Prisma.RightsLicenseWhereInput {
+    return { OR: jsonListAbsentOrContains(value).map((filter) => ({ [column]: filter })) };
   }
 
   mediaFormatsForVersionType(type: string): RightsLicenseMediaFormat[] {
@@ -430,11 +469,7 @@ export class RightsLicenseCoverageService {
    * their per-country assessments, territory decisions and the source edition.
    */
   async loadLicensesForProfile(rightsProfileId: string): Promise<RightsLicenseRecord[]> {
-    const links = await this.linkDelegate.findMany({
-      where: this.buildProfileLinkWhere(rightsProfileId),
-      select: { rightsLicenseId: true },
-    });
-    return this.loadLicensesByIds(links.map((link) => link.rightsLicenseId));
+    return this.findLicenses(this.buildProfileLicenseWhere(rightsProfileId));
   }
 
   /** Тот же набор, что `loadLicensesForProfile`, одной страницей: новые первыми. */
@@ -442,14 +477,12 @@ export class RightsLicenseCoverageService {
     rightsProfileId: string,
     { page, limit }: ChildListPage,
   ): Promise<{ total: number; licenses: RightsLicenseRecord[] }> {
-    const where: Prisma.RightsLicenseWhereInput = {
-      links: { some: this.buildProfileLinkWhere(rightsProfileId) },
-    };
+    const where = this.buildProfileLicenseWhere(rightsProfileId);
     const [total, licenses] = await Promise.all([
       this.prisma.rightsLicense.count({ where }),
       this.prisma.rightsLicense.findMany({
         where,
-        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        orderBy: LICENSE_LIST_ORDER,
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -458,37 +491,36 @@ export class RightsLicenseCoverageService {
     return { total, licenses: licenses as unknown as RightsLicenseRecord[] };
   }
 
-  /** Licenses linked directly to the version plus everything reachable from its profile. */
-  async loadLicensesForVersion(bookVersionId: string): Promise<RightsLicenseRecord[]> {
+  buildProfileLicenseWhere(rightsProfileId: string): Prisma.RightsLicenseWhereInput {
+    return { links: { some: this.buildProfileLinkWhere(rightsProfileId) } };
+  }
+
+  /** Лицензии, связанные с версией напрямую или через её профиль. */
+  async buildVersionLicenseWhere(bookVersionId: string): Promise<Prisma.RightsLicenseWhereInput> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
       select: { rightsProfileId: true },
     });
-
-    const links = await this.linkDelegate.findMany({
-      where: { bookVersionId },
-      select: { rightsLicenseId: true },
-    });
-    const direct = await this.loadLicensesByIds(links.map((link) => link.rightsLicenseId));
-
-    if (!version?.rightsProfileId) return direct;
-
-    const fromProfile = await this.loadLicensesForProfile(version.rightsProfileId);
-    return this.dedupeById([...direct, ...fromProfile]);
+    const direct: Prisma.RightsLicenseLinkWhereInput = { bookVersionId };
+    return {
+      links: {
+        some: version?.rightsProfileId
+          ? { OR: [direct, this.buildProfileLinkWhere(version.rightsProfileId)] }
+          : direct,
+      },
+    };
   }
 
-  private async loadLicensesByIds(ids: string[]): Promise<RightsLicenseRecord[]> {
-    const uniqueIds = Array.from(new Set(ids));
-    if (uniqueIds.length === 0) return [];
-    return this.licenseDelegate.findMany({ where: { id: { in: uniqueIds } } });
+  /** Licenses linked directly to the version plus everything reachable from its profile. */
+  async loadLicensesForVersion(bookVersionId: string): Promise<RightsLicenseRecord[]> {
+    return this.findLicenses(await this.buildVersionLicenseWhere(bookVersionId));
   }
 
-  private dedupeById(licenses: RightsLicenseRecord[]): RightsLicenseRecord[] {
-    const byId = new Map<string, RightsLicenseRecord>();
-    for (const license of licenses) {
-      if (!byId.has(license.id)) byId.set(license.id, license);
-    }
-    return Array.from(byId.values());
+  private async findLicenses(
+    where: Prisma.RightsLicenseWhereInput,
+  ): Promise<RightsLicenseRecord[]> {
+    const licenses = await this.prisma.rightsLicense.findMany({ where });
+    return licenses as unknown as RightsLicenseRecord[];
   }
 
   async evaluateVersionCoverage(bookVersionId: string): Promise<LicenseCoverageResult> {

@@ -133,14 +133,20 @@ describe('RightsLicensesService', () => {
 
   describe('list shape', () => {
     it('findAll answers {items, pagination} with the applied page', async () => {
+      prisma.rightsLicense.count.mockResolvedValue(41);
       prisma.rightsLicense.findMany.mockResolvedValue([makeRecord()]);
 
-      const result = await service.findAll({ page: 1, limit: 20 });
+      const result = await service.findAll({ page: 3, limit: 20 });
 
       // Тело целиком: возврат плоской `{items,total,page,limit}` красит эту строку.
       expect(Object.keys(result).sort()).toEqual(['items', 'pagination']);
-      expect(result.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
+      expect(result.pagination).toEqual({ page: 3, limit: 20, total: 41, totalPages: 3 });
       expect(result.items).toHaveLength(1);
+      // Страница режется в базе (LEGACY-377), а не срезом выборки без `take`.
+      expect(prisma.rightsLicense.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.rightsLicense.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 40, take: 20 }),
+      );
     });
 
     it('listForProfile reads one page of licenses in the database (LEGACY-377)', async () => {

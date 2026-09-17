@@ -208,7 +208,7 @@ describe('BookVersionService', () => {
     isActiveAt: jest.Mock;
     evaluateVersionCoverage: jest.Mock;
   };
-  let rightsClaimsService: { listForVersion: jest.Mock };
+  let rightsClaimsService: { listForVersion: jest.Mock; summarizeForVersion: jest.Mock };
   let adminAudit: { record: jest.Mock };
   let rightsRecheckService: {
     ensureTask: jest.Mock;
@@ -241,6 +241,17 @@ describe('BookVersionService', () => {
     };
     rightsClaimsService = {
       listForVersion: jest.fn().mockResolvedValue({ items: [], total: 0, page: 1, limit: 0 }),
+      summarizeForVersion: jest.fn().mockResolvedValue({
+        claimsCount: 0,
+        activeClaimsCount: 0,
+        blockingClaimsCount: 0,
+        criticalClaimsCount: 0,
+        overdueClaimsCount: 0,
+        activeClaimBlocksCount: 0,
+        claimBlockedCountriesCount: 0,
+        hasWorldwideClaimBlock: false,
+        worstClaimSeverity: null,
+      }),
     };
     licenseCoverageService = {
       loadLicensesForProfile: jest.fn().mockResolvedValue([]),
@@ -2041,51 +2052,47 @@ describe('BookVersionService', () => {
         recheckRequired: false,
       });
       rightsClaimsService.listForVersion.mockResolvedValue({
-        items: [
-          {
-            id: 'claim-1',
-            claimNumber: 'CLM-2026-000001',
-            severity: 'CRITICAL',
-            isOpen: true,
-            isOverdue: true,
-            blocksPublication: true,
-            activeBlocksCount: 2,
-            hasWorldwideBlock: true,
-            blockedCountryCodes: ['DE', 'FR'],
-          },
-          {
-            id: 'claim-2',
-            claimNumber: 'CLM-2026-000002',
-            severity: 'LOW',
-            isOpen: false,
-            isOverdue: false,
-            blocksPublication: true,
-            activeBlocksCount: 0,
-            hasWorldwideBlock: false,
-            blockedCountryCodes: [],
-          },
-        ],
-        total: 2,
-        page: 1,
-        limit: 2,
+        items: [{ id: 'claim-1', claimNumber: 'CLM-2026-000001', severity: 'LOW', isOpen: true }],
+        pagination: { page: 1, limit: 50, total: 120, totalPages: 3 },
+      });
+      // Сводка намеренно расходится со страницей: числа берутся из подсчёта по всем претензиям.
+      rightsClaimsService.summarizeForVersion.mockResolvedValue({
+        claimsCount: 120,
+        activeClaimsCount: 7,
+        blockingClaimsCount: 3,
+        criticalClaimsCount: 2,
+        overdueClaimsCount: 4,
+        activeClaimBlocksCount: 9,
+        claimBlockedCountriesCount: 5,
+        hasWorldwideClaimBlock: true,
+        worstClaimSeverity: 'CRITICAL',
       });
 
       const res = await service.getRightsDashboard('v1');
 
-      // Сводка берёт первые 50 претензий в порядке списка, а не весь набор.
+      // Список - одна страница для показа, счётчики - из базы по всем претензиям (LEGACY-377).
       expect(rightsClaimsService.listForVersion).toHaveBeenCalledTimes(1);
       expect(rightsClaimsService.listForVersion).toHaveBeenCalledWith('v1', { page: 1, limit: 50 });
+      expect(rightsClaimsService.summarizeForVersion).toHaveBeenCalledTimes(1);
+      expect(rightsClaimsService.summarizeForVersion).toHaveBeenCalledWith({
+        id: 'v1',
+        bookId: 'b1',
+      });
 
-      expect(res.claims).toHaveLength(2);
-      expect(res.summary.claimsCount).toBe(2);
-      expect(res.summary.activeClaimsCount).toBe(1);
-      expect(res.summary.blockingClaimsCount).toBe(1);
-      expect(res.summary.criticalClaimsCount).toBe(1);
-      expect(res.summary.overdueClaimsCount).toBe(1);
-      expect(res.summary.activeClaimBlocksCount).toBe(2);
-      expect(res.summary.claimBlockedCountriesCount).toBe(2);
-      expect(res.summary.hasWorldwideClaimBlock).toBe(true);
-      expect(res.summary.worstClaimSeverity).toBe('CRITICAL');
+      expect(res.claims).toHaveLength(1);
+      expect(res.summary).toEqual(
+        expect.objectContaining({
+          claimsCount: 120,
+          activeClaimsCount: 7,
+          blockingClaimsCount: 3,
+          criticalClaimsCount: 2,
+          overdueClaimsCount: 4,
+          activeClaimBlocksCount: 9,
+          claimBlockedCountriesCount: 5,
+          hasWorldwideClaimBlock: true,
+          worstClaimSeverity: 'CRITICAL',
+        }),
+      );
       expect(res.currentVersion.rightsClaimBlockActive).toBe(true);
       expect(res.currentVersion.rightsClaimBlockAppliedAt).toBe('2026-07-28T10:00:00.000Z');
     });
