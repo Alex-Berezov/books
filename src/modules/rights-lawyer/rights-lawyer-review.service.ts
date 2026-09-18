@@ -252,6 +252,7 @@ export class RightsLawyerReviewService {
   async listByIntake(
     intakeId: string,
     query: ListLawyerReviewsDto,
+    actorUserId: string,
   ): Promise<PaginatedResult<LawyerReviewDto>> {
     const database = this.getDatabase();
     const intake = await database.rightsIntake.findUnique({ where: { id: intakeId } });
@@ -261,32 +262,9 @@ export class RightsLawyerReviewService {
       });
     }
 
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit =
-      query.limit && query.limit > 0
-        ? Math.min(query.limit, LAWYER_LIST_MAX_LIMIT)
-        : LAWYER_LIST_DEFAULT_LIMIT;
-
-    const where: Record<string, unknown> = { rightsIntakeId: intakeId };
-    if (query.status) where['status'] = query.status;
-
-    const [total, rows] = await Promise.all([
-      database.rightsLawyerReview.count({ where }),
-      database.rightsLawyerReview.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-        include: REVIEW_INCLUDE,
-      }),
-    ]);
-
-    const now = new Date();
-    const counters = await this.loadCounters(rows.map((row) => row.id));
-    return paginated(
-      rows.map((row) => this.toDto(row, counters, now)),
-      { page, limit, total },
-    );
+    // LEGACY-407: делегирование в `list`, как у `rights-recheck.listByIntake` - иначе фильтры
+    // DTO, кроме `status`, проходят валидацию и молча теряются.
+    return this.list({ ...query, rightsIntakeId: intakeId }, actorUserId);
   }
 
   /** Risk snapshot of a profile enriched with the currently open lawyer review. */

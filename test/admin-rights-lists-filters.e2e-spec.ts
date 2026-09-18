@@ -56,6 +56,12 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
   let adminAccess: string;
   let bookId: string;
   let versionId: string;
+  let intakeId: string;
+  // LEGACY-407: посадка интейк-маршрута проверок юристов живёт здесь, рядом с посадкой
+  // фильтров остальных админских списков.
+  let lawyerId: string;
+  let otherLawyerId: string;
+  const lawyerReviewIds: Record<string, string> = {};
   let profileId: string;
   const claimIds: Record<string, string> = {};
   const licenseIds: Record<string, string> = {};
@@ -93,6 +99,7 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
     const created = await createBookWithRights(prisma as unknown as PrismaClient, slug);
     bookId = created.book.id;
     profileId = created.profile.id;
+    intakeId = created.intake.id;
     const version = await prisma.bookVersion.create({
       data: {
         bookId,
@@ -284,6 +291,42 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
       }
     }
 
+    // LEGACY-407: две проверки юристов на одной заявке - назначенная и без юриста. Пара нужна
+    // затем, что маршрут заявки применял только `status`: с одной записью потерянный
+    // `assignedLawyerId` неотличим от применённого.
+    const lawyer = await prisma.rightsLawyer.create({
+      data: { fullName: `${slug}-lawyer`, jurisdictionCodes: ['US'] },
+    });
+    lawyerId = lawyer.id;
+    const otherLawyer = await prisma.rightsLawyer.create({
+      data: { fullName: `${slug}-other-lawyer`, jurisdictionCodes: ['US'] },
+    });
+    otherLawyerId = otherLawyer.id;
+
+    // Сроки разведены нарочно: `overdueOnly` обязан отделять просроченную от несрочной,
+    // а не отдавать обе.
+    for (const seed of [
+      { name: 'assigned', assignedLawyerId: lawyerId, dueAt: new Date(now + 14 * DAY) },
+      { name: 'unassigned', assignedLawyerId: null, dueAt: new Date(now - 14 * DAY) },
+    ]) {
+      const review = await prisma.rightsLawyerReview.create({
+        data: {
+          reviewNumber: `LR-${stamp}-${seed.name}`,
+          trigger: 'MANUAL_REQUEST',
+          rightsIntakeId: intakeId,
+          rightsProfileId: profileId,
+          titleRu: `${slug} ${seed.name}`,
+          questionRu: 'Нужна ли лицензия на территорию?',
+          affectedCountryCodes: [],
+          affectedLanguages: [],
+          assignedLawyerId: seed.assignedLawyerId,
+          assignedAt: seed.assignedLawyerId ? new Date() : null,
+          dueAt: seed.dueAt,
+        },
+      });
+      lawyerReviewIds[seed.name] = review.id;
+    }
+
     const password = 'password123';
     const registration = await request(http())
       .post('/auth/register')
@@ -303,6 +346,14 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
     await prisma.rightsClaim.deleteMany({ where: { bookId } });
     await prisma.rightsLicense.deleteMany({ where: { id: { in: Object.values(licenseIds) } } });
     await prisma.bookVersion.deleteMany({ where: { id: versionId } });
+    // Проверки юристов держат FK на профиль, а юристы - на проверки: обе чистки идут
+    // до `cleanupBookWithRights`, иначе она падает на связанных строках.
+    await prisma.rightsLawyerReview.deleteMany({
+      where: { id: { in: Object.values(lawyerReviewIds) } },
+    });
+    await prisma.rightsLawyer.deleteMany({
+      where: { id: { in: [lawyerId, otherLawyerId].filter(Boolean) } },
+    });
     await cleanupBookWithRights(prisma as unknown as PrismaClient, slug);
     await app.close();
   });
@@ -511,6 +562,82 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
         walked.push(...body.items.map((row) => row.id));
       }
       expect(walked).toEqual(['l5', 'l4', 'l3', 'l2', 'l1'].map((name) => licenseIds[name]));
+    });
+  });
+
+  describe('GET /admin/rights/intakes/:id/lawyer-reviews', () => {
+    it('applies every filter of the list DTO, not only status (LEGACY-407)', async () => {
+      // Без фильтра маршрут отдаёт обе проверки заявки - это эталон, с которым сравнивается
+      // отфильтрованная выдача: совпадение наборов и означало потерянный фильтр.
+      const all = await get<ListBody<{ id: string }>>(
+        `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100`,
+      );
+      expect(ids(all.items)).toEqual(named(lawyerReviewIds, ['assigned', 'unassigned']));
+
+      const byLawyer = await get<ListBody<{ id: string }>>(
+        `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100&assignedLawyerId=${lawyerId}`,
+      );
+      expect(ids(byLawyer.items)).toEqual([lawyerReviewIds['assigned']]);
+      expect(byLawyer.pagination.total).toBe(1);
+
+      const unassignedOnly = await get<ListBody<{ id: string }>>(
+        `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100&unassignedOnly=true`,
+      );
+      expect(ids(unassignedOnly.items)).toEqual([lawyerReviewIds['unassigned']]);
+
+      // Юрист без единой проверки на этой заявке: фильтр применён - список пуст.
+      const byOtherLawyer = await get<ListBody<{ id: string }>>(
+        `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100&assignedLawyerId=${otherLawyerId}`,
+      );
+      expect(byOtherLawyer.items).toHaveLength(0);
+      expect(byOtherLawyer.pagination.total).toBe(0);
+    });
+
+    it('applies overdueOnly and mine over an intake, the pair named by the record (LEGACY-407)', async () => {
+      // `overdueOnly`: срок назначенной проверки в будущем, неназначенной - в прошлом.
+      const overdue = await get<ListBody<{ id: string }>>(
+        `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100&overdueOnly=true`,
+      );
+      expect(ids(overdue.items)).toEqual([lawyerReviewIds['unassigned']]);
+      expect(overdue.pagination.total).toBe(1);
+
+      // `mine` для не-юриста отдаёт пустую страницу, а не все проверки заявки: ветка
+      // `findByUserId` на этом маршруте появилась вместе с делегированием.
+      const mine = await get<ListBody<{ id: string }>>(
+        `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100&mine=true`,
+      );
+      expect(mine.items).toHaveLength(0);
+      expect(mine.pagination.total).toBe(0);
+
+      // Пара из шапки записи: «все проверки заявки» вместо «только свои просроченные».
+      const overdueMine = await get<ListBody<{ id: string }>>(
+        `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100&overdueOnly=true&mine=true`,
+      );
+      expect(overdueMine.items).toHaveLength(0);
+      expect(overdueMine.pagination.total).toBe(0);
+    });
+
+    it('keeps the intake of the path, ignoring rightsIntakeId from the query', async () => {
+      const foreignIntake = await prisma.rightsIntake.create({
+        data: {
+          candidateTitle: `${slug}-foreign`,
+          candidateAuthor: 'A',
+          originalLanguage: 'en',
+          workflowStatus: 'APPROVED',
+          targetLanguages: [Language.en],
+          targetCountryCodes: ['US'],
+          plannedContentTypes: ['text'],
+        },
+      });
+
+      try {
+        const body = await get<ListBody<{ id: string }>>(
+          `/admin/rights/intakes/${intakeId}/lawyer-reviews?limit=100&rightsIntakeId=${foreignIntake.id}`,
+        );
+        expect(ids(body.items)).toEqual(named(lawyerReviewIds, ['assigned', 'unassigned']));
+      } finally {
+        await prisma.rightsIntake.delete({ where: { id: foreignIntake.id } });
+      }
     });
   });
 });

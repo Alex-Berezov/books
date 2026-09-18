@@ -236,8 +236,9 @@ export class RightsLawyerReviewController {
   listByIntake(
     @Param('id') id: string,
     @Query() query: ListLawyerReviewsDto,
+    @Req() req: { user: { userId: string } },
   ): Promise<PaginatedResult<LawyerReviewDto>> {
-    return this.reviews.listByIntake(id, query);
+    return this.reviews.listByIntake(id, query, req.user.userId);
   }
 
   @Get('admin/rights/profiles/:id/risk-assessment')

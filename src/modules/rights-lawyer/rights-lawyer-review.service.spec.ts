@@ -1099,4 +1099,33 @@ describe('RightsLawyerReviewService', () => {
       });
     });
   });
+
+  describe('listByIntake', () => {
+    it('delegates to `list`, keeping every filter instead of only `status` (LEGACY-407)', async () => {
+      await service.listByIntake(
+        'intake-1',
+        { status: RightsLawyerReviewStatus.APPROVED, assignedLawyerId: 'lawyer-9' },
+        'user-1',
+      );
+
+      expect(reviewDelegate().findMany).toHaveBeenCalledTimes(1);
+      const where = reviewDelegate().findMany.mock.calls[0][0].where as Record<string, unknown>;
+      // Тело целиком: до правки `where` собирался заново и знал только `status` -
+      // `assignedLawyerId` проходил валидацию DTO и молча терялся.
+      expect(where).toEqual({
+        status: RightsLawyerReviewStatus.APPROVED,
+        rightsIntakeId: 'intake-1',
+        AND: [{ assignedLawyerId: 'lawyer-9' }],
+      });
+    });
+
+    it('still rejects an intake that does not exist', async () => {
+      intakeDelegate().findUnique.mockResolvedValue(null);
+
+      await expect(service.listByIntake('missing', {}, 'user-1')).rejects.toMatchObject({
+        response: { code: 'LAWYER_INTAKE_NOT_FOUND', statusCode: 404 },
+      });
+      expect(reviewDelegate().findMany).not.toHaveBeenCalled();
+    });
+  });
 });
