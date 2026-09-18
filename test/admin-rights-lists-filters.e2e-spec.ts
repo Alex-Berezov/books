@@ -361,6 +361,18 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
       expect(ids(body.items)).toEqual(named(claimIds, ['c1', 'c2', 'c5']));
     });
 
+    it('combines an explicit status with openOnly via AND instead of overwriting it (LEGACY-405)', async () => {
+      const closedAndOpen = await get<ListBody<ClaimRow>>(
+        `/admin/rights/claims?q=${claimPrefix}&limit=100&status=CLOSED&openOnly=true`,
+      );
+      expect(ids(closedAndOpen.items)).toEqual([]);
+
+      const openAndOpen = await get<ListBody<ClaimRow>>(
+        `/admin/rights/claims?q=${claimPrefix}&limit=100&status=UNDER_REVIEW&openOnly=true`,
+      );
+      expect(ids(openAndOpen.items)).toEqual(named(claimIds, ['c2']));
+    });
+
     it('cuts the page in the database and walks every claim once in the list order', async () => {
       const full = await get<ListBody<ClaimRow>>(`/admin/rights/claims?q=${claimPrefix}&limit=100`);
       expect(full.pagination.total).toBe(6);

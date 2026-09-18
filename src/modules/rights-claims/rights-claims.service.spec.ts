@@ -275,6 +275,28 @@ describe('RightsClaimsService', () => {
     );
   });
 
+  it('findAll combines an explicit status with openOnly via AND instead of overwriting it (LEGACY-405)', async () => {
+    prisma.rightsClaim.count.mockResolvedValue(0);
+    prisma.rightsClaim.findMany.mockResolvedValue([]);
+
+    await service.findAll({
+      page: 1,
+      limit: 20,
+      status: RightsClaimStatus.CLOSED,
+      openOnly: true,
+    });
+
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: RightsClaimStatus.CLOSED,
+          AND: [{ status: { in: expect.arrayContaining([RightsClaimStatus.RECEIVED]) } }],
+        }),
+      }),
+    );
+  });
+
   it('listForVersion reads one page in the database and reports the real total (LEGACY-377)', async () => {
     prisma.rightsClaim.count.mockResolvedValue(45);
     prisma.rightsClaim.findMany.mockResolvedValue([createClaim(), createClaim({ id: 'claim-2' })]);

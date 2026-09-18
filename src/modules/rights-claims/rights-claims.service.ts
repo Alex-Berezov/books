@@ -1613,7 +1613,6 @@ export class RightsClaimsService {
     if (query.requiresLawyerReview !== undefined) {
       where.requiresLawyerReview = query.requiresLawyerReview;
     }
-    if (query.openOnly) where.status = { in: [...OPEN_CLAIM_STATUSES] };
     if (query.q) {
       const contains: Prisma.StringFilter = { contains: query.q, mode: 'insensitive' };
       where.OR = [
@@ -1641,6 +1640,7 @@ export class RightsClaimsService {
         OR: jsonListAbsentOrContains(code).map((filter) => ({ affectedCountryCodes: filter })),
       });
     }
+    if (query.openOnly) and.push(OPEN_CLAIM_WHERE);
     if (query.overdueOnly) and.push({ ...OPEN_CLAIM_WHERE, deadlineAt: { lt: now } });
     if (query.hasActiveBlock) and.push({ accessBlocks: { some: activeBlockWhere(now) } });
     if (query.deadlineWithinDays !== undefined) {
