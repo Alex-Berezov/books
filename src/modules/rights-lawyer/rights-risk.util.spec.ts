@@ -115,18 +115,30 @@ describe('computeRiskAssessment', () => {
       expect(result.suggestedTrigger).toBe(RightsLawyerReviewTrigger.RIGHTS_CLAIM);
     });
 
-    it('ignores resolved and closed claims', () => {
+    it('ignores a claim closed as CLOSED', () => {
       const result = computeRiskAssessment(
         input({
           claims: [
-            { id: 'c1', status: 'RESOLVED', severity: 'CRITICAL', requiresLawyerReview: true },
-            { id: 'c2', status: 'CLOSED', severity: 'CRITICAL', requiresLawyerReview: true },
+            { id: 'c1', status: 'CLOSED', severity: 'CRITICAL', requiresLawyerReview: true },
           ],
         }),
       );
       expect(result.riskLevel).toBe(RightsRiskLevel.LOW);
       expect(result.factors).toHaveLength(0);
     });
+
+    it.each(['RESOLVED_VALID', 'RESOLVED_INVALID', 'WITHDRAWN'] as const)(
+      'ignores a claim closed as %s (LEGACY-409)',
+      (status) => {
+        const result = computeRiskAssessment(
+          input({
+            claims: [{ id: 'c1', status, severity: 'CRITICAL', requiresLawyerReview: true }],
+          }),
+        );
+        expect(result.riskLevel).toBe(RightsRiskLevel.LOW);
+        expect(result.factors).toHaveLength(0);
+      },
+    );
   });
 
   describe('HIGH factors', () => {

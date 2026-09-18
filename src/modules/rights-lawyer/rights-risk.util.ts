@@ -22,6 +22,10 @@ import {
  * both of which are import-free leaves. That is deliberate: the function is used by the lawyer
  * module AND by `RightsApprovalService` in `rights-intake`, and a heavier import would create a
  * module cycle (ADR-003). It also never reads the clock — "now" is not part of the model.
+ *
+ * Since 18.09.2026 a **type-only** import from `@prisma/client` is the one allowed exception
+ * (arbiter decision, `decisions-log.md`, LEGACY-409): it is erased at compile time and never
+ * reaches the runtime module graph. A value import remains forbidden in both leaves.
  */
 
 export interface RiskAssessmentInput {

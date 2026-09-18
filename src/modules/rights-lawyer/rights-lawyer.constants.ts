@@ -1,3 +1,5 @@
+import type { RightsActionStatus, RightsClaimStatus } from '@prisma/client';
+
 import {
   RightsLawyerConditionStatus,
   RightsLawyerDecision,
@@ -13,6 +15,12 @@ import {
  * This file must not import anything outside `./rights-lawyer-interface`: it is pulled in by
  * `RightsApprovalService` (module `rights-intake`), and any further import would risk a module
  * cycle. See ADR-003.
+ *
+ * One exception, decided by the arbiter on 18.09.2026 (`decisions-log.md`, LEGACY-409): a
+ * **type-only** import (`import type`) from the generated `@prisma/client` is allowed. It is
+ * erased at compile time, so it adds nothing to the runtime module graph and cannot create the
+ * cycle ADR-003 guards against, while letting the compiler check status lists against the real
+ * enums. A value import — from `@prisma/client` or from any project module — stays forbidden.
  */
 
 export const LAWYER_REVIEW_DUE_DAYS_DEFAULT = 14;
@@ -111,11 +119,43 @@ export const LAWYER_DECISION_TO_STATUS: Record<RightsLawyerDecision, RightsLawye
   [RightsLawyerDecision.REJECTED]: RightsLawyerReviewStatus.REJECTED,
 };
 
-/** Rights claim statuses that no longer contribute to risk. */
-export const CLOSED_CLAIM_STATUSES: readonly string[] = ['RESOLVED', 'CLOSED', 'REJECTED'];
+/**
+ * Rights claim statuses that no longer contribute to risk.
+ *
+ * Must match `RightsClaimStatus`'s terminal values (`RESOLVED_VALID`, `RESOLVED_INVALID`,
+ * `WITHDRAWN`, `CLOSED` — see `rights-claims/rights-claim.constants.ts:CLOSED_CLAIM_STATUSES`).
+ * `satisfies` makes the compiler reject a value that is not in the enum; the old list
+ * (`['RESOLVED', 'CLOSED', 'REJECTED']`) fails to build under it — that is LEGACY-409.
+ * The exported type stays `readonly string[]` so `isOpenClaim` keeps taking a plain `string`.
+ * This file still cannot import the `rights-claims` module itself (ADR-003 leaf), so the two
+ * copies are kept in sync by hand and cross-checked by `rights-lawyer.constants.spec.ts`:
+ * `satisfies` checks membership in the enum, not that the two lists agree or that they are
+ * exhaustive.
+ */
+const CLOSED_CLAIM_STATUS_VALUES = [
+  'RESOLVED_VALID',
+  'RESOLVED_INVALID',
+  'WITHDRAWN',
+  'CLOSED',
+] satisfies readonly `${RightsClaimStatus}`[];
 
-/** Rights action statuses that no longer contribute to risk. */
-export const CLOSED_ACTION_STATUSES: readonly string[] = ['COMPLETED', 'WAIVED'];
+export const CLOSED_CLAIM_STATUSES: readonly string[] = CLOSED_CLAIM_STATUS_VALUES;
+
+/**
+ * Rights action statuses that no longer contribute to risk.
+ *
+ * Checked against `RightsActionStatus` (LEGACY-409): matches `RESOLVED_ACTION_STATUSES` in
+ * `rights-intake/rights-action.constants.ts` — `CANCELLED` is deliberately not closed there
+ * (a cancelled blocking action keeps blocking), so it is not closed here either. Same
+ * `satisfies` check and same ADR-003 constraint as `CLOSED_CLAIM_STATUSES` above; agreement
+ * of the two copies is cross-checked by `rights-lawyer.constants.spec.ts`.
+ */
+const CLOSED_ACTION_STATUS_VALUES = [
+  'COMPLETED',
+  'WAIVED',
+] satisfies readonly `${RightsActionStatus}`[];
+
+export const CLOSED_ACTION_STATUSES: readonly string[] = CLOSED_ACTION_STATUS_VALUES;
 
 /** Contributor roles whose unknown death year is a real copyright risk. */
 export const RISKY_CONTRIBUTOR_ROLES: readonly string[] = [
