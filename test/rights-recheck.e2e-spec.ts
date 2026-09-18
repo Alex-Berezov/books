@@ -271,6 +271,64 @@ describe('Rights recheck e2e', () => {
     expect(types.some((type) => type === 'RECHECK_DUE' || type === 'RECHECK_OVERDUE')).toBe(true);
   });
 
+  it('combines an explicit status with overdueOnly via AND instead of overwriting it (LEGACY-406)', async () => {
+    // Открытая, но не просроченная задача: без неё `overdueOnly` неотличим от «любая открытая».
+    const future = await prisma.rightsRecheckTask.create({
+      data: {
+        reason: 'MANUAL_REQUEST',
+        source: 'MANUAL',
+        rightsProfileId: profileId,
+        titleRu: 'Ручная задача со сроком в будущем',
+        descriptionRu: 'Не просрочена',
+        dueAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    try {
+      const contradictory = await request(http())
+        .get(
+          `/admin/rights/recheck/tasks?rightsProfileId=${profileId}&limit=100&status=COMPLETED&overdueOnly=true`,
+        )
+        .set(...auth())
+        .expect(200);
+      const contradictoryItems = contradictory.body.items as { id: string }[];
+      expect(contradictoryItems.some((t) => t.id === taskId)).toBe(false);
+
+      const consistent = await request(http())
+        .get(
+          `/admin/rights/recheck/tasks?rightsProfileId=${profileId}&limit=100&status=PENDING&overdueOnly=true`,
+        )
+        .set(...auth())
+        .expect(200);
+      const consistentItems = consistent.body.items as { id: string }[];
+      expect(consistentItems.some((t) => t.id === taskId)).toBe(true);
+      // Срок в будущем — задача открыта, но под `overdueOnly` не подпадает.
+      expect(consistentItems.some((t) => t.id === future.id)).toBe(false);
+
+      // Пара флагов различает сложение и `else if` только по структуре `where` (это сверяет юнит):
+      // просроченное всегда внутри окна `dueWithinDays`, поэтому набор строк у обеих форм один.
+      // Здесь проверяется другое — что пара не теряет `overdueOnly` и не расширяет выдачу окном.
+      const bothFlags = await request(http())
+        .get(
+          `/admin/rights/recheck/tasks?rightsProfileId=${profileId}&limit=100&overdueOnly=true&dueWithinDays=180`,
+        )
+        .set(...auth())
+        .expect(200);
+      const bothFlagsItems = bothFlags.body.items as { id: string }[];
+      expect(bothFlagsItems.some((t) => t.id === taskId)).toBe(true);
+      expect(bothFlagsItems.some((t) => t.id === future.id)).toBe(false);
+
+      const windowOnly = await request(http())
+        .get(`/admin/rights/recheck/tasks?rightsProfileId=${profileId}&limit=100&dueWithinDays=180`)
+        .set(...auth())
+        .expect(200);
+      const windowOnlyItems = windowOnly.body.items as { id: string }[];
+      expect(windowOnlyItems.some((t) => t.id === future.id)).toBe(true);
+    } finally {
+      await prisma.rightsRecheckTask.delete({ where: { id: future.id } });
+    }
+  });
+
   it('blocks publication through the gate while the recheck is overdue', async () => {
     const gate = await request(http())
       .get(`/admin/versions/${versionId}/publication-gate`)

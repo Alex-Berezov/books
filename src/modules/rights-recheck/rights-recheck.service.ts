@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
 import {
@@ -118,6 +119,15 @@ const CLOSED_STATUSES: readonly RightsRecheckStatus[] = [
   RightsRecheckStatus.COMPLETED,
   RightsRecheckStatus.DISMISSED,
 ];
+
+/**
+ * Условие «задача открыта» одним объектом - как `OPEN_CLAIM_WHERE` в `rights-claims`.
+ * Тип берётся у сгенерированного клиента: имена полей во всех ветках `AND` сверяет компилятор,
+ * хотя сам делегат этого модуля объявлен вручную.
+ */
+const RECHECK_OPEN_WHERE: Prisma.RightsRecheckTaskWhereInput = {
+  status: { in: [...RECHECK_OPEN_STATUSES] },
+};
 
 /**
  * The recheck task is the single unit of work of Phase 18: schedule, content change,
@@ -332,8 +342,11 @@ export class RightsRecheckService {
     );
   }
 
-  private buildListWhere(query: ListRecheckTasksDto, now: Date): Record<string, unknown> {
-    const where: Record<string, unknown> = {};
+  private buildListWhere(
+    query: ListRecheckTasksDto,
+    now: Date,
+  ): Prisma.RightsRecheckTaskWhereInput {
+    const where: Prisma.RightsRecheckTaskWhereInput = {};
     if (query.status) where.status = query.status;
     if (query.reason) where.reason = query.reason;
     if (query.severity) where.severity = query.severity;
@@ -344,13 +357,12 @@ export class RightsRecheckService {
     if (query.bookVersionId) where.bookVersionId = query.bookVersionId;
     if (query.legalChangeEventId) where.legalChangeEventId = query.legalChangeEventId;
 
-    if (query.overdueOnly) {
-      where.status = { in: [...RECHECK_OPEN_STATUSES] };
-      where.dueAt = { lt: now };
-    } else if (query.dueWithinDays !== undefined) {
-      where.status = { in: [...RECHECK_OPEN_STATUSES] };
-      where.dueAt = { lte: addDays(now, query.dueWithinDays) };
+    const and: Prisma.RightsRecheckTaskWhereInput[] = [];
+    if (query.overdueOnly) and.push({ ...RECHECK_OPEN_WHERE, dueAt: { lt: now } });
+    if (query.dueWithinDays !== undefined) {
+      and.push({ ...RECHECK_OPEN_WHERE, dueAt: { lte: addDays(now, query.dueWithinDays) } });
     }
+    if (and.length > 0) where.AND = and;
 
     return where;
   }

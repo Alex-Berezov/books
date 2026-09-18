@@ -15,6 +15,7 @@ import {
   type RightsLawyerRecord,
   type RightsLawyerReviewRecord,
 } from './rights-lawyer-interface';
+import { LAWYER_REVIEW_OPEN_STATUSES } from './rights-lawyer.constants';
 
 const LAWYER: RightsLawyerRecord = {
   id: 'lawyer-1',
@@ -1039,8 +1040,63 @@ describe('RightsLawyerReviewService', () => {
 
     it('scopes `mine` to the lawyer of the current user', async () => {
       await service.list({ mine: true }, 'user-lawyer');
+
+      expect(reviewDelegate().findMany).toHaveBeenCalledTimes(1);
       const where = reviewDelegate().findMany.mock.calls[0][0].where as Record<string, unknown>;
-      expect(where['assignedLawyerId']).toBe('lawyer-1');
+      // Тело целиком: лишняя ветка в `AND` сузила бы инбокс юриста до пустого.
+      expect(where).toEqual({ AND: [{ assignedLawyerId: 'lawyer-1' }] });
+    });
+
+    it('combines an explicit status with overdueOnly via AND instead of overwriting it (LEGACY-406)', async () => {
+      const before = Date.now();
+      await service.list(
+        { status: RightsLawyerReviewStatus.APPROVED, overdueOnly: true },
+        'user-1',
+      );
+
+      expect(reviewDelegate().findMany).toHaveBeenCalledTimes(1);
+      const where = reviewDelegate().findMany.mock.calls[0][0].where as Record<string, unknown>;
+      // Тело целиком: возврат перезаписи убирает явный `status`, потеря срока - `dueAt` в ветке.
+      expect(where).toEqual({
+        status: RightsLawyerReviewStatus.APPROVED,
+        AND: [
+          {
+            status: { in: [...LAWYER_REVIEW_OPEN_STATUSES] },
+            dueAt: { lt: expect.any(Date) },
+          },
+        ],
+      });
+      // Граница - «сейчас»: сдвиг `lt` вперёд пустил бы в «просроченные» проверки со сроком в будущем.
+      const [branch] = where['AND'] as [{ dueAt: { lt: Date } }];
+      expect(branch.dueAt.lt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(branch.dueAt.lt.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    it('combines assignedLawyerId, unassignedOnly and mine as independent AND branches instead of the last one silently winning (LEGACY-406)', async () => {
+      await service.list(
+        { assignedLawyerId: 'other-lawyer', unassignedOnly: true, mine: true },
+        'user-lawyer',
+      );
+
+      expect(reviewDelegate().findMany).toHaveBeenCalledTimes(1);
+      const where = reviewDelegate().findMany.mock.calls[0][0].where as Record<string, unknown>;
+      expect(where).toEqual({
+        AND: [
+          { assignedLawyerId: 'other-lawyer' },
+          { assignedLawyerId: null },
+          { assignedLawyerId: 'lawyer-1' },
+        ],
+      });
+    });
+
+    it('keeps expiringWithinDays a window on validUntil, outside the AND accumulator (LEGACY-406)', async () => {
+      await service.list({ expiringWithinDays: 30 }, 'user-1');
+
+      expect(reviewDelegate().findMany).toHaveBeenCalledTimes(1);
+      const where = reviewDelegate().findMany.mock.calls[0][0].where as Record<string, unknown>;
+      expect(where).toEqual({
+        validUntil: { gt: expect.any(Date), lte: expect.any(Date) },
+      });
     });
   });
 });

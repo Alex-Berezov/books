@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
 import {
@@ -102,6 +103,11 @@ const isUniqueViolation = (error: unknown): boolean =>
   'code' in error &&
   (error as Error & { code?: unknown }).code === 'P2002';
 
+/** Условие «проверка открыта» одним объектом - как `OPEN_CLAIM_WHERE` в `rights-claims`. */
+const LAWYER_REVIEW_OPEN_WHERE: Prisma.RightsLawyerReviewWhereInput = {
+  status: { in: [...LAWYER_REVIEW_OPEN_STATUSES] },
+};
+
 const REVIEW_INCLUDE = {
   assignedLawyer: true,
   rightsIntake: { select: { id: true, candidateTitle: true, workflowStatus: true } },
@@ -168,37 +174,18 @@ export class RightsLawyerReviewService {
         ? Math.min(query.limit, LAWYER_LIST_MAX_LIMIT)
         : LAWYER_LIST_DEFAULT_LIMIT;
 
-    const where: Record<string, unknown> = {};
-    if (query.status) where['status'] = query.status;
-    if (query.trigger) where['trigger'] = query.trigger;
-    if (query.riskLevel) where['riskLevel'] = query.riskLevel;
-    if (query.decision) where['decision'] = query.decision;
-    if (query.assignedLawyerId) where['assignedLawyerId'] = query.assignedLawyerId;
-    if (query.rightsIntakeId) where['rightsIntakeId'] = query.rightsIntakeId;
-    if (query.rightsProfileId) where['rightsProfileId'] = query.rightsProfileId;
-    if (query.bookId) where['bookId'] = query.bookId;
-    if (query.bookVersionId) where['bookVersionId'] = query.bookVersionId;
-    if (query.rightsClaimId) where['rightsClaimId'] = query.rightsClaimId;
-    if (query.blocksApproval !== undefined) where['blocksApproval'] = query.blocksApproval;
-    if (query.unassignedOnly) where['assignedLawyerId'] = null;
-
     const now = new Date();
-    if (query.overdueOnly) {
-      where['status'] = { in: [...LAWYER_REVIEW_OPEN_STATUSES] };
-      where['dueAt'] = { lt: now };
-    }
-    if (query.expiringWithinDays !== undefined) {
-      where['validUntil'] = { gt: now, lte: addDays(now, query.expiringWithinDays) };
-    }
-
+    let mineLawyerId: string | null = null;
     if (query.mine) {
       const lawyer = await this.lawyers.findByUserId(actorUserId);
       // Не-юрист по фильтру «только мои» получает пустой список, а не чужие проверки.
       if (!lawyer) {
         return paginated<LawyerReviewDto>([], { page, limit, total: 0 });
       }
-      where['assignedLawyerId'] = lawyer.id;
+      mineLawyerId = lawyer.id;
     }
+
+    const where = this.buildListWhere(query, mineLawyerId, now);
 
     const database = this.getDatabase();
     const [total, rows] = await Promise.all([
@@ -218,6 +205,43 @@ export class RightsLawyerReviewService {
       rows.map((row) => this.toDto(row, counters, now)),
       { page, limit, total },
     );
+  }
+
+  /**
+   * Фильтры списка одним местом - как `buildListWhere` в `rights-claims` и `rights-recheck`.
+   * Условия одного поля складываются в `and`, а не перезаписывают друг друга (`LEGACY-406`):
+   * `mine`, `unassignedOnly` и явный `assignedLawyerId` - три независимые ветки, и пара,
+   * которая не может выполниться одновременно, отдаёт пустой список, а не теряет фильтр.
+   */
+  private buildListWhere(
+    query: ListLawyerReviewsDto,
+    mineLawyerId: string | null,
+    now: Date,
+  ): Prisma.RightsLawyerReviewWhereInput {
+    const where: Prisma.RightsLawyerReviewWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (query.trigger) where.trigger = query.trigger;
+    if (query.riskLevel) where.riskLevel = query.riskLevel;
+    if (query.decision) where.decision = query.decision;
+    if (query.rightsIntakeId) where.rightsIntakeId = query.rightsIntakeId;
+    if (query.rightsProfileId) where.rightsProfileId = query.rightsProfileId;
+    if (query.bookId) where.bookId = query.bookId;
+    if (query.bookVersionId) where.bookVersionId = query.bookVersionId;
+    if (query.rightsClaimId) where.rightsClaimId = query.rightsClaimId;
+    if (query.blocksApproval !== undefined) where.blocksApproval = query.blocksApproval;
+    // `validUntil` больше никто не задаёт, столкновения нет - условие остаётся полем `where`.
+    if (query.expiringWithinDays !== undefined) {
+      where.validUntil = { gt: now, lte: addDays(now, query.expiringWithinDays) };
+    }
+
+    const and: Prisma.RightsLawyerReviewWhereInput[] = [];
+    if (query.assignedLawyerId) and.push({ assignedLawyerId: query.assignedLawyerId });
+    if (query.unassignedOnly) and.push({ assignedLawyerId: null });
+    if (query.overdueOnly) and.push({ ...LAWYER_REVIEW_OPEN_WHERE, dueAt: { lt: now } });
+    if (mineLawyerId) and.push({ assignedLawyerId: mineLawyerId });
+    if (and.length > 0) where.AND = and;
+
+    return where;
   }
 
   async getById(id: string): Promise<LawyerReviewDetailDto> {

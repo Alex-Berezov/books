@@ -247,6 +247,70 @@ describe('Rights lawyer workflow e2e', () => {
     expect(assigned.body.assignedLawyerId).toBe(lawyerId);
   });
 
+  it('combines explicit filters with the flags via AND instead of the last one silently winning (LEGACY-406)', async () => {
+    // Вторая проверка — без юриста и просроченная: без неё пара фильтров не различает
+    // сложение и перезапись, потому что первая проверка назначена и не просрочена.
+    const unassignedOverdue = await prisma.rightsLawyerReview.create({
+      data: {
+        reviewNumber: `LR-2026-9${String(Date.now()).slice(-5)}`,
+        trigger: 'MANUAL_REQUEST',
+        rightsProfileId: profileId,
+        titleRu: 'Непросмотренная проверка без юриста',
+        questionRu: 'Нужна ли лицензия на территорию?',
+        affectedCountryCodes: [],
+        affectedLanguages: [],
+        dueAt: new Date('2020-01-01T00:00:00.000Z'),
+      },
+    });
+
+    try {
+      // `assignedLawyerId` + `unassignedOnly`: перезапись отдала бы неназначенную проверку.
+      const contradictoryAssignee = await request(http())
+        .get(
+          `/admin/rights/lawyer-reviews?rightsProfileId=${profileId}&limit=100&assignedLawyerId=${lawyerId}&unassignedOnly=true`,
+        )
+        .set(...auth())
+        .expect(200);
+      const contradictoryAssigneeItems = contradictoryAssignee.body.items as { id: string }[];
+      expect(contradictoryAssigneeItems.some((r) => r.id === unassignedOverdue.id)).toBe(false);
+      expect(contradictoryAssigneeItems.some((r) => r.id === lawyerReviewId)).toBe(false);
+
+      // `status` + `overdueOnly`: перезапись отдала бы просроченную проверку в открытом статусе.
+      const contradictoryStatus = await request(http())
+        .get(
+          `/admin/rights/lawyer-reviews?rightsProfileId=${profileId}&limit=100&status=APPROVED&overdueOnly=true`,
+        )
+        .set(...auth())
+        .expect(200);
+      const contradictoryStatusItems = contradictoryStatus.body.items as { id: string }[];
+      expect(contradictoryStatusItems.some((r) => r.id === unassignedOverdue.id)).toBe(false);
+
+      // Согласованные пары продолжают находить свою запись.
+      const consistentStatus = await request(http())
+        .get(
+          `/admin/rights/lawyer-reviews?rightsProfileId=${profileId}&limit=100&status=PENDING&overdueOnly=true`,
+        )
+        .set(...auth())
+        .expect(200);
+      const consistentStatusItems = consistentStatus.body.items as { id: string }[];
+      expect(consistentStatusItems.some((r) => r.id === unassignedOverdue.id)).toBe(true);
+      // Контроль границы: `lawyerReviewId` открыт, но срок у него в будущем - в «просроченных»
+      // его быть не должно. Без этой строки сдвиг `lt: now` вперёд прошёл бы посадку.
+      expect(consistentStatusItems.some((r) => r.id === lawyerReviewId)).toBe(false);
+
+      const consistentAssignee = await request(http())
+        .get(
+          `/admin/rights/lawyer-reviews?rightsProfileId=${profileId}&limit=100&assignedLawyerId=${lawyerId}`,
+        )
+        .set(...auth())
+        .expect(200);
+      const consistentAssigneeItems = consistentAssignee.body.items as { id: string }[];
+      expect(consistentAssigneeItems.some((r) => r.id === lawyerReviewId)).toBe(true);
+    } finally {
+      await prisma.rightsLawyerReview.delete({ where: { id: unassignedOverdue.id } });
+    }
+  });
+
   it('attaches a legal opinion and creates LEGAL_OPINION evidence', async () => {
     const opinion = await request(http())
       .post(`/admin/rights/lawyer-reviews/${lawyerReviewId}/opinions`)

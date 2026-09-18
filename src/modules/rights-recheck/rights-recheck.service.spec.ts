@@ -14,6 +14,7 @@ import {
   type RightsRecheckTaskRecord,
 } from './rights-recheck-interface';
 import { addDays } from './rights-recheck.util';
+import { RECHECK_OPEN_STATUSES } from './rights-recheck.constants';
 
 const NOW = new Date();
 
@@ -156,6 +157,81 @@ describe('RightsRecheckService', () => {
       notifications as unknown as RightsNotificationsService,
       configWith(),
     );
+  });
+
+  describe('list', () => {
+    const openStatuses = { in: [...RECHECK_OPEN_STATUSES] };
+
+    const whereOfListQuery = (): Record<string, unknown> =>
+      (stub.rightsRecheckTask.findMany.mock.calls[0][0] as { where: Record<string, unknown> })
+        .where;
+
+    it('combines an explicit status with overdueOnly via AND instead of overwriting it (LEGACY-406)', async () => {
+      const before = Date.now();
+      await service.list({
+        page: 1,
+        limit: 20,
+        status: RightsRecheckStatus.COMPLETED,
+        overdueOnly: true,
+      });
+
+      expect(stub.rightsRecheckTask.findMany).toHaveBeenCalledTimes(1);
+      // Тело целиком: и явный статус, и условие ветки `overdueOnly` со сроком - возврат
+      // перезаписи убирает `status` сверху, потеря `dueAt` убирает его из ветки.
+      const where = whereOfListQuery();
+      expect(where).toEqual({
+        status: RightsRecheckStatus.COMPLETED,
+        AND: [{ status: openStatuses, dueAt: { lt: expect.any(Date) } }],
+      });
+      // Граница - именно «сейчас»: сдвиг `lt` вперёд пустил бы в «просроченные» задачи,
+      // срок которых ещё не наступил.
+      const [branch] = where['AND'] as [{ dueAt: { lt: Date } }];
+      expect(branch.dueAt.lt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(branch.dueAt.lt.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    it('combines an explicit status with dueWithinDays via AND instead of overwriting it (LEGACY-406)', async () => {
+      await service.list({
+        page: 1,
+        limit: 20,
+        status: RightsRecheckStatus.COMPLETED,
+        dueWithinDays: 5,
+      });
+
+      expect(stub.rightsRecheckTask.findMany).toHaveBeenCalledTimes(1);
+      expect(whereOfListQuery()).toEqual({
+        status: RightsRecheckStatus.COMPLETED,
+        AND: [{ status: openStatuses, dueAt: { lte: expect.any(Date) } }],
+      });
+    });
+
+    it('applies overdueOnly and dueWithinDays as two independent AND branches, not an else-if chain (LEGACY-406)', async () => {
+      await service.list({ page: 1, limit: 20, overdueOnly: true, dueWithinDays: 5 });
+
+      expect(stub.rightsRecheckTask.findMany).toHaveBeenCalledTimes(1);
+      // Возврат `else if` оставит одну ветку из двух.
+      expect(whereOfListQuery()).toEqual({
+        AND: [
+          { status: openStatuses, dueAt: { lt: expect.any(Date) } },
+          { status: openStatuses, dueAt: { lte: expect.any(Date) } },
+        ],
+      });
+    });
+
+    it('applies dueWithinDays on its own, with the window measured from now (LEGACY-406)', async () => {
+      const before = Date.now();
+      await service.list({ page: 1, limit: 20, dueWithinDays: 5 });
+
+      expect(stub.rightsRecheckTask.findMany).toHaveBeenCalledTimes(1);
+      const where = whereOfListQuery();
+      expect(where).toEqual({
+        AND: [{ status: openStatuses, dueAt: { lte: expect.any(Date) } }],
+      });
+      const [branch] = where['AND'] as [{ dueAt: { lte: Date } }];
+      // Окно именно вперёд на пять суток, а не назад и не «сегодня».
+      expect(branch.dueAt.lte.getTime()).toBeGreaterThanOrEqual(before + 5 * 24 * 60 * 60 * 1000);
+      expect(branch.dueAt.lte.getTime()).toBeLessThan(Date.now() + 6 * 24 * 60 * 60 * 1000);
+    });
   });
 
   describe('ensureTask', () => {
