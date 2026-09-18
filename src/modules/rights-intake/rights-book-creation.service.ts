@@ -510,7 +510,10 @@ export class RightsBookCreationService {
             originalLanguage:
               versionDto.originalLanguage ?? (intake['originalLanguage'] as string | null),
             originalTitle: versionDto.originalTitle ?? (intake['originalTitle'] as string | null),
-            copyrightStatus: versionDto.copyrightStatus ?? rightsStatus,
+            // LEGACY-007: рекомендация записи (ввести enum) отвергнута ADR-005. Автоподстановка
+            // rightsStatus сюда была лишней: поле — ручной ввод редактора, не отражение
+            // вычисленного статуса прав, и владелец 18.09.2026 решил оставить только его.
+            copyrightStatus: versionDto.copyrightStatus ?? null,
             primaryCategoryId: versionDto.primaryCategoryId ?? null,
             firstPublishedYear: versionDto.firstPublishedYear ?? null,
             editionPublishedYear: versionDto.editionPublishedYear ?? null,

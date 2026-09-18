@@ -1047,37 +1047,40 @@ describe('RightsBookCreationService', () => {
   // ---------------------------------------------------------------------------
   // WP-L.1: описание и обложка перестали быть обязательными в этом канале.
   // ---------------------------------------------------------------------------
-  describe('optional content fields (WP-L.1)', () => {
-    const arrangeCreate = () => {
-      (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeIntake(),
-      );
-      (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
-        makeReview(),
-      );
-      (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
-      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
-      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+  // Общая подготовка удачного создания книги. Вынесена из `optional content fields (WP-L.1)`
+  // наружу: блок WP-L.1 переходный и будет снят вместе с бэкфиллом старых книг, а сторожа
+  // ниже него переживут это снятие только вне его границ.
+  const arrangeCreate = () => {
+    (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+      makeIntake(),
+    );
+    (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+      makeReview(),
+    );
+    (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+    (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+    (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
 
-      const bookVersionCreate = jest
-        .fn()
-        .mockResolvedValue({ id: 'version-1', language: 'en', type: 'text' });
-      const txStub = {
-        book: {
-          create: jest.fn().mockResolvedValue({
-            id: 'book-1',
-            slug: 'test-book',
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }),
-        },
-        bookVersion: { create: bookVersionCreate },
-        rightsIntake: { update: jest.fn().mockResolvedValue({}) },
-      };
-      (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
-      return bookVersionCreate;
+    const bookVersionCreate = jest
+      .fn()
+      .mockResolvedValue({ id: 'version-1', language: 'en', type: 'text' });
+    const txStub = {
+      book: {
+        create: jest.fn().mockResolvedValue({
+          id: 'book-1',
+          slug: 'test-book',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      },
+      bookVersion: { create: bookVersionCreate },
+      rightsIntake: { update: jest.fn().mockResolvedValue({}) },
     };
+    (prisma['$transaction'] as jest.Mock).mockImplementation((fn) => Promise.resolve(fn(txStub)));
+    return bookVersionCreate;
+  };
 
+  describe('optional content fields (WP-L.1)', () => {
     it('writes empty strings when the request carries no description and no cover', async () => {
       const bookVersionCreate = arrangeCreate();
       const dto = makeDto();
@@ -1103,6 +1106,38 @@ describe('RightsBookCreationService', () => {
       const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
       expect(data['description']).toBe('Test Description');
       expect(data['coverImageUrl']).toBe('https://example.com/cover.jpg');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // LEGACY-007, решение владельца 18.09.2026 (вариант C): `copyrightStatus` — ручной ввод
+  // редактора, не отражение вычисленного `rightsStatus`. Автоподстановка писала в колонку
+  // `APPROVED*`, и анонимный читатель видел это значение сырым на странице книги.
+  // Enum не вводится: ADR-005 его отверг.
+  // ---------------------------------------------------------------------------
+  describe('copyrightStatus stays editor input only (LEGACY-007)', () => {
+    it('does not fall back to the computed rightsStatus when the request carries no copyrightStatus', async () => {
+      const bookVersionCreate = arrangeCreate();
+
+      // `makeDto()` поле не задаёт — это и есть проверяемый вход приёмки прав.
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data['copyrightStatus']).toBeNull();
+      // Вычисленный статус прав при этом на месте — снята подмена, а не сам расчёт.
+      expect(data['rightsStatus']).toBe('APPROVED');
+    });
+
+    it('keeps an explicit copyrightStatus from the request', async () => {
+      const bookVersionCreate = arrangeCreate();
+      const dto = makeDto({
+        versions: [{ ...makeDto().versions[0], copyrightStatus: 'public_domain' }],
+      });
+
+      await service.createBookFromApprovedClearance('intake-1', dto);
+
+      const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data['copyrightStatus']).toBe('public_domain');
     });
   });
 
