@@ -5,6 +5,12 @@ import { RightsClearanceResolverService } from '../rights-clearance/rights-clear
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
 import { NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+// Настоящий ConfigService читает process.env, и заданный снаружи RIGHTS_LAWYER_* переворачивал бы
+// ожидания про lawyerReviewRequired без единой правки кода. Подставной — как в соседних спеках.
+const createConfigStub = (values: Record<string, string> = {}) =>
+  ({ get: jest.fn((key: string) => values[key]) }) as unknown as ConfigService;
 
 interface PrismaStub {
   rightsIntake: { findUnique: jest.Mock };
@@ -30,6 +36,7 @@ const createPrismaStub = (): PrismaStub => {
   stub['rightsLicense'] = { findMany: jest.fn().mockResolvedValue([]) };
   stub['rightsLicenseLink'] = { findMany: jest.fn().mockResolvedValue([]) };
   stub['bookVersion'] = { findUnique: jest.fn().mockResolvedValue(null) };
+  stub['rightsClaim'] = { findMany: jest.fn().mockResolvedValue([]) };
 
   return stub as unknown as PrismaStub;
 };
@@ -58,18 +65,23 @@ describe('RightsProfileService', () => {
   let service: RightsProfileService;
   let prisma: PrismaStub;
 
-  beforeEach(() => {
-    prisma = createPrismaStub();
+  const buildService = (config: ConfigService) => {
     const coverageService = new RightsLicenseCoverageService(
       prisma as unknown as PrismaService,
       new RightsClearanceResolverService(prisma as unknown as PrismaService),
     );
-    service = new RightsProfileService(
+    return new RightsProfileService(
       prisma as unknown as PrismaService,
       new TerritoryRegionAggregationService(),
       new RightsLicensesService(prisma as unknown as PrismaService, coverageService),
       coverageService,
+      config,
     );
+  };
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    service = buildService(createConfigStub());
   });
 
   describe('getCurrentByIntake', () => {
@@ -361,6 +373,140 @@ describe('RightsProfileService', () => {
       (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
 
       await expect(service.getById('missing-profile')).rejects.toThrow(NotFoundException);
+    });
+
+    // LEGACY-410: снимок на записи профиля застыл на старом (ошибочном) счёте, потому что его
+    // пишет только `assessAndSync`, а при смене статуса претензии его никто не зовёт. Ответ
+    // ручки обязан считать риск заново, иначе карточка показывает CRITICAL и «нужен юрист»
+    // там, где гейт ту же книгу пропускает.
+    describe('LEGACY-410: risk is recomputed, not read from the stale snapshot', () => {
+      const mockEmptyRelations = () => {
+        (prisma['sourceEdition'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+        (prisma['rightsReview'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['rightsEvidence'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      };
+
+      const staleCriticalProfile = () =>
+        makeProfile({
+          riskLevel: 'CRITICAL',
+          riskFactors: [{ code: 'CRITICAL_CLAIM_OPEN', level: 'CRITICAL', messageRu: 'stale' }],
+          riskAssessedAt: new Date('2026-01-01T00:00:00.000Z'),
+          lawyerReviewRequired: true,
+        });
+
+      it.each(['RESOLVED_VALID', 'RESOLVED_INVALID', 'WITHDRAWN', 'CLOSED'])(
+        'answers LOW for a critical claim closed as %s, ignoring the CRITICAL snapshot',
+        async (closedStatus) => {
+          (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+            staleCriticalProfile(),
+          );
+          mockEmptyRelations();
+          (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+            {
+              id: 'claim-1',
+              status: closedStatus,
+              severity: 'CRITICAL',
+              requiresLawyerReview: false,
+            },
+          ]);
+
+          const result = await service.getById('profile-1');
+
+          expect(result.riskLevel).toBe('LOW');
+          expect(result.riskFactors).toEqual([]);
+          expect(result.lawyerReviewRequired).toBe(false);
+        },
+      );
+
+      it('still answers CRITICAL while the critical claim is genuinely open', async () => {
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeProfile({
+            riskLevel: 'LOW',
+            riskFactors: [],
+            riskAssessedAt: new Date('2026-01-01T00:00:00.000Z'),
+            lawyerReviewRequired: false,
+          }),
+        );
+        mockEmptyRelations();
+        (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+          { id: 'claim-1', status: 'OPEN', severity: 'CRITICAL', requiresLawyerReview: false },
+        ]);
+
+        const result = await service.getById('profile-1');
+
+        expect(result.riskLevel).toBe('CRITICAL');
+        expect(result.riskFactors).toEqual([
+          expect.objectContaining({ code: 'CRITICAL_CLAIM_OPEN' }),
+        ]);
+        expect(result.lawyerReviewRequired).toBe(true);
+      });
+
+      it('reports the moment of this recomputation in riskAssessedAt, not the stored one', async () => {
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          staleCriticalProfile(),
+        );
+        mockEmptyRelations();
+        (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+        const before = Date.now();
+        const result = await service.getById('profile-1');
+
+        expect(result.riskAssessedAt).not.toBe('2026-01-01T00:00:00.000Z');
+        expect(new Date(result.riskAssessedAt as string).getTime()).toBeGreaterThanOrEqual(before);
+      });
+
+      it('leaves lawyerReviewRequired false when the lawyer workflow is switched off', async () => {
+        service = buildService(createConfigStub({ RIGHTS_LAWYER_WORKFLOW_ENABLED: 'false' }));
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeProfile({ riskLevel: 'LOW', lawyerReviewRequired: false }),
+        );
+        mockEmptyRelations();
+        (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+          { id: 'claim-1', status: 'OPEN', severity: 'CRITICAL', requiresLawyerReview: false },
+        ]);
+
+        const result = await service.getById('profile-1');
+
+        expect(result.riskLevel).toBe('CRITICAL');
+        expect(result.lawyerReviewRequired).toBe(false);
+      });
+
+      it('honours a raised RIGHTS_LAWYER_MIN_RISK_LEVEL threshold', async () => {
+        const insufficientData = () => makeProfile({ overallStatus: 'INSUFFICIENT_DATA' });
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          insufficientData(),
+        );
+        mockEmptyRelations();
+        (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+        // По умолчанию порог HIGH, и этот же профиль требует юриста.
+        const byDefault = await service.getById('profile-1');
+        expect(byDefault.riskLevel).toBe('HIGH');
+        expect(byDefault.lawyerReviewRequired).toBe(true);
+
+        service = buildService(createConfigStub({ RIGHTS_LAWYER_MIN_RISK_LEVEL: 'CRITICAL' }));
+        const raised = await service.getById('profile-1');
+
+        expect(raised.riskLevel).toBe('HIGH');
+        expect(raised.lawyerReviewRequired).toBe(false);
+      });
+
+      it('never writes the snapshot back: the GET stays a read', async () => {
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          staleCriticalProfile(),
+        );
+        mockEmptyRelations();
+        (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+        await service.getById('profile-1');
+
+        const profileModel = prisma['rightsProfile'] as Record<string, jest.Mock>;
+        expect(profileModel['update']).toBeUndefined();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
     });
   });
   // Phase 15: licenses in profile detail

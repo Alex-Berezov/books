@@ -365,8 +365,11 @@ export class RightsProfileDetailDto {
   @ApiProperty() licenseCoveredCountriesCount!: number;
   @ApiProperty() licenseUncoveredCountriesCount!: number;
 
-  // Phase 19: снимок оценки риска и юридического утверждения. Читается из уже загруженной
-  // записи профиля — дополнительных запросов маппинг не делает.
+  // LEGACY-410: `riskLevel`, `riskFactors`, `riskAssessedAt` и `lawyerReviewRequired` считаются
+  // на чтении, а не берутся из снимка `RightsProfile`: снимок пишет только `assessAndSync`, и при
+  // смене статуса претензии его никто не обновляет. `riskAssessedAt` — момент этого пересчёта.
+  // Маппинг делает ради них один запрос претензий; остальной вход у него уже загружен.
+  // `lawyerReviewBlocking` и поля утверждения ниже остаются снимком: их ведёт `syncWorkflowStatuses`.
   @ApiPropertyOptional() riskLevel?: string;
   @ApiPropertyOptional({ type: [Object] }) riskFactors?: Record<string, unknown>[];
   @ApiProperty({ type: String, nullable: true }) riskAssessedAt!: string | null;

@@ -1,8 +1,18 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
 import { RightsLicenseStatus } from '../rights-licenses/rights-license-interface';
+import { LAWYER_ENV } from '../rights-lawyer/rights-lawyer.constants';
+import { RightsRiskLevel } from '../rights-lawyer/rights-lawyer-interface';
+import {
+  computeRiskAssessment,
+  meetsRiskThreshold,
+  parseBooleanFlag,
+  parseRiskLevel,
+  type RiskAssessmentInput,
+} from '../rights-lawyer/rights-risk.util';
 import { mapRightsAction } from './rights-action.mapper';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
 import type { RightsLicenseSummaryDto } from '../rights-licenses/dto/rights-license-response.dto';
@@ -16,6 +26,8 @@ import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 
 const EXPIRING_SOON_DAYS = 90;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
 
 /** One RightsLicenseLink row joined with its license, as loaded for a profile. */
 interface ProfileLicenseLink {
@@ -32,6 +44,7 @@ export class RightsProfileService {
     private readonly regionAggregationService: TerritoryRegionAggregationService,
     private readonly licensesService: RightsLicensesService,
     private readonly licenseCoverageService: RightsLicenseCoverageService,
+    private readonly config: ConfigService,
   ) {}
 
   private get rp() {
@@ -120,6 +133,69 @@ export class RightsProfileService {
       createdAt: new Date(profile['createdAt'] as string).toISOString(),
       updatedAt: new Date(profile['updatedAt'] as string).toISOString(),
     } as RightsProfileSummaryDto;
+  }
+
+  /**
+   * Собирает вход пересчёта риска из строк, уже загруженных `mapToDetail`.
+   *
+   * Сервисы `rights-lawyer` здесь не зовутся намеренно: `RightsIntakeModule` не должен зависеть
+   * от `RightsLawyerModule` (ADR-003). Берётся только чистая функция из листа — тем же приёмом,
+   * что и `rights-approval.service.ts:108`.
+   */
+  private buildRiskInput(source: {
+    profile: Record<string, unknown>;
+    sourceEditionRecord: Record<string, unknown> | null;
+    componentsData: Array<Record<string, unknown>>;
+    territoryData: Array<Record<string, unknown>>;
+    intakeTargetCountryCodes: string[];
+    actionsData: Array<Record<string, unknown>>;
+    contributorsData: Array<Record<string, unknown>>;
+    claimsData: Array<Record<string, unknown>>;
+  }): RiskAssessmentInput {
+    return {
+      profile: {
+        overallStatus: asString(source.profile['overallStatus']),
+        publicationGate: asString(source.profile['publicationGate']),
+        confidence: asString(source.profile['confidence']),
+        status: asString(source.profile['status']),
+      },
+      sourceTextType: (source.sourceEditionRecord?.['sourceTextType'] as string | null) ?? null,
+      components: source.componentsData.map((component) => ({
+        id: component['id'] as string,
+        componentType: asString(component['componentType']),
+        status: asString(component['status']),
+        requiredAction: asString(component['requiredAction']),
+        confidence: (component['confidence'] as string | null) ?? null,
+        titleRu: asString(component['titleRu']),
+        territoryAssessmentCount: Array.isArray(component['territoryAssessments'])
+          ? component['territoryAssessments'].length
+          : 0,
+      })),
+      territoryDecisions: source.territoryData.map((decision) => ({
+        countryCode: asString(decision['countryCode']),
+        finalStatus: asString(decision['finalStatus']),
+      })),
+      targetCountryCodes: source.intakeTargetCountryCodes,
+      actions: source.actionsData.map((action) => ({
+        actionType: asString(action['actionType']),
+        status: asString(action['status']),
+        isBlocking: action['isBlocking'] === true,
+      })),
+      contributors: source.contributorsData.map((contributor) => {
+        const person = contributor['person'] as Record<string, unknown> | null;
+        return {
+          role: asString(contributor['role']),
+          fullName: asString(person?.['fullName']),
+          deathYear: (person?.['deathYear'] as number | null) ?? null,
+        };
+      }),
+      claims: source.claimsData.map((claim) => ({
+        id: claim['id'] as string,
+        status: asString(claim['status']),
+        severity: asString(claim['severity']),
+        requiresLawyerReview: claim['requiresLawyerReview'] === true,
+      })),
+    };
   }
 
   private async mapToDetail(profile: Record<string, unknown>) {
@@ -221,6 +297,35 @@ export class RightsProfileService {
       },
     });
 
+    // LEGACY-410: единственная строка риска, которой у маппинга ещё нет. Остальной вход
+    // (издание, компоненты, территории, действия, участники, целевые страны) уже загружен выше.
+    // Клиент типизированный намеренно: каст выключил бы проверку имени поля в `where`,
+    // и опечатка дожила бы до прода (`books/CLAUDE.md`, «Специфика проекта»).
+    const claimsData = await this.prisma.rightsClaim.findMany({
+      where: { rightsProfileId: profileId },
+      // Риску нужны четыре скаляра; без `select` сюда едут все `@db.Text` претензии.
+      select: { id: true, status: true, severity: true, requiresLawyerReview: true },
+    });
+
+    const riskInput = this.buildRiskInput({
+      profile,
+      sourceEditionRecord,
+      componentsData,
+      territoryData,
+      intakeTargetCountryCodes,
+      actionsData,
+      contributorsData,
+      claimsData,
+    });
+    const riskAssessment = computeRiskAssessment(riskInput);
+    const riskAssessedAt = new Date();
+    const lawyerReviewRequired =
+      parseBooleanFlag(this.config.get(LAWYER_ENV.WORKFLOW_ENABLED), true) &&
+      meetsRiskThreshold(
+        riskAssessment.riskLevel,
+        parseRiskLevel(this.config.get(LAWYER_ENV.MIN_RISK_LEVEL), RightsRiskLevel.HIGH),
+      );
+
     const licenseLinks = await this.loadProfileLicenseLinks(profileId);
     const licenseMetrics = this.buildLicenseMetrics(licenseLinks);
     const licenseCoverage = await this.licenseCoverageService.evaluateProfileCoverage(profileId);
@@ -285,15 +390,14 @@ export class RightsProfileService {
       translatorsCount,
       narratorsCount,
       contributorsWithoutPersonCount,
-      // Phase 19: снимок риска и юридического утверждения — прямо из загруженной записи.
-      riskLevel: (profile['riskLevel'] as string) ?? undefined,
-      riskFactors: Array.isArray(profile['riskFactors'])
-        ? (profile['riskFactors'] as Record<string, unknown>[])
-        : undefined,
-      riskAssessedAt: profile['riskAssessedAt']
-        ? new Date(profile['riskAssessedAt'] as string).toISOString()
-        : null,
-      lawyerReviewRequired: (profile['lawyerReviewRequired'] as boolean) ?? undefined,
+      // LEGACY-410: риск считается здесь и сейчас, а не читается из снимка `RightsProfile`.
+      // Снимок пишет только `assessAndSync`, и его никто не зовёт при смене статуса претензии:
+      // карточка показывала CRITICAL и «нужен юрист» там, где гейт ту же книгу пропускал.
+      // В базу не пишем: это GET (решение арбитра 18.09.2026, decisions-log.md).
+      riskLevel: riskAssessment.riskLevel,
+      riskFactors: riskAssessment.factors as unknown as Record<string, unknown>[],
+      riskAssessedAt: riskAssessedAt.toISOString(),
+      lawyerReviewRequired,
       lawyerReviewBlocking: (profile['lawyerReviewBlocking'] as boolean) ?? undefined,
       currentLawyerReviewId: (profile['currentLawyerReviewId'] as string) ?? null,
       lawyerApprovedAt: profile['lawyerApprovedAt']
