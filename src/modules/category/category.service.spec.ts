@@ -85,11 +85,31 @@ const createPrismaStub = (): PrismaStub => ({
   slugRedirect: { deleteMany: jest.fn() },
 });
 
+/**
+ * Значения, подставленные в замок **слага** (`LEGACY-276`).
+ *
+ * ⚠️ Берутся из аргументов тега `$queryRaw`, а не из склеенного текста:
+ * у замка дерева ключ — `bigint`, и `JSON.stringify` на нём бросает
+ * `TypeError: Do not know how to serialize a BigInt`, то есть проверка падала бы
+ * на себе самой, а не на предмете.
+ *
+ * Вызов отбирается по `hashtext` — тем же признаком, которым спеки различают
+ * два замка: общий отбор «любой `$queryRaw`» вернул бы ключ дерева и зеленел
+ * бы на подмене одного замка другим.
+ */
+const slugLockValues = (queryRaw: jest.Mock): unknown[] =>
+  (queryRaw.mock.calls as unknown[][])
+    .filter((call) => {
+      const parts = call[0] as { raw?: readonly string[] } | undefined;
+      return (parts?.raw ?? []).join(' ').includes('hashtext');
+    })
+    .flatMap((call): unknown[] => call.slice(1));
+
 describe('CategoryService', () => {
   let service: CategoryService;
   let prisma: PrismaStub;
   let indexability: { recomputeForTerms: jest.Mock };
-  let slugRedirects: { record: jest.Mock; resolve: jest.Mock };
+  let slugRedirects: { record: jest.Mock; resolve: jest.Mock; recordBaseSlugChange: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -100,6 +120,7 @@ describe('CategoryService', () => {
     slugRedirects = {
       record: jest.fn().mockResolvedValue(undefined),
       resolve: jest.fn().mockResolvedValue(null),
+      recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
     };
     service = new CategoryService(
       prisma as unknown as PrismaService,
@@ -234,20 +255,75 @@ describe('CategoryService', () => {
   });
 
   /**
-   * Обратная сторона: корневой термин ребра не пишет, блокировать нечего.
-   * Безусловный вызов сериализовал бы массовое заведение терминов.
+   * 🔴 `LEGACY-276`. Ветка `create` **с родителем** — такой же писатель слага,
+   * как остальные три, и замок слага берёт тоже. Без этой спеки снятие
+   * `dto.slug` у здешнего `runInLockedTree` не красило ни одного теста:
+   * соседняя спека выше меряет один общий `$queryRaw` меткой `lock` и падает
+   * на проверке типов раньше, чем дойдёт до проверки слага.
    *
-   * ⚠️ Проверяется отсутствие **блокировки**, а не отсутствие транзакции.
-   * С `LEGACY-311` корневой термин тоже пишется транзакцией: проверка
-   * занятости слага и сама запись — это «проверил и записал», и на клиенте
-   * пула между ними помещается чужой `POST`. Прежнее утверждение
-   * `$transaction` не вызывался зеленело бы и на возврате дефекта.
+   * ⚠️ Проверяется **порядок двух замков**: дерево, затем слаг. Обратный
+   * порядок даёт взаимную блокировку с транзакцией, взявшей их как положено,
+   * и `toHaveBeenCalled` на обоих зеленеет и на нём.
    */
-  it('создание без родителя блокировку не берёт (LEGACY-274)', async () => {
+  it('создание под родителем берёт замок дерева, затем замок слага (LEGACY-276)', async () => {
+    const order: string[] = [];
+    prisma.category.findUnique.mockResolvedValue({ id: 'P', type: 'genre' });
+    const tx = {
+      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
+        const sql = (parts?.raw ?? []).join(' ');
+        order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findUnique: jest.fn(() => {
+          order.push('tx-read');
+          return Promise.resolve({ id: 'P', type: 'genre' });
+        }),
+        findFirst: jest.fn(() => {
+          order.push('slug-check');
+          return Promise.resolve(null);
+        }),
+        create: jest.fn(() => {
+          order.push('write');
+          return Promise.resolve({ id: 'C' });
+        }),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await service.create({ type: 'genre', name: 'C', slug: 'c', parentId: 'P' } as never);
+
+    expect(order.slice(0, 2)).toEqual(['lock-tree', 'lock-slug']);
+    expect(order.indexOf('lock-slug')).toBeLessThan(order.indexOf('slug-check'));
+    expect(order.indexOf('slug-check')).toBeLessThan(order.indexOf('write'));
+    // Ключ замка — слаг нового термина, а не что-нибудь из строки родителя.
+    // Значения берутся из аргументов тега, а не из склеенной строки: ключ
+    // дерева — `bigint`, и `JSON.stringify` на нём падает.
+    expect(slugLockValues(tx.$queryRaw)).toContain('c');
+  });
+
+  /**
+   * Обратная сторона: корневой термин ребра не пишет, и очередь **дерева**
+   * ему не нужна — безусловный вызов сериализовал бы массовое заведение
+   * терминов на очереди импорта (`LEGACY-256`).
+   *
+   * ⚠️ Проверяется отсутствие блокировки **дерева**, а не отсутствие
+   * блокировки вообще: с `LEGACY-276` этот же путь берёт замок по слагу —
+   * иначе два одновременных `POST` с одним слагом проходили бы оба
+   * (уникальности на `Category.slug` в базе нет до релиза 2).
+   *
+   * ⚠️ Замки различаются по тексту запроса, а не одной меткой на оба:
+   * общая метка оставила бы спеку зелёной на подмене одного замка другим —
+   * ровно то, ради чего то же разведение сделано в спеке импорта.
+   */
+  it('создание без родителя берёт замок слага, но не замок дерева (LEGACY-274, LEGACY-276)', async () => {
     const order: string[] = [];
     const tx = {
-      $queryRaw: jest.fn(() => {
-        order.push('lock');
+      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
+        const sql = (parts?.raw ?? []).join(' ');
+        order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
         return Promise.resolve([]);
       }),
       category: {
@@ -267,8 +343,10 @@ describe('CategoryService', () => {
 
     await service.create({ type: 'genre', name: 'C', slug: 'c' } as never);
 
-    expect(order).toEqual(['slug-check', 'write']);
-    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    // Замок слага — **первым** оператором, до проверки и до записи: взятый
+    // после проверки, он не стережёт ничего (`LEGACY-310`).
+    expect(order).toEqual(['lock-slug', 'slug-check', 'write']);
+    expect(order).not.toContain('lock-tree');
   });
 
   /**
@@ -434,6 +512,10 @@ describe('CategoryService', () => {
       $queryRaw: jest.fn().mockResolvedValue([]),
       category: {
         findUnique: jest.fn().mockResolvedValue(fresh),
+        // `LEGACY-276`: с 19.09.2026 занятость слага проверяется клиентом
+        // транзакции, а не пулом — без этой заглушки `assertSlugFree` упадёт
+        // на «not a function», а не на настоящем ассершене теста.
+        findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue(fresh),
       },
     };
@@ -458,6 +540,209 @@ describe('CategoryService', () => {
     // с устаревшим слагом рядом с верным, оставил бы проверку зелёной.
     expect(recordBaseSlugChange).toHaveBeenCalledTimes(1);
     expect(recordBaseSlugChange).toHaveBeenCalledWith('category', 'a-fresh', 'a-newest', tx);
+  });
+
+  /**
+   * `LEGACY-276`. Проверок занятости слага при `PATCH` **две**, и решает
+   * вторая: дешёвая на пуле даёт быстрый 400 обычной ошибке оператора,
+   * настоящая идёт клиентом транзакции под замком по слагу.
+   *
+   * ⚠️ Пул отвечает «слаг свободен», клиент транзакции — «занят»: тест
+   * зеленеет только на том клиенте, который реально решает. Спека, где оба
+   * отвечают одинаково, пропустила бы возврат проверки на пул.
+   */
+  it('update проверяет занятость слага клиентом транзакции, а не пулом (LEGACY-276)', async () => {
+    prisma.category.findUnique.mockResolvedValue({
+      id: 'A',
+      type: 'genre',
+      slug: 'a',
+      parentId: null,
+      key: 'a',
+    });
+    // Пул сказал бы «свободен» — если бы проверка спрашивала его, тест
+    // остался бы зелёным на дефекте.
+    prisma.category.findFirst.mockResolvedValue(null);
+
+    const txUpdate = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'A',
+          type: 'genre',
+          slug: 'a',
+          parentId: null,
+        }),
+        findFirst: jest.fn().mockResolvedValue({ id: 'other' }),
+        update: txUpdate,
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await expect(service.update('A', { slug: 'taken' })).rejects.toThrow(
+      'Category with same slug already exists',
+    );
+    expect(txUpdate).not.toHaveBeenCalled();
+    // Счётчик обязателен рядом с `toHaveBeenCalledWith` (`L-005`): через тот же
+    // `tx.category.findFirst` ходит `assertChildTypesAllowed`, и совпадение
+    // по аргументам засчиталось бы по любому из вызовов.
+    expect(tx.category.findFirst).toHaveBeenCalledTimes(1);
+    expect(tx.category.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'taken', NOT: { id: 'A' } },
+      select: { id: true },
+    });
+  });
+
+  /**
+   * 🔴 `LEGACY-276`, сама гонка. `PATCH {"slug"}` дерева не касается и идёт
+   * через `runInTree`, то есть мимо очереди дерева. Пока замка по слагу
+   * не было, пара «проверил — записал» не была сериализована ничем: на
+   * READ COMMITTED соседний писатель того же слага не виден до своего коммита,
+   * а уникального индекса в базе нет до релиза 2 — оба запроса проходили.
+   *
+   * ⚠️ Проверяется **порядок**: замок, взятый после проверки, не стережёт
+   * ничего (`LEGACY-310`). И проверяется, что это замок именно слага, а не
+   * дерева: подмена одного другим вернула бы `P2028` на переименовании
+   * во время импорта (`LEGACY-256`).
+   */
+  it('PATCH одного слага берёт замок слага первым оператором, а замок дерева не берёт (LEGACY-276)', async () => {
+    const order: string[] = [];
+    prisma.category.findUnique.mockResolvedValue({
+      id: 'A',
+      type: 'genre',
+      slug: 'a-old',
+      parentId: null,
+      key: 'a',
+    });
+    prisma.category.findFirst.mockResolvedValue(null);
+
+    const tx = {
+      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
+        const sql = (parts?.raw ?? []).join(' ');
+        order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findUnique: jest.fn(() => {
+          order.push('read');
+          return Promise.resolve({ id: 'A', type: 'genre', slug: 'a-old', parentId: null });
+        }),
+        findFirst: jest.fn(() => {
+          order.push('slug-check');
+          return Promise.resolve(null);
+        }),
+        update: jest.fn(() => {
+          order.push('write');
+          return Promise.resolve({ id: 'A' });
+        }),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await service.update('A', { slug: 'a-new' });
+
+    expect(order[0]).toBe('lock-slug');
+    expect(order).not.toContain('lock-tree');
+    expect(order.indexOf('lock-slug')).toBeLessThan(order.indexOf('slug-check'));
+    expect(order.indexOf('slug-check')).toBeLessThan(order.indexOf('write'));
+    // Ключ замка — слаг из тела запроса, а не из строки базы: иначе замок
+    // берётся по адресу, который освобождают, а не по тому, который занимают.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(slugLockValues(tx.$queryRaw)).toContain('a-new');
+  });
+
+  /**
+   * 🔴 `LEGACY-276`, обратная сторона. `PATCH`, слага не несущий, писателем
+   * слага не является: замок он брать не должен вовсе, иначе переименование
+   * без смены адреса встаёт в чужую очередь просто так.
+   */
+  it('PATCH без слага замка слага не берёт (LEGACY-276)', async () => {
+    const order: string[] = [];
+    prisma.category.findUnique.mockResolvedValue({
+      id: 'A',
+      type: 'genre',
+      slug: 'a',
+      parentId: null,
+      key: 'a',
+    });
+
+    const tx = {
+      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
+        const sql = (parts?.raw ?? []).join(' ');
+        order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
+        return Promise.resolve([]);
+      }),
+      category: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'A',
+          type: 'genre',
+          slug: 'a',
+          parentId: null,
+        }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn(() => {
+          order.push('write');
+          return Promise.resolve({ id: 'A' });
+        }),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await service.update('A', { name: 'Renamed' });
+
+    expect(order).toEqual(['write']);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-276`. До этой правки финальная запись `update` не ловила `P2002`
+   * вовсе: гонка на слаге, прошедшая мимо `assertSlugFree` этой же
+   * транзакции (сегодня — окно до появления `@@unique([slug])`, до тех пор
+   * это соглашение кода, а не ограничение базы), отвечала бы 500, а не 400.
+   * `create` через `writeCategoryRow` ловит с `LEGACY-311`, у `update` копии
+   * не было.
+   */
+  it('update отвечает 400, а не падает 500, если запись столкнулась с занятым слагом (LEGACY-276)', async () => {
+    prisma.category.findUnique.mockResolvedValue({
+      id: 'A',
+      type: 'genre',
+      slug: 'a',
+      parentId: null,
+      key: 'a',
+    });
+    const conflict = Object.assign(new Error('unique'), {
+      code: 'P2002',
+      meta: { target: ['slug'] },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'A',
+          type: 'genre',
+          slug: 'a',
+          parentId: null,
+        }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockRejectedValue(conflict),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    // Тип, а не только текст (`L-004`): `toThrow(string)` зеленеет на любом
+    // `Error`, и возврат `writeCategoryRow` к голому `throw new Error(...)`
+    // вернул бы 500, оставив проверку зелёной.
+    const rejection = service.update('A', { slug: 'taken' });
+    await expect(rejection).rejects.toBeInstanceOf(BadRequestException);
+    await expect(rejection).rejects.toThrow('Category with same slug already exists');
   });
 
   /**

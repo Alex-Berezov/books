@@ -29,6 +29,19 @@ import type { SlugRedirectService } from '../slug-redirect/slug-redirect.service
 
 type WriteLog = string[];
 
+/**
+ * Пространства имён двухаргументного `pg_advisory_xact_lock`, по которым
+ * различаются два внешне одинаковых замка: `hashtext` есть у обоих.
+ *
+ * 🔴 Числа продублированы здесь намеренно, а не импортированы: обе константы
+ * приватны в своих сервисах (замок, взятый мимо их методов, ничего не стережёт),
+ * а спеке нужно именно **проводное значение**. Побочно это сторож на совпадение:
+ * сведённые в одно пространство, эти замки поставили бы админский `PATCH`
+ * категории в очередь за партией импорта тегов (`LEGACY-256`).
+ */
+const TAG_KEY_LOCK_NAMESPACE = 831_427_002;
+const CATEGORY_SLUG_LOCK_NAMESPACE = 831_427_003;
+
 interface FakeModel {
   findUnique: jest.Mock;
   // 🔴 `LEGACY-315`. Второй проход в конце партии читает детей терминов,
@@ -74,16 +87,31 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
     // разбирает вид «клиент, точка, имя» как обращение к делегату Prisma
     // и печатает заведомо ложную строку — за ней прячется настоящая находка.
     // ⚠️ Метка берётся из текста запроса, а не пишется одной строкой на все:
-    // сырым SQL в этих путях идут ТРИ разных замка — блокировка дерева
-    // категорий, замок строки тега (`FOR UPDATE`) и с 16.09.2026 advisory-замок
-    // ключа тега (`hashtext`). Общая метка сделала бы спеку, проверяющую порядок
-    // операторов, зелёной на чужом замке.
-    $queryRaw: jest.fn().mockImplementation((parts?: { raw?: readonly string[] }) => {
+    // сырым SQL в этих путях идут ЧЕТЫРЕ разных замка — блокировка дерева
+    // категорий, замок строки тега (`FOR UPDATE`), advisory-замок ключа тега
+    // (`hashtext`, 16.09.2026) и с 19.09.2026 advisory-замок слага категории
+    // (`hashtext`, `LEGACY-276`). Общая метка сделала бы спеку, проверяющую
+    // порядок операторов, зелёной на чужом замке.
+    //
+    // 🔴 Два последних отличаются **только пространством имён**, а не формой
+    // запроса: общий признак `hashtext` метил их одинаково, и на категорийном
+    // пути замок слага логировался как замок ключа тега. Пока это было так,
+    // снятие замка слага у импорта не красило ни одной спеки.
+    $queryRaw: jest.fn().mockImplementation((parts?: { raw?: readonly string[] }, ...values) => {
       const sql = (parts?.raw ?? []).join(' ');
+      const namespace = values[0];
+      const advisoryByKey =
+        namespace === CATEGORY_SLUG_LOCK_NAMESPACE
+          ? 'lockCategorySlug'
+          : namespace === TAG_KEY_LOCK_NAMESPACE
+            ? 'lockTagKey'
+            : // Неизвестное пространство — не повод молча подписать его соседом:
+              // так метка и соврала бы, ради чего весь этот разбор и написан.
+              `lockUnknown(${String(namespace)})`;
       const lock = sql.includes('FOR UPDATE')
         ? 'lockTagRow'
         : sql.includes('hashtext')
-          ? 'lockTagKey'
+          ? advisoryByKey
           : 'lockTree';
       log.push(`${label}:${lock}`);
       return Promise.resolve([]);
@@ -371,6 +399,88 @@ describe('ImportService — создание термина и переводо�
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(writesOf(log).filter((call) => call.startsWith('root.'))).toEqual([]);
     expect(log).toContain('tx.tag.create');
+  });
+});
+
+describe('ImportService — импорт не заводит второй термин на занятый базовый слаг (LEGACY-276)', () => {
+  /**
+   * До этой правки дубли `Category.slug` заводил именно этот путь, а не
+   * гонка: `getFirstSlug` берёт слаг из первого перевода по порядку ключей
+   * JSON, и два разных `key` с одинаковым первым слагом создавали оба
+   * термина отчётом `imported`, без единой проверки — `assertSlugFree`
+   * контроллера сюда не заглядывает, импорт идёт мимо него.
+   */
+  it('термин с занятым базовым слагом отвергается, а не заводит второй адрес', async () => {
+    const log: WriteLog = [];
+    const { service, tx, $transaction } = makeService(log);
+
+    // Другая живая категория уже держит этот базовый слаг.
+    tx.category.findFirst.mockImplementation((args: { where?: { slug?: string } }) => {
+      log.push('tx.category.findFirst');
+      return Promise.resolve(
+        args?.where?.slug === 'victorian-literature' ? { id: 'other-cat' } : null,
+      );
+    });
+
+    const result = await service.importCategories([categoryDto()]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [
+        {
+          key: 'victorian-literature',
+          // Текст — общий с админским путём: правило одно и живёт
+          // в `CategoryTreeService` (`LEGACY-276`). Своя формулировка здесь
+          // означала бы, что оператор видит разные фразы на одно событие.
+          message: 'Category with same slug already exists',
+        },
+      ],
+    });
+    expect($transaction).toHaveBeenCalledTimes(1);
+    // Проверка нашла занятый адрес раньше записи — термина в базе нет вовсе.
+    expect(tx.category.create).not.toHaveBeenCalled();
+    expect(writesOf(log)).toEqual([]);
+  });
+
+  /** Обратная сторона: слаг свободен — партия проходит, как и раньше. */
+  it('термин со свободным базовым слагом импортируется как обычно', async () => {
+    const log: WriteLog = [];
+    const { service, tx } = makeService(log);
+
+    const result = await service.importCategories([categoryDto()]);
+
+    expect(result).toEqual({ imported: 1, updated: 0, errors: [] });
+    expect(tx.category.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ slug: 'victorian-literature' }),
+    });
+  });
+
+  /**
+   * 🔴 Сама сериализация. Проверка занятости слага без замка ловит только
+   * уже закоммиченный дубль: на `read committed` соседний писатель того же
+   * слага не виден до своего коммита, а уникального индекса в базе нет
+   * до релиза 2. Поэтому импорт берёт замок слага — вторым оператором,
+   * после замка дерева.
+   *
+   * ⚠️ Замки различаются по **пространству имён**, а не по слову `hashtext`:
+   * его содержат оба advisory-замка, и общий признак метил замок слага
+   * замком ключа тега. Пока это было так, снятие `commonData.slug` у входа
+   * не красило ни одной спеки.
+   */
+  it('импорт берёт замок дерева, затем замок слага — до проверки и до записи', async () => {
+    const log: WriteLog = [];
+    const { service } = makeService(log);
+
+    await service.importCategories([categoryDto()]);
+
+    const inTx = log.filter((call) => call.startsWith('tx:'));
+    expect(inTx).toEqual(['tx:lockTree', 'tx:lockCategorySlug']);
+
+    // И оба — раньше первой записи: замок, взятый после `create`,
+    // не стережёт ничего (`LEGACY-310`).
+    const firstWrite = log.findIndex((call) => call === 'tx.category.create');
+    expect(firstWrite).toBeGreaterThan(log.indexOf('tx:lockCategorySlug'));
   });
 });
 
