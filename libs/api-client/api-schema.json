@@ -2215,6 +2215,11 @@
           "author": {
             "type": "string"
           },
+          "authorSlug": {
+            "example": "sun-czy",
+            "nullable": true,
+            "type": "string"
+          },
           "availableLanguages": {
             "items": {
               "enum": [
@@ -2476,6 +2481,11 @@
             "type": "string"
           },
           "authorPageUrl": {
+            "nullable": true,
+            "type": "string"
+          },
+          "authorSlug": {
+            "example": "sun-czy",
             "nullable": true,
             "type": "string"
           },

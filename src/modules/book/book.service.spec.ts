@@ -1,6 +1,7 @@
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { BookService } from './book.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuthorService } from '../author/author.service';
 import { BookType, Language } from '@prisma/client';
 import { NotFoundException } from '@nestjs/common';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
@@ -110,6 +111,9 @@ describe('BookService.getOverview', () => {
       new RelatedTaxonomyService(prisma as unknown as PrismaService),
       createSlugRedirectStub(),
       createModeratorRolesStub(),
+      // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
+      // по-прежнему управляется моками `authorTranslation.findMany`.
+      new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
     );
   });
 
@@ -165,6 +169,220 @@ describe('BookService.getOverview', () => {
     expect(res.seo.read?.metaTitle).toBe('T-text');
     expect(res.seo.listen?.metaTitle).toBe('T-audio');
     expect(res.seo.summary?.metaTitle).toBe('T-text');
+  });
+
+  /**
+   * 🔴 LEGACY-006. Публичный адрес автора обзор книги не отдавал вовсе, и фронт
+   * собирал его слагификацией отображаемого имени. Слаг бывает транслитерацией:
+   * «Сунь-цзы» лежит под `sun-czy`, а из имени получалось бы другое — ссылка
+   * со страницы книги вела в 404. Теперь ключ отдаётся сервером, а фронту собирать
+   * его запрещено (`books-front/types/api-schema/books.ts`, `BookCardModel.authorSlug`).
+   */
+  describe('настоящий слаг автора в обзоре (LEGACY-006)', () => {
+    const arrangeOverview = (
+      authorId: string | null,
+      extraVersions: Array<Record<string, unknown>> = [],
+    ) => {
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-text-ru',
+          language: Language.ru,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          author: 'Сунь-цзы',
+          authorId,
+          _count: { chapters: 5, audioChapters: 0, summaries: 0 },
+        },
+        ...extraVersions,
+      ]);
+      prisma.seo.findMany.mockResolvedValue([]);
+    };
+
+    it('отдаёт слаг из справочника и на верхнем уровне, и у версии', async () => {
+      arrangeOverview('author-1');
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { authorId: 'author-1', language: Language.ru, slug: 'sun-czy' },
+      ]);
+
+      const res = await service.getOverview('slug-1', Language.ru);
+
+      expect(res.authorSlug).toBe('sun-czy');
+      expect(res.versions[0].authorSlug).toBe('sun-czy');
+      // Запрос один на весь обзор, а не по запросу на версию.
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledTimes(1);
+      // 🔴 Язык спрашивается **строго** тот, что у версии: английского фолбэка нет.
+      // `en`-слаг, подставленный в адрес под `/ru`, — гарантированный 404
+      // (`getPublicBySlug` ищет парой «слаг + язык»).
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledWith({
+        where: { authorId: { in: ['author-1'] }, language: { in: [Language.ru] } },
+        select: { authorId: true, language: true, slug: true },
+      });
+    });
+
+    // Перевода на язык ответа нет — адреса нет. `null` честнее выдуманного слага:
+    // фронт по нему рисует имя текстом, без ссылки в никуда.
+    it('отдаёт null, когда перевода автора нет', async () => {
+      arrangeOverview('author-1');
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+
+      const res = await service.getOverview('slug-1', Language.ru);
+
+      expect(res.authorSlug).toBeNull();
+      expect(res.versions[0].authorSlug).toBeNull();
+      // Имя при этом на месте — правка меняет адрес, а не подпись.
+      expect(res.author).toBe('Сунь-цзы');
+    });
+
+    /**
+     * 🔴 Слаг версии считается по языку **этой версии**, а не по языку страницы.
+     * Иначе у книги с версиями `ru` и `fr` французская версия получила бы русский слаг,
+     * и ссылка из неё ушла бы на `/fr/author/<русский слаг>` — 404.
+     */
+    it('слаг каждой версии считается в языке этой версии', async () => {
+      arrangeOverview('author-1', [
+        {
+          id: 'v-text-fr',
+          language: Language.fr,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          author: 'Sun Tzu',
+          authorId: 'author-1',
+          _count: { chapters: 3, audioChapters: 0, summaries: 0 },
+        },
+      ]);
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { authorId: 'author-1', language: Language.ru, slug: 'sun-czy' },
+        { authorId: 'author-1', language: Language.fr, slug: 'sun-tzu-fr' },
+      ]);
+
+      const res = await service.getOverview('slug-1', Language.ru);
+
+      const ru = res.versions.find((v) => v.language === Language.ru);
+      const fr = res.versions.find((v) => v.language === Language.fr);
+      expect(ru?.authorSlug).toBe('sun-czy');
+      expect(fr?.authorSlug).toBe('sun-tzu-fr');
+
+      // Оба языка спрошены одним запросом, а не по запросу на версию.
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledTimes(1);
+      const where = prisma.authorTranslation.findMany.mock.calls[0][0].where as {
+        language: { in: string[] };
+      };
+      expect(new Set(where.language.in)).toEqual(new Set([Language.ru, Language.fr]));
+    });
+
+    /**
+     * 🔴 Активная версия не обязана быть на языке ответа: текста на запрошенном языке
+     * может не быть вовсе, и тогда активной становится версия другого языка. Слаг этой
+     * версии посчитан в **её** языке, а потребитель клеит его с языком ответа (`language`
+     * ниже в теле) — получилась бы пара «слаг + язык», которой нет, то есть 404.
+     * Поэтому верхнеуровневый слаг считается в языке **ответа**, а не активной версии.
+     */
+    it('верхнеуровневый слаг считается в языке ответа, а не активной версии', async () => {
+      // Русская версия — аудио без глав, текст лежит только в английской: активной
+      // станет английская, а ответ останется русским.
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-audio-ru',
+          language: Language.ru,
+          type: BookType.audio,
+          isFree: true,
+          seoId: null,
+          slug: 'slug-1',
+          author: 'Сунь-цзы',
+          authorId: 'author-1',
+          _count: { chapters: 0, audioChapters: 0, summaries: 0 },
+        },
+        {
+          id: 'v-text-en',
+          language: Language.en,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          slug: 'slug-1',
+          author: 'Sun Tzu',
+          authorId: 'author-1',
+          _count: { chapters: 7, audioChapters: 0, summaries: 0 },
+        },
+      ]);
+      prisma.seo.findMany.mockResolvedValue([]);
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { authorId: 'author-1', language: Language.ru, slug: 'sun-czy' },
+        { authorId: 'author-1', language: Language.en, slug: 'sun-tzu' },
+      ]);
+
+      const res = await service.getOverview('slug-1', Language.ru);
+
+      // Ответ русский — значит и слаг верхнего уровня русский, хотя активная версия английская.
+      expect(res.language).toBe(Language.ru);
+      expect(res.authorSlug).toBe('sun-czy');
+      // У самих версий слаг по-прежнему в языке версии: эта ссылка ведёт под `/en`.
+      const en = res.versions.find((v) => v.language === Language.en);
+      expect(en?.authorSlug).toBe('sun-tzu');
+    });
+
+    /**
+     * 🔴 Выбор языка может не состояться вовсе: книга издана только на `es` и `fr`,
+     * запрос пришёл на `/pt` (`LEGACY-104`). Тогда `preferredLang` — `undefined`,
+     * и подстановка `en` «чтобы что-то было» вернула бы снятый английский фолбэк
+     * с другой стороны: ответ ушёл бы с английским слагом, а потребитель склеил бы
+     * его с языком адреса и получил 404.
+     */
+    it('не выдаёт слаг, когда язык ответа не определился вовсе', async () => {
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-text-es',
+          language: Language.es,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          slug: 'slug-1',
+          author: 'Sun Tzu',
+          authorId: 'author-1',
+          _count: { chapters: 4, audioChapters: 0, summaries: 0 },
+        },
+      ]);
+      prisma.seo.findMany.mockResolvedValue([]);
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { authorId: 'author-1', language: Language.en, slug: 'sun-tzu' },
+        { authorId: 'author-1', language: Language.es, slug: 'sun-tzu-es' },
+      ]);
+
+      const res = await service.getOverview('slug-1', Language.pt);
+
+      expect(res.language).toBeUndefined();
+      expect(res.authorSlug).toBeNull();
+      // У самой версии слаг есть — он в её собственном языке и годится только под `/es`.
+      expect(res.versions[0].authorSlug).toBe('sun-tzu-es');
+    });
+
+    // Перевода на язык версии нет — слага нет. Подставлять английский нельзя:
+    // страница автора ищет строго парой, и такой адрес отдаёт 404.
+    it('не подставляет английский слаг, когда перевода на язык версии нет', async () => {
+      arrangeOverview('author-1');
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { authorId: 'author-1', language: Language.en, slug: 'sun-tzu' },
+      ]);
+
+      const res = await service.getOverview('slug-1', Language.ru);
+
+      expect(res.authorSlug).toBeNull();
+      expect(res.versions[0].authorSlug).toBeNull();
+    });
+
+    // Ключа автора у версии нет (legacy-данные) — в справочник не ходим вовсе.
+    it('не ходит в справочник, когда ключа автора нет', async () => {
+      arrangeOverview(null);
+
+      const res = await service.getOverview('slug-1', Language.ru);
+
+      expect(res.authorSlug).toBeNull();
+      expect(prisma.authorTranslation.findMany).not.toHaveBeenCalled();
+    });
   });
 
   it('handles no versions gracefully', async () => {
@@ -527,6 +745,9 @@ describe('BookService.getOverview', () => {
         new RelatedTaxonomyService(prisma as unknown as PrismaService),
         createSlugRedirectStub(),
         createModeratorRolesStub(),
+        // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
+        // по-прежнему управляется моками `authorTranslation.findMany`.
+        new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
       );
     });
 
@@ -672,6 +893,9 @@ describe('BookService.getOverview', () => {
         new RelatedTaxonomyService(prisma as unknown as PrismaService),
         createSlugRedirectStub(),
         createModeratorRolesStub(),
+        // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
+        // по-прежнему управляется моками `authorTranslation.findMany`.
+        new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
       );
 
       prisma.bookVersion.findFirst
@@ -780,6 +1004,9 @@ describe('BookService.remove (LEGACY-395)', () => {
       new RelatedTaxonomyService(prisma as unknown as PrismaService),
       slugRedirects as unknown as SlugRedirectService,
       createModeratorRolesStub(),
+      // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
+      // по-прежнему управляется моками `authorTranslation.findMany`.
+      new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
     );
   });
 

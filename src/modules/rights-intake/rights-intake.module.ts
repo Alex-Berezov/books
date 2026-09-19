@@ -21,6 +21,7 @@ import { ComponentTerritoryAggregationService } from './component-territory-aggr
 import { PersonsModule } from '../persons/persons.module';
 import { RightsNotificationsModule } from '../rights-agent/rights-notifications.module';
 import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module';
+import { AuthorModule } from '../author/author.module';
 
 /**
  * `RightsNotificationsModule` — лист графа (WP-6.3): импортировать сам `RightsAgentModule`
@@ -32,6 +33,12 @@ import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module'
  *
  * `RightsFileStorageModule` — лист графа (WP-9): приватное хранилище юридических файлов,
  * отдельное от публичного `StorageModule` медиа. Зависимостей на прикладные модули не имеет.
+ *
+ * `AuthorModule` — лист графа (LEGACY-006): из прикладных модулей не импортирует ничего
+ * (только глобальный `SlugRedirectModule`, и тот — явно, `author.module.ts`). Отсюда берётся
+ * резолвинг `authorId` по имени; взять его из `BookVersionService` было нельзя —
+ * `BookVersionModule` импортирует этот модуль, получилось бы кольцо. Добавлять в `AuthorModule`
+ * импорт доменного модуля нельзя: его держат четверо, и первое же такое ребро вернёт кольцо.
  */
 @Module({
   imports: [
@@ -40,6 +47,7 @@ import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module'
     RightsNotificationsModule,
     RightsContentHashModule,
     RightsFileStorageModule,
+    AuthorModule,
   ],
   controllers: [
     RightsIntakeController,

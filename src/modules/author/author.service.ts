@@ -151,6 +151,15 @@ const PUBLISHED_BOOKS_JOIN = Prisma.sql`
  AND bv.status = 'published'
  AND (bv."authorId" = t."authorId" OR bv.author = t.name)`;
 
+/**
+ * Ключ карты слагов: слаг уникален парой `@@unique([language, slug])`
+ * (`prisma/schema.prisma`), поэтому и искать его можно только парой. Одна функция
+ * на запись и на чтение — врозь они разъедутся на первой же правке разделителя.
+ */
+export function authorSlugKey(authorId: string, language: Language): string {
+  return `${authorId}:${language}`;
+}
+
 /** Сколько кандидатов `<slug>-N` проверяет один запрос подсказки (LEGACY-370). */
 const SLUG_SUGGESTION_BATCH = 20;
 
@@ -162,6 +171,100 @@ export class AuthorService {
     private readonly prisma: PrismaService,
     private readonly slugRedirects: SlugRedirectService,
   ) {}
+
+  /**
+   * Связывает версию книги с автором **ключом**, а не только строкой.
+   *
+   * 🔴 `BookVersion.authorId` принимался в DTO и раньше, но его не присылал никто:
+   * на 09.08.2026 в проде он был NULL у **всех 45** версий, а фактическая связь
+   * держалась на строковом поле `author`. Из-за этого список авторов показывал
+   * «0 книг» у всех десяти, включая тех, чьи книги лежат в каталоге, а связанные
+   * книги на странице книги искались обходным путём по нормализованной строке.
+   *
+   * Поэтому ключ выводится **здесь**, а не в форме админки. Форма — лишь один из
+   * писателей: есть ещё импорт и приёмка прав, и починка одной формы вернула бы
+   * расхождение с первой же записью из другого места.
+   *
+   * 🔴 Метод живёт в `AuthorService`, а не в `BookVersionService`, потому что
+   * писателей версий **двое**: форма админки (`BookVersionService.create`/`update`)
+   * и приёмка прав (`RightsBookCreationService`). Приватный метод первого второму
+   * не виден, а внедрить `BookVersionService` в приёмку нельзя — `BookVersionModule`
+   * сам импортирует `RightsIntakeModule` (`book-version.module.ts`), получилось бы
+   * кольцо. `AuthorModule` — лист: из прикладных модулей он не импортирует ничего,
+   * и резолвинг автора по имени принадлежит домену автора
+   * (`LEGACY-006`, решение арбитра 19.09.2026).
+   *
+   * Явно переданный `authorId` имеет приоритет: у человека может быть причина
+   * связать версию с автором, чьё имя записано иначе.
+   *
+   * Не найдено совпадение — остаётся NULL, и это правильный ответ, а не сбой:
+   * автора может не быть в справочнике вовсе. Поштучный резолвинг книг автора
+   * по-прежнему имеет fallback по имени, так что связь не теряется.
+   */
+  async resolveAuthorIdByName(
+    tx: Prisma.TransactionClient,
+    language: Language,
+    authorName: string | undefined,
+    explicitAuthorId?: string | null,
+  ): Promise<string | null | undefined> {
+    if (explicitAuthorId !== undefined && explicitAuthorId !== null) return explicitAuthorId;
+    if (!authorName) return explicitAuthorId;
+
+    const match = await tx.authorTranslation.findFirst({
+      where: { language, name: authorName },
+      select: { authorId: true },
+    });
+
+    return match?.authorId ?? explicitAuthorId ?? null;
+  }
+
+  /**
+   * Настоящие слаги авторов — батчем, одним запросом, **строго в запрошенном языке**.
+   *
+   * 🔴 Публичный адрес автора — это `AuthorTranslation.slug`, и вывести его из имени
+   * нельзя: слаг бывает транслитерацией («Сунь-цзы» → `sun-czy`, а не `sun-tzu`),
+   * а при коллизии — иметь суффикс. Собранная из имени строка ведёт в 404 или, хуже,
+   * на чужую страницу. Запрет записан прямо в контракте фронта
+   * (`books-front/types/api-schema/books.ts`, `BookCardModel.authorSlug`:
+   * «do NOT generate from display name»).
+   *
+   * 🔴 **Фолбэка на английский здесь нет, и заводить его нельзя.** Слаг существует
+   * только в паре с языком: `getPublicBySlug` (`:893-906`) ищет
+   * `findFirst({ where: { slug, language } })` и при промахе бросает `NotFoundException`,
+   * а фронт отдаёт этот 404 читателю. Значит английский слаг, подставленный в адрес
+   * под `/ru`, — не «ссылка про запас», а гарантированно битый переход. Нет перевода
+   * на нужный язык — ключа в карте нет, вызывающий отдаёт `null`, и потребитель рисует
+   * имя текстом без ссылки. До 19.09.2026 фолбэк здесь был (унаследован из приватного
+   * `BookService.getAuthorSlugs`) и давал ровно тот дефект, ради которого заведена
+   * запись `LEGACY-006`; снят решением арбитра 19.09.2026.
+   *
+   * Язык спрашивается **на каждого автора отдельно**, а не один на вызов: у обзора книги
+   * версии разноязычные, и слаг версии обязан быть в языке этой версии, иначе ссылка
+   * из `versions[fr]` уедет с русским слагом.
+   *
+   * LEGACY-006: живёт здесь, а не в `BookService`, потому что потребителей трое —
+   * карточки книг, обзор книги и разметка `schema.org` в `SeoService`. Третья копия
+   * того же запроса разошлась бы с остальными молча.
+   */
+  async getSlugsByAuthorIds(
+    wanted: Array<{ authorId: string; language: Language }>,
+  ): Promise<Map<string, string>> {
+    if (wanted.length === 0) return new Map();
+
+    const authorIds = Array.from(new Set(wanted.map((w) => w.authorId)));
+    const languages = Array.from(new Set(wanted.map((w) => w.language)));
+
+    const translations = await this.prisma.authorTranslation.findMany({
+      where: { authorId: { in: authorIds }, language: { in: languages } },
+      select: { authorId: true, language: true, slug: true },
+    });
+
+    const map = new Map<string, string>();
+    for (const t of translations) {
+      map.set(authorSlugKey(t.authorId, t.language), t.slug);
+    }
+    return map;
+  }
 
   /**
    * Сколько **опубликованных книг** у каждого из авторов — батчем.

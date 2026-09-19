@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoryTreeService } from '../category/category-tree.service';
+import { AuthorService, authorSlugKey } from '../author/author.service';
 import { CategoryType, Language, Seo } from '@prisma/client';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoQueryDto, ResolveSeoTypeValue } from './dto/resolve-seo.dto';
@@ -90,6 +91,8 @@ export class SeoService {
   constructor(
     private prisma: PrismaService,
     private readonly categoryTree: CategoryTreeService,
+    // LEGACY-006: публичный адрес автора берётся из справочника, а не собирается из имени.
+    private readonly authors: AuthorService,
   ) {
     const raw = process.env.SEO_CACHE_TTL_MS;
     const parsed = raw ? Number(raw) : NaN;
@@ -846,13 +849,33 @@ export class SeoService {
       this.warnDegraded('comments', 'book', chosen.id, error);
     }
 
+    // 🔴 LEGACY-006. Слаг автора берётся из `AuthorTranslation`, а не собирается из имени.
+    // Слагификация давала адрес, которого нет: «Сунь-цзы» превращалась в `sun-czy` вручную,
+    // а разметка звала `sun-tzu` — ссылка в `schema.org` вела в 404. Ключа нет или перевода
+    // на язык нет — слага нет вовсе, и `generateBookSchema` (`:26-27`) опускает `@id` и `url`
+    // автора. Имя при этом остаётся: автор в разметке назван, просто без адреса.
+    let authorSlug: string | undefined;
+    if (chosen.authorId) {
+      try {
+        const slugs = await this.authors.getSlugsByAuthorIds([
+          { authorId: chosen.authorId, language: effLang },
+        ]);
+        authorSlug = slugs.get(authorSlugKey(chosen.authorId, effLang));
+      } catch (error) {
+        // Адрес автора — необязательная часть разметки, и её отказ обязан вести себя
+        // как отказ жанров, рейтинга и отзывов рядом: пометить ответ и не ронять его
+        // (`LEGACY-277`, `LEGACY-305`). Иначе один споткнувшийся запрос превращает
+        // обеднённый 200 в 500, и страница книги остаётся вовсе без мета-блока и JSON-LD.
+        degraded = true;
+        this.warnDegraded('author slug', 'book', chosen.id, error);
+      }
+    }
+
     const bookSchema = generateBookSchema({
       slug: chosen.slug || id,
       title: chosen.title,
       authorName: chosen.author,
-      authorSlug: encodeURIComponent(
-        (chosen.author || '').trim().toLowerCase().replace(/\s+/g, '-'),
-      ),
+      authorSlug,
       language: effLang,
       genres: genresList,
       coverImageUrl: chosen.coverImageUrl,

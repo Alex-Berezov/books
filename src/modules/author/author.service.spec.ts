@@ -107,6 +107,91 @@ describe('AuthorService', () => {
     );
   });
 
+  /**
+   * LEGACY-006. Вывод ключа автора из имени — общий для всех писателей версий:
+   * формы админки (`BookVersionService`) и приёмки прав (`RightsBookCreationService`).
+   * До 19.09.2026 он был приватным методом первого, и второй писал версии с пустым
+   * `authorId` при заполненной строке имени — книга не попадала в выдачу автора по ключу.
+   *
+   * Метод работает на переданном `tx`: оба писателя зовут его внутри своей транзакции,
+   * и собственной он не открывает.
+   */
+  describe('resolveAuthorIdByName (LEGACY-006)', () => {
+    /** Транзакционный клиент подменён целиком: метод обязан ходить в него, а не в `this.prisma`. */
+    const txStub = () => ({
+      authorTranslation: { findFirst: jest.fn() },
+    });
+
+    it('resolves the key from the name within the requested language', async () => {
+      const tx = txStub();
+      tx.authorTranslation.findFirst.mockResolvedValue({ authorId: 'author-1' });
+
+      const resolved = await service.resolveAuthorIdByName(
+        tx as unknown as Prisma.TransactionClient,
+        Language.en,
+        'Sun Tzu',
+      );
+
+      expect(resolved).toBe('author-1');
+      expect(tx.authorTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(tx.authorTranslation.findFirst).toHaveBeenCalledWith({
+        where: { language: Language.en, name: 'Sun Tzu' },
+        select: { authorId: true },
+      });
+      // Запрос идёт в переданную транзакцию, а не мимо неё: иначе запись версии
+      // и чтение автора разъехались бы по разным соединениям.
+      expect(prisma.authorTranslation.findFirst).not.toHaveBeenCalled();
+    });
+
+    // Автора может не быть в справочнике вовсе — это не сбой. Пустой ключ честнее
+    // выдуманного, фолбэк по строке имени продолжает работать.
+    it('returns null when the name matches no author', async () => {
+      const tx = txStub();
+      tx.authorTranslation.findFirst.mockResolvedValue(null);
+
+      const resolved = await service.resolveAuthorIdByName(
+        tx as unknown as Prisma.TransactionClient,
+        Language.ru,
+        'Nobody In The Catalogue',
+      );
+
+      expect(resolved).toBeNull();
+      expect(tx.authorTranslation.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    // У человека может быть причина связать версию с автором, чьё имя записано иначе.
+    // Явный ключ вывод не переспоривает и в базу за ним не ходит вовсе.
+    it('keeps an explicit authorId without querying the catalogue', async () => {
+      const tx = txStub();
+      tx.authorTranslation.findFirst.mockResolvedValue({ authorId: 'guessed' });
+
+      const resolved = await service.resolveAuthorIdByName(
+        tx as unknown as Prisma.TransactionClient,
+        Language.en,
+        'Sun Tzu',
+        'chosen-by-hand',
+      );
+
+      expect(resolved).toBe('chosen-by-hand');
+      expect(tx.authorTranslation.findFirst).not.toHaveBeenCalled();
+    });
+
+    // Имени нет вовсе — выводить не из чего, и запрос не нужен. Возвращается то же,
+    // что пришло, чтобы вызывающий отличил «не резолвили» от «не нашли».
+    it('does not query when there is no name to resolve from', async () => {
+      const tx = txStub();
+
+      const resolved = await service.resolveAuthorIdByName(
+        tx as unknown as Prisma.TransactionClient,
+        Language.en,
+        undefined,
+      );
+
+      expect(resolved).toBeUndefined();
+      expect(tx.authorTranslation.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
   describe('create', () => {
     it('creates author successfully', async () => {
       prisma.authorTranslation.findFirst.mockResolvedValue(null);

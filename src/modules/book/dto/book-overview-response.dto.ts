@@ -51,6 +51,19 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
   @ApiPropertyOptional({ type: String, nullable: true })
   authorPageUrl!: string | null;
 
+  /**
+   * LEGACY-006: настоящий `AuthorTranslation.slug` для публичного адреса автора.
+   *
+   * 🔴 `null`, когда у версии нет `authorId` **или нет перевода на её язык**.
+   * Фолбэка на английский нет намеренно: `AuthorService.getPublicBySlug` ищет строго
+   * парой «слаг + язык» и при промахе бросает 404, то есть `en`-слаг под `/ru` был бы
+   * гарантированно битым адресом. Собирать слаг из `author` нельзя: он бывает
+   * транслитерацией («Сунь-цзы» лежит под `sun-czy`). При `null` имя автора
+   * показывается текстом, без ссылки.
+   */
+  @ApiPropertyOptional({ type: String, nullable: true, example: 'sun-czy' })
+  authorSlug!: string | null;
+
   @ApiPropertyOptional({
     type: 'array',
     items: { type: 'string' },
@@ -186,6 +199,19 @@ export class BookOverviewResponseDto {
 
   @ApiProperty({ type: String })
   author!: string;
+
+  /**
+   * LEGACY-006: настоящий `AuthorTranslation.slug` для публичного адреса автора.
+   *
+   * 🔴 `null`, когда у версии нет `authorId` **или нет перевода на её язык**.
+   * Фолбэка на английский нет намеренно: `AuthorService.getPublicBySlug` ищет строго
+   * парой «слаг + язык» и при промахе бросает 404, то есть `en`-слаг под `/ru` был бы
+   * гарантированно битым адресом. Собирать слаг из `author` нельзя: он бывает
+   * транслитерацией («Сунь-цзы» лежит под `sun-czy`). При `null` имя автора
+   * показывается текстом, без ссылки.
+   */
+  @ApiPropertyOptional({ type: String, nullable: true, example: 'sun-czy' })
+  authorSlug!: string | null;
 
   @ApiProperty({ type: String, description: 'Description with the boilerplate intro stripped' })
   description!: string;

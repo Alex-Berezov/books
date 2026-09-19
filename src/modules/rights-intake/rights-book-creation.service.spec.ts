@@ -5,6 +5,8 @@ import { RightsClearanceResolverService } from '../rights-clearance/rights-clear
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
+import { AuthorService } from '../author/author.service';
+import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
 
 const createPrismaStub = () => {
   const stub: Record<string, unknown> = {
@@ -75,6 +77,7 @@ describe('RightsBookCreationService', () => {
   let service: RightsBookCreationService;
   let prisma: Record<string, unknown>;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
+  let authorService: { resolveAuthorIdByName: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -84,6 +87,9 @@ describe('RightsBookCreationService', () => {
       checkVersionStaleness: jest.fn(),
       markVersionAndClearanceStale: jest.fn(),
     } as unknown as jest.Mocked<RightsContentHashService>;
+    // LEGACY-006: приёмка прав выводит authorId из имени тем же методом, что и форма админки.
+    // Дефолт «совпадения нет» — самый частый случай и он же прежнее поведение поля.
+    authorService = { resolveAuthorIdByName: jest.fn().mockResolvedValue(null) };
     service = new RightsBookCreationService(
       prisma as unknown as PrismaService,
       mockRightsContentHashService,
@@ -91,6 +97,7 @@ describe('RightsBookCreationService', () => {
         prisma as unknown as PrismaService,
         new RightsClearanceResolverService(prisma as unknown as PrismaService),
       ),
+      authorService as unknown as AuthorService,
     );
   });
 
@@ -1138,6 +1145,101 @@ describe('RightsBookCreationService', () => {
 
       const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
       expect(data['copyrightStatus']).toBe('public_domain');
+    });
+  });
+
+  /**
+   * LEGACY-006. Приёмка прав — второй писатель версий, и до 19.09.2026 она писала
+   * `authorId: versionDto.authorId ?? null` без вывода ключа из имени. Форма админки
+   * ключ выводила, приёмка — нет, и книги, заведённые через приёмку, не попадали
+   * в выдачу автора по ключу: связь держалась только на фолбэке по строке имени.
+   */
+  describe('author key is resolved from the name (LEGACY-006)', () => {
+    it('asks the author service for the key and writes its answer', async () => {
+      const bookVersionCreate = arrangeCreate();
+      authorService.resolveAuthorIdByName.mockResolvedValue('author-7');
+
+      // `makeDto()` задаёт `author: 'Test Author'` и не задаёт `authorId` —
+      // это и есть вход, на котором раньше уезжал пустой ключ.
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(authorService.resolveAuthorIdByName).toHaveBeenCalledTimes(1);
+      expect(authorService.resolveAuthorIdByName).toHaveBeenCalledWith(
+        expect.anything(),
+        'en',
+        'Test Author',
+        undefined,
+      );
+
+      const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data['authorId']).toBe('author-7');
+    });
+
+    // Явный ключ из запроса доходит до резолвинга, а не теряется по дороге: у редактора
+    // может быть причина связать версию с автором, чьё имя записано иначе.
+    it('passes an explicit authorId from the request through to the author service', async () => {
+      const bookVersionCreate = arrangeCreate();
+      authorService.resolveAuthorIdByName.mockResolvedValue('chosen-by-hand');
+      const dto = makeDto({
+        versions: [{ ...makeDto().versions[0], authorId: 'chosen-by-hand' }],
+      });
+
+      await service.createBookFromApprovedClearance('intake-1', dto);
+
+      expect(authorService.resolveAuthorIdByName).toHaveBeenCalledTimes(1);
+      expect(authorService.resolveAuthorIdByName).toHaveBeenCalledWith(
+        expect.anything(),
+        'en',
+        'Test Author',
+        'chosen-by-hand',
+      );
+      const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data['authorId']).toBe('chosen-by-hand');
+    });
+
+    // Автора нет в справочнике — ключ остаётся пустым, и это честный ответ:
+    // связь книги с автором продолжает держаться на строке имени.
+    it('leaves the key null when the author service finds no match', async () => {
+      const bookVersionCreate = arrangeCreate();
+      authorService.resolveAuthorIdByName.mockResolvedValue(null);
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      expect(authorService.resolveAuthorIdByName).toHaveBeenCalledTimes(1);
+      const data = bookVersionCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data['authorId']).toBeNull();
+    });
+
+    /**
+     * 🔴 `L-020`. Внутри транзакции идёт цикл по языковым версиям, и с 19.09.2026
+     * в нём есть обращение в базу за ключом автора. На умолчаниях Prisma (5000/2000 мс)
+     * клиренс на шесть-восемь языков упёрся бы в дедлайн, отдал `P2028` и откатил
+     * создание книги целиком. Границы берутся у общей константы, а не выдумываются
+     * на месте: четвёртый литерал в модуле разъехался бы с остальными молча.
+     */
+    it('открывает транзакцию с общими границами, а не на умолчаниях Prisma', async () => {
+      arrangeCreate();
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      const [, options] = (prisma['$transaction'] as jest.Mock).mock.calls[0];
+      expect(options).toBe(CLEARANCE_TX_OPTIONS);
+    });
+
+    // Резолвинг зовётся внутри той же транзакции, что и запись версии: иначе чтение
+    // справочника ушло бы по другому соединению и не откатилось бы вместе с ней.
+    it('resolves inside the same transaction that writes the version', async () => {
+      arrangeCreate();
+      authorService.resolveAuthorIdByName.mockResolvedValue(null);
+
+      await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+      const passedTx = authorService.resolveAuthorIdByName.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
+      expect(passedTx).toBeDefined();
+      expect(passedTx).not.toBe(prisma);
     });
   });
 

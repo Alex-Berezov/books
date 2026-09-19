@@ -1,5 +1,6 @@
 import { BookService } from './book.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuthorService } from '../author/author.service';
 import { BookType, Language } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
@@ -90,6 +91,9 @@ const createService = (prisma: PrismaStub): BookService =>
       isModerator: jest.fn().mockResolvedValue(false),
       isAdmin: jest.fn().mockResolvedValue(false),
     } as unknown as ModeratorRolesService,
+    // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
+    // считается тем же счётчиком запросов, что и остальная выдача.
+    new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
   );
 
 describe('LEGACY-124: findAll берёт рейтинги одним групповым запросом', () => {

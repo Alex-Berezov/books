@@ -6,6 +6,7 @@ import {
   createClearanceLockFake,
 } from '../../common/testing/clearance-lock-fake';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
+import { AuthorService } from '../author/author.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
@@ -210,6 +211,7 @@ describe('BookVersionService', () => {
   };
   let rightsClaimsService: { listForVersion: jest.Mock; summarizeForVersion: jest.Mock };
   let adminAudit: { record: jest.Mock };
+  let authorService: { resolveAuthorIdByName: jest.Mock };
   let rightsRecheckService: {
     ensureTask: jest.Mock;
     getRuntimeConfig: jest.Mock;
@@ -328,6 +330,9 @@ describe('BookVersionService', () => {
       }),
     };
     adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
+    // LEGACY-006: резолвинг переехал в AuthorService, поэтому здесь он мок, а не
+    // прогон настоящего запроса. Сама логика вывода ключа проверяется в author.service.spec.ts.
+    authorService = { resolveAuthorIdByName: jest.fn().mockResolvedValue(null) };
     slugRedirects = {
       record: jest.fn().mockResolvedValue(undefined),
       recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
@@ -349,6 +354,7 @@ describe('BookVersionService', () => {
       slugRedirects as unknown as SlugRedirectService,
       adminAudit as unknown as AdminAuditService,
       clearanceLock.service,
+      authorService as unknown as AuthorService,
       new TerritoryRegionAggregationService(),
     );
   });
@@ -471,10 +477,16 @@ describe('BookVersionService', () => {
    *
    * Ключ выводится в сервисе, а не в форме админки, намеренно: форма — лишь один
    * из писателей, есть ещё импорт и приёмка прав.
+   *
+   * LEGACY-006: сам вывод ключа переехал в `AuthorService.resolveAuthorIdByName`,
+   * потому что второй писатель (приёмка прав) приватный метод этого сервиса
+   * не видел. Здесь проверяется **передача** — что форма спрашивает ключ с теми
+   * аргументами и кладёт в запись ровно ответ; правила самого вывода (совпадение,
+   * промах, приоритет явного ключа) закреплены в `author.service.spec.ts`.
    */
-  it('links a new version to the author by key, resolved from the name', async () => {
+  it('asks the author service for the key and stores its answer', async () => {
     arrangeSimpleCreate();
-    prisma.authorTranslation.findFirst.mockResolvedValue({ authorId: 'author-1' });
+    authorService.resolveAuthorIdByName.mockResolvedValue('author-1');
 
     await service.create('b1', {
       language: Language.en,
@@ -486,6 +498,14 @@ describe('BookVersionService', () => {
       isFree: true,
     });
 
+    expect(authorService.resolveAuthorIdByName).toHaveBeenCalledTimes(1);
+    expect(authorService.resolveAuthorIdByName).toHaveBeenCalledWith(
+      expect.anything(),
+      Language.en,
+      'Sun Tzu',
+      undefined,
+    );
+
     const data = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0].data as {
       authorId?: string | null;
     };
@@ -494,9 +514,9 @@ describe('BookVersionService', () => {
 
   // Автора может не быть в справочнике вовсе — это не сбой. Пустой ключ честнее
   // выдуманного, а поштучный резолвинг книг по имени всё равно работает.
-  it('leaves the key empty when the name matches no author', async () => {
+  it('leaves the key empty when the author service finds no match', async () => {
     arrangeSimpleCreate();
-    prisma.authorTranslation.findFirst.mockResolvedValue(null);
+    authorService.resolveAuthorIdByName.mockResolvedValue(null);
 
     await service.create('b1', {
       language: Language.en,
@@ -508,6 +528,7 @@ describe('BookVersionService', () => {
       isFree: true,
     });
 
+    expect(authorService.resolveAuthorIdByName).toHaveBeenCalledTimes(1);
     const data = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0].data as {
       authorId?: string | null;
     };
@@ -515,10 +536,10 @@ describe('BookVersionService', () => {
   });
 
   // У человека может быть причина связать версию с автором, чьё имя записано
-  // иначе, — явный ключ вывод не переспоривает.
-  it('keeps an explicitly supplied authorId', async () => {
+  // иначе, — явный ключ передаётся дальше, а не теряется по дороге.
+  it('passes an explicitly supplied authorId through to the author service', async () => {
     arrangeSimpleCreate();
-    prisma.authorTranslation.findFirst.mockResolvedValue({ authorId: 'guessed' });
+    authorService.resolveAuthorIdByName.mockResolvedValue('chosen-by-hand');
 
     await service.create('b1', {
       language: Language.en,
@@ -530,6 +551,14 @@ describe('BookVersionService', () => {
       isFree: true,
       authorId: 'chosen-by-hand',
     });
+
+    expect(authorService.resolveAuthorIdByName).toHaveBeenCalledTimes(1);
+    expect(authorService.resolveAuthorIdByName).toHaveBeenCalledWith(
+      expect.anything(),
+      Language.en,
+      'Sun Tzu',
+      'chosen-by-hand',
+    );
 
     const data = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0].data as {
       authorId?: string | null;
@@ -1546,6 +1575,7 @@ describe('BookVersionService', () => {
         } as unknown as SlugRedirectService,
         adminAudit as unknown as AdminAuditService,
         clearanceLock.service,
+        authorService as unknown as AuthorService,
         new TerritoryRegionAggregationService(),
         {
           // Отказ **однократный**: иначе тест проходил бы и при широком обработчике —

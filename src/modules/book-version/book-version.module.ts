@@ -11,6 +11,7 @@ import { RightsRecheckModule } from '../rights-recheck/rights-recheck.module';
 import { RightsLawyerModule } from '../rights-lawyer/rights-lawyer.module';
 import { TaxonomyIndexabilityModule } from '../seo/indexability/taxonomy-indexability.module';
 import { AdminAuditModule } from '../../shared/admin-audit/admin-audit.module';
+import { AuthorModule } from '../author/author.module';
 
 @Module({
   imports: [
@@ -23,6 +24,9 @@ import { AdminAuditModule } from '../../shared/admin-audit/admin-audit.module';
     RightsRecheckModule,
     RightsLawyerModule,
     AdminAuditModule,
+    // LEGACY-006: резолвинг authorId по имени живёт в AuthorService — модуль-лист,
+    // поэтому кольца с RightsIntakeModule не возникает.
+    AuthorModule,
   ],
   controllers: [BookVersionController],
   providers: [BookVersionService, PublicationGateService],

@@ -4,9 +4,10 @@ import { SeoController } from './seo.controller';
 import { TaxonomyIndexabilityModule } from './indexability/taxonomy-indexability.module';
 import { SystemPagesModule } from './system-pages/system-pages.module';
 import { CategoryTreeModule } from '../category/category-tree.module';
+import { AuthorModule } from '../author/author.module';
 
 @Module({
-  imports: [TaxonomyIndexabilityModule, SystemPagesModule, CategoryTreeModule],
+  imports: [TaxonomyIndexabilityModule, SystemPagesModule, CategoryTreeModule, AuthorModule],
   controllers: [SeoController],
   providers: [SeoService],
   exports: [SeoService],

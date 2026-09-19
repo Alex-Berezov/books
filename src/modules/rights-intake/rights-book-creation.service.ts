@@ -14,6 +14,8 @@ import { BOOK_CREATION_ERROR_CODES, BookCreationErrorCode } from './rights-book-
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { CreateBookFromClearanceVersionDto } from './dto/create-book-from-clearance-version.dto';
 import { BookType, Prisma } from '@prisma/client';
+import { AuthorService } from '../author/author.service';
+import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
 
 /**
  * WP-L.2: версия, на которую ложится снимок прав. В обычном режиме она создаётся из запроса, в
@@ -40,6 +42,11 @@ export class RightsBookCreationService {
     private readonly prisma: PrismaService,
     private readonly rightsContentHashService: RightsContentHashService,
     private readonly licenseCoverageService: RightsLicenseCoverageService,
+    // LEGACY-006: приёмка прав — второй писатель версий. Без резолвинга она заводила
+    // версии с пустым authorId при заполненной строке имени, и книга не попадала
+    // в выдачу автора по ключу. Метод живёт в AuthorService, а не в BookVersionService:
+    // внедрить последний нельзя, BookVersionModule сам импортирует RightsIntakeModule.
+    private readonly authorService: AuthorService,
   ) {}
 
   private get ri() {
@@ -518,7 +525,15 @@ export class RightsBookCreationService {
             firstPublishedYear: versionDto.firstPublishedYear ?? null,
             editionPublishedYear: versionDto.editionPublishedYear ?? null,
             authorPageUrl: versionDto.authorPageUrl ?? null,
-            authorId: versionDto.authorId ?? null,
+            // LEGACY-006: ключ выводится из имени, как и у второго писателя версий
+            // (форма админки). Явный authorId побеждает; имя без совпадения даёт null.
+            authorId:
+              (await this.authorService.resolveAuthorIdByName(
+                tx,
+                versionDto.language,
+                versionDto.author,
+                versionDto.authorId,
+              )) ?? null,
             shortDescription: versionDto.shortDescription ?? null,
             summaryShort: versionDto.summaryShort ?? null,
             coverAlt: versionDto.coverAlt ?? null,
@@ -583,7 +598,12 @@ export class RightsBookCreationService {
       });
 
       return { book, versions };
-    });
+      // 🔴 `L-020`. Границы транзакции взяты у общей константы, а не выдуманы здесь:
+      // внутри идёт цикл по языковым версиям, и с 19.09.2026 в нём есть обращение
+      // в базу за ключом автора (`LEGACY-006`). На умолчаниях Prisma (5000/2000 мс)
+      // клиренс на шесть-восемь языков упёрся бы в дедлайн, отдал `P2028` и откатил
+      // создание книги целиком. Решение арбитра 19.09.2026.
+    }, CLEARANCE_TX_OPTIONS);
 
     const book = result.book;
     const versions = result.versions;

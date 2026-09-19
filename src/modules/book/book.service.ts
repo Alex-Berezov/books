@@ -5,6 +5,7 @@ import {
   PUBLIC_BOOK_VERSION_SELECT,
 } from '../../common/selects/public-book.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+import { AuthorService, authorSlugKey } from '../author/author.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
@@ -46,6 +47,10 @@ export class BookService {
     private relatedTaxonomy: RelatedTaxonomyService,
     private slugRedirects: SlugRedirectService,
     private readonly moderatorRoles: ModeratorRolesService,
+    // LEGACY-006: добор настоящих слагов авторов живёт в домене автора — потребителей
+    // у него двое, карточки книг и разметка schema.org, и третья копия запроса
+    // разошлась бы с остальными молча.
+    private readonly authors: AuthorService,
   ) {}
 
   async rateBook(userId: string, bookId: string, score: number) {
@@ -561,6 +566,39 @@ export class BookService {
       });
     }
 
+    // 🔴 LEGACY-006. Публичный адрес автора отдаётся ключом, а не собирается фронтом
+    // из отображаемого имени: слаг бывает транслитерацией («Сунь-цзы» лежит под `sun-czy`),
+    // и собранный из имени адрес ведёт в 404 или на чужую страницу. Relation в белый
+    // список не добавлена намеренно — слаг доберается отдельным запросом, иначе в выдачу
+    // версии заехал бы весь `AuthorTranslation`. Ключа или перевода нет — `null`,
+    // и фронт рисует имя текстом без ссылки.
+    const authorSlugMap = await this.authors.getSlugsByAuthorIds([
+      ...versions
+        .filter((v): v is typeof v & { authorId: string } => !!v.authorId)
+        .map((v) => ({ authorId: v.authorId, language: v.language })),
+      // 🔴 Верхнеуровневый `authorSlug` отдаётся в языке **ответа** (`language` ниже),
+      // а не в языке активной версии. Эти языки расходятся: активной может стать версия
+      // другого языка (текст нашёлся только там), и тогда её слаг, склеенный потребителем
+      // с языком ответа, дал бы пару «слаг + язык», которой нет, — то есть 404.
+      //
+      // ⚠️ Язык берётся у `preferredLang`, а **не** у `countedLanguage`: второй подставляет
+      // `en`, когда выбор языка не состоялся вовсе (книга издана только на `es` и `fr`,
+      // запрос на `/pt` — `LEGACY-104`). Тот `en` и был бы снятым английским фолбэком,
+      // только заведённым заново с другой стороны: ответ ушёл бы с `language: undefined`
+      // и английским слагом, а потребитель склеил бы его с языком адреса.
+      ...(activeVersion?.authorId && preferredLang
+        ? [{ authorId: activeVersion.authorId, language: preferredLang }]
+        : []),
+    ]);
+    // 🔴 Язык берётся у самой версии, а не у страницы: у книги версии разноязычные,
+    // и слаг версии `fr` обязан быть французским. Иначе ссылка из `versions[fr]`
+    // уехала бы с русским слагом и упёрлась в 404 — `getPublicBySlug` ищет строго
+    // по паре (слаг, язык).
+    const authorSlugOf = (version: { authorId: string | null; language: Language } | null) =>
+      version?.authorId
+        ? (authorSlugMap.get(authorSlugKey(version.authorId, version.language)) ?? null)
+        : null;
+
     const cleanedDesc = activeVersion
       ? await cleanDescription(
           this.prisma,
@@ -577,6 +615,10 @@ export class BookService {
       slug: targetVersion?.slug || slug,
       title: activeVersion?.title || '',
       author: activeVersion?.author || '',
+      authorSlug:
+        activeVersion?.authorId && preferredLang
+          ? (authorSlugMap.get(authorSlugKey(activeVersion.authorId, preferredLang)) ?? null)
+          : null,
       description: cleanedDesc,
       coverUrl: activeVersion?.coverImageUrl || '',
       rating: await this.getAverageRating(bookId),
@@ -599,6 +641,7 @@ export class BookService {
       versions: versions.map((v) => ({
         ...v,
         coverUrl: v.coverImageUrl, // compatibility alias
+        authorSlug: authorSlugOf(v),
       })),
       createdAt: book?.createdAt || new Date(),
       updatedAt: book?.updatedAt || new Date(),
@@ -825,11 +868,17 @@ export class BookService {
           .filter((id): id is string => !!id),
       ),
     );
-    const authorSlugMap = await this.getAuthorSlugs(authorIds, lang);
+    // Карточка ведёт на `/{lang}/author/...`, то есть слаг нужен в языке страницы;
+    // перевода на него нет — ссылки не будет, имя останется текстом.
+    const authorSlugMap = await this.authors.getSlugsByAuthorIds(
+      authorIds.map((authorId) => ({ authorId, language: lang })),
+    );
 
     return {
-      sameAuthor: sameAuthorVersions.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap)),
-      similar: similarVersions.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap)),
+      sameAuthor: sameAuthorVersions.map((v) =>
+        this.toBookCardDto(v, ratingsMap, authorSlugMap, lang),
+      ),
+      similar: similarVersions.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap, lang)),
     };
   }
 
@@ -1369,10 +1418,14 @@ export class BookService {
     const authorIds = Array.from(
       new Set(ordered.map((v) => v.authorId).filter((id): id is string => !!id)),
     );
-    const authorSlugMap = await this.getAuthorSlugs(authorIds, lang);
+    // Карточка ведёт на `/{lang}/author/...`, то есть слаг нужен в языке страницы;
+    // перевода на него нет — ссылки не будет, имя останется текстом.
+    const authorSlugMap = await this.authors.getSlugsByAuthorIds(
+      authorIds.map((authorId) => ({ authorId, language: lang })),
+    );
 
     return {
-      items: ordered.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap)),
+      items: ordered.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap, lang)),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -1424,23 +1477,6 @@ export class BookService {
     return map;
   }
 
-  private async getAuthorSlugs(authorIds: string[], lang: Language): Promise<Map<string, string>> {
-    if (authorIds.length === 0) return new Map();
-    // Prefer translation for the requested language; fallback to English; then any.
-    const translations = await this.prisma.authorTranslation.findMany({
-      where: { authorId: { in: authorIds }, language: { in: [lang, Language.en] } },
-      select: { authorId: true, language: true, slug: true },
-    });
-    const map = new Map<string, string>();
-    for (const t of translations) {
-      // First-wins preference: requested lang over en
-      if (!map.has(t.authorId) || t.language === lang) {
-        map.set(t.authorId, t.slug);
-      }
-    }
-    return map;
-  }
-
   private toBookCardDto(
     version: {
       id: string;
@@ -1457,6 +1493,7 @@ export class BookService {
     },
     ratingsMap: Map<string, { avg: number | null; count: number }>,
     authorSlugMap: Map<string, string>,
+    lang: Language,
   ): BookCardDto {
     const rating = ratingsMap.get(version.bookId);
     const hasText = version._count.chapters > 0 || version.type === BookType.text;
@@ -1466,7 +1503,9 @@ export class BookService {
       slug: version.slug ?? version.id,
       title: version.title,
       author: version.author,
-      authorSlug: version.authorId ? (authorSlugMap.get(version.authorId) ?? null) : null,
+      authorSlug: version.authorId
+        ? (authorSlugMap.get(authorSlugKey(version.authorId, lang)) ?? null)
+        : null,
       coverImageUrl: version.coverImageUrl,
       rating: rating?.avg ?? null,
       ratingsCount: rating?.count ?? 0,

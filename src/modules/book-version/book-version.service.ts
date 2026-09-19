@@ -42,6 +42,7 @@ import {
 import { addDays } from '../rights-recheck/rights-recheck.util';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { AuthorService } from '../author/author.service';
 
 interface BookWithRights {
   id: string;
@@ -123,49 +124,16 @@ export class BookVersionService {
     private adminAudit: AdminAuditService,
     // LEGACY-368: без замка группы параллельные правки версий одного клиренса ловят 40P01.
     private clearanceLock: RightsClearanceLockService,
+    // LEGACY-006: вывод `authorId` из имени живёт в домене автора, потому что писателей
+    // версий двое, и второй (`RightsBookCreationService`) не может видеть приватный метод
+    // этого сервиса — `BookVersionModule` сам импортирует `RightsIntakeModule`.
+    private authorService: AuthorService,
     private regionAggregationService?: TerritoryRegionAggregationService,
     // Optional so existing direct instantiations in unit tests keep working; a
     // missing counter only means the taxonomy state is refreshed by the admin
     // recompute endpoint instead of immediately.
     private taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
-
-  /**
-   * Связывает версию книги с автором **ключом**, а не только строкой.
-   *
-   * 🔴 `BookVersion.authorId` принимался в DTO и раньше, но его не присылал никто:
-   * на 09.08.2026 в проде он был NULL у **всех 45** версий, а фактическая связь
-   * держалась на строковом поле `author`. Из-за этого список авторов показывал
-   * «0 книг» у всех десяти, включая тех, чьи книги лежат в каталоге, а связанные
-   * книги на странице книги искались обходным путём по нормализованной строке.
-   *
-   * Поэтому ключ выводится **здесь**, а не в форме админки. Форма — лишь один из
-   * писателей: есть ещё импорт и приёмка прав, и починка одной формы вернула бы
-   * расхождение с первой же записью из другого места.
-   *
-   * Явно переданный `authorId` имеет приоритет: у человека может быть причина
-   * связать версию с автором, чьё имя записано иначе.
-   *
-   * Не найдено совпадение — остаётся NULL, и это правильный ответ, а не сбой:
-   * автора может не быть в справочнике вовсе. Поштучный резолвинг книг автора
-   * по-прежнему имеет fallback по имени, так что связь не теряется.
-   */
-  private async resolveAuthorId(
-    tx: Prisma.TransactionClient,
-    language: Language,
-    authorName: string | undefined,
-    explicitAuthorId?: string | null,
-  ): Promise<string | null | undefined> {
-    if (explicitAuthorId !== undefined && explicitAuthorId !== null) return explicitAuthorId;
-    if (!authorName) return explicitAuthorId;
-
-    const match = await tx.authorTranslation.findFirst({
-      where: { language, name: authorName },
-      select: { authorId: true },
-    });
-
-    return match?.authorId ?? explicitAuthorId ?? null;
-  }
 
   async list(
     bookId: string,
@@ -345,7 +313,12 @@ export class BookVersionService {
             originalLanguage: dto.originalLanguage,
             copyrightStatus: dto.copyrightStatus,
             authorPageUrl: dto.authorPageUrl,
-            authorId: await this.resolveAuthorId(tx, effectiveLanguage, dto.author, dto.authorId),
+            authorId: await this.authorService.resolveAuthorIdByName(
+              tx,
+              effectiveLanguage,
+              dto.author,
+              dto.authorId,
+            ),
             characters: toJsonInput(dto.characters),
             quotes: toJsonInput(dto.quotes),
             faq: toJsonInput(dto.faq),
@@ -1079,7 +1052,7 @@ export class BookVersionService {
         // строка на странице показывает одного, счётчик считает другому.
         const resolvedAuthorId =
           updateData.author !== undefined || updateData.authorId !== undefined
-            ? await this.resolveAuthorId(
+            ? await this.authorService.resolveAuthorIdByName(
                 tx,
                 current?.language,
                 updateData.author ?? current?.author,

@@ -1,6 +1,8 @@
 import { Logger, NotFoundException } from '@nestjs/common';
 import { SeoService } from './seo.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuthorService } from '../author/author.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CategoryTreeService, CATEGORY_TREE_MAX_DEPTH } from '../category/category-tree.service';
 import { Language } from '@prisma/client';
 import { DEGRADED_RESPONSE } from '../../common/interceptors/degraded-response';
@@ -16,6 +18,7 @@ type PrismaStub = {
   category: { findUnique: jest.Mock };
   tagTranslation: { findUnique: jest.Mock; findMany: jest.Mock };
   comment: { findMany: jest.Mock };
+  authorTranslation: { findMany: jest.Mock };
 };
 
 const createPrismaStub = (): PrismaStub => ({
@@ -34,6 +37,7 @@ const createPrismaStub = (): PrismaStub => ({
   category: { findUnique: jest.fn() },
   tagTranslation: { findUnique: jest.fn(), findMany: jest.fn() },
   comment: { findMany: jest.fn().mockResolvedValue([]) },
+  authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
 });
 
 describe('SeoService (unit)', () => {
@@ -70,6 +74,9 @@ describe('SeoService (unit)', () => {
     service = new SeoService(
       prisma as unknown as PrismaService,
       new CategoryTreeService(prisma as unknown as PrismaService),
+      // LEGACY-006: настоящий AuthorService на том же стабе — слаг автора в разметке
+      // берётся из `authorTranslation.findMany`, а не собирается из имени.
+      new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
     );
     process.env = { ...ORIGINAL_ENV, PUBLIC_SITE_URL: 'http://localhost:5000/static' };
   });
@@ -190,6 +197,119 @@ describe('SeoService (unit)', () => {
       })) as unknown as SeoBundle;
       expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/book-slug');
       expect(bundle.meta.title).toBe('Book book-slug');
+    });
+  });
+
+  /**
+   * 🔴 LEGACY-006. Ссылка на автора в разметке `schema.org` собиралась слагификацией
+   * строки-имени: `(chosen.author || '').trim().toLowerCase().replace(/\s+/g, '-')`.
+   * Настоящий публичный адрес автора — это `AuthorTranslation.slug`, и он бывает
+   * транслитерацией: «Сунь-цзы» лежит под `sun-czy`, а слагификация давала `sun-tzu`.
+   * То есть `@id` и `url` автора в разметке вели в 404.
+   */
+  describe('resolvePublic(book): слаг автора в разметке (LEGACY-006)', () => {
+    const arrangeBook = (versionOverrides: Record<string, unknown> = {}) => {
+      prisma.bookVersion.findFirst.mockResolvedValue(null);
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-ru',
+          bookId: 'b1',
+          language: 'ru',
+          title: 'Искусство войны',
+          author: 'Сунь-цзы',
+          description: 'D',
+          coverImageUrl: null,
+          seoId: null,
+          slug: 'iskusstvo-vojny',
+          status: 'published',
+          type: 'text',
+          authorId: 'author-1',
+          ...versionOverrides,
+        },
+      ]);
+    };
+
+    const authorOf = (bundle: SeoBundle): Record<string, unknown> | undefined => {
+      const graph = (bundle.schema as { '@graph'?: Array<Record<string, unknown>> })['@graph'];
+      const book = graph?.find((node) => node['@type'] === 'Book');
+      return book?.author as Record<string, unknown> | undefined;
+    };
+
+    it('берёт адрес автора из справочника, а не собирает его из имени', async () => {
+      arrangeBook();
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { authorId: 'author-1', language: 'ru', slug: 'sun-czy' },
+      ]);
+
+      const bundle = (await service.resolvePublic('book', 'book-slug', {
+        pathLang: 'ru' as Language,
+      })) as unknown as SeoBundle;
+
+      const author = authorOf(bundle);
+      expect(author?.url).toBe('http://localhost:5000/static/ru/author/sun-czy');
+      expect(author?.['@id']).toBe('http://localhost:5000/static/ru/author/sun-czy#person');
+      // Имя остаётся как есть — правка меняет адрес, а не подпись.
+      expect(author?.name).toBe('Сунь-цзы');
+
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledTimes(1);
+      // 🔴 Язык спрашивается **строго** тот, что у страницы: английского фолбэка нет.
+      // Слаг живёт только в паре с языком, и `en`-слаг под `/ru` — гарантированный 404.
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledWith({
+        where: { authorId: { in: ['author-1'] }, language: { in: ['ru'] } },
+        select: { authorId: true, language: true, slug: true },
+      });
+      // Исправный ответ пометки не несёт — иначе проверка выше проходила бы всегда.
+      expect((bundle as unknown as Record<symbol, unknown>)[DEGRADED_RESPONSE]).toBeUndefined();
+    });
+
+    // Перевода на язык нет — адреса нет вовсе. Ссылка на несуществующую страницу
+    // хуже её отсутствия: автор в разметке остаётся назван, но без `url` и `@id`.
+    it('не выдаёт адрес автора, когда перевода на язык нет', async () => {
+      arrangeBook();
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+
+      const bundle = (await service.resolvePublic('book', 'book-slug', {
+        pathLang: 'ru' as Language,
+      })) as unknown as SeoBundle;
+
+      const author = authorOf(bundle);
+      expect(author?.name).toBe('Сунь-цзы');
+      expect(author?.url).toBeUndefined();
+      expect(author?.['@id']).toBeUndefined();
+    });
+
+    // Отказ базы на слаге автора — это деградация, а не 500: адрес автора необязателен,
+    // и его потеря обязана вести себя как потеря жанров, рейтинга и отзывов рядом
+    // (`LEGACY-277`, `LEGACY-305`). Иначе страница книги остаётся вовсе без мета-блока.
+    it('не роняет ответ, когда справочник авторов отказал', async () => {
+      arrangeBook();
+      prisma.authorTranslation.findMany.mockRejectedValue(new Error('db is down'));
+
+      const bundle = (await service.resolvePublic('book', 'book-slug', {
+        pathLang: 'ru' as Language,
+      })) as unknown as SeoBundle;
+
+      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/ru/book/iskusstvo-vojny');
+      const author = authorOf(bundle);
+      expect(author?.name).toBe('Сунь-цзы');
+      expect(author?.url).toBeUndefined();
+      // 🔴 Пометка обязательна, а не приятна: без неё обеднённый ответ уходит
+      // в `PublicCacheInterceptor` с обычным `public, s-maxage=300` и оседает на CDN
+      // на весь TTL вместо короткого кэша деградации (`LEGACY-305`).
+      expect((bundle as unknown as Record<symbol, unknown>)[DEGRADED_RESPONSE]).toBe(true);
+    });
+
+    // Ключа автора у версии нет — в справочник не ходим вовсе.
+    it('не ходит в справочник, когда у версии нет ключа автора', async () => {
+      arrangeBook({ authorId: null });
+
+      const bundle = (await service.resolvePublic('book', 'book-slug', {
+        pathLang: 'ru' as Language,
+      })) as unknown as SeoBundle;
+
+      expect(authorOf(bundle)?.url).toBeUndefined();
+      expect(prisma.authorTranslation.findMany).not.toHaveBeenCalled();
     });
   });
 
