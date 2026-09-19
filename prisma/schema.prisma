@@ -397,6 +397,15 @@ model Category {
   // LEGACY-367: documents an index that already lives on the VPS (migration
   // 20260630000000_taxonomy_restructure) — CategoryService.list() filters by `type` directly.
   @@index([type])
+  // LEGACY-276, релиз 2: возврат ограничения, снятого 30.08.2025
+  // (20250830151000_add_taxonomy_translations) и заведённого заново миграцией
+  // 20260919170000_legacy_276_category_slug_unique. Пути записи закрыты релизом 1
+  // (advisory-замок + assertSlugFree в CategoryTreeService, P2002 ловится
+  // на create и update) — здесь сам рубеж в базе. Правило записи, ради которого
+  // он вернулся, — LEGACY-276, раздел Rule for future agents: уникальность,
+  // которую проверяют запросом, обязана существовать в схеме, иначе проверка
+  // это соглашение, а не ограничение.
+  @@unique([slug])
 }
 
 /// Главную категорию версии держит `BookVersion.primaryCategoryId` — единственный источник.

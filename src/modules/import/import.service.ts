@@ -672,7 +672,8 @@ export class ImportService {
         //
         // Сериализует пару «проверил — записал» замок по слагу, взятый входом
         // `runInLockedTree` первым оператором (после замка дерева). Рубеж
-        // в базе — `@@unique([slug])` релизом 2.
+        // в базе — `@@unique([slug])`, заведён релизом 2 (миграция
+        // `20260919170000_legacy_276_category_slug_unique`).
         await this.categoryTree.assertSlugFree(tx, commonData.slug);
 
         // Термин и его переводы — одна запись (`LEGACY-131`). Обрыв между ними

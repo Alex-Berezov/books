@@ -739,16 +739,34 @@ async function main() {
 
   await addRoleForEmails(process.env.ADMIN_EMAILS, RoleName.admin);
   await addRoleForEmails(process.env.CONTENT_MANAGER_EMAILS, RoleName.content_manager);
-  // Seed Categories (slug is not unique anymore => no upsert by slug)
+  // Seed Categories.
+  //
+  // 🔴 `LEGACY-276`, релиз 2: `upsert` по слагу, а не `findFirst` + `create`. Пара
+  // «прочитал — создал» не атомарна, и до возврата `@@unique([slug])`
+  // (`20260919170000_legacy_276_category_slug_unique`) проигравший гонку просто заводил
+  // дубль — неприятно, но тихо. С уникальным индексом он получает `P2002`, и сид падает
+  // необработанным исключением. Потребителей у сида три (`LEGACY-294`): шаблонная база
+  // e2e, `books_test` в `deploy.yml` и **конвейер соседнего репозитория** —
+  // `books-front/.github/workflows/ci.yml` зовёт `prisma db seed` внутри образа. То есть
+  // отказ вылез бы красным в чужом репозитории.
+  //
+  // ⚠️ Этот путь по-прежнему идёт мимо `CategoryTreeService`: замка по слагу не берёт
+  // и правила `assertSlugFree` не знает. Для сида это допустимо — он работает на пустой
+  // базе, — но он остаётся писателем `Category.slug` вне общих входов, и строка про это
+  // лежит в теле `LEGACY-276`.
   const getOrCreateCategory = async (
     slug: string,
     name: string,
     type: CategoryType,
-  ): Promise<{ id: string; slug: string; name: string }> => {
-    const existing = await prisma.category.findFirst({ where: { slug } });
-    if (existing) return existing;
-    return prisma.category.create({ data: { slug, name, type, key: slug } });
-  };
+  ): Promise<{ id: string; slug: string; name: string }> =>
+    prisma.category.upsert({
+      where: { slug },
+      // Существующую строку сид не переписывает: заголовки и тип мог сменить редактор,
+      // а сид идемпотентен, а не авторитетен.
+      update: {},
+      create: { slug, name, type, key: slug },
+      select: { id: true, slug: true, name: true },
+    });
 
   const categories = await Promise.all([
     getOrCreateCategory('fantasy', 'Fantasy', CategoryType.genre),
