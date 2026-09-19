@@ -468,9 +468,13 @@ export class BookVersionService {
             rightsCreatedAt: true,
           },
         },
+        // `include` на связи тянет все скаляры самой связи, включая мёртвую
+        // `isPrimary` (`LEGACY-005`); наружу отсюда идёт только `c.category`.
         categories: {
-          include: { category: true },
+          select: { category: true },
         },
+        // `tags` намеренно оставлен на `include`: у `BookTag` мёртвой колонки нет,
+        // и правка этой строки была бы попутной (`books/CLAUDE.md`, запрет 10).
         tags: {
           include: { tag: true },
         },

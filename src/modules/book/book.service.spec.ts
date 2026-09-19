@@ -600,6 +600,38 @@ describe('BookService.getOverview', () => {
     );
   });
 
+  /**
+   * 🔴 LEGACY-005. Колонка `BookCategory.isPrimary` мертва и снимается миграцией
+   * следующим релизом. Запрос без `select` выбирает все скаляры связи, включая её,
+   * поэтому `DROP COLUMN` уронил бы ещё работающий образ на `42703` (`ADR-018`, класс 1).
+   * Белый список здесь не украшение: он и есть условие, при котором снятие колонки
+   * вообще становится возможным.
+   */
+  it('категории обзора читаются белым списком, без мёртвой isPrimary', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+    prisma.bookVersion.findMany.mockResolvedValue([
+      {
+        id: 'v-text-en',
+        language: Language.en,
+        type: BookType.text,
+        isFree: true,
+        seoId: null,
+        _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+      },
+    ]);
+    prisma.bookSummary.findFirst.mockResolvedValue(null);
+
+    await service.getOverview('slug-1', Language.en);
+
+    expect(prisma.bookCategory.findMany).toHaveBeenCalledTimes(1);
+    const [args] = prisma.bookCategory.findMany.mock.calls[0] as [Record<string, unknown>];
+    expect(args.include).toBeUndefined();
+    expect(args.select).toEqual({
+      categoryId: true,
+      category: { include: { translations: true } },
+    });
+  });
+
   describe('rateBook', () => {
     it('throws NotFoundException if book does not exist', async () => {
       prisma.book.findUnique.mockResolvedValue(null);

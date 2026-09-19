@@ -1121,6 +1121,10 @@ export class CategoryService {
         if (!exists) {
           await tx.bookCategory.create({
             data: { bookVersionId: sibling.id, categoryId },
+            // `create` возвращает запись целиком (`INSERT ... RETURNING` все скаляры),
+            // то есть выбирает и мёртвую `isPrimary` (`LEGACY-005`). Результат здесь
+            // не нужен вовсе — белый список сводит `RETURNING` к ключу.
+            select: { id: true },
           });
         }
       }
@@ -1130,8 +1134,14 @@ export class CategoryService {
     // counter for this term is stale.
     await this.taxonomyIndexabilityService?.recomputeForTerms([categoryId], []);
 
+    // Белый список, а не голый вызов (`LEGACY-005`): форма ответа обязана совпадать
+    // с `VersionCategoryLinkDto`, а без `select` наружу уезжали все скаляры связи,
+    // включая мёртвую `isPrimary`. Поле снято из ответа этим же релизом — колонку
+    // снимает следующий. Что её не выбирает больше никто, держит не этот комментарий,
+    // а сканирующая спека `src/common/testing/book-category-select.spec.ts`.
     return this.prisma.bookCategory.findFirst({
       where: { bookVersionId: versionId, categoryId },
+      select: { id: true, bookVersionId: true, categoryId: true, sortOrder: true },
     });
   }
 
@@ -1151,9 +1161,12 @@ export class CategoryService {
       for (const sibling of siblings) {
         const link = await tx.bookCategory.findFirst({
           where: { bookVersionId: sibling.id, categoryId },
+          select: { id: true },
         });
         if (link) {
-          await tx.bookCategory.delete({ where: { id: link.id } });
+          // `delete` тоже возвращает запись целиком (`DELETE ... RETURNING`), поэтому
+          // белый список нужен и ему: читается только ключ (`LEGACY-005`).
+          await tx.bookCategory.delete({ where: { id: link.id }, select: { id: true } });
         }
       }
     });

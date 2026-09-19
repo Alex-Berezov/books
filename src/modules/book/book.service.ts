@@ -501,7 +501,10 @@ export class BookService {
       activeVersion && this.prisma.bookCategory
         ? await this.prisma.bookCategory.findMany({
             where: { bookVersionId: activeVersion.id },
-            include: { category: { include: { translations: true } } },
+            // Белый список, а не `include` (`LEGACY-005`): голый вызов тянет все скаляры
+            // модели, включая мёртвую `isPrimary`, которую следующий релиз снимает миграцией.
+            // Пока колонку выбирает работающий образ, её `DROP COLUMN` ломает откат.
+            select: { categoryId: true, category: { include: { translations: true } } },
           })
         : [];
     const tagsRelation =

@@ -1340,6 +1340,36 @@ describe('CategoryService', () => {
     expect(indexability.recomputeForTerms).toHaveBeenCalledWith(['c1'], []);
   });
 
+  /**
+   * 🔴 LEGACY-005. Ответ привязки уезжал наружу сырым объектом Prisma: запрос без
+   * `select` тянет все скаляры `BookCategory`, включая мёртвую `isPrimary`, и форма
+   * ответа держалась на совпадении модели с DTO. Колонку снимает следующий релиз,
+   * а пока её выбирает работающий образ, `DROP COLUMN` ломает откат (`ADR-018`, класс 1).
+   */
+  it('ответ привязки собирается белым списком, без мёртвой isPrimary', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+    prisma.bookCategory.findFirst.mockResolvedValue(null);
+
+    await service.attachCategoryToVersion('v1', 'c1');
+
+    // Последний вызов — тот, чей результат и есть тело ответа: до него идёт
+    // проверка существования связи у каждой языковой версии книги.
+    // Число вызовов зафиксировано рядом (`L-005`): без него допишут ниже по методу
+    // ещё один `findFirst`, «последний вызов» станет другим запросом, и `select`
+    // на проверяемом можно будет снять, не покраснив ничего.
+    const calls = prisma.bookCategory.findFirst.mock.calls;
+    expect(calls).toHaveLength(2);
+    const [args] = calls[calls.length - 1] as [Record<string, unknown>];
+    expect(args.select).toEqual({
+      id: true,
+      bookVersionId: true,
+      categoryId: true,
+      sortOrder: true,
+    });
+  });
+
   it('creates a translation that is not indexable until it earns it', async () => {
     prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
     prisma.categoryTranslation.create.mockResolvedValue({ id: 'tr1' });

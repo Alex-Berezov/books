@@ -23435,10 +23435,6 @@
           "id": {
             "type": "string"
           },
-          "isPrimary": {
-            "default": false,
-            "type": "boolean"
-          },
           "sortOrder": {
             "default": 0,
             "type": "number"
@@ -23448,7 +23444,6 @@
           "id",
           "bookVersionId",
           "categoryId",
-          "isPrimary",
           "sortOrder"
         ],
         "type": "object"

@@ -629,6 +629,11 @@ async function seedSeoCatalog(): Promise<void> {
               },
               update: {},
               create: { bookVersionId: version.id, categoryId: category.id },
+              // `upsert` возвращает запись целиком, то есть выбирает и мёртвую
+              // `isPrimary` (`LEGACY-005`). Сид зовут три потребителя, включая
+              // конвейер соседнего репозитория из готового образа (`LEGACY-294`),
+              // поэтому белый список нужен и здесь.
+              select: { id: true },
             });
           }
 
@@ -947,6 +952,7 @@ async function main() {
         },
         update: {},
         create: { bookVersionId: baseVersion.id, categoryId: cat.id },
+        select: { id: true },
       }),
     ),
   );

@@ -1120,6 +1120,24 @@ describe('SeoService (unit)', () => {
       });
 
       /**
+       * 🔴 `LEGACY-005`. Список жанров читал связь через `include`, то есть выбирал
+       * все скаляры `BookCategory`, включая мёртвую `isPrimary`. Колонку снимает
+       * следующий релиз миграцией, и пока её выбирает работающий образ, `DROP COLUMN`
+       * даёт ему `42703` (`ADR-018`, класс 1). Из связи нужен только перевод термина.
+       */
+      it('жанры читаются белым списком, без мёртвой isPrimary', async () => {
+        await resolveBook();
+
+        // Число вызовов зафиксировано рядом (`L-005`): их два — крошки и жанры, —
+        // и без счётчика «последний вызов» молча станет другим запросом.
+        const calls = prisma.bookCategory.findMany.mock.calls;
+        expect(calls).toHaveLength(2);
+        const [args] = calls[calls.length - 1] as [Record<string, unknown>];
+        expect(args.include).toBeUndefined();
+        expect(args.select).toEqual({ category: { select: { translations: true } } });
+      });
+
+      /**
        * 🔴 `LEGACY-307`. Среднее и количество считает база одним `aggregate`,
        * а не приложение по всем строкам рейтинга: прежний `findMany` без
        * потолка тянул в память столько строк, сколько у книги оценок.
