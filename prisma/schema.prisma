@@ -400,24 +400,18 @@ model Category {
 }
 
 /// Главную категорию версии держит `BookVersion.primaryCategoryId` — единственный источник.
-/// `isPrimary` мертва: в `true` её не пишет ни один путь, по значению не читает никто.
 ///
-/// 🔴 Она под `@ignore`, и это **расширение перед сжатием** (`ADR-018`), а не косметика.
-/// Клиент Prisma строит список колонок `INSERT` из схемы, по которой собран, а не из `select`
-/// вызова: образ `v1.0.97` (релиз 1, снявший все чтения) называет колонку в каждом `INSERT`,
-/// и проверено это прогоном, а не рассуждением — `create`, `createMany` и `upsert` дают
-/// `P2022` против базы без колонки. Поэтому порядок такой: этот тег убирает колонку
-/// из клиента (`@ignore`) и снимает её частичный индекс миграцией
-/// `20260919120000_legacy_005_drop_isprimary_index`, а `DROP COLUMN` уезжает **следующим**
-/// тегом — тогда его предыдущий образ колонку уже не знает. ⛔ Тег на тот релиз ставит
-/// **владелец**: разрушительную миграцию агент пишет, но не выкатывает (тема 2,
-/// `D:/newDev/CLAUDE.md`). Снимать `@ignore` нельзя: это вернёт колонку в `INSERT`
-/// и сломает то самое сжатие.
+/// Мёртвая `isPrimary` и её частичный уникальный индекс сняты `LEGACY-005` тремя релизами
+/// (19.09.2026): `v1.0.97` убрал все чтения, `v1.0.98` — индекс и само поле из клиента
+/// (`@ignore`), третий — колонку миграцией `20260919160000_legacy_005_drop_isprimary_column`.
+/// Три, а не два, потому что клиент Prisma строит список колонок `INSERT` по схеме, а не
+/// по `select` вызова: пока поле стояло в схеме, образ называл колонку в каждой записи.
+/// Заводить его заново не нужно — перечень обращений держит
+/// `src/common/testing/book-category-select.spec.ts`.
 model BookCategory {
   id            String      @id @default(uuid())
   bookVersionId String
   categoryId    String
-  isPrimary     Boolean     @default(false) @ignore
   sortOrder     Int         @default(0)
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   category      Category    @relation(fields: [categoryId], references: [id])

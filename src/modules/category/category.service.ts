@@ -1122,7 +1122,7 @@ export class CategoryService {
           await tx.bookCategory.create({
             data: { bookVersionId: sibling.id, categoryId },
             // `create` возвращает запись целиком (`INSERT ... RETURNING` все скаляры),
-            // `LEGACY-005` — среди них мёртвая `isPrimary`. Результат здесь не нужен вовсе —
+            // (`LEGACY-005`). Результат здесь не нужен вовсе —
             // белый список сводит `RETURNING` к ключу.
             select: { id: true },
           });
