@@ -1122,8 +1122,8 @@ export class CategoryService {
           await tx.bookCategory.create({
             data: { bookVersionId: sibling.id, categoryId },
             // `create` возвращает запись целиком (`INSERT ... RETURNING` все скаляры),
-            // то есть выбирает и мёртвую `isPrimary` (`LEGACY-005`). Результат здесь
-            // не нужен вовсе — белый список сводит `RETURNING` к ключу.
+            // `LEGACY-005` — среди них мёртвая `isPrimary`. Результат здесь не нужен вовсе —
+            // белый список сводит `RETURNING` к ключу.
             select: { id: true },
           });
         }
@@ -1135,10 +1135,10 @@ export class CategoryService {
     await this.taxonomyIndexabilityService?.recomputeForTerms([categoryId], []);
 
     // Белый список, а не голый вызов (`LEGACY-005`): форма ответа обязана совпадать
-    // с `VersionCategoryLinkDto`, а без `select` наружу уезжали все скаляры связи,
-    // включая мёртвую `isPrimary`. Поле снято из ответа этим же релизом — колонку
-    // снимает следующий. Что её не выбирает больше никто, держит не этот комментарий,
-    // а сканирующая спека `src/common/testing/book-category-select.spec.ts`.
+    // с `VersionCategoryLinkDto`, а без `select` наружу уезжали бы все скаляры связи.
+    // Мёртвая `isPrimary` в их число входила. Что её не выбирает никто, держит
+    // не этот комментарий, а сканирующая спека
+    // `src/common/testing/book-category-select.spec.ts`.
     return this.prisma.bookCategory.findFirst({
       where: { bookVersionId: versionId, categoryId },
       select: { id: true, bookVersionId: true, categoryId: true, sortOrder: true },

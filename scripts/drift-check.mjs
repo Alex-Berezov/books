@@ -2250,8 +2250,11 @@ DROP INDEX "Book_title_idx";`,
     expect: ['index drift'],
   },
   {
-    // BookCategory_bookVersionId_isPrimary_key: Prisma cannot describe a partial index, so the
-    // schema names it in a comment. Without the marker the same index is EXTRA (next case).
+    // Prisma cannot describe a partial index, so the schema names it in a comment. Without the
+    // marker the same index is EXTRA (next case). The repository has had no live sql-only
+    // marker since LEGACY-005 release 2 dropped BookCategory_bookVersionId_isPrimary_key
+    // (19.09.2026) — this self-test is now the only thing keeping the mechanism honest, so it
+    // stays even though `drift-check` reports 0 markers on the real tree.
     name: 'index: a partial index named by a sql-only marker is accounted for',
     schema: (s) => `/// drift-check: sql-only index "Book_title_live_key"\n${s}`,
     extraMigration:

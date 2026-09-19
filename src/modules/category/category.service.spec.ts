@@ -1342,11 +1342,10 @@ describe('CategoryService', () => {
 
   /**
    * 🔴 LEGACY-005. Ответ привязки уезжал наружу сырым объектом Prisma: запрос без
-   * `select` тянет все скаляры `BookCategory`, включая мёртвую `isPrimary`, и форма
-   * ответа держалась на совпадении модели с DTO. Колонку снимает следующий релиз,
-   * а пока её выбирает работающий образ, `DROP COLUMN` ломает откат (`ADR-018`, класс 1).
+   * `select` тянул бы все скаляры `BookCategory`, и форма ответа держалась на совпадении
+   * модели с DTO. Мёртвая `isPrimary` в этот ответ и уезжала.
    */
-  it('ответ привязки собирается белым списком, без мёртвой isPrimary', async () => {
+  it('ответ привязки собирается белым списком, а не сырой строкой модели', async () => {
     prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
     prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
     prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);

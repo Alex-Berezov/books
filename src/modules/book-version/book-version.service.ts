@@ -468,8 +468,8 @@ export class BookVersionService {
             rightsCreatedAt: true,
           },
         },
-        // `include` на связи тянет все скаляры самой связи, включая мёртвую
-        // `isPrimary` (`LEGACY-005`); наружу отсюда идёт только `c.category`.
+        // `include` на связи тянул бы все скаляры самой связи (`LEGACY-005`, мёртвая
+        // `isPrimary`); наружу отсюда идёт только `c.category`.
         categories: {
           select: { category: true },
         },

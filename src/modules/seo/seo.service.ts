@@ -790,7 +790,7 @@ export class SeoService {
       const bookCategories = await this.prisma.bookCategory.findMany({
         where: { bookVersionId: chosen.id },
         // Белый список, а не `include` (`LEGACY-005`): читается только перевод термина,
-        // а голый вызов выбирал все скаляры связи, включая мёртвую `isPrimary`.
+        // а голый вызов выбирал бы все скаляры связи, включая мёртвую `isPrimary`.
         select: { category: { select: { translations: true } } },
       });
       for (const bc of bookCategories) {

@@ -501,9 +501,11 @@ export class BookService {
       activeVersion && this.prisma.bookCategory
         ? await this.prisma.bookCategory.findMany({
             where: { bookVersionId: activeVersion.id },
-            // Белый список, а не `include` (`LEGACY-005`): голый вызов тянет все скаляры
-            // модели, включая мёртвую `isPrimary`, которую следующий релиз снимает миграцией.
-            // Пока колонку выбирает работающий образ, её `DROP COLUMN` ломает откат.
+            // Белый список, а не `include`: голый вызов тянет все скаляры модели, и это
+            // требование `books/CLAUDE.md` само по себе, а не разовая мера под одну колонку.
+            // Поводом был `LEGACY-005` (мёртвая `isPrimary`, которая уйдёт `DROP COLUMN`
+            // отдельным тегом), но возврат к `include` запрещён и после него — перечень держит
+            // `src/common/testing/book-category-select.spec.ts`.
             select: { categoryId: true, category: { include: { translations: true } } },
           })
         : [];

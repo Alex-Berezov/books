@@ -399,22 +399,25 @@ model Category {
   @@index([type])
 }
 
-/// ⚠️ На этой модели есть ограничение, которого нет в схеме: частичный уникальный индекс
-/// `BookCategory_bookVersionId_isPrimary_key` — `ON ("bookVersionId") WHERE "isPrimary" = true`
-/// (миграция `20260908120000_legacy_004_005_...`, LEGACY-005). Prisma предикат `WHERE`
-/// в `@@unique` не выражает, поэтому индекс объявлен для `scripts/drift-check.mjs` строкой ниже
-/// (LEGACY-367): снятие индекса миграцией сторож покажет как маркер без индекса. Индекс не снимать.
-/// drift-check: sql-only index "BookCategory_bookVersionId_isPrimary_key"
-/// Выразить его как `@@unique([bookVersionId, isPrimary])` нельзя: это другое ограничение
-/// (пара, а не «одна главная категория на версию»), и Prisma сгенерирует индекс с тем же
-/// именем — `migrate deploy` упадёт на `42P07` и заблокирует остаток пачки.
-/// `isPrimary` на 08.09.2026 не пишется в `true` нигде в `src`; главную категорию версии
-/// держит `BookVersion.primaryCategoryId`, её и читают breadcrumb и SEO.
+/// Главную категорию версии держит `BookVersion.primaryCategoryId` — единственный источник.
+/// `isPrimary` мертва: в `true` её не пишет ни один путь, по значению не читает никто.
+///
+/// 🔴 Она под `@ignore`, и это **расширение перед сжатием** (`ADR-018`), а не косметика.
+/// Клиент Prisma строит список колонок `INSERT` из схемы, по которой собран, а не из `select`
+/// вызова: образ `v1.0.97` (релиз 1, снявший все чтения) называет колонку в каждом `INSERT`,
+/// и проверено это прогоном, а не рассуждением — `create`, `createMany` и `upsert` дают
+/// `P2022` против базы без колонки. Поэтому порядок такой: этот тег убирает колонку
+/// из клиента (`@ignore`) и снимает её частичный индекс миграцией
+/// `20260919120000_legacy_005_drop_isprimary_index`, а `DROP COLUMN` уезжает **следующим**
+/// тегом — тогда его предыдущий образ колонку уже не знает. ⛔ Тег на тот релиз ставит
+/// **владелец**: разрушительную миграцию агент пишет, но не выкатывает (тема 2,
+/// `D:/newDev/CLAUDE.md`). Снимать `@ignore` нельзя: это вернёт колонку в `INSERT`
+/// и сломает то самое сжатие.
 model BookCategory {
   id            String      @id @default(uuid())
   bookVersionId String
   categoryId    String
-  isPrimary     Boolean     @default(false)
+  isPrimary     Boolean     @default(false) @ignore
   sortOrder     Int         @default(0)
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   category      Category    @relation(fields: [categoryId], references: [id])

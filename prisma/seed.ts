@@ -629,8 +629,8 @@ async function seedSeoCatalog(): Promise<void> {
               },
               update: {},
               create: { bookVersionId: version.id, categoryId: category.id },
-              // `upsert` возвращает запись целиком, то есть выбирает и мёртвую
-              // `isPrimary` (`LEGACY-005`). Сид зовут три потребителя, включая
+              // `upsert` возвращает запись целиком (`LEGACY-005`, среди скаляров мёртвая
+              // `isPrimary`). Сид зовут три потребителя, включая
               // конвейер соседнего репозитория из готового образа (`LEGACY-294`),
               // поэтому белый список нужен и здесь.
               select: { id: true },
