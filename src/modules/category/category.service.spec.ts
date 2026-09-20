@@ -2,8 +2,9 @@ import { CategoryTreeService } from './category-tree.service';
 import { CategoryService } from './category.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Language } from '@prisma/client';
 
 interface PrismaStub {
@@ -109,6 +110,7 @@ describe('CategoryService', () => {
   let service: CategoryService;
   let prisma: PrismaStub;
   let indexability: { recomputeForTerms: jest.Mock };
+  let adminAudit: { record: jest.Mock };
   let slugRedirects: { record: jest.Mock; resolve: jest.Mock; recordBaseSlugChange: jest.Mock };
 
   beforeEach(() => {
@@ -122,10 +124,12 @@ describe('CategoryService', () => {
       resolve: jest.fn().mockResolvedValue(null),
       recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
     };
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     service = new CategoryService(
       prisma as unknown as PrismaService,
       slugRedirects as unknown as SlugRedirectService,
       new CategoryTreeService(prisma as unknown as PrismaService),
+      adminAudit as unknown as AdminAuditService,
       indexability as unknown as TaxonomyIndexabilityService,
     );
   });
@@ -538,6 +542,7 @@ describe('CategoryService', () => {
         recordBaseSlugChange,
       } as unknown as SlugRedirectService,
       new CategoryTreeService(prisma as unknown as PrismaService),
+      { record: jest.fn().mockResolvedValue(undefined) } as unknown as AdminAuditService,
       indexability as unknown as TaxonomyIndexabilityService,
     );
 
@@ -958,7 +963,7 @@ describe('CategoryService', () => {
     prisma.categoryTranslation.deleteMany = jest.fn();
     prisma.category.delete = jest.fn();
 
-    await service.remove('A');
+    await service.remove('A', 'admin-actor-1');
 
     expect(order).toEqual([
       'lock',
@@ -1007,14 +1012,14 @@ describe('CategoryService', () => {
       .fn()
       .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
 
-    await expect(service.remove('A')).rejects.toThrow('db is down');
+    await expect(service.remove('A', 'admin-actor-1')).rejects.toThrow('db is down');
     expect(tx.category.delete).not.toHaveBeenCalled();
   });
 
   it('remove rejects when category has children', async () => {
     prisma.category.findUnique.mockResolvedValue({ id: 'A' });
     prisma.category.count.mockResolvedValue(1);
-    await expect(service.remove('A')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.remove('A', 'admin-actor-1')).rejects.toBeInstanceOf(BadRequestException);
   });
 
   /**
@@ -1111,7 +1116,7 @@ describe('CategoryService', () => {
       ],
     );
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     expect(slugRedirects.record).toHaveBeenCalledTimes(2);
     expect(slugRedirects.record).toHaveBeenCalledWith(
@@ -1143,7 +1148,7 @@ describe('CategoryService', () => {
       [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
     );
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     // Два вызова: отбор занятости исчезающего слага перевода и проверка того,
     // жив ли ещё базовый слаг удалённой категории.
@@ -1165,7 +1170,7 @@ describe('CategoryService', () => {
       { dyingSlug: { id: 'other' } },
     );
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     expect(slugRedirects.record).not.toHaveBeenCalled();
   });
@@ -1179,7 +1184,7 @@ describe('CategoryService', () => {
       [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
     );
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     // Иначе адрес, который вёл сюда 308-м, после исчезновения цели указывал бы в 404.
     // Счётчик обязателен рядом с `toHaveBeenCalledWith` (`L-005`): без него уборка,
@@ -1214,7 +1219,7 @@ describe('CategoryService', () => {
       [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
     );
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     expect(slugRedirects.record).toHaveBeenCalledTimes(1);
     expect(slugRedirects.record).toHaveBeenCalledWith(
@@ -1248,7 +1253,7 @@ describe('CategoryService', () => {
       return Promise.resolve({ count: 0 });
     });
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     expect(order[0]).toBe('record');
     expect(order).toContain('deleteMany');
@@ -1263,7 +1268,7 @@ describe('CategoryService', () => {
     // Тот же базовый слаг носит en-перевод другой, остающейся жить категории.
     arrangeRemove([{ language: Language.ru, slug: 'roman' }], null, [Language.en]);
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     // Счётчик первым (`L-005`): без него разбор по `mock.calls` брал бы первый
     // подходящий вызов и молчал про остальные — вернувшийся цикл по языкам
@@ -1292,7 +1297,7 @@ describe('CategoryService', () => {
   it('LEGACY-394: базовый слаг, живой во всех языках, уборки не получает вовсе', async () => {
     arrangeRemove([{ language: Language.ru, slug: 'roman' }], null, Object.values(Language));
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     // Остался ровно один вызов — на умерший ru-перевод; базовый слаг не тронут.
     expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledTimes(1);
@@ -1324,7 +1329,7 @@ describe('CategoryService', () => {
       [Language.en],
     );
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     // Живой только `en` — уборку обязаны получить ровно остальные четыре языка,
     // и `en` в перечне стоять не должен.
@@ -1350,7 +1355,7 @@ describe('CategoryService', () => {
   it('LEGACY-394: уборка базового слага идёт с языком — запрос попадает в индекс', async () => {
     arrangeRemove([{ language: Language.ru, slug: 'roman' }], null);
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     // 🔴 Счётчик первым: без него кейс зеленеет на пустом списке вызовов, то есть
     // ровно в том исходе, ради запрета которого запись и заведена (`L-015` —
@@ -1386,7 +1391,7 @@ describe('CategoryService', () => {
       { dyingSlug: { id: 'other' }, baseSlug: { id: 'other' } },
     );
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     expect(slugRedirects.record).not.toHaveBeenCalled();
     expect(prisma.slugRedirect.deleteMany).not.toHaveBeenCalled();
@@ -1395,7 +1400,7 @@ describe('CategoryService', () => {
   it('LEGACY-390: у корневой категории родителя нет — редиректов не пишется', async () => {
     arrangeRemove([{ language: Language.ru, slug: 'roman' }], null);
 
-    await service.remove('cat1');
+    await service.remove('cat1', 'admin-actor-1');
 
     expect(slugRedirects.record).not.toHaveBeenCalled();
     // Адрес всё равно обязан перестать вести в никуда.
@@ -1717,7 +1722,7 @@ describe('CategoryService', () => {
       parent: { translations: [{ slug: 'hudozhestvennaya-literatura' }] },
     });
 
-    await service.deleteTranslation('cat1', Language.ru);
+    await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
     expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
     expect(slugRedirects.record).toHaveBeenCalledTimes(1);
@@ -1744,7 +1749,7 @@ describe('CategoryService', () => {
     // Родитель есть, но переводов на `ru` у него нет — `where: { language }` вернул пусто.
     prisma.category.findUnique.mockResolvedValue({ parent: { translations: [] } });
 
-    await service.deleteTranslation('cat1', Language.ru);
+    await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
     expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
     expect(slugRedirects.record).not.toHaveBeenCalled();
@@ -1764,7 +1769,7 @@ describe('CategoryService', () => {
     // которой ничто не соответствует.
     prisma.category.findFirst.mockResolvedValue({ id: 'cat1' });
 
-    await service.deleteTranslation('cat1', Language.ru);
+    await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
     expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
     expect(slugRedirects.record).not.toHaveBeenCalled();
@@ -1788,7 +1793,7 @@ describe('CategoryService', () => {
     prisma.category.findFirst.mockResolvedValue(null);
     prisma.category.findUnique.mockResolvedValue({ parent: null });
 
-    await service.deleteTranslation('cat1', Language.ru);
+    await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
     // Иначе адрес, который вёл сюда 308-м, после исчезновения цели указывал бы в 404.
     expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
@@ -1823,7 +1828,7 @@ describe('CategoryService', () => {
       return Promise.resolve({ count: 0 });
     });
 
-    await service.deleteTranslation('cat1', Language.ru);
+    await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
     expect(order).toEqual(['record', 'deleteMany']);
   });
@@ -1839,9 +1844,157 @@ describe('CategoryService', () => {
     prisma.category.findFirst.mockResolvedValue(null);
     prisma.category.findUnique.mockResolvedValue({ parent: null });
 
-    await service.deleteTranslation('cat1', Language.ru);
+    await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
     expect(prisma.categoryTranslation.delete).toHaveBeenCalledTimes(1);
     expect(slugRedirects.record).not.toHaveBeenCalled();
+  });
+  /**
+   * 🔴 `LEGACY-015`, пачка `T20`. Удаление термина таксономии — административное
+   * действие по критерию из докблока `AdminAuditEvent`: маршрут закрыт ролью,
+   * `user` в `@Roles` нет, строка стирается физически.
+   *
+   * Отдельных событий на переводы, снесённые вместе с категорией, нет намеренно
+   * (решение арбитра 20.09.2026): в `AdminAuditAction` нет ни одного утверждения
+   * о переводе, которое их снос сделал бы ложным. Но их публичные адреса умирают
+   * вместе с ними и после `deleteMany` невосстановимы — поэтому список уходит
+   * в `payload` события самой категории, и состав проверяется целиком, а не
+   * `toMatchObject`: лишнее поле в журнале так же неверно, как потерянное.
+   */
+  describe('журнал административных действий (LEGACY-015, T20)', () => {
+    it('remove пишет CATEGORY_DELETED со списком умерших переводов', async () => {
+      // Стенд — общий `arrangeRemove`, а не своя копия: он единственный разводит
+      // два разных `categoryTranslation.findMany` по `where` (умирающие адреса
+      // против живых носителей базового слага) и на третью форму бросает отказ.
+      // Рукописная копия отвечала бы `dying` на оба вопроса, и поломка отбора
+      // языков в уборке редиректов прошла бы мимо (`STYLE_GUIDE.md §1`).
+      const dying = [
+        { language: Language.ru, slug: 'roman' },
+        { language: Language.en, slug: 'novel' },
+      ];
+      arrangeRemove(dying, null);
+
+      await service.remove('cat1', 'admin-actor-1');
+
+      expect(adminAudit.record).toHaveBeenCalledTimes(1);
+      // ⚠️ Первый аргумент `record` здесь НЕ проверяется: `$transaction` общего
+      // стенда отдаёт колбэку сам `prisma`, и сверка была бы истинна при любом
+      // аргументе. Настоящая посадка на `LEGACY-036` — в тесте порядка ниже,
+      // где `tx` отдельным объектом (`L-016`).
+      expect(adminAudit.record.mock.calls[0][1]).toEqual({
+        action: 'CATEGORY_DELETED',
+        targetType: 'CATEGORY',
+        targetId: 'cat1',
+        actorUserId: 'admin-actor-1',
+        payload: { slug: 'fiction', translations: dying },
+      });
+    });
+
+    /**
+     * Порядок, а не только факт записи: событие обязано лежать внутри того же
+     * замка дерева, что и само удаление. Запись, выехавшая из-под замка, даёт
+     * журнал, который расходится с данными при встречной правке дерева.
+     */
+    it('запись идёт под тем же замком дерева, что и удаление', async () => {
+      const order: string[] = [];
+      const tx = {
+        $queryRaw: jest.fn(() => {
+          order.push('lock');
+          return Promise.resolve([]);
+        }),
+        category: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'cat1', parent: null }),
+          count: jest.fn().mockResolvedValue(0),
+          delete: jest.fn(() => {
+            order.push('delete');
+            return Promise.resolve({ id: 'cat1', slug: 'fiction' });
+          }),
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        bookCategory: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        categoryTranslation: {
+          findMany: jest.fn().mockResolvedValue([]),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        slugRedirect: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      };
+      adminAudit.record.mockImplementation(() => {
+        order.push('audit');
+        return Promise.resolve(undefined);
+      });
+      prisma.$transaction = jest
+        .fn()
+        .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+      await service.remove('cat1', 'admin-actor-1');
+
+      expect(order).toEqual(['lock', 'delete', 'audit']);
+      // Посадка на `LEGACY-036`: здесь `tx` — отдельный объект, не равный `prisma`,
+      // поэтому подмена клиента в сервисе роняет тест, а не проходит молча.
+      expect(adminAudit.record.mock.calls[0][0]).toBe(tx);
+    });
+
+    it('несуществующая категория журнала не касается', async () => {
+      prisma.category.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove('missing', 'admin-actor-1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(adminAudit.record).not.toHaveBeenCalled();
+    });
+
+    it('отказ из-за детей журнала не касается', async () => {
+      prisma.category.findUnique.mockResolvedValue({ id: 'cat1' });
+      prisma.category.count.mockResolvedValue(1);
+
+      await expect(service.remove('cat1', 'admin-actor-1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(adminAudit.record).not.toHaveBeenCalled();
+    });
+
+    /**
+     * ⚠️ `targetId` — идентификатор **категории**, хотя у строки перевода есть своё
+     * `id`: язык стоит в `payload`, и вся история термина собирается одной выборкой
+     * по `targetId` (решение арбитра 20.09.2026). Проверяется буквально — подстановка
+     * `tr.id` компилируется и осталась бы незамеченной.
+     */
+    it('deleteTranslation пишет CATEGORY_TRANSLATION_DELETED на саму категорию', async () => {
+      prisma.categoryTranslation.findUnique.mockResolvedValue({
+        id: 'translation-row-1',
+        categoryId: 'cat1',
+        language: Language.ru,
+        slug: 'roman',
+        seoId: null,
+      });
+      prisma.categoryTranslation.delete.mockResolvedValue({});
+      prisma.category.findFirst.mockResolvedValue(null);
+      prisma.category.findUnique.mockResolvedValue({ parent: null });
+
+      await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
+
+      expect(adminAudit.record).toHaveBeenCalledTimes(1);
+      expect(adminAudit.record.mock.calls[0][1]).toEqual({
+        action: 'CATEGORY_TRANSLATION_DELETED',
+        targetType: 'CATEGORY',
+        targetId: 'cat1',
+        actorUserId: 'admin-actor-1',
+        payload: { language: Language.ru, slug: 'roman' },
+      });
+    });
+
+    /**
+     * Инвариант «событие = изменение состояния» (`M5`, 11.09.2026): удалять было
+     * нечего, значит и записывать нечего. Без этого теста тихий `return` легко
+     * заменить на запись «на всякий случай», и `CATEGORY_TRANSLATION_DELETED`
+     * перестанет означать «перевод был и его не стало».
+     */
+    it('отсутствующий перевод журнала не касается', async () => {
+      prisma.categoryTranslation.findUnique.mockResolvedValue(null);
+
+      await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
+
+      expect(adminAudit.record).not.toHaveBeenCalled();
+    });
   });
 });

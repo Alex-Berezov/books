@@ -1,10 +1,18 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { Prisma, Language, Tag, TagTranslation } from '@prisma/client';
+import {
+  AdminAuditAction,
+  AdminAuditTargetType,
+  Prisma,
+  Language,
+  Tag,
+  TagTranslation,
+} from '@prisma/client';
 import {
   PUBLIC_BOOK_VERSION_SELECT,
   type PublicBookVersion,
 } from '../../common/selects/public-book.select';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CreateTagDto } from './dto/create-tag.dto';
@@ -21,6 +29,7 @@ export class TagsService {
     private prisma: PrismaService,
     private readonly slugRedirects: SlugRedirectService,
     private readonly tagLock: TagLockService,
+    private readonly adminAudit: AdminAuditService,
     @Optional()
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
@@ -209,7 +218,7 @@ export class TagsService {
    * `retireCategoryAddress`, здесь только половина — сама уборка, без записи
    * нового звена цепочки.
    */
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null) {
     return this.tagLock.runInLockedTag({ id }, async (tx) => {
       const exists = await tx.tag.findUnique({ where: { id } });
       if (!exists) throw new NotFoundException('Tag not found');
@@ -225,6 +234,19 @@ export class TagsService {
       await tx.tagTranslation.deleteMany({ where: { tagId: id } });
 
       const removed = await tx.tag.delete({ where: { id } });
+
+      // Тем же `tx` и под тем же замком строки тега. Переводы, снесённые выше,
+      // своих событий не получают, но их адреса умирают вместе с ними и после
+      // `deleteMany` невосстановимы — поэтому `dying` уходит в `payload` целиком
+      // (решение арбитра 20.09.2026). Он уже прочитан ради уборки редиректов
+      // и стоит ноль лишних запросов.
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.TAG_DELETED,
+        targetType: AdminAuditTargetType.TAG,
+        targetId: id,
+        actorUserId,
+        payload: { slug: removed.slug, translations: dying },
+      });
 
       for (const dyingTranslation of dying) {
         // Адрес пережил удаление, если слаг перевода совпал с чьим-то ещё
@@ -547,7 +569,7 @@ export class TagsService {
     });
   }
 
-  async deleteTranslation(tagId: string, language: Language) {
+  async deleteTranslation(tagId: string, language: Language, actorUserId: string | null) {
     await this.tagLock.runInLockedTag({ id: tagId }, async (tx) => {
       const tr = await tx.tagTranslation.findUnique({
         where: { tagId_language: { tagId, language } },
@@ -560,6 +582,18 @@ export class TagsService {
       if (tr.seoId) {
         await tx.seo.delete({ where: { id: tr.seoId } });
       }
+
+      // `targetId` — идентификатор **тега**, а не строки перевода: язык стоит
+      // в `payload`, и вся история термина собирается одной выборкой по `targetId`
+      // (решение арбитра 20.09.2026). Тихий `return` выше — единственная ветка
+      // без записи: удалять было нечего, а событие означает изменение состояния.
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.TAG_TRANSLATION_DELETED,
+        targetType: AdminAuditTargetType.TAG,
+        targetId: tagId,
+        actorUserId,
+        payload: { language, slug: tr.slug },
+      });
     });
 
     return { success: true };

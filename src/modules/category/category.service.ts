@@ -4,13 +4,20 @@ import {
   PUBLIC_BOOK_VERSION_SELECT,
 } from '../../common/selects/public-book.select';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CategoryTreeService, CATEGORY_SLUG_TAKEN_MESSAGE } from './category-tree.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { Prisma, Category as PrismaCategory, Language } from '@prisma/client';
+import {
+  AdminAuditAction,
+  AdminAuditTargetType,
+  Prisma,
+  Category as PrismaCategory,
+  Language,
+} from '@prisma/client';
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 
@@ -88,6 +95,7 @@ export class CategoryService {
     private prisma: PrismaService,
     private readonly slugRedirects: SlugRedirectService,
     private readonly categoryTree: CategoryTreeService,
+    private readonly adminAudit: AdminAuditService,
     @Optional()
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
@@ -499,7 +507,7 @@ export class CategoryService {
    * ниже), фоллбэк не срабатывает, адрес мёртв — исключается только **чужая** живая
    * категория с тем же базовым слагом (решение арбитра 15.09.2026, `decisions-log.md`).
    */
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null) {
     return this.categoryTree.runInLockedTree(async (tx) => {
       // Родитель читается тем же запросом, что и проверка существования: политике
       // редиректов нужен его перевод на каждом языке, а отдельный `findUnique`
@@ -528,6 +536,21 @@ export class CategoryService {
       await tx.categoryTranslation.deleteMany({ where: { categoryId: id } });
 
       const removed = await tx.category.delete({ where: { id } });
+
+      // Тем же `tx` и под тем же замком дерева: запись, пережившая откат своей
+      // операции, — это `LEGACY-036`. Переводы, снесённые строкой выше, своих
+      // событий не получают — в `AdminAuditAction` нет ни одного утверждения
+      // о переводе, которое их снос сделал бы ложным (решение арбитра 20.09.2026).
+      // Но их адреса умирают вместе с ними и после `deleteMany` невосстановимы,
+      // поэтому `dying` уходит в `payload` целиком: он уже прочитан ради уборки
+      // редиректов и стоит ноль лишних запросов.
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.CATEGORY_DELETED,
+        targetType: AdminAuditTargetType.CATEGORY,
+        targetId: id,
+        actorUserId,
+        payload: { slug: removed.slug, translations: dying },
+      });
 
       const parentSlugByLanguage = new Map(
         (existing.parent?.translations ?? []).map((t) => [t.language, t.slug] as const),
@@ -882,7 +905,7 @@ export class CategoryService {
    * для каждого из них (`LEGACY-390`). Правка одного пути без второго — тот самый
    * разъезд, из-за которого запись и заводилась.
    */
-  async deleteTranslation(categoryId: string, language: Language) {
+  async deleteTranslation(categoryId: string, language: Language, actorUserId: string | null) {
     // 🔴 Замок дерева здесь взят не ради границ транзакции, а против гонки
     // (`LEGACY-390`, решение арбитра 15.09.2026). `runInTree` дал бы те же
     // `CATEGORY_TREE_TX_OPTIONS`, но без блокировки — и тогда удаление перевода
@@ -915,6 +938,19 @@ export class CategoryService {
       if (tr.seoId) {
         await tx.seo.delete({ where: { id: tr.seoId } });
       }
+
+      // `targetId` — идентификатор **категории**, а не строки перевода, хотя своё
+      // `id` у неё есть: язык стоит в `payload`, и вся история термина собирается
+      // одной выборкой по `targetId` (решение арбитра 20.09.2026). Тихий `return`
+      // выше — единственная ветка без записи, и это тот же инвариант «событие =
+      // изменение состояния», что у повторной выдачи роли: удалять было нечего.
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.CATEGORY_TRANSLATION_DELETED,
+        targetType: AdminAuditTargetType.CATEGORY,
+        targetId: categoryId,
+        actorUserId,
+        payload: { language, slug: tr.slug },
+      });
 
       // Преемник — перевод прямого родителя на том же языке. Читается тем же `tx`
       // и после удаления: иначе есть момент, когда слаг уже мёртв, а редиректа ещё

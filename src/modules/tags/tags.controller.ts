@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -39,6 +40,17 @@ import { CheckTagSlugResponseDto } from './dto/check-slug-response.dto';
 import { TagEntityDto } from './dto/tag-entity.dto';
 import { TagTranslationEntityDto } from './dto/tag-translation-entity.dto';
 import { VersionTagLinkDto } from './dto/version-tag-link.dto';
+
+/**
+ * Форма пользователя запроса — та же, что в остальных контроллерах
+ * (`STYLE_GUIDE.md`, раздел «Контроллеры»). Общего `@CurrentUser()` в проекте
+ * нет вовсе, и сведение копий к одному декоратору — отдельная работа,
+ * записанная строкой в теле `LEGACY-015`.
+ */
+interface RequestUser {
+  userId: string;
+  email: string;
+}
 
 @ApiTags('tags')
 @Controller()
@@ -120,8 +132,10 @@ export class TagsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  remove(@Param('id') id: string, @Req() req: { user: RequestUser }) {
+    // Актёр берётся из запроса, а не из тела: журнал должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.service.remove(id, req.user.userId);
   }
 
   @Post('versions/:id/tags')
@@ -196,7 +210,11 @@ export class TagsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  deleteTranslation(@Param('id') id: string, @Param('language') language: Language) {
-    return this.service.deleteTranslation(id, language);
+  deleteTranslation(
+    @Param('id') id: string,
+    @Param('language') language: Language,
+    @Req() req: { user: RequestUser },
+  ) {
+    return this.service.deleteTranslation(id, language, req.user.userId);
   }
 }

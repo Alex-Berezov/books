@@ -2,6 +2,7 @@ import { TagsService } from './tags.service';
 import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { Language } from '@prisma/client';
 
@@ -53,6 +54,7 @@ describe('TagsService', () => {
   let service: TagsService;
   let prisma: PrismaStub;
   let indexability: { recomputeForTerms: jest.Mock };
+  let adminAudit: { record: jest.Mock };
   let slugRedirects: {
     record: jest.Mock;
     resolve: jest.Mock;
@@ -72,10 +74,12 @@ describe('TagsService', () => {
       recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
       cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
     };
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     service = new TagsService(
       prisma as unknown as PrismaService,
       slugRedirects as unknown as SlugRedirectService,
       new TagLockService(prisma as unknown as PrismaService),
+      adminAudit as unknown as AdminAuditService,
       indexability as unknown as TaxonomyIndexabilityService,
     );
   });
@@ -352,7 +356,7 @@ describe('TagsService', () => {
     });
     prisma.tagTranslation.delete.mockResolvedValue({});
 
-    await service.deleteTranslation('t1', Language.ru);
+    await service.deleteTranslation('t1', Language.ru, 'admin-actor-1');
 
     expect(prisma.tagTranslation.delete).toHaveBeenCalledTimes(1);
     expect(slugRedirects.record).not.toHaveBeenCalled();
@@ -378,7 +382,7 @@ describe('TagsService', () => {
       // чужим живым базовым слагом.
       prisma.tag.findFirst.mockResolvedValue(null);
 
-      const res = await service.remove('t1');
+      const res = await service.remove('t1', 'admin-actor-1');
 
       expect(res.id).toBe('t1');
       expect(prisma.bookTag.deleteMany).toHaveBeenCalledWith({ where: { tagId: 't1' } });
@@ -412,7 +416,7 @@ describe('TagsService', () => {
       // Базовый слаг удалённого тега ('classics') не занят никем.
       prisma.tag.findFirst.mockResolvedValueOnce({ id: 'other-tag' }).mockResolvedValueOnce(null);
 
-      await service.remove('t1');
+      await service.remove('t1', 'admin-actor-1');
 
       expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalledWith(
         'tag',
@@ -425,7 +429,7 @@ describe('TagsService', () => {
     it('throws NotFoundException and touches nothing when the tag does not exist', async () => {
       prisma.tag.findUnique.mockResolvedValue(null);
 
-      await expect(service.remove('missing')).rejects.toThrow('Tag not found');
+      await expect(service.remove('missing', 'admin-actor-1')).rejects.toThrow('Tag not found');
       expect(prisma.tag.delete).not.toHaveBeenCalled();
       expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
     });
@@ -433,7 +437,7 @@ describe('TagsService', () => {
     it('runs inside the tag lock with explicit bounds', async () => {
       prisma.tag.findFirst.mockResolvedValue(null);
 
-      await service.remove('t1');
+      await service.remove('t1', 'admin-actor-1');
 
       expect(prisma.$transaction.mock.calls).toEqual([[expect.any(Function), TAG_TX_OPTIONS]]);
     });
@@ -448,7 +452,7 @@ describe('TagsService', () => {
         .mockResolvedValueOnce([]);
       prisma.tag.findFirst.mockResolvedValue(null);
 
-      await service.remove('t1');
+      await service.remove('t1', 'admin-actor-1');
 
       for (const call of prisma.tag.findFirst.mock.calls) {
         expect((call[0] as { where: { isVisible?: boolean } }).where.isVisible).toBe(true);
@@ -458,6 +462,90 @@ describe('TagsService', () => {
           where: expect.objectContaining({ tag: { isVisible: true } }),
         }),
       );
+    });
+  });
+
+  /**
+   * 🔴 `LEGACY-015`, пачка `T20`. Тот же критерий и та же форма, что у категории
+   * (`category.service.spec.ts`, блок «журнал административных действий»):
+   * событие на сам термин со списком умерших переводов в `payload`, отдельных
+   * событий на переводы нет (решение арбитра 20.09.2026).
+   */
+  describe('журнал административных действий (LEGACY-015, T20)', () => {
+    beforeEach(() => {
+      prisma.tag.findUnique.mockResolvedValue({ id: 't1', slug: 'classics' });
+      prisma.tag.delete.mockResolvedValue({ id: 't1', slug: 'classics' });
+      prisma.tag.findFirst.mockResolvedValue(null);
+    });
+
+    it('remove пишет TAG_DELETED со списком умерших переводов', async () => {
+      const dying = [
+        { language: Language.en, slug: 'classic-books' },
+        { language: Language.ru, slug: 'klassika' },
+      ];
+      prisma.tagTranslation.findMany.mockResolvedValueOnce(dying).mockResolvedValueOnce([]);
+
+      await service.remove('t1', 'admin-actor-1');
+
+      expect(adminAudit.record).toHaveBeenCalledTimes(1);
+      // ⚠️ Первый аргумент `record` здесь НЕ проверяется: `$transaction` этого
+      // стенда (`:66-68`) отдаёт колбэку сам `prisma`, поэтому `tx === prisma`
+      // и любая такая сверка истинна при любом аргументе. Настоящая посадка
+      // на `LEGACY-036` — в блоке «писатели тега идут под замком» ниже, где
+      // `tx` и `root` различимы (`L-016`).
+      expect(adminAudit.record.mock.calls[0][1]).toEqual({
+        action: 'TAG_DELETED',
+        targetType: 'TAG',
+        targetId: 't1',
+        actorUserId: 'admin-actor-1',
+        payload: { slug: 'classics', translations: dying },
+      });
+    });
+
+    it('несуществующий тег журнала не касается', async () => {
+      prisma.tag.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove('missing', 'admin-actor-1')).rejects.toThrow('Tag not found');
+      expect(adminAudit.record).not.toHaveBeenCalled();
+    });
+
+    /**
+     * ⚠️ `targetId` — идентификатор **тега**, хотя у строки перевода есть своё `id`:
+     * язык стоит в `payload`, и вся история термина собирается одной выборкой
+     * по `targetId` (решение арбитра 20.09.2026).
+     */
+    it('deleteTranslation пишет TAG_TRANSLATION_DELETED на сам тег', async () => {
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        id: 'translation-row-1',
+        tagId: 't1',
+        language: Language.ru,
+        slug: 'klassika',
+        seoId: null,
+      });
+      prisma.tagTranslation.delete.mockResolvedValue({});
+
+      await service.deleteTranslation('t1', Language.ru, 'admin-actor-1');
+
+      expect(adminAudit.record).toHaveBeenCalledTimes(1);
+      expect(adminAudit.record.mock.calls[0][1]).toEqual({
+        action: 'TAG_TRANSLATION_DELETED',
+        targetType: 'TAG',
+        targetId: 't1',
+        actorUserId: 'admin-actor-1',
+        payload: { language: Language.ru, slug: 'klassika' },
+      });
+    });
+
+    /**
+     * Инвариант «событие = изменение состояния» (`M5`, 11.09.2026): удалять было
+     * нечего — записывать тоже.
+     */
+    it('отсутствующий перевод журнала не касается', async () => {
+      prisma.tagTranslation.findUnique.mockResolvedValue(null);
+
+      await service.deleteTranslation('t1', Language.ru, 'admin-actor-1');
+
+      expect(adminAudit.record).not.toHaveBeenCalled();
     });
   });
 });
@@ -515,14 +603,22 @@ describe('TagsService — писатели тега идут под замком
     const prismaClient = new Proxy(root, {
       get: (target, prop: string) => (prop === '$transaction' ? $transaction : target[prop]),
     });
-    const redirects = { record: jest.fn(), recordBaseSlugChange: jest.fn() };
+    // `cleanupDeadRedirects` в стенде есть потому, что `remove` её зовёт
+    // (`tags.service.ts:270`): без неё блок не может прогнать удаление тега вовсе.
+    const redirects = {
+      record: jest.fn(),
+      recordBaseSlugChange: jest.fn(),
+      cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
+    };
+    const adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     const tagsService = new TagsService(
       prismaClient as unknown as PrismaService,
       redirects as unknown as SlugRedirectService,
       new TagLockService(prismaClient as unknown as PrismaService),
+      adminAudit as unknown as AdminAuditService,
       { recomputeForTerms: jest.fn() } as unknown as TaxonomyIndexabilityService,
     );
-    return { tagsService, log, tx, $transaction, redirects };
+    return { tagsService, log, tx, $transaction, redirects, adminAudit };
   };
 
   const rootCalls = (log: string[]) => log.filter((call) => call.startsWith('root.'));
@@ -632,7 +728,9 @@ describe('TagsService — писатели тега идут под замком
       'tagTranslation.findUnique': () => ({ id: 'tr1', seoId: 5 }),
     });
 
-    await expect(tagsService.deleteTranslation('t1', Language.en)).resolves.toEqual({
+    await expect(
+      tagsService.deleteTranslation('t1', Language.en, 'admin-actor-1'),
+    ).resolves.toEqual({
       success: true,
     });
 
@@ -645,10 +743,46 @@ describe('TagsService — писатели тега идут под замком
     ]);
   });
 
+  /**
+   * 🔴 `LEGACY-015`, пачка `T20`, посадка на `LEGACY-036`. Проверять первый
+   * аргумент `record` имеет смысл только здесь: в верхнем стенде файла
+   * `$transaction` отдаёт колбэку сам `prisma`, и сверка проходит при любом
+   * аргументе. Тут `tx` и `root` — разные объекты, и подмена `tx` на
+   * `this.prisma` в сервисе роняет тест (`L-016`).
+   */
+  it('remove: событие журнала пишется тем же tx, что и удаление', async () => {
+    const { tagsService, tx, adminAudit, log } = setup({
+      'tag.findUnique': () => ({ id: 't1', slug: 'classics' }),
+      'tagTranslation.findMany': () => [],
+      'tag.delete': () => ({ id: 't1', slug: 'classics' }),
+      'tag.findFirst': () => null,
+    });
+
+    await tagsService.remove('t1', 'admin-actor-1');
+
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record.mock.calls[0][0]).toBe(tx);
+    expect(rootCalls(log)).toEqual([]);
+  });
+
+  it('deleteTranslation: событие журнала пишется тем же tx, что и удаление', async () => {
+    const { tagsService, tx, adminAudit, log } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'klassika', seoId: null }),
+    });
+
+    await tagsService.deleteTranslation('t1', Language.en, 'admin-actor-1');
+
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record.mock.calls[0][0]).toBe(tx);
+    expect(rootCalls(log)).toEqual([]);
+  });
+
   it('deleteTranslation: перевода нет — успех без записей', async () => {
     const { tagsService, log } = setup();
 
-    await expect(tagsService.deleteTranslation('t1', Language.en)).resolves.toEqual({
+    await expect(
+      tagsService.deleteTranslation('t1', Language.en, 'admin-actor-1'),
+    ).resolves.toEqual({
       success: true,
     });
     expect(log).toEqual(['tx.forUpdate', 'tx.tagTranslation.findUnique']);

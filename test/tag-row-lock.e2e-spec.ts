@@ -331,7 +331,9 @@ describe('LEGACY-320 — строка тега запирается на пут�
       data: { tagId: tag.id, language: 'en', name: 'Doomed', slug: `${prefix}-tr-delete-en` },
     });
 
-    await expectWaitsForLock({ id: tag.id }, () => tags.deleteTranslation(tag.id, 'en'));
+    // Актёра нет намеренно: спека зовёт сервис напрямую, мимо HTTP, и проверяет
+    // порядок захвата замка, а не проводку актёра (её держит `*.controller.actor.spec.ts`).
+    await expectWaitsForLock({ id: tag.id }, () => tags.deleteTranslation(tag.id, 'en', null));
 
     const after = await prisma.tagTranslation.findUnique({
       where: { tagId_language: { tagId: tag.id, language: 'en' } },

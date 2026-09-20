@@ -4,6 +4,7 @@ import { TagLockService } from '../../tags/tag-lock.service';
 import { CategoryService } from '../../category/category.service';
 import { TagsService } from '../../tags/tags.service';
 import { SlugRedirectService } from '../../slug-redirect/slug-redirect.service';
+import { AdminAuditService } from '../../../shared/admin-audit/admin-audit.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 /**
@@ -67,6 +68,10 @@ const slugRedirectStub = () =>
     resolve: jest.fn().mockResolvedValue(null),
   }) as unknown as SlugRedirectService;
 
+/** Журналом этот контракт не занимается — нужен лишь корректный конструктор. */
+const adminAuditStub = () =>
+  ({ record: jest.fn().mockResolvedValue(undefined) }) as unknown as AdminAuditService;
+
 const prismaStub = () => {
   const stub = {
     $transaction: jest.fn((ops: Array<Promise<unknown>>) => Promise.all(ops)),
@@ -93,9 +98,15 @@ describe('indexability contract: autoIndexable reaches the client', () => {
       categoryPrisma,
       slugRedirectStub(),
       new CategoryTreeService(categoryPrisma),
+      adminAuditStub(),
     );
     const tagPrisma = prismaStub();
-    tags = new TagsService(tagPrisma, slugRedirectStub(), new TagLockService(tagPrisma));
+    tags = new TagsService(
+      tagPrisma,
+      slugRedirectStub(),
+      new TagLockService(tagPrisma),
+      adminAuditStub(),
+    );
   });
 
   it.each(TRANSLATION_KEYS)(
@@ -155,6 +166,7 @@ describe('indexability contract: autoIndexable reaches the client', () => {
       prisma,
       slugRedirectStub(),
       new CategoryTreeService(prisma),
+      adminAuditStub(),
     );
     await service.getTree('genre', Language.en);
 
