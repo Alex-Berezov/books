@@ -113,8 +113,10 @@ export class UsersController {
   @Roles(Role.Admin)
   @Delete(':id')
   @ApiOkResponse({ type: PublicUserDto })
-  deleteById(@Param('id') id: string) {
-    return this.users.deleteById(id);
+  deleteById(@Param('id') id: string, @Req() req: { user: RequestUser }) {
+    // Актёр берётся из запроса, а не из тела: журнал прав должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.users.deleteById(id, req.user.userId);
   }
 
   @ApiOperation({ summary: 'List user roles (admin only)' })

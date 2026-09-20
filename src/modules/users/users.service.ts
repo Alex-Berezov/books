@@ -27,15 +27,23 @@ import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-u
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { rolesCache } from '../../common/roles/roles-cache';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 
 /**
- * Параметры транзакций, меняющих набор ролей вместе с записью в журнал (L-020).
+ * Границы транзакций, меняющих состояние пользователя вместе с записью в журнал (L-020):
+ * смена набора ролей и удаление. Имя названо по роли, а не по первому из потребителей —
+ * иначе следующий, кто придёт за бюджетом удаления, не найдёт «ролевую» константу
+ * и допишет шестой литерал в этот же файл.
  *
  * Дефолт Prisma (`timeout: 5000`, `maxWait: 2000`) рассчитан на пару операторов, а здесь
- * их до шести: чтение прежнего набора, замена, запись событий. Значения те же,
- * что у соседних многошаговых транзакций (`contributors.service.ts`, `persons.service.ts`).
+ * их до шести: чтение прежнего набора, замена, запись событий. У `deleteById` цепочка ещё
+ * длиннее — около дюжины операторов, от лайков и комментариев до двух записей журнала, —
+ * и именно она упирается в дефолт первой. Ужимая эти значения, помни про оба потребителя.
+ *
+ * Значения те же, что у соседних многошаговых транзакций (`contributors.service.ts`,
+ * `persons.service.ts`).
  */
-const USER_ROLES_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+const USER_WRITE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 /**
  * Prisma сообщает кодом `P2025`, что строки под запись не нашлось (`LEGACY-194`).
@@ -77,6 +85,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private moderatorRoles: ModeratorRolesService,
+    private adminAudit: AdminAuditService,
   ) {}
 
   async me(userId: string): Promise<PublicUser & { roles: RoleName[] }> {
@@ -148,55 +157,110 @@ export class UsersService {
     };
   }
 
-  async deleteById(userId: string): Promise<PublicUser> {
+  /**
+   * `LEGACY-015`. Удаление пользователя снимает его роли оператором ниже, и до
+   * 20.09.2026 не писало об этом ни строки: по журналу роль оставалась у пользователя,
+   * которого уже нет, — то есть выкаченный инвариант «событие = изменение состояния»
+   * ломало само удаление, а не его отсутствие.
+   *
+   * Событий два вида, и оба идут **внутри** той же транзакции: `ROLE_REVOKED` на каждую
+   * снятую роль (ролевым писателем, общим с четырьмя путями смены ролей) и `USER_DELETED`
+   * на саму строку (общим писателем, как велит дополнение к правилу записи). Наличие
+   * в одном модуле обоих писателей ожидаемо: переезд ролевого на общий — отдельный
+   * остаток `LEGACY-015` (решение арбитра 12.09.2026, в силе).
+   *
+   * У `AdminAuditEvent` намеренно нет внешних ключей, поэтому обе записи переживают
+   * удаление и актёра, и цели (`LEGACY-015`, форма модели от 11.09.2026).
+   */
+  async deleteById(userId: string, actorUserId: string | null): Promise<PublicUser> {
     const userBefore = await this.prisma.user.findUnique({
       where: { id: userId },
       select: USER_EXISTS_SELECT,
     });
     if (!userBefore) throw new NotFoundException('User not found');
 
-    const deleted = await this.prisma.$transaction(async (tx) => {
-      // 1) Collect user's comment IDs
-      const userComments = await tx.comment.findMany({
-        where: { userId },
-        select: { id: true },
-      });
-      const commentIds = userComments.map((c) => c.id);
-
-      // 2) Remove likes written by the user
-      await tx.like.deleteMany({ where: { userId } });
-
-      // 3) Remove likes that target comments authored by the user
-      if (commentIds.length > 0) {
-        await tx.like.deleteMany({ where: { commentId: { in: commentIds } } });
-        // 4) Detach children of user's comments to avoid FK on parentId
-        await tx.comment.updateMany({
-          where: { parentId: { in: commentIds } },
-          data: { parentId: null },
+    const deleted = await this.prisma.$transaction(
+      async (tx) => {
+        // 1) Collect user's comment IDs
+        const userComments = await tx.comment.findMany({
+          where: { userId },
+          select: { id: true },
         });
-        // 5) Delete user's comments
-        await tx.comment.deleteMany({ where: { id: { in: commentIds } } });
-      }
+        const commentIds = userComments.map((c) => c.id);
 
-      // 6) Bookshelf and reading progress
-      await tx.bookshelf.deleteMany({ where: { userId } });
-      await tx.readingProgress.deleteMany({ where: { userId } });
+        // 2) Remove likes written by the user
+        await tx.like.deleteMany({ where: { userId } });
 
-      // 7) View stats: nullify userId (optional FK)
-      await tx.viewStat.updateMany({ where: { userId }, data: { userId: null } });
+        // 3) Remove likes that target comments authored by the user
+        if (commentIds.length > 0) {
+          await tx.like.deleteMany({ where: { commentId: { in: commentIds } } });
+          // 4) Detach children of user's comments to avoid FK on parentId
+          await tx.comment.updateMany({
+            where: { parentId: { in: commentIds } },
+            data: { parentId: null },
+          });
+          // 5) Delete user's comments
+          await tx.comment.deleteMany({ where: { id: { in: commentIds } } });
+        }
 
-      // 8) Media assets: nullify createdById
-      await tx.mediaAsset.updateMany({
-        where: { createdById: userId },
-        data: { createdById: null },
-      });
+        // 6) Bookshelf and reading progress
+        await tx.bookshelf.deleteMany({ where: { userId } });
+        await tx.readingProgress.deleteMany({ where: { userId } });
 
-      // 9) Role links
-      await tx.userRole.deleteMany({ where: { userId } });
+        // 7) View stats: nullify userId (optional FK)
+        await tx.viewStat.updateMany({ where: { userId }, data: { userId: null } });
 
-      // 10) Finally delete the user
-      return tx.user.delete({ where: { id: userId }, select: ACCOUNT_USER_SELECT });
-    });
+        // 8) Media assets: nullify createdById
+        await tx.mediaAsset.updateMany({
+          where: { createdById: userId },
+          data: { createdById: null },
+        });
+
+        // 9) Role links: чтение прежнего набора, снятие, событие на каждую снятую роль.
+        // Прежний набор читается до снятия и в той же транзакции — приём тот же, что
+        // в замене набора ролей: после `deleteMany` ответить, что именно сняли, неоткуда.
+        const rolesBefore = await tx.userRole.findMany({
+          where: { userId },
+          select: { role: { select: { name: true } } },
+        });
+        await tx.userRole.deleteMany({ where: { userId } });
+        // Пустой набор событий писатель отбрасывает сам: у пользователя без ролей
+        // состояние не менялось, и строка `ROLE_REVOKED` утверждала бы отзыв, которого
+        // не было (инвариант «событие = изменение состояния»).
+        await this.recordRoleAuditEvents(
+          tx,
+          rolesBefore.map((ur) => ({
+            action: AdminAuditAction.ROLE_REVOKED,
+            role: ur.role.name,
+          })),
+          userId,
+          actorUserId,
+        );
+
+        // 10) Сама строка пользователя и событие о её удалении
+        const removed = await tx.user.delete({
+          where: { id: userId },
+          select: ACCOUNT_USER_SELECT,
+        });
+
+        // Событие о самой строке — после её удаления и тем же `tx`: запись, пережившая
+        // откат транзакции, утверждала бы удаление, которого не было (`LEGACY-036`).
+        // `payload` нет намеренно: состав ролей уже разложен событиями выше, а почта
+        // и имя в журнал не идут вовсе — его читает кто угодно, включая выгрузку базы.
+        await this.adminAudit.record(tx, {
+          action: AdminAuditAction.USER_DELETED,
+          targetType: AdminAuditTargetType.USER,
+          targetId: userId,
+          actorUserId,
+        });
+
+        return removed;
+      },
+      // Явный дедлайн, как у соседних многошаговых транзакций (`L-020`): запись событий
+      // добавила к цепочке три оператора, а дефолт Prisma (5000/2000) рассчитан на пару.
+      // Значения те же, что у смены ролей выше.
+      USER_WRITE_TX_OPTIONS,
+    );
     rolesCache.invalidate(userId);
 
     return {
@@ -269,7 +333,7 @@ export class UsersService {
         userId,
         actorUserId,
       );
-    }, USER_ROLES_TX_OPTIONS);
+    }, USER_WRITE_TX_OPTIONS);
     // Сброс кэша — вне транзакции намеренно: это не запись в базу, и откат транзакции
     // его бы не отменил. Внутри он сбросился бы раньше, чем данные стали видны.
     rolesCache.invalidate(userId);
@@ -303,7 +367,7 @@ export class UsersService {
           userId,
           actorUserId,
         );
-      }, USER_ROLES_TX_OPTIONS);
+      }, USER_WRITE_TX_OPTIONS);
     } catch (error) {
       // `P2025` — «нечего удалять»: роли у пользователя нет. Ответ 404, как
       // у двух проверок выше, а не 500 (`LEGACY-194`). Идемпотентности здесь
@@ -492,7 +556,7 @@ export class UsersService {
       );
 
       return created;
-    }, USER_ROLES_TX_OPTIONS);
+    }, USER_WRITE_TX_OPTIONS);
 
     const roles = user.roles.map((ur) => ur.role.name);
 
@@ -599,7 +663,7 @@ export class UsersService {
       }
 
       return u;
-    }, USER_ROLES_TX_OPTIONS);
+    }, USER_WRITE_TX_OPTIONS);
     if (rolesDto) rolesCache.invalidate(id);
 
     const roles = await this.computeRoles(updatedUser);
@@ -780,8 +844,11 @@ export class UsersService {
    * `PrismaService` компилятор **позволит**: `Prisma.TransactionClient` — это
    * `Omit<PrismaClient, ITXClientDenyList>`, и наследник `PrismaClient` ему структурно
    * подходит. Запись, пережившая откат своей операции, — это `LEGACY-036`, и от неё здесь
-   * держит не тип, а посадка: на каждом из четырёх путей записи стоит тест, отличающий
-   * клиент транзакции от корневого. Добавляешь пятый путь — добавляй и такой тест.
+   * держит не тип, а посадка: на каждом из пяти путей записи стоит тест, отличающий
+   * клиент транзакции от корневого (`assignRole`, `revokeRole`, `create`, `update`
+   * и `deleteById` — последний добавлен `LEGACY-015` 20.09.2026). Добавляешь шестой путь —
+   * добавляй и такой тест, причём с **отдельным** объектом `tx`: дефолтный стаб
+   * `$transaction` отдаёт в колбэк сам `prismaMock`, и на нём подмена неотличима.
    *
    * ⚠️ Зовётся **только на фактическое изменение** набора ролей: пустой список событий
    * не делает запроса вовсе. Инвариант «событие = изменение состояния» описан

@@ -1376,7 +1376,7 @@ describe('BookVersionService', () => {
       .mockResolvedValueOnce({ id: 'v1', status: 'published', publishedAt: now })
       .mockResolvedValueOnce({ id: 'v1', status: 'draft', publishedAt: null });
 
-    const pub = await service.publish('v1');
+    const pub = await service.publish('v1', 'admin-7');
     expect(pub.status).toBe('published');
     // WP-H: публикация обязана звать гейт полной стадией — послабления стадии подготовки
     // до этого пути не доходят.
@@ -1401,7 +1401,7 @@ describe('BookVersionService', () => {
       publishedAt: now,
     });
 
-    await service.publish('v1');
+    await service.publish('v1', 'admin-7');
 
     expect(finalizeBaselineOnPublish).toHaveBeenCalledWith('v1', null, prisma);
   });
@@ -1410,7 +1410,7 @@ describe('BookVersionService', () => {
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
     gateService.assertVersionCanPublish.mockRejectedValue(new BadRequestException('blocked'));
 
-    await expect(service.publish('v1')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.publish('v1', 'admin-7')).rejects.toBeInstanceOf(BadRequestException);
     expect(finalizeBaselineOnPublish).not.toHaveBeenCalled();
   });
 
@@ -1713,7 +1713,7 @@ describe('BookVersionService', () => {
       publishedAt: now,
     } as BookVersion);
 
-    await service.publish('v1');
+    await service.publish('v1', 'admin-7');
 
     const updateArgs = (prisma.bookVersion.update as jest.Mock).mock
       .calls[0][0] as Prisma.BookVersionUpdateArgs;
@@ -1733,7 +1733,226 @@ describe('BookVersionService', () => {
       Object.assign(new Error('Record to update not found'), { code: 'P2025' }),
     );
 
-    await expect(service.publish('v1')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.publish('v1', 'admin-7')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  /**
+   * `LEGACY-015`. Парное событие к `VERSION_UNPUBLISHED`. До 20.09.2026 журнал не молчал,
+   * а врал: снятие с публикации записано, публикации нет, и по журналу версия снята
+   * с публикации, которой не случалось.
+   *
+   * Тест смотрит на клиент, которым событие записано, и на содержимое `payload`:
+   * запись корневым клиентом переживает откат своей транзакции (`LEGACY-036`), а payload
+   * обязан назвать тот самый снимок, который записан этим же оператором, — иначе две
+   * половины истории версии читаются двумя разными выборками.
+   */
+  it('публикация пишет VERSION_PUBLISHED клиентом транзакции со снимком лицензий (LEGACY-015)', async () => {
+    const publishedAt = new Date('2026-09-20T10:00:00.000Z');
+    const checkedAt = new Date('2026-09-20T09:59:00.000Z');
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+    } as BookVersion);
+    licenseCoverageService.evaluateVersionCoverage.mockResolvedValue({
+      status: 'PARTIAL',
+      checkedAt: checkedAt.toISOString(),
+      requiredCountryCodes: ['BR'],
+      coveredCountryCodes: [],
+      uncoveredCountryCodes: ['BR'],
+      countries: [],
+      licenseIds: ['lic-A'],
+      blockers: [],
+      warnings: [],
+      attributionTextsRu: [],
+    });
+    const txUpdate = jest.fn().mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      publishedAt,
+      rightsLicenseIds: ['lic-A'],
+      rightsLicenseCoverageStatus: 'PARTIAL',
+      rightsLicenseCheckedAt: checkedAt,
+      rightsLicenseUncoveredCountryCodes: ['BR'],
+      seo: null,
+    });
+    // Замок отдаёт прежнее состояние: версия была черновиком, значит публикация
+    // состояние меняет и событие ей положено.
+    const txQueryRaw = jest.fn().mockResolvedValue([
+      {
+        status: 'draft',
+        publishedAt: null,
+        rightsLicenseIds: null,
+        rightsLicenseCoverageStatus: null,
+        rightsLicenseCheckedAt: null,
+        rightsLicenseUncoveredCountryCodes: null,
+      },
+    ]);
+    const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
+    let transactionOptions: unknown;
+    jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementationOnce((fn: (tx: unknown) => unknown, options?: unknown) => {
+        transactionOptions = options;
+        return Promise.resolve(fn(txClient));
+      });
+
+    await service.publish('v1', 'admin-7');
+
+    // Замок берётся первым оператором транзакции и именно на этой строке: без него
+    // две встречные публикации обе прочитали бы `draft` и обе записали бы событие.
+    expect(txQueryRaw).toHaveBeenCalledTimes(1);
+    const lockSql = (txQueryRaw.mock.calls[0][0] as { strings?: string[] } & string[]).join('');
+    expect(lockSql).toContain('FOR UPDATE');
+    // Границы транзакции заданы: замок строки без дедлайна держит её до конца пула,
+    // а внутри ещё и пересчёт слепка по всем главам версии (`L-020`).
+    expect(transactionOptions).toEqual({ timeout: 30_000, maxWait: 10_000 });
+
+    // Счётчик рядом с проверкой аргументов (`L-005`): вторая запись события оставила бы
+    // спеку зелёной, а журнал утверждал бы две публикации подряд.
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+      action: AdminAuditAction.VERSION_PUBLISHED,
+      targetType: AdminAuditTargetType.BOOK_VERSION,
+      targetId: 'v1',
+      actorUserId: 'admin-7',
+      payload: {
+        publishedAt: '2026-09-20T10:00:00.000Z',
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'PARTIAL',
+        rightsLicenseCheckedAt: '2026-09-20T09:59:00.000Z',
+        rightsLicenseUncoveredCountryCodes: ['BR'],
+      },
+    });
+    // Запись идёт клиентом транзакции, а не корневым `this.prisma`.
+    expect(prisma.adminAuditEvent.create).not.toHaveBeenCalled();
+    expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-015`, инвариант «событие = изменение состояния». Повторная публикация уже
+   * опубликованной версии состояние не меняет, и второй строки в журнале быть не должно:
+   * иначе на вопрос «когда эту версию опубликовали» журнал отдаёт столько ответов,
+   * сколько раз нажали кнопку, — ровно та ложь, ради устранения которой заход и делался.
+   */
+  it('повторная публикация уже опубликованной версии второго события не пишет (LEGACY-015)', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+    } as BookVersion);
+    const txUpdate = jest.fn().mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      publishedAt: new Date('2026-09-20T11:00:00.000Z'),
+      rightsLicenseIds: [],
+      rightsLicenseCoverageStatus: 'NOT_REQUIRED',
+      rightsLicenseCheckedAt: new Date('2026-09-20T11:00:00.000Z'),
+      rightsLicenseUncoveredCountryCodes: [],
+      seo: null,
+    });
+    // Замок отдаёт уже опубликованную версию — то самое состояние, в котором
+    // публиковать нечего.
+    const txQueryRaw = jest.fn().mockResolvedValue([
+      {
+        status: 'published',
+        publishedAt: new Date('2026-09-20T10:00:00.000Z'),
+        rightsLicenseIds: [],
+        rightsLicenseCoverageStatus: 'NOT_REQUIRED',
+        rightsLicenseCheckedAt: new Date('2026-09-20T09:59:00.000Z'),
+        rightsLicenseUncoveredCountryCodes: [],
+      },
+    ]);
+    const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
+    jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementationOnce((fn: (tx: unknown) => unknown) => Promise.resolve(fn(txClient)));
+
+    await service.publish('v1', 'admin-7');
+
+    // Сама запись как шла, так и идёт: ответ маршрута этой правкой не менялся.
+    expect(txUpdate).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Обратная сторона предыдущего теста и вторая половина решения арбитра 20.09.2026.
+   * Повторная публикация переписывает лицензионный снимок **физически**: отозвали лицензию,
+   * купили другую, нажали «Опубликовать» — прежние значения исчезают. Без события на этот
+   * случай на вопрос «на чём стояла выдача до сегодня» не ответит ни строка версии
+   * (значение затёрто), ни журнал (`ADR-009`), а `VERSION_UNPUBLISHED` той же версии
+   * назвал бы уже другую лицензию.
+   */
+  it('повторная публикация со сменой покрытия пишет событие с новым снимком (LEGACY-015)', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+    } as BookVersion);
+    licenseCoverageService.evaluateVersionCoverage.mockResolvedValue({
+      status: 'COVERED',
+      checkedAt: new Date('2026-09-25T09:59:00.000Z').toISOString(),
+      requiredCountryCodes: ['BR'],
+      coveredCountryCodes: ['BR'],
+      uncoveredCountryCodes: [],
+      countries: [],
+      licenseIds: ['lic-B'],
+      blockers: [],
+      warnings: [],
+      attributionTextsRu: [],
+    });
+    const txUpdate = jest.fn().mockResolvedValue({
+      id: 'v1',
+      status: 'published',
+      publishedAt: new Date('2026-09-25T10:00:00.000Z'),
+      rightsLicenseIds: ['lic-B'],
+      rightsLicenseCoverageStatus: 'COVERED',
+      rightsLicenseCheckedAt: new Date('2026-09-25T09:59:00.000Z'),
+      rightsLicenseUncoveredCountryCodes: [],
+      seo: null,
+    });
+    // Под замком лежит прежнее покрытие — та самая отозванная лицензия.
+    const txQueryRaw = jest.fn().mockResolvedValue([
+      {
+        status: 'published',
+        publishedAt: new Date('2026-09-20T10:00:00.000Z'),
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'PARTIAL',
+        rightsLicenseCheckedAt: new Date('2026-09-20T09:59:00.000Z'),
+        rightsLicenseUncoveredCountryCodes: ['BR'],
+      },
+    ]);
+    const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
+    jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementationOnce((fn: (tx: unknown) => unknown) => Promise.resolve(fn(txClient)));
+
+    await service.publish('v1', 'admin-7');
+
+    // `payload` называет **новый** снимок: прежний лежит в предыдущей строке журнала,
+    // и вместе они дают историю версии целиком.
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+      action: AdminAuditAction.VERSION_PUBLISHED,
+      targetType: AdminAuditTargetType.BOOK_VERSION,
+      targetId: 'v1',
+      actorUserId: 'admin-7',
+      payload: {
+        publishedAt: '2026-09-25T10:00:00.000Z',
+        rightsLicenseIds: ['lic-B'],
+        rightsLicenseCoverageStatus: 'COVERED',
+        rightsLicenseCheckedAt: '2026-09-25T09:59:00.000Z',
+        rightsLicenseUncoveredCountryCodes: [],
+      },
+    });
+  });
+
+  it('заблокированная гейтом публикация события не пишет (LEGACY-015)', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
+    gateService.assertVersionCanPublish.mockRejectedValue(new BadRequestException('blocked'));
+
+    await expect(service.publish('v1', 'admin-7')).rejects.toBeInstanceOf(BadRequestException);
+
+    // Инвариант «событие = изменение состояния»: публикации не было, значит и строки
+    // о ней быть не должно.
+    expect(adminAudit.record).not.toHaveBeenCalled();
   });
 
   it('publish throws if gate blocks', async () => {
@@ -1750,7 +1969,7 @@ describe('BookVersionService', () => {
       }),
     );
 
-    await expect(service.publish('v1')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.publish('v1', 'admin-7')).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.bookVersion.update).not.toHaveBeenCalled();
   });
 

@@ -34,6 +34,7 @@ describe('UsersController (роли и актёр журнала)', () => {
       revokeRole: jest.fn().mockResolvedValue({ userId: TARGET_ID, role: 'admin' }),
       create: jest.fn().mockResolvedValue({ id: 'new-user', roles: [] }),
       update: jest.fn().mockResolvedValue({ id: TARGET_ID, roles: [] }),
+      deleteById: jest.fn().mockResolvedValue({ id: TARGET_ID }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -54,6 +55,18 @@ describe('UsersController (роли и актёр журнала)', () => {
 
     expect(service.assignRole).toHaveBeenCalledTimes(1);
     expect(service.assignRole).toHaveBeenCalledWith(TARGET_ID, 'admin', ACTOR_ID);
+  });
+
+  /**
+   * `LEGACY-015`, пятый путь. Удаление снимает роли и пишет о них события, поэтому
+   * подмена актёра здесь приписывает удалённому пользователю его собственное удаление,
+   * а восстановить исполнителя нечем: внешнего ключа у `actorUserId` нет намеренно.
+   */
+  it('deleteById: актёр берётся из токена, цель — из адреса', async () => {
+    await controller.deleteById(TARGET_ID, req);
+
+    expect(service.deleteById).toHaveBeenCalledTimes(1);
+    expect(service.deleteById).toHaveBeenCalledWith(TARGET_ID, ACTOR_ID);
   });
 
   it('revokeRole: актёр берётся из токена, цель — из адреса', async () => {

@@ -1,10 +1,18 @@
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RoleName, Language as PrismaLanguage, User, Prisma } from '@prisma/client';
+import {
+  RoleName,
+  Language as PrismaLanguage,
+  User,
+  Prisma,
+  AdminAuditAction,
+  AdminAuditTargetType,
+} from '@prisma/client';
 import { ACCOUNT_USER_SELECT } from '../../common/selects/account-user.select';
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { rolesCache } from '../../common/roles/roles-cache';
 import { Role } from '../../common/decorators/roles.decorator';
 import { STAFF_ROLE_NAMES } from './users.constants';
@@ -61,7 +69,7 @@ interface PrismaStub {
   viewStat: { updateMany: jest.Mock };
   mediaAsset: { updateMany: jest.Mock };
   adminAuditEvent: { createMany: jest.Mock };
-  // Второй параметр — `{ timeout, maxWait }` (`USER_ROLES_TX_OPTIONS`). Он объявлен здесь,
+  // Второй параметр — `{ timeout, maxWait }` (`USER_WRITE_TX_OPTIONS`). Он объявлен здесь,
   // а не опущен, потому что это поведение: на дефолтах Prisma смена набора ролей на занятом
   // пуле отдаёт `P2028`, и посадка на эти значения читает именно `mock.calls[0][1]`.
   $transaction: jest.Mock<
@@ -74,6 +82,9 @@ describe('UsersService (unit)', () => {
   let service: UsersService;
   let prismaMock: PrismaStub;
   let moderatorRoles: ModeratorRolesService;
+  // Общий писатель журнала подменён целиком: сервис зовёт его на удалении
+  // пользователя (`LEGACY-015`), и посадкам важно, каким клиентом он позван.
+  let adminAudit: { record: jest.Mock };
 
   const baseUser: User = {
     id: 'u1',
@@ -137,7 +148,12 @@ describe('UsersService (unit)', () => {
     // `computeRoles` к нему (`LEGACY-111`) обязано сохранить поведение
     // один в один, и соседние спеки на роли это и проверяют.
     moderatorRoles = new ModeratorRolesService(prismaMock as unknown as PrismaService);
-    service = new UsersService(prismaMock as unknown as PrismaService, moderatorRoles);
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
+    service = new UsersService(
+      prismaMock as unknown as PrismaService,
+      moderatorRoles,
+      adminAudit as unknown as AdminAuditService,
+    );
 
     // Кэш ролей общий на процесс (`LEGACY-112`) — гасить его надо на весь файл,
     // а не в одном вложенном блоке: первый же тест, который позовёт гвард,
@@ -212,7 +228,7 @@ describe('UsersService (unit)', () => {
 
   it('deleteById: NotFound when user missing initially', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(null);
-    await expect(service.deleteById('u1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.deleteById('u1', 'admin-1')).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('deleteById: performs cascading cleanup and returns public user', async () => {
@@ -226,16 +242,128 @@ describe('UsersService (unit)', () => {
     prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
     prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.userRole.findMany.mockResolvedValueOnce([]);
     prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.user.delete.mockResolvedValue(baseUser);
 
-    const res = await service.deleteById('u1');
+    const res = await service.deleteById('u1', 'admin-1');
     expect(prismaMock.$transaction).toHaveBeenCalled();
     expect(prismaMock.like.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u1' } });
     expect(prismaMock.comment.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['c1', 'c2'] } },
     });
     expect(res.email).toBe(baseUser.email);
+  });
+
+  /**
+   * `LEGACY-015`. Удаление снимает роли оператором `userRole.deleteMany`, и до 20.09.2026
+   * не писало об этом ни строки: по журналу роль оставалась у пользователя, которого нет.
+   * Тест смотрит на **состав** событий и на клиент, которым они записаны, а не на факт
+   * вызова: запись мимо транзакции переживает её откат (`LEGACY-036`).
+   */
+  it('удаление пользователя пишет ROLE_REVOKED на каждую снятую роль и USER_DELETED (LEGACY-015)', async () => {
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    prismaMock.comment.findMany.mockResolvedValueOnce([]);
+    prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+    // Клиент транзакции собран **отдельным** объектом, а не дефолтным стабом: тот
+    // отдаёт в колбэк сам `prismaMock`, которым сконструирован и сервис, поэтому
+    // `tx` и `this.prisma` там неотличимы по ссылке и подмена одного другим оставляет
+    // спеку зелёной (`LEGACY-036`). Приём взят у соседней посадки на `update` ниже.
+    const txRolesFindMany = jest
+      .fn()
+      .mockResolvedValue([
+        { role: { name: 'admin' as RoleName } },
+        { role: { name: 'user' as RoleName } },
+      ]);
+    const txRolesDeleteMany = jest.fn().mockResolvedValue({ count: 2 });
+    const txAudit = jest.fn().mockResolvedValue({ count: 2 });
+    const txUserDelete = jest.fn().mockResolvedValue(baseUser);
+    let txClient: unknown;
+    prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
+      if (typeof arg !== 'function') return Promise.all(arg);
+      txClient = {
+        ...prismaMock,
+        user: { ...prismaMock.user, delete: txUserDelete },
+        userRole: {
+          ...prismaMock.userRole,
+          findMany: txRolesFindMany,
+          deleteMany: txRolesDeleteMany,
+        },
+        adminAuditEvent: { createMany: txAudit },
+      };
+      return arg(txClient as PrismaStub);
+    });
+
+    await service.deleteById('u1', 'admin-7');
+
+    // Прежний набор читается **до** снятия: после `deleteMany` ответить, что именно
+    // сняли, неоткуда.
+    expect(txRolesFindMany).toHaveBeenCalledTimes(1);
+    expect(txRolesFindMany).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      select: { role: { select: { name: true } } },
+    });
+    expect(txUserDelete).toHaveBeenCalledTimes(1);
+
+    // Ролевые события — ролевым писателем, одной записью на обе роли, и клиентом
+    // транзакции: корневой клиент здесь остался пустым.
+    expect(txAudit).toHaveBeenCalledTimes(1);
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+    expect(prismaMock.user.delete).not.toHaveBeenCalled();
+    expect(txAudit).toHaveBeenCalledWith({
+      data: [
+        {
+          actorUserId: 'admin-7',
+          action: AdminAuditAction.ROLE_REVOKED,
+          targetType: AdminAuditTargetType.USER,
+          targetId: 'u1',
+          payload: { role: 'admin' },
+        },
+        {
+          actorUserId: 'admin-7',
+          action: AdminAuditAction.ROLE_REVOKED,
+          targetType: AdminAuditTargetType.USER,
+          targetId: 'u1',
+          payload: { role: 'user' },
+        },
+      ],
+    });
+
+    // Событие о самой строке — общим писателем и **клиентом транзакции**: сравнение
+    // идёт с тем самым объектом, который стенд отдал в колбэк, а он не равен
+    // `prismaMock`, то есть подмена `tx` на `this.prisma` красит эту строку.
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+      action: AdminAuditAction.USER_DELETED,
+      targetType: AdminAuditTargetType.USER,
+      targetId: 'u1',
+      actorUserId: 'admin-7',
+    });
+  });
+
+  it('удаление пользователя без ролей событий об отзыве не пишет (LEGACY-015)', async () => {
+    prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
+    prismaMock.comment.findMany.mockResolvedValueOnce([]);
+    prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.userRole.findMany.mockResolvedValueOnce([]);
+    prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.user.delete.mockResolvedValue(baseUser);
+
+    await service.deleteById('u1', 'admin-7');
+
+    // Инвариант «событие = изменение состояния»: снимать было нечего, значит строка
+    // `ROLE_REVOKED` утверждала бы отзыв, которого не было. Само удаление при этом
+    // состоялось, и событие о нём пишется.
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
   });
 
   it('assignRole + revokeRole happy path', async () => {
@@ -503,7 +631,7 @@ describe('UsersService (unit)', () => {
    * `timeout: 5000 / maxWait: 2000` смена набора ролей на занятом пуле отдаёт `P2028` и 500.
    * Без этой проверки снятие второго аргумента `$transaction` не роняет ничего.
    */
-  it('все четыре пути: транзакция идёт с явными timeout и maxWait', async () => {
+  it('все пять путей: транзакция идёт с явными timeout и maxWait', async () => {
     const expected = { timeout: 30_000, maxWait: 10_000 };
     // Читается именно первый вызов: перед каждой проверкой стоит `mockClear()`, поэтому
     // вызов в мокe ровно один. Имя говорит «первый», чтобы помощник не начал врать, когда
@@ -541,6 +669,24 @@ describe('UsersService (unit)', () => {
     prismaMock.userRole.delete = jest.fn().mockResolvedValue({});
 
     await service.revokeRole('u1', 'admin', 'admin-1');
+    expect(optionsOfFirstTransaction()).toEqual(expected);
+
+    // Пятый путь (`LEGACY-015`): удаление пользователя. Цепочка здесь длиннее всех
+    // остальных — комментарии, лайки, полки, прогресс, роли и две записи журнала, —
+    // и именно на ней дефолт Prisma отказывает первым.
+    prismaMock.$transaction.mockClear();
+    prismaMock.user.findUnique.mockResolvedValue(baseUser);
+    prismaMock.comment.findMany.mockResolvedValue([]);
+    prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.userRole.findMany.mockResolvedValue([]);
+    prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.user.delete.mockResolvedValue(baseUser);
+
+    await service.deleteById('u1', 'admin-1');
     expect(optionsOfFirstTransaction()).toEqual(expected);
   });
 
@@ -760,10 +906,11 @@ describe('UsersService (unit)', () => {
       prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
       prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
       prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.userRole.findMany.mockResolvedValueOnce([]);
       prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
       prismaMock.user.delete.mockResolvedValue(baseUser);
 
-      await service.deleteById('u1');
+      await service.deleteById('u1', 'admin-1');
       expect(cached('u1')).toBeUndefined();
     });
 
@@ -1451,9 +1598,10 @@ describe('UsersService (unit)', () => {
     it('deleteById: удаление зовётся с select без passwordHash', async () => {
       prismaMock.user.findUnique.mockResolvedValueOnce({ id: 'u1' });
       prismaMock.comment.findMany.mockResolvedValueOnce([]);
+      prismaMock.userRole.findMany.mockResolvedValueOnce([]);
       prismaMock.user.delete.mockResolvedValueOnce(baseUser);
 
-      await service.deleteById('u1');
+      await service.deleteById('u1', 'admin-1');
 
       const [deleteSelect] = selectsOf(prismaMock.user.delete);
       expect(deleteSelect).toEqual(ACCOUNT_USER_SELECT);

@@ -126,6 +126,18 @@ describe('BookVersions e2e', () => {
     expect(listAfterPublish.body.length).toBe(1);
     await request(http()).get(`/versions/${versionId}`).expect(200);
 
+    // `LEGACY-015`: повторная публикация уже опубликованной версии состояние не меняет,
+    // значит и второй строки в журнале быть не должно. Условие проверяется здесь, а не
+    // только юнитом: прежнее состояние читается под замком строки, а замок — это база.
+    await request(http())
+      .patch(`/versions/${versionId}/publish`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const auditAfterRepeatPublish = await prisma.adminAuditEvent.findMany({
+      where: { targetType: 'BOOK_VERSION', targetId: versionId, action: 'VERSION_PUBLISHED' },
+    });
+    expect(auditAfterRepeatPublish).toHaveLength(1);
+
     // Unpublish -> public should hide again
     await request(http())
       .patch(`/versions/${versionId}/unpublish`)
@@ -144,12 +156,19 @@ describe('BookVersions e2e', () => {
     expect(afterUnpublish?.rightsLicenseCheckedAt).toBeNull();
     expect(afterUnpublish?.rightsLicenseUncoveredCountryCodes).toBeNull();
 
+    // `LEGACY-015`: у публикации с 20.09.2026 есть парное событие, поэтому строк здесь
+    // две, а не одна, и порядок у них тот же, что и порядок действий. Проверяется вся
+    // пара: событие публикации без события снятия (и наоборот) означало бы журнал,
+    // по которому версию сняли с публикации, которой не было.
     const auditRows = await prisma.adminAuditEvent.findMany({
       where: { targetType: 'BOOK_VERSION', targetId: versionId },
+      orderBy: { createdAt: 'asc' },
     });
-    expect(auditRows).toHaveLength(1);
-    expect(auditRows[0].action).toBe('VERSION_UNPUBLISHED');
-    expect(auditRows[0].actorUserId).not.toBeNull();
+    expect(auditRows.map((row) => row.action)).toEqual([
+      'VERSION_PUBLISHED',
+      'VERSION_UNPUBLISHED',
+    ]);
+    expect(auditRows.every((row) => row.actorUserId !== null)).toBe(true);
 
     // Повторное снятие уже снятой версии строки не добавляет: снимать нечего,
     // и событие «равно изменению состояния» (инвариант модели `AdminAuditEvent`).
@@ -160,7 +179,7 @@ describe('BookVersions e2e', () => {
     const auditRowsAfterRepeat = await prisma.adminAuditEvent.findMany({
       where: { targetType: 'BOOK_VERSION', targetId: versionId },
     });
-    expect(auditRowsAfterRepeat).toHaveLength(1);
+    expect(auditRowsAfterRepeat).toHaveLength(2);
 
     const listAfterUnpublish = await request(http()).get(`/books/${bookId}/versions`).expect(200);
     expect(listAfterUnpublish.body.length).toBe(0);
