@@ -8,6 +8,8 @@ import { CreatePersonDto } from './dto/create-person.dto';
 import { QueryPersonsDto } from './dto/query-persons.dto';
 import { UpdatePersonDto } from './dto/update-person.dto';
 import type { Prisma } from '@prisma/client';
+import { AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { paginated } from '../../shared/dto/paginated-response.dto';
 
 @Injectable()
@@ -15,6 +17,7 @@ export class PersonsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rightsContentHashService: RightsContentHashService,
+    private readonly adminAudit: AdminAuditService,
   ) {}
 
   /**
@@ -226,7 +229,7 @@ export class PersonsService {
     return this.findAll({ q, limit: 20 });
   }
 
-  public async remove(id: string): Promise<{ id: string }> {
+  public async remove(id: string, actorUserId: string): Promise<{ id: string }> {
     await this.findOne(id);
 
     // Проверка связей идёт по сгенерированному делегату и **безусловно** (`LEGACY-384`),
@@ -290,6 +293,25 @@ export class PersonsService {
         }
 
         await this.personModelOf(tx).delete({ where: { id } });
+
+        // `LEGACY-015`, пачка `T21`. Тем же `tx` и под тем же замком строки: запись,
+        // пережившая откат своей операции, — это `LEGACY-036`. Место выбрано после
+        // `delete`, а не до: до него транзакция ещё может уйти в отказ по блокерам
+        // выше, и событие утверждало бы удаление, которого не было.
+        //
+        // ⚠️ `payload` нет намеренно. Всё, что у персоны есть сверх идентификатора, —
+        // её каноническое имя и имена её переводов, то есть ровно то, чему в журнале
+        // не место: инвариант докблока `AdminAuditEvent` запрещает почты и имена,
+        // потому что журнал выката и выгрузку базы читает кто угодно. Список умерших
+        // адресов, который в такой же ситуации несут категория и тег, здесь не нужен:
+        // публичного адреса у персоны нет вовсе.
+        await this.adminAudit.record(tx, {
+          action: AdminAuditAction.PERSON_DELETED,
+          targetType: AdminAuditTargetType.PERSON,
+          targetId: id,
+          actorUserId,
+        });
+
         return { id };
       },
       { timeout: 30_000, maxWait: 10_000 },

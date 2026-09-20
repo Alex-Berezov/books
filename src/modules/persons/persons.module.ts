@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { RightsContentHashModule } from '../rights-intake/rights-content-hash.module';
+import { AdminAuditModule } from '../../shared/admin-audit/admin-audit.module';
 import { PersonResolverService } from './person-resolver.service';
 import { PersonsController } from './persons.controller';
 import { PersonsService } from './persons.service';
@@ -9,7 +10,7 @@ import { PersonsService } from './persons.service';
  * хотя `RightsIntakeModule` импортирует персон.
  */
 @Module({
-  imports: [RightsContentHashModule],
+  imports: [RightsContentHashModule, AdminAuditModule],
   controllers: [PersonsController],
   providers: [PersonsService, PersonResolverService],
   exports: [PersonsService, PersonResolverService],

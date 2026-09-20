@@ -116,7 +116,13 @@ describe('BookService.getOverview', () => {
       createModeratorRolesStub(),
       // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
       // по-прежнему управляется моками `authorTranslation.findMany`.
-      new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        // `LEGACY-015`, пачка `T21`: писатель журнала обязателен по конструктору, но этот
+        // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
       adminAudit as unknown as AdminAuditService,
     );
   });
@@ -783,7 +789,13 @@ describe('BookService.getOverview', () => {
         createModeratorRolesStub(),
         // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
         // по-прежнему управляется моками `authorTranslation.findMany`.
-        new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+        new AuthorService(
+          prisma as unknown as PrismaService,
+          {} as unknown as SlugRedirectService,
+          // `LEGACY-015`, пачка `T21`: писатель журнала обязателен по конструктору, но этот
+          // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
+          { record: jest.fn() } as unknown as AdminAuditService,
+        ),
         adminAudit as unknown as AdminAuditService,
       );
     });
@@ -934,7 +946,13 @@ describe('BookService.getOverview', () => {
         createModeratorRolesStub(),
         // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
         // по-прежнему управляется моками `authorTranslation.findMany`.
-        new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+        new AuthorService(
+          prisma as unknown as PrismaService,
+          {} as unknown as SlugRedirectService,
+          // `LEGACY-015`, пачка `T21`: писатель журнала обязателен по конструктору, но этот
+          // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
+          { record: jest.fn() } as unknown as AdminAuditService,
+        ),
         adminAudit as unknown as AdminAuditService,
       );
 
@@ -1048,7 +1066,13 @@ describe('BookService.remove (LEGACY-395)', () => {
       createModeratorRolesStub(),
       // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
       // по-прежнему управляется моками `authorTranslation.findMany`.
-      new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        // `LEGACY-015`, пачка `T21`: писатель журнала обязателен по конструктору, но этот
+        // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
       adminAudit as unknown as AdminAuditService,
     );
   });

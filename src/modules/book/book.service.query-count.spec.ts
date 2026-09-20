@@ -94,7 +94,13 @@ const createService = (prisma: PrismaStub): BookService =>
     } as unknown as ModeratorRolesService,
     // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
     // считается тем же счётчиком запросов, что и остальная выдача.
-    new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+    new AuthorService(
+      prisma as unknown as PrismaService,
+      {} as unknown as SlugRedirectService,
+      // `LEGACY-015`, пачка `T21`: писатель журнала обязателен по конструктору, но этот
+      // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
+      { record: jest.fn() } as unknown as AdminAuditService,
+    ),
     // `LEGACY-015`: журнал в счёт запросов не входит — этот файл считает выдачу,
     // а не удаление, и `record` здесь не зовётся ни разу.
     { record: jest.fn() } as unknown as AdminAuditService,

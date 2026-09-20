@@ -1,11 +1,18 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Language, Prisma, PublicationStatus } from '@prisma/client';
+import {
+  AdminAuditAction,
+  AdminAuditTargetType,
+  Language,
+  Prisma,
+  PublicationStatus,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePageDto } from './dto/create-page.dto';
 import { UpdatePageDto } from './dto/update-page.dto';
 import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/reserved-slugs';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { paginated } from '../../shared/dto/paginated-response.dto';
 
 /**
@@ -34,11 +41,25 @@ function escapeLikeWildcards(term: string): string {
  */
 const PAGE_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
+/**
+ * Границы транзакции смены видимости (`LEGACY-015`, пачка `T21`). Те же цифры, что
+ * у удаления страницы выше, и по той же причине (`L-020`).
+ *
+ * ⚠️ Транзакции здесь не было вовсе — `setStatus` шёл парой `findUnique` + `update`
+ * по корневому клиенту. Заведена она ради атомарности записи в журнал (`LEGACY-036`),
+ * а **не** ради закрытия гонки: `SELECT ... FOR UPDATE` на строку страницы решением
+ * арбитра 20.09.2026 в эту пачку не берётся (`decisions-log.md`). Признак изменения
+ * состояния даёт не замок и не сравнение в коде, а сама условная запись — см.
+ * `setStatus` ниже.
+ */
+const PAGE_STATUS_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
 @Injectable()
 export class PagesService {
   constructor(
     private prisma: PrismaService,
     private slugRedirects: SlugRedirectService,
+    private adminAudit: AdminAuditService,
   ) {}
 
   async getPublicBySlug(slug: string, language?: Language) {
@@ -251,7 +272,12 @@ export class PagesService {
     }
   }
 
-  async update(id: string, dto: UpdatePageDto): Promise<PageWithSeo> {
+  /**
+   * ⚠️ `actorUserId` обязателен, хотя журналируется здесь только одно поле формы —
+   * `status`. Умолчания нет намеренно: оно сняло бы единственную машинную гарантию,
+   * что актёр доехал от контроллера до записи (`LEGACY-015`, пачка `T21`).
+   */
+  async update(id: string, dto: UpdatePageDto, actorUserId: string): Promise<PageWithSeo> {
     const exists = await this.prisma.page.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Page not found');
     if (dto.slug || dto.language) {
@@ -330,7 +356,10 @@ export class PagesService {
       if (dto.sections !== undefined) updateInput.sections = dto.sections ?? Prisma.JsonNull;
       if (dto.language !== undefined) updateInput.language = dto.language;
       if (finalSeoId !== undefined) updateInput.seoId = finalSeoId;
-      if (dto.status !== undefined) updateInput.status = dto.status;
+      // `status` в `updateInput` намеренно **не** кладётся: смена публичной видимости
+      // журналируется, и признак изменения даёт отдельная условная запись ниже.
+      // Положить его сюда значило бы вернуть безусловный апдейт, на котором отличить
+      // «опубликовали» от «нажали второй раз» уже нечем (`LEGACY-015`, пачка `T21`).
 
       // Слаг страницы — её публичный адрес. С тех пор как системные страницы ищутся
       // по неизменяемому `systemKey` (09.08.2026), слаг стал обычным редактируемым
@@ -355,12 +384,41 @@ export class PagesService {
           );
         }
 
+        // `LEGACY-015`, пачка `T21`. Видимость страницы меняют **три** входа, а не два:
+        // кроме выделенных `publish`/`unpublish` её меняет эта общая форма редактирования.
+        // Критерий админского действия называет основанием смену публичной видимости как
+        // действие, а не конкретный маршрут, поэтому третий вход пишет те же события
+        // (решение арбитра 20.09.2026, `decisions-log.md`).
+        //
+        // Поле отделено в свою условную запись по образцу `setStatus` ниже: признак
+        // изменения даёт результат `updateMany`, а не сравнение в коде между чтением
+        // и записью (`L-019`). Идёт она **до** общего `update`, чтобы возвращаемое тело
+        // несло уже новый статус — контракт ручки от правки не меняется.
+        if (dto.status !== undefined) {
+          const changed = await tx.page.updateMany({
+            where: { id, status: { not: dto.status } },
+            data: { status: dto.status },
+          });
+
+          if (changed.count > 0) {
+            await this.adminAudit.record(tx, {
+              action:
+                dto.status === PublicationStatus.published
+                  ? AdminAuditAction.PAGE_PUBLISHED
+                  : AdminAuditAction.PAGE_UNPUBLISHED,
+              targetType: AdminAuditTargetType.PAGE,
+              targetId: id,
+              actorUserId,
+            });
+          }
+        }
+
         return tx.page.update({
           where: { id },
           data: updateInput,
           include: { seo: true },
         });
-      });
+      }, PAGE_STATUS_TX_OPTIONS);
     } catch (e) {
       const err = e as Prisma.PrismaClientKnownRequestError & { meta?: { constraint?: string } };
       if (err?.code === 'P2003' && err?.meta?.constraint === 'Page_seoId_fkey') {
@@ -370,14 +428,57 @@ export class PagesService {
     }
   }
 
-  async setStatus(id: string, status: PublicationStatus): Promise<PageWithSeo> {
-    const exists = await this.prisma.page.findUnique({ where: { id } });
-    if (!exists) throw new NotFoundException('Page not found');
-    return this.prisma.page.update({
-      where: { id },
-      data: { status },
-      include: { seo: true },
-    });
+  /**
+   * `LEGACY-015`, пачка `T21`. Публикация и снятие страницы с публикации журналируются
+   * **обе** (`PAGE_PUBLISHED`/`PAGE_UNPUBLISHED`, решение арбитра 20.09.2026): журнал,
+   * знающий одну сторону пары, не молчит, а врёт — это уже проходили на версии книги
+   * в `LEGACY-180`.
+   *
+   * ⚠️ Признак изменения состояния даёт **результат условной записи**, а не пара
+   * «прочитали — сравнили — записали» (`L-019`). `updateMany` с `status: { not: status }`
+   * в `where` возвращает `count: 0`, если страница уже в целевом состоянии, и тогда
+   * события нет: инвариант докблока `AdminAuditEvent` — событие равно изменению
+   * состояния, повторная публикация уже опубликованной страницы ничего не меняет.
+   * Сравнение в коде между чтением и записью давало бы тот же ответ только в отсутствие
+   * встречного запроса, а замка здесь нет.
+   *
+   * Контракт ручек при этом не меняется: повторный вызов по-прежнему отвечает 200 тем же
+   * телом — просто без строки в журнале.
+   *
+   * `payload` нет: строка жива, её язык и слаг читаются из неё самой. Публичный адрес
+   * снятие не освобождает вовсе — слаг остаётся занят `@@unique([language, slug])`,
+   * публичная выдача просто фильтрует по `status`.
+   */
+  async setStatus(
+    id: string,
+    status: PublicationStatus,
+    actorUserId: string,
+  ): Promise<PageWithSeo> {
+    return this.prisma.$transaction(async (tx) => {
+      const changed = await tx.page.updateMany({
+        where: { id, status: { not: status } },
+        data: { status },
+      });
+
+      // Ноль изменённых строк — это либо «страницы нет», либо «уже в этом состоянии».
+      // Различить их может только чтение: у первого случая ответ 404, у второго 200.
+      const page = await tx.page.findUnique({ where: { id }, include: { seo: true } });
+      if (!page) throw new NotFoundException('Page not found');
+
+      if (changed.count > 0) {
+        await this.adminAudit.record(tx, {
+          action:
+            status === PublicationStatus.published
+              ? AdminAuditAction.PAGE_PUBLISHED
+              : AdminAuditAction.PAGE_UNPUBLISHED,
+          targetType: AdminAuditTargetType.PAGE,
+          targetId: id,
+          actorUserId,
+        });
+      }
+
+      return page;
+    }, PAGE_STATUS_TX_OPTIONS);
   }
 
   /**
@@ -389,7 +490,7 @@ export class PagesService {
    * удалена, а после удаления адрес мёртв безусловно — преемника тоже
    * нет, писать некому (см. тело записи `LEGACY-395`).
    */
-  async remove(id: string): Promise<{ success: boolean }> {
+  async remove(id: string, actorUserId: string): Promise<{ success: boolean }> {
     return this.prisma.$transaction(async (tx) => {
       const exists = await tx.page.findUnique({ where: { id } });
       if (!exists) throw new NotFoundException('Page not found');
@@ -397,6 +498,22 @@ export class PagesService {
       await tx.page.delete({ where: { id } });
 
       await this.slugRedirects.cleanupDeadRedirects('page', [exists.language], exists.slug, tx);
+
+      // `LEGACY-015`, пачка `T21`. Тем же `tx`, что и удаление: запись, пережившая
+      // откат своей операции, — это `LEGACY-036`. Транзакция здесь уже была, новой
+      // не заводится.
+      //
+      // `payload` несёт умерший адрес. Строка `Page` — это и есть один публичный
+      // адрес (докблок выше, `LEGACY-395`), преемника у слага нет, и после `delete`
+      // ответить, какой адрес перестал существовать, больше нечем. Язык и слаг уже
+      // прочитаны ради уборки редиректов и стоят ноль лишних запросов.
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.PAGE_DELETED,
+        targetType: AdminAuditTargetType.PAGE,
+        targetId: id,
+        actorUserId,
+        payload: { language: exists.language, slug: exists.slug },
+      });
 
       return { success: true };
     }, PAGE_REMOVE_TX_OPTIONS);

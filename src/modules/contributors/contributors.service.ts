@@ -134,8 +134,16 @@ export class ContributorsService {
     return this.toContributorResponse(person);
   }
 
-  async remove(id: string): Promise<{ id: string }> {
-    return this.personsService.remove(id);
+  /**
+   * `LEGACY-015`, пачка `T21`. Делегат, но актёра он обязан пронести: строка физически
+   * умирает в `PersonsService.remove`, там же под замком пишется `PERSON_DELETED`,
+   * и без этого аргумента журнал знал бы «что», но не «кто».
+   *
+   * Умолчания у `actorUserId` нет намеренно: оно сняло бы единственную машинную
+   * гарантию, что актёр доехал от контроллера до записи.
+   */
+  async remove(id: string, actorUserId: string): Promise<{ id: string }> {
+    return this.personsService.remove(id, actorUserId);
   }
 
   async linkSourceEdition(

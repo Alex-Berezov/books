@@ -1,5 +1,8 @@
+import { BadRequestException } from '@nestjs/common';
 import { PersonsService } from './persons.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 
 /**
@@ -44,6 +47,9 @@ describe('PersonsService — content hash triggers', () => {
     service = new PersonsService(
       prisma as unknown as PrismaService,
       hashService as unknown as RightsContentHashService,
+      // `LEGACY-015`, пачка `T21`: этот блок удаление персоны не трогает вовсе —
+      // писатель обязателен по конструктору, но не зовётся ни разу.
+      { record: jest.fn() } as unknown as AdminAuditService,
     );
   });
 
@@ -99,6 +105,9 @@ describe('PersonsService.findAll — обёртка ответа', () => {
       {
         checkStalenessForPerson: jest.fn(),
       } as unknown as RightsContentHashService,
+      // Список персон журнала не пишет: писатель обязателен по конструктору,
+      // но не зовётся ни разу.
+      { record: jest.fn() } as unknown as AdminAuditService,
     );
   });
 
@@ -202,6 +211,7 @@ describe('PersonsService.remove — проверка связей падает �
     const tx: Record<string, unknown> = {
       person: { delete: jest.fn().mockResolvedValue(person) },
       $queryRaw: jest.fn().mockResolvedValue([]),
+      adminAuditEvent: { create: jest.fn() },
       ...delegates,
     };
 
@@ -216,15 +226,21 @@ describe('PersonsService.remove — проверка связей падает �
       rightsProfileContributor: { count: outOfTransaction('rightsProfileContributor.count') },
       author: { count: outOfTransaction('author.count') },
       rightsClaim: { count: outOfTransaction('rightsClaim.count') },
+      // `LEGACY-015`, пачка `T21`: запись журнала мимо `tx` переживает откат своей
+      // операции (`LEGACY-036`) — и здесь красит тест по имени, а не молчит.
+      adminAuditEvent: { create: outOfTransaction('adminAuditEvent.create') },
     };
     client.$transaction = jest.fn().mockImplementation((fn: (tx: unknown) => unknown) => fn(tx));
 
     return {
       client,
       tx,
+      // Писатель журнала — настоящий: мок подтвердил бы только то, что его позвали,
+      // а вопрос здесь другой — каким клиентом ушла запись.
       service: new PersonsService(
         client as unknown as PrismaService,
         { checkStalenessForPerson: jest.fn() } as unknown as RightsContentHashService,
+        new AdminAuditService(),
       ),
     };
   }
@@ -250,7 +266,7 @@ describe('PersonsService.remove — проверка связей падает �
   it('отказывает 400 и не удаляет, когда персона связана с версией книги', async () => {
     const { tx, service } = build(allLinksCount({ bookVersionContributor: 2 }));
 
-    await expect(service.remove('person-1')).rejects.toThrow(
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
       /still linked to 2 book version contributor records/,
     );
     expect((tx.person as { delete: jest.Mock }).delete).not.toHaveBeenCalled();
@@ -259,7 +275,7 @@ describe('PersonsService.remove — проверка связей падает �
   it('отказывает 400 и не удаляет, когда персона связана с правовым профилем', async () => {
     const { tx, service } = build(allLinksCount({ rightsProfileContributor: 3 }));
 
-    await expect(service.remove('person-1')).rejects.toThrow(
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
       /still linked to 3 rights profile contributor records/,
     );
     expect((tx.person as { delete: jest.Mock }).delete).not.toHaveBeenCalled();
@@ -268,7 +284,7 @@ describe('PersonsService.remove — проверка связей падает �
   it('отказывает 400 и не удаляет, когда персона отмечена легаси-автором (LEGACY-385)', async () => {
     const { tx, service } = build(allLinksCount({ author: 1 }));
 
-    await expect(service.remove('person-1')).rejects.toThrow(
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
       /still linked to 1 legacy author records/,
     );
     expect((tx.person as { delete: jest.Mock }).delete).not.toHaveBeenCalled();
@@ -277,7 +293,7 @@ describe('PersonsService.remove — проверка связей падает �
   it('отказывает 400 и не удаляет, когда персона — заявитель правовой претензии (LEGACY-385)', async () => {
     const { tx, service } = build(allLinksCount({ rightsClaim: 4 }));
 
-    await expect(service.remove('person-1')).rejects.toThrow(
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
       /still linked to 4 rights claim records as claimant/,
     );
     expect((tx.person as { delete: jest.Mock }).delete).not.toHaveBeenCalled();
@@ -288,7 +304,7 @@ describe('PersonsService.remove — проверка связей падает �
       allLinksCount({ bookVersionContributor: 2, author: 1, rightsClaim: 4 }),
     );
 
-    await expect(service.remove('person-1')).rejects.toThrow(
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
       'Cannot delete Person: still linked to 2 book version contributor records, ' +
         '1 legacy author records, 4 rights claim records as claimant. ' +
         'Remove or reassign these links before deleting the person.',
@@ -302,10 +318,10 @@ describe('PersonsService.remove — проверка связей падает �
     // присваивает, поля нет в `UpdateAuthorDto`. Прежнее «Unlink them first» посылало
     // редактора искать ручку, которой не существует, — для этой связи и для закрытой
     // претензии. Возврат старой формулировки красит этот кейс.
-    await expect(service.remove('person-1')).rejects.toThrow(
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
       /Remove or reassign these links before deleting the person\./,
     );
-    await expect(service.remove('person-1')).rejects.not.toThrow(/Unlink them first/);
+    await expect(service.remove('person-1', 'admin-1')).rejects.not.toThrow(/Unlink them first/);
   });
 
   it('не удаляет персону, когда проверить связи нечем: делегатов в клиенте нет', async () => {
@@ -315,8 +331,8 @@ describe('PersonsService.remove — проверка связей падает �
     // на любом исключении — в том числе на `NotFoundException` из `findOne()`, если фикстура
     // `findUnique` однажды вернёт `null`: до проверки связей дело бы не дошло вовсе,
     // а сторож возврата `LEGACY-384` замолчал бы, оставшись зелёным.
-    await expect(service.remove('person-1')).rejects.toThrow(TypeError);
-    await expect(service.remove('person-1')).rejects.toThrow(/count/);
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(TypeError);
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(/count/);
     expect((tx.person as { delete: jest.Mock }).delete).not.toHaveBeenCalled();
   });
 
@@ -324,7 +340,7 @@ describe('PersonsService.remove — проверка связей падает �
     const delegates = allLinksCount();
     const { client, tx, service } = build(delegates);
 
-    await service.remove('person-1');
+    await service.remove('person-1', 'admin-1');
 
     expect(client.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
@@ -346,7 +362,7 @@ describe('PersonsService.remove — проверка связей падает �
   it('замок — это SELECT ... FOR UPDATE по строке персоны, а не просто запрос (LEGACY-386)', async () => {
     const { tx, service } = build(allLinksCount());
 
-    await service.remove('person-1');
+    await service.remove('person-1', 'admin-1');
 
     // 🔴 Сверяется текст шаблона, а не только факт вызова. Образец — `tag-lock.service.spec.ts:87`.
     // Снятое `FOR UPDATE` превращает замок в обычное чтение: тест на порядок остаётся
@@ -370,7 +386,7 @@ describe('PersonsService.remove — проверка связей падает �
     const delegates = allLinksCount();
     const { service } = build(delegates);
 
-    await service.remove('person-1');
+    await service.remove('person-1', 'admin-1');
 
     // 🔴 Сверяется `where`, а не только число вызовов. `count()` без фильтра компилируется
     // (аргумент необязателен) и в проде посчитал бы всю таблицу: удаление любой персоны
@@ -391,9 +407,59 @@ describe('PersonsService.remove — проверка связей падает �
   it('удаляет персону без связей', async () => {
     const { tx, service } = build(allLinksCount());
 
-    await expect(service.remove('person-1')).resolves.toEqual({ id: 'person-1' });
+    await expect(service.remove('person-1', 'admin-1')).resolves.toEqual({ id: 'person-1' });
     const personTx = tx.person as { delete: jest.Mock };
     expect(personTx.delete).toHaveBeenCalledTimes(1);
     expect(personTx.delete).toHaveBeenCalledWith({ where: { id: 'person-1' } });
+  });
+
+  /**
+   * `LEGACY-015`, пачка `T21`. Состав сверяется `toEqual`, а не `toMatchObject`:
+   * лишнее поле в журнале так же неверно, как потерянное — и здесь это не формальность.
+   * `payload` у события персоны нет **вовсе**: всё, что у неё есть сверх идентификатора,
+   * — это имя, а имён и почт в журнале быть не должно (инвариант докблока
+   * `AdminAuditEvent`). `toMatchObject` пропустил бы дописанное туда имя молча.
+   */
+  it('пишет PERSON_DELETED без payload и с актёром из аргумента', async () => {
+    const { tx, service } = build(allLinksCount());
+
+    await service.remove('person-1', 'admin-1');
+
+    const audit = tx.adminAuditEvent as { create: jest.Mock };
+    expect(audit.create).toHaveBeenCalledTimes(1);
+    const [call] = audit.create.mock.calls as Array<[{ data: unknown }]>;
+    expect(call[0].data).toEqual({
+      actorUserId: 'admin-1',
+      action: AdminAuditAction.PERSON_DELETED,
+      targetType: AdminAuditTargetType.PERSON,
+      targetId: 'person-1',
+    });
+  });
+
+  /**
+   * Посадка на `LEGACY-036` — и она здесь **настоящая**: делегаты корневого клиента
+   * в этом стенде бросают (`outOfTransaction`), то есть `tx` и клиент пула различимы.
+   * Подмена `tx` на `this.prisma` в сервисе роняет тест по имени делегата.
+   */
+  it('пишет событие клиентом транзакции, а не клиентом пула', async () => {
+    const { client, tx, service } = build(allLinksCount());
+
+    await service.remove('person-1', 'admin-1');
+
+    expect((tx.adminAuditEvent as { create: jest.Mock }).create).toHaveBeenCalledTimes(1);
+    expect((client.adminAuditEvent as { create: jest.Mock }).create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Событие равно изменению состояния: удаления не было — строки в журнале нет.
+   * Иначе `PERSON_DELETED` перестаёт означать «персоны больше нет» и появляется
+   * на каждой отбитой попытке удалить связанную персону.
+   */
+  it('не пишет события, когда удаление отбито блокерами', async () => {
+    const { tx, service } = build(allLinksCount({ author: 1 }));
+
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(BadRequestException);
+
+    expect((tx.adminAuditEvent as { create: jest.Mock }).create).not.toHaveBeenCalled();
   });
 });

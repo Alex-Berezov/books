@@ -9,6 +9,7 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -33,6 +34,17 @@ import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-r
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+
+/**
+ * Форма пользователя запроса — та же, что в остальных контроллерах
+ * (`STYLE_GUIDE.md`, раздел «Контроллеры»). Общего `@CurrentUser()` в проекте
+ * нет вовсе, и сведение копий к одному декоратору — отдельная работа,
+ * записанная строкой в теле `LEGACY-015`.
+ */
+interface RequestUser {
+  userId: string;
+  email: string;
+}
 
 @ApiTags('authors')
 @ApiBearerAuth()
@@ -127,7 +139,9 @@ export class AuthorController {
   @ApiOperation({ summary: 'Delete author' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  delete(@Param('id') id: string) {
-    return this.service.delete(id);
+  delete(@Param('id') id: string, @Req() req: { user: RequestUser }) {
+    // Актёр берётся из запроса, а не из тела: журнал должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.service.delete(id, req.user.userId);
   }
 }

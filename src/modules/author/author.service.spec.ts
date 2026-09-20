@@ -1,6 +1,7 @@
 import { AuthorService } from './author.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import {
   BadRequestException,
   ConflictException,
@@ -9,7 +10,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Language, Prisma } from '@prisma/client';
+import { AdminAuditAction, AdminAuditTargetType, Language, Prisma } from '@prisma/client';
 
 interface PrismaStub {
   author: {
@@ -27,6 +28,9 @@ interface PrismaStub {
     findMany: jest.Mock;
     create: jest.Mock;
     findFirst: jest.Mock;
+  };
+  adminAuditEvent: {
+    create: jest.Mock;
   };
   seo: {
     deleteMany: jest.Mock;
@@ -61,6 +65,9 @@ const createPrismaStub = (): PrismaStub => {
       findMany: jest.fn(),
       create: jest.fn(),
       findFirst: jest.fn(),
+    },
+    adminAuditEvent: {
+      create: jest.fn(),
     },
     seo: {
       deleteMany: jest.fn(),
@@ -101,9 +108,13 @@ describe('AuthorService', () => {
   beforeEach(() => {
     prisma = createPrismaStub();
     slugRedirects = createSlugRedirectStub();
+    // Писатель журнала — **настоящий**, а не мок: он и есть проверяемое поведение
+    // (`LEGACY-015`). Мок подтвердил бы только то, что его позвали, а вопрос здесь
+    // другой — каким клиентом ушла запись (`LEGACY-036`).
     service = new AuthorService(
       prisma as unknown as PrismaService,
       slugRedirects as unknown as SlugRedirectService,
+      new AdminAuditService(),
     );
   });
 
@@ -428,16 +439,96 @@ describe('AuthorService', () => {
   describe('delete', () => {
     it('deletes author successfully', async () => {
       prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
       prisma.author.delete.mockResolvedValue({ id: 'auth1' });
 
-      await service.delete('auth1');
+      await service.delete('auth1', 'admin-1');
       expect(prisma.author.delete).toHaveBeenCalledWith({ where: { id: 'auth1' } });
     });
 
     it('throws NotFoundException on delete if not found', async () => {
       prisma.author.findUnique.mockResolvedValue(null);
 
-      await expect(service.delete('auth1')).rejects.toThrow(NotFoundException);
+      await expect(service.delete('auth1', 'admin-1')).rejects.toThrow(NotFoundException);
+    });
+
+    /**
+     * `LEGACY-015`, пачка `T21`. Список умирающих адресов проверяется `toEqual`,
+     * а не `toMatchObject`: лишнее поле в журнале так же неверно, как потерянное —
+     * имя и биография того же перевода в журнал попасть не должны вовсе.
+     */
+    it('пишет AUTHOR_DELETED со списком умерших адресов и актёром из аргумента', async () => {
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { language: 'en', slug: 'oscar-wilde' },
+        { language: 'ru', slug: 'oskar-uayld' },
+      ]);
+      prisma.author.delete.mockResolvedValue({ id: 'auth1' });
+
+      await service.delete('auth1', 'admin-1');
+
+      expect(prisma.adminAuditEvent.create).toHaveBeenCalledTimes(1);
+      const [call] = prisma.adminAuditEvent.create.mock.calls as Array<[{ data: unknown }]>;
+      expect(call[0].data).toEqual({
+        actorUserId: 'admin-1',
+        action: AdminAuditAction.AUTHOR_DELETED,
+        targetType: AdminAuditTargetType.AUTHOR,
+        targetId: 'auth1',
+        payload: {
+          translations: [
+            { language: 'en', slug: 'oscar-wilde' },
+            { language: 'ru', slug: 'oskar-uayld' },
+          ],
+        },
+      });
+    });
+
+    it('не пишет события, когда автора нет: удаления не было', async () => {
+      prisma.author.findUnique.mockResolvedValue(null);
+
+      await expect(service.delete('auth1', 'admin-1')).rejects.toThrow(NotFoundException);
+
+      expect(prisma.adminAuditEvent.create).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Посадка на `LEGACY-036`: запись обязана уйти **клиентом транзакции**, а не
+     * корневым, иначе она переживает откат своей операции.
+     *
+     * ⚠️ Стенд собран отдельно намеренно. Общий `$transaction` этого файла отдаёт
+     * колбэку **сам** `stub` (`fn(stub)`), то есть `tx === root`, и любая сверка
+     * первого аргумента была бы истинна при любом аргументе — ровно та тавтология,
+     * которую поймало ревью пачки `T20`. Здесь `tx` и корневой клиент различимы:
+     * запись на корневом клиенте роняет тест.
+     */
+    it('пишет событие тем же tx, что и удаление, а не корневым клиентом', async () => {
+      const tx = {
+        author: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'auth1' }),
+          delete: jest.fn().mockResolvedValue({ id: 'auth1' }),
+        },
+        authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
+        adminAuditEvent: { create: jest.fn() },
+      };
+      prisma.$transaction.mockImplementation(async (callback: unknown) =>
+        (callback as (client: unknown) => Promise<unknown>)(tx),
+      );
+
+      await service.delete('auth1', 'admin-1');
+
+      expect(tx.adminAuditEvent.create).toHaveBeenCalledTimes(1);
+      expect(prisma.adminAuditEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('открывает транзакцию с явными границами', async () => {
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+      prisma.author.delete.mockResolvedValue({ id: 'auth1' });
+
+      await service.delete('auth1', 'admin-1');
+
+      const [, options] = prisma.$transaction.mock.calls[0] as [unknown, unknown];
+      expect(options).toEqual({ timeout: 30_000, maxWait: 10_000 });
     });
   });
 

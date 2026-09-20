@@ -3,6 +3,7 @@ import { SeoService } from './seo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { CategoryTreeService, CATEGORY_TREE_MAX_DEPTH } from '../category/category-tree.service';
 import { Language } from '@prisma/client';
 import { DEGRADED_RESPONSE } from '../../common/interceptors/degraded-response';
@@ -76,7 +77,13 @@ describe('SeoService (unit)', () => {
       new CategoryTreeService(prisma as unknown as PrismaService),
       // LEGACY-006: настоящий AuthorService на том же стабе — слаг автора в разметке
       // берётся из `authorTranslation.findMany`, а не собирается из имени.
-      new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        // `LEGACY-015`, пачка `T21`: писатель журнала обязателен по конструктору, но этот
+        // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
     );
     process.env = { ...ORIGINAL_ENV, PUBLIC_SITE_URL: 'http://localhost:5000/static' };
   });

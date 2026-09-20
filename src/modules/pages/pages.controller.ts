@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
   Headers,
 } from '@nestjs/common';
@@ -40,6 +41,17 @@ import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
 import { PageGroupResponse } from './dto/page-group-response.dto';
 import { ListPagesQueryDto } from './dto/list-pages-query.dto';
 import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
+
+/**
+ * Форма пользователя запроса — та же, что в остальных контроллерах
+ * (`STYLE_GUIDE.md`, раздел «Контроллеры»). Общего `@CurrentUser()` в проекте
+ * нет вовсе, и сведение копий к одному декоратору — отдельная работа,
+ * записанная строкой в теле `LEGACY-015`.
+ */
+interface RequestUser {
+  userId: string;
+  email: string;
+}
 
 @ApiTags('pages')
 @ApiExtraModels(PageResponse, PageGroupResponse, PaginationInfoDto)
@@ -207,8 +219,11 @@ export class PagesController {
     @Param('lang', LangParamPipe) _lang: Language,
     @Param('id') id: string,
     @Body() dto: UpdatePageDto,
+    @Req() req: { user: RequestUser },
   ): ReturnType<PagesService['update']> {
-    return this.service.update(id, dto);
+    // Форма редактирования — третий вход в смену публичной видимости, наравне
+    // с `publish` и `unpublish`, поэтому актёр нужен и здесь (`LEGACY-015`).
+    return this.service.update(id, dto, req.user.userId);
   }
 
   @Delete('admin/:lang/pages/:id')
@@ -223,8 +238,11 @@ export class PagesController {
   remove(
     @Param('lang', LangParamPipe) _lang: Language,
     @Param('id') id: string,
+    @Req() req: { user: RequestUser },
   ): ReturnType<PagesService['remove']> {
-    return this.service.remove(id);
+    // Актёр берётся из запроса, а не из тела: журнал должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.service.remove(id, req.user.userId);
   }
 
   @Patch('admin/:lang/pages/:id/publish')
@@ -238,8 +256,9 @@ export class PagesController {
   publish(
     @Param('lang', LangParamPipe) _lang: Language,
     @Param('id') id: string,
+    @Req() req: { user: RequestUser },
   ): ReturnType<PagesService['setStatus']> {
-    return this.service.setStatus(id, 'published');
+    return this.service.setStatus(id, 'published', req.user.userId);
   }
 
   @Patch('admin/:lang/pages/:id/unpublish')
@@ -253,8 +272,9 @@ export class PagesController {
   unpublish(
     @Param('lang', LangParamPipe) _lang: Language,
     @Param('id') id: string,
+    @Req() req: { user: RequestUser },
   ): ReturnType<PagesService['setStatus']> {
-    return this.service.setStatus(id, 'draft');
+    return this.service.setStatus(id, 'draft', req.user.userId);
   }
 
   @Get('admin/pages/group/:groupId')

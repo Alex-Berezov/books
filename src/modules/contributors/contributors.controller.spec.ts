@@ -81,10 +81,16 @@ describe('ContributorsController', () => {
     expect(service['update']).toHaveBeenCalledWith('contributor-1', dto);
   });
 
+  // Посадка «актёр берётся из токена» живёт в `contributors.controller.actor.spec.ts`
+  // — по той же маске `*.controller.actor.spec.ts`, что у восьми других контроллеров
+  // с журналом. Здесь остаётся проверка самой проводки вызова.
   it('should call remove', async () => {
-    const res = await controller.remove('contributor-1');
+    const res = await controller.remove('contributor-1', {
+      user: { userId: 'admin-1', email: 'admin@example.com' },
+    });
     expect(res).toEqual(mockContributor);
-    expect(service['remove']).toHaveBeenCalledWith('contributor-1');
+    expect(service['remove']).toHaveBeenCalledTimes(1);
+    expect(service['remove']).toHaveBeenCalledWith('contributor-1', 'admin-1');
   });
 
   it('should call linkSourceEdition', async () => {

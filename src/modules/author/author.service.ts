@@ -10,7 +10,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
-import { Language, Prisma } from '@prisma/client';
+import { AdminAuditAction, AdminAuditTargetType, Language, Prisma } from '@prisma/client';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import {
   AuthorQuoteDto as AuthorQuote,
   AuthorFaqDto as AuthorFaq,
@@ -163,6 +164,21 @@ export function authorSlugKey(authorId: string, language: Language): string {
 /** Сколько кандидатов `<slug>-N` проверяет один запрос подсказки (LEGACY-370). */
 const SLUG_SUGGESTION_BATCH = 20;
 
+/**
+ * Границы транзакции удаления автора (`LEGACY-015`, пачка `T21`). Те же цифры, что
+ * у персоны, страницы и книги: расхождение здесь значило бы, что один и тот же отказ
+ * базы ведёт себя по-разному в зависимости от того, что именно удаляют.
+ *
+ * ⚠️ Транзакции здесь не было вовсе - удаление шло парой `findUnique` + `delete` по
+ * корневому клиенту. Заведена она ради атомарности записи в журнал (`LEGACY-036`),
+ * а **не** ради закрытия гонки: `SELECT ... FOR UPDATE` на строку автора решением
+ * арбитра 20.09.2026 в эту пачку не берётся (`decisions-log.md`). Встречная правка
+ * перевода в окне между чтением списка слагов и удалением по-прежнему возможна,
+ * и список в `payload` может от неё разойтись - это отдельная строка техдолга,
+ * а не закрытый здесь случай (`L-019`: транзакция без замка гонку не сужает).
+ */
+const AUTHOR_DELETE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
 @Injectable()
 export class AuthorService {
   private readonly logger = new Logger(AuthorService.name);
@@ -170,6 +186,7 @@ export class AuthorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly slugRedirects: SlugRedirectService,
+    private readonly adminAudit: AdminAuditService,
   ) {}
 
   /**
@@ -869,12 +886,46 @@ export class AuthorService {
     }
   }
 
-  async delete(id: string) {
-    const author = await this.prisma.author.findUnique({ where: { id } });
-    if (!author) {
-      throw new NotFoundException(`Author with ID '${id}' not found`);
-    }
-    return this.prisma.author.delete({ where: { id } });
+  /**
+   * `LEGACY-015`, пачка `T21`. Удаление автора пишет `AUTHOR_DELETED` **тем же `tx`**,
+   * что и сама строка: запись, пережившая откат своей операции, - это `LEGACY-036`.
+   *
+   * Переводы читаются до удаления и уходят в `payload` списком `{ language, slug }`:
+   * `AuthorTranslation.author` стоит под `onDelete: Cascade` (`schema.prisma:659`),
+   * вместе с переводами умирают публичные адреса `/:lang/authors/:slug` на всех языках
+   * сразу, и после `delete` взять их неоткуда. Один лишний запрос на админском маршруте
+   * удаления - цена того, что журнал может ответить, какой адрес перестал существовать.
+   *
+   * ⚠️ В `payload` уходят только язык и слаг. `name`, `biography` и `photoUrl` того же
+   * перевода - персональные данные, а журнал выката и выгрузку базы читает кто угодно
+   * (инвариант докблока `AdminAuditEvent`). Слаг персональными данными не является:
+   * он и был публичным адресом.
+   */
+  async delete(id: string, actorUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const author = await tx.author.findUnique({ where: { id } });
+      if (!author) {
+        throw new NotFoundException(`Author with ID '${id}' not found`);
+      }
+
+      const dying = await tx.authorTranslation.findMany({
+        where: { authorId: id },
+        select: { language: true, slug: true },
+        orderBy: { language: 'asc' },
+      });
+
+      const removed = await tx.author.delete({ where: { id } });
+
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.AUTHOR_DELETED,
+        targetType: AdminAuditTargetType.AUTHOR,
+        targetId: id,
+        actorUserId,
+        payload: { translations: dying },
+      });
+
+      return removed;
+    }, AUTHOR_DELETE_TX_OPTIONS);
   }
 
   async checkSlugExists(slug: string, language: Language, excludeId?: string) {

@@ -31,6 +31,24 @@ import { ContributorLinkResponseDto, ContributorResponseDto } from './dto/contri
 import { DeleteContributorResponseDto } from './dto/delete-contributor-response.dto';
 import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 
+/**
+ * Форма пользователя запроса — та же, что в остальных контроллерах
+ * (`STYLE_GUIDE.md`, раздел «Контроллеры»). Общего `@CurrentUser()` в проекте
+ * нет вовсе, и сведение копий к одному декоратору — отдельная работа,
+ * записанная строкой в теле `LEGACY-015`.
+ *
+ * ⚠️ Заведён под путь журнала (`DELETE admin/contributors/:id`). Пять соседних
+ * обработчиков этого файла по-прежнему типизируют `@Req()` встроенным литералом:
+ * перевод их всех — попутный рефакторинг вне границ записи. Но копии актёра
+ * считаются машинно (`grep -rl "^interface RequestUser" src`), и анонимная форма
+ * в этот счёт не попадает — значит путь журнала остался бы вне будущей замены
+ * на общий `@CurrentUser()`.
+ */
+interface RequestUser {
+  userId: string;
+  email: string;
+}
+
 @ApiTags('Contributors')
 @ApiExtraModels(ContributorResponseDto, PaginationInfoDto)
 @Controller('admin')
@@ -75,8 +93,13 @@ export class ContributorsController {
   @ApiOkResponse({ type: DeleteContributorResponseDto })
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Delete a contributor' })
-  async remove(@Param('id') id: string): Promise<{ id: string }> {
-    return this.contributorsService.remove(id);
+  async remove(
+    @Param('id') id: string,
+    @Req() request: { user: RequestUser },
+  ): Promise<{ id: string }> {
+    // Актёр берётся из запроса, а не из тела: журнал должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.contributorsService.remove(id, request.user.userId);
   }
 
   @Post('source-editions/:id/contributors')
