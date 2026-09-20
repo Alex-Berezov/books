@@ -9,7 +9,8 @@ import { CreateAudioChapterDto } from './dto/create-audio-chapter.dto';
 import { UpdateAudioChapterDto } from './dto/update-audio-chapter.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
-import { Prisma } from '@prisma/client';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import { Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 
@@ -28,6 +29,9 @@ export class AudioChapterService {
     private rightsContentHashService: RightsContentHashService,
     private geoBlockRuleService: GeoBlockRuleService,
     private clearanceLock: RightsClearanceLockService,
+    // `LEGACY-015`, пачка `T19`: удаление аудиоглавы отвечает критерию
+    // админского действия из докблока `AdminAuditEvent`.
+    private adminAudit: AdminAuditService,
   ) {}
 
   private normalizePage(page = 1, limit = 50) {
@@ -229,12 +233,26 @@ export class AudioChapterService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null) {
     const item = await this.prisma.audioChapter.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Audio chapter not found');
     const bookVersionId = item.bookVersionId;
     const result = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
       const deleted = await tx.audioChapter.delete({ where: { id } });
+
+      // `LEGACY-015`, пачка `T19`. Стоит **до** пометки свежести, а не после:
+      // спека проверяет, что последней операцией под замком идёт именно она
+      // (`allUnderOneLock в audio-chapter.service.spec.ts`), и порядок «удалили → записали → пересчитали»
+      // это ожидание сохраняет. Замок группы к этому моменту уже взят —
+      // `runInLockedClearance` берёт его первым оператором транзакции (`LEGACY-368`).
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.AUDIO_CHAPTER_DELETED,
+        targetType: AdminAuditTargetType.AUDIO_CHAPTER,
+        targetId: id,
+        actorUserId,
+        payload: { bookVersionId },
+      });
+
       await this.rightsContentHashService.checkVersionStaleness(
         bookVersionId,
         'AUDIO_CHAPTER_DELETED',

@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Chapter, Prisma } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 
 interface PrismaStub {
   bookVersion: {
@@ -47,6 +48,7 @@ describe('ChapterService', () => {
   let prisma: PrismaStub;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
   let clearanceLock: ClearanceLockFake;
+  let adminAudit: { record: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -57,11 +59,13 @@ describe('ChapterService', () => {
       markVersionAndClearanceStale: jest.fn(),
     } as unknown as jest.Mocked<RightsContentHashService>;
     clearanceLock = createClearanceLockFake(prisma);
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     service = new ChapterService(
       prisma as unknown as PrismaService,
       mockRightsContentHashService,
       { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
       clearanceLock.service,
+      adminAudit as unknown as AdminAuditService,
     );
   });
 
@@ -107,10 +111,40 @@ describe('ChapterService', () => {
       (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({ id: 'c1', bookVersionId: 'v1' });
       const seen = underLock(prisma.chapter.delete as jest.Mock, { id: 'c1' });
 
-      await service.remove('c1');
+      await service.remove('c1', 'admin-1');
 
       expect(seen).toEqual([true]);
       expect(clearanceLock.lockedVersions).toEqual(['v1']);
+    });
+
+    /**
+     * `LEGACY-015`, пачка `T19`. Событие пишется тем же клиентом транзакции,
+     * что и само удаление: иначе оно переживёт откат (`LEGACY-036`). Что запись
+     * идёт именно через `tx`, а не через корневой клиент, статически сторожит
+     * `src/common/testing/admin-audit-writers.spec.ts`; здесь проверяется состав.
+     */
+    it('remove пишет CHAPTER_DELETED под тем же замком', async () => {
+      (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({ id: 'c1', bookVersionId: 'v1' });
+      (prisma.chapter.delete as jest.Mock).mockResolvedValue({ id: 'c1' });
+
+      await service.remove('c1', 'admin-1');
+
+      expect(adminAudit.record).toHaveBeenCalledTimes(1);
+      expect(adminAudit.record.mock.calls[0][1]).toEqual({
+        action: 'CHAPTER_DELETED',
+        targetType: 'CHAPTER',
+        targetId: 'c1',
+        actorUserId: 'admin-1',
+        payload: { bookVersionId: 'v1' },
+      });
+      expect(clearanceLock.lockedVersions).toEqual(['v1']);
+    });
+
+    it('remove несуществующей главы журнала не касается', async () => {
+      (prisma.chapter.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.remove('missing', 'admin-1')).rejects.toThrow(NotFoundException);
+      expect(adminAudit.record).not.toHaveBeenCalled();
     });
   });
 
@@ -223,7 +257,7 @@ describe('ChapterService', () => {
   it('removes chapter', async () => {
     (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({ id: 'c1' });
     (prisma.chapter.delete as jest.Mock).mockResolvedValue({ id: 'c1' });
-    const res = await service.remove('c1');
+    const res = await service.remove('c1', 'admin-1');
     expect(res.id).toBe('c1');
   });
 });

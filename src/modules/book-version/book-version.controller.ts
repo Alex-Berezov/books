@@ -583,8 +583,9 @@ export class BookVersionController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  remove(@Param('id') id: string, @Req() request: { user: RequestUser }) {
+    // Актёр из запроса — как у `publish` и `unpublish` ниже (`LEGACY-015`).
+    return this.service.remove(id, request.user.userId);
   }
 
   @Patch('versions/:id/publish')

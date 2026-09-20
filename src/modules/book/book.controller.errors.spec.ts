@@ -67,7 +67,7 @@ const HANDLERS: HandlerCase[] = [
     serviceMethod: 'update',
     invoke: (c) => c.update('b1', {} as UpdateBookDto),
   },
-  { handler: 'remove', serviceMethod: 'remove', invoke: (c) => c.remove('b1') },
+  { handler: 'remove', serviceMethod: 'remove', invoke: (c) => c.remove('b1', { user }) },
   {
     handler: 'rate',
     serviceMethod: 'rateBook',

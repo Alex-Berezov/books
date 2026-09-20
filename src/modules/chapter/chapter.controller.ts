@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Headers,
+  Req,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -30,6 +31,17 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { Query } from '@nestjs/common';
 import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
+
+/**
+ * Форма пользователя запроса — та же, что в остальных контроллерах
+ * (`STYLE_GUIDE.md`, раздел «Контроллеры»). Общего `@CurrentUser()` в проекте
+ * нет вовсе, и сведение семи копий к одному декоратору — отдельная работа,
+ * записанная строкой в теле `LEGACY-015`.
+ */
+interface RequestUser {
+  userId: string;
+  email: string;
+}
 
 @ApiTags('chapters')
 @Controller()
@@ -108,7 +120,9 @@ export class ChapterController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  remove(@Param('id') id: string, @Req() req: { user: RequestUser }) {
+    // Актёр берётся из запроса, а не из тела: журнал должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`).
+    return this.service.remove(id, req.user.userId);
   }
 }

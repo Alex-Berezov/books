@@ -4,7 +4,8 @@ import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
-import { Prisma } from '@prisma/client';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import { Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 
@@ -15,6 +16,9 @@ export class ChapterService {
     private rightsContentHashService: RightsContentHashService,
     private geoBlockRuleService: GeoBlockRuleService,
     private clearanceLock: RightsClearanceLockService,
+    // `LEGACY-015`, пачка `T19`: удаление главы отвечает критерию
+    // админского действия из докблока `AdminAuditEvent`.
+    private adminAudit: AdminAuditService,
   ) {}
 
   async listByVersion(
@@ -143,12 +147,26 @@ export class ChapterService {
     return updated;
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null) {
     const chapter = await this.prisma.chapter.findUnique({ where: { id } });
     if (!chapter) throw new NotFoundException('Chapter not found');
     const bookVersionId = chapter.bookVersionId;
     const result = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
       const deleted = await tx.chapter.delete({ where: { id } });
+
+      // `LEGACY-015`, пачка `T19`. Стоит **до** пометки свежести, а не после:
+      // спека проверяет, что последней операцией под замком идёт именно она
+      // (`chapter.service.spec.ts`), и порядок «удалили → записали → пересчитали»
+      // это ожидание сохраняет. Замок группы к этому моменту уже взят —
+      // `runInLockedClearance` берёт его первым оператором транзакции (`LEGACY-368`).
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.CHAPTER_DELETED,
+        targetType: AdminAuditTargetType.CHAPTER,
+        targetId: id,
+        actorUserId,
+        payload: { bookVersionId },
+      });
+
       await this.rightsContentHashService.checkVersionStaleness(
         bookVersionId,
         'CHAPTER_DELETED',

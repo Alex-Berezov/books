@@ -1174,7 +1174,7 @@ export class BookVersionService {
    * языке — версия того же слага в другом языке (у любой книги) свободна
    * держать адрес живым и после удаления этой строки.
    */
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null) {
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.bookVersion.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException('BookVersion not found');
@@ -1182,6 +1182,27 @@ export class BookVersionService {
       const removed = await tx.bookVersion.delete({
         where: { id },
         include: { seo: true },
+      });
+
+      // `LEGACY-015`, пачка `T19`: парное к `VERSION_PUBLISHED` и `VERSION_UNPUBLISHED`
+      // выше по файлу. Без него последнее, что журнал знает о стёртой версии, — что она
+      // опубликована. Признака `cascade` здесь нет намеренно: это прямой маршрут,
+      // а не удаление книги (решение арбитра 20.09.2026).
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.VERSION_DELETED,
+        targetType: AdminAuditTargetType.BOOK_VERSION,
+        targetId: id,
+        actorUserId,
+        // Снимок лицензий — тот же состав, что у `VERSION_PUBLISHED` и
+        // `VERSION_UNPUBLISHED` выше по файлу: удаление терминально, и после него
+        // ответить, на что опиралась публикация, не может уже ничто (`LEGACY-180`,
+        // `ADR-009`). Найдено ревью 20.09.2026.
+        payload: {
+          ...licenseSnapshotPayload(removed),
+          bookId: removed.bookId,
+          language: removed.language,
+          status: removed.status,
+        },
       });
 
       if (removed.slug) {

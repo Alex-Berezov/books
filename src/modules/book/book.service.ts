@@ -6,12 +6,25 @@ import {
 } from '../../common/selects/public-book.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { AuthorService, authorSlugKey } from '../author/author.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import {
+  licenseSnapshotPayload,
+  lockLicenseSnapshotsByBook,
+} from '../../shared/rights-license-snapshot/rights-license-snapshot';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
-import { BookType, Language, Category, CategoryTranslation, Prisma } from '@prisma/client';
+import {
+  BookType,
+  Language,
+  Category,
+  CategoryTranslation,
+  Prisma,
+  AdminAuditAction,
+  AdminAuditTargetType,
+} from '@prisma/client';
 import {
   resolveRequestedLanguage,
   getSupportedLanguages,
@@ -51,6 +64,9 @@ export class BookService {
     // у него двое, карточки книг и разметка schema.org, и третья копия запроса
     // разошлась бы с остальными молча.
     private readonly authors: AuthorService,
+    // `LEGACY-015`, пачка `T19`: удаление книги отвечает критерию админского действия
+    // из докблока `AdminAuditEvent` — маршрут закрыт ролями и физически стирает строку.
+    private readonly adminAudit: AdminAuditService,
   ) {}
 
   async rateBook(userId: string, bookId: string, score: number) {
@@ -1560,16 +1576,78 @@ export class BookService {
    * версии со всеми главами и статистикой чтения, и голая `$transaction`
    * укладывается в дефолтные 5 секунд не на каждой книге.
    */
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null) {
     return this.prisma.$transaction(async (tx) => {
       const book = await tx.book.findUnique({ where: { id } });
       if (!book) {
         throw new NotFoundException(`Book with ID ${id} not found`);
       }
 
+      // Два замка, и ни один не лишний — иначе список каскадных версий разойдётся
+      // с тем, что реально снесёт каскад. Обе дыры найдены ревью 20.09.2026.
+      //
+      // Первый, на строку книги, закрывает встречную **вставку** версии: `FOR UPDATE`
+      // конфликтует с `FOR KEY SHARE`, который берёт на родительскую строку проверка
+      // внешнего ключа. По существующим строкам такую вставку не поймать — новой
+      // строки ещё нет, поэтому одним замком версий не обойтись.
+      const lockedBook = await tx.$queryRaw<
+        { id: string }[]
+      >`SELECT id FROM "Book" WHERE id = ${id} FOR UPDATE`;
+
+      // Ноль строк — книгу снёс встречный запрос, пока мы ждали замка. Идти дальше
+      // нельзя: `tx.book.delete` ответит `P2025`, глобального фильтра Prisma в проекте
+      // нет, и наружу уйдёт 500 вместо 404. Приём взят у `lockLicenseSnapshot`,
+      // который так же превращает пустой замок в отказ.
+      if (lockedBook.length === 0) {
+        throw new NotFoundException(`Book with ID ${id} not found`);
+      }
+
+      // Второй замок и чтение снимков — одним запросом общего помощника. Он же
+      // держит состав колонок снимка в одном месте с `VERSION_PUBLISHED`
+      // и `VERSION_UNPUBLISHED`: рукописная копия `select` разошлась бы с ними молча
+      // при первой же новой колонке `rightsLicense*`.
+      //
+      // Читается **до** удаления: после каскада ни идентификаторов, ни снимка взять
+      // негде, а журнал обязан назвать каждую снесённую версию (решение арбитра
+      // 20.09.2026, `LEGACY-180`).
+      const doomedVersions = await lockLicenseSnapshotsByBook(tx, id);
+
       // `onDelete: Cascade` снимает версии книги вместе с ней — до запроса
       // живости слага ниже, поэтому свои же версии в нём уже не участвуют.
       const removed = await tx.book.delete({ where: { id } });
+
+      // Событие на саму книгу и на каждую версию, которую унёс каскад. Без второй
+      // половины журнал начинает врать ровно тем способом, который закрывали в `V1`:
+      // `VERSION_PUBLISHED` пережил бы версию, стёртую вместе с книгой, и по журналу
+      // она осталась бы опубликованной. Тот же класс, что снятие ролей при удалении
+      // пользователя (`users.service.ts`).
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.BOOK_DELETED,
+        targetType: AdminAuditTargetType.BOOK,
+        targetId: id,
+        actorUserId,
+        payload: { slug: removed.slug, versionCount: doomedVersions.length },
+      });
+
+      for (const version of doomedVersions) {
+        await this.adminAudit.record(tx, {
+          action: AdminAuditAction.VERSION_DELETED,
+          targetType: AdminAuditTargetType.BOOK_VERSION,
+          targetId: version.id,
+          actorUserId,
+          // `cascade` отличает эту строку от прямого `DELETE versions/:id`: без признака
+          // журнал перестаёт различать «удалили версию» и «удалили книгу с версиями».
+          // Снимок лицензий — тот же, что у `VERSION_PUBLISHED` и `VERSION_UNPUBLISHED`:
+          // после каскада ответить, на что опиралась публикация, больше нечем.
+          payload: {
+            ...licenseSnapshotPayload(version),
+            bookId: id,
+            language: version.language,
+            status: version.status,
+            cascade: true,
+          },
+        });
+      }
 
       const stillLive = await this.isBookSlugLive(tx, removed.slug);
       if (!stillLive) {

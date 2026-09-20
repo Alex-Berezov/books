@@ -1232,7 +1232,7 @@ describe('BookVersionService', () => {
     (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
     (prisma.book.findFirst as jest.Mock).mockResolvedValue(null);
 
-    const res = await service.remove('v3');
+    const res = await service.remove('v3', 'admin-1');
 
     expect(res.id).toBe('v3');
     expect(prisma.bookVersion.delete).toHaveBeenCalled();
@@ -1256,6 +1256,60 @@ describe('BookVersionService', () => {
       'karamazovy-brothers',
       prisma,
     );
+  });
+
+  /**
+   * `LEGACY-015`, пачка `T19`. Парное к `VERSION_PUBLISHED` и `VERSION_UNPUBLISHED`:
+   * без него последнее, что журнал знает о стёртой версии, — что она опубликована.
+   * Признака `cascade` у прямого маршрута нет — он отличает удаление книги
+   * (решение арбитра 20.09.2026).
+   */
+  it('records VERSION_DELETED without the cascade mark on the direct route', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
+    (prisma.bookVersion.delete as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      bookId: 'b1',
+      language: 'ru',
+      status: 'published',
+      slug: null,
+      seo: null,
+      publishedAt: new Date('2026-09-01T00:00:00.000Z'),
+      rightsLicenseIds: ['lic-A'],
+      rightsLicenseCoverageStatus: 'FULL',
+      rightsLicenseCheckedAt: new Date('2026-09-02T00:00:00.000Z'),
+      rightsLicenseUncoveredCountryCodes: [],
+    });
+
+    await service.remove('v1', 'admin-1');
+
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record.mock.calls[0][1]).toEqual({
+      action: 'VERSION_DELETED',
+      targetType: 'BOOK_VERSION',
+      targetId: 'v1',
+      actorUserId: 'admin-1',
+      // Состав снимка — тот же, что у `VERSION_PUBLISHED` и `VERSION_UNPUBLISHED`
+      // (требование ревью 20.09.2026, `LEGACY-180`). Признака `cascade` нет:
+      // это прямой маршрут, а не удаление книги.
+      payload: {
+        bookId: 'b1',
+        language: 'ru',
+        status: 'published',
+        publishedAt: '2026-09-01T00:00:00.000Z',
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'FULL',
+        rightsLicenseCheckedAt: '2026-09-02T00:00:00.000Z',
+        rightsLicenseUncoveredCountryCodes: [],
+      },
+    });
+  });
+
+  it('writes nothing to the log when the version does not exist', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(null);
+
+    await expect(service.remove('missing', 'admin-1')).rejects.toThrow(NotFoundException);
+    expect(adminAudit.record).not.toHaveBeenCalled();
+    expect(prisma.bookVersion.delete).not.toHaveBeenCalled();
   });
 
   it('does not clean up the redirect when the dying slug is still a live Book.slug (LEGACY-395)', async () => {
@@ -1282,7 +1336,7 @@ describe('BookVersionService', () => {
     (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
     (prisma.book.findFirst as jest.Mock).mockResolvedValue({ id: 'other-book' });
 
-    await service.remove('v4');
+    await service.remove('v4', 'admin-1');
 
     expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
   });
@@ -1312,7 +1366,7 @@ describe('BookVersionService', () => {
     // проверять уже не нужно.
     (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue({ id: 'ru-version' });
 
-    await service.remove('v5');
+    await service.remove('v5', 'admin-1');
 
     expect(prisma.book.findFirst).not.toHaveBeenCalled();
     expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();

@@ -2,6 +2,7 @@ import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy
 import { BookService } from './book.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { BookType, Language } from '@prisma/client';
 import { NotFoundException } from '@nestjs/common';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
@@ -101,10 +102,12 @@ const createModeratorRolesStub = (): ModeratorRolesService =>
 
 describe('BookService.getOverview', () => {
   let service: BookService;
+  let adminAudit: { record: jest.Mock };
   let prisma: PrismaStub;
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     service = new BookService(
       prisma as unknown as PrismaService,
       createGeoBlockRuleServiceStub(),
@@ -114,6 +117,7 @@ describe('BookService.getOverview', () => {
       // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
       // по-прежнему управляется моками `authorTranslation.findMany`.
       new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+      adminAudit as unknown as AdminAuditService,
     );
   });
 
@@ -746,6 +750,7 @@ describe('BookService.getOverview', () => {
 
   describe('findCards', () => {
     let service: BookService;
+    let adminAudit: { record: jest.Mock };
     let prisma: PrismaStub;
 
     const mockVersion = (overrides: Record<string, unknown> = {}) => ({
@@ -769,6 +774,7 @@ describe('BookService.getOverview', () => {
 
     beforeEach(() => {
       prisma = createPrismaStub();
+      adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
       service = new BookService(
         prisma as unknown as PrismaService,
         createGeoBlockRuleServiceStub(),
@@ -778,6 +784,7 @@ describe('BookService.getOverview', () => {
         // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
         // по-прежнему управляется моками `authorTranslation.findMany`.
         new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+        adminAudit as unknown as AdminAuditService,
       );
     });
 
@@ -892,6 +899,7 @@ describe('BookService.getOverview', () => {
    */
   describe('findRelated: порядок при равных рейтингах (LEGACY-253)', () => {
     let service: BookService;
+    let adminAudit: { record: jest.Mock };
     let prisma: PrismaStub;
 
     const relatedVersion = (bookId: string, publishedAt: Date | null) => ({
@@ -917,6 +925,7 @@ describe('BookService.getOverview', () => {
 
     beforeEach(() => {
       prisma = createPrismaStub();
+      adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
       service = new BookService(
         prisma as unknown as PrismaService,
         createGeoBlockRuleServiceStub(),
@@ -926,6 +935,7 @@ describe('BookService.getOverview', () => {
         // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
         // по-прежнему управляется моками `authorTranslation.findMany`.
         new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+        adminAudit as unknown as AdminAuditService,
       );
 
       prisma.bookVersion.findFirst
@@ -1017,6 +1027,7 @@ describe('BookService.getOverview', () => {
 
 describe('BookService.remove (LEGACY-395)', () => {
   let service: BookService;
+  let adminAudit: { record: jest.Mock };
   let prisma: PrismaStub;
   let slugRedirects: {
     record: jest.Mock;
@@ -1027,6 +1038,7 @@ describe('BookService.remove (LEGACY-395)', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     slugRedirects = createSlugRedirectStub() as unknown as typeof slugRedirects;
     service = new BookService(
       prisma as unknown as PrismaService,
@@ -1037,17 +1049,19 @@ describe('BookService.remove (LEGACY-395)', () => {
       // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
       // по-прежнему управляется моками `authorTranslation.findMany`.
       new AuthorService(prisma as unknown as PrismaService, {} as unknown as SlugRedirectService),
+      adminAudit as unknown as AdminAuditService,
     );
   });
 
   it('cleans up the redirect in every language when no live version holds the slug anywhere', async () => {
     prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
     prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([]);
     // Ни одной опубликованной версии с этим слагом не осталось нигде — адрес
     // мёртв во всех языках (фоллбэк `getOverview` языконезависим).
     prisma.bookVersion.findFirst.mockResolvedValue(null);
 
-    const res = await service.remove('b1');
+    const res = await service.remove('b1', 'admin-1');
 
     expect(res.id).toBe('b1');
     expect(prisma.book.delete).toHaveBeenCalledWith({ where: { id: 'b1' } });
@@ -1069,12 +1083,13 @@ describe('BookService.remove (LEGACY-395)', () => {
   it('skips cleanup in every language when another live published version anywhere still holds the slug', async () => {
     prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
     prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([]);
     // Версия другой книги в любом (здесь — английском) языке по-прежнему
     // отвечает по этому слову: `getOverview` находит её без фильтра по языку
     // и оживляет адрес сразу во всех пяти — не только в `en`.
     prisma.bookVersion.findFirst.mockResolvedValue({ id: 'other-version' });
 
-    await service.remove('b1');
+    await service.remove('b1', 'admin-1');
 
     expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
   });
@@ -1082,8 +1097,156 @@ describe('BookService.remove (LEGACY-395)', () => {
   it('throws NotFoundException and cleans up nothing when the book does not exist', async () => {
     prisma.book.findUnique.mockResolvedValue(null);
 
-    await expect(service.remove('missing')).rejects.toThrow(NotFoundException);
+    await expect(service.remove('missing', 'admin-1')).rejects.toThrow(NotFoundException);
     expect(prisma.book.delete).not.toHaveBeenCalled();
     expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
+    // `LEGACY-015`: несостоявшееся удаление журнала не касается — событие пишется
+    // только на изменение состояния (инвариант модели `AdminAuditEvent`).
+    expect(adminAudit.record).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-015`, пачка `T19`. Посадка на журнал удаления книги. Событие на саму
+   * книгу пишется всегда, а `VERSION_DELETED` — на каждую версию, которую унёс
+   * каскад: без второй половины журнал врёт ровно так, как врал до `V1` про роли
+   * удалённого пользователя (решение арбитра 20.09.2026).
+   */
+  it('records BOOK_DELETED and VERSION_DELETED for every version the cascade takes', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    // Версии приходят замком `lockLicenseSnapshotsByBook`, то есть через `$queryRaw`:
+    // первый вызов — замок книги, второй — снимки версий.
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([
+      {
+        id: 'v-ru',
+        language: 'ru',
+        status: 'published',
+        publishedAt: new Date('2026-09-01T00:00:00.000Z'),
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'FULL',
+        rightsLicenseCheckedAt: new Date('2026-09-02T00:00:00.000Z'),
+        rightsLicenseUncoveredCountryCodes: [],
+      },
+      {
+        id: 'v-en',
+        language: 'en',
+        status: 'draft',
+        publishedAt: null,
+        rightsLicenseIds: null,
+        rightsLicenseCoverageStatus: null,
+        rightsLicenseCheckedAt: null,
+        rightsLicenseUncoveredCountryCodes: null,
+      },
+    ]);
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+
+    await service.remove('b1', 'admin-1');
+
+    expect(adminAudit.record).toHaveBeenCalledTimes(3);
+
+    const [bookCall, ruCall, enCall] = adminAudit.record.mock.calls;
+    expect(bookCall[1]).toEqual({
+      action: 'BOOK_DELETED',
+      targetType: 'BOOK',
+      targetId: 'b1',
+      actorUserId: 'admin-1',
+      payload: { slug: 'karamazovy', versionCount: 2 },
+    });
+    expect(ruCall[1]).toEqual({
+      action: 'VERSION_DELETED',
+      targetType: 'BOOK_VERSION',
+      targetId: 'v-ru',
+      actorUserId: 'admin-1',
+      // Снимок лицензий в составе — требование ревью 20.09.2026: после каскада
+      // ответить, на что опиралась публикация стёртой версии, больше нечем.
+      payload: {
+        bookId: 'b1',
+        language: 'ru',
+        status: 'published',
+        cascade: true,
+        publishedAt: '2026-09-01T00:00:00.000Z',
+        rightsLicenseIds: ['lic-A'],
+        rightsLicenseCoverageStatus: 'FULL',
+        rightsLicenseCheckedAt: '2026-09-02T00:00:00.000Z',
+        rightsLicenseUncoveredCountryCodes: [],
+      },
+    });
+    expect(enCall[1].targetId).toBe('v-en');
+    expect(enCall[1].payload).toMatchObject({ cascade: true });
+  });
+
+  /**
+   * Идентификаторы версий обязаны читаться **до** `book.delete`: после каскада
+   * взять их негде, и журнал промолчал бы о каждой снесённой версии.
+   */
+  /**
+   * Два замка — единственное, что держит список каскадных версий совпадающим с тем,
+   * что реально снесёт каскад. Снять любую из двух строк при рефакторинге ничего
+   * не мешает, а ни один прогон этого не замечал: e2e однопоточна, а юнит смотрел
+   * только порядок чтения и удаления. Обе дыры и сама посадка — круг 2 ревью
+   * 20.09.2026.
+   *
+   * Замок книги закрывает встречную вставку версии (через `FOR KEY SHARE`
+   * по внешнему ключу), замок строк версий — встречные изменение и удаление
+   * уже существующих.
+   */
+  it('locks the book row, then its version rows, and only then deletes', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    const order: string[] = [];
+    prisma.$queryRaw.mockImplementation((...call: unknown[]) => {
+      const sql = renderSql(call);
+      order.push(sql.includes('"BookVersion"') ? 'lock:versions' : 'lock:book');
+      return Promise.resolve(sql.includes('"BookVersion"') ? [] : [{ id: 'b1' }]);
+    });
+    prisma.book.delete.mockImplementation(() => {
+      order.push('delete');
+      return Promise.resolve({ id: 'b1', slug: 'karamazovy' });
+    });
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+
+    await service.remove('b1', 'admin-1');
+
+    expect(order).toEqual(['lock:book', 'lock:versions', 'delete']);
+
+    const bookLock = renderSql(prisma.$queryRaw.mock.calls[0] as unknown[]);
+    expect(bookLock).toContain('"Book"');
+    expect(bookLock).toContain('FOR UPDATE');
+
+    const versionLock = renderSql(prisma.$queryRaw.mock.calls[1] as unknown[]);
+    expect(versionLock).toContain('"BookVersion"');
+    expect(versionLock).toContain('"bookId"');
+    expect(versionLock).toContain('FOR UPDATE');
+  });
+
+  /**
+   * Книгу снёс встречный запрос, пока мы ждали замка: замок вернул ноль строк.
+   * Без этой ветки `book.delete` отдал бы `P2025`, а наружу ушло бы 500 вместо 404 —
+   * глобального фильтра Prisma в проекте нет (находка круга 2 ревью).
+   */
+  it('answers 404, not 500, when the book vanished while we waited for the lock', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.$queryRaw.mockResolvedValue([]);
+
+    await expect(service.remove('b1', 'admin-1')).rejects.toThrow(NotFoundException);
+    expect(prisma.book.delete).not.toHaveBeenCalled();
+    expect(adminAudit.record).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Актёр объявлен без умолчания намеренно (ревью 20.09.2026): вызов без него
+   * не компилируется, и это единственная машинная гарантия, что исполнитель доехал
+   * до журнала. Здесь проверяется вторая половина — `null` передан осознанно
+   * (фоновый снос, скрипт), и молчать про удаление всё равно нельзя.
+   */
+  it('records the deletion with a null actor when the caller has none', async () => {
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([]);
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+
+    await service.remove('b1', null);
+
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record.mock.calls[0][1]).toMatchObject({ actorUserId: null });
   });
 });

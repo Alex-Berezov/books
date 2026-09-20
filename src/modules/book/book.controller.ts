@@ -242,8 +242,10 @@ export class BookController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async remove(@Param('id') id: string) {
-    await this.bookService.remove(id);
+  async remove(@Param('id') id: string, @Req() req: { user: RequestUser }) {
+    // Актёр берётся из запроса, а не из тела: журнал должен отвечать «кто»,
+    // а не «кто представился» (`LEGACY-015`, тот же приём, что у `publish`).
+    await this.bookService.remove(id, req.user.userId);
     return { success: true };
   }
 

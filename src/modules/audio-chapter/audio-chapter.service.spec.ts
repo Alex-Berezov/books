@@ -6,6 +6,7 @@ import {
 } from '../../common/testing/clearance-lock-fake';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 
 const createPrismaStub = () => {
   const stub = {
@@ -32,12 +33,14 @@ describe('AudioChapterService clearance lock', () => {
   let prisma: ReturnType<typeof createPrismaStub>;
   let hash: { checkVersionStaleness: jest.Mock };
   let clearanceLock: ClearanceLockFake;
+  let adminAudit: { record: jest.Mock };
   let seen: string[];
   let service: AudioChapterService;
 
   beforeEach(() => {
     prisma = createPrismaStub();
     clearanceLock = createClearanceLockFake(prisma);
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     seen = [];
     const track = (name: string, result: unknown) => (): Promise<unknown> => {
       seen.push(`${name}:${clearanceLock.isLocked() ? 'locked' : 'open'}`);
@@ -52,6 +55,7 @@ describe('AudioChapterService clearance lock', () => {
       hash as unknown as RightsContentHashService,
       { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
       clearanceLock.service,
+      adminAudit as unknown as AdminAuditService,
     );
   });
 
@@ -79,9 +83,35 @@ describe('AudioChapterService clearance lock', () => {
   it('remove', async () => {
     prisma.audioChapter.findUnique.mockResolvedValue({ id: 'a1', bookVersionId: 'v1' });
 
-    await service.remove('a1');
+    await service.remove('a1', 'admin-1');
 
     allUnderOneLock();
+  });
+
+  /**
+   * `LEGACY-015`, пачка `T19`. Проверяется состав события и то, что удаление
+   * по-прежнему идёт под замком группы.
+   *
+   * ⚠️ Момент вызова `adminAudit.record` в `seen` не отслеживается — туда попадают
+   * только операции `prisma` (`write`) и пересчёт свежести (`stale`). Значит переезд
+   * записи журнала за `checkVersionStaleness` этот тест не поймает; комментарий
+   * уточнён по находке круга 2 ревью 20.09.2026, чтобы не обещать проверки,
+   * которой здесь нет.
+   */
+  it('remove пишет AUDIO_CHAPTER_DELETED под замком группы', async () => {
+    prisma.audioChapter.findUnique.mockResolvedValue({ id: 'a1', bookVersionId: 'v1' });
+
+    await service.remove('a1', 'admin-1');
+
+    allUnderOneLock();
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record.mock.calls[0][1]).toEqual({
+      action: 'AUDIO_CHAPTER_DELETED',
+      targetType: 'AUDIO_CHAPTER',
+      targetId: 'a1',
+      actorUserId: 'admin-1',
+      payload: { bookVersionId: 'v1' },
+    });
   });
 
   it('reorder', async () => {

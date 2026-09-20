@@ -101,6 +101,59 @@ export async function lockLicenseSnapshot(
 }
 
 /**
+ * Снимок версии вместе с тем, чем её называет журнал: `id` и язык. Отдельный тип,
+ * а не пересечение по месту, — состав читается одним запросом и уходит в одно событие.
+ */
+export type BookVersionLicenseSnapshot = RightsLicenseSnapshot & {
+  id: string;
+  language: string;
+};
+
+/**
+ * 🔴 `LEGACY-015`, пачка `T19`. То же, что `lockLicenseSnapshot`, но на **все версии
+ * книги сразу** — для удаления книги, которое сносит их каскадом и обязано назвать
+ * в журнале каждую.
+ *
+ * Почему замок, а не обычный `findMany`: между чтением списка и `book.delete` проходит
+ * чужой `publish` и переписывает те же колонки — журнал назвал бы покрытие, которого
+ * на момент удаления уже не было, а настоящее стёр бы каскад (та же причина, что
+ * у одиночного замка выше). Чужое `DELETE /versions/:id` в том же окне записало бы
+ * своё `VERSION_DELETED`, и на тот же объект легла бы вторая строка с `cascade: true` —
+ * по журналу одна версия удалена дважды.
+ *
+ * ⚠️ Замка строки `Book` этим не заменить: он нужен **дополнительно** и раньше, потому
+ * что закрывает встречную **вставку** версии (через `FOR KEY SHARE`, который берёт
+ * проверка внешнего ключа), а `FOR UPDATE` по существующим строкам её не видит —
+ * новой строки ещё нет.
+ *
+ * `ORDER BY "id"` — дисциплина порядка захвата: два удаления книг с пересекающимися
+ * наборами версий встают в очередь, а не в цикл.
+ *
+ * ⚠️ Первым аргументом обязан идти клиент транзакции — по той же причине, что у соседа
+ * выше: `FOR UPDATE` в autocommit отпускает строки сразу после чтения. Типом это
+ * не держится, держится сторожем в `rights-license-snapshot.spec.ts`.
+ */
+export async function lockLicenseSnapshotsByBook(
+  tx: Prisma.TransactionClient,
+  bookId: string,
+): Promise<BookVersionLicenseSnapshot[]> {
+  return tx.$queryRaw<BookVersionLicenseSnapshot[]>`
+    SELECT "id",
+           "language",
+           "status",
+           "publishedAt",
+           "rightsLicenseIds",
+           "rightsLicenseCoverageStatus",
+           "rightsLicenseCheckedAt",
+           "rightsLicenseUncoveredCountryCodes"
+      FROM "BookVersion"
+     WHERE "bookId" = ${bookId}
+     ORDER BY "id"
+       FOR UPDATE
+  `;
+}
+
+/**
  * Значения, которыми снимок гасится. `Prisma.DbNull`, а не `JsonNull`: колонка должна стать
  * тем же SQL NULL, что у никогда не заполнявшихся строк, иначе «не заполняли» и «очистили»
  * разойдутся в фильтрах по Json.

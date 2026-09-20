@@ -20,8 +20,8 @@ import { ModeratorRolesService } from '../../common/roles/moderator-roles.servic
  * ⚠️ Поэтому идентификаторы актёра и цели в фикстурах обязаны различаться (`L-004`):
  * совпади они — подмена перестала бы ронять эти тесты.
  *
- * Тот же приём и та же причина, что у `users.controller.spec.ts`; здесь закрыта вторая
- * пара путей — публикация и снятие с публикации.
+ * Тот же приём и та же причина, что у `users.controller.spec.ts`; здесь закрыты три
+ * пути — публикация, снятие с публикации и удаление версии (последнее — пачка `T19`).
  */
 describe('BookVersionController — актёр журнала берётся из токена', () => {
   const ACTOR_ID = 'admin-actor-1';
@@ -33,6 +33,7 @@ describe('BookVersionController — актёр журнала берётся и�
     const service = {
       publish: jest.fn().mockResolvedValue({ id: VERSION_ID, status: 'published' }),
       unpublish: jest.fn().mockResolvedValue({ id: VERSION_ID, status: 'draft' }),
+      remove: jest.fn().mockResolvedValue({ id: VERSION_ID }),
     };
 
     const controller = new BookVersionController(
@@ -65,5 +66,16 @@ describe('BookVersionController — актёр журнала берётся и�
 
     expect(service.unpublish).toHaveBeenCalledTimes(1);
     expect(service.unpublish).toHaveBeenCalledWith(VERSION_ID, ACTOR_ID);
+  });
+
+  // `T19`: третий путь той же записи — удаление версии. Добавлен сюда, а не отдельным
+  // файлом: контроллер, приём и фикстуры те же.
+  it('remove: актёр берётся из токена, цель — из адреса', async () => {
+    const { controller, service } = makeController();
+
+    await controller.remove(VERSION_ID, request);
+
+    expect(service.remove).toHaveBeenCalledTimes(1);
+    expect(service.remove).toHaveBeenCalledWith(VERSION_ID, ACTOR_ID);
   });
 });

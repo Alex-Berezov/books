@@ -8,6 +8,7 @@ import {
   licenseSnapshotChanged,
   licenseSnapshotPayload,
   lockLicenseSnapshot,
+  lockLicenseSnapshotsByBook,
   type RightsLicenseSnapshot,
 } from './rights-license-snapshot';
 import { SRC_ROOT, listFiles, relativeToSrc } from '../../common/testing/controller-decorators';
@@ -224,6 +225,46 @@ describe('rights-license-snapshot', () => {
     });
 
     /**
+     * `LEGACY-015`, пачка `T19`. Пачечный замок — для удаления книги: каскад сносит
+     * все её версии разом, и журнал обязан назвать каждую с тем снимком, который
+     * был на момент удаления.
+     */
+    it('пачечный замок берёт версии книги одним запросом, с порядком и снимком', async () => {
+      const rows = [
+        { ...snapshot, id: 'v1', language: 'ru' },
+        { ...snapshot, id: 'v2', language: 'en' },
+      ];
+      const queryRaw = jest.fn().mockResolvedValue(rows);
+
+      const result = await lockLicenseSnapshotsByBook(txWith(queryRaw), 'b1');
+
+      expect(result).toEqual(rows);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      const sql = (queryRaw.mock.calls[0][0] as string[]).join('');
+      expect(sql).toContain('FOR UPDATE');
+      expect(sql).toContain('"BookVersion"');
+      expect(sql).toContain('"bookId"');
+      // Журналу нужны и сам объект, и язык — иначе событие не назвать.
+      expect(sql).toContain('"id"');
+      expect(sql).toContain('"language"');
+      // Порядок захвата фиксирован: два удаления с пересекающимися наборами версий
+      // встают в очередь, а не в цикл.
+      expect(sql).toContain('ORDER BY "id"');
+      // Состав снимка — тот же, что у одиночного замка выше.
+      expect(sql).toContain('"rightsLicenseIds"');
+      expect(sql).toContain('"rightsLicenseCoverageStatus"');
+      expect(sql).toContain('"rightsLicenseUncoveredCountryCodes"');
+      // Идентификатор книги уходит параметром, а не склейкой в текст запроса.
+      expect(queryRaw.mock.calls[0][1]).toBe('b1');
+    });
+
+    it('пачечный замок на книге без версий отдаёт пустой список, а не отказ', async () => {
+      const queryRaw = jest.fn().mockResolvedValue([]);
+
+      await expect(lockLicenseSnapshotsByBook(txWith(queryRaw), 'b1')).resolves.toEqual([]);
+    });
+
+    /**
      * Сторож первого аргумента. `Prisma.TransactionClient` структурно принимает корневой
      * `PrismaService`, поэтому `lockLicenseSnapshot(this.prisma, id)` компилируется — а `FOR
      * UPDATE` в autocommit отпускает строку сразу после чтения, и замок пропадает молча.
@@ -235,8 +276,10 @@ describe('rights-license-snapshot', () => {
      * вызова лежат внутри `$transaction`; появится пятый — проверять придётся и то,
      * откуда пришёл сам `tx`.
      */
-    it('во всём src зовётся только с клиентом транзакции', () => {
-      const callRe = /lockLicenseSnapshot\(\s*([A-Za-z_$][\w$.]*)/g;
+    it('оба замка снимка во всём src зовутся только с клиентом транзакции', () => {
+      // Оба замка разом: одиночный и пачечный `…sByBook` (`T19`). Второй завёлся
+      // позже, и регекс без `s?ByBook` его бы не заметил вовсе.
+      const callRe = /lockLicenseSnapshots?(?:ByBook)?\(\s*([A-Za-z_$][\w$.]*)/g;
       const wrong: string[] = [];
 
       for (const file of listFiles(
@@ -247,7 +290,7 @@ describe('rights-license-snapshot', () => {
         for (const [, firstArg] of text.matchAll(callRe)) {
           // Объявление самой функции в модуле под правило не подпадает.
           if (firstArg === 'tx' || firstArg === 'tx:') continue;
-          wrong.push(`${relativeToSrc(file)}: lockLicenseSnapshot(${firstArg}, …)`);
+          wrong.push(`${relativeToSrc(file)}: замок снимка с ${firstArg}`);
         }
       }
 
