@@ -685,15 +685,30 @@ run_migrations() {
 deploy_services() {
     log "Deploying services..."
     
-    cd "$DEPLOY_DIR"
-    
+    # 🔴 `LEGACY-365`. Отказы ниже разводятся СВОИМИ ветками, а не полагаются на `set -e`.
+    # С переносом вызова этой функции в условие (`if deploy_services && verify_deployment`)
+    # `errexit` внутри всего её тела погашен — так устроен bash, и это цена правки, а не
+    # недосмотр. Без явных веток упавший `up -d` проваливался бы прямо в цикл ожидания,
+    # а тот читает здоровье СЛУЖБЫ, не отличая новый контейнер от старого: прежний
+    # контейнер жив и `healthy`, первая же итерация возвращает 0, и `verify_deployment`
+    # (ни одна из пяти его проверок не сверяет `APP_VERSION` с `$IMAGE_TAG`) зеленеет
+    # на старом образе. Выкат печатал бы «✅ Deployment successful» и писал точку
+    # состояния с новым тегом, не выкатив ничего.
+    if ! cd "$DEPLOY_DIR"; then
+        log_error "Deploy directory is not reachable: $DEPLOY_DIR"
+        return 1
+    fi
+
     # The tag the container is started with, so `GET /api/health/liveness` can report which image
     # actually answers and the pipeline can tell "deployed" from "the old container still serves".
     export APP_VERSION="$IMAGE_TAG"
 
     # Starting new services / updating existing ones (avoids downtime and container conflicts)
-    execute "docker compose -f docker-compose.prod.yml up -d"
-    
+    if ! execute "docker compose -f docker-compose.prod.yml up -d"; then
+        log_error "docker compose up -d failed - services were not started with image $IMAGE_TAG"
+        return 1
+    fi
+
     # `LEGACY-359`. Проверка здоровья пропускается ЦЕЛИКОМ, вместе с ожиданием, а не
     # заглушкой внутри цикла. Раньше ветка DRY-RUN стояла в теле цикла и делала `break`:
     # код ниже — `log_error "Service not healthy..."` и `return 1` — не знает, что вышли
@@ -753,8 +768,19 @@ verify_deployment() {
         return 0
     fi
     
-    cd "$DEPLOY_DIR"
-    
+    # 🔴 `LEGACY-365` + `LEGACY-329` (правка одного места обязана грепнуть файл целиком).
+    # Эта функция тоже зовётся из условия (`if deploy_services && verify_deployment`),
+    # то есть `errexit` в её теле погашен — здесь это было так и до правки соседней
+    # функции. Несработавший `cd` без своей ветки уводит все пять проверок ниже в каталог
+    # вызывающего: `docker compose -f docker-compose.prod.yml ps` не находит файла,
+    # `checks_passed` остаётся нулём, и ИСПРАВНЫЙ выкат получает вердикт
+    # «Deployment failed critical checks». По этому тексту оператор подтверждает откат
+    # и меняет только что поднятый здоровый образ на прежний.
+    if ! cd "$DEPLOY_DIR"; then
+        log_error "Deploy directory is not reachable: $DEPLOY_DIR"
+        return 1
+    fi
+
     local checks_passed=0
     local total_checks=5
     local app_container
@@ -950,9 +976,9 @@ perform_rollback() {
     execute "docker tag $rollback_image_id books-app:prod"
     execute "docker tag $rollback_image_id books-app:latest"
 
-    deploy_services
-
-    if verify_deployment; then
+    # `LEGACY-365`. То же место: `deploy_services` в условии вместе с `verify_deployment`,
+    # иначе провал здоровья после самого отката валит скрипт до строки ниже.
+    if deploy_services && verify_deployment; then
     log_success "Rollback successful"
     else
     log_error "Rollback failed checks"
@@ -1060,9 +1086,19 @@ main() {
         update_code
         build_image
         run_migrations
-        deploy_services
-        
-    if verify_deployment; then
+
+    # `LEGACY-365`. `deploy_services` зовётся в условии вместе с `verify_deployment`,
+    # а не голым оператором перед ней: под `set -euo pipefail` её `return 1`
+    # (контейнер не стал healthy) иначе валит скрипт через ERR-trap до этой ветки,
+    # и ветка ниже не выполняется вовсе.
+    #
+    # ⚠️ Кому это на самом деле помогает. Ветка отката закрыта условием
+    # `FORCE == false`, а конвейер зовёт скрипт с `--force` (`deploy.yml:874-880`)
+    # и откатывается отдельным job'ом (`deploy.yml:1335`). Значит выигрыш здесь —
+    # у РУЧНОГО прогона на машине, у которого прикрытия не было вовсе; на пути
+    # конвейера меняется лишь то, что отказ доходит до `exit 1` своей дорогой,
+    # а не через ERR-trap. Ровно так это и описано в теле записи.
+        if deploy_services && verify_deployment; then
             save_deployment_state
             cleanup_old_images
             
@@ -1081,15 +1117,35 @@ main() {
             
             send_notification "SUCCESS" "Image $IMAGE_TAG deployed successfully"
         else
-            log_error "Deployment did not pass verification checks"
-            send_notification "FAILURE" "Image $IMAGE_TAG failed verification checks"
+            # `LEGACY-365`. Причин у этой ветки теперь две, и текст называет обе:
+            # при отказе `deploy_services` короткое замыкание `&&` не даёт
+            # `verify_deployment` выполниться вовсе, и прежняя формулировка
+            # «не прошёл проверки» отправляла бы оператора искать несуществующий
+            # вывод проверок. Настоящая причина — строкой выше, в её собственном
+            # `log_error`.
+            log_error "Deployment failed: services did not come up or verification checks did not pass"
+            send_notification "FAILURE" "Image $IMAGE_TAG failed to deploy"
             
             if [[ "$FORCE" == false ]]; then
-                read -p "Perform automatic rollback? (Y/n): " -n 1 -r
+                # 🔴 `LEGACY-365`. `read` здесь голый, а `errexit` в этой ветке В СИЛЕ
+                # (это тело `else`, а не условие). На EOF — когда stdin не терминал:
+                # `< /dev/null`, `nohup`, `cron`, `ssh -n` — `read` возвращает ненулевой
+                # код, и ERR-trap убивает скрипт РОВНО ПЕРЕД `perform_rollback`. Тот же
+                # класс дефекта, что чинит эта запись, одной строкой ниже починенного
+                # места; правка захода впервые сделала эту ветку достижимой и при провале
+                # `deploy_services`, то есть в сценарии, ради которого запись заведена.
+                #
+                # ⚠️ Умолчание на EOF — НЕ откатываться (решение арбитра 21.09.2026,
+                # `books-app-docs/ai-context/decisions-log.md`). Откат без ответа человека
+                # был бы новым автоматическим действием на живой машине, которого скрипт
+                # не делал никогда; явный путь уже есть — повторный прогон с `--rollback`.
+                read -p "Perform automatic rollback? (Y/n): " -n 1 -r || REPLY=n
                 echo
                 if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
                     perform_rollback
                     send_notification "ROLLBACK" "Automatic rollback performed after failed deployment"
+                else
+                    log_warning "No rollback was performed (declined, or stdin is not a terminal). Re-run with --rollback to roll back."
                 fi
             fi
             

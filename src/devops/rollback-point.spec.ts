@@ -564,3 +564,183 @@ describe('scripts/deploy_production.sh: сухой прогон (LEGACY-359)', (
     expect(branch).toMatch(/return 0/);
   });
 });
+
+/**
+ * Провал здоровья до ветки отката, а не до выхода (`LEGACY-365`).
+ *
+ * Скрипт идёт под `set -euo pipefail` (`set -E` + ERR-trap ниже). `deploy_services`
+ * стоял в `main` и в `perform_rollback` голым оператором перед `if verify_deployment`:
+ * её `return 1` (контейнер не стал healthy за 60 попыток) срабатывал как отказ всего
+ * скрипта раньше, чем выполнялась хоть одна строка ветки, которая спрашивает про
+ * автоматический откат. Прод оставался с неподнявшимся контейнером без единой попытки
+ * вернуться. Правка зовёт `deploy_services` в условии вместе с `verify_deployment`:
+ * её отказ ведёт по той же ветке, что и провал самой проверки.
+ */
+/**
+ * Строка, НАЧИНАЮЩАЯСЯ с имени функции, — всегда возврат дефекта: законный вызов
+ * начинается с `if`, а объявление отсекает `(?!\(\))`. Форма `^\s*deploy_services\s*$`,
+ * стоявшая здесь сначала, ловила только голый вызов и пропускала тот же дефект,
+ * записанный иначе: с хвостом-комментарием, с глушением кода возврата и с отправкой
+ * в фон.
+ */
+const BARE_DEPLOY_CALL = /^[ \t]*deploy_services\b(?!\(\))/m;
+
+describe('scripts/deploy_production.sh: провал здоровья доводит до отката (LEGACY-365)', () => {
+  it('main зовёт deploy_services в условии, а не голым оператором перед verify_deployment', () => {
+    const body = functionBody('main');
+    expect(body.length).toBeGreaterThan(500);
+
+    // Возврат дефекта: `deploy_services` как отдельная команда на своей строке —
+    // её отказ снова сработает как отказ всего скрипта до любой ветки ниже.
+    // ⚠️ Форма `\s*$` ловила только голый вызов и пропускала тот же дефект с хвостом:
+    // комментарием, глушением кода возврата, отправкой в фон. Общая форма —
+    // `BARE_DEPLOY_CALL`. Законный вызов начинается с `if`, объявление — с имени и скобок,
+    // поэтому строка, НАЧИНАЮЩАЯСЯ с имени функции, всегда возврат дефекта.
+    expect(body).not.toMatch(BARE_DEPLOY_CALL);
+
+    const guard = body.indexOf('if deploy_services && verify_deployment; then');
+    expect(guard).toBeGreaterThanOrEqual(0);
+
+    // Ветка отказа обязана остаться той же самой: провал `deploy_services` идёт
+    // туда же, куда и провал `verify_deployment` — к предложению автооткатa.
+    // ⚠️ Границу ветки по первому `fi` не ищем: успешная ветка внутри несёт свой
+    // вложенный `if [[ -n "$VERSION" ... ]]; then ... fi`, и его закрывающий `fi`
+    // стоит раньше настоящего конца — обрезка по нему теряла бы ветку отказа целиком.
+    const tail = body.slice(guard);
+
+    // 🔴 Текст ветки обязан называть обе причины. При отказе `deploy_services`
+    // короткое замыкание `&&` не даёт `verify_deployment` выполниться вовсе,
+    // и прежнее «did not pass verification checks» посылало бы оператора искать
+    // вывод проверок, которых не было.
+    const errorMsg = tail.indexOf('services did not come up or verification checks did not pass');
+    expect(errorMsg).toBeGreaterThan(0);
+    const rollbackCall = tail.indexOf('perform_rollback', errorMsg);
+    expect(rollbackCall).toBeGreaterThan(errorMsg);
+  });
+
+  it('perform_rollback зовёт deploy_services в условии на откате самого отката', () => {
+    const rollback = functionBody('perform_rollback');
+    expect(rollback.length).toBeGreaterThan(100);
+
+    expect(rollback).not.toMatch(BARE_DEPLOY_CALL);
+
+    const guard = rollback.indexOf('if deploy_services && verify_deployment; then');
+    expect(guard).toBeGreaterThanOrEqual(0);
+
+    const endOfIf = rollback.slice(guard).search(/\n\s*fi\b/);
+    expect(endOfIf).toBeGreaterThan(0);
+    const branch = rollback.slice(guard, guard + endOfIf);
+    expect(branch).toContain('Rollback successful');
+  });
+
+  /**
+   * 🔴 `LEGACY-329`: приём проверяется по файлу целиком, а не в двух известных телах.
+   * Третий вызов `deploy_services`, заведённый завтра в новой функции, вернул бы дефект
+   * ровно в той же форме — а обе проверки выше остались бы зелёными, потому что смотрят
+   * только в `main` и `perform_rollback`.
+   */
+  it('голого вызова deploy_services нет нигде в скрипте', () => {
+    const code = LINES.filter((line) => !/^\s*#/.test(line)).join('\n');
+    expect(code).not.toMatch(BARE_DEPLOY_CALL);
+
+    // Страховка от «проверено ноль строк»: объявление функции обязано найтись.
+    expect(code).toMatch(/^deploy_services\(\)/m);
+  });
+
+  /**
+   * 🔴 Цена самой правки, и её обязан держать тест. Вызов функции в условии гасит
+   * `errexit` внутри всего её тела: отказ `cd` или `docker compose up -d` перестаёт
+   * валить скрипт сам собой. Без своих веток упавший `up -d` проваливался бы в цикл
+   * ожидания, а тот читает здоровье СЛУЖБЫ и не отличает новый контейнер от старого —
+   * живой прежний контейнер отвечает `healthy` на первой же итерации, `verify_deployment`
+   * зеленеет на старом образе (ни одна из его пяти проверок не сверяет `APP_VERSION`
+   * с `$IMAGE_TAG`), и выкат печатает «Deployment successful», не выкатив ничего.
+   * Это хуже прежнего дефекта: тот хотя бы отказывал громко.
+   */
+  it('deploy_services разводит свои отказы ветками, а не полагается на set -e', () => {
+    const deploy = functionBody('deploy_services');
+    expect(deploy.length).toBeGreaterThan(200);
+
+    for (const [guardText, anchor] of [
+      ['if ! cd "$DEPLOY_DIR"; then', 'Deploy directory is not reachable'],
+      ['if ! execute "docker compose -f docker-compose.prod.yml up -d"; then', 'up -d failed'],
+    ] as const) {
+      const guard = deploy.indexOf(guardText);
+      expect(guard).toBeGreaterThanOrEqual(0);
+
+      const endOfIf = deploy.slice(guard).search(/\n\s*fi\b/);
+      expect(endOfIf).toBeGreaterThan(0);
+      const branch = deploy.slice(guard, guard + endOfIf);
+      expect(branch).toContain('log_error');
+      expect(branch).toContain(anchor);
+      expect(branch).toMatch(/return 1/);
+    }
+
+    // 🔴 Возврат голой формы — это возврат ложного успеха, а не косметика.
+    expect(deploy).not.toMatch(/^\s*cd "\$DEPLOY_DIR"\s*$/m);
+    expect(deploy).not.toMatch(
+      /^\s*execute "docker compose -f docker-compose\.prod\.yml up -d"\s*$/m,
+    );
+  });
+
+  /**
+   * 🔴 Второе место того же класса, и оно обязано быть закрыто вместе с первым
+   * (`LEGACY-329`: правка, снимающая приём в одном месте файла, грепает файл целиком).
+   * `verify_deployment` тоже зовётся из условия, то есть `errexit` в её теле погашен —
+   * здесь так было и до правки соседней функции. Несработавший `cd` уводит все пять
+   * проверок в каталог вызывающего, `checks_passed` остаётся нулём, и ИСПРАВНЫЙ выкат
+   * получает «Deployment failed critical checks» — по этому тексту оператор подтверждает
+   * откат здорового образа.
+   * Решение арбитра 21.09.2026, `books-app-docs/ai-context/decisions-log.md`.
+   */
+  it('verify_deployment разводит отказ cd своей веткой', () => {
+    const verify = functionBody('verify_deployment');
+    expect(verify.length).toBeGreaterThan(200);
+
+    const guard = verify.indexOf('if ! cd "$DEPLOY_DIR"; then');
+    expect(guard).toBeGreaterThanOrEqual(0);
+
+    const endOfIf = verify.slice(guard).search(/\n\s*fi\b/);
+    expect(endOfIf).toBeGreaterThan(0);
+    const branch = verify.slice(guard, guard + endOfIf);
+    expect(branch).toContain('log_error');
+    expect(branch).toMatch(/return 1/);
+
+    expect(verify).not.toMatch(/^\s*cd "\$DEPLOY_DIR"\s*$/m);
+
+    // Ветка обязана стоять ДО первой из пяти проверок, иначе она ничего не решает.
+    const firstCheck = verify.indexOf('Containers running');
+    expect(firstCheck).toBeGreaterThan(guard);
+  });
+
+  /**
+   * 🔴 Последний рубеж той же беды. `read -p` в ветке предложения отката стоит голым,
+   * а `errexit` здесь В СИЛЕ: это тело `else`, а не условие. На EOF — stdin не терминал
+   * (`< /dev/null`, `nohup`, `cron`, `ssh -n`) — `read` возвращает ненулевой код,
+   * и ERR-trap убивает скрипт РОВНО ПЕРЕД `perform_rollback`, то есть ровно тем способом,
+   * который эта запись и чинит, одной строкой ниже починенного места.
+   *
+   * ⚠️ Умолчание на EOF — НЕ откатываться (решение арбитра 21.09.2026,
+   * `books-app-docs/ai-context/decisions-log.md`): молчаливый откат был бы новым
+   * автоматическим действием на живой машине. Поэтому тест держит и `|| REPLY=n`,
+   * и то, что при отказе человек слышит про `--rollback`, а не остаётся в тишине.
+   */
+  it('предложение отката переживает stdin без терминала', () => {
+    const body = functionBody('main');
+
+    const readLine = body.split('\n').find((line) => line.includes('Perform automatic rollback?'));
+    expect(readLine).toBeDefined();
+
+    // 🔴 Возврат голой формы — возврат смерти скрипта перед самым откатом.
+    expect(readLine).toMatch(/\|\|\s*REPLY=n\s*$/);
+
+    // Умолчание на EOF обязано быть «не откатывать»: `REPLY=n` не проходит ни ветку
+    // `^[Yy]$`, ни ветку пустого ответа.
+    expect(body).toMatch(/if \[\[ \$REPLY =~ \^\[Yy\]\$ \]\] \|\| \[\[ -z \$REPLY \]\]; then/);
+
+    // И молчания быть не должно: человек обязан узнать, что отката не было и чем его позвать.
+    const declined = body.indexOf('No rollback was performed');
+    expect(declined).toBeGreaterThan(0);
+    expect(body.slice(declined)).toContain('--rollback');
+  });
+});
