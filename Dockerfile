@@ -8,6 +8,37 @@ RUN yarn install
 COPY . .
 RUN yarn prisma:generate || echo "Prisma generate failed, continuing..."
 RUN yarn build
+# LEGACY-100. Чистка мёртвого веса стоит здесь, в builder-стадии, а НЕ в runner после
+# `COPY --from=builder /app/node_modules`. Удаление отдельным слоем поверх готового COPY
+# веса не снимает вовсе: файлы остаются лежать в нижнем слое, а `RUN rm` кладёт сверху
+# только whiteout-записи, и размер образа (сумма слоёв) от этого не падает, а растёт.
+# Снять вес можно, только если `COPY --from=builder` копирует уже урезанное дерево.
+#
+# Что удаляется и почему это безопасно:
+# - `@prisma/client/runtime` несёт wasm-компиляторы под все провайдеры Prisma сразу,
+#   а схема объявляет только postgresql (`prisma/schema.prisma:2`), доступ идёт через
+#   `PrismaPg` (`@prisma/adapter-pg`), сгенерированный клиент лежит в
+#   `node_modules/.prisma/client` со своим компилятором и имён чужих провайдеров
+#   не содержит. Проверено живым запросом к локальному Postgres при убранных файлах:
+#   `$queryRaw SELECT 1` и `user.count()` отвечают как обычно;
+# - `@swc/cli` и `@swc/core` не упоминаются больше нигде в репозитории (сборка идёт
+#   `nest build --webpack`), и удаляются уже ПОСЛЕ `yarn build`. Проверено: без них
+#   грузится и CLI prisma, и `dist/main.js`.
+#
+# 🔴 Чего здесь быть не должно, сколько бы оно ни весило:
+# - `@prisma/studio-core` и `@prisma/dev` - их `require` стоит в бандле CLI
+#   (`node_modules/prisma/build/index.js`) на верхнем уровне, а не в ветке команд
+#   `prisma studio`/`prisma dev`. Без них падает ЛЮБОЙ вызов `prisma`, включая
+#   `migrate deploy` из `scripts/docker-entrypoint.sh` - и падает молча, потому что
+#   entrypoint глушит его `|| echo`: контейнер поднимется без применённых миграций.
+#   Проверено воспроизведением: `Cannot find module '@prisma/studio-core/data/bff'`;
+# - `typescript` и `ts-node` - их требует `prisma db seed` (`LEGACY-294`).
+# Сторож на оба случая - `src/devops/dockerfiles.spec.ts`, он сверяет цели чистки
+# с графом `require` бандла CLI, а не с текстом этого комментария.
+RUN find node_modules/@prisma/client/runtime -type f \
+      \( -name '*.cockroachdb.*' -o -name '*.mysql.*' -o -name '*.sqlite.*' -o -name '*.sqlserver.*' \) \
+      -delete \
+  && rm -rf node_modules/@swc
 
 FROM node:22-alpine AS runner
 ENV NODE_ENV=production
@@ -17,16 +48,23 @@ COPY package.json yarn.lock ./
 # The build failed because `yarn.lock` is out of sync with `package.json`, causing
 # Yarn to request a lockfile update which `--frozen-lockfile` forbids.
 # For a fast unblock in prod we copy the already installed modules from the builder stage.
-# This includes devDependencies; later we can optimize by pruning to production-only.
+# This includes devDependencies.
+#
+# 🔴 Урезание до production-only здесь не годится (LEGACY-100, проверено и отвергнуто):
+# `prisma db seed` зовёт `ts-node ./prisma/seed.ts` (LEGACY-294), а ts-node требует
+# `typescript` рядом как peer-зависимость - обе лежат в devDependencies. Урезание
+# соберёт образ и запустит `dist/main.js` без единой ошибки, а сид молча упадёт
+# только в конвейере фронта, который его зовёт. Это стережёт
+# `src/devops/dockerfiles.spec.ts` ("не урезает зависимости до production").
+# Мёртвый вес снимается в builder-стадии, до этого COPY, а не после него - см. там же,
+# почему удаление поверх готового слоя веса не снимает.
 	RUN apk add --no-cache bash openssl
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-# Prisma runtime bits
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-# Prisma CLI for migrate deploy (copied from builder where it was installed)
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
+# LEGACY-100: node_modules скопирован целиком строкой выше - @prisma, .prisma
+# и prisma/.bin/prisma уже внутри него. Точечные COPY тех же путей поверх состава
+# не меняли, а клали второй слой с теми же файлами: один только дубль `.prisma`
+# весил 22.9 МБ (`docker history`).
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 # Две строки ниже нужны не сборке, а `prisma db seed` внутри контейнера — с 02.09.2026
