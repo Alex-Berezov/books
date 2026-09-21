@@ -163,7 +163,7 @@ describe('LEGACY-032: оснастка копирования знает оба 
     it('зовёт проверку прав отдельно от проверки загрузок', () => {
       expect(TEST_BACKUP).toContain('check_rights_files_backups()');
       expect(TEST_BACKUP).toMatch(/check_rights_files_backups\s*$/m);
-      expect(TEST_BACKUP).toContain(`bibliaris-prod-${RIGHTS_SLUG}`);
+      expect(TEST_BACKUP).toContain(`\${BACKUP_PREFIX}-${RIGHTS_SLUG}`);
     });
 
     it('не краснеет на законно пустом хранилище', () => {
@@ -176,7 +176,7 @@ describe('LEGACY-032: оснастка копирования знает оба 
 
   describe('оснастка машины знает про второй том', () => {
     it('check_backup_status.sh видит архив прав в проверке свежести', () => {
-      expect(CHECK_STATUS).toContain(`bibliaris-prod-${RIGHTS_SLUG}-*.tar.gz`);
+      expect(CHECK_STATUS).toContain(`\${BACKUP_PREFIX}-${RIGHTS_SLUG}-*.tar.gz`);
     });
 
     it('оба скрипта подготовки сервера создают каталог хранилища', () => {
@@ -189,6 +189,128 @@ describe('LEGACY-032: оснастка копирования знает оба 
       // поэтому дописанная руками строка в нём не живёт.
       expect(SETUP_CRON).toContain('INCLUDE_RIGHTS_FILES=');
       expect(SETUP_CRON).toContain('RIGHTS_FILES_DIR=');
+    });
+  });
+
+  /**
+   * LEGACY-032/T26: четыре дефекта, внесённые самой правкой T24 (`books@f8643bd`,
+   * тег `v1.0.110`) и уехавшие на прод раньше, чем их нашло ревью. Разбор -
+   * `decisions-log.md`, строка `T26`, `work-queue.md`, строка `T26`.
+   */
+  describe('T26: провал восстановления файлового хранилища доезжает до кода возврата', () => {
+    it('после провала обоих store restore код возврата ненулевой даже при целой базе', () => {
+      // Раньше `store_restore_failed` выставлялся, логировался строкой предупреждения -
+      // и терялся: "Restore completed successfully" и код 0 уходили при провале
+      // восстановления юридических файлов. Симметрично backup_database.sh:912.
+      // Привязка к ветке УСПЕХА обязательна: перенос того же блока в `else` вернул бы
+      // дефект целиком (целая база плюс провал хранилища снова дают код 0), а проверка
+      // «где-то ниже по файлу» осталась бы зелёной. Поэтому между `if verify_restore`
+      // и блоком не допускается ни одного `else`.
+      expect(RESTORE).toMatch(
+        /if verify_restore; then\n(?:(?!\s*else\b)[^\n]*\n)*?\s*if \[\[ "\$store_restore_failed" == "true" \]\]; then\n\s*log_error[^\n]*\n\s*exit 1/,
+      );
+    });
+  });
+
+  describe('T26: Docker-ветка restore разбирает раскладку архива хостовой ветки', () => {
+    it('не распаковывает архив вслепую по фиксированному -C /data', () => {
+      // Архив хостовой ветки бэкапа лежит внутри `<store>/file`, Docker-ветка бэкапа -
+      // внутри `./file`. Слепой `tar -xzf ... -C /data` кладёт хостовой архив на уровень
+      // глубже (`/data/<store>/...`), tar возвращает 0, и восстановление отчитывается
+      // успешным, хотя ожидаемых путей в томе нет.
+      expect(RESTORE).toMatch(/NEEDS_FLATTEN=\$\{archive_has_top_dir\}/);
+      expect(RESTORE).toMatch(/cp -a "\/data\/\$STORE_ROOT\/\." \/data\//);
+      expect(RESTORE).toMatch(/rm -rf "\/data\/\$STORE_ROOT"/);
+    });
+
+    it('определяет раскладку по первой записи архива, а не по имени файла', () => {
+      expect(RESTORE).toMatch(
+        /first_entry=\$\(tar -tzf "\$store_backup" 2>\/dev\/null \| sed -n '1p'\)/,
+      );
+    });
+
+    it('решает про верхний каталог ОДИН раз, до ветвления на Docker и хост', () => {
+      // Две копии одного решения - это тот же дефект через год: обе прошлые правки этого
+      // места легли только в хостовую ветку. Обе ветки обязаны читать один флаг.
+      const decisions = RESTORE.match(/archive_has_top_dir=0/g) ?? [];
+      expect(decisions).toHaveLength(1);
+      expect(RESTORE).toMatch(/NEEDS_FLATTEN=\$\{archive_has_top_dir\}/);
+      expect(RESTORE).toMatch(/if \[\[ "\$archive_has_top_dir" == "1" \]\]; then/);
+    });
+
+    it('передаёт имя архива в контейнер через -e, а не склейкой в текст sh -c', () => {
+      // Имя копии приходит позиционным аргументом main: пробел, скобка или апостроф
+      // в нём разорвали бы одинарную кавычку `sh -c`, stderr погашен, и ветка молча
+      // ушла бы в хостовый откат с рапортом об успехе при нетронутом томе.
+      expect(RESTORE).toMatch(/-e "ARCHIVE_NAME=\$\(basename "\$store_backup"\)"/);
+      expect(RESTORE).toMatch(/tar -xzf "\/backup\/\$ARCHIVE_NAME" -C \/data/);
+    });
+  });
+
+  describe('T26: проверки держат настраиваемый BACKUP_PREFIX, а не литерал', () => {
+    it('restore_database.sh выбирает список и дамп по BACKUP_PREFIX', () => {
+      expect(RESTORE).toContain('BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"');
+      expect(RESTORE).toMatch(
+        /find "\$dir" \\\( -name "\$\{BACKUP_PREFIX\}-\*\.sql\*" -o -name "\$\{BACKUP_PREFIX\}-\*\.dump" \\\)/,
+      );
+      expect(RESTORE).not.toMatch(
+        /-name "bibliaris-prod-\*\.sql\*" -o -name "bibliaris-prod-\*\.dump"/,
+      );
+    });
+
+    it('test_backup.sh зовёт проверку хранилищ с BACKUP_PREFIX', () => {
+      expect(TEST_BACKUP).toContain('BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"');
+      expect(TEST_BACKUP).toMatch(/check_file_store_backups "\$\{BACKUP_PREFIX\}-uploads"/);
+      expect(TEST_BACKUP).toMatch(/check_file_store_backups "\$\{BACKUP_PREFIX\}-rights-files"/);
+    });
+
+    it('check_backup_status.sh считает свежесть и размер по BACKUP_PREFIX', () => {
+      expect(CHECK_STATUS).toContain('BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"');
+      // Оба места проверяются ПОИМЕННО. Один шаблон дампа встречается в файле дважды -
+      // в вызове свежести и в поиске файла для проверки размера; регулярка без привязки
+      // к своей строке зеленела бы, когда литерал вернулся ровно в одно из двух.
+      expect(CHECK_STATUS).toMatch(
+        /check_store_freshness "Database" "true" "fail" \\\( -name "\$\{BACKUP_PREFIX\}-\*\.dump" -o -name "\$\{BACKUP_PREFIX\}-\*\.sql\*" \\\)/,
+      );
+      expect(CHECK_STATUS).toMatch(
+        /latest_db=\$\(find "\$BACKUP_DIR" \\\( -name "\$\{BACKUP_PREFIX\}-\*\.dump" -o -name "\$\{BACKUP_PREFIX\}-\*\.sql\*" \\\)/,
+      );
+      expect(CHECK_STATUS).not.toContain('bibliaris-prod-');
+    });
+  });
+
+  describe('T26: свежесть каждого хранилища проверяется отдельно', () => {
+    it('провал дампа базы не тонет в свежести архива прав', () => {
+      // Один `find` по объединению всех шаблонов маскировал провал: свежий (возможно
+      // пустой) архив прав удовлетворял порогу 36 часов при устаревшем или отсутствующем
+      // дампе базы. Три раздельных вызова - три независимых исхода.
+      expect(CHECK_STATUS).toContain('check_store_freshness()');
+      expect(CHECK_STATUS).toMatch(/check_store_freshness "Database" "true" "fail"/);
+      expect(CHECK_STATUS).toMatch(
+        /check_store_freshness "Uploads" "\$\{INCLUDE_UPLOADS:-true\}" "warn"/,
+      );
+      expect(CHECK_STATUS).toMatch(
+        /check_store_freshness "Rights files" "\$\{INCLUDE_RIGHTS_FILES:-true\}" "warn"/,
+      );
+      expect(CHECK_STATUS).not.toMatch(/latest_local=\$\(find "\$BACKUP_DIR" \\\(/);
+    });
+
+    it('законно пустое файловое хранилище не краснит проверку', () => {
+      // Записанное решение LEGACY-032: при STORAGE_DRIVER=r2 том пуст, архива нет вовсе,
+      // и `fail` красил бы исправную машину каждую ночь. У дампа базы законной причины
+      // отсутствовать нет - он единственный остаётся `fail`.
+      expect(CHECK_STATUS).toMatch(/check "No \$label backups found" "\$missing_verdict"/);
+      expect(CHECK_STATUS).not.toMatch(/check "No \$label backups found" "fail"/);
+    });
+
+    it('не берёт первую строку через head под set -euo pipefail', () => {
+      // head закрывает трубу, sort получает SIGPIPE и выходит с 141; под pipefail это
+      // роняет весь скрипт прямо на присваивании - молча и до всех оставшихся проверок.
+      // Срабатывает на накопленной ротации, то есть на проде, а не на стенде.
+      expect(CHECK_STATUS).toContain('set -euo pipefail');
+      expect(CHECK_STATUS).not.toMatch(/\| head -1/);
+      const firstLinePicks = CHECK_STATUS.match(/sort -rn \| sed -n '1p'/g) ?? [];
+      expect(firstLinePicks).toHaveLength(2);
     });
   });
 });

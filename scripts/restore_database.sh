@@ -164,7 +164,7 @@ list_available_backups() {
         if [[ -d "$dir" ]]; then
             while IFS= read -r -d '' file; do
                 backups+=("$file")
-            done < <(find "$dir" \( -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-*.dump" \) -type f -print0 | sort -z 2>/dev/null)
+            done < <(find "$dir" \( -name "${BACKUP_PREFIX}-*.sql*" -o -name "${BACKUP_PREFIX}-*.dump" \) -type f -print0 | sort -z 2>/dev/null)
         fi
     done
     
@@ -561,6 +561,29 @@ restore_file_store() {
 
     local restore_ok=false
 
+    # Раскладка архива решается ОДИН раз, до ветвления, и обе ветки применяют её по-своему.
+    #
+    # 🔴 Раскладка зависит от того, чем архив снят, и распаковывать оба вида одинаково нельзя.
+    # Docker-ветка бэкапа пишет `-C /data .` - внутри `./file`, без верхнего каталога.
+    # Хостовая пишет `-C dirname basename` - внутри `<store>/file`. Хостовой архив, вслепую
+    # распакованный в том, ложится на уровень глубже (`/data/<store>/...`), tar возвращает 0,
+    # и восстановление отчитывается успешным при пустом по нужным путям томе. Docker-архив,
+    # распакованный «как хостовый», рассыпал бы юридические документы прямо в родительский
+    # каталог (`/opt/books/`) - с тем же нулевым кодом.
+    #
+    # 🔴 Первую запись листинга нельзя брать через `| head -1`: head закрывает трубу,
+    # tar получает SIGPIPE и выходит с 141, а под pipefail это делает ненулевым весь
+    # конвейер - ветка «архив хостовой» не выбиралась бы даже при совпадении имени.
+    # На коротком листинге как повезёт, на сотне файлов - всегда, то есть на стенде
+    # из условия приёмки дефект не воспроизводится. `sed -n 1p` дочитывает поток
+    # до конца и трубу не закрывает.
+    local first_entry store_root archive_has_top_dir=0
+    first_entry=$(tar -tzf "$store_backup" 2>/dev/null | sed -n '1p') || first_entry=""
+    store_root=$(basename "$host_dir")
+    if [[ "$first_entry" == "${store_root}/"* || "$first_entry" == "./${store_root}/"* ]]; then
+        archive_has_top_dir=1
+    fi
+
     if [[ "$USE_DOCKER" == "true" ]]; then
         # Docker mode: restore to named volume
         local volume_name
@@ -579,9 +602,32 @@ restore_file_store() {
                 log_warning "Could not snapshot current ${store_label} before restore"
             fi
 
-            # Restore from backup file into volume
-            if docker run --rm -v "${volume_name}:/data" -v "$(dirname "$store_backup"):/backup" alpine \
-                tar -xzf "/backup/$(basename "$store_backup")" -C /data 2>/dev/null; then
+            # Restore from backup file into volume: содержимое хранилища обязано лечь
+            # в корень тома, поэтому верхний каталог хостового архива снимается после
+            # распаковки. Решение о нём принято выше, до ветвления.
+            #
+            # 🔴 Все три значения уезжают в контейнер через `-e`, а не склейкой в текст
+            # скрипта. Имя копии приходит позиционным аргументом `main` и может содержать
+            # пробел, скобку или апостроф: вклеенное в одинарные кавычки, оно разорвало бы
+            # `sh -c`, а погашенный stderr увёл бы ветку в молчаливый хостовый откат
+            # с рапортом «restored to host path» при нетронутом томе.
+            if docker run --rm \
+                -e "STORE_ROOT=${store_root}" \
+                -e "NEEDS_FLATTEN=${archive_has_top_dir}" \
+                -e "ARCHIVE_NAME=$(basename "$store_backup")" \
+                -v "${volume_name}:/data" -v "$(dirname "$store_backup"):/backup" alpine sh -c '
+                    set -e
+                    tar -xzf "/backup/$ARCHIVE_NAME" -C /data
+                    if [ "$NEEDS_FLATTEN" = "1" ] && [ -d "/data/$STORE_ROOT" ]; then
+                        cp -a "/data/$STORE_ROOT/." /data/
+                        rm -rf "/data/$STORE_ROOT"
+                    fi
+                '; then
+                # 🔴 stderr контейнера НЕ гасится. Распаковка в том стала многошаговой
+                # (tar, затем снятие верхнего каталога), и отказ на середине оставляет том
+                # в смешанном состоянии. С `2>/dev/null` причина уходила в никуда, а ветка
+                # молча сваливалась в хостовый откат и рапортовала успех: в журнале
+                # оставалось только «restore failed» без единого слова о том, что случилось.
                 restore_ok=true
                 log_success "${store_label} restored to Docker volume $volume_name"
             fi
@@ -600,25 +646,10 @@ restore_file_store() {
             log_info "Current ${store_label} saved to: $backup_current"
         fi
 
-        # Restore.
-        #
-        # 🔴 Раскладка архива зависит от того, чем он снят, и распаковывать их одинаково
-        # нельзя. Docker-ветка бэкапа пишет `-C /data .` - внутри `./file`, без верхнего
-        # каталога. Хостовая пишет `-C dirname basename` - внутри `<store>/file`.
-        # Docker-архив, распакованный «как хостовый», рассыпал бы юридические документы
-        # прямо в родительский каталог (`/opt/books/`), tar вернул бы 0, и скрипт
-        # отчитался бы об успешном восстановлении.
+        # Restore. Решение о верхнем каталоге принято выше, до ветвления, и здесь оно
+        # применяется выбором каталога распаковки, а не снятием каталога после неё.
         local extract_target extract_status=0
-        # 🔴 Первую запись листинга нельзя брать через `| head -1`: head закрывает трубу,
-        # tar получает SIGPIPE и выходит с 141, а под pipefail это делает ненулевым весь
-        # конвейер - ветка «архив хостовой» не выбиралась бы даже при совпадении имени.
-        # На коротком листинге как повезёт, на сотне файлов - всегда, то есть на стенде
-        # из условия приёмки дефект не воспроизводится. `sed -n 1p` дочитывает поток
-        # до конца и трубу не закрывает.
-        local first_entry store_root
-        first_entry=$(tar -tzf "$store_backup" 2>/dev/null | sed -n '1p') || first_entry=""
-        store_root=$(basename "$host_dir")
-        if [[ "$first_entry" == "${store_root}/"* || "$first_entry" == "./${store_root}/"* ]]; then
+        if [[ "$archive_has_top_dir" == "1" ]]; then
             extract_target="$(dirname "$host_dir")"
         else
             # Архив снят из тома: его содержимое - это содержимое самого хранилища.
@@ -750,9 +781,17 @@ main() {
     if [[ "$store_restore_failed" == "true" ]]; then
         log_error "File store restore failed - see messages above"
     fi
-    
+
     # Integrity verification
     if verify_restore; then
+        # 🔴 Симметрично backup_database.sh:912: отказ файлового хранилища доезжает до кода
+        # возврата. Без этой проверки `store_restore_failed` выставлялся, логировался строкой
+        # выше и терялся - "Restore completed successfully" и код 0 уходили при провале
+        # восстановления юридических файлов, а бэкап той же ситуации отвечает `exit 1`.
+        if [[ "$store_restore_failed" == "true" ]]; then
+            log_error "=== Restore completed with file store FAILURES ==="
+            exit 1
+        fi
         log_success "=== Restore completed successfully ==="
     else
         log_error "=== Restore completed with errors ==="

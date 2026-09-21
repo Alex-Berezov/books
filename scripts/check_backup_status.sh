@@ -30,6 +30,7 @@ fi
 
 PASS=0; FAIL=0; WARN=0
 BACKUP_DIR="${BACKUP_DIR:-/opt/books/backups}"
+BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"
 MIN_BACKUP_SIZE_MB="${MIN_BACKUP_SIZE_MB:-1}"
 
 check() {
@@ -58,26 +59,56 @@ else
   check "Backend container NOT running" "fail"
 fi
 
-# 3. Last local backup freshness (≤ 36 hours)
+# 3. Last local backup freshness (≤ 36 hours), per store
 log_info "Checking local backup freshness..."
-# LEGACY-032: архив второго файлового хранилища (юридические файлы прав) входит в список
-# наравне с остальными - иначе свежесть считается по копиям, среди которых его никогда нет.
-latest_local=$(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.dump" -o -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-uploads-*.tar.gz" -o -name "bibliaris-prod-rights-files-*.tar.gz" \) -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-if [[ -n "$latest_local" ]]; then
-  local_age=$(( ($(date +%s) - $(stat -c %Y "$latest_local")) / 3600 ))
-  if [[ $local_age -le 36 ]]; then
-    check "Local backup fresh: $(basename "$latest_local") (${local_age}h old)" "pass"
-  else
-    check "Local backup stale: $(basename "$latest_local") (${local_age}h > 36h)" "fail"
+# 🔴 LEGACY-032/T26: свежесть считалась по объединению всех архивов одним find - свежий
+# (возможно пустой) архив прав удовлетворял порогу 36 часов при устаревшем или отсутствующем
+# дампе базы. Каждое хранилище проверяется отдельно, иначе провал одного тонет в свежести
+# другого.
+#
+# $1 - метка, $2 - выключатель хранилища, $3 - исход при отсутствии архивов
+# (`fail` для дампа базы, `warn` для файловых хранилищ), дальше - аргументы find.
+#
+# 🔴 Отсутствие архива файлового хранилища - НЕ отказ, и это записанное решение
+# LEGACY-032, а не смягчение проверки: при `STORAGE_DRIVER=r2` том законно пуст,
+# `backup_database.sh:411` печатает `No files to backup` и выходит нулём, архива нет
+# вовсе. `fail` здесь красил бы исправную машину каждую ночь, а дежурный, привыкший
+# к ложной тревоге, пропустил бы настоящую - ровно то, ради чего разделение и делалось.
+# Соседний `test_backup.sh:373` на тех же данных даёт `warn_test`. Дамп базы исключение:
+# законной причины не быть у него нет.
+check_store_freshness() {
+  local label="$1" enabled="$2" missing_verdict="$3"; shift 3
+  if [[ "$enabled" != "true" ]]; then
+    check "$label backup check skipped (store disabled)" "warn"
+    return
   fi
-else
-  check "No local backups found" "fail"
-fi
+  local latest
+  # 🔴 `sed -n 1p` вместо `head -1`: head закрывает трубу, sort получает SIGPIPE и выходит
+  # с 141, а под `set -euo pipefail` это роняет весь скрипт на месте присваивания - молча,
+  # до всех оставшихся проверок. Срабатывает на длинном листинге, то есть на проде
+  # с накопленной ротацией, а не на стенде. Тот же приём уже применён
+  # в `restore_database.sh` по той же причине.
+  latest=$(find "$BACKUP_DIR" "$@" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '1p' | cut -d' ' -f2-)
+  if [[ -n "$latest" ]]; then
+    local age=$(( ($(date +%s) - $(stat -c %Y "$latest")) / 3600 ))
+    if [[ $age -le 36 ]]; then
+      check "$label backup fresh: $(basename "$latest") (${age}h old)" "pass"
+    else
+      check "$label backup stale: $(basename "$latest") (${age}h > 36h)" "fail"
+    fi
+  else
+    check "No $label backups found" "$missing_verdict"
+  fi
+}
+
+check_store_freshness "Database" "true" "fail" \( -name "${BACKUP_PREFIX}-*.dump" -o -name "${BACKUP_PREFIX}-*.sql*" \)
+check_store_freshness "Uploads" "${INCLUDE_UPLOADS:-true}" "warn" -name "${BACKUP_PREFIX}-uploads-*.tar.gz"
+check_store_freshness "Rights files" "${INCLUDE_RIGHTS_FILES:-true}" "warn" -name "${BACKUP_PREFIX}-rights-files-*.tar.gz"
 
 # 4. Last local backup size
 log_info "Checking local backup size..."
 min_bytes=$(( MIN_BACKUP_SIZE_MB * 1024 * 1024 ))
-latest_db=$(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.dump" -o -name "bibliaris-prod-*.sql*" \) -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+latest_db=$(find "$BACKUP_DIR" \( -name "${BACKUP_PREFIX}-*.dump" -o -name "${BACKUP_PREFIX}-*.sql*" \) -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '1p' | cut -d' ' -f2-)
 if [[ -n "$latest_db" ]]; then
   size=$(stat -c %s "$latest_db" 2>/dev/null || echo 0)
   size_mb=$(( size / 1024 / 1024 ))

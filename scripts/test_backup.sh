@@ -40,6 +40,7 @@ fi
 
 # Configuration
 BACKUP_DIR="${BACKUP_DIR:-/opt/books/backups}"
+BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"
 MIN_BACKUP_SIZE_MB="${MIN_BACKUP_SIZE_MB:-1}"
 MAX_BACKUP_AGE_DAYS="${MAX_BACKUP_AGE_DAYS:-7}"
 
@@ -322,7 +323,7 @@ check_sql_structure() {
 # так пропажа файлов прав оставалась незамеченной. Поэтому имя хранилища задаётся параметром,
 # а вызовов столько же, сколько хранилищ.
 #
-# $1 - archive name prefix (bibliaris-prod-uploads | bibliaris-prod-rights-files)
+# $1 - archive name prefix (${BACKUP_PREFIX}-uploads | ${BACKUP_PREFIX}-rights-files)
 # $2 - human label for the log
 check_file_store_backups() {
     local archive_prefix="$1"
@@ -380,14 +381,14 @@ check_file_store_backups() {
 
 # Check media uploads backups
 check_uploads_backups() {
-    check_file_store_backups bibliaris-prod-uploads "Media uploads" "${INCLUDE_UPLOADS:-true}"
+    check_file_store_backups "${BACKUP_PREFIX}-uploads" "Media uploads" "${INCLUDE_UPLOADS:-true}"
 }
 
 # Check rights files backups (WP-9 private legal storage).
 # Хранилище выключают тем же выключателем, что и бэкап: INCLUDE_RIGHTS_FILES=false.
 # Пока оно включено, отсутствие копий - отказ, а не примечание.
 check_rights_files_backups() {
-    check_file_store_backups bibliaris-prod-rights-files "Rights files" "${INCLUDE_RIGHTS_FILES:-true}"
+    check_file_store_backups "${BACKUP_PREFIX}-rights-files" "Rights files" "${INCLUDE_RIGHTS_FILES:-true}"
 }
 
 # Check backup logs
