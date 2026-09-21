@@ -1,4 +1,13 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOkResponse,
@@ -12,9 +21,11 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { MediaProbeService } from './media-probe.service';
 import { MediaCleanupService } from './media-cleanup.service';
+import { MediaCleanupSchedulerService } from './media-cleanup-scheduler.service';
 import { CleanupOrphansResponseDto } from './dto/cleanup-orphans-response.dto';
 import { ReprobeResponseDto } from './dto/reprobe-response.dto';
 import { ProbeResponseDto } from './dto/probe-response.dto';
+import { MediaCleanupStatusResponseDto } from './dto/media-cleanup-status-response.dto';
 
 @ApiTags('media-jobs')
 @ApiBearerAuth()
@@ -25,6 +36,7 @@ export class MediaJobsController {
   constructor(
     private readonly probe: MediaProbeService,
     private readonly cleanup: MediaCleanupService,
+    private readonly cleanupScheduler: MediaCleanupSchedulerService,
   ) {}
 
   @Post('reprobe')
@@ -54,6 +66,13 @@ export class MediaJobsController {
       softDays: softDays ? Number(softDays) : undefined,
       hardDays: hardDays ? Number(hardDays) : undefined,
     });
+  }
+
+  @Get('cleanup-status')
+  @ApiOperation({ summary: 'Last run of the daily media cleanup sweep' })
+  @ApiOkResponse({ type: MediaCleanupStatusResponseDto })
+  cleanupStatus() {
+    return this.cleanupScheduler.getStatus();
   }
 
   @Post('probe')

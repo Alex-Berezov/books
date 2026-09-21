@@ -73,6 +73,18 @@ const READ_BUT_NOT_IN_EXAMPLE = {
  * `docker-compose*.yml`, so only keys with no consumer at all end up here.
  */
 const IN_EXAMPLE_BUT_NOT_READ = {
+  BULLMQ_DEMO_QUEUE:
+    'Demo BullMQ queue removed as dead code (LEGACY-059, decision 21.09.2026, batch W3): it never carried product traffic. Line stays in .env.example only because this agent cannot edit that file (same restriction as the .env.example line in T22/LEGACY-032) — delete by hand next time the file is touched.',
+  BULLMQ_DEMO_CONCURRENCY:
+    'Demo BullMQ queue removed as dead code (LEGACY-059, decision 21.09.2026, batch W3), same as BULLMQ_DEMO_QUEUE above.',
+  MEDIA_CLEANUP_CRON:
+    'Media cleanup no longer runs as a BullMQ repeatable job (LEGACY-059, decision 21.09.2026, batch W3): production has no Redis, so the cron pattern never scheduled anything. Replaced by an in-process daily timer (MediaCleanupSchedulerService, hour fixed at 05:00 UTC — distinct from the taxonomy sweep at 03:00 and the lawyer-expiry sweep at 04:00) — no cron string to configure. Line stays in .env.example only because this agent cannot edit that file — delete by hand next time it is touched.',
+  BULLMQ_MEDIA_CLEANUP_QUEUE:
+    'Media cleanup no longer needs a BullMQ queue name (LEGACY-059, decision 21.09.2026, batch W3), same reason as MEDIA_CLEANUP_CRON above.',
+  BULLMQ_WORKER_LOG_LEVEL:
+    'Only consumer was the standalone demo worker process (src/workers/demo.worker.ts), removed with the demo queue (LEGACY-059, decision 21.09.2026, batch W3). The remaining in-process workers (media-probe) log through Nest\'s own Logger, not this flag.',
+  BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS:
+    'Only consumer was the standalone demo worker process, removed with the demo queue (LEGACY-059, decision 21.09.2026, batch W3), same reason as BULLMQ_WORKER_LOG_LEVEL above.',
   ALERT_EMAIL_FROM:
     'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
   ALERT_EMAIL_TO:

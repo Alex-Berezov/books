@@ -234,28 +234,19 @@ docker compose down
 - Порты: Postgres `5432`, Redis `6379` (можно переопределить через переменные в `.env`).
 - Redis добавлен для будущих задач (кэш/очереди); текущий код может работать без него.
 
-### Очереди (BullMQ) — базовая интеграция
+### Очереди (BullMQ) — только media-probe
 
-- Поддерживается базовая интеграция BullMQ с Redis. При наличии `REDIS_URL` или `REDIS_HOST`/`REDIS_PORT` модуль очередей активируется и поднимает демонстрационную очередь `demo` с воркером.
-- **Важно**: BullMQ требует `maxRetriesPerRequest: null` в настройках Redis для блокирующих операций (Worker, QueueEvents). Это автоматически настроено в `QueueModule`.
-- Админ-эндпоинты (Auth + Role Admin):
-  - `GET /queues/status` — статус подсистемы очередей (enabled: true|false)
-  - `GET /queues/demo/stats` — счётчики очереди demo
-  - `POST /queues/demo/enqueue` — поставить тестовую задачу `{ delayMs?: number }`
+- 🔴 Демонстрационная очередь `demo` снята как мёртвый код (`LEGACY-059`, решение владельца 21.09.2026, пачка `W3`): прод не поднимает Redis, и очередь ни дня не несла продуктового трафика. Вместе с ней сняты ручки `/queues/status`, `/queues/demo/stats`, `/queues/demo/enqueue`, `QueueController`/`QueueService` и отдельный процесс `yarn worker:demo`.
+- `QueueModule` теперь хостит только соединение с Redis для единственного настоящего потребителя BullMQ — `media-probe` (чтение метаданных аудио при загрузке, `media-jobs.module.ts`). Без `REDIS_URL`/`REDIS_HOST` `enqueueProbe` не отключается, а выполняется синхронно внутри запроса на загрузку (без ретраев) — состояние `DEGRADED` в `GET /admin/background-jobs`.
+- **Важно**: BullMQ требует `maxRetriesPerRequest: null` в настройках Redis для блокирующих операций (Worker). Это автоматически настроено в `QueueModule`.
+- Уборка орфанных медиа-файлов (`media-cleanup`) с 21.09.2026 больше не BullMQ-задача — это ежедневный таймер в процессе (`MediaCleanupSchedulerService`, по образцу `TaxonomyIndexabilitySchedulerService`), Redis ему не нужен. Статус последнего прогона — `GET /admin/media/cleanup-status`, ручной запуск — `POST /admin/media/cleanup-orphans`.
 - Переменные окружения:
   - `REDIS_URL` или `REDIS_HOST`/`REDIS_PORT` (+ `REDIS_PASSWORD`)
-  - `BULLMQ_DEMO_QUEUE` (по умолчанию demo)
-  - `BULLMQ_DEMO_CONCURRENCY` (по умолчанию 2)
+  - `BULLMQ_MEDIA_PROBE_QUEUE`, `BULLMQ_MEDIA_PROBE_CONCURRENCY`
   - `BULLMQ_IN_PROCESS_WORKER` (0/1) — запуск in-process воркера вместе с приложением (dev по умолчанию 1)
-  - `BULLMQ_WORKER_LOG_LEVEL` — уровень логирования воркера: debug|info|warn|error (по умолчанию info)
-  - `BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS` — таймаут graceful shutdown воркера (по умолчанию 5000)
-- Если Redis не настроен — модуль очередей отключается автоматически; health/readiness продолжает работать, Redis помечается как `skipped`.
-- **Graceful shutdown**: модуль реализует `onModuleDestroy` lifecycle hook для корректного закрытия воркеров, очередей и Redis подключения при остановке приложения или в тестах.
-
-#### Отдельный процесс воркера
-
-- Запуск демо‑воркера в отдельном процессе: `yarn worker:demo`.
-- Воркерт читает те же переменные Redis (`REDIS_URL` или `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`), а также поддерживает конфиги выше (`BULLMQ_DEMO_QUEUE`, `BULLMQ_DEMO_CONCURRENCY`, `BULLMQ_WORKER_LOG_LEVEL`, `BULLMQ_WORKER_SHUTDOWN_TIMEOUT_MS`).
+  - `MEDIA_CLEANUP_ENABLED` (0/1) — включает/выключает таймер уборки медиа
+- Если Redis не настроен — очередь `media-probe` отключается автоматически (с graceful-деградацией на синхронный путь); health/readiness продолжает работать, Redis помечается как `skipped`.
+- **Graceful shutdown**: модуль реализует `onModuleDestroy` lifecycle hook для корректного закрытия воркера, очереди и Redis подключения при остановке приложения или в тестах.
 
 ## 🚀 Production Deployment
 

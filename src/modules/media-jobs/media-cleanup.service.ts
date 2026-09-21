@@ -8,6 +8,17 @@ export interface CleanupResult {
   hardDeleted: number;
   storageFilesRemoved: number;
   storageErrors: number;
+  /**
+   * Сколько строк прогон реально посмотрел на stage 1.
+   *
+   * 🔴 Без этого числа `markedSoftDeleted: 0` неотличимо от «критерий не выбрал ничего»
+   * (`L-015`): пустая уборка и сломанная уборка отдают одно и то же тело. Именно этим
+   * ответом подтверждается первый прогон на боевых данных, поэтому число считается
+   * всегда, а не только в `dryRun`.
+   */
+  scanned: number;
+  /** Из посмотренных: сколько спасла проверка ссылок по URL (обложки, аудио, аватары). */
+  skippedByUrlReference: number;
   softDeletedCandidates?: string[];
   hardDeletedCandidates?: string[];
 }
@@ -129,6 +140,8 @@ export class MediaCleanupService {
       hardDeleted: dryRun ? hardCandidates.length : hardDeleted,
       storageFilesRemoved,
       storageErrors,
+      scanned: fkCandidates.length + hardCandidates.length,
+      skippedByUrlReference,
     };
     if (dryRun) {
       result.softDeletedCandidates = softCandidates.map((a) => a.id);

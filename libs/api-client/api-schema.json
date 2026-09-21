@@ -5528,6 +5528,14 @@
           "markedSoftDeleted": {
             "type": "number"
           },
+          "scanned": {
+            "description": "How many assets the run looked at. Without it \"deleted 0\" is indistinguishable from a run that scanned nothing.",
+            "type": "number"
+          },
+          "skippedByUrlReference": {
+            "description": "Of those scanned: how many the URL-reference check saved.",
+            "type": "number"
+          },
           "softDeletedCandidates": {
             "items": {
               "type": "string"
@@ -5545,7 +5553,9 @@
           "markedSoftDeleted",
           "hardDeleted",
           "storageFilesRemoved",
-          "storageErrors"
+          "storageErrors",
+          "scanned",
+          "skippedByUrlReference"
         ],
         "type": "object"
       },
@@ -8646,14 +8656,6 @@
         ],
         "type": "object"
       },
-      "EnqueueDemoResponseDto": {
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
       "ExistingAuthorDto": {
         "properties": {
           "id": {
@@ -11351,6 +11353,82 @@
         ],
         "type": "object"
       },
+      "MediaCleanupStatusResponseDto": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "isRunning": {
+            "type": "boolean"
+          },
+          "lastDurationMs": {
+            "nullable": true,
+            "type": "number"
+          },
+          "lastError": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lastFinishedAt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lastHardDeleted": {
+            "nullable": true,
+            "type": "number"
+          },
+          "lastMarkedSoftDeleted": {
+            "nullable": true,
+            "type": "number"
+          },
+          "lastScanned": {
+            "description": "How many assets the sweep looked at. Without it \"deleted 0\" is indistinguishable from a sweep that scanned nothing.",
+            "nullable": true,
+            "type": "number"
+          },
+          "lastSkippedByUrlReference": {
+            "nullable": true,
+            "type": "number"
+          },
+          "lastStartedAt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lastStorageErrors": {
+            "nullable": true,
+            "type": "number"
+          },
+          "lastStorageFilesRemoved": {
+            "nullable": true,
+            "type": "number"
+          },
+          "nextRunAt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "scheduledHourUtc": {
+            "description": "Wall-clock hour (UTC) the sweep is pinned to.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "enabled",
+          "scheduledHourUtc",
+          "nextRunAt",
+          "lastStartedAt",
+          "lastFinishedAt",
+          "lastDurationMs",
+          "lastScanned",
+          "lastSkippedByUrlReference",
+          "lastMarkedSoftDeleted",
+          "lastHardDeleted",
+          "lastStorageFilesRemoved",
+          "lastStorageErrors",
+          "lastError",
+          "isRunning"
+        ],
+        "type": "object"
+      },
       "PageGroupResponse": {
         "properties": {
           "pages": {
@@ -13825,55 +13903,6 @@
           "riskLevel",
           "lawyerOpinionValidUntil",
           "lawyerReviewIds"
-        ],
-        "type": "object"
-      },
-      "QueueDemoStatsResponseDto": {
-        "properties": {
-          "active": {
-            "description": "Задачи в работе",
-            "type": "number"
-          },
-          "completed": {
-            "description": "Успешно завершённые задачи",
-            "type": "number"
-          },
-          "delayed": {
-            "description": "Задачи, отложенные до срока",
-            "type": "number"
-          },
-          "failed": {
-            "description": "Задачи, упавшие после всех попыток",
-            "type": "number"
-          },
-          "paused": {
-            "description": "Задачи в приостановленной очереди",
-            "type": "number"
-          },
-          "waiting": {
-            "description": "Задачи, ожидающие исполнителя",
-            "type": "number"
-          }
-        },
-        "required": [
-          "waiting",
-          "active",
-          "completed",
-          "failed",
-          "delayed",
-          "paused"
-        ],
-        "type": "object"
-      },
-      "QueueStatusResponseDto": {
-        "properties": {
-          "enabled": {
-            "description": "Есть ли конфигурация Redis для очередей.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "enabled"
         ],
         "type": "object"
       },
@@ -24680,6 +24709,33 @@
           }
         ],
         "summary": "Run two-stage cleanup of orphan MediaAssets (soft-delete + hard-delete)",
+        "tags": [
+          "media-jobs"
+        ]
+      }
+    },
+    "/admin/media/cleanup-status": {
+      "get": {
+        "operationId": "MediaJobsController_cleanupStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaCleanupStatusResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Last run of the daily media cleanup sweep",
         "tags": [
           "media-jobs"
         ]
@@ -35631,90 +35687,6 @@
         },
         "tags": [
           "Metrics"
-        ]
-      }
-    },
-    "/queues/demo/enqueue": {
-      "post": {
-        "operationId": "QueueController_enqueue",
-        "parameters": [],
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnqueueDemoResponseDto"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Enqueue a demo job",
-        "tags": [
-          "queues"
-        ]
-      }
-    },
-    "/queues/demo/stats": {
-      "get": {
-        "operationId": "QueueController_stats",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueueDemoStatsResponseDto"
-                }
-              }
-            },
-            "description": ""
-          },
-          "503": {
-            "description": "Очередь не сконфигурирована (нет Redis) — тот же отказ, что у enqueue"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Demo queue stats",
-        "tags": [
-          "queues"
-        ]
-      }
-    },
-    "/queues/status": {
-      "get": {
-        "operationId": "QueueController_status",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueueStatusResponseDto"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Queues subsystem status",
-        "tags": [
-          "queues"
         ]
       }
     },

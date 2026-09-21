@@ -90,6 +90,30 @@ describe('Media jobs e2e', () => {
     expect(typeof res.body.enqueued).toBe('number');
   });
 
+  /**
+   * `LEGACY-059`, пачка `W3`. Маршрут отдаёт снимок таймера уборки, и проверять его надо
+   * через HTTP: `getStatus()` в обход контроллера не задевает ни путь, ни связывание DTO,
+   * ни цепочку гвардов — то есть ровно то, что здесь может сломаться.
+   */
+  it('GET /admin/media/cleanup-status returns the sweep snapshot and is admin-only', async () => {
+    await request(http()).get('/admin/media/cleanup-status').expect(401);
+
+    const res = await request(http())
+      .get('/admin/media/cleanup-status')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+
+    // Уборка выключена по умолчанию (решение арбитра 21.09.2026, LEGACY-058):
+    // в тестовом окружении ключ не выставлен, значит таймера нет и прогонов не было.
+    expect(res.body.enabled).toBe(false);
+    expect(res.body.nextRunAt).toBeNull();
+    expect(res.body.isRunning).toBe(false);
+    expect(typeof res.body.scheduledHourUtc).toBe('number');
+    // Поле, которым подтверждается прогон, обязано присутствовать в форме ответа
+    // даже когда прогонов не было (`L-015`).
+    expect(res.body).toHaveProperty('lastScanned', null);
+  });
+
   it('POST /admin/media/cleanup-orphans?dryRun=true returns candidates without deleting', async () => {
     const orphan = await prisma.mediaAsset.create({
       data: {

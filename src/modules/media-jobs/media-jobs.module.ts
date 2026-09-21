@@ -14,12 +14,10 @@ import {
   MediaProbeService,
 } from './media-probe.service';
 import { MediaCleanupService } from './media-cleanup.service';
+import { MediaCleanupSchedulerService } from './media-cleanup-scheduler.service';
 import { MediaJobsController } from './media-jobs.controller';
 
 const PROBE_QUEUE_NAME_DEFAULT = 'media-probe';
-const CLEANUP_QUEUE_NAME_DEFAULT = 'media-cleanup';
-const MEDIA_CLEANUP_QUEUE = Symbol('MEDIA_CLEANUP_QUEUE');
-const MEDIA_CLEANUP_WORKER = Symbol('MEDIA_CLEANUP_WORKER');
 
 const PROBE_PURPOSE = 'Reads audio metadata (duration, bitrate) from an uploaded file';
 
@@ -83,129 +81,46 @@ const probeWorkerProvider: Provider = {
   },
 };
 
-/** Repeatable cleanup job wiring. Adds a daily repeatable job; worker runs inline. */
-const CLEANUP_PURPOSE = 'Deletes media assets nothing references any more (orphans)';
-
-const cleanupQueueProvider: Provider = {
-  provide: MEDIA_CLEANUP_QUEUE,
-  inject: [REDIS_CONNECTION, ConfigService, BackgroundJobsRegistry],
-  useFactory: async (
-    connection: IORedis | undefined,
-    config: ConfigService,
-    registry: BackgroundJobsRegistry,
-  ): Promise<Queue | undefined> => {
-    if (!connection) {
-      registry.register({
-        name: 'media-cleanup',
-        state: 'DISABLED',
-        reason: 'no REDIS_URL / REDIS_HOST',
-        purpose: CLEANUP_PURPOSE,
-      });
-      return undefined;
-    }
-    const enabled = !/^(0|false)$/i.test(config.get<string>('MEDIA_CLEANUP_ENABLED') ?? 'true');
-    if (!enabled) {
-      registry.register({
-        name: 'media-cleanup',
-        state: 'DISABLED',
-        reason: 'MEDIA_CLEANUP_ENABLED is off',
-        purpose: CLEANUP_PURPOSE,
-      });
-      return undefined;
-    }
-    const name = config.get<string>('BULLMQ_MEDIA_CLEANUP_QUEUE') || CLEANUP_QUEUE_NAME_DEFAULT;
-    const queue = new Queue(name, {
-      connection: connection as unknown as QueueOptions['connection'],
-    });
-    const pattern = config.get<string>('MEDIA_CLEANUP_CRON') || '15 3 * * *';
-    try {
-      await queue.add(
-        'cleanup',
-        {},
-        {
-          repeat: { pattern },
-          jobId: 'media-cleanup-repeatable',
-          removeOnComplete: 100,
-          removeOnFail: 100,
-        },
-      );
-    } catch {
-      /* best-effort scheduling */
-    }
-    registry.register({
-      name: 'media-cleanup',
-      state: 'ACTIVE',
-      schedule: `cron ${pattern} UTC`,
-      purpose: CLEANUP_PURPOSE,
-    });
-    return queue;
-  },
-};
-
-const cleanupWorkerProvider: Provider = {
-  provide: MEDIA_CLEANUP_WORKER,
-  inject: [REDIS_CONNECTION, ConfigService, MediaCleanupService],
-  useFactory: (
-    connection: IORedis | undefined,
-    config: ConfigService,
-    cleanup: MediaCleanupService,
-  ): Worker | undefined => {
-    if (!connection) return undefined;
-    const enabled = !/^(0|false)$/i.test(config.get<string>('MEDIA_CLEANUP_ENABLED') ?? 'true');
-    if (!enabled) return undefined;
-    const flag = config.get<string>('BULLMQ_IN_PROCESS_WORKER');
-    const inProcess = flag === undefined ? true : !/^(0|false)$/i.test(flag);
-    if (!inProcess) return undefined;
-    const name = config.get<string>('BULLMQ_MEDIA_CLEANUP_QUEUE') || CLEANUP_QUEUE_NAME_DEFAULT;
-    return new Worker(
-      name,
-      async () => {
-        await cleanup.cleanup();
-      },
-      { connection: connection as unknown as WorkerOptions['connection'], concurrency: 1 },
-    );
-  },
-};
-
 @Module({
   imports: [BackgroundJobsRegistryModule, ConfigModule, QueueModule, StorageModule],
   providers: [
     MediaProbeService,
     MediaCleanupService,
+    MediaCleanupSchedulerService,
     probeQueueProvider,
     probeWorkerProvider,
-    cleanupQueueProvider,
-    cleanupWorkerProvider,
   ],
   controllers: [MediaJobsController],
+  // Планировщик не экспортируется намеренно: его единственный потребитель — контроллер этого
+  // же модуля. Экспорт сделал бы таймер внешней поверхностью модуля, и статус уборки стало бы
+  // можно читать инжектом мимо `@Roles(Role.Admin)` на `GET /admin/media/cleanup-status`.
   exports: [MediaProbeService, MediaCleanupService],
 })
 export class MediaJobsModule implements OnModuleDestroy {
   constructor(
     @Optional() @Inject(MEDIA_PROBE_QUEUE) private readonly probeQueue?: Queue,
     @Optional() @Inject(MEDIA_PROBE_WORKER) private readonly probeWorker?: Worker,
-    @Optional() @Inject(MEDIA_CLEANUP_QUEUE) private readonly cleanupQueue?: Queue,
-    @Optional() @Inject(MEDIA_CLEANUP_WORKER) private readonly cleanupWorker?: Worker,
   ) {}
 
   private readonly shutdownLogger = new Logger(MediaJobsModule.name);
 
   /**
-   * 🔴 `LEGACY-364`, тот же класс, что и в `QueueModule`. Прежняя версия глушила
-   * отказ через `catch { /* ignore *\/ }`, но глушение ловит **отказ**, а не
-   * **зависание**: `Worker.close()` дублирует связь для блокирующих операций и
-   * делает по дублю `quit()`, который на переподключающейся связи не возвращается
-   * никогда (`maxRetriesPerRequest: null` обязателен для BullMQ). Один такой
-   * воркер вешал всё выключение приложения.
+   * 🔴 `LEGACY-364`. Прежняя версия глушила отказ через `catch { /* ignore *\/ }`,
+   * но глушение ловит **отказ**, а не **зависание**: `Worker.close()` дублирует
+   * связь для блокирующих операций и делает по дублю `quit()`, который на
+   * переподключающейся связи не возвращается никогда (`maxRetriesPerRequest:
+   * null` обязателен для BullMQ). Один такой воркер вешал всё выключение
+   * приложения.
    *
    * Связь здесь не закрывается намеренно: она общая и принадлежит `QueueModule`.
+   *
+   * `media-cleanup` больше не держит здесь ни очередь, ни воркер (`LEGACY-059`,
+   * пачка `W3`) — уборка теперь идёт таймером в `MediaCleanupSchedulerService`,
+   * который останавливает свой `setTimeout` в собственном `onModuleDestroy` и
+   * ничего не открывает по сети.
    */
   async onModuleDestroy() {
     await closeWithin(this.shutdownLogger, 'media probe worker', () => this.probeWorker?.close());
-    await closeWithin(this.shutdownLogger, 'media cleanup worker', () =>
-      this.cleanupWorker?.close(),
-    );
     await closeWithin(this.shutdownLogger, 'media probe queue', () => this.probeQueue?.close());
-    await closeWithin(this.shutdownLogger, 'media cleanup queue', () => this.cleanupQueue?.close());
   }
 }

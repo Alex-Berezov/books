@@ -12,8 +12,6 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "worker:demo": "ts-node src/workers/demo.worker.ts",
-    "worker:demo:build": "node dist/workers/demo.worker.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix --max-warnings=0",
     "typecheck": "yarn typecheck:src && yarn typecheck:test",
     "typecheck:src": "tsc --noEmit",
