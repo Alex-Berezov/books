@@ -22,6 +22,7 @@ import {
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RoleName } from '@prisma/client';
+import { ASSIGNABLE_ROLE_NAMES } from './users.constants';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -133,7 +134,7 @@ export class UsersController {
 
   @ApiOperation({ summary: 'Assign role to user (admin only)' })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiParam({ name: 'role', description: 'Role name', enum: ['user', 'admin', 'content_manager'] })
+  @ApiParam({ name: 'role', description: 'Role name', enum: ASSIGNABLE_ROLE_NAMES })
   @Roles(Role.Admin)
   @Post(':id/roles/:role')
   @ApiCreatedResponse({ type: UserRoleDto })
@@ -149,7 +150,7 @@ export class UsersController {
 
   @ApiOperation({ summary: 'Revoke role from user (admin only)' })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiParam({ name: 'role', description: 'Role name', enum: ['user', 'admin', 'content_manager'] })
+  @ApiParam({ name: 'role', description: 'Role name', enum: ASSIGNABLE_ROLE_NAMES })
   @Roles(Role.Admin)
   @Delete(':id/roles/:role')
   @ApiOkResponse({ type: UserRoleDto })

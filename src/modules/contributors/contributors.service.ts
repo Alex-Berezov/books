@@ -11,6 +11,7 @@ import { UpdateContributorDto } from './dto/update-contributor.dto';
 import type { ContributorResponseDto } from './dto/contributor-response.dto';
 import type { PersonRecord } from '../persons/person-interface';
 import { paginated } from '../../shared/dto/paginated-response.dto';
+import { buildContributorEventSnapshot } from '../../shared/rights-contributor-event/contributor-event-snapshot';
 
 /**
  * Снимок связи для события журнала. Формы две, и обе — сгенерированные типы, а не рукописный
@@ -317,8 +318,6 @@ export class ContributorsService {
       userId: string;
     },
   ): Promise<void> {
-    const linkedAt = link.createdAt;
-
     await tx.rightsProfileContributorEvent.create({
       data: {
         rightsProfileId: context.rightsProfileId,
@@ -330,14 +329,10 @@ export class ContributorsService {
         role: link.role ?? null,
         displayName: link.displayName ?? null,
         creditedName: link.creditedName ?? null,
-        payload: {
-          canonicalName: link.canonicalName ?? null,
-          birthYear: link.birthYear ?? null,
-          deathYear: link.deathYear ?? null,
-          nationalityCountryCode: link.nationalityCountryCode ?? null,
-          notesRu: link.notesRu ?? null,
-          linkedAt: linkedAt instanceof Date ? linkedAt.toISOString() : null,
-        },
+        // Форма снимка задаётся одним местом на писателя и читателя (`LEGACY-037`):
+        // колонка `Json?` компилятором не проверяется, и разъехавшиеся копии означали бы
+        // поле, которое пишется, но не доезжает до админки.
+        payload: { ...buildContributorEventSnapshot(link) },
         createdByUserId: context.userId,
       },
     });

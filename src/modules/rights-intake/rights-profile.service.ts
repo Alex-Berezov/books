@@ -23,6 +23,7 @@ import type {
   RightsReviewDto,
 } from './dto/rights-profile-response.dto';
 import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
+import { loadContributorEvents } from './rights-profile-contributor-event.mapper';
 
 const EXPIRING_SOON_DAYS = 90;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -297,6 +298,11 @@ export class RightsProfileService {
       },
     });
 
+    // LEGACY-037: журнал связей участников. Выборка и проекция — общие с дашбордом версии
+    // (`rights-profile-contributor-event.mapper.ts`): до общей точки поле, добавленное сюда,
+    // на второй экран админки не доезжало вовсе (решение арбитра 21.09.2026).
+    const contributorEventsData = await loadContributorEvents(this.prisma, profileId);
+
     // LEGACY-410: единственная строка риска, которой у маппинга ещё нет. Остальной вход
     // (издание, компоненты, территории, действия, участники, целевые страны) уже загружен выше.
     // Клиент типизированный намеренно: каст выключил бы проверку имени поля в `where`,
@@ -385,6 +391,7 @@ export class RightsProfileService {
       evidence: evidenceData.map((e: Record<string, unknown>) => this.mapEvidence(e)),
       actions: actionsData.map((a: Record<string, unknown>) => this.mapAction(a)),
       contributors: contributorsData.map((c: Record<string, unknown>) => this.mapContributor(c)),
+      contributorEvents: contributorEventsData,
       contributorsCount: contributorsData.length,
       authorsCount,
       translatorsCount,

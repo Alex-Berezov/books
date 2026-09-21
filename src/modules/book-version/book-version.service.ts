@@ -14,6 +14,7 @@ import {
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
+import { loadContributorEvents } from '../rights-intake/rights-profile-contributor-event.mapper';
 import { Language, BookType, Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { ContributorRole } from '../persons/person-interface';
 import { CreateBookVersionContributorDto } from './dto/create-version-contributor.dto';
@@ -593,7 +594,16 @@ export class BookVersionService {
         },
       });
       if (foundProfile) {
-        currentProfile = foundProfile as Record<string, unknown>;
+        // LEGACY-037: журнал связей участников. Дашборд собирает профиль своей выборкой мимо
+        // `RightsProfileService.mapToDetail`, поэтому поле, добавленное в ручку профиля, сюда
+        // само не попадает — и вкладка «Права» книжной карточки молча оставалась без истории.
+        // Через `include` сырой выборки его класть нельзя: под тем же именем уехали бы `payload`
+        // сырым `Json` и `createdAt` объектом `Date`, то есть другая форма того же поля.
+        // Выборка, потолок и проекция берутся из общей точки (решение арбитра 21.09.2026).
+        currentProfile = {
+          ...(foundProfile as Record<string, unknown>),
+          contributorEvents: await loadContributorEvents(this.prisma, profileId),
+        };
         const foundReviews = await this.prisma.rightsReview.findMany({
           where: { rightsProfileId: profileId },
           include: {

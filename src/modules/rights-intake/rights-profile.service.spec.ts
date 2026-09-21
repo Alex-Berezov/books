@@ -33,6 +33,7 @@ const createPrismaStub = (): PrismaStub => {
   stub['rightsEvidence'] = { findMany: jest.fn() };
   stub['rightsAction'] = { findMany: jest.fn() };
   stub['rightsProfileContributor'] = { findMany: jest.fn().mockResolvedValue([]) };
+  stub['rightsProfileContributorEvent'] = { findMany: jest.fn().mockResolvedValue([]) };
   stub['rightsLicense'] = { findMany: jest.fn().mockResolvedValue([]) };
   stub['rightsLicenseLink'] = { findMany: jest.fn().mockResolvedValue([]) };
   stub['bookVersion'] = { findUnique: jest.fn().mockResolvedValue(null) };
@@ -234,6 +235,134 @@ describe('RightsProfileService', () => {
             },
           },
         },
+      });
+    });
+
+    // LEGACY-037: журнал связей участников пишется с 02.08.2026 и до этой правки не читался
+    // нигде — отвязанного участника можно было восстановить только прямым доступом к базе.
+    describe('LEGACY-037: журнал связей участников', () => {
+      const makeEvent = (overrides: Record<string, unknown> = {}) => ({
+        id: 'event-1',
+        rightsProfileId: 'profile-1',
+        rightsProfileContributorId: 'link-1',
+        rightsComponentId: 'component-1',
+        sourceEditionId: 'se-1',
+        personId: 'person-1',
+        eventType: 'UNLINKED',
+        role: 'TRANSLATOR',
+        displayName: 'Иван Иванов',
+        creditedName: 'И. Иванов',
+        payload: {
+          canonicalName: 'Иванов, Иван',
+          birthYear: 1901,
+          deathYear: 1975,
+          nationalityCountryCode: 'RU',
+          notesRu: 'перевод с французского',
+          linkedAt: '2026-08-01T00:00:00.000Z',
+        },
+        createdByUserId: 'admin-1',
+        createdAt: new Date('2026-09-01T10:00:00.000Z'),
+        ...overrides,
+      });
+
+      const arrangeProfile = () => {
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeProfile(),
+        );
+        (prisma['sourceEdition'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+        (prisma['rightsReview'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['rightsEvidence'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      };
+
+      it('отдаёт отвязку участника вместе со снимком, который остался только в журнале', async () => {
+        arrangeProfile();
+        (
+          prisma['rightsProfileContributorEvent'] as Record<string, jest.Mock>
+        ).findMany.mockResolvedValue([makeEvent()]);
+
+        const result = await service.getById('profile-1');
+
+        expect(result.contributorEvents).toHaveLength(1);
+        const event = result.contributorEvents[0];
+        expect(event.eventType).toBe('UNLINKED');
+        expect(event.rightsProfileContributorId).toBe('link-1');
+        expect(event.personId).toBe('person-1');
+        expect(event.role).toBe('TRANSLATOR');
+        expect(event.displayName).toBe('Иван Иванов');
+        expect(event.creditedName).toBe('И. Иванов');
+        expect(event.createdByUserId).toBe('admin-1');
+        expect(event.createdAt).toBe('2026-09-01T10:00:00.000Z');
+        // Ради этих полей запись и заводилась: в строке связи их уже нет, она удалена физически.
+        expect(event.snapshot).toEqual({
+          canonicalName: 'Иванов, Иван',
+          birthYear: 1901,
+          deathYear: 1975,
+          nationalityCountryCode: 'RU',
+          notesRu: 'перевод с французского',
+          linkedAt: '2026-08-01T00:00:00.000Z',
+        });
+      });
+
+      it('берёт свежие события сверху и не отдаёт журнал целиком', async () => {
+        arrangeProfile();
+        (
+          prisma['rightsProfileContributorEvent'] as Record<string, jest.Mock>
+        ).findMany.mockResolvedValue([]);
+
+        await service.getById('profile-1');
+
+        // `toHaveBeenCalledTimes` рядом обязателен: `toHaveBeenCalledWith` засчитывает
+        // совпадение по **любому** вызову, и второй, сужающий запрос к той же модели оставил
+        // бы этот тест зелёным при сломанном потолке (L-005).
+        expect(
+          (prisma['rightsProfileContributorEvent'] as Record<string, jest.Mock>).findMany,
+        ).toHaveBeenCalledTimes(1);
+        expect(
+          (prisma['rightsProfileContributorEvent'] as Record<string, jest.Mock>).findMany,
+        ).toHaveBeenCalledWith({
+          where: { rightsProfileId: 'profile-1' },
+          orderBy: { createdAt: 'desc' },
+          take: 200,
+        });
+      });
+
+      // Колонка `payload` нетипизирована: чужая строка в ней не должна утечь в ответ как есть.
+      it('не пропускает наружу чужие и битые значения из payload', async () => {
+        arrangeProfile();
+        (
+          prisma['rightsProfileContributorEvent'] as Record<string, jest.Mock>
+        ).findMany.mockResolvedValue([
+          makeEvent({
+            payload: {
+              canonicalName: { evil: true },
+              birthYear: 'не число',
+              deathYear: Number.NaN,
+              nationalityCountryCode: 42,
+              notesRu: null,
+              linkedAt: '2026-08-01T00:00:00.000Z',
+              secret: 'постороннее поле',
+            },
+          }),
+          makeEvent({ id: 'event-2', payload: null }),
+          makeEvent({ id: 'event-3', payload: ['не объект'] }),
+        ]);
+
+        const result = await service.getById('profile-1');
+
+        expect(result.contributorEvents[0].snapshot).toEqual({
+          canonicalName: null,
+          birthYear: null,
+          deathYear: null,
+          nationalityCountryCode: null,
+          notesRu: null,
+          linkedAt: '2026-08-01T00:00:00.000Z',
+        });
+        expect(result.contributorEvents[0].snapshot).not.toHaveProperty('secret');
+        expect(result.contributorEvents[1].snapshot).toBeNull();
+        expect(result.contributorEvents[2].snapshot).toBeNull();
       });
     });
 

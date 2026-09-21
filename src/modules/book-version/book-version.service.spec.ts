@@ -89,6 +89,11 @@ interface PrismaStub {
   rightsProfile: {
     findUnique: jest.Mock;
   };
+  // LEGACY-037: дашборд добирает журнал связей участников общей точкой
+  // (`rights-profile-contributor-event.mapper.ts`), а не `include` сырой выборки профиля.
+  rightsProfileContributorEvent: {
+    findMany: jest.Mock;
+  };
   rightsReview: {
     findMany: jest.Mock;
   };
@@ -130,6 +135,9 @@ const createPrismaStub = (): PrismaStub => {
     },
     rightsProfile: {
       findUnique: jest.fn(),
+    },
+    rightsProfileContributorEvent: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     rightsReview: {
       findMany: jest.fn(),

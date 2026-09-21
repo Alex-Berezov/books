@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ContributorRole, RightsProfileContributorEventType } from '@prisma/client';
 import {
   LicenseCoverageResultDto,
   RightsLicenseSummaryDto,
@@ -185,6 +186,46 @@ export class RightsProfileContributorDto {
   @ApiProperty() updatedAt!: string;
 }
 
+/**
+ * Снимок связи на момент события. Лежит в колонке `payload Json?`, наружу отдаётся
+ * типизированным объектом: схема на фронте пишется руками, и сырой `Json` превратился бы
+ * там в `unknown` (решение арбитра 21.09.2026, `decisions-log.md`). Состав фиксирован
+ * единственным местом записи — `contributors.service.ts`, `recordContributorEvent`.
+ */
+export class RightsProfileContributorEventSnapshotDto {
+  @ApiProperty({ type: String, nullable: true }) canonicalName!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) birthYear!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) deathYear!: number | null;
+  @ApiProperty({ type: String, nullable: true }) nationalityCountryCode!: string | null;
+  @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
+  @ApiProperty({ type: String, nullable: true }) linkedAt!: string | null;
+}
+
+/**
+ * Одна привязка или отвязка участника профиля прав (`LEGACY-037`). Строка связи удаляется
+ * физически, поэтому событие — единственный след того, кто был привязан и когда.
+ */
+export class RightsProfileContributorEventDto {
+  @ApiProperty() id!: string;
+  // Перечисления берутся из Prisma, а не переписываются литералом: третье значение,
+  // дописанное в `RightsProfileContributorEventType`, обязано покрасить эту сторону,
+  // а не молча отдать подпись `undefined` в админку (STYLE_GUIDE §2).
+  @ApiProperty({ enum: RightsProfileContributorEventType })
+  eventType!: RightsProfileContributorEventType;
+  @ApiProperty() rightsProfileContributorId!: string;
+  @ApiProperty({ type: String, nullable: true }) rightsComponentId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) sourceEditionId!: string | null;
+  @ApiProperty({ type: String, nullable: true }) personId!: string | null;
+  @ApiPropertyOptional({ enum: ContributorRole, nullable: true })
+  role!: ContributorRole | null;
+  @ApiProperty({ type: String, nullable: true }) displayName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) creditedName!: string | null;
+  @ApiProperty({ type: RightsProfileContributorEventSnapshotDto, nullable: true })
+  snapshot!: RightsProfileContributorEventSnapshotDto | null;
+  @ApiProperty({ type: String, nullable: true }) createdByUserId!: string | null;
+  @ApiProperty() createdAt!: string;
+}
+
 export class RightsComponentDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsProfileId!: string;
@@ -342,6 +383,15 @@ export class RightsProfileDetailDto {
 
   @ApiProperty({ type: [RightsProfileContributorDto] })
   contributors!: RightsProfileContributorDto[];
+
+  /**
+   * `LEGACY-037`: журнал привязок и отвязок участников, свежие сверху, не больше
+   * `CONTRIBUTOR_EVENTS_LIMIT` строк. Имя не `events`, потому что журнал принадлежит
+   * не профилю, а его связям, и имя второго журнала того же класса (`RightsActionEvent`
+   * по `actions[]`) остаётся свободным (решение арбитра 21.09.2026, `decisions-log.md`).
+   */
+  @ApiProperty({ type: [RightsProfileContributorEventDto] })
+  contributorEvents!: RightsProfileContributorEventDto[];
 
   @ApiProperty() contributorsCount!: number;
   @ApiProperty() authorsCount!: number;

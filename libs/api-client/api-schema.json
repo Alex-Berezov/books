@@ -18197,6 +18197,128 @@
         ],
         "type": "object"
       },
+      "RightsProfileContributorEventDto": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "createdByUserId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "creditedName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "displayName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "eventType": {
+            "enum": [
+              "LINKED",
+              "UNLINKED"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "personId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsComponentId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsProfileContributorId": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "AUTHOR",
+              "TRANSLATOR",
+              "EDITOR",
+              "ILLUSTRATOR",
+              "NARRATOR",
+              "ADAPTER",
+              "COMPILER",
+              "COMMENTATOR",
+              "INTRODUCTION_AUTHOR",
+              "AFTERWORD_AUTHOR",
+              "COVER_ARTIST",
+              "RIGHTS_HOLDER",
+              "OTHER"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "snapshot": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RightsProfileContributorEventSnapshotDto"
+              }
+            ],
+            "nullable": true
+          },
+          "sourceEditionId": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "eventType",
+          "rightsProfileContributorId",
+          "rightsComponentId",
+          "sourceEditionId",
+          "personId",
+          "displayName",
+          "creditedName",
+          "snapshot",
+          "createdByUserId",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "RightsProfileContributorEventSnapshotDto": {
+        "properties": {
+          "birthYear": {
+            "nullable": true,
+            "type": "number"
+          },
+          "canonicalName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "deathYear": {
+            "nullable": true,
+            "type": "number"
+          },
+          "linkedAt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "nationalityCountryCode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "notesRu": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "canonicalName",
+          "birthYear",
+          "deathYear",
+          "nationalityCountryCode",
+          "notesRu",
+          "linkedAt"
+        ],
+        "type": "object"
+      },
       "RightsProfileDetailDto": {
         "properties": {
           "actions": {
@@ -18226,6 +18348,12 @@
           },
           "confidence": {
             "type": "string"
+          },
+          "contributorEvents": {
+            "items": {
+              "$ref": "#/components/schemas/RightsProfileContributorEventDto"
+            },
+            "type": "array"
           },
           "contributors": {
             "items": {
@@ -18412,6 +18540,7 @@
           "evidence",
           "actions",
           "contributors",
+          "contributorEvents",
           "contributorsCount",
           "authorsCount",
           "translatorsCount",
@@ -36796,7 +36925,8 @@
               "enum": [
                 "user",
                 "admin",
-                "content_manager"
+                "content_manager",
+                "lawyer"
               ],
               "type": "string"
             }
@@ -36845,7 +36975,8 @@
               "enum": [
                 "user",
                 "admin",
-                "content_manager"
+                "content_manager",
+                "lawyer"
               ],
               "type": "string"
             }
