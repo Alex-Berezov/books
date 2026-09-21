@@ -34,8 +34,12 @@ if [[ -f "$BACKUP_ENV_FILE" ]]; then
 fi
 
 # Default configuration
-BACKUP_DIR="/opt/books/backups"
-UPLOADS_DIR="/opt/books/uploads"
+BACKUP_DIR="${BACKUP_DIR:-/opt/books/backups}"
+BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"
+UPLOADS_DIR="${UPLOADS_DIR:-/opt/books/uploads}"
+# WP-9: второй файловый том - приватное хранилище юридических файлов прав. Восстановление
+# симметрично бэкапу: архив без обратной распаковки бесполезен (ADR-009).
+RIGHTS_FILES_DIR="${RIGHTS_FILES_DIR:-/opt/books/rights-files}"
 
 # PostgreSQL settings
 POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
@@ -47,34 +51,44 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
 # Docker environment settings
 USE_DOCKER="${USE_DOCKER:-auto}"
 
-# Function to detect Docker volume name for uploads
-detect_uploads_volume() {
-    if [[ -n "${UPLOADS_DOCKER_VOLUME:-}" ]]; then
-        echo "$UPLOADS_DOCKER_VOLUME"
+# Function to detect a Docker volume name for one file store.
+# $1 - logical volume name from docker-compose (e.g. uploads_data_prod)
+# $2 - explicit override; when set, it wins over any detection
+detect_file_volume() {
+    local logical_name="$1"
+    local override="${2:-}"
+
+    if [[ -n "$override" ]]; then
+        echo "$override"
         return
     fi
-    
+
     local detected=""
-    
+
     # Try docker compose config
     local compose_file="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
     if [[ -f "$compose_file" ]]; then
-        detected=$(docker compose -f "$compose_file" config --volumes 2>/dev/null | grep uploads_data_prod | head -1 || true)
+        # grep выходит с кодом 1, когда совпадений нет, а скрипт идёт под `set -e`:
+        # пустой результат здесь - штатный исход, поэтому он присваивается явно.
+        # 🔴 Отбор первой строки делает сам grep (-m1), а не `| head -1`: head закрывает
+        # трубу, grep получает SIGPIPE, под pipefail конвейер становится ненулевым - и ветка
+        # ниже стёрла бы уже найденное имя тома. Ловится только там, где томов два.
+        detected=$(docker compose -f "$compose_file" config --volumes 2>/dev/null | grep -x -m1 "$logical_name") || detected=""
         if [[ -n "$detected" ]] && ! docker volume inspect "$detected" &>/dev/null; then
             detected=""
         fi
     fi
-    
+
     # Fallback: list Docker volumes by name suffix (handles project-name prefixing)
     if [[ -z "$detected" ]]; then
-        detected=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E '(^|_)uploads_data_prod$' | head -1 || true)
+        detected=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E -m1 "(^|_)${logical_name}\$") || detected=""
     fi
-    
+
     # Final fallback
     if [[ -z "$detected" ]]; then
-        detected="uploads_data_prod"
+        detected="$logical_name"
     fi
-    
+
     echo "$detected"
 }
 
@@ -441,69 +455,213 @@ restore_database() {
     fi
 }
 
-# Function to restore media uploads
-restore_uploads() {
-    local uploads_backup="$1"
-    
-    if [[ ! -f "$uploads_backup" ]]; then
-        log_warning "Uploads backup not found: $uploads_backup"
+# Locate the archive of one file store that belongs to a given database dump.
+#
+# Имя собирается из ЧАСТЕЙ имени дампа, а не подстановкой по образцу. Прежняя форма
+# `sed 's/bibliaris-prod-[^-]*-/...-/'` съедала только первый сегмент типа копии и на
+# `before-deploy` давала `...-rights-files-deploy-...` — то есть на предвыкатных копиях,
+# ради которых откат и делается, точное имя не совпадало НИКОГДА.
+#
+# Дамп:   <BACKUP_PREFIX>-<тип><-метка>-<время>.dump
+# Архив:  <BACKUP_PREFIX>-<слаг><-метка>-<время>.tar.gz
+# Тип берётся из каталога, в котором лежит дамп, — он там же, где его создал бэкап.
+#
+# $1 - path to the database dump
+# $2 - store slug (uploads | rights-files)
+find_store_archive() {
+    local db_backup="$1"
+    local store_slug="$2"
+    local dir backup_type db_name tail_part
+    dir=$(dirname "$db_backup")
+    backup_type=$(basename "$dir")
+    db_name=$(basename "$db_backup")
+
+    # Отрезаем префикс с типом спереди и расширение сзади: остаётся <-метка>-<время>.
+    tail_part="${db_name#"${BACKUP_PREFIX}-${backup_type}"}"
+    tail_part="${tail_part%.dump}"
+    tail_part="${tail_part%.sql}"
+    tail_part="${tail_part%.sql.gz}"
+
+    local exact="${dir}/${BACKUP_PREFIX}-${store_slug}${tail_part}.tar.gz"
+    if [[ -f "$exact" ]]; then
+        echo "$exact"
+        return
+    fi
+
+    # Запасной путь: архив того же хранилища, снятый рядом по времени с дампом. Метки
+    # времени у дампа и у архива берутся двумя независимыми вызовами `date`, поэтому дамп
+    # длиной больше минуты разводит их на минуту-другую.
+    #
+    # 🔴 Окно обязательно. Без него в каталоге, где ротация держит копии за месяц,
+    # «ближайшим» оказался бы архив чужого прогона — и распаковался бы поверх содержимого
+    # тома, смешав два поколения доказательств. Лучше не найти ничего и сказать об этом,
+    # чем восстановить не то.
+    local window_seconds="${STORE_ARCHIVE_WINDOW_SECONDS:-7200}"
+    local db_mtime
+    db_mtime=$(stat -c %Y "$db_backup" 2>/dev/null) || db_mtime=0
+
+    local best="" best_delta=-1 candidate candidate_mtime delta
+    while IFS= read -r -d '' candidate; do
+        candidate_mtime=$(stat -c %Y "$candidate" 2>/dev/null) || continue
+        delta=$(( candidate_mtime > db_mtime ? candidate_mtime - db_mtime : db_mtime - candidate_mtime ))
+        if [[ $delta -gt $window_seconds ]]; then
+            continue
+        fi
+        if [[ $best_delta -lt 0 || $delta -lt $best_delta ]]; then
+            best="$candidate"
+            best_delta=$delta
+        fi
+    done < <(find "$dir" -maxdepth 1 -name "${BACKUP_PREFIX}-${store_slug}-*.tar.gz" -type f -print0 2>/dev/null)
+
+    if [[ -n "$best" ]]; then
+        log_warning "Exact ${store_slug} archive $(basename "$exact") not found; using closest within ${window_seconds}s: $(basename "$best")"
+        echo "$best"
+        return
+    fi
+
+    # Ничего подходящего в окне нет - отдаём точное имя, вызванный скажет об отсутствии сам.
+    echo "$exact"
+}
+
+# Function to restore one file store from its archive.
+#
+# Симметрия бэкапу обязательна: архив, который некому распаковать, ценности не имеет.
+# Страховочный снимок текущего состояния именуется по слагу хранилища - иначе восстановление
+# второго тома затёрло бы страховку первого.
+#
+# $1 - path to the archive
+# $2 - store slug used in the safety snapshot name (uploads | rights-files)
+# $3 - human label for the log
+# $4 - logical Docker volume name
+# $5 - explicit volume override, may be empty
+# $6 - host directory used when Docker is not in play
+restore_file_store() {
+    local store_backup="$1"
+    local store_slug="$2"
+    local store_label="$3"
+    local logical_volume="$4"
+    local volume_override="$5"
+    local host_dir="$6"
+    # ADR-015: приватное хранилище не раздаётся статикой и мировой доступ ему не положен.
+    # Режим задаётся вызывающим, потому что у загрузок и у файлов прав он разный.
+    local dir_mode="${7:-755}"
+    # 🔴 Страховочный снимок кладётся рядом с копиями, а не в /tmp. В /tmp он создавался
+    # с правами 644 в каталоге 1777 и лежал там до перезагрузки: весь юридический архив
+    # целиком читал любой процесс на машине (ADR-015). Каталог копий уже имеет режим 700
+    # (setup_server.sh), поэтому снимок наследует его защиту.
+    local snapshot_dir="${STORE_SNAPSHOT_DIR:-${BACKUP_DIR}/pre-restore}"
+    mkdir -p "$snapshot_dir" 2>/dev/null || snapshot_dir="$(dirname "$store_backup")"
+
+    if [[ ! -f "$store_backup" ]]; then
+        log_warning "${store_label} backup not found: $store_backup"
         return 0
     fi
-    
-    log_info "Restoring uploads from: $(basename "$uploads_backup")"
-    
+
+    log_info "Restoring ${store_label} from: $(basename "$store_backup")"
+
     local restore_ok=false
-    
+
     if [[ "$USE_DOCKER" == "true" ]]; then
         # Docker mode: restore to named volume
         local volume_name
-        volume_name=$(detect_uploads_volume)
+        volume_name=$(detect_file_volume "$logical_volume" "$volume_override")
         if docker volume inspect "$volume_name" &>/dev/null; then
             log_info "Restoring to Docker volume: $volume_name"
-            
+
             # Backup current state in volume
             local timestamp=$(date '+%Y%m%d_%H%M%S')
-            local backup_current_uploads="/tmp/uploads_backup_${timestamp}.tar.gz"
-            docker run --rm -v "${volume_name}:/data" -v "/tmp:/backup" alpine \
-                tar -czf "/backup/uploads_backup_${timestamp}.tar.gz" -C /data . 2>/dev/null && \
-                log_info "Current uploads saved to: $backup_current_uploads" || true
-            
+            local snapshot_name="${store_slug}_backup_${timestamp}.tar.gz"
+            local backup_current="${snapshot_dir}/${snapshot_name}"
+            if docker run --rm -v "${volume_name}:/data" -v "${snapshot_dir}:/backup" alpine \
+                tar -czf "/backup/${snapshot_name}" -C /data . 2>/dev/null; then
+                log_info "Current ${store_label} saved to: $backup_current"
+            else
+                log_warning "Could not snapshot current ${store_label} before restore"
+            fi
+
             # Restore from backup file into volume
-            if docker run --rm -v "${volume_name}:/data" -v "$(dirname "$uploads_backup"):/backup" alpine \
-                tar -xzf "/backup/$(basename "$uploads_backup")" -C /data 2>/dev/null; then
+            if docker run --rm -v "${volume_name}:/data" -v "$(dirname "$store_backup"):/backup" alpine \
+                tar -xzf "/backup/$(basename "$store_backup")" -C /data 2>/dev/null; then
                 restore_ok=true
-                log_success "Uploads restored to Docker volume $volume_name"
+                log_success "${store_label} restored to Docker volume $volume_name"
             fi
         else
             log_warning "Docker volume $volume_name not found, falling back to host path"
         fi
     fi
-    
+
     if [[ "$restore_ok" != "true" ]]; then
         # Fallback or local mode: restore to host directory
-        # Backup current uploads
-        if [[ -d "$UPLOADS_DIR" && "$(ls -A "$UPLOADS_DIR" 2>/dev/null)" ]]; then
+        # Backup current state
+        if [[ -d "$host_dir" && "$(ls -A "$host_dir" 2>/dev/null)" ]]; then
             local timestamp=$(date '+%Y%m%d_%H%M%S')
-            local backup_current_uploads="/tmp/uploads_backup_${timestamp}.tar.gz"
-            tar -czf "$backup_current_uploads" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")" 2>/dev/null
-            log_info "Current uploads saved to: $backup_current_uploads"
+            local backup_current="${snapshot_dir}/${store_slug}_backup_${timestamp}.tar.gz"
+            tar -czf "$backup_current" -C "$(dirname "$host_dir")" "$(basename "$host_dir")" 2>/dev/null
+            log_info "Current ${store_label} saved to: $backup_current"
         fi
-        
-        # Restore
-        if tar -xzf "$uploads_backup" -C "$(dirname "$UPLOADS_DIR")" 2>/dev/null; then
+
+        # Restore.
+        #
+        # 🔴 Раскладка архива зависит от того, чем он снят, и распаковывать их одинаково
+        # нельзя. Docker-ветка бэкапа пишет `-C /data .` - внутри `./file`, без верхнего
+        # каталога. Хостовая пишет `-C dirname basename` - внутри `<store>/file`.
+        # Docker-архив, распакованный «как хостовый», рассыпал бы юридические документы
+        # прямо в родительский каталог (`/opt/books/`), tar вернул бы 0, и скрипт
+        # отчитался бы об успешном восстановлении.
+        local extract_target extract_status=0
+        # 🔴 Первую запись листинга нельзя брать через `| head -1`: head закрывает трубу,
+        # tar получает SIGPIPE и выходит с 141, а под pipefail это делает ненулевым весь
+        # конвейер - ветка «архив хостовой» не выбиралась бы даже при совпадении имени.
+        # На коротком листинге как повезёт, на сотне файлов - всегда, то есть на стенде
+        # из условия приёмки дефект не воспроизводится. `sed -n 1p` дочитывает поток
+        # до конца и трубу не закрывает.
+        local first_entry store_root
+        first_entry=$(tar -tzf "$store_backup" 2>/dev/null | sed -n '1p') || first_entry=""
+        store_root=$(basename "$host_dir")
+        if [[ "$first_entry" == "${store_root}/"* || "$first_entry" == "./${store_root}/"* ]]; then
+            extract_target="$(dirname "$host_dir")"
+        else
+            # Архив снят из тома: его содержимое - это содержимое самого хранилища.
+            mkdir -p "$host_dir"
+            extract_target="$host_dir"
+        fi
+
+        tar -xzf "$store_backup" -C "$extract_target" 2>/dev/null || extract_status=$?
+        if [[ $extract_status -eq 0 ]]; then
             restore_ok=true
-            log_success "Uploads restored to host path $UPLOADS_DIR"
-            
-            # Fix permissions
-            chown -R deploy:deploy "$UPLOADS_DIR" 2>/dev/null || true
-            chmod -R 755 "$UPLOADS_DIR" 2>/dev/null || true
+            log_success "${store_label} restored to host path $host_dir"
+
+            # Fix permissions. Best effort: на машине без пользователя deploy обе команды
+            # падают, и останавливать на этом восстановление нельзя - но и молчать о них
+            # тоже: раньше отказ прав уходил в никуда.
+            if ! chown -R deploy:deploy "$host_dir" 2>/dev/null; then
+                log_warning "Could not chown $host_dir to deploy:deploy"
+            fi
+            if ! chmod -R "$dir_mode" "$host_dir" 2>/dev/null; then
+                log_warning "Could not chmod $host_dir to $dir_mode"
+            fi
         fi
     fi
-    
+
     if [[ "$restore_ok" != "true" ]]; then
-        log_error "Uploads restore failed"
+        log_error "${store_label} restore failed"
         return 1
     fi
+}
+
+# Function to restore media uploads
+restore_uploads() {
+    restore_file_store "$1" uploads "Uploads" uploads_data_prod \
+        "${UPLOADS_DOCKER_VOLUME:-}" "$UPLOADS_DIR"
+}
+
+# Function to restore rights files (WP-9 private legal storage)
+restore_rights_files() {
+    # 750, а не 755: отчёты юриста, письма правообладателей и персональные данные заявителей
+    # не должны читаться любым локальным аккаунтом и любым контейнером, смонтировавшим
+    # /opt/books (ADR-015). Образец рядом - chmod 700 на каталоге копий в setup_server.sh.
+    restore_file_store "$1" rights-files "Rights files" rights_files_data_prod \
+        "${RIGHTS_FILES_DOCKER_VOLUME:-}" "$RIGHTS_FILES_DIR" 750
 }
 
 # Function to verify integrity after restore
@@ -572,13 +730,26 @@ main() {
         exit 1
     fi
     
-    # Locate and restore uploads archive if present
-    local uploads_backup_file
-    local backup_basename=$(basename "$backup_file" | sed 's/bibliaris-prod-[^-]*-/bibliaris-prod-uploads-/' | sed 's/\.sql.*/.tar.gz/' | sed 's/\.dump/.tar.gz/')
+    # Locate and restore file-store archives if present
     local backup_dir=$(dirname "$backup_file")
-    uploads_backup_file="${backup_dir}/${backup_basename}"
-    
-    restore_uploads "$uploads_backup_file"
+
+    local uploads_backup_file rights_files_backup_file
+    uploads_backup_file=$(find_store_archive "$backup_file" uploads)
+    rights_files_backup_file=$(find_store_archive "$backup_file" rights-files)
+
+    # WP-9: второй файловый том. Отсутствие архива - не отказ: при STORAGE_DRIVER=r2
+    # том пуст и бэкап его не создаёт.
+    #
+    # Обе функции возвращают 1 при неудаче и зовутся под `set -e`. Голым вызовом первая
+    # неудача унесла бы с собой и второе хранилище, и verify_restore - причём
+    # невосстановленным осталось бы именно то, потеря которого необратима.
+    local store_restore_failed=false
+    restore_uploads "$uploads_backup_file" || store_restore_failed=true
+    restore_rights_files "$rights_files_backup_file" || store_restore_failed=true
+
+    if [[ "$store_restore_failed" == "true" ]]; then
+        log_error "File store restore failed - see messages above"
+    fi
     
     # Integrity verification
     if verify_restore; then

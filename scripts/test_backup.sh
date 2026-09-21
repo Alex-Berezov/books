@@ -39,7 +39,7 @@ if [[ -f "$BACKUP_ENV_FILE" ]]; then
 fi
 
 # Configuration
-BACKUP_DIR="/opt/books/backups"
+BACKUP_DIR="${BACKUP_DIR:-/opt/books/backups}"
 MIN_BACKUP_SIZE_MB="${MIN_BACKUP_SIZE_MB:-1}"
 MAX_BACKUP_AGE_DAYS="${MAX_BACKUP_AGE_DAYS:-7}"
 
@@ -316,22 +316,33 @@ check_sql_structure() {
     fi
 }
 
-# Check media uploads backups
-check_uploads_backups() {
-    log_info "Checking media uploads backups..."
-    
-    local uploads_count=0
-    
+# Check backups of one file store.
+#
+# Проверка, которая не знает имени архива, зелена и тогда, когда архива нет вовсе - именно
+# так пропажа файлов прав оставалась незамеченной. Поэтому имя хранилища задаётся параметром,
+# а вызовов столько же, сколько хранилищ.
+#
+# $1 - archive name prefix (bibliaris-prod-uploads | bibliaris-prod-rights-files)
+# $2 - human label for the log
+check_file_store_backups() {
+    local archive_prefix="$1"
+    local store_label="$2"
+    local store_enabled="${3:-true}"
+
+    log_info "Checking ${store_label} backups..."
+
+    local store_count=0
+
     while IFS= read -r -d '' file; do
-        uploads_count=$((uploads_count + 1))
-        
+        store_count=$((store_count + 1))
+
     # Archive integrity check
         if tar -tzf "$file" >/dev/null 2>&1; then
-            pass_test "$(basename "$file"): uploads archive OK"
+            pass_test "$(basename "$file"): ${store_label} archive OK"
         else
-            fail_test "$(basename "$file"): corrupted uploads archive"
+            fail_test "$(basename "$file"): corrupted ${store_label} archive"
         fi
-        
+
     # Archive content check
         local files_in_archive=$(tar -tzf "$file" 2>/dev/null | wc -l)
         if [[ $files_in_archive -gt 0 ]]; then
@@ -339,14 +350,44 @@ check_uploads_backups() {
         else
             warn_test "$(basename "$file"): archive empty or damaged"
         fi
-        
-    done < <(find "$BACKUP_DIR" -name "bibliaris-prod-uploads-*.tar.gz" -type f -print0 2>/dev/null)
-    
-    if [[ $uploads_count -eq 0 ]]; then
-    warn_test "Uploads backups not found (may be disabled)"
+
+    done < <(find "$BACKUP_DIR" -name "${archive_prefix}-*.tar.gz" -type f -print0 2>/dev/null)
+
+    if [[ $store_count -eq 0 ]]; then
+        # 🔴 Тут и был дефект, ради которого правится этот файл: проверка, не знающая имени
+        # архива, зелена и тогда, когда архива нет вовсе. Одного `warn_test` мало - `main`
+        # выходит с кодом 0 при любом числе предупреждений, то есть прекратившееся
+        # копирование по-прежнему выглядело бы исправным.
+        #
+        # Отличаем «хранилище выключено или законно пусто» от «включено, а копий нет»:
+        # первое - предупреждение, второе - отказ.
+        # 🔴 Здесь нельзя краснеть, и это не смягчение проверки, а условие приёмки записи:
+        # при STORAGE_DRIVER=r2 том прав законно пуст, бэкап архива не создаёт вовсе,
+        # и fail_test красил бы ночной прогон на исправной машине каждую ночь. Дежурный
+        # к такому привыкает за неделю, и настоящая пропажа проходит мимо него.
+        #
+        # Настоящую пропажу ловит не этот шаг, а сам бэкап: хранилище включено, а источника
+        # нет вовсе - там это отказ с ненулевым кодом и без метрики успеха.
+        if [[ "$store_enabled" == "true" ]]; then
+            warn_test "${store_label} backups not found (store may be empty)"
+        else
+            warn_test "${store_label} backups not found (store disabled)"
+        fi
     else
-    pass_test "Found uploads backups: $uploads_count"
+    pass_test "Found ${store_label} backups: $store_count"
     fi
+}
+
+# Check media uploads backups
+check_uploads_backups() {
+    check_file_store_backups bibliaris-prod-uploads "Media uploads" "${INCLUDE_UPLOADS:-true}"
+}
+
+# Check rights files backups (WP-9 private legal storage).
+# Хранилище выключают тем же выключателем, что и бэкап: INCLUDE_RIGHTS_FILES=false.
+# Пока оно включено, отсутствие копий - отказ, а не примечание.
+check_rights_files_backups() {
+    check_file_store_backups bibliaris-prod-rights-files "Rights files" "${INCLUDE_RIGHTS_FILES:-true}"
 }
 
 # Check backup logs
@@ -577,6 +618,8 @@ main() {
     echo
     check_uploads_backups
     echo
+    check_rights_files_backups
+    echo
     check_backup_logs
     echo
     check_disk_space
@@ -620,6 +663,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     echo "- Compressed archive integrity"
     echo "- SQL dump structure"
     echo "- Media uploads backups"
+    echo "- Rights files backups"
     echo "- Backup logs"
     echo "- Disk free space"
     echo "- Automated backup schedule"

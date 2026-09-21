@@ -60,7 +60,9 @@ fi
 
 # 3. Last local backup freshness (≤ 36 hours)
 log_info "Checking local backup freshness..."
-latest_local=$(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.dump" -o -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-uploads-*.tar.gz" \) -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+# LEGACY-032: архив второго файлового хранилища (юридические файлы прав) входит в список
+# наравне с остальными - иначе свежесть считается по копиям, среди которых его никогда нет.
+latest_local=$(find "$BACKUP_DIR" \( -name "bibliaris-prod-*.dump" -o -name "bibliaris-prod-*.sql*" -o -name "bibliaris-prod-uploads-*.tar.gz" -o -name "bibliaris-prod-rights-files-*.tar.gz" \) -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
 if [[ -n "$latest_local" ]]; then
   local_age=$(( ($(date +%s) - $(stat -c %Y "$latest_local")) / 3600 ))
   if [[ $local_age -le 36 ]]; then

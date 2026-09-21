@@ -258,7 +258,7 @@ create_deploy_user() {
     execute "usermod -aG sudo $DEPLOY_USER"
     
     # Create application directory structure
-    execute "mkdir -p /opt/books/{app,uploads,backups,logs}"
+    execute "mkdir -p /opt/books/{app,uploads,rights-files,backups,logs}"
     execute "chown -R $DEPLOY_USER:$DEPLOY_USER /opt/books"
     execute "chmod 755 /opt/books"
     execute "chmod 700 /opt/books/backups"

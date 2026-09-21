@@ -268,6 +268,13 @@ BACKUP_DIR="/opt/books/backups"
 BACKUP_RETENTION_DAYS=14
 COMPRESS_BACKUPS=true
 INCLUDE_UPLOADS=true
+UPLOADS_DIR="/opt/books/uploads"
+# WP-9 / LEGACY-032. Второе файловое хранилище - приватные юридические файлы прав.
+# Объявляется здесь потому, что cron не наследует окружение оболочки, и этот файл -
+# единственное окружение, которое получает бэкап. Дописанная руками строка тут не живёт:
+# setup_backup_cron.sh перезаписывает файл целиком при каждом прогоне.
+INCLUDE_RIGHTS_FILES=true
+RIGHTS_FILES_DIR="/opt/books/rights-files"
 MIN_BACKUP_SIZE_MB=1
 
 # PostgreSQL Configuration (adjust as needed)

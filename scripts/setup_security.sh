@@ -212,7 +212,7 @@ setup_project_directories() {
     log_info "Creating project directories..."
     
     # Create base directories
-    mkdir -p /opt/books/{app,uploads,backups,logs}
+    mkdir -p /opt/books/{app,uploads,rights-files,backups,logs}
     
     # Ownership and permissions
     chown -R deploy:deploy /opt/books

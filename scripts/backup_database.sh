@@ -46,7 +46,7 @@ if [[ -f "$BACKUP_ENV_FILE" ]]; then
 fi
 
 # Default configuration
-BACKUP_DIR="/opt/books/backups"
+BACKUP_DIR="${BACKUP_DIR:-/opt/books/backups}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 COMPRESS_BACKUPS="${COMPRESS_BACKUPS:-true}"
 BACKUP_PREFIX="${BACKUP_PREFIX:-bibliaris-prod}"
@@ -59,8 +59,14 @@ LOG_FILE="${BACKUP_DIR}/backup.log"
 # Overriding the path means overriding it in every consumer: `.env.monitoring` (compose and
 # `setup_monitoring.sh`) and `.env.backup` (this script under cron, sourced above).
 NODE_TEXTFILE_DIR="${NODE_TEXTFILE_DIR:-/opt/books/monitoring/textfile}"
-UPLOADS_DIR="/opt/books/uploads"
+UPLOADS_DIR="${UPLOADS_DIR:-/opt/books/uploads}"
 INCLUDE_UPLOADS="${INCLUDE_UPLOADS:-true}"
+# WP-9: приватное хранилище юридических файлов прав (`RIGHTS_FILES_LOCAL_DIR`). Отдельный том,
+# а не подкаталог uploads: uploads раздаётся статикой, а отчёт о правах публичного адреса иметь
+# не должен (ADR-015). Том нужен и при `STORAGE_DRIVER=r2` — тогда он просто пуст, и пустой
+# архив здесь не отказ, а штатный исход.
+RIGHTS_FILES_DIR="${RIGHTS_FILES_DIR:-/opt/books/rights-files}"
+INCLUDE_RIGHTS_FILES="${INCLUDE_RIGHTS_FILES:-true}"
 BACKUP_TAG=""
 
 # PostgreSQL settings (can be overridden via environment variables)
@@ -75,14 +81,22 @@ DOCKER_COMPOSE_FILE="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
 DOCKER_POSTGRES_SERVICE="${DOCKER_POSTGRES_SERVICE:-postgres}"
 USE_DOCKER="${USE_DOCKER:-auto}"
 
-# Docker volume name for uploads (auto-detected, fallback to this default)
+# Docker volume names for the file stores (auto-detected, fallback to these defaults)
 UPLOADS_DOCKER_VOLUME="${UPLOADS_DOCKER_VOLUME:-}"
+RIGHTS_FILES_DOCKER_VOLUME="${RIGHTS_FILES_DOCKER_VOLUME:-}"
 
 # S3-compatible remote storage settings
 BACKUP_REMOTE_ENABLED="${BACKUP_REMOTE_ENABLED:-0}"
 BACKUP_S3_ENDPOINT="${BACKUP_S3_ENDPOINT:-}"
 BACKUP_S3_BUCKET="${BACKUP_S3_BUCKET:-}"
 BACKUP_S3_PREFIX="${BACKUP_S3_PREFIX:-prod/postgres}"
+# ADR-015: приватность юридических файлов прав во внешнем хранилище держится на сегменте
+# ключа `rights-private/` - по нему стоит правило Cloudflare WAF. Сегмент захардкожен,
+# отдельной переменной ему не заводится: настраиваемый дал бы второе место, способное
+# разойтись с правилом. Бакет копий скрипту неизвестен (.env - тема владельца), и ключ
+# с этим сегментом верен в обе стороны: при общем с медиа бакете его закрывает правило,
+# при отдельном - он безвреден.
+BACKUP_S3_RIGHTS_PREFIX="${BACKUP_S3_PREFIX}/rights-private"
 BACKUP_S3_ACCESS_KEY_ID="${BACKUP_S3_ACCESS_KEY_ID:-}"
 BACKUP_S3_SECRET_ACCESS_KEY="${BACKUP_S3_SECRET_ACCESS_KEY:-}"
 BACKUP_S3_REGION="${BACKUP_S3_REGION:-auto}"
@@ -93,36 +107,46 @@ BACKUP_RETENTION_WEEKLY="${BACKUP_RETENTION_WEEKLY:-56}"
 BACKUP_RETENTION_MONTHLY="${BACKUP_RETENTION_MONTHLY:-365}"
 BACKUP_RETENTION_BEFORE_DEPLOY="${BACKUP_RETENTION_BEFORE_DEPLOY:-30}"
 
-# Function to detect Docker volume name for uploads
-detect_uploads_volume() {
-    if [[ -n "${UPLOADS_DOCKER_VOLUME:-}" ]]; then
-        echo "$UPLOADS_DOCKER_VOLUME"
+# Function to detect a Docker volume name for one file store.
+# $1 - logical volume name from docker-compose (e.g. uploads_data_prod)
+# $2 - explicit override; when set, it wins over any detection
+detect_file_volume() {
+    local logical_name="$1"
+    local override="${2:-}"
+
+    if [[ -n "$override" ]]; then
+        echo "$override"
         return
     fi
-    
+
     local detected=""
-    
+
     # Try docker compose config (most reliable in production)
     local compose_file="${DOCKER_COMPOSE_FILE:-docker-compose.prod.yml}"
     if [[ -f "$compose_file" ]]; then
-        detected=$(docker compose -f "$compose_file" config --volumes 2>/dev/null | grep uploads_data_prod | head -1 || true)
+        # grep выходит с кодом 1, когда совпадений нет, а скрипт идёт под `set -e`:
+        # пустой результат здесь - штатный исход, поэтому он присваивается явно.
+        # 🔴 Отбор первой строки делает сам grep (-m1), а не `| head -1`: head закрывает
+        # трубу, grep получает SIGPIPE, под pipefail конвейер становится ненулевым - и ветка
+        # ниже стёрла бы уже найденное имя тома. Ловится только там, где томов два.
+        detected=$(docker compose -f "$compose_file" config --volumes 2>/dev/null | grep -x -m1 "$logical_name") || detected=""
         # compose config returns logical name (e.g., uploads_data_prod);
         # verify the actual Docker volume exists (Docker may prefix it)
         if [[ -n "$detected" ]] && ! docker volume inspect "$detected" &>/dev/null; then
             detected=""
         fi
     fi
-    
+
     # Fallback: list Docker volumes by name suffix (handles project-name prefixing)
     if [[ -z "$detected" ]]; then
-        detected=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E '(^|_)uploads_data_prod$' | head -1 || true)
+        detected=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E -m1 "(^|_)${logical_name}\$") || detected=""
     fi
-    
+
     # Final fallback: hardcoded name
     if [[ -z "$detected" ]]; then
-        detected="uploads_data_prod"
+        detected="$logical_name"
     fi
-    
+
     echo "$detected"
 }
 
@@ -309,30 +333,49 @@ backup_database() {
     fi
 }
 
-# Function to create uploads/media backup
-backup_uploads() {
-    local backup_type="${1:-daily}"
+# Function to create a backup of one file store (Docker volume, host path as fallback).
+#
+# WP-9 added a second file volume, and the backup knew only the first one: a store that is not
+# named here is not in the archive at all, and for the rights files that loss is irreversible
+# (ADR-009 - a RightsEvidence row pointing at a missing object proves nothing). Hence one
+# function over a named store instead of a copy per store.
+#
+# $1 - store slug used in the archive name (uploads | rights-files)
+# $2 - human label for the log
+# $3 - logical Docker volume name
+# $4 - explicit volume override, may be empty
+# $5 - host directory used when Docker is not in play
+# $6 - "true" when this store is included in the backup
+# $7 - backup type (daily/weekly/...)
+backup_file_store() {
+    local store_slug="$1"
+    local store_label="$2"
+    local logical_volume="$3"
+    local volume_override="$4"
+    local host_dir="$5"
+    local include_store="$6"
+    local backup_type="${7:-daily}"
+
     local timestamp=$(date '+%Y-%m-%d-%H-%M')
     local filename_suffix=""
     if [[ -n "$BACKUP_TAG" ]]; then
         filename_suffix="-${BACKUP_TAG}"
     fi
-    local backup_file="${BACKUP_DIR}/${backup_type}/bibliaris-prod-uploads${filename_suffix}-${timestamp}.tar.gz"
-    
-    if [[ "$INCLUDE_UPLOADS" != "true" ]]; then
-    log_info "Uploads/media backup disabled"
+    local backup_file="${BACKUP_DIR}/${backup_type}/${BACKUP_PREFIX}-${store_slug}${filename_suffix}-${timestamp}.tar.gz"
+
+    if [[ "$include_store" != "true" ]]; then
+    log_info "${store_label} backup disabled"
         return 0
     fi
-    
-    log_info "Creating uploads/media backup..."
-    
-    local files_count=0
+
+    log_info "Creating ${store_label} backup..."
+
     local tar_ok=false
-    
+
     if [[ "$USE_DOCKER" == "true" ]]; then
         # Docker mode: backup from named volume
         local volume_name
-        volume_name=$(detect_uploads_volume)
+        volume_name=$(detect_file_volume "$logical_volume" "$volume_override")
         if docker volume inspect "$volume_name" &>/dev/null; then
             log_info "Backing up Docker volume: $volume_name"
             # Use a temporary container to tar the volume contents
@@ -340,44 +383,72 @@ backup_uploads() {
                 tar -czf "/backup/$(basename "$backup_file")" -C /data . 2>>"$LOG_FILE"; then
                 tar_ok=true
             else
-                log_warning "Docker volume backup failed, falling back to host path: $UPLOADS_DIR"
+                # Оборванный архив контейнер уже оставил на диске: без уборки его подберёт
+                # test_backup.sh и назовёт битым, а ротация уберёт только по возрасту.
+                rm -f "$backup_file"
+                log_warning "Docker volume backup failed, falling back to host path: $host_dir"
             fi
         else
-            log_warning "Docker volume $volume_name not found, falling back to host path: $UPLOADS_DIR"
+            log_warning "Docker volume $volume_name not found, falling back to host path: $host_dir"
         fi
     fi
-    
+
     if [[ "$tar_ok" != "true" ]]; then
         # Fallback or local mode: backup from host directory
-        if [[ ! -d "$UPLOADS_DIR" ]]; then
-            log_warning "Uploads directory not found: $UPLOADS_DIR"
-            return 0
+        if [[ ! -d "$host_dir" ]]; then
+            # 🔴 Хранилище включено, но не нашлось ни тома, ни каталога - это отказ, а не
+            # пустой том. Молчаливый `return 0` здесь означал бы «копии нет», а наверх
+            # ушло бы «completed» вместе с метрикой успеха: ровно то, от чего ADR-009
+            # защищает юридические файлы. Пустое хранилище - это существующий каталог
+            # без файлов, ветка ниже.
+            log_error "${store_label} enabled but neither Docker volume nor host directory found: $host_dir"
+            return 1
         fi
-        
-        local file_count=$(find "$UPLOADS_DIR" -type f 2>/dev/null | wc -l)
+
+        local file_count=$(find "$host_dir" -type f 2>/dev/null | wc -l)
         log_info "Files found for backup: $file_count"
-        
+
         if [[ $file_count -eq 0 ]]; then
-            log_warning "No files to backup in $UPLOADS_DIR"
+            log_warning "No files to backup in $host_dir"
             return 0
         fi
-        
-        log_info "Archiving from host path: $UPLOADS_DIR"
-        tar -czf "$backup_file" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")" 2>>"$LOG_FILE"
-        
-        if [[ $? -eq 0 && -f "$backup_file" ]]; then
+
+        log_info "Archiving from host path: $host_dir"
+        # Код возврата tar проверяется явно и ДО проверки файла: tar создаёт файл раньше,
+        # чем может упасть, поэтому оборванный архив (кончилось место, нечитаемый файл,
+        # отказ прав) существует на диске и по одному `-f` неотличим от целого. Внутри
+        # подстановки команд в условии `if` errexit подавляется, то есть ветка достижима.
+        local tar_status=0
+        tar -czf "$backup_file" -C "$(dirname "$host_dir")" "$(basename "$host_dir")" 2>>"$LOG_FILE" || tar_status=$?
+
+        if [[ $tar_status -eq 0 && -f "$backup_file" ]]; then
             tar_ok=true
+        else
+            log_error "tar failed for ${store_label} (exit $tar_status), removing partial archive"
+            rm -f "$backup_file"
         fi
     fi
-    
+
     if [[ "$tar_ok" == "true" && -f "$backup_file" ]]; then
         local file_size=$(du -h "$backup_file" | cut -f1)
-    log_success "Uploads/media backup created: $(basename "$backup_file") (size: $file_size)"
+    log_success "${store_label} backup created: $(basename "$backup_file") (size: $file_size)"
         echo "$backup_file"
     else
-    log_error "Error creating uploads/media backup"
+    log_error "Error creating ${store_label} backup"
         return 1
     fi
+}
+
+# Function to create uploads/media backup
+backup_uploads() {
+    backup_file_store uploads "Uploads/media" uploads_data_prod \
+        "${UPLOADS_DOCKER_VOLUME:-}" "$UPLOADS_DIR" "$INCLUDE_UPLOADS" "${1:-daily}"
+}
+
+# Function to create rights files backup (WP-9 private legal storage)
+backup_rights_files() {
+    backup_file_store rights-files "Rights files" rights_files_data_prod \
+        "${RIGHTS_FILES_DOCKER_VOLUME:-}" "$RIGHTS_FILES_DIR" "$INCLUDE_RIGHTS_FILES" "${1:-daily}"
 }
 
 # Function to rotate (clean up) old backups
@@ -410,7 +481,8 @@ cleanup_old_backups() {
 generate_backup_report() {
     local db_backup_file="$1"
     local uploads_backup_file="$2"
-    local backup_type="${3:-daily}"
+    local rights_files_backup_file="$3"
+    local backup_type="${4:-daily}"
     
     log_info "Generating backup report..."
     
@@ -448,7 +520,23 @@ generate_backup_report() {
             echo "Status: Disabled"
         fi
         echo ""
-        
+
+    echo "=== Rights Files ==="
+        if [[ "$INCLUDE_RIGHTS_FILES" == "true" ]]; then
+            if [[ -n "$rights_files_backup_file" && -f "$rights_files_backup_file" ]]; then
+                echo "File: $(basename "$rights_files_backup_file")"
+                echo "Size: $(du -h "$rights_files_backup_file" | cut -f1)"
+                echo "Path: $rights_files_backup_file"
+                echo "Status: Success"
+            else
+                # Пустой том - штатное состояние при STORAGE_DRIVER=r2, а не отказ.
+                echo "Status: Empty or no files"
+            fi
+        else
+            echo "Status: Disabled"
+        fi
+        echo ""
+
     echo "=== Configuration ==="
     echo "Retention: $BACKUP_RETENTION_DAYS days"
     echo "Compression: $COMPRESS_BACKUPS"
@@ -474,12 +562,24 @@ generate_backup_report() {
             echo -e "${YELLOW}!${NC} Media uploads: Skipped or error" >&2
         fi
     fi
+
+    if [[ "$INCLUDE_RIGHTS_FILES" == "true" ]]; then
+        if [[ -n "$rights_files_backup_file" && -f "$rights_files_backup_file" ]]; then
+            echo -e "${GREEN}✓${NC} Rights files: $(basename "$rights_files_backup_file") ($(du -h "$rights_files_backup_file" | cut -f1))" >&2
+        else
+            echo -e "${YELLOW}!${NC} Rights files: Empty or skipped" >&2
+        fi
+    fi
 }
 
 # Function to upload backup file to S3-compatible remote storage
 upload_to_remote() {
     local backup_file="$1"
     local backup_type="${2:-daily}"
+    # Базовый префикс - параметр, потому что архив приватного хранилища прав обязан лежать
+    # под сегментом `rights-private/`: приватность этих объектов по ADR-015 держится
+    # на правиле Cloudflare WAF по пути `/rights-private/`.
+    local base_prefix="${3:-$BACKUP_S3_PREFIX}"
     
     if [[ "$BACKUP_REMOTE_ENABLED" != "1" ]]; then
         log_info "Remote backup upload disabled (BACKUP_REMOTE_ENABLED != 1)"
@@ -515,7 +615,7 @@ upload_to_remote() {
         return 1
     fi
     
-    local remote_path="${BACKUP_S3_PREFIX}/${backup_type}/$(basename "$backup_file")"
+    local remote_path="${base_prefix}/${backup_type}/$(basename "$backup_file")"
     local s3_uri="s3://${BACKUP_S3_BUCKET}/${remote_path}"
     
     log_info "Uploading backup to remote storage: ${s3_uri}"
@@ -557,7 +657,10 @@ cleanup_remote_old_backups() {
     
     log_info "Applying remote retention for ${backup_type} backups (older than ${retention_days} days)..."
     
-    local remote_prefix="${BACKUP_S3_PREFIX}/${backup_type}/"
+    # Второй параметр - базовый префикс: ретенция обязана ходить по тем же путям,
+    # что выгрузка, иначе архивы приватного хранилища копились бы в облаке вечно.
+    local base_prefix="${2:-$BACKUP_S3_PREFIX}"
+    local remote_prefix="${base_prefix}/${backup_type}/"
     local s3_uri="s3://${BACKUP_S3_BUCKET}/${remote_prefix}"
     
     export AWS_ACCESS_KEY_ID="$BACKUP_S3_ACCESS_KEY_ID"
@@ -594,7 +697,7 @@ cleanup_remote_old_backups() {
                 continue
             fi
             
-            if aws s3 rm "s3://${BACKUP_S3_BUCKET}/${BACKUP_S3_PREFIX}/${backup_type}/${obj_name}" "${aws_args[@]}" 2>>"$LOG_FILE"; then
+            if aws s3 rm "s3://${BACKUP_S3_BUCKET}/${base_prefix}/${backup_type}/${obj_name}" "${aws_args[@]}" 2>>"$LOG_FILE"; then
                 log_info "Deleted remote backup: ${obj_name}"
                 ((deleted_count++)) || true
             else
@@ -726,7 +829,8 @@ main() {
     # Creating backups
     local db_backup_file=""
     local uploads_backup_file=""
-    
+    local rights_files_backup_file=""
+
     # Database backup
     if db_backup_file=$(backup_database "$backup_type"); then
     log_success "Database backup completed"
@@ -735,11 +839,29 @@ main() {
         exit 1
     fi
     
-    # Media (uploads) backup
+    # Media (uploads) backup.
+    #
+    # 🔴 Отказ одного хранилища не отменяет ни второе, ни выгрузку дампа: немедленный exit 1
+    # здесь означал бы, что ночь, когда упал tar загрузок, оставляет хранилище прав без копии
+    # вовсе - при исправном томе. Отказ копится и уносится в код возврата в конце, после того
+    # как дамп уехал во внешнее хранилище.
+    local store_backup_failed=false
+
     if uploads_backup_file=$(backup_uploads "$backup_type"); then
     log_success "Uploads/media backup completed"
+    else
+    log_error "Uploads/media backup FAILED"
+        store_backup_failed=true
     fi
-    
+
+    # Rights files backup (WP-9 private legal storage, second file volume)
+    if rights_files_backup_file=$(backup_rights_files "$backup_type"); then
+    log_success "Rights files backup completed"
+    else
+    log_error "Rights files backup FAILED"
+        store_backup_failed=true
+    fi
+
     # Upload to remote storage
     local remote_upload_failed=false
     
@@ -756,7 +878,14 @@ main() {
             log_error "Uploads backup remote upload FAILED"
         fi
     fi
-    
+
+    if [[ -n "$rights_files_backup_file" && -f "$rights_files_backup_file" ]]; then
+        if ! upload_to_remote "$rights_files_backup_file" "$backup_type" "$BACKUP_S3_RIGHTS_PREFIX"; then
+            remote_upload_failed=true
+            log_error "Rights files backup remote upload FAILED"
+        fi
+    fi
+
     # Fail if remote upload is enabled and failed
     if [[ "$remote_upload_failed" == "true" && "$BACKUP_REMOTE_ENABLED" == "1" ]]; then
         log_error "Remote backup upload failed — aborting (BACKUP_REMOTE_ENABLED=1)"
@@ -765,13 +894,26 @@ main() {
     
     # Apply remote retention
     cleanup_remote_old_backups "$backup_type"
+    # Ретенция ходит по обоим путям: архивы приватного хранилища лежат под своим префиксом
+    # и без этого вызова копились бы в облаке вечно.
+    cleanup_remote_old_backups "$backup_type" "$BACKUP_S3_RIGHTS_PREFIX"
     
     # Cleanup old local backups
     cleanup_old_backups "$backup_type"
     
     # Generate report
-    generate_backup_report "$db_backup_file" "$uploads_backup_file" "$backup_type"
+    generate_backup_report "$db_backup_file" "$uploads_backup_file" "$rights_files_backup_file" "$backup_type"
     
+    # 🔴 Отказ файлового хранилища доезжает до кода возврата и НЕ пишет метрику успеха.
+    # Иначе выходит худшее из возможного: копии юридических файлов нет, а мониторинг зелён,
+    # потому что метрика `books_backup_last_success_timestamp_seconds` свежая (LEGACY-219).
+    # Задания крона оканчиваются на `>/dev/null 2>&1`, то есть отсутствие метрики -
+    # единственный сигнал, который вообще покидает машину.
+    if [[ "$store_backup_failed" == "true" ]]; then
+        log_error "=== Backup finished with file store FAILURES - success metric NOT written ==="
+        exit 1
+    fi
+
     # Reached only when none of the exits above fired.
     write_backup_success_metric "$backup_type"
 
@@ -803,6 +945,9 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     echo "  BACKUP_RETENTION_DAYS   - retention period in days (14)"
     echo "  COMPRESS_BACKUPS        - compress backups (true/false)"
     echo "  INCLUDE_UPLOADS         - include uploads/media files (true/false)"
+    echo "  INCLUDE_RIGHTS_FILES    - include private rights files (true/false)"
+    echo "  UPLOADS_DIR             - host path of the uploads store"
+    echo "  RIGHTS_FILES_DIR        - host path of the rights files store"
     echo "  USE_DOCKER              - use Docker (true/false/auto)"
     echo "  NODE_TEXTFILE_DIR       - node-exporter textfile collector dir (/opt/books/monitoring/textfile);"
     echo "                            override in .env.monitoring AND .env.backup"
