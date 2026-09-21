@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.registry';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsNotificationsService } from '../rights-agent/rights-notifications.service';
@@ -15,6 +16,7 @@ import {
   RECHECK_OPEN_STATUSES,
   RECHECK_SCAN_INITIAL_DELAY_MS_DEFAULT,
   RECHECK_SCAN_INTERVAL_MS_DEFAULT,
+  RECHECK_SCAN_STALE_RUNNING_MS,
   RECHECK_SCHEDULABLE_PROFILE_STATUSES,
 } from './rights-recheck.constants';
 import { recheckError } from './rights-recheck.errors';
@@ -91,21 +93,47 @@ const REMINDER_NOTIFICATION: Partial<
 };
 
 /**
+ * Single argument of `pg_advisory_xact_lock(bigint)`, same overload as `CategoryTreeService`'s
+ * `CATEGORY_TREE_LOCK_KEY` (`category-tree.service.ts:52`, `8_314_270_001n`) — a global lock
+ * for the whole scan is enough, there is no per-profile or per-version granularity to lock.
+ * Value chosen not to collide with it. The two-argument overload used elsewhere keys off its
+ * own `int4` namespaces and cannot collide with a `bigint` key at all:
+ * `TAG_KEY_LOCK_NAMESPACE` (`831_427_002`), `CATEGORY_SLUG_LOCK_NAMESPACE` (`831_427_003`),
+ * `RIGHTS_PROFILE_LOCK_NAMESPACE` (`831_427_101`), `RIGHTS_REVIEW_LOCK_NAMESPACE`
+ * (`831_427_102`).
+ */
+const RECHECK_SCAN_LOCK_KEY = 8_314_270_002n;
+
+/**
+ * Explicit, not Prisma's defaults (`maxWait` 2s, `timeout` 5s), by the same reasoning as
+ * `CATEGORY_TREE_TX_OPTIONS` (`category-tree.service.ts:81`): the whole application shares one
+ * pool (`LEGACY-130`), and this transaction additionally waits on an advisory lock held by
+ * whoever is claiming the slot right now. On the defaults a claim under load fails with
+ * `P2024`/`P2028` — a manual scan would answer 500 instead of 409, and an automatic one would
+ * skip its tick entirely and wait six hours for the next. The claim itself is three statements,
+ * so a wide ceiling costs nothing.
+ */
+const RECHECK_CLAIM_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/**
  * In-process scan that turns dates and Phase 8 staleness flags into recheck tasks.
  *
  * Why `setInterval` and not `@nestjs/schedule` or BullMQ:
  * - `@nestjs/schedule` is not a dependency of this project and Phase 18 adds none;
  * - BullMQ exists, but Redis is optional in this deployment (`QueueModule` yields
  *   undefined providers without `REDIS_URL`/`REDIS_HOST`) — the rights scheduler must not
- *   silently switch itself off when Redis is absent;
- * - the application runs in a single container. Under horizontal scaling two instances would
- *   scan concurrently: safe, because every scan operation is idempotent (`ensureTask`
- *   deduplicates, reminders only fire on a stage increase), but wasteful. Recorded as a known
- *   limitation in `ai-context/legacy-warnings.md`; not fixed in this phase.
+ *   silently switch itself off when Redis is absent.
  *
  * The scan is a pull model on purpose: `RightsContentHashService` lives in `RightsIntakeModule`,
  * which must not import `RightsRecheckModule` (that would be a module cycle). Staleness is
  * therefore discovered by scanning, not pushed at detection time.
+ *
+ * **`LEGACY-021`, closed.** Under horizontal scaling every instance runs this same timer, and
+ * `isRunning` alone only ever protected concurrent runs *inside one process* — two containers
+ * each saw no running scan and both started one. `runScan` now claims its `RightsRecheckScanRun`
+ * row under `pg_advisory_xact_lock` (`claimRun`/`lockScan` below, same shape as
+ * `CategoryTreeService.lockTree`): the check-then-write that decides "is a scan already running"
+ * is now atomic across every instance, not only within one process. See `ADR-001`.
  */
 @Injectable()
 export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -187,84 +215,205 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
     source: RightsRecheckTriggerSource,
     userId: string | null,
   ): Promise<RecheckScanRunDto> {
+    // Fast in-process short-circuit — avoids a claim round trip when this same process already
+    // knows it is scanning. Set synchronously, before any `await`, so two calls issued back to
+    // back from the same process never both pass it. The cross-process guarantee comes from
+    // `claimRun` below, not from this flag (`LEGACY-021`).
     if (this.isRunning) {
       if (source === RightsRecheckTriggerSource.MANUAL) {
         throw recheckError(HttpStatus.CONFLICT, RECHECK_ERROR_CODES.RECHECK_SCAN_ALREADY_RUNNING);
       }
       this.logger.warn('Rights recheck scan skipped: a previous run is still in progress');
+      // Filtered by RUNNING, not just "the newest row": without the filter this reports the
+      // previous, already finished run as though it were the one in flight — and in the window
+      // between `isRunning = true` and `claimRun`'s insert there is no new row yet at all.
       const last = await this.getDatabase().rightsRecheckScanRun.findFirst({
+        where: { status: RightsRecheckScanStatus.RUNNING },
         orderBy: { startedAt: 'desc' },
       });
       return this.toScanRunDto(last as RightsRecheckScanRunRecord);
     }
 
     this.isRunning = true;
-    const database = this.getDatabase();
-    const startedAt = new Date();
-
-    const run = await database.rightsRecheckScanRun.create({
-      data: {
-        status: RightsRecheckScanStatus.RUNNING,
-        source,
-        startedAt,
-        triggeredByUserId: userId,
-      },
-    });
-
-    const counters: ScanCounters = {
-      profilesScanned: 0,
-      versionsScanned: 0,
-      tasksCreated: 0,
-      tasksEscalated: 0,
-      tasksAutoClosed: 0,
-      remindersSent: 0,
-    };
-
     try {
-      const config = this.recheckService.getRuntimeConfig();
-      const now = new Date();
+      const claim = await this.claimRun(source, userId);
+      if ('skipped' in claim) {
+        return this.toScanRunDto(claim.last);
+      }
 
-      await this.scanScheduledDueDates(database, config, now, counters);
-      await this.scanStaleVersions(database, config, now, counters);
-      await this.scanStaleReviews(database, config, now, counters);
-      await this.autoCloseSupersededTasks(database, now, counters);
-      await this.sendReminders(database, config, now, counters);
-      await this.escalateSeverities(database, config, now, counters);
+      const database = this.getDatabase();
+      const run = claim.run;
+      const startedAt = run.startedAt;
 
-      const finishedAt = new Date();
-      const finished = await database.rightsRecheckScanRun.update({
-        where: { id: run.id },
-        data: {
+      const counters: ScanCounters = {
+        profilesScanned: 0,
+        versionsScanned: 0,
+        tasksCreated: 0,
+        tasksEscalated: 0,
+        tasksAutoClosed: 0,
+        remindersSent: 0,
+      };
+
+      try {
+        const config = this.recheckService.getRuntimeConfig();
+        const now = new Date();
+
+        await this.scanScheduledDueDates(database, config, now, counters);
+        await this.scanStaleVersions(database, config, now, counters);
+        await this.scanStaleReviews(database, config, now, counters);
+        await this.autoCloseSupersededTasks(database, now, counters);
+        await this.sendReminders(database, config, now, counters);
+        await this.escalateSeverities(database, config, now, counters);
+
+        const finishedAt = new Date();
+        const finished = await this.finishRun(database, run.id, {
           status: RightsRecheckScanStatus.SUCCEEDED,
           finishedAt,
           durationMs: finishedAt.getTime() - startedAt.getTime(),
           ...counters,
-        },
-      });
-      return this.toScanRunDto(finished);
-    } catch (error: unknown) {
-      const finishedAt = new Date();
-      const message = error instanceof Error ? error.message : 'unknown error';
-      const failed = await database.rightsRecheckScanRun.update({
-        where: { id: run.id },
-        data: {
+        });
+        return this.toScanRunDto(finished);
+      } catch (error: unknown) {
+        const finishedAt = new Date();
+        const message = error instanceof Error ? error.message : 'unknown error';
+        const failed = await this.finishRun(database, run.id, {
           status: RightsRecheckScanStatus.FAILED,
           finishedAt,
           durationMs: finishedAt.getTime() - startedAt.getTime(),
           errorMessage: message,
           ...counters,
-        },
-      });
-      this.logger.error(`Rights recheck scan ${run.id} failed: ${message}`);
+        });
+        this.logger.error(`Rights recheck scan ${run.id} failed: ${message}`);
 
-      // A manual run must surface the failure; the timer must not die because of it.
-      if (source === RightsRecheckTriggerSource.MANUAL) {
-        throw error;
+        // A manual run must surface the failure; the timer must not die because of it.
+        if (source === RightsRecheckTriggerSource.MANUAL) {
+          throw error;
+        }
+        return this.toScanRunDto(failed);
       }
-      return this.toScanRunDto(failed);
     } finally {
       this.isRunning = false;
     }
+  }
+
+  /**
+   * `LEGACY-021`. Makes "is a scan already running" and "claim the slot" one atomic step across
+   * every instance of the backend, not only within this process.
+   *
+   * `pg_advisory_xact_lock` serialises the check-then-write — same shape as
+   * `CategoryTreeService.lockTree` / `lockCategorySlug`: taken as the transaction's first
+   * statement, held only for this short claim and released automatically at commit. The lock is
+   * NOT held for the whole scan on purpose: a multi-batch scan over the whole catalogue can run
+   * long, and holding a lock (or an open transaction) for that entire time is its own hazard.
+   * Once the `RUNNING` row is claimed here, the scan body below reads and writes through the
+   * ordinary pooled client, exactly as before.
+   *
+   * A `RUNNING` row older than `RECHECK_SCAN_STALE_RUNNING_MS` is treated as abandoned
+   * (its owning process died mid-scan) and marked `FAILED` so a new run can claim the slot —
+   * without this, one crashed process would wedge the scan for every instance forever, which is
+   * worse than the race this method closes. Fixed, not read from the environment on purpose:
+   * it is an internal safety ceiling nobody needs to retune per deployment, not an operational
+   * knob — unlike `RIGHTS_RECHECK_SCAN_INTERVAL_MS` above, which genuinely is one.
+   */
+  private async claimRun(
+    source: RightsRecheckTriggerSource,
+    userId: string | null,
+  ): Promise<
+    { run: RightsRecheckScanRunRecord } | { skipped: true; last: RightsRecheckScanRunRecord | null }
+  > {
+    const staleAfterMs = RECHECK_SCAN_STALE_RUNNING_MS;
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockScan(tx);
+
+      const running = (await tx.rightsRecheckScanRun.findFirst({
+        where: { status: RightsRecheckScanStatus.RUNNING },
+        orderBy: { startedAt: 'desc' },
+      })) as RightsRecheckScanRunRecord | null;
+
+      if (running) {
+        const abandoned = Date.now() - new Date(running.startedAt).getTime() > staleAfterMs;
+        if (!abandoned) {
+          if (source === RightsRecheckTriggerSource.MANUAL) {
+            throw recheckError(
+              HttpStatus.CONFLICT,
+              RECHECK_ERROR_CODES.RECHECK_SCAN_ALREADY_RUNNING,
+            );
+          }
+          this.logger.warn('Rights recheck scan skipped: a previous run is still in progress');
+          return { skipped: true as const, last: running };
+        }
+
+        this.logger.error(
+          `Rights recheck scan run ${running.id} abandoned after ${staleAfterMs}ms without ` +
+            'finishing — marking it FAILED and claiming a new run',
+        );
+        await tx.rightsRecheckScanRun.update({
+          where: { id: running.id },
+          data: {
+            status: RightsRecheckScanStatus.FAILED,
+            finishedAt: new Date(),
+            errorMessage:
+              `Abandoned: ran for more than the ${staleAfterMs}ms ceiling without finishing ` +
+              '(RECHECK_SCAN_STALE_RUNNING_MS, a code constant — there is no environment ' +
+              'override for it). The slot was taken over by a new run.',
+          },
+        });
+      }
+
+      const run = (await tx.rightsRecheckScanRun.create({
+        data: {
+          status: RightsRecheckScanStatus.RUNNING,
+          source,
+          startedAt: new Date(),
+          triggeredByUserId: userId,
+        },
+      })) as RightsRecheckScanRunRecord;
+
+      return { run };
+    }, RECHECK_CLAIM_TX_OPTIONS);
+  }
+
+  /**
+   * Closes the run — but only while this run still owns the slot.
+   *
+   * Guarded by `status: RUNNING` rather than written with a plain `update({ where: { id } })`,
+   * because a slot can be taken over: a scan that outlives `RECHECK_SCAN_STALE_RUNNING_MS` is
+   * marked `FAILED` by whichever instance reclaims it, and an unconditional write here would
+   * then flip that same row back to `SUCCEEDED` with real counters. The operator would be shown
+   * a successful scan on the very row that was declared abandoned, and the takeover would leave
+   * no trace at all.
+   *
+   * Losing the slot is not turned into a thrown error: the scan's own work is idempotent and
+   * has already happened: what is lost is only the right to write the verdict.
+   */
+  private async finishRun(
+    database: RecheckDatabaseClient,
+    runId: string,
+    data: Record<string, unknown>,
+  ): Promise<RightsRecheckScanRunRecord | null> {
+    const { count } = await database.rightsRecheckScanRun.updateMany({
+      where: { id: runId, status: RightsRecheckScanStatus.RUNNING },
+      data,
+    });
+
+    if (count === 0) {
+      this.logger.error(
+        `Rights recheck scan ${runId} lost its slot while running: another instance reclaimed ` +
+          'it as abandoned. The verdict of this run is not recorded — the reclaim stands.',
+      );
+    }
+
+    return database.rightsRecheckScanRun.findUnique({
+      where: { id: runId },
+    });
+  }
+
+  private async lockScan(tx: Prisma.TransactionClient): Promise<void> {
+    // Called from `FROM`, not the select list: `pg_advisory_xact_lock` returns `void`, and
+    // `SELECT pg_advisory_xact_lock(...)` fails to parse the column type (see
+    // `CategoryTreeService.lockTree`, the same shape).
+    await tx.$queryRaw`SELECT true AS locked FROM pg_advisory_xact_lock(${RECHECK_SCAN_LOCK_KEY})`;
   }
 
   // ---------------------------------------------------------------------------

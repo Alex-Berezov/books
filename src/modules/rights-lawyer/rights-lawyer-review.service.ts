@@ -1167,14 +1167,20 @@ export class RightsLawyerReviewService {
   }
 
   // ---------------------------------------------------------------------------
-  // Expiry scan (manual, admin-only — Phase 19 adds no scheduler, see ADR-001)
+  // Expiry scan — one implementation, two triggers: the admin endpoint below passes the
+  // acting admin's id, `RightsLawyerExpirySchedulerService`'s daily sweep passes `null`
+  // (`LEGACY-022`, closed — see `ADR-020`).
   // ---------------------------------------------------------------------------
 
   /**
    * Materialises expired opinions and sends the expiry notifications.
    * Idempotent: a review whose `expiryNotifiedAt` is already set is skipped.
+   *
+   * `userId: null` marks the run as system-triggered in the audit trail
+   * (`RightsLawyerReviewEvent.createdByUserId`), same convention as
+   * `RightsRecheckSchedulerService.runScan`'s automatic runs.
    */
-  async runExpiryScan(userId: string): Promise<LawyerExpiryScanResultDto> {
+  async runExpiryScan(userId: string | null): Promise<LawyerExpiryScanResultDto> {
     const now = new Date();
     const timing = this.getTimingConfig();
     const database = this.getDatabase();
@@ -1202,12 +1208,19 @@ export class RightsLawyerReviewService {
       if (review.expiryNotifiedAt && !isExpired) continue;
       if (isExpired && review.expiredAt) continue;
 
-      if (isExpired) expiredCount += 1;
-      else expiringSoonCount += 1;
-
-      await database.$transaction(async (tx) => {
-        const updated = await tx.rightsLawyerReview.update({
-          where: { id: review.id },
+      const claimed = await database.$transaction(async (tx) => {
+        // 🔴 The guard repeats the two checks above INSIDE the transaction, as a condition of
+        // the write itself. The checks above read a snapshot taken by `findMany` before the
+        // loop; between that read and this write the same review can be expired by a second
+        // sweeper (this scan runs daily on a timer since `LEGACY-022`, and the admin endpoint
+        // can fire at the same moment). Without the guard both sides pass the snapshot check
+        // and both write — two `EXPIRED` events and two "publication is blocked" notifications
+        // for one review. `updateMany` is what allows a non-unique column in `where`; a count
+        // of zero means somebody else got there first, and this side must do nothing at all.
+        const { count } = await tx.rightsLawyerReview.updateMany({
+          where: isExpired
+            ? { id: review.id, expiredAt: null }
+            : { id: review.id, expiryNotifiedAt: null },
           data: isExpired
             ? {
                 status: RightsLawyerReviewStatus.EXPIRED,
@@ -1216,6 +1229,12 @@ export class RightsLawyerReviewService {
               }
             : { expiryNotifiedAt: now },
         });
+
+        if (count === 0) return false;
+
+        const updated = (await tx.rightsLawyerReview.findUnique({
+          where: { id: review.id },
+        })) as RightsLawyerReviewRecord;
 
         await this.recordEvent(tx, review.id, {
           eventType: isExpired
@@ -1256,8 +1275,16 @@ export class RightsLawyerReviewService {
           },
           tx as unknown as AgentDatabaseClient,
         );
+
+        return true;
       });
 
+      // Counted only after the write actually landed: a run that lost the row to a concurrent
+      // sweeper reported an expiry it did not perform and a notification it did not send.
+      if (!claimed) continue;
+
+      if (isExpired) expiredCount += 1;
+      else expiringSoonCount += 1;
       notificationsSent += 1;
       touched.push(review.id);
     }

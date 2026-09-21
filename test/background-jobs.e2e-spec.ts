@@ -105,6 +105,33 @@ describe('Background jobs inventory (e2e)', () => {
     }
   });
 
+  // 🔴 LEGACY-022: this mechanism did not exist before T22 — same readiness criterion applies
+  // to it as to every other mechanism the registry lists.
+  it('reports the rights lawyer expiry sweep, active and disabled', async () => {
+    const activeApp = await bootApp({ RIGHTS_LAWYER_EXPIRY_SCHEDULER_ENABLED: '1' });
+    try {
+      const sweep = (await fetchJobs(activeApp)).find(
+        (j) => j.name === 'rights-lawyer-expiry-sweep',
+      );
+      expect(sweep?.state).toBe('ACTIVE');
+      expect(sweep?.schedule).toMatch(/daily at \d{2}:00 UTC/);
+    } finally {
+      await activeApp.close();
+    }
+
+    const disabledApp = await bootApp({ RIGHTS_LAWYER_EXPIRY_SCHEDULER_ENABLED: '0' });
+    try {
+      const sweep = (await fetchJobs(disabledApp)).find(
+        (j) => j.name === 'rights-lawyer-expiry-sweep',
+      );
+      expect(sweep?.state).toBe('DISABLED');
+      expect(sweep?.reason).toContain('RIGHTS_LAWYER_EXPIRY_SCHEDULER_ENABLED=0');
+    } finally {
+      await disabledApp.close();
+      process.env.RIGHTS_LAWYER_EXPIRY_SCHEDULER_ENABLED = '1';
+    }
+  });
+
   /**
    * 🔴 Три состояния, а не два. Probe без очереди не умирает — он выполняется
    * синхронно внутри HTTP-запроса на загрузку, без ретраев. Слить это с ACTIVE

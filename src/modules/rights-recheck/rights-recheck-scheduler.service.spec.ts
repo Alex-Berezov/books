@@ -97,6 +97,7 @@ interface Stub {
   rightsIntake: Record<string, jest.Mock>;
   territoryDecision: Record<string, jest.Mock>;
   $transaction: jest.Mock;
+  $queryRaw: jest.Mock;
 }
 
 const createStub = (): Stub => {
@@ -112,30 +113,49 @@ const createStub = (): Stub => {
     },
     rightsRecheckEvent: { create: jest.fn().mockResolvedValue({}) },
     rightsLegalChangeEvent: {},
-    rightsRecheckScanRun: {
-      create: jest.fn().mockResolvedValue({ id: 'run-1', startedAt: NOW }),
-      update: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-        Promise.resolve({
-          id: 'run-1',
-          source: RightsRecheckTriggerSource.SCHEDULER,
-          startedAt: NOW,
-          finishedAt: NOW,
-          durationMs: 1,
-          profilesScanned: 0,
-          versionsScanned: 0,
-          tasksCreated: 0,
-          tasksEscalated: 0,
-          tasksAutoClosed: 0,
-          remindersSent: 0,
-          errorMessage: null,
-          triggeredByUserId: null,
-          ...data,
+    // Stateful on purpose: `finishRun` writes with `updateMany` and then re-reads the row with
+    // `findUnique`, so a stub that answered both from fixed literals would report a SUCCEEDED
+    // run no matter what was actually written — including when the write was refused.
+    rightsRecheckScanRun: (() => {
+      const row: Record<string, unknown> = {
+        id: 'run-1',
+        status: RightsRecheckScanStatus.RUNNING,
+        source: RightsRecheckTriggerSource.SCHEDULER,
+        startedAt: NOW,
+        finishedAt: null,
+        durationMs: null,
+        profilesScanned: 0,
+        versionsScanned: 0,
+        tasksCreated: 0,
+        tasksEscalated: 0,
+        tasksAutoClosed: 0,
+        remindersSent: 0,
+        errorMessage: null,
+        triggeredByUserId: null,
+      };
+      return {
+        create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+          Object.assign(row, data, { id: 'run-1' });
+          return Promise.resolve({ ...row });
         }),
-      ),
-      findMany: jest.fn().mockResolvedValue([]),
-      findFirst: jest.fn().mockResolvedValue(null),
-      count: jest.fn().mockResolvedValue(0),
-    },
+        update: jest
+          .fn()
+          .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+            Promise.resolve({ ...row, ...data }),
+          ),
+        // `count: 1` — this run still owns the slot. A zero means another instance reclaimed
+        // it as abandoned, and then the verdict must NOT be written: tests that want that case
+        // override this mock.
+        updateMany: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+          Object.assign(row, data);
+          return Promise.resolve({ count: 1 });
+        }),
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockImplementation(() => Promise.resolve({ ...row })),
+        count: jest.fn().mockResolvedValue(0),
+      };
+    })(),
     rightsProfile: {
       findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue(profile()),
@@ -159,6 +179,7 @@ const createStub = (): Stub => {
     },
     territoryDecision: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
+    $queryRaw: jest.fn().mockResolvedValue([{ locked: true }]),
   };
   stub.$transaction.mockImplementation((callback: (client: Stub) => Promise<unknown>) =>
     callback(stub),
@@ -205,8 +226,10 @@ describe('RightsRecheckSchedulerService', () => {
 
     expect(stub.rightsRecheckScanRun.create).toHaveBeenCalled();
     expect(result.status).toBe(RightsRecheckScanStatus.SUCCEEDED);
-    expect(stub.rightsRecheckScanRun.update).toHaveBeenCalledWith(
+    // Guarded by `status: RUNNING`: the verdict is written only while this run owns the slot.
+    expect(stub.rightsRecheckScanRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ status: RightsRecheckScanStatus.RUNNING }),
         data: expect.objectContaining({ status: RightsRecheckScanStatus.SUCCEEDED }),
       }),
     );
@@ -487,10 +510,18 @@ describe('RightsRecheckSchedulerService', () => {
 
   describe('concurrency and failures', () => {
     it('rejects a concurrent manual scan with RECHECK_SCAN_ALREADY_RUNNING', async () => {
-      // Keep the first run in-flight while the second one starts.
-      let release: () => void = () => undefined;
+      // Keep the first run in-flight while the second one starts. Queued rather than a single
+      // reassigned callback: `claimRun`'s own claim transaction (lock, findFirst, create) adds
+      // several microtask ticks ahead of the first `rightsProfile.findMany` call, so a `release`
+      // captured too early — before that call has actually happened — would target nothing.
+      let released = false;
+      const pending: Array<() => void> = [];
       stub.rightsProfile.findMany.mockImplementation(
-        () => new Promise((resolve) => (release = () => resolve([]))),
+        () =>
+          new Promise((resolve) => {
+            if (released) resolve([]);
+            else pending.push(() => resolve([]));
+          }),
       );
 
       const first = scheduler.runScan(RightsRecheckTriggerSource.MANUAL, 'admin-1');
@@ -502,7 +533,120 @@ describe('RightsRecheckSchedulerService', () => {
         response: { code: 'RECHECK_SCAN_ALREADY_RUNNING', statusCode: 409 },
       });
 
-      release();
+      released = true;
+      pending.splice(0).forEach((resolve) => resolve());
+      await first;
+    });
+
+    // 🔴 LEGACY-021: this is the case `isRunning` never covered — a RUNNING row already claimed
+    // by ANOTHER instance, discovered only through the DB, not through in-process state.
+    it('rejects a manual scan when another instance already claimed a running row', async () => {
+      const runningRow = { id: 'run-other-instance', startedAt: NOW };
+      stub.rightsRecheckScanRun.findFirst.mockResolvedValueOnce(runningRow);
+
+      await expect(
+        scheduler.runScan(RightsRecheckTriggerSource.MANUAL, 'admin-1'),
+      ).rejects.toMatchObject({
+        response: { code: 'RECHECK_SCAN_ALREADY_RUNNING', statusCode: 409 },
+      });
+      expect(stub.rightsRecheckScanRun.create).not.toHaveBeenCalled();
+    });
+
+    it('skips an automatic scan when another instance already claimed a running row', async () => {
+      const runningRow = { id: 'run-other-instance', startedAt: NOW };
+      stub.rightsRecheckScanRun.findFirst.mockResolvedValueOnce(runningRow);
+
+      const result = await scheduler.runScan(RightsRecheckTriggerSource.SCHEDULER, null);
+
+      expect(result.id).toBe('run-other-instance');
+      expect(stub.rightsRecheckScanRun.create).not.toHaveBeenCalled();
+    });
+
+    it('reclaims the slot when the running row is older than the stale ceiling', async () => {
+      const abandonedAt = new Date(NOW.getTime() - 2 * 60 * 60 * 1000); // 2h ago, default ceiling is 1h
+      const runningRow = { id: 'run-abandoned', startedAt: abandonedAt };
+      stub.rightsRecheckScanRun.findFirst.mockResolvedValueOnce(runningRow);
+
+      const result = await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, 'admin-1');
+
+      expect(stub.rightsRecheckScanRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'run-abandoned' },
+          data: expect.objectContaining({ status: RightsRecheckScanStatus.FAILED }),
+        }),
+      );
+      expect(stub.rightsRecheckScanRun.create).toHaveBeenCalled();
+      expect(result.status).toBe(RightsRecheckScanStatus.SUCCEEDED);
+    });
+
+    /**
+     * 🔴 Обратная сторона реклейма: скан, идущий дольше потолка, сосед объявляет брошенным
+     * и штампует его строку `FAILED`. Безусловная запись вердикта в конце перевернула бы её
+     * обратно в `SUCCEEDED` с настоящими счётчиками — админу показали бы успешный прогон ровно
+     * на той строке, которую объявили брошенной, и от факта перехвата не осталось бы следа.
+     */
+    it('does not overwrite the verdict when another instance reclaimed the slot', async () => {
+      // Слот перехвачен: guarded-запись `status: RUNNING` больше не находит строку.
+      stub.rightsRecheckScanRun.updateMany.mockResolvedValue({ count: 0 });
+      stub.rightsRecheckScanRun.findUnique.mockResolvedValue({
+        id: 'run-1',
+        status: RightsRecheckScanStatus.FAILED,
+        source: RightsRecheckTriggerSource.SCHEDULER,
+        startedAt: NOW,
+        finishedAt: NOW,
+        durationMs: 1,
+        profilesScanned: 0,
+        versionsScanned: 0,
+        tasksCreated: 0,
+        tasksEscalated: 0,
+        tasksAutoClosed: 0,
+        remindersSent: 0,
+        errorMessage: 'Abandoned: ran for more than the 3600000ms ceiling without finishing',
+        triggeredByUserId: null,
+      });
+
+      const result = await scheduler.runScan(RightsRecheckTriggerSource.SCHEDULER, null);
+
+      // Отдаётся то, что реально лежит в базе, — перехват, а не выдуманный успех.
+      expect(result.status).toBe(RightsRecheckScanStatus.FAILED);
+      expect(result.errorMessage).toContain('Abandoned');
+      // И ни одной записи мимо условия `status: RUNNING`.
+      const unguarded = stub.rightsRecheckScanRun.updateMany.mock.calls.filter(
+        ([args]: [{ where?: Record<string, unknown> }]) =>
+          args?.where?.status !== RightsRecheckScanStatus.RUNNING,
+      );
+      expect(unguarded).toHaveLength(0);
+    });
+
+    it('reports the running row, not the previous finished one, on the in-process skip', async () => {
+      // Первый прогон держит флаг; второй уходит в быстрый short-circuit.
+      const release: () => void = () => undefined;
+      let released = false;
+      const pending: Array<() => void> = [];
+      stub.rightsProfile.findMany.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            if (released) resolve([]);
+            else pending.push(() => resolve([]));
+          }),
+      );
+
+      const first = scheduler.runScan(RightsRecheckTriggerSource.SCHEDULER, null);
+      await Promise.resolve();
+
+      await scheduler.runScan(RightsRecheckTriggerSource.SCHEDULER, null);
+
+      // Запрос идущего прогона фильтруется по RUNNING, иначе вернулся бы прошлый, уже
+      // закрытый прогон — и вызывающий принял бы его за текущий.
+      expect(stub.rightsRecheckScanRun.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: RightsRecheckScanStatus.RUNNING }),
+        }),
+      );
+
+      released = true;
+      pending.splice(0).forEach((resolve) => resolve());
+      void release;
       await first;
     });
 
@@ -512,8 +656,9 @@ describe('RightsRecheckSchedulerService', () => {
       const result = await scheduler.runScan(RightsRecheckTriggerSource.SCHEDULER, null);
 
       expect(result.status).toBe(RightsRecheckScanStatus.FAILED);
-      expect(stub.rightsRecheckScanRun.update).toHaveBeenCalledWith(
+      expect(stub.rightsRecheckScanRun.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: expect.objectContaining({ status: RightsRecheckScanStatus.RUNNING }),
           data: expect.objectContaining({
             status: RightsRecheckScanStatus.FAILED,
             errorMessage: 'database down',

@@ -18,6 +18,18 @@ export const RECHECK_MAX_SNOOZE_DAYS = 180;
 export const RECHECK_SCAN_INTERVAL_MS_DEFAULT = 21_600_000; // 6 hours
 export const RECHECK_SCAN_INITIAL_DELAY_MS_DEFAULT = 60_000;
 
+/**
+ * A RUNNING scan row older than this is treated as abandoned (its owning process died
+ * mid-scan) rather than genuinely in progress, so a new instance can claim the slot.
+ * `LEGACY-021`: without this ceiling, one crashed process would wedge the scan for every
+ * instance forever — a worse failure than the cross-instance race the claim closes.
+ *
+ * No `_DEFAULT` suffix on purpose: unlike its neighbours in this file, this one is NOT the
+ * fallback of a `config.get(...)` — it is the value itself, an internal safety ceiling with
+ * no environment override.
+ */
+export const RECHECK_SCAN_STALE_RUNNING_MS = 3_600_000; // 1 hour
+
 /** Maximum page size of every list endpoint of this module. */
 export const RECHECK_LIST_MAX_LIMIT = 100;
 export const RECHECK_LIST_DEFAULT_LIMIT = 20;

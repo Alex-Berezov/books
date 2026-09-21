@@ -132,7 +132,9 @@ const createPrismaStub = () => {
         .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
           Promise.resolve(makeReview(data as Partial<RightsLawyerReviewRecord>)),
         ),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      // `count: 1` — the write lands. `runExpiryScan` reads this count to tell "I expired this
+      // review" from "a concurrent sweeper got there first"; the zero case has its own test.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       count: jest.fn().mockResolvedValue(0),
     },
     rightsLawyerReviewEvent: {
@@ -1024,6 +1026,70 @@ describe('RightsLawyerReviewService', () => {
       const second = await service.runExpiryScan('user-1');
       expect(second.expiringSoonCount).toBe(0);
       expect(second.notificationsSent).toBe(0);
+    });
+
+    /**
+     * 🔴 LEGACY-022. Since the sweep runs on a daily timer, the admin endpoint and the timer
+     * (or two replicas) can hit the same review at the same instant. The snapshot checks before
+     * the transaction cannot see the other side's uncommitted write; only the guard inside the
+     * write can. A count of zero means the other side won — this run must not send its own
+     * notification, must not record its own event, and must not count the expiry as its own.
+     */
+    it('does not notify twice when a concurrent sweeper already expired the review', async () => {
+      reviewDelegate().findMany.mockResolvedValue([
+        makeReview({
+          status: RightsLawyerReviewStatus.APPROVED,
+          validUntil: new Date('2020-01-01T00:00:00.000Z'),
+        }),
+      ]);
+      // The guarded write matches nothing: the row no longer has `expiredAt: null`.
+      reviewDelegate().updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.runExpiryScan(null);
+
+      expect(result.expiredCount).toBe(0);
+      expect(result.notificationsSent).toBe(0);
+      expect(result.reviewIds).toEqual([]);
+      expect(notifications.create).not.toHaveBeenCalled();
+      expect(eventDelegate().create).not.toHaveBeenCalled();
+    });
+
+    it('guards the expiry write by expiredAt, not only by the pre-read snapshot', async () => {
+      reviewDelegate().findMany.mockResolvedValue([
+        makeReview({
+          status: RightsLawyerReviewStatus.APPROVED,
+          validUntil: new Date('2020-01-01T00:00:00.000Z'),
+        }),
+      ]);
+
+      await service.runExpiryScan(null);
+
+      expect(reviewDelegate().updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ expiredAt: null }),
+        }),
+      );
+    });
+
+    // 🔴 LEGACY-022: RightsLawyerExpirySchedulerService calls this with `null` for its
+    // automatic runs — the same convention RightsRecheckSchedulerService uses.
+    it('accepts a null (system) actor and records the event with no user', async () => {
+      reviewDelegate().findMany.mockResolvedValue([
+        makeReview({
+          status: RightsLawyerReviewStatus.APPROVED,
+          validUntil: new Date('2020-01-01T00:00:00.000Z'),
+        }),
+      ]);
+      reviewDelegate().update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve(makeReview({ ...(data as Partial<RightsLawyerReviewRecord>) })),
+      );
+
+      const result = await service.runExpiryScan(null);
+
+      expect(result.expiredCount).toBe(1);
+      expect(eventDelegate().create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ createdByUserId: null }) }),
+      );
     });
   });
 
