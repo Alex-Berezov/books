@@ -7,9 +7,14 @@ import { Language } from '@prisma/client';
 import { readSlugRedirect, taxonomyFixture, uniqueMark } from './helpers/taxonomy-null-cases';
 
 /**
- * `LEGACY-390`. Второй путь смерти публичного адреса категории: `DELETE /categories/:id`
- * сносит переводы по всем языкам разом. До 15.09.2026 политика владельца («уводить
- * на родителя, а не в 404») жила только в первом пути — удалении одного перевода.
+ * `LEGACY-390` и `LEGACY-392`. Второй путь смерти публичного адреса категории:
+ * `DELETE /categories/:id` сносит переводы по всем языкам разом. До 15.09.2026
+ * политика владельца («уводить на родителя, а не в 404») жила только в первом
+ * пути — удалении одного перевода.
+ *
+ * С 22.09.2026 здесь же живут кейсы `LEGACY-392`: у категории умирает не один вид
+ * адреса, а два. Кроме слагов переводов умирает **базовый** `Category.slug`,
+ * и 308 с него идёт на перевод прямого родителя того же языка — одним переходом.
  *
  * 🔴 Что сажает именно этот набор, а не юниты рядом. В спеке сервиса слой данных
  * замокан целиком: она доказывает, что ветка выбрана и запрос имеет нужную форму,
@@ -30,7 +35,7 @@ import { readSlugRedirect, taxonomyFixture, uniqueMark } from './helpers/taxonom
 
 type TokenBody = { accessToken: string };
 
-describe('LEGACY-390: удаление категории целиком и история слагов (e2e)', () => {
+describe('LEGACY-390, LEGACY-392: удаление категории целиком и история слагов (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let admin: string;
@@ -223,5 +228,174 @@ describe('LEGACY-390: удаление категории целиком и ис
     expect(await redirectsTo(staryj)).toBeNull();
     // `en`: адрес жив чужим переводом — 308 ведёт на работающую страницу и уцелел.
     expect(await readSlugRedirect(prisma, 'category', Language.en, staryj)).toBe(zanjat);
+  });
+
+  /**
+   * 🔴 `LEGACY-392` на настоящей базе. Базовый `Category.slug` — публичный адрес
+   * во **всех** пяти языках: резолв ищет пару `language_slug`, а при промахе падает
+   * на `Category.slug`. До этой правки удаление категории уносило его в 404 при живом
+   * родителе: 308 писались только со слагов переводов, а с базового — ни одного.
+   *
+   * Почему кейс нужен здесь, а не только юнитом: юнит доказывает, что вызов сделан
+   * с нужными аргументами, но `SlugRedirectService` в нём замокан целиком — строки
+   * в базе он не пишет и переписывание цепочек не выполняет. Здесь работает
+   * настоящий сервис на настоящей транзакции, и проверяется результат: что лежит
+   * в истории слагов после `DELETE /categories/:id`.
+   *
+   * 🔴 Форма — один переход (решение арбитра 22.09.2026). Поэтому проверяется
+   * не «редирект есть», а его адресат: он обязан быть **переводом** родителя
+   * (`parentRu`), а не его базовым слагом (`parentBase`). Второй вариант отправил бы
+   * посетителя на адрес, который сам отвечает редиректом, — два перехода вместо
+   * одного, а там, где перевода у родителя нет, ещё и 308 в 404.
+   */
+  it('LEGACY-392: базовый слаг удалённой категории уводит на перевод родителя', async () => {
+    const parentBase = uniqueMark('l392-p-base');
+    const parentRu = uniqueMark('l392-p-ru');
+    const parentId = await withRuTranslation(parentBase, parentRu);
+
+    // Базовый слаг ребёнка нарочно отличается от слага его ru-перевода: иначе оба
+    // адреса совпали бы, и кейс не отличал бы новый 308 от уже работавшего.
+    const childBase = uniqueMark('l392-c-base');
+    const childRu = uniqueMark('l392-c-ru');
+    const childId = await withRuTranslation(childBase, childRu, parentId);
+
+    await categories.drop(childId);
+
+    // Новый 308: адрес, который раньше жил только фоллбэком на базовый слаг.
+    // 🔴 Проверка точным значением и есть проверка формы: `parentRu` — перевод
+    // родителя, а `parentBase` — его базовый слаг, и вариант в два перехода
+    // записал бы сюда второе. Отдельного `not.toBe(parentBase)` рядом не ставится:
+    // упасть он не смог бы никогда — строка выше упала бы первой (находка ревью
+    // 22.09.2026 о проверке, которая не умеет краснеть).
+    expect(await redirectsTo(childBase)).toBe(parentRu);
+    // Прежнее поведение на слаге перевода не тронуто.
+    expect(await redirectsTo(childRu)).toBe(parentRu);
+  });
+
+  /**
+   * Вторая половина D1 для базового слага: за родителя адресата не достраивают.
+   * У родителя из кейса выше есть только ru-перевод, значит в `en` базовый слаг
+   * ребёнка остаётся 404 — невыданный 308 чинится вторым заходом, выданный
+   * из поискового индекса не отзывается.
+   */
+  it('LEGACY-392: в языке без перевода у родителя базовый слаг остаётся 404', async () => {
+    const parentRu = uniqueMark('l392-p2-ru');
+    const parentId = await withRuTranslation(uniqueMark('l392-p2-base'), parentRu);
+
+    const childBase = uniqueMark('l392-c2-base');
+    const childId = await withRuTranslation(childBase, uniqueMark('l392-c2-ru'), parentId);
+
+    await categories.drop(childId);
+
+    // `ru` — преемник есть, и он назван точно: `not.toBeNull()` прошёл бы и на чужой
+    // строке, попавшей сюда переписыванием цепочек.
+    expect(await redirectsTo(childBase)).toBe(parentRu);
+    // `en` — перевода у родителя нет, и строки быть не должно.
+    expect(await readSlugRedirect(prisma, 'category', Language.en, childBase)).toBeNull();
+  });
+
+  /**
+   * 🔴 Цепочка на **базовом** слаге, на настоящей базе. Соседний кейс про цепочку
+   * работает на слагах переводов, а единственный базовый живёт в `LEGACY-394`, где
+   * цепочка нарочно НЕ переписывается. То есть половина `record` — переписывание
+   * цепочек (`updateMany` по `newSlug = oldSlug`) — для базового слага живой базой
+   * не проверена нигде, а юнит на порядок работает на моках и настоящих строк
+   * не двигает.
+   *
+   * Сценарий. Базовый слаг переименован до удаления, поэтому `recordBaseSlugChange`
+   * завёл `staryj → novyj` сразу на пять языков. Категорию удаляют при живом
+   * родителе: `novyj` обязан уехать на перевод родителя, и `staryj` — вместе с ним,
+   * одним переходом, а не остаться 308-м на адрес, который уже отвечает 404.
+   *
+   * Кейс краснеет от перестановки нового цикла после уборки: тогда `deleteMany`
+   * по `newSlug: novyj` снесёт строку `staryj` раньше, чем `record` успеет её
+   * подобрать, и вместо 308 по индексированному адресу выдастся 404.
+   */
+  it('LEGACY-392: цепочка прежних базовых слагов уезжает на родителя, а не теряется', async () => {
+    const parentRu = uniqueMark('l392-p3-ru');
+    const parentId = await withRuTranslation(uniqueMark('l392-p3-base'), parentRu);
+
+    const staryj = uniqueMark('l392-c3-staryj');
+    const childId = await withRuTranslation(staryj, uniqueMark('l392-c3-ru'), parentId);
+
+    const novyj = uniqueMark('l392-c3-novyj');
+    await categories.renameBase(childId, novyj);
+    expect(await redirectsTo(staryj)).toBe(novyj);
+
+    await categories.drop(childId);
+
+    // Новый базовый слаг уехал на родителя...
+    expect(await redirectsTo(novyj)).toBe(parentRu);
+    // ...и прежний вместе с ним, одним переходом, а не цепочкой в мёртвый адрес.
+    expect(await redirectsTo(staryj)).toBe(parentRu);
+  });
+  /**
+   * 🔴 Сужение множества языков на живой базе (решение арбитра 22.09.2026
+   * по находке ревью). Базовый слаг был адресом **только там, где у категории был
+   * перевод**: без перевода резолв отдаёт 200 с `translation: null`, а фронт уходит
+   * в `isUnaddressableInLanguage → notFound()` **до** истории слагов — то есть
+   * адрес отвечал 404 и до удаления. 308 на таком языке был бы не возвратом
+   * умершего адреса, а заведением нового, а он из индекса не отзывается.
+   *
+   * Стенд разводит два условия, которые легко спутать: у родителя перевод на `en`
+   * **есть**, а у самой категории его **нет**. Преемник, стало быть, доступен —
+   * и всё равно строки быть не должно.
+   *
+   * Кейс краснеет от возврата дефекта: верни цикл на все мёртвые языки — и `en`
+   * получит 308 с адреса, который никогда не открывался.
+   */
+  it('LEGACY-392: язык без перевода у категории 308 не получает, даже когда преемник есть', async () => {
+    const parentRu = uniqueMark('l392-p4-ru');
+    const parentId = await withRuTranslation(uniqueMark('l392-p4-base'), parentRu);
+    // У родителя есть и en-перевод — преемник в `en` доступен.
+    const parentEn = uniqueMark('l392-p4-en');
+    await categories.addTranslation(parentId, Language.en, parentEn);
+
+    // У категории перевод только на `ru`: в `en` её базовый слаг адресом не был.
+    const childBase = uniqueMark('l392-c4-base');
+    const childId = await withRuTranslation(childBase, uniqueMark('l392-c4-ru'), parentId);
+
+    await categories.drop(childId);
+
+    // `ru` — адрес был живым, 308 выдан.
+    expect(await redirectsTo(childBase)).toBe(parentRu);
+    // 🔴 `en` — преемник есть, а адреса не было: строки быть не должно.
+    expect(await readSlugRedirect(prisma, 'category', Language.en, childBase)).toBeNull();
+  });
+  /**
+   * 🔴 Та же проверка живости по языку, но на настоящей базе (находка ревью
+   * 22.09.2026). Юнит рядом сажает условие по форме вызова; здесь отбор идёт
+   * по правде, и проверяется результат — какие строки легли в историю.
+   *
+   * Стенд: у удаляемой категории переводы на `ru` и `en`, базовый слаг `fiction`.
+   * Чужая живая категория держит **en-перевод** с тем же слагом `fiction` —
+   * `@@unique([language, slug])` это разрешает. Значит `/en/category/fiction`
+   * отвечает 200 чужой страницей и после удаления, а `/ru/category/fiction` — 404.
+   * 308 обязан быть выдан только в `ru`.
+   */
+  it('LEGACY-392: язык, где базовый слаг жив чужим переводом, 308 не получает', async () => {
+    const parentRu = uniqueMark('l392-p5-ru');
+    const parentId = await withRuTranslation(uniqueMark('l392-p5-base'), parentRu);
+    const parentEn = uniqueMark('l392-p5-en');
+    await categories.addTranslation(parentId, Language.en, parentEn);
+
+    // Чужая живая категория занимает базовый слаг удаляемой — но только в `en`.
+    const childBase = uniqueMark('l392-c5-base');
+    const otherId = await categories.create(uniqueMark('l392-other'), {
+      slug: uniqueMark('l392-other-base'),
+      key: uniqueMark('l392-other-key'),
+    });
+    await categories.addTranslation(otherId, Language.en, childBase);
+
+    const childId = await withRuTranslation(childBase, uniqueMark('l392-c5-ru'), parentId);
+    await categories.addTranslation(childId, Language.en, uniqueMark('l392-c5-en'));
+
+    await categories.drop(childId);
+
+    // `ru` — адрес умер, 308 выдан.
+    expect(await redirectsTo(childBase)).toBe(parentRu);
+    // 🔴 `en` — адрес жив чужим переводом: 308 увёл бы посетителя с работающей
+    // страницы, поэтому строки быть не должно.
+    expect(await readSlugRedirect(prisma, 'category', Language.en, childBase)).toBeNull();
   });
 });

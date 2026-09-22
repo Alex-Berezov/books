@@ -1112,13 +1112,22 @@ describe('CategoryService', () => {
       ],
       [
         { language: Language.ru, slug: 'hudozhestvennaya-literatura' },
-        { language: Language.en, slug: 'fiction' },
+        // ⚠️ Слаг нарочно не равен базовому слагу удаляемой категории (`fiction`).
+        // Равенство делало бы стенд невозможным: живой en-перевод родителя с этим
+        // слагом нашёл бы `deadLanguagesForSlug`, и `en` выпал бы из мёртвых языков,
+        // а мок `baseSlugAliveIn` по умолчанию утверждает обратное — что слаг
+        // не занят никем (находка ревью 22.09.2026).
+        { language: Language.en, slug: 'fiction-genre' },
       ],
     );
 
     await service.remove('cat1', 'admin-actor-1');
 
-    expect(slugRedirects.record).toHaveBeenCalledTimes(2);
+    // Четыре записи, а не две: по одной на каждый умерший перевод плюс по одной
+    // с базового слага на тот же язык (`LEGACY-392`). Базовый слаг был адресом
+    // во всех пяти языках через фоллбэк, но 308 получают только те, где у родителя
+    // есть перевод, — здесь это `ru` и `en`.
+    expect(slugRedirects.record).toHaveBeenCalledTimes(4);
     expect(slugRedirects.record).toHaveBeenCalledWith(
       {
         entityType: 'category',
@@ -1129,7 +1138,27 @@ describe('CategoryService', () => {
       expect.anything(),
     );
     expect(slugRedirects.record).toHaveBeenCalledWith(
-      { entityType: 'category', language: Language.en, oldSlug: 'novel', newSlug: 'fiction' },
+      { entityType: 'category', language: Language.en, oldSlug: 'novel', newSlug: 'fiction-genre' },
+      expect.anything(),
+    );
+    // Счётчик выше держится на этих двух: без них четвёрка не говорит, какие
+    // именно записи пришли с базового слага.
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      {
+        entityType: 'category',
+        language: Language.ru,
+        oldSlug: 'fiction',
+        newSlug: 'hudozhestvennaya-literatura',
+      },
+      expect.anything(),
+    );
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      {
+        entityType: 'category',
+        language: Language.en,
+        oldSlug: 'fiction',
+        newSlug: 'fiction-genre',
+      },
       expect.anything(),
     );
   });
@@ -1157,10 +1186,12 @@ describe('CategoryService', () => {
       where: { slug: 'roman', id: { not: 'cat1' } },
       select: { id: true },
     });
-    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+    // Два: слаг умершего перевода и базовый слаг той же категории (`LEGACY-392`),
+    // оба уводят на ru-перевод родителя.
+    expect(slugRedirects.record).toHaveBeenCalledTimes(2);
   });
 
-  it('LEGACY-390: слаг, занятый живой чужой категорией, редиректа не получает', async () => {
+  it('LEGACY-390: слаг перевода, занятый живой чужой категорией, редиректа не получает', async () => {
     arrangeRemove(
       [{ language: Language.ru, slug: 'roman' }],
       [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
@@ -1172,7 +1203,18 @@ describe('CategoryService', () => {
 
     await service.remove('cat1', 'admin-actor-1');
 
-    expect(slugRedirects.record).not.toHaveBeenCalled();
+    // Живым остался только слаг умершего ПЕРЕВОДА — он редиректа не получает.
+    // Базовый слаг категории умер вместе с ней и 308 получает (`LEGACY-392`):
+    // это два разных адреса, и живость у каждого своя.
+    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      expect.objectContaining({ oldSlug: 'fiction' }),
+      expect.anything(),
+    );
+    expect(slugRedirects.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ oldSlug: 'roman' }),
+      expect.anything(),
+    );
   });
 
   it('LEGACY-390: записи, ведущие на исчезающие слаги, снимаются по каждому языку', async () => {
@@ -1221,9 +1263,16 @@ describe('CategoryService', () => {
 
     await service.remove('cat1', 'admin-actor-1');
 
-    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+    // Два: умерший ru-перевод и базовый слаг в том же `ru` (`LEGACY-392`).
+    // `en` не получает ни того, ни другого — у родителя нет en-перевода,
+    // и достраивать адресата за него нельзя (D1).
+    expect(slugRedirects.record).toHaveBeenCalledTimes(2);
     expect(slugRedirects.record).toHaveBeenCalledWith(
       expect.objectContaining({ language: Language.ru }),
+      expect.anything(),
+    );
+    expect(slugRedirects.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ language: Language.en }),
       expect.anything(),
     );
     // Уборка идёт по каждому языку независимо от того, нашёлся ли преемник,
@@ -1395,6 +1444,318 @@ describe('CategoryService', () => {
 
     expect(slugRedirects.record).not.toHaveBeenCalled();
     expect(prisma.slugRedirect.deleteMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 Посадка `LEGACY-392`. Базовый `Category.slug` был **вторым** публичным адресом
+   * каждого перевода: резолв ищет пару `language_slug`, а при промахе падает
+   * на `Category.slug` (`getByLangSlugWithBooks`) и отдаёт страницу запрошенного
+   * языка. После удаления категории строка исчезает, фоллбэк не срабатывает —
+   * и адрес отвечает 404 даже там, где родитель жив. До этой правки 308 с базового
+   * слага не писался вовсе: редиректы получали только слаги переводов.
+   *
+   * Форма — один переход, прямо на перевод родителя того же языка (решение арбитра
+   * 22.09.2026, вариант A). Кейс краснеет от возврата дефекта: сними запись — и ни
+   * одного вызова с `oldSlug: 'fiction'` не останется.
+   */
+  it('LEGACY-392: базовый слаг удалённой категории уводит на перевод родителя того же языка', async () => {
+    arrangeRemove(
+      // Переводы на двух языках — значит и базовый слаг был адресом на двух,
+      // и 308 обязан прийти на оба.
+      [
+        { language: Language.ru, slug: 'roman' },
+        { language: Language.es, slug: 'novela' },
+      ],
+      [
+        { language: Language.ru, slug: 'hudozhestvennaya-literatura' },
+        { language: Language.es, slug: 'ficcion' },
+      ],
+    );
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    // Четыре записи: два умерших перевода плюс базовый слаг в `ru` и в `es` —
+    // ровно в тех языках, где у категории был перевод, а у родителя он есть.
+    expect(slugRedirects.record).toHaveBeenCalledTimes(4);
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      {
+        entityType: 'category',
+        language: Language.ru,
+        oldSlug: 'fiction',
+        newSlug: 'hudozhestvennaya-literatura',
+      },
+      expect.anything(),
+    );
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      { entityType: 'category', language: Language.es, oldSlug: 'fiction', newSlug: 'ficcion' },
+      expect.anything(),
+    );
+    // 🔴 Адресат — перевод родителя, а не его базовый слаг: второй вариант дал бы
+    // либо два перехода, либо 308 в 404 там, где перевода у родителя нет.
+    // `recordBaseSlugChange` пишет именно на базовый слаг, поэтому его здесь быть
+    // не должно вовсе.
+    expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Вторая половина D1 для базового слага: адресата за родителя не достраивают.
+   * Нет перевода на этот язык — остаётся 404, потому что невыданный 308 чинится
+   * вторым заходом, а выданный из поискового индекса не отзывается.
+   */
+  it('LEGACY-392: язык без перевода у родителя 308 с базового слага не получает', async () => {
+    arrangeRemove(
+      [{ language: Language.ru, slug: 'roman' }],
+      // У родителя переведён только `ru` — остальные четыре языка остаются 404.
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    const baseSlugCalls = slugRedirects.record.mock.calls.filter(
+      (call) => (call[0] as { oldSlug: string }).oldSlug === 'fiction',
+    );
+    expect(baseSlugCalls).toHaveLength(1);
+    expect(baseSlugCalls[0][0]).toEqual({
+      entityType: 'category',
+      language: Language.ru,
+      oldSlug: 'fiction',
+      newSlug: 'hudozhestvennaya-literatura',
+    });
+  });
+
+  /**
+   * 🔴 Язык, в котором базовый слаг остался живым, 308 не получает вовсе. Живость
+   * здесь даёт чужой перевод с тем же слагом: публичный резолв находит пару
+   * `language_slug` раньше, чем доходит до фоллбэка, и отвечает 200 чужой страницей.
+   * Редирект в этом языке увёл бы посетителя с работающего адреса.
+   *
+   * Множество берётся у `deadLanguagesForSlug` — того же, по которому идёт уборка.
+   * Возьми запись множество шире (например, все языки подряд), кейс краснеет.
+   */
+  it('LEGACY-392: язык, где базовый слаг жив чужим переводом, редиректа не получает', async () => {
+    arrangeRemove(
+      [{ language: Language.ru, slug: 'roman' }],
+      [
+        { language: Language.ru, slug: 'hudozhestvennaya-literatura' },
+        { language: Language.en, slug: 'literature' },
+      ],
+      // Тот же `fiction` носит en-перевод другой, остающейся жить категории.
+      [Language.en],
+    );
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    // 🔴 Счётчик рядом с обеими проверками (`L-005`): `toHaveBeenCalledWith` матчит
+    // по любому вызову из всех, поэтому без него лишняя запись — на `es`, `fr`, `pt`
+    // или вторая на тот же `ru` — осталась бы незамеченной. Ровно два: умерший
+    // ru-перевод и базовый слаг в `ru`.
+    expect(slugRedirects.record).toHaveBeenCalledTimes(2);
+    expect(slugRedirects.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ language: Language.en, oldSlug: 'fiction' }),
+      expect.anything(),
+    );
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      expect.objectContaining({ language: Language.ru, oldSlug: 'fiction' }),
+      expect.anything(),
+    );
+  });
+
+  /**
+   * 🔴 Посадка на дубль, найденный ревью 22.09.2026. Базовый слаг категории равен
+   * слагу её же ru-перевода — так термины заводит сид, случай рядовой. Адрес тогда
+   * один, а не два, и обслужить его обязан ровно один вызов: цикл по умершим
+   * переводам. Без пропуска новый цикл звал бы `record` второй раз с теми же
+   * аргументами — данных это не меняет (`upsert`), но стоит три лишних обмена
+   * внутри транзакции, держащей глобальный advisory-замок дерева.
+   */
+  it('LEGACY-392: слаг перевода, равный базовому, обслуживается одним вызовом, а не двумя', async () => {
+    arrangeRemove(
+      // Слаг умершего ru-перевода совпадает с базовым слагом категории (`fiction`).
+      [{ language: Language.ru, slug: 'fiction' }],
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      {
+        entityType: 'category',
+        language: Language.ru,
+        oldSlug: 'fiction',
+        newSlug: 'hudozhestvennaya-literatura',
+      },
+      expect.anything(),
+    );
+  });
+
+  /**
+   * 🔴 Посадка на сужение множества языков (решение арбитра 22.09.2026 по находке
+   * ревью). Базовый слаг был живым адресом **только там, где у категории был
+   * перевод**: без перевода резолв отдаёт 200 с `translation: null`, а фронт уходит
+   * в `notFound()` до истории слагов, то есть адрес отвечал 404 и до удаления.
+   * 308 на таком языке был бы не возвратом умершего адреса, а заведением нового —
+   * а он из поискового индекса не отзывается.
+   *
+   * Кейс краснеет от возврата дефекта: верни цикл на `deadLanguages` целиком —
+   * и `es`, `fr`, `pt` получат по записи, хотя перевода у категории там не было
+   * никогда.
+   */
+  it('LEGACY-392: язык без перевода у категории 308 не получает — адрес был 404 и до удаления', async () => {
+    arrangeRemove(
+      // У категории перевод только на `ru`.
+      [{ language: Language.ru, slug: 'roman' }],
+      // У родителя переводы на всех пяти — преемник есть везде, и только
+      // множество языков решает, куда пишется 308.
+      Object.values(Language).map((language) => ({ language, slug: `parent-${language}` })),
+    );
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    const baseSlugLanguages = slugRedirects.record.mock.calls
+      .filter((call) => (call[0] as { oldSlug: string }).oldSlug === 'fiction')
+      .map((call) => (call[0] as { language: Language }).language);
+    // Ровно один язык — тот, где у категории был перевод. Не пять.
+    expect(baseSlugLanguages).toEqual([Language.ru]);
+    // Уборка при этом идёт по всем мёртвым языкам: множества намеренно разные,
+    // потому что отвечают на разные вопросы. Счётчик обязателен рядом (`L-005`):
+    // именно этот кейс объявлен сторожем расхождения, и без него возврат уборки
+    // в цикл по языкам — пять запросов вместо одного (`LEGACY-394`) — остался бы
+    // незамеченным: батчевый вызов матчер нашёл бы среди прочих.
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledTimes(cleanupCalls(1));
+    expect(prisma.slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: {
+        entityType: 'category',
+        language: { in: Object.values(Language) },
+        newSlug: 'fiction',
+      },
+    });
+  });
+
+  /**
+   * 🔴 Посадка проверки живости **по языку** в новом цикле (находка ревью 22.09.2026).
+   * Соседний кейс «при живом чужом базовом слаге записи не снимаются» ловит снятие
+   * этой строки, но по другой причине — там слаг занят чужой живой **категорией**,
+   * и `deadLanguagesForSlug` выходит рано с пустым списком. Здесь список не пуст:
+   * слаг жив только в `en`, и только поязыковая проверка мешает записи.
+   *
+   * Сценарий из прода, а не выдуманный. Категория `A`: базовый слаг `fiction`,
+   * переводы `ru` и `en`. Категория `B` остаётся жить и держит **en-перевод**
+   * со слагом `fiction` — `@@unique([language, slug])` это разрешает, базовый слаг
+   * у `B` свой. Удаление `A` без этой проверки зовёт `record(en, fiction → …)`,
+   * а он делает `updateMany where newSlug = 'fiction'`: все строки истории, ведущие
+   * сегодня 308-м на живую страницу `B` в `en`, переезжают на родителя `A`, и сверх
+   * того заводится 308 с адреса, который отвечает 200. Это ровно тот урон
+   * `LEGACY-394`, что уехал в прод в `v1.0.77`, — возвращённый через новый путь записи.
+   */
+  it('LEGACY-392: язык, где базовый слаг жив чужим переводом, 308 не получает даже при своём переводе', async () => {
+    arrangeRemove(
+      // У категории переводы на обоих языках — значит оба попадают в перебор.
+      [
+        { language: Language.ru, slug: 'roman' },
+        { language: Language.en, slug: 'novel' },
+      ],
+      // У родителя переводы тоже на обоих — преемник доступен везде.
+      [
+        { language: Language.ru, slug: 'hudozhestvennaya-literatura' },
+        { language: Language.en, slug: 'literature' },
+      ],
+      // 🔴 Базовый слаг `fiction` жив в `en`: его носит перевод чужой живой категории.
+      [Language.en],
+    );
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    const baseSlugLanguages = slugRedirects.record.mock.calls
+      .filter((call) => (call[0] as { oldSlug: string }).oldSlug === 'fiction')
+      .map((call) => (call[0] as { language: Language }).language);
+    // Только `ru`: в `en` адрес жив и 308 увёл бы посетителя с работающей страницы.
+    expect(baseSlugLanguages).toEqual([Language.ru]);
+    // Слаги самих переводов при этом обслуживаются обычным порядком, оба.
+    expect(slugRedirects.record).toHaveBeenCalledTimes(3);
+  });
+
+  /**
+   * 🔴 Посадка на вынос `recordAddressSuccessor` (решение арбитра 22.09.2026).
+   * Преемника выбирают три адреса: слаг перевода на двух путях смерти и базовый
+   * слаг в `remove()`. Признак живости и форма уборки у них разные намеренно,
+   * а вот выбор преемника обязан быть один — иначе следующая правка D1 («идём
+   * к деду», «не писать на скрытого родителя») ляжет в один путь и минует второй,
+   * и два публичных адреса одной категории начнут отвечать по-разному.
+   *
+   * Кейс краснеет от расхождения: верни одному из вызывающих собственный выбор
+   * адресата — например, базовому слагу `parentBase` вместо перевода родителя —
+   * и `es` перестанет совпадать с `ru` по форме, а `en` получит запись, которой
+   * при отсутствии перевода у родителя быть не должно.
+   */
+  it('LEGACY-392: преемника оба пути выбирают одинаково — перевод родителя того же языка', async () => {
+    arrangeRemove(
+      [
+        { language: Language.ru, slug: 'roman' },
+        // У `en` перевод категории есть, а у родителя — нет: ни один из двух
+        // адресов этого языка преемника получить не должен.
+        { language: Language.en, slug: 'novel' },
+      ],
+      [
+        { language: Language.ru, slug: 'hudozhestvennaya-literatura' },
+        // ⚠️ У `es` перевод есть у родителя, но не было у самой категории —
+        // значит базовый слаг там адресом не был, и 308 не пишется ни одним
+        // из путей. Строка стоит здесь нарочно: она отделяет «преемник есть»
+        // от «адрес был живым».
+        { language: Language.es, slug: 'ficcion' },
+      ],
+    );
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    // Два: слаг перевода в `ru` и базовый слаг в `ru`. `en` — нет преемника,
+    // `es` — не было адреса.
+    expect(slugRedirects.record).toHaveBeenCalledTimes(2);
+    // Путь перевода и путь базового слага в одном языке дают один и тот же адресат.
+    const ruTargets = slugRedirects.record.mock.calls
+      .filter((call) => (call[0] as { language: Language }).language === Language.ru)
+      .map((call) => (call[0] as { newSlug: string }).newSlug);
+    expect(ruTargets).toEqual(['hudozhestvennaya-literatura', 'hudozhestvennaya-literatura']);
+    // Язык без перевода у родителя не получает ничего ни от одного из путей.
+    expect(slugRedirects.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ language: Language.en }),
+      expect.anything(),
+    );
+    // Язык, где перевода не было у самой категории, — тоже: преемник там есть,
+    // а живого адреса не было.
+    expect(slugRedirects.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ language: Language.es }),
+      expect.anything(),
+    );
+  });
+
+  /**
+   * 🔴 Порядок для базового слага отдельным кейсом: соседний проверяет его на слагах
+   * переводов и остался бы зелёным, встань запись базового слага после уборки.
+   * А встань она после — `deleteMany` по `newSlug: 'fiction'` снёс бы строки прежних
+   * базовых слагов этой же категории раньше, чем `record` перевёл бы их на родителя
+   * (переписывание цепочек в `SlugRedirectService.record`). Это дефект `LEGACY-390`,
+   * возвращённый на второй адрес.
+   */
+  it('LEGACY-392: запись с базового слага идёт до уборки записей, ведущих на него', async () => {
+    const order: string[] = [];
+    arrangeRemove(
+      [{ language: Language.ru, slug: 'roman' }],
+      [{ language: Language.ru, slug: 'hudozhestvennaya-literatura' }],
+    );
+    slugRedirects.record.mockImplementation((change: { oldSlug: string }) => {
+      order.push(`record:${change.oldSlug}`);
+      return Promise.resolve(undefined);
+    });
+    prisma.slugRedirect.deleteMany.mockImplementation((args: { where: { newSlug: string } }) => {
+      order.push(`deleteMany:${args.where.newSlug}`);
+      return Promise.resolve({ count: 0 });
+    });
+
+    await service.remove('cat1', 'admin-actor-1');
+
+    expect(order.indexOf('record:fiction')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('deleteMany:fiction')).toBeGreaterThan(order.indexOf('record:fiction'));
   });
 
   it('LEGACY-390: у корневой категории родителя нет — редиректов не пишется', async () => {
