@@ -22,6 +22,7 @@ import {
   ApiResponse,
   ApiTags,
   ApiNoContentResponse,
+  ApiExtraModels,
 } from '@nestjs/swagger';
 import { CategoryType, Language, Prisma } from '@prisma/client';
 import { CategoryTreeNodeDto } from './dto/category-tree-node.dto';
@@ -36,7 +37,12 @@ import { CreateCategoryTranslationDto } from './dto/create-category-translation.
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 import { CheckCategorySlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
-import { PaginatedCategoriesResponse } from './dto/category-response.dto';
+import { CategoryResponse, PaginatedCategoriesResponse } from './dto/category-response.dto';
+import {
+  paginated,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
 import { CategoryEntityDto } from './dto/category-entity.dto';
 import { CategoryAncestorDto } from './dto/category-ancestor.dto';
@@ -55,6 +61,7 @@ interface RequestUser {
 }
 
 @ApiTags('categories')
+@ApiExtraModels(CategoryResponse)
 @Controller()
 export class CategoryController {
   constructor(private readonly service: CategoryService) {}
@@ -97,6 +104,29 @@ export class CategoryController {
         slug: existingCategory.slug,
       },
     };
+  }
+
+  /**
+   * Административный список терминов — для пикеров админки (`LEGACY-387`).
+   *
+   * Заведён, чтобы можно было снять безъязыкий `GET /categories`, не сажая админское
+   * чтение на публичный `GET /:lang/categories`: тот идёт под `PublicCacheInterceptor`
+   * (`public.controller.ts:67-68`) и отдаётся с `public, s-maxage=300,
+   * stale-while-revalidate=3600`. Заведённая контент-менеджером категория не появлялась
+   * бы в пикере до часа — «категория не сохранилась» (решение арбитра 22.09.2026,
+   * `decisions-log.md`). Здесь же умолчание `private, no-store`.
+   *
+   * Форма ответа — общая для всего, что за логином: `{items, pagination}` (`LEGACY-177`).
+   */
+  @Get('admin/categories')
+  @ApiOperation({ summary: 'List categories for admin pickers' })
+  @ApiOkResponse({ schema: paginatedSchema(CategoryResponse) })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async adminList(@Query() query: ListCategoriesQueryDto): Promise<PaginatedResult<unknown>> {
+    const { data, meta } = await this.service.list(query.page, query.limit, query.type, query.lang);
+    return paginated(data, { page: meta.page, limit: meta.limit, total: meta.total });
   }
 
   @Get('categories')

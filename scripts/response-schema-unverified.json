@@ -1,9 +1,9 @@
 {
-  "routes": 94,
+  "routes": 96,
   "byReason": {
     "depth limit": 33,
     "object without readable properties": 58,
     "union of object types": 202,
-    "unknown": 36
+    "unknown": 38
   }
 }

@@ -220,4 +220,95 @@ describe('Tags e2e', () => {
       await tag.drop(id);
     });
   });
+  /**
+   * `LEGACY-387`: админский список с поиском. Заведён, чтобы можно было снять
+   * безъязыкий `GET /tags`, — у публичного двойника `GET /:lang/tags` поиска нет
+   * и не будет (решение арбитра 22.09.2026).
+   */
+  describe('GET /admin/tags', () => {
+    const tag = taxonomyFixture(http, () => adminAccess, 'tags');
+
+    it('без токена отвечает 401, а не отдаёт список', async () => {
+      await request(http()).get('/admin/tags?page=1&limit=1').expect(401);
+    });
+
+    it('с токеном админа ищет по `q` и не возвращает посторонние теги', async () => {
+      const needle = uniqueMark('admin-needle');
+      const haystackId = await tag.create('admin-haystack');
+      const needleId = await request(http())
+        .post('/tags')
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ name: needle, slug: needle, key: needle })
+        .expect(201)
+        .then((res) => (res.body as { id: string }).id);
+
+      const res = await request(http())
+        .get(`/admin/tags?page=1&limit=50&q=${needle}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+
+      // Форма за логином — `{items, pagination}` (`LEGACY-177`), а не публичная
+      // `{data, meta}`. Читается именно она: подмена формы должна ронять набор.
+      const body = res.body as {
+        items: Array<{ id: string }>;
+        pagination: { page: number; limit: number; total: number };
+      };
+      expect(Array.isArray(body.items)).toBe(true);
+      expect(body.pagination.page).toBe(1);
+      expect(body.pagination.limit).toBe(50);
+      expect(typeof body.pagination.total).toBe('number');
+      const ids = body.items.map((row) => row.id);
+      expect(ids).toContain(needleId);
+      expect(ids).not.toContain(haystackId);
+
+      await tag.drop(needleId);
+      await tag.drop(haystackId);
+    });
+
+    it('`lang` необязателен, и без него `booksCount` считается по всем языкам', async () => {
+      // Граница решения арбитра: обязательный язык, как в пути публичного двойника,
+      // молча сделал бы `booksCount` в админской таблице поязыковым. Поэтому кейс
+      // читает само число, а не только код ответа: тег привязан к английской версии,
+      // и запрос с `lang=es` обязан дать ноль там, где запрос без языка даёт единицу.
+      const id = await tag.create('lang-optional');
+      // Счётчик считает только опубликованные версии (`bv.status = 'published'`
+      // в сыром запросе `TagsService.list`), а общая фикстура файла лежит черновиком
+      // и дала бы ноль в обоих замерах. Своей версии тут не завести — на пару
+      // (`bookId`, `language`) стоит уникальность, — поэтому публикуется фикстурная
+      // и возвращается в прежний статус в конце кейса.
+      const before = await prisma.bookVersion.findUniqueOrThrow({ where: { id: versionId } });
+      await prisma.bookVersion.update({
+        where: { id: versionId },
+        data: { status: 'published' },
+      });
+      await request(http())
+        .post(`/versions/${versionId}/tags`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ tagId: id })
+        .expect(201);
+
+      const countFor = async (query: string): Promise<number> => {
+        const res = await request(http())
+          .get(`/admin/tags?page=1&limit=100${query}`)
+          .set('Authorization', `Bearer ${adminAccess}`)
+          .expect(200);
+        const rows = (res.body as { items: Array<{ id: string; booksCount: number }> }).items;
+        return rows.find((row) => row.id === id)?.booksCount ?? -1;
+      };
+
+      // Версия книги из фикстуры — английская, другой языковой редакции у неё нет.
+      expect(await countFor('')).toBe(1);
+      expect(await countFor('&lang=es')).toBe(0);
+
+      await request(http())
+        .delete(`/versions/${versionId}/tags/${id}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(204);
+      await prisma.bookVersion.update({
+        where: { id: versionId },
+        data: { status: before.status },
+      });
+      await tag.drop(id);
+    });
+  });
 });

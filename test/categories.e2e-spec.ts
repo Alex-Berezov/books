@@ -247,4 +247,57 @@ describe('Categories e2e', () => {
       }
     });
   });
+  /**
+   * `LEGACY-387`: админский список терминов. Заведён, чтобы пикеры админки не читали
+   * публичный `GET /:lang/categories` — тот под `PublicCacheInterceptor`, и заведённая
+   * категория не появлялась бы в форме до часа (решение арбитра 22.09.2026).
+   */
+  describe('GET /admin/categories', () => {
+    const category = taxonomyFixture(http, () => adminAccess, 'categories', { type: 'genre' });
+
+    it('без токена отвечает 401, а не отдаёт список', async () => {
+      await request(http()).get('/admin/categories?page=1&limit=1').expect(401);
+    });
+
+    it('с токеном админа отдаёт форму `{items, pagination}`, а не публичную `{data, meta}`', async () => {
+      const id = await category.create('admin-list');
+
+      const res = await request(http())
+        .get('/admin/categories?page=1&limit=100')
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+
+      // Форма за логином одна на все такие ручки (`LEGACY-177`); публичная `{data, meta}`
+      // осталась только на публичных адресах. Обе половины проверяются явно: подмена
+      // формы обязана ронять набор, а не молча отдавать пустоту потребителю.
+      const body = res.body as {
+        items: Array<{ id: string }>;
+        pagination: { page: number; limit: number; total: number; totalPages: number };
+      };
+      expect(Array.isArray(body.items)).toBe(true);
+      expect(res.body).not.toHaveProperty('data');
+      expect(res.body).not.toHaveProperty('meta');
+      expect(body.pagination.page).toBe(1);
+      expect(body.pagination.limit).toBe(100);
+      expect(typeof body.pagination.total).toBe('number');
+      expect(typeof body.pagination.totalPages).toBe('number');
+      expect(body.items.map((row) => row.id)).toContain(id);
+
+      await category.drop(id);
+    });
+
+    it('`type` фильтрует выдачу', async () => {
+      const id = await category.create('admin-genre');
+
+      const res = await request(http())
+        .get('/admin/categories?page=1&limit=100&type=category')
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+
+      const ids = (res.body as { items: Array<{ id: string }> }).items.map((row) => row.id);
+      expect(ids).not.toContain(id);
+
+      await category.drop(id);
+    });
+  });
 });

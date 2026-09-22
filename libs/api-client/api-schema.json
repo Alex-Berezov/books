@@ -24293,6 +24293,102 @@
         ]
       }
     },
+    "/admin/categories": {
+      "get": {
+        "operationId": "CategoryController_adminList",
+        "parameters": [
+          {
+            "description": "Page number",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Rows per page. Values above 100 are rejected with 400.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Filter by category type",
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "enum": [
+                "category",
+                "genre",
+                "collection"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by language",
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "es",
+                "fr",
+                "pt",
+                "ru"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List categories for admin pickers",
+        "tags": [
+          "categories"
+        ]
+      }
+    },
     "/admin/comments": {
       "get": {
         "operationId": "CommentsController_adminList",
@@ -31686,6 +31782,97 @@
         "summary": "Unlink contributor from a source edition",
         "tags": [
           "Contributors"
+        ]
+      }
+    },
+    "/admin/tags": {
+      "get": {
+        "operationId": "TagsController_adminList",
+        "parameters": [
+          {
+            "description": "Page number",
+            "in": "query",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Number of records per page",
+            "in": "query",
+            "name": "limit",
+            "required": true,
+            "schema": {
+              "default": 10,
+              "example": 10,
+              "maximum": 100,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Search query",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Language for per-language counters",
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "es",
+                "fr",
+                "pt",
+                "ru"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/TagEntityDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List tags for admin pickers (supports search)",
+        "tags": [
+          "tags"
         ]
       }
     },

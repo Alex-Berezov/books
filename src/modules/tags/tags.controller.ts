@@ -22,6 +22,7 @@ import {
   ApiResponse,
   ApiTags,
   ApiNoContentResponse,
+  ApiExtraModels,
 } from '@nestjs/swagger';
 import { TagsService } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
@@ -35,6 +36,11 @@ import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { Language } from '@prisma/client';
 import { PaginatedTagsResponse } from './dto/tag-response.dto';
+import {
+  paginated,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { CheckTagSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckTagSlugResponseDto } from './dto/check-slug-response.dto';
 import { TagEntityDto } from './dto/tag-entity.dto';
@@ -53,6 +59,7 @@ interface RequestUser {
 }
 
 @ApiTags('tags')
+@ApiExtraModels(TagEntityDto)
 @Controller()
 export class TagsController {
   constructor(private readonly service: TagsService) {}
@@ -85,6 +92,33 @@ export class TagsController {
         slug: existingTag.slug,
       },
     };
+  }
+
+  /**
+   * Административный список тегов — с поиском, для пикеров админки (`LEGACY-387`).
+   *
+   * Заведён, чтобы можно было снять безъязыкий `GET /tags`: у его языкового двойника
+   * `GET /:lang/tags` поиска нет и не будет — `PublicTagsQueryDto` под
+   * `PublicCacheInterceptor`, и кардинальность ключей кэша задавал бы посторонний
+   * произвольной строкой (решение арбитра 22.09.2026, `decisions-log.md`).
+   *
+   * `lang` остаётся **необязательным** намеренно: админская таблица его не шлёт, и
+   * `booksCount` там считается сквозным по языкам. Обязательный язык — как в пути
+   * публичного двойника — молча сделал бы счётчик поязыковым.
+   */
+  @Get('admin/tags')
+  @ApiOperation({ summary: 'List tags for admin pickers (supports search)' })
+  @ApiOkResponse({ schema: paginatedSchema(TagEntityDto) })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  async adminList(@Query() query: ListTagsDto): Promise<PaginatedResult<unknown>> {
+    // Вход целиком из DTO: `page`/`limit` приезжают собранными
+    // (`ValidationPipe` с `transform: true`, `main.ts:77`), поэтому своих
+    // умолчаний здесь нет — иначе ручка обещала бы одно число, а отдавала
+    // другое, как это было у авторов (`author.controller.ts:82-89`).
+    const { data, meta } = await this.service.list(query.page, query.limit, query.q, query.lang);
+    return paginated(data, { page: meta.page, limit: meta.limit, total: meta.total });
   }
 
   @Get('tags')
