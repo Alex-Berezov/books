@@ -3,16 +3,21 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
-  IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
 } from 'class-validator';
 import { ClaimBlockScope } from '../rights-claim-interface';
+import { ALLOWED_CLAIM_BLOCK_SCOPES } from '../rights-claim.constants';
 
 export class ApplyClaimBlockDto {
-  @ApiProperty({ enum: ClaimBlockScope })
-  @IsEnum(ClaimBlockScope)
+  @ApiProperty({
+    enum: ALLOWED_CLAIM_BLOCK_SCOPES,
+    description:
+      'SPECIFIC_ASSET is forbidden (LEGACY-027): a block with that scope never matches any request. Point-level blocking of a single file is done by hand, not through a claim.',
+  })
+  @IsIn(ALLOWED_CLAIM_BLOCK_SCOPES)
   scope!: ClaimBlockScope;
 
   @ApiPropertyOptional({

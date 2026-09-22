@@ -1,4 +1,4 @@
-import { RightsClaimStatus } from './rights-claim-interface';
+import { ClaimBlockScope, RightsClaimStatus } from './rights-claim-interface';
 
 /** Statuses in which a claim is considered open (still being worked on). */
 export const OPEN_CLAIM_STATUSES: readonly RightsClaimStatus[] = [
@@ -32,8 +32,24 @@ export const VERSION_SCOPED_BLOCK_SCOPES: readonly string[] = [
   'TEXT_READER',
   'DOWNLOADS',
   'AUDIO',
-  'SPECIFIC_ASSET',
 ];
+
+/**
+ * Scopes an admin may pick when applying a claim block (LEGACY-027, owner's decision
+ * 21.09.2026). `SPECIFIC_ASSET` is deliberately excluded: `RightsClaimAccessBlock` carries
+ * no asset reference, so a block with this scope never matches any request — see
+ * `scopeCovers` in `rights-claim-enforcement.service.ts`. The owner chose to forbid the
+ * scope outright rather than widen it to `LANGUAGE_EDITION` (the fix used for the same
+ * defect in geo-block rules, WP-3.3): point-level blocking of a single file is done by
+ * hand, not through a claim block.
+ *
+ * Derived from `ClaimBlockScope` (the `GeoBlockScope` Prisma enum) rather than a
+ * hand-copied literal list, so a future value added to the enum is allowed automatically
+ * instead of being silently rejected until this file is updated too (`STYLE_GUIDE.md` §7).
+ */
+export const ALLOWED_CLAIM_BLOCK_SCOPES: readonly ClaimBlockScope[] = Object.values(
+  ClaimBlockScope,
+).filter((scope) => scope !== ClaimBlockScope.SPECIFIC_ASSET);
 
 export const CLAIM_ACCESS_BLOCK_REASON_CODE = 'BLOCKED_BY_RIGHTS_CLAIM';
 export const CLAIM_ACCESS_BLOCK_MESSAGE =

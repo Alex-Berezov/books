@@ -808,13 +808,13 @@
             "type": "string"
           },
           "scope": {
+            "description": "SPECIFIC_ASSET is forbidden (LEGACY-027): a block with that scope never matches any request. Point-level blocking of a single file is done by hand, not through a claim.",
             "enum": [
               "ENTIRE_BOOK",
               "LANGUAGE_EDITION",
               "TEXT_READER",
               "DOWNLOADS",
-              "AUDIO",
-              "SPECIFIC_ASSET"
+              "AUDIO"
             ],
             "type": "string"
           },
