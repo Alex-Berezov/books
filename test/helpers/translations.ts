@@ -7,9 +7,16 @@ export type TranslationResponse = {
   seo: Record<string, unknown> | null;
 };
 
-/** Picks the translation for `language`, failing the test outright when it is missing. */
+/**
+ * Picks the translation for `language` from a `{items, pagination}` list body (`LEGACY-379`),
+ * failing the test outright when the body has another shape or the language is missing.
+ */
 export const findTranslation = (body: unknown, language: string): TranslationResponse => {
-  const found = (body as TranslationResponse[]).find((t) => t.language === language);
+  const items = (body as { items?: unknown }).items;
+  if (!Array.isArray(items)) {
+    throw new Error('Expected a {items, pagination} list body');
+  }
+  const found = (items as TranslationResponse[]).find((t) => t.language === language);
   if (!found) {
     throw new Error(`No ${language} translation in response`);
   }

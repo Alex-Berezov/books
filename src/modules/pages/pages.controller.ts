@@ -40,7 +40,11 @@ import { CheckPageSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckPageSlugResponseDto } from './dto/check-slug-response.dto';
 import { PageGroupResponse } from './dto/page-group-response.dto';
 import { ListPagesQueryDto } from './dto/list-pages-query.dto';
-import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
+import {
+  PaginationInfoDto,
+  paginatedAll,
+  paginatedSchema,
+} from '../../shared/dto/paginated-response.dto';
 
 /**
  * Форма пользователя запроса — та же, что в остальных контроллерах
@@ -281,13 +285,13 @@ export class PagesController {
   @ApiOperation({ summary: 'Get all pages in a translation group' })
   @ApiResponse({
     status: 200,
-    description: 'List of pages in the group',
-    type: [PageResponse],
+    description: 'Pages in the group, one page (`LEGACY-379`)',
+    schema: paginatedSchema(PageResponse),
   })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async findByGroup(@Param('groupId') groupId: string) {
-    return this.service.findByGroupId(groupId);
+    return paginatedAll(await this.service.findByGroupId(groupId));
   }
 }

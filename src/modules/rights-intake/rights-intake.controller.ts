@@ -20,7 +20,12 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
+import {
+  PaginationInfoDto,
+  paginatedAll,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { RightsIntakeService } from './rights-intake.service';
 import { RightsIntakeManifestService } from './rights-intake-manifest.service';
 import { RightsApprovalService } from './rights-approval.service';
@@ -152,12 +157,13 @@ export class RightsIntakeController {
   }
 
   @Get(':intakeId/approvals')
-  @ApiOkResponse({ type: [RightsReviewApprovalDto] })
+  @ApiExtraModels(RightsReviewApprovalDto)
+  @ApiOkResponse({ schema: paginatedSchema(RightsReviewApprovalDto) })
   @ApiOperation({ summary: 'Get all approvals for a rights intake' })
   async getApprovalsByIntake(
     @Param('intakeId') intakeId: string,
-  ): Promise<RightsReviewApprovalDto[]> {
-    return this.rightsApprovalService.getApprovalsByIntake(intakeId);
+  ): Promise<PaginatedResult<RightsReviewApprovalDto>> {
+    return paginatedAll(await this.rightsApprovalService.getApprovalsByIntake(intakeId));
   }
 
   @Post(':id/create-book')

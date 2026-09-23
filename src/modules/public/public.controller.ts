@@ -12,6 +12,7 @@ import {
 import { PublicCacheInterceptor } from '../../common/interceptors/public-cache.interceptor';
 import {
   ApiBearerAuth,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -50,6 +51,12 @@ import { PublicPageDto } from './dto/public-page-response.dto';
 import { PublicTagBooksResponseDto } from './dto/public-tag-books-response.dto';
 import { PublicAuthorsListResponseDto } from './dto/public-authors-list-response.dto';
 import { AuthorLetterCountDto } from './dto/author-letter-count.dto';
+import {
+  PaginationInfoDto,
+  paginatedAll,
+  paginatedSchema,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 import { PagedBookCardsDto, RelatedBooksResponseDto } from '../book/dto/paged-book-cards.dto';
 import { CategoryBookCardsResponseDto } from '../book/dto/category-book-cards-response.dto';
 import { BookOverviewResponseDto } from '../book/dto/book-overview-response.dto';
@@ -415,7 +422,8 @@ export class PublicController {
    */
   @Get('authors/letters')
   @ApiOperation({ summary: 'Author alphabet index with per-letter counts' })
-  @ApiOkResponse({ type: AuthorLetterCountDto, isArray: true })
+  @ApiExtraModels(AuthorLetterCountDto, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(AuthorLetterCountDto) })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
   @ApiQuery({
     name: 'search',
@@ -423,11 +431,11 @@ export class PublicController {
     description:
       'Same name filter as the list. The index sits above the filtered grid, so its counts must describe that grid and not the whole alphabet.',
   })
-  authorLetters(
+  async authorLetters(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query() query: PublicAuthorLettersQueryDto,
-  ) {
-    return this.authors.listPublicLetters(pathLang, query.search);
+  ): Promise<PaginatedResult<AuthorLetterCountDto>> {
+    return paginatedAll(await this.authors.listPublicLetters(pathLang, query.search));
   }
 
   // Localized author details by slug

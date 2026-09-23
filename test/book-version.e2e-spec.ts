@@ -96,8 +96,9 @@ describe('BookVersions e2e', () => {
 
     // Public must not see draft
     const listDraftHidden = await request(http()).get(`/books/${bookId}/versions`).expect(200);
-    expect(Array.isArray(listDraftHidden.body)).toBe(true);
-    expect(listDraftHidden.body.length).toBe(0);
+    expect(Array.isArray(listDraftHidden.body.items)).toBe(true);
+    expect(listDraftHidden.body.items.length).toBe(0);
+    expect(listDraftHidden.body.pagination.total).toBe(0);
     await request(http()).get(`/versions/${versionId}`).expect(404);
 
     // Admin sees draft via admin route
@@ -105,7 +106,17 @@ describe('BookVersions e2e', () => {
       .get(`/admin/en/books/${bookId}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect(adminList.body.length).toBe(1);
+    expect(adminList.body.items.length).toBe(1);
+    expect(adminList.body.pagination.total).toBe(1);
+
+    // `LEGACY-379`: contributors list is `{items, pagination}`, not a bare array
+    const contributors = await request(http())
+      .get(`/admin/versions/${versionId}/contributors`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(Array.isArray(contributors.body)).toBe(false);
+    expect(Array.isArray(contributors.body.items)).toBe(true);
+    expect(contributors.body.pagination.total).toBe(contributors.body.items.length);
 
     // Admin can get draft version by ID via admin endpoint
     const adminGetDraft = await request(http())
@@ -123,7 +134,7 @@ describe('BookVersions e2e', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const listAfterPublish = await request(http()).get(`/books/${bookId}/versions`).expect(200);
-    expect(listAfterPublish.body.length).toBe(1);
+    expect(listAfterPublish.body.items.length).toBe(1);
     await request(http()).get(`/versions/${versionId}`).expect(200);
 
     // `LEGACY-015`: повторная публикация уже опубликованной версии состояние не меняет,
@@ -182,7 +193,7 @@ describe('BookVersions e2e', () => {
     expect(auditRowsAfterRepeat).toHaveLength(2);
 
     const listAfterUnpublish = await request(http()).get(`/books/${bookId}/versions`).expect(200);
-    expect(listAfterUnpublish.body.length).toBe(0);
+    expect(listAfterUnpublish.body.items.length).toBe(0);
     await request(http()).get(`/versions/${versionId}`).expect(404);
     // Update still works via admin
     await request(http())

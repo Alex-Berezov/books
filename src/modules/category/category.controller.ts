@@ -39,7 +39,9 @@ import { CheckCategorySlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
 import { CategoryResponse } from './dto/category-response.dto';
 import {
+  PaginationInfoDto,
   paginated,
+  paginatedAll,
   paginatedSchema,
   type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
@@ -48,6 +50,10 @@ import { CategoryEntityDto } from './dto/category-entity.dto';
 import { CategoryAncestorDto } from './dto/category-ancestor.dto';
 import { CategoryTranslationEntityDto } from './dto/category-translation-entity.dto';
 import { VersionCategoryLinkDto } from './dto/version-category-link.dto';
+
+type CategoryTreeNode = Awaited<ReturnType<CategoryService['getTree']>>[number];
+type CategoryChild = Awaited<ReturnType<CategoryService['getChildren']>>[number];
+type CategoryAncestor = Awaited<ReturnType<CategoryService['getAncestors']>>[number];
 
 /**
  * Форма пользователя запроса — та же, что в остальных контроллерах
@@ -61,7 +67,13 @@ interface RequestUser {
 }
 
 @ApiTags('categories')
-@ApiExtraModels(CategoryResponse)
+@ApiExtraModels(
+  CategoryResponse,
+  CategoryTreeNodeDto,
+  CategoryAncestorDto,
+  CategoryTranslationEntityDto,
+  PaginationInfoDto,
+)
 @Controller()
 export class CategoryController {
   constructor(private readonly service: CategoryService) {}
@@ -132,8 +144,8 @@ export class CategoryController {
   @Get('categories/tree')
   @ApiOperation({ summary: 'Get categories tree (optionally filtered by type)' })
   @ApiOkResponse({
-    description: 'Array of root categories with nested children',
-    type: [CategoryTreeNodeDto],
+    description: 'Root categories with nested children, one page (`LEGACY-379`)',
+    schema: paginatedSchema(CategoryTreeNodeDto),
   })
   @ApiQuery({
     name: 'type',
@@ -141,31 +153,33 @@ export class CategoryController {
     enum: CategoryType,
     description: 'Filter by category type (category|genre|collection)',
   })
-  tree(@Query('type') type?: CategoryType, @Query('lang') lang?: Language) {
-    return this.service.getTree(type, lang);
+  async tree(
+    @Query('type') type?: CategoryType,
+    @Query('lang') lang?: Language,
+  ): Promise<PaginatedResult<CategoryTreeNode>> {
+    return paginatedAll(await this.service.getTree(type, lang));
   }
 
   @Get('categories/:id/children')
   @ApiOperation({ summary: 'Get direct children of the category' })
   @ApiParam({ name: 'id' })
   @ApiOkResponse({
-    description: 'Array of direct child categories',
-    type: [CategoryTreeNodeDto],
+    description: 'Direct child categories, one page (`LEGACY-379`)',
+    schema: paginatedSchema(CategoryTreeNodeDto),
   })
-  children(@Param('id') id: string) {
-    return this.service.getChildren(id);
+  async children(@Param('id') id: string): Promise<PaginatedResult<CategoryChild>> {
+    return paginatedAll(await this.service.getChildren(id));
   }
 
   @Get('categories/:id/ancestors')
   @ApiOperation({ summary: 'Get ancestors path of the category (root → ... → parent)' })
   @ApiParam({ name: 'id' })
   @ApiOkResponse({
-    description: 'Array from root to parent (excluding the node itself)',
-    type: CategoryAncestorDto,
-    isArray: true,
+    description: 'Path from root to parent, excluding the node itself; one page (`LEGACY-379`)',
+    schema: paginatedSchema(CategoryAncestorDto),
   })
-  ancestors(@Param('id') id: string) {
-    return this.service.getAncestors(id);
+  async ancestors(@Param('id') id: string): Promise<PaginatedResult<CategoryAncestor>> {
+    return paginatedAll(await this.service.getAncestors(id));
   }
 
   @Post('categories')
@@ -228,14 +242,14 @@ export class CategoryController {
   @Get('categories/:id/translations')
   @ApiOperation({ summary: 'List category translations (admin)' })
   @ApiParam({ name: 'id' })
-  @ApiOkResponse({ type: CategoryTranslationEntityDto, isArray: true })
+  @ApiOkResponse({ schema: paginatedSchema(CategoryTranslationEntityDto) })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  listTranslations(
+  async listTranslations(
     @Param('id') id: string,
-  ): Promise<Prisma.CategoryTranslationGetPayload<{ include: { seo: true } }>[]> {
-    return this.service.listTranslations(id);
+  ): Promise<PaginatedResult<Prisma.CategoryTranslationGetPayload<{ include: { seo: true } }>>> {
+    return paginatedAll(await this.service.listTranslations(id));
   }
 
   @Post('categories/:id/translations')

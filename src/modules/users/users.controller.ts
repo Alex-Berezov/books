@@ -37,7 +37,10 @@ import { PaginationDto } from '../../shared/dto/pagination.dto';
 import {
   PaginationInfoDto,
   PaginationWithNextDto,
+  paginatedAll,
+  paginatedItemsSchema,
   paginatedSchema,
+  type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
 
 interface RequestUser {
@@ -125,11 +128,11 @@ export class UsersController {
   @Roles(Role.Admin)
   @Get(':id/roles')
   @ApiOkResponse({
-    description: 'Role names assigned to the user',
-    schema: { type: 'array', items: { type: 'string', enum: Object.values(RoleName) } },
+    description: 'Role names assigned to the user, one page (`LEGACY-379`)',
+    schema: paginatedItemsSchema({ type: 'string', enum: Object.values(RoleName) }),
   })
-  listRoles(@Param('id') id: string) {
-    return this.users.listRoles(id);
+  async listRoles(@Param('id') id: string): Promise<PaginatedResult<RoleName>> {
+    return paginatedAll(await this.users.listRoles(id));
   }
 
   @ApiOperation({ summary: 'Assign role to user (admin only)' })

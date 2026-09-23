@@ -327,6 +327,21 @@ describe('Rights lawyer workflow e2e', () => {
     expect(opinion.body.rightsEvidenceId).toBeTruthy();
     expect(opinion.body.lawyerNameSnapshot).toBe('Иванова Анна Сергеевна');
 
+    // `LEGACY-379`: список заключений — `{items, pagination}`, а не голый массив.
+    const opinions = await request(http())
+      .get(`/admin/rights/lawyer-reviews/${lawyerReviewId}/opinions`)
+      .set(...auth())
+      .expect(200);
+    expect(Array.isArray(opinions.body)).toBe(false);
+    const opinionItems = opinions.body.items as { id: string }[];
+    expect(opinionItems.some((o) => o.id === opinion.body.id)).toBe(true);
+    expect(opinions.body.pagination).toEqual({
+      page: 1,
+      limit: opinionItems.length,
+      total: opinionItems.length,
+      totalPages: 1,
+    });
+
     const profile = await request(http())
       .get(`/admin/rights/profiles/${profileId}`)
       .set(...auth())

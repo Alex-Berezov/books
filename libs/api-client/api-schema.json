@@ -25076,14 +25076,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/PageResponse"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/PageResponse"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "List of pages in the group"
+            "description": "Pages in the group, one page (`LEGACY-379`)"
           }
         },
         "security": [
@@ -28257,10 +28269,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/RightsReviewApprovalDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/RightsReviewApprovalDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -29008,10 +29032,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/LegalOpinionDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/LegalOpinionDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -32075,10 +32111,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/BookVersionContributorResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/BookVersionContributorResponseDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -32896,10 +32944,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/BookVersionResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/BookVersionResponseDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -33818,14 +33878,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "type": "string"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "List of themes returned"
+            "description": "List of themes returned, one page (`LEGACY-379`)"
           }
         },
         "security": [
@@ -33909,17 +33981,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/PublicBookVersionListItemDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/PublicBookVersionListItemDto"
+                          },
+                          {
+                            "$ref": "#/components/schemas/BookVersionResponseDto"
+                          }
+                        ]
                       },
-                      {
-                        "$ref": "#/components/schemas/BookVersionResponseDto"
-                      }
-                    ]
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -34409,14 +34493,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CategoryTreeNodeDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CategoryTreeNodeDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "Array of root categories with nested children"
+            "description": "Root categories with nested children, one page (`LEGACY-379`)"
           }
         },
         "summary": "Get categories tree (optionally filtered by type)",
@@ -34516,14 +34612,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CategoryAncestorDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CategoryAncestorDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "Array from root to parent (excluding the node itself)"
+            "description": "Path from root to parent, excluding the node itself; one page (`LEGACY-379`)"
           }
         },
         "summary": "Get ancestors path of the category (root → ... → parent)",
@@ -34550,14 +34658,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CategoryTreeNodeDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CategoryTreeNodeDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "Array of direct child categories"
+            "description": "Direct child categories, one page (`LEGACY-379`)"
           }
         },
         "summary": "Get direct children of the category",
@@ -34584,10 +34704,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CategoryTranslationEntityDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CategoryTranslationEntityDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -36138,10 +36270,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/TagTranslationEntityDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/TagTranslationEntityDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -36895,20 +37039,32 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "enum": [
-                      "user",
-                      "admin",
-                      "content_manager",
-                      "lawyer"
-                    ],
-                    "type": "string"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "enum": [
+                          "user",
+                          "admin",
+                          "content_manager",
+                          "lawyer"
+                        ],
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "Role names assigned to the user"
+            "description": "Role names assigned to the user, one page (`LEGACY-379`)"
           }
         },
         "security": [
@@ -38268,10 +38424,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/AuthorLetterCountDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AuthorLetterCountDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },

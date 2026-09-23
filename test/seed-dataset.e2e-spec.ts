@@ -122,7 +122,7 @@ describe('Seeded dataset (e2e)', () => {
     'сид даёт хабу авторов непустой буквенный указатель на языке %s',
     async (lang) => {
       const res = await get(`/${lang}/authors/letters`).expect(200);
-      const letters = res.body as Array<{ letter: string; count: number }>;
+      const letters = (res.body as { items: Array<{ letter: string; count: number }> }).items;
 
       // ⚠️ Длина ответа здесь ничего не значит и не проверяется: `listPublicLetters`
       // собирает его из `alphabetForLanguage(lang)` и отдаёт весь алфавит целиком
@@ -156,7 +156,7 @@ describe('Seeded dataset (e2e)', () => {
    */
   it('русский указатель наполнен буквой алфавита, а не только группой #', async () => {
     const res = await get('/ru/authors/letters').expect(200);
-    const letters = res.body as Array<{ letter: string; count: number }>;
+    const letters = (res.body as { items: Array<{ letter: string; count: number }> }).items;
 
     const named = letters.filter((l) => l.count > 0 && l.letter !== '#');
     expect(named.length).toBeGreaterThan(0);
@@ -384,7 +384,9 @@ describe('Seeded dataset (e2e)', () => {
     ])('сид даёт хабу %s линкуемый термин %s', async (type, key) => {
       const res = await get(`/categories/tree?lang=${lang}&type=${type}`).expect(200);
 
-      expect(linkableIn(flatten(res.body as TreeNode[])).map((t) => t.key)).toContain(key);
+      expect(
+        linkableIn(flatten((res.body as { items: TreeNode[] }).items)).map((t) => t.key),
+      ).toContain(key);
     });
 
     it('сид даёт хабу tags линкуемый термин classics', async () => {

@@ -147,7 +147,9 @@ describe('Authors hub (e2e)', () => {
   // `res.body` у supertest — `any`, и линт справедливо ругается на доступ к нему.
   // Приводим один раз здесь, а не рассыпаем касты по тесту.
   const list = (res: request.Response): ListResponse => res.body as ListResponse;
-  const letters = (res: request.Response): LettersResponse => res.body as LettersResponse;
+  // `LEGACY-379`: указатель — `{items, pagination}`, а не голый массив.
+  const letters = (res: request.Response): LettersResponse =>
+    (res.body as { items: LettersResponse }).items;
 
   const find = (res: request.Response, id: string) => list(res).data.find((a) => a.id === id);
 
@@ -277,7 +279,7 @@ describe('Authors hub (e2e)', () => {
     it('is reachable and not swallowed by authors/:slug', async () => {
       const res = await get('/ru/authors/letters').expect(200);
 
-      expect(Array.isArray(res.body)).toBe(true);
+      expect(Array.isArray(letters(res))).toBe(true);
       expect(letters(res).length).toBeGreaterThan(0);
     });
 

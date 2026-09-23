@@ -9,6 +9,7 @@ import {
 } from '@nestjs/swagger';
 import {
   PaginationInfoDto,
+  paginatedAll,
   paginatedSchema,
   type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
@@ -161,10 +162,11 @@ export class RightsLawyerReviewController {
   }
 
   @Get('admin/rights/lawyer-reviews/:id/opinions')
-  @ApiOkResponse({ type: [LegalOpinionDto] })
+  @ApiExtraModels(LegalOpinionDto)
+  @ApiOkResponse({ schema: paginatedSchema(LegalOpinionDto) })
   @ApiOperation({ summary: 'Legal opinions attached to a review' })
-  listOpinions(@Param('id') id: string): Promise<LegalOpinionDto[]> {
-    return this.opinions.list(id);
+  async listOpinions(@Param('id') id: string): Promise<PaginatedResult<LegalOpinionDto>> {
+    return paginatedAll(await this.opinions.list(id));
   }
 
   @Post('admin/rights/lawyer-reviews/:id/opinions')

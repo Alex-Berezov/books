@@ -50,7 +50,7 @@ describe('User roles e2e', () => {
       .get(`/users/${userId}/roles`)
       .set('Authorization', `Bearer ${aToken}`)
       .expect(200);
-    expect(roles1.body).toContain('user');
+    expect(roles1.body.items).toContain('user');
 
     // Assign content_manager
     const assign = await request(app.getHttpServer())
@@ -64,7 +64,7 @@ describe('User roles e2e', () => {
       .get(`/users/${userId}/roles`)
       .set('Authorization', `Bearer ${aToken}`)
       .expect(200);
-    expect(roles2.body).toContain('content_manager');
+    expect(roles2.body.items).toContain('content_manager');
 
     // Revoke content_manager
     await request(app.getHttpServer())
@@ -76,7 +76,8 @@ describe('User roles e2e', () => {
       .get(`/users/${userId}/roles`)
       .set('Authorization', `Bearer ${aToken}`)
       .expect(200);
-    expect(roles3.body).not.toContain('content_manager');
+    expect(Array.isArray(roles3.body.items)).toBe(true);
+    expect(roles3.body.items).not.toContain('content_manager');
 
     // Prevent revoking base user role
     await request(app.getHttpServer())

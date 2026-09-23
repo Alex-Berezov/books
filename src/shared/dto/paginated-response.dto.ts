@@ -12,10 +12,11 @@ import type {
  * выбрана `{items, pagination:{page,limit,total,totalPages}}`: на ней уже сидела
  * публичная витрина карточек, и её потребители правки не требуют.
  *
- * ⚠️ Публичные маршруты этой обёрткой **не переводятся** (решение арбитра
- * 13.09.2026, `books-app-docs/ai-context/decisions-log.md`): их ответы лежат
- * в edge-кэше Cloudflare, и смена формы потребовала бы сброса кэша на боевом
- * домене. Публичный остаток ведётся отдельной записью.
+ * ⚠️ Публичные списки на `{data, meta}` этой обёрткой **не переведены** (решение
+ * арбитра 13.09.2026, `books-app-docs/ai-context/decisions-log.md`): их ответы
+ * лежат в edge-кэше Cloudflare, и смена формы требует сброса кэша на боевом
+ * домене — остаток ведётся записью `LEGACY-378`. Голые массивы, включая
+ * публичный `GET /:lang/authors/letters`, переведены пачкой `W7` (`LEGACY-379`).
  *
  * ⚠️ Обёртка ничего не считает и не режет. `skip`/`take` в маршруты, где их нет,
  * она не вводит: молчаливое усечение выдачи — это `LEGACY-098`, и вводится оно
@@ -101,11 +102,21 @@ export const paginatedAll = <T>(items: T[]): PaginatedResult<T> =>
 export const paginatedSchema = (
   itemType: Parameters<typeof getSchemaPath>[0],
   paginationType: Parameters<typeof getSchemaPath>[0] = PaginationInfoDto,
+): SchemaObject & Partial<ReferenceObject> =>
+  paginatedItemsSchema({ $ref: getSchemaPath(itemType) }, paginationType);
+
+/**
+ * Та же схема `{items, pagination}`, но строка описана готовой схемой, а не классом:
+ * для списка строк (`{ type: 'string' }`) и для union через `oneOf`.
+ */
+export const paginatedItemsSchema = (
+  itemSchema: SchemaObject | ReferenceObject,
+  paginationType: Parameters<typeof getSchemaPath>[0] = PaginationInfoDto,
 ): SchemaObject & Partial<ReferenceObject> => ({
   type: 'object',
   required: ['items', 'pagination'],
   properties: {
-    items: { type: 'array', items: { $ref: getSchemaPath(itemType) } },
+    items: { type: 'array', items: itemSchema },
     pagination: { $ref: getSchemaPath(paginationType) },
   },
 });

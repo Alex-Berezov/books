@@ -43,6 +43,8 @@ import { RightsClaimSummaryDto } from '../rights-claims/dto/rights-claim-respons
 import { ChildListQueryDto } from '../../shared/dto/child-list-query.dto';
 import {
   PaginationInfoDto,
+  paginatedAll,
+  paginatedItemsSchema,
   paginatedSchema,
   type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
@@ -153,17 +155,14 @@ export class BookVersionController {
   // Настоящий union: не-модератор получает публичный `list()` — белый список полей
   // `PublicBookVersionListItemDto`; модератор с `includeDrafts=true` получает
   // `listAdmin()` — строку версии целиком, вместе с правовым контуром.
-  @ApiExtraModels(PublicBookVersionListItemDto, BookVersionResponseDto)
+  @ApiExtraModels(PublicBookVersionListItemDto, BookVersionResponseDto, PaginationInfoDto)
   @ApiOkResponse({
-    schema: {
-      type: 'array',
-      items: {
-        oneOf: [
-          { $ref: getSchemaPath(PublicBookVersionListItemDto) },
-          { $ref: getSchemaPath(BookVersionResponseDto) },
-        ],
-      },
-    },
+    schema: paginatedItemsSchema({
+      oneOf: [
+        { $ref: getSchemaPath(PublicBookVersionListItemDto) },
+        { $ref: getSchemaPath(BookVersionResponseDto) },
+      ],
+    }),
   })
   @ApiUnauthorizedResponse({
     description:
@@ -187,20 +186,24 @@ export class BookVersionController {
       type && Object.values(BookType).includes(type as BookType) ? (type as BookType) : undefined;
     // Если includeDrafts=true и пользователь модератор — используем admin-листинг
     if (includeDrafts === 'true' && (await this.moderatorRoles.isModerator(req?.user))) {
-      return this.service.listAdmin(bookId, {
-        language: langEnum,
-        type: typeEnum,
-        isFree: isFree !== undefined ? isFree === 'true' : undefined,
-      });
+      return paginatedAll(
+        await this.service.listAdmin(bookId, {
+          language: langEnum,
+          type: typeEnum,
+          isFree: isFree !== undefined ? isFree === 'true' : undefined,
+        }),
+      );
     }
-    return this.service.list(
-      bookId,
-      {
-        language: langEnum,
-        type: typeEnum,
-        isFree: isFree !== undefined ? isFree === 'true' : undefined,
-      },
-      acceptLanguage,
+    return paginatedAll(
+      await this.service.list(
+        bookId,
+        {
+          language: langEnum,
+          type: typeEnum,
+          isFree: isFree !== undefined ? isFree === 'true' : undefined,
+        },
+        acceptLanguage,
+      ),
     );
   }
 
@@ -324,11 +327,12 @@ export class BookVersionController {
   @ApiOperation({ summary: 'Admin: list versions for a book (includes drafts)' })
   @ApiParam({ name: 'lang', enum: Object.values(Language) })
   @ApiParam({ name: 'bookId' })
-  @ApiOkResponse({ type: BookVersionResponseDto, isArray: true })
+  @ApiExtraModels(BookVersionResponseDto, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(BookVersionResponseDto) })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  listAdmin(
+  async listAdmin(
     @Param('lang', LangParamPipe) pathLang: Language,
     @Param('bookId') bookId: string,
     @Query('language') language?: string,
@@ -346,11 +350,13 @@ export class BookVersionController {
         : pathEff; // по умолчанию — язык из контекста админки (заголовок > путь)
     const typeEnum =
       type && Object.values(BookType).includes(type as BookType) ? (type as BookType) : undefined;
-    return this.service.listAdmin(bookId, {
-      language: langEnum,
-      type: typeEnum,
-      isFree: isFree !== undefined ? isFree === 'true' : undefined,
-    });
+    return paginatedAll(
+      await this.service.listAdmin(bookId, {
+        language: langEnum,
+        type: typeEnum,
+        isFree: isFree !== undefined ? isFree === 'true' : undefined,
+      }),
+    );
   }
 
   @Get('versions/:id')
@@ -745,13 +751,14 @@ export class BookVersionController {
 
   @Get('admin/versions/:id/contributors')
   @ApiOperation({ summary: 'Get list of contributors for a book version' })
-  @ApiResponse({ status: 200, type: [BookVersionContributorResponseDto] })
+  @ApiExtraModels(BookVersionContributorResponseDto, PaginationInfoDto)
+  @ApiResponse({ status: 200, schema: paginatedSchema(BookVersionContributorResponseDto) })
   @ApiParam({ name: 'id' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async getVersionContributors(@Param('id') id: string) {
-    return this.service.getVersionContributors(id);
+    return paginatedAll(await this.service.getVersionContributors(id));
   }
 
   @Post('admin/versions/:id/contributors')

@@ -33,9 +33,11 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
-import { Language } from '@prisma/client';
+import { Language, Prisma } from '@prisma/client';
 import {
+  PaginationInfoDto,
   paginated,
+  paginatedAll,
   paginatedSchema,
   type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
@@ -57,7 +59,7 @@ interface RequestUser {
 }
 
 @ApiTags('tags')
-@ApiExtraModels(TagEntityDto)
+@ApiExtraModels(TagEntityDto, TagTranslationEntityDto, PaginationInfoDto)
 @Controller()
 export class TagsController {
   constructor(private readonly service: TagsService) {}
@@ -182,12 +184,14 @@ export class TagsController {
   @Get('tags/:id/translations')
   @ApiOperation({ summary: 'List tag translations (admin)' })
   @ApiParam({ name: 'id' })
-  @ApiOkResponse({ type: TagTranslationEntityDto, isArray: true })
+  @ApiOkResponse({ schema: paginatedSchema(TagTranslationEntityDto) })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  listTranslations(@Param('id') id: string) {
-    return this.service.listTranslations(id);
+  async listTranslations(
+    @Param('id') id: string,
+  ): Promise<PaginatedResult<Prisma.TagTranslationGetPayload<{ include: { seo: true } }>>> {
+    return paginatedAll(await this.service.listTranslations(id));
   }
 
   @Post('tags/:id/translations')

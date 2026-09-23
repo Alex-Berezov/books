@@ -113,10 +113,10 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .expect(200);
-    expect(Array.isArray(listEs.body)).toBe(true);
-    expect((listEs.body as Array<{ language: string }>).every((v) => v.language === 'es')).toBe(
-      true,
-    );
+    expect(Array.isArray(listEs.body.items)).toBe(true);
+    expect(
+      (listEs.body.items as Array<{ language: string }>).every((v) => v.language === 'es'),
+    ).toBe(true);
 
     // Override to EN via query
     const listEn = await request(http())
@@ -124,8 +124,8 @@ describe('Admin language context (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .set('X-Admin-Language', Language.es)
       .expect(200);
-    expect(Array.isArray(listEn.body)).toBe(true);
-    expect((listEn.body as Array<{ language: string }>).length).toBe(0); // no EN versions yet
+    expect(Array.isArray(listEn.body.items)).toBe(true);
+    expect((listEn.body.items as Array<{ language: string }>).length).toBe(0); // no EN versions yet
   });
 
   it('uses path :lang as effective admin language when X-Admin-Language is absent (smoke)', async () => {
@@ -183,15 +183,15 @@ describe('Admin language context (e2e)', () => {
       .get(`/admin/fr/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listFrV.body as Array<{ language: string }>).every((v) => v.language === 'fr')).toBe(
-      true,
-    );
+    expect(
+      (listFrV.body.items as Array<{ language: string }>).every((v) => v.language === 'fr'),
+    ).toBe(true);
 
     const listEnV = await request(http())
       .get(`/admin/en/books/${bookWithRights.book.id}/versions`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((listEnV.body as Array<{ language: string }>).length).toBe(0);
+    expect((listEnV.body.items as Array<{ language: string }>).length).toBe(0);
   });
 
   it('ignores DTO.language on admin Page create and rejects duplicate for same language+slug', async () => {

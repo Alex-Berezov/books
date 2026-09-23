@@ -44,7 +44,10 @@ import { BookListItemDto } from './dto/paged-books.dto';
 import {
   PaginationInfoDto,
   paginated,
+  paginatedAll,
+  paginatedItemsSchema,
   paginatedSchema,
+  type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
 
 interface RequestUser {
@@ -138,9 +141,12 @@ export class BookController {
     summary: 'Get list of all unique themes',
     description: 'Returns a list of all unique themes used in book versions. Admin only.',
   })
-  @ApiOkResponse({ description: 'List of themes returned', type: String, isArray: true })
-  async getThemes() {
-    return this.bookService.getAllThemes();
+  @ApiOkResponse({
+    description: 'List of themes returned, one page (`LEGACY-379`)',
+    schema: paginatedItemsSchema({ type: 'string' }),
+  })
+  async getThemes(): Promise<PaginatedResult<string>> {
+    return paginatedAll(await this.bookService.getAllThemes());
   }
 
   /**

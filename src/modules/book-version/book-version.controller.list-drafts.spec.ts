@@ -67,7 +67,7 @@ describe('BookVersionController — includeDrafts видит только мод
   it('анониму с includeDrafts=true отдаёт публичный список без черновиков и без правовых полей', async () => {
     const { controller, service } = makeController(false);
 
-    const result = (await controller.list(
+    const response = await controller.list(
       bookId,
       undefined,
       undefined,
@@ -75,7 +75,14 @@ describe('BookVersionController — includeDrafts видит только мод
       'true',
       'en',
       undefined,
-    )) as Record<string, unknown>[];
+    );
+    const result = response.items as Record<string, unknown>[];
+    expect(response.pagination).toEqual({
+      page: 1,
+      limit: result.length,
+      total: result.length,
+      totalPages: result.length > 0 ? 1 : 0,
+    });
 
     expect(service.listAdmin).not.toHaveBeenCalled();
     expect(service.list).toHaveBeenCalledTimes(1);
@@ -111,9 +118,10 @@ describe('BookVersionController — includeDrafts видит только мод
   it('модератору с includeDrafts=true отдаёт админский листинг с черновиками', async () => {
     const { controller, service } = makeController(true);
 
-    const result = (await controller.list(bookId, 'en', 'text', 'true', 'true', 'en', {
+    const response = await controller.list(bookId, 'en', 'text', 'true', 'true', 'en', {
       user: { userId: 'u-9', email: 'admin@example.com' },
-    })) as Record<string, unknown>[];
+    });
+    const result = response.items as Record<string, unknown>[];
 
     expect(service.list).not.toHaveBeenCalled();
     expect(service.listAdmin).toHaveBeenCalledTimes(1);

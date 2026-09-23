@@ -188,6 +188,31 @@ describe('Pages e2e', () => {
       .expect(204);
   });
 
+  it('GET /admin/pages/group/:groupId - answers {items, pagination} (LEGACY-379)', async () => {
+    const created = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        slug: `group-shape-${Date.now()}`,
+        title: 'Group shape',
+        type: 'generic',
+        content: 'x',
+      })
+      .expect(201);
+    const page = created.body as { id: string; translationGroupId: string };
+
+    const res = await request(http())
+      .get(`/admin/pages/group/${page.translationGroupId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+
+    expect(Array.isArray(res.body)).toBe(false);
+    expect((res.body as { items: Array<{ id: string }> }).items.map((p) => p.id)).toEqual([
+      page.id,
+    ]);
+    expect(res.body.pagination).toEqual({ page: 1, limit: 1, total: 1, totalPages: 1 });
+  });
+
   it('GET /admin/pages - search and status filter (LEGACY-371)', async () => {
     const stamp = Date.now();
     const needle = `zzquux${stamp}`;

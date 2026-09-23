@@ -129,11 +129,21 @@ describe('Categories e2e', () => {
       .expect(201);
     const childId = childRes.body.id as string;
 
-    // get children
-    await request(http()).get(`/categories/${categoryId}/children`).expect(200);
+    // `LEGACY-379`: children, ancestors and tree answer `{items, pagination}`, not a bare array
+    const children = await request(http()).get(`/categories/${categoryId}/children`).expect(200);
+    expect(Array.isArray(children.body)).toBe(false);
+    expect((children.body.items as { id: string }[]).map((c) => c.id)).toEqual([childId]);
+    expect(children.body.pagination).toEqual({ page: 1, limit: 1, total: 1, totalPages: 1 });
 
-    // get tree
-    await request(http()).get('/categories/tree').expect(200);
+    const ancestors = await request(http()).get(`/categories/${childId}/ancestors`).expect(200);
+    expect(Array.isArray(ancestors.body)).toBe(false);
+    expect((ancestors.body.items as { id: string }[]).map((a) => a.id)).toEqual([categoryId]);
+    expect(ancestors.body.pagination.total).toBe(1);
+
+    const tree = await request(http()).get('/categories/tree').expect(200);
+    expect(Array.isArray(tree.body)).toBe(false);
+    expect(Array.isArray(tree.body.items)).toBe(true);
+    expect(tree.body.pagination.total).toBe(tree.body.items.length);
 
     // try delete parent (should fail)
     await request(http())

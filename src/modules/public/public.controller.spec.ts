@@ -150,7 +150,10 @@ describe('PublicController (unit)', () => {
 
     const res = await controller.authorLetters(PrismaLanguage.en, {});
 
-    expect(res).toEqual([{ letter: 'A', count: 2 }]);
+    expect(res).toEqual({
+      items: [{ letter: 'A', count: 2 }],
+      pagination: { page: 1, limit: 1, total: 1, totalPages: 1 },
+    });
     expect(authors.listPublicLetters).toHaveBeenCalledTimes(1);
     expect(authors.listPublicLetters).toHaveBeenCalledWith(PrismaLanguage.en, undefined);
   });

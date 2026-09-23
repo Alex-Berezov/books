@@ -131,7 +131,9 @@ describe('Tag Translation Content & SEO (e2e)', () => {
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
 
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    expect(res.body.pagination.page).toBe(1);
+    expect(res.body.pagination.total).toBe(res.body.items.length);
     const enTrans = findTranslation(res.body, 'en');
     expect(enTrans.seo).toBeDefined();
     expect(enTrans.description).toBe('<p>Top selling books</p>');
