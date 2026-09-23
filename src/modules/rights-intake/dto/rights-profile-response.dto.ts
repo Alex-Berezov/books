@@ -14,7 +14,6 @@ export class EditionRightsDto {
   @ApiProperty() languageCode!: string;
   @ApiProperty() status!: string;
   @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
-  @ApiProperty({ type: String, nullable: true }) legalBasisRu!: string | null;
   @ApiProperty() translationOrigin!: string;
   @ApiProperty({ type: String, nullable: true }) translationSourceLanguage!: string | null;
   @ApiProperty() requiresGeoBlock!: boolean;

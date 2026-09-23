@@ -100,11 +100,12 @@ describe('RightsContentHashUtil', () => {
   });
 
   describe('RIGHTS_CONTENT_HASH_ALGORITHM_VERSION', () => {
-    // WP-9 / WP-8.3: в состав входа добавлена контрольная сумма файла исходного издания —
-    // версия V4. Проверка намеренно жёсткая: смена состава входа без смены версии отправила
+    // LEGACY-033: из записи прав издания на язык убрано `legalBasisRu` — версия V5
+    // (V4 — WP-9 / WP-8.3, контрольная сумма файла исходного издания).
+    // Проверка намеренно жёсткая: смена состава входа без смены версии отправила
     // бы весь опубликованный каталог в STALE (ADR-010, пункт 4).
-    it('should be RIGHTS_CONTENT_HASH_V4', () => {
-      expect(RIGHTS_CONTENT_HASH_ALGORITHM_VERSION).toBe('RIGHTS_CONTENT_HASH_V4');
+    it('should be RIGHTS_CONTENT_HASH_V5', () => {
+      expect(RIGHTS_CONTENT_HASH_ALGORITHM_VERSION).toBe('RIGHTS_CONTENT_HASH_V5');
     });
   });
 

@@ -13,6 +13,7 @@ import {
   PublicationGateStage,
 } from './publication-gate.constants';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { baselineMatchesCurrent } from '../rights-intake/rights-content-hash.util';
 import { UNASSESSED_LANGUAGE_STATUS } from '../rights-intake/rights-review-import.constants';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockRuleDto, GeoBlockScope } from '../geo-block/dto/geo-block.dto';
@@ -546,8 +547,17 @@ export class PublicationGateService {
     try {
       const computation = await this.rightsContentHashService.computeVersionHash(versionId);
       contentHashCurrent = computation.hash;
+      // LEGACY-033: база V4 сверяется со своим сохранённым входом — смена алгоритма не правка.
+      const matchesBaseline = baselineMatchesCurrent(
+        {
+          hash: version.rightsContentHash,
+          algorithmVersion: version.rightsContentHashAlgorithmVersion,
+          input: version.rightsContentHashInput,
+        },
+        computation.hash,
+      );
 
-      if (version.rightsContentHash && computation.hash !== version.rightsContentHash) {
+      if (version.rightsContentHash && !matchesBaseline) {
         contentHashMatches = false;
         blockingReasons.push(
           new PublicationGateReasonDto({

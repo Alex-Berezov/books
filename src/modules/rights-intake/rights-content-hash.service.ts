@@ -3,8 +3,10 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+  isReconciledByStoredInput,
   stableStringify,
   sha256Hex,
+  storedBaselineHolds,
 } from './rights-content-hash.util';
 import {
   RightsContentHashComputationDto,
@@ -561,6 +563,7 @@ export class RightsContentHashService {
         publishedAt: true,
         rightsContentHash: true,
         rightsContentHashAlgorithmVersion: true,
+        rightsContentHashInput: true,
         rightsRecheckRequired: true,
         rightsStaleReasonCode: true,
         rightsStaleReasonRu: true,
@@ -586,7 +589,11 @@ export class RightsContentHashService {
      */
     if (
       baselineHash &&
-      version.rightsContentHashAlgorithmVersion !== computation.algorithmVersion
+      version.rightsContentHashAlgorithmVersion !== computation.algorithmVersion &&
+      // LEGACY-033: база V4 переснимается, только если её сохранённый вход без `legalBasisRu`
+      // даёт текущий хеш; иначе версия идёт обычным путём в stale. V1–V3 — прежний путь.
+      (!isReconciledByStoredInput(version.rightsContentHashAlgorithmVersion) ||
+        storedBaselineHolds(baselineHash, version.rightsContentHashInput, computation.hash))
     ) {
       if (persist) {
         // LEGACY-036: пересъёмка меняет baseline и пишет о ней событие — вместе или никак.
@@ -1280,7 +1287,6 @@ export class RightsContentHashService {
         .map((er) => ({
           languageCode: (er['languageCode'] as string | null) ?? '',
           status: er['status'],
-          legalBasisRu: er['legalBasisRu'] ?? null,
           notesRu: er['notesRu'] ?? null,
           translationOrigin: er['translationOrigin'] ?? null,
           translationSourceLanguage: er['translationSourceLanguage'] ?? null,

@@ -8613,10 +8613,6 @@
           "languageCode": {
             "type": "string"
           },
-          "legalBasisRu": {
-            "nullable": true,
-            "type": "string"
-          },
           "notesRu": {
             "nullable": true,
             "type": "string"
@@ -8647,7 +8643,6 @@
           "languageCode",
           "status",
           "notesRu",
-          "legalBasisRu",
           "translationOrigin",
           "translationSourceLanguage",
           "requiresGeoBlock",

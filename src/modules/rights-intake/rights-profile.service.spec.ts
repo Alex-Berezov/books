@@ -386,7 +386,6 @@ describe('RightsProfileService', () => {
           languageCode: 'en',
           status: 'ALLOWED',
           notesRu: 'Оригинал',
-          legalBasisRu: null,
           translationOrigin: 'NOT_APPLICABLE_ORIGINAL',
           translationSourceLanguage: null,
           requiresGeoBlock: false,
@@ -399,7 +398,6 @@ describe('RightsProfileService', () => {
           languageCode: 'ru',
           status: 'LICENSE_REQUIRED',
           notesRu: null,
-          legalBasisRu: null,
           translationOrigin: 'BIBLIARIS_TRANSLATION_FROM_INTERMEDIATE_TRANSLATION',
           translationSourceLanguage: 'fr',
           requiresGeoBlock: true,
@@ -429,6 +427,8 @@ describe('RightsProfileService', () => {
           requiresGeoBlock: true,
         }),
       );
+      // LEGACY-033: основания на языковую редакцию нет — поле снято из контракта.
+      expect(result.sourceEdition!.editionRights[0]).not.toHaveProperty('legalBasisRu');
     });
 
     it('should return nested component territory assessments and normalize missing arrays', async () => {

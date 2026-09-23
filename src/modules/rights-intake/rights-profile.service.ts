@@ -464,7 +464,6 @@ export class RightsProfileService {
       languageCode: record['languageCode'] as string,
       status: record['status'] as string,
       notesRu: (record['notesRu'] as string) ?? null,
-      legalBasisRu: (record['legalBasisRu'] as string) ?? null,
       translationOrigin: (record['translationOrigin'] as string) ?? 'UNKNOWN',
       translationSourceLanguage: (record['translationSourceLanguage'] as string) ?? null,
       requiresGeoBlock: (record['requiresGeoBlock'] as boolean) ?? false,

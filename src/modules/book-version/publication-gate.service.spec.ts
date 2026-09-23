@@ -1,5 +1,6 @@
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { sha256Hex, stableStringify } from '../rights-intake/rights-content-hash.util';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
@@ -1104,6 +1105,59 @@ describe('PublicationGateService', () => {
       });
       expect(result.contentHashMatches).toBe(false);
       expect(result.contentHashCurrent).toBe('changed-hash-999');
+    });
+
+    // LEGACY-033: выкат V5 застаёт базы V4 — гейт сверяет их с сохранённым входом базы.
+    const storedV4Input = {
+      algorithmVersion: 'RIGHTS_CONTENT_HASH_V4',
+      rightsProfile: {
+        sourceEdition: {
+          editionRights: [{ languageCode: 'en', status: 'ALLOWED', legalBasisRu: 'Основание' }],
+        },
+      },
+    };
+    const v4Baseline = {
+      rightsContentHash: sha256Hex(stableStringify(storedV4Input)),
+      rightsContentHashAlgorithmVersion: 'RIGHTS_CONTENT_HASH_V4',
+      rightsContentHashInput: storedV4Input,
+    };
+    const unchangedUnderV5 = sha256Hex(
+      stableStringify({
+        algorithmVersion: 'RIGHTS_CONTENT_HASH_V5',
+        rightsProfile: {
+          sourceEdition: { editionRights: [{ languageCode: 'en', status: 'ALLOWED' }] },
+        },
+      }),
+    );
+
+    it('does not block a V4 baseline whose content did not change (LEGACY-033)', async () => {
+      arrange(v4Baseline);
+      mockRightsContentHashService.computeVersionHash.mockResolvedValue({
+        hash: unchangedUnderV5,
+        algorithmVersion: 'RIGHTS_CONTENT_HASH_V5',
+      } as never);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED')).toBe(
+        false,
+      );
+      expect(result.contentHashMatches).toBe(true);
+    });
+
+    it('still blocks a V4 baseline whose content changed (LEGACY-033)', async () => {
+      arrange(v4Baseline);
+      mockRightsContentHashService.computeVersionHash.mockResolvedValue({
+        hash: 'changed-hash-999',
+        algorithmVersion: 'RIGHTS_CONTENT_HASH_V5',
+      } as never);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED')).toBe(
+        true,
+      );
+      expect(result.canPublish).toBe(false);
     });
   });
 

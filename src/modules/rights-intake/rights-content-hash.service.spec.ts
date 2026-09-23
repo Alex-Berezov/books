@@ -2,7 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { RightsContentHashService } from './rights-content-hash.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RIGHTS_CONTENT_HASH_ALGORITHM_VERSION } from './rights-content-hash.util';
+import {
+  RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+  sha256Hex,
+  stableStringify,
+  storedBaselineHolds,
+} from './rights-content-hash.util';
 
 const mockPrisma = {
   bookVersion: {
@@ -731,26 +736,170 @@ describe('RightsContentHashService', () => {
      * в `STALE` клиренс всех уже опубликованных книг — по причине, которой не было.
      */
     describe('baseline taken under a previous algorithm version', () => {
-      const setupPreviousAlgorithmBaseline = (recheckRequired = false) => {
+      const setupPreviousAlgorithmBaseline = (
+        recheckRequired = false,
+        previousAlgorithmVersion = 'RIGHTS_CONTENT_HASH_V1',
+        baseline: { hash?: string; input?: unknown; currentHash?: string } = {},
+      ) => {
         mockPrisma.bookVersion.findUnique.mockResolvedValue({
           id: 'version-1',
-          rightsContentHash: 'v1-hash',
-          rightsContentHashAlgorithmVersion: 'RIGHTS_CONTENT_HASH_V1',
+          rightsContentHash: baseline.hash ?? 'v1-hash',
+          rightsContentHashAlgorithmVersion: previousAlgorithmVersion,
+          rightsContentHashInput: baseline.input ?? null,
           rightsRecheckRequired: recheckRequired,
           rightsStaleReasonCode: recheckRequired ? 'CHAPTER_UPDATED' : null,
           rightsStaleReasonRu: recheckRequired ? 'Изменена глава' : null,
         });
-        jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
+        const computeSpy = jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
           versionId: 'version-1',
           rightsProfileId: 'profile-1',
           approvedRightsReviewId: 'review-1',
-          hash: 'v2-hash',
+          hash: baseline.currentHash ?? 'v2-hash',
           algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
           calculatedAt: new Date().toISOString(),
           input: {},
         });
         mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+        return computeSpy;
       };
+
+      /**
+       * LEGACY-033: база V4 сверяется со своим сохранённым входом. Вход ниже — база V4 с непустым
+       * основанием языковой редакции; `heldHash` — хеш того же содержимого под V5.
+       */
+      const storedV4Input = {
+        algorithmVersion: 'RIGHTS_CONTENT_HASH_V4',
+        identity: { versionId: 'version-1' },
+        rightsProfile: {
+          sourceEdition: {
+            editionRights: [
+              { languageCode: 'ru', status: 'ALLOWED', legalBasisRu: 'Основание редакции' },
+            ],
+          },
+        },
+      };
+      const v4Hash = sha256Hex(stableStringify(storedV4Input));
+      const heldHash = sha256Hex(
+        stableStringify({
+          algorithmVersion: 'RIGHTS_CONTENT_HASH_V5',
+          identity: { versionId: 'version-1' },
+          rightsProfile: {
+            sourceEdition: { editionRights: [{ languageCode: 'ru', status: 'ALLOWED' }] },
+          },
+        }),
+      );
+
+      const expectStaleWithoutRetake = (markStale: jest.SpyInstance, baselineHash: string) => {
+        expect(markStale).toHaveBeenCalledTimes(1);
+        expect(markStale).toHaveBeenCalledWith(
+          'version-1',
+          'CHAPTER_CREATED',
+          expect.any(String),
+          baselineHash,
+          null,
+          undefined,
+        );
+        expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+      };
+
+      // LEGACY-033: выкат V5 застаёт на проде baseline, снятые под V4.
+      it('re-takes a V4 baseline whose stored input still holds (LEGACY-033)', async () => {
+        setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V4', {
+          hash: v4Hash,
+          input: storedV4Input,
+          currentHash: heldHash,
+        });
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'MANUAL_HASH_CHECK',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(false);
+        expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+        expect(mockPrisma.bookVersion.update).toHaveBeenCalledTimes(1);
+        const [{ data }] = mockPrisma.bookVersion.update.mock.calls[0] as [
+          { data: Record<string, unknown> },
+        ];
+        expect(data['rightsContentHash']).toBe(heldHash);
+        expect(data['rightsContentHashAlgorithmVersion']).toBe('RIGHTS_CONTENT_HASH_V5');
+        expect(data).not.toHaveProperty('rightsRecheckRequired');
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              staleMarked: false,
+              reasonCode: 'HASH_ALGORITHM_CHANGED',
+              previousHash: v4Hash,
+            }),
+          }),
+        );
+      });
+
+      // LEGACY-033: правка, записанная до проверки, не должна уйти в новую базу молча.
+      it('marks a V4 baseline stale when the content changed (LEGACY-033)', async () => {
+        setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V4', {
+          hash: v4Hash,
+          input: storedV4Input,
+          currentHash: 'hash-after-edit',
+        });
+        const markStale = jest
+          .spyOn(service, 'markVersionAndClearanceStale')
+          .mockResolvedValue(undefined as never);
+
+        const result = await service.checkVersionStaleness(
+          'version-1',
+          'CHAPTER_CREATED',
+          null,
+          true,
+        );
+
+        expect(result.isStale).toBe(true);
+        expect(result.matchesBaseline).toBe(false);
+        expectStaleWithoutRetake(markStale, v4Hash);
+      });
+
+      it('marks a V4 baseline stale when its stored input does not give its hash (LEGACY-033)', async () => {
+        setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V4', {
+          hash: 'tampered-baseline',
+          input: storedV4Input,
+          currentHash: heldHash,
+        });
+        const markStale = jest
+          .spyOn(service, 'markVersionAndClearanceStale')
+          .mockResolvedValue(undefined as never);
+
+        await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', null, true);
+
+        expectStaleWithoutRetake(markStale, 'tampered-baseline');
+      });
+
+      it('marks a V4 baseline stale when it has no stored input (LEGACY-033)', async () => {
+        setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V4', {
+          hash: v4Hash,
+          currentHash: heldHash,
+        });
+        const markStale = jest
+          .spyOn(service, 'markVersionAndClearanceStale')
+          .mockResolvedValue(undefined as never);
+
+        await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', null, true);
+
+        expectStaleWithoutRetake(markStale, v4Hash);
+      });
+
+      it('keeps the old silent re-take for baselines older than V4 (LEGACY-033)', async () => {
+        const computeSpy = setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V3');
+        const markStale = jest.spyOn(service, 'markVersionAndClearanceStale');
+
+        await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', null, true);
+
+        expect(computeSpy).toHaveBeenCalledTimes(1);
+        expect(markStale).not.toHaveBeenCalled();
+        expect(mockPrisma.bookVersion.update).toHaveBeenCalledTimes(1);
+      });
 
       it('does not mark the version stale', async () => {
         setupPreviousAlgorithmBaseline();
@@ -1122,6 +1271,90 @@ describe('RightsContentHashService', () => {
         const reversed = await hashOf([ruRow, enRow]);
 
         expect(straight).toBe(reversed);
+      });
+
+      // LEGACY-033: база V4 с непустым основанием языковой редакции держится при сверке A2.
+      // Эталон `d023a796…` снят прогоном кода коммита 80a5ec4 (v1.0.118) на этом же входе:
+      // восстановленный отсюда вход V4 обязан давать ровно его, иначе проверка ничего не значит.
+      it('holds a v1.0.118 V4 baseline with a filled edition legal basis (LEGACY-033)', async () => {
+        const rows = [
+          {
+            languageCode: 'en',
+            status: 'ALLOWED',
+            notesRu: 'n',
+            translationOrigin: 'NOT_APPLICABLE_ORIGINAL',
+            translationSourceLanguage: null,
+            requiresGeoBlock: false,
+          },
+          {
+            languageCode: 'ru',
+            status: 'LICENSE_REQUIRED',
+            notesRu: null,
+            translationOrigin: 'BIBLIARIS_TRANSLATION_FROM_ORIGINAL',
+            translationSourceLanguage: 'en',
+            requiresGeoBlock: true,
+          },
+        ];
+        const legalBasisByLanguage: Record<string, string | null> = {
+          en: null,
+          ru: 'Основание языковой редакции',
+        };
+        mockPrisma.bookVersion.findUnique.mockResolvedValue({
+          ...baseVersion,
+          rightsProfile: {
+            ...baseVersion.rightsProfile,
+            sourceEdition: {
+              provider: 'PROJECT_GUTENBERG',
+              externalId: 'id',
+              sourceUrl: 'u',
+              sourceTitle: 'S',
+              sourceLanguage: 'en',
+              sourceTextType: 'ORIGINAL_TEXT',
+              gutenbergStatus: null,
+              status: 'OK',
+              sourceFileSha256: 'abc',
+              editionRights: rows,
+            },
+          },
+        });
+
+        const current = await service.computeVersionHash('version-1');
+        const storedV4 = JSON.parse(JSON.stringify(current.input)) as Record<string, unknown>;
+        storedV4['algorithmVersion'] = 'RIGHTS_CONTENT_HASH_V4';
+        const sourceEdition = (storedV4['rightsProfile'] as Record<string, unknown>)[
+          'sourceEdition'
+        ] as { editionRights: Array<Record<string, unknown>> };
+        sourceEdition.editionRights = sourceEdition.editionRights.map((row) => ({
+          ...row,
+          legalBasisRu: legalBasisByLanguage[row['languageCode'] as string],
+        }));
+        const v118Hash = 'd023a796cdb1b55ba208f6aff5664617893c829cbad7a9abafb43d2287bf14f6';
+
+        expect(sha256Hex(stableStringify(storedV4))).toBe(v118Hash);
+        expect(storedBaselineHolds(v118Hash, storedV4, current.hash)).toBe(true);
+        expect(storedBaselineHolds(v118Hash, storedV4, 'hash-after-edit')).toBe(false);
+      });
+
+      // LEGACY-033: своего правового основания у языковой редакции нет, основание привязано
+      // к стране. Поле не входит во вход хеша с V5 — строка из старой базы хеш не двигает.
+      it('does not depend on a legal basis left in the edition row (LEGACY-033)', async () => {
+        const empty = await hashOf([enRow, ruRow]);
+        const filled = await hashOf([
+          enRow,
+          { ...ruRow, legalBasisRu: 'Основание языковой редакции' },
+        ]);
+
+        expect(filled).toBe(empty);
+      });
+
+      it('keeps legalBasisRu out of the per-language input (LEGACY-033)', async () => {
+        mockPrisma.bookVersion.findUnique.mockResolvedValue(
+          versionWithLanguages([{ ...ruRow, legalBasisRu: 'Основание языковой редакции' }]),
+        );
+        const { input } = await service.computeVersionHash('version-1');
+
+        expect(JSON.stringify(input)).not.toContain('Основание языковой редакции');
+        expect(JSON.stringify(input)).not.toContain('"legalBasisRu"');
       });
     });
 
