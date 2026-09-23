@@ -37,20 +37,14 @@ import { collectRoutes, type ControllerRoute } from './controller-decorators';
  * показала, что предпосылка разрешения («потребителей на фронте нет ни у одного»)
  * верна только для двух. Сняты они: `/books/:param/overview` и `/seo/resolve`.
  *
- * Оставшиеся три и почему они здесь (`LEGACY-387`, решение арбитра 15.09.2026):
+ * Остался один, и он вне предмета записи (`LEGACY-387`, решение арбитра 15.09.2026):
  *
- * - `/categories` и `/tags` — ⚠️ **потребителей у них с 22.09.2026 больше нет**
- *   (пачка `W6`): карта сайта переведена на `getPublicCategories`/`getPublicTags`,
- *   админские пикеры — на гвардованные `GET /admin/categories` и `GET /admin/tags`,
- *   а три публичные страницы таксономии, звавшие `/categories` напрямую, — на
- *   языковой адрес. Разрешение владельца получено 21.09.2026 дословно: «разрешаю
- *   снять безъязыкие адреса после перевода потребителей на `/:lang/...`».
- *   🔴 Снять оба маршрута и сократить этот список до `['/books']` — работа
- *   следующего захода (`work-queue.md`, строка `6б`), и делается она **только
- *   после того, как фронт уехал на прод**: до выката живой фронт зовёт их прямо
- *   сейчас. Прежняя редакция этого абзаца утверждала, что генератор карты сайта
- *   зовёт `getCategories`/`getTags` и что вопрос ждёт владельца, — оба утверждения
- *   неверны с 22.09.2026.
+ * - `/categories` и `/tags` сняты 23.09.2026 (`W6`, половина 2): карта сайта
+ *   переведена на `getPublicCategories`/`getPublicTags`, админские пикеры — на
+ *   гвардованные `GET /admin/categories` и `GET /admin/tags`, а три публичные
+ *   страницы таксономии, звавшие `/categories` напрямую, — на языковой адрес.
+ *   Разрешение владельца получено 21.09.2026 дословно: «разрешаю снять
+ *   безъязыкие адреса после перевода потребителей на `/:lang/...`».
  * - `/books` в предмет записи не входит вовсе: он закрыт
  *   `@UseGuards(JwtAuthGuard, RolesGuard)` с ролями `Admin`/`ContentManager`
  *   (`book.controller.ts`, правка `LEGACY-093`), то есть публичным адресом
@@ -59,7 +53,7 @@ import { collectRoutes, type ControllerRoute } from './controller-decorators';
  *   сторож разбирает путь и гвардов не учитывает — расширять его признаком гварда
  *   запрещено тем же решением арбитра.
  */
-const KNOWN_LANGLESS_TWINS: ReadonlyArray<string> = ['/books', '/categories', '/tags'];
+const KNOWN_LANGLESS_TWINS: ReadonlyArray<string> = ['/books'];
 
 /**
  * `all` учитывается наравне с `get`: `@All('pages/:slug')` отвечает на `GET /pages/about`
@@ -96,12 +90,15 @@ describe('LEGACY-010: публичный маршрут не дублирует 
     // Сравнение идёт по нормализованному пути, поэтому возврат под другим именем
     // параметра (`/pages/:pageSlug`) краснит этот кейс так же, как возврат один в один.
     //
-    // Трое сняты 14.09.2026 (`LEGACY-010`), двое — 15.09.2026 (`LEGACY-387`).
+    // Трое сняты 14.09.2026 (`LEGACY-010`), двое — 15.09.2026, ещё двое —
+    // 23.09.2026 (все четыре — `LEGACY-387`).
     expect(paths.has('/pages/:param')).toBe(false);
     expect(paths.has('/categories/:param/books')).toBe(false);
     expect(paths.has('/tags/:param/books')).toBe(false);
     expect(paths.has('/books/:param/overview')).toBe(false);
     expect(paths.has('/seo/resolve')).toBe(false);
+    expect(paths.has('/categories')).toBe(false);
+    expect(paths.has('/tags')).toBe(false);
   });
 
   it('новых безъязыких двойников не появилось', () => {

@@ -320,7 +320,7 @@ export class PublicController {
   ) {
     // Потолок стоит в `PublicCategoriesQueryDto` (`@Max`, `LEGACY-377`): запрос сверх
     // него получает 400, а не 200 с урезанной страницей. Сервис общий с админским
-    // `GET /categories`, у которого свой DTO и свой потолок, — его это не задевает.
+    // `GET /admin/categories`, у которого свой DTO и свой потолок, — его это не задевает.
     return this.categories.list(
       query.page ?? 1,
       query.limit ?? PUBLIC_CATEGORIES_DEFAULT_LIMIT,

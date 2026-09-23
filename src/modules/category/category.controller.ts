@@ -37,7 +37,7 @@ import { CreateCategoryTranslationDto } from './dto/create-category-translation.
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 import { CheckCategorySlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckCategorySlugResponseDto } from './dto/check-slug-response.dto';
-import { CategoryResponse, PaginatedCategoriesResponse } from './dto/category-response.dto';
+import { CategoryResponse } from './dto/category-response.dto';
 import {
   paginated,
   paginatedSchema,
@@ -127,16 +127,6 @@ export class CategoryController {
   async adminList(@Query() query: ListCategoriesQueryDto): Promise<PaginatedResult<unknown>> {
     const { data, meta } = await this.service.list(query.page, query.limit, query.type, query.lang);
     return paginated(data, { page: meta.page, limit: meta.limit, total: meta.total });
-  }
-
-  @Get('categories')
-  @ApiOperation({ summary: 'List categories (optionally filtered by type)' })
-  @ApiResponse({ status: 200, type: PaginatedCategoriesResponse })
-  async list(@Query() query: ListCategoriesQueryDto): Promise<PaginatedCategoriesResponse> {
-    // 🔴 `page`/`limit` раньше шли голым `ParseIntPipe` без верхней границы вовсе:
-    // `?limit=100000` проходил приведение типа и уезжал в `take` Prisma как есть
-    // (`LEGACY-298`, схлопнута сюда `LEGACY-353`).
-    return this.service.list(query.page, query.limit, query.type, query.lang);
   }
 
   @Get('categories/tree')

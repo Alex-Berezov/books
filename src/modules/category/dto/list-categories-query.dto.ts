@@ -5,14 +5,17 @@ import { CategoryType, Language } from '@prisma/client';
 import { PAGINATION_MAX_LIMIT } from '../../../shared/dto/pagination.dto';
 
 /**
- * Параметры `GET /categories` — раньше `page`/`limit` шли голым
- * `@Query('page', new DefaultValuePipe(1), ParseIntPipe)` без верхней границы вовсе:
- * `?limit=100000` проходил приведение типа и уезжал в `take` Prisma как есть
- * (`LEGACY-298`, схлопнута сюда `LEGACY-353`).
+ * Параметры `GET /admin/categories` — до 23.09.2026 тем же DTO отвечал ещё
+ * и безъязыкий `GET /categories` (снят пачкой `W6`, `LEGACY-387`), где `page`/`limit`
+ * раньше шли голым `@Query('page', new DefaultValuePipe(1), ParseIntPipe)` без верхней
+ * границы вовсе: `?limit=100000` проходил приведение типа и уезжал в `take` Prisma
+ * как есть (`LEGACY-298`, схлопнута сюда `LEGACY-353`).
  *
  * Потолок — `PAGINATION_MAX_LIMIT`, тот же, что уже стоит на административном
- * `GET /books` и `GET /tags`: маршрут делит сервис (`CategoryService.list`) с картой
- * сайта, но она с этой же правки ходит листая страницы, а не одним `limit=1000`.
+ * `GET /books` и `GET /admin/tags`. Карта сайта раньше ходила тем же `CategoryService.list`
+ * через этот DTO одним `limit=1000` (`LEGACY-298`) — с 22.09.2026 (`W6`) она читает
+ * публичный `GET /:lang/categories` (`PublicCategoriesQueryDto`, свой потолок) листая
+ * страницы, и этого DTO больше не касается.
  *
  * `type`/`lang` получили `@IsEnum` при заведении DTO (найдено ревью): без него
  * `?type=garbage` уезжал бы в `where` Prisma и падал `PrismaClientValidationError`

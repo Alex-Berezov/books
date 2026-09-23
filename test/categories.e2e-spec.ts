@@ -84,8 +84,11 @@ describe('Categories e2e', () => {
       .expect(201);
     categoryId = createRes.body.id as string;
 
-    // list
-    await request(http()).get('/categories?page=1&limit=1').expect(200);
+    // list (безъязыкий `GET /categories` снят пачкой `W6`, `LEGACY-387`; список за логином теперь `/admin/categories`)
+    await request(http())
+      .get('/admin/categories?page=1&limit=1')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
 
     // update
     await request(http())

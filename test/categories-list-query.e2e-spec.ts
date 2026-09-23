@@ -6,16 +6,17 @@ import { httpServerOf } from './http-server';
 import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 
 /**
- * `LEGACY-298` (схлопнута `LEGACY-353`). `GET /categories` принимал `page`/`limit`
- * через `@Query('page', new DefaultValuePipe(1), ParseIntPipe)` — приведение типа
- * без верхней границы вовсе: `?limit=100000` проходило и уезжало в `take` Prisma
- * как есть. Соседние публичные списки того же класса (`/:lang/books`, `/:lang/tags`)
- * на DTO уже отвечают 400 на тот же мусор.
+ * `LEGACY-298` (схлопнута `LEGACY-353`). Изначально дефект жил в безъязыком `GET /categories`:
+ * `page`/`limit` принимались через `@Query('page', new DefaultValuePipe(1), ParseIntPipe)` —
+ * приведение типа без верхней границы вовсе, `?limit=100000` проходило и уезжало в `take`
+ * Prisma как есть. Тот маршрут снят 23.09.2026 (`W6`, `LEGACY-387`); `ListCategoriesQueryDto`,
+ * на котором стоит починка, теперь общий у него не осталось — единственный потребитель —
+ * `GET /admin/categories`, и валидация проверяется на нём.
  *
  * 🔴 Почему e2e, а не юнит: дефект жил в связке «глобальный пайп + сигнатура
  * обработчика» — юнит, вызывающий метод контроллера напрямую, пайп не видит.
  */
-describe('Categories list query validation (LEGACY-298/353) e2e', () => {
+describe('Admin categories list query validation (LEGACY-298/353/387) e2e', () => {
   let app: INestApplication;
   let adminToken: string;
   let genreSlug: string;
@@ -59,29 +60,32 @@ describe('Categories list query validation (LEGACY-298/353) e2e', () => {
     await app.close();
   });
 
-  it('без параметров отдаёт первую страницу дефолтного размера', async () => {
-    const res = await request(http()).get('/categories').expect(200);
-    const body = res.body as { data: unknown[]; meta: { page: number; limit: number } };
+  const get = (query: string) =>
+    request(http()).get(`/admin/categories${query}`).set('Authorization', `Bearer ${adminToken}`);
 
-    expect(Array.isArray(body.data)).toBe(true);
-    expect(body.meta.page).toBe(1);
-    expect(body.meta.limit).toBe(20);
+  it('без параметров отдаёт первую страницу дефолтного размера', async () => {
+    const res = await get('').expect(200);
+    const body = res.body as { items: unknown[]; pagination: { page: number; limit: number } };
+
+    expect(Array.isArray(body.items)).toBe(true);
+    expect(body.pagination.page).toBe(1);
+    expect(body.pagination.limit).toBe(20);
   });
 
   it.each(['?page=abc', '?page=', '?page=0', '?page=-1'])(
     'мусор в page отбивается кодом 400, а не приводится к дефолту молча: %s',
     async (query) => {
-      await request(http()).get(`/categories${query}`).expect(400);
+      await get(query).expect(400);
     },
   );
 
   it('limit выше потолка отбивается, ровно на потолке проходит', async () => {
-    await request(http())
-      .get(`/categories?limit=${PAGINATION_MAX_LIMIT + 1}`)
-      .expect(400);
+    await get(`?limit=${PAGINATION_MAX_LIMIT + 1}`).expect(400);
 
-    const res = await request(http()).get(`/categories?limit=${PAGINATION_MAX_LIMIT}`).expect(200);
-    expect((res.body as { meta: { limit: number } }).meta.limit).toBe(PAGINATION_MAX_LIMIT);
+    const res = await get(`?limit=${PAGINATION_MAX_LIMIT}`).expect(200);
+    expect((res.body as { pagination: { limit: number } }).pagination.limit).toBe(
+      PAGINATION_MAX_LIMIT,
+    );
   });
 
   /**
@@ -93,15 +97,13 @@ describe('Categories list query validation (LEGACY-298/353) e2e', () => {
     const slugs = new Set<string>();
     let page = 1;
     for (;;) {
-      const res = await request(http())
-        .get(`/categories?type=${type}&limit=${PAGINATION_MAX_LIMIT}&page=${page}`)
-        .expect(200);
+      const res = await get(`?type=${type}&limit=${PAGINATION_MAX_LIMIT}&page=${page}`).expect(200);
       const body = res.body as {
-        data: Array<{ slug: string; type: string }>;
-        meta: { totalPages: number };
+        items: Array<{ slug: string; type: string }>;
+        pagination: { totalPages: number };
       };
-      body.data.forEach((c) => slugs.add(c.slug));
-      if (page >= body.meta.totalPages || page > 20) break;
+      body.items.forEach((c) => slugs.add(c.slug));
+      if (page >= body.pagination.totalPages || page > 20) break;
       page += 1;
     }
     return slugs;
@@ -118,21 +120,21 @@ describe('Categories list query validation (LEGACY-298/353) e2e', () => {
   });
 
   it('lang принимается вместе с type, ответ остаётся согласованным', async () => {
-    const res = await request(http()).get('/categories?type=genre&lang=en').expect(200);
-    const body = res.body as { data: Array<{ type: string }> };
+    const res = await get('?type=genre&lang=en').expect(200);
+    const body = res.body as { items: Array<{ type: string }> };
 
-    expect(body.data.every((c) => c.type === 'genre')).toBe(true);
+    expect(body.items.every((c) => c.type === 'genre')).toBe(true);
   });
 
   it('неизвестное значение type отбивается 400, а не уходит в Prisma сырым', async () => {
-    await request(http()).get('/categories?type=bogus').expect(400);
+    await get('?type=bogus').expect(400);
   });
 
   it('неизвестное значение lang отбивается 400, а не падает 500 из сырого SQL', async () => {
-    await request(http()).get('/categories?lang=xx').expect(400);
+    await get('?lang=xx').expect(400);
   });
 
   it('неизвестный параметр не принимается молча', async () => {
-    await request(http()).get('/categories?perPage=10').expect(400);
+    await get('?perPage=10').expect(400);
   });
 });

@@ -18,7 +18,6 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiParam,
-  ApiQuery,
   ApiResponse,
   ApiTags,
   ApiNoContentResponse,
@@ -35,7 +34,6 @@ import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { Language } from '@prisma/client';
-import { PaginatedTagsResponse } from './dto/tag-response.dto';
 import {
   paginated,
   paginatedSchema,
@@ -119,22 +117,6 @@ export class TagsController {
     // другое, как это было у авторов (`author.controller.ts:82-89`).
     const { data, meta } = await this.service.list(query.page, query.limit, query.q, query.lang);
     return paginated(data, { page: meta.page, limit: meta.limit, total: meta.total });
-  }
-
-  @Get('tags')
-  @ApiOperation({ summary: 'List tags' })
-  @ApiResponse({ status: 200, type: PaginatedTagsResponse })
-  @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiQuery({ name: 'q', required: false, type: String })
-  @ApiQuery({ name: 'lang', required: false, enum: Language })
-  list(
-    @Query() query?: ListTagsDto,
-    @Query('lang') lang?: Language,
-  ): Promise<PaginatedTagsResponse> {
-    const page = query?.page ?? 1;
-    const limit = query?.limit ?? 20;
-    return this.service.list(page, limit, query?.q, lang);
   }
 
   @Post('tags')

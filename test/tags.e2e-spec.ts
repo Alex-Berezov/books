@@ -83,8 +83,11 @@ describe('Tags e2e', () => {
       .expect(201);
     tagId = createRes.body.id as string;
 
-    // list
-    await request(http()).get('/tags?page=1&limit=1').expect(200);
+    // list (безъязыкий `GET /tags` снят пачкой `W6`, `LEGACY-387`; список за логином теперь `/admin/tags`)
+    await request(http())
+      .get('/admin/tags?page=1&limit=1')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
 
     // update
     await request(http())
