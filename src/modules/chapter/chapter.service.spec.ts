@@ -16,13 +16,14 @@ interface PrismaStub {
   };
   chapter: {
     findMany: (args: Prisma.ChapterFindManyArgs) => Promise<Chapter[]>;
+    count: jest.Mock;
     findFirst: (args: Prisma.ChapterFindFirstArgs) => Promise<{ id: string } | null>;
     create: (args: Prisma.ChapterCreateArgs) => Promise<Chapter>;
     findUnique: (args: Prisma.ChapterFindUniqueArgs) => Promise<{ id: string } | null>;
     update: (args: Prisma.ChapterUpdateArgs) => Promise<Chapter>;
     delete: (args: Prisma.ChapterDeleteArgs) => Promise<Chapter>;
   };
-  $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
+  $transaction: (arg: unknown) => Promise<unknown>;
 }
 
 const createPrismaStub = (): PrismaStub => {
@@ -32,13 +33,18 @@ const createPrismaStub = (): PrismaStub => {
     },
     chapter: {
       findMany: jest.fn(),
+      count: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
     },
-    $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
+    // Массив — пакетная форма (`$transaction([...])`), функция — интерактивная.
+    $transaction: (arg: unknown) =>
+      Array.isArray(arg)
+        ? Promise.all(arg)
+        : Promise.resolve((arg as (tx: PrismaStub) => unknown)(stub)),
   };
   return stub;
 };
@@ -154,7 +160,10 @@ describe('ChapterService', () => {
       { id: 'c2', number: 2 },
     ]);
     const res = await service.listByVersion('v1');
-    expect(res.length).toBe(2);
+    expect(res.items).toHaveLength(2);
+    expect(res.pagination).toEqual({ page: 1, limit: 2, total: 2, totalPages: 1 });
+    // Весь список одной страницей: `total` — длина выдачи, второй запрос не нужен.
+    expect(prisma.chapter.count).not.toHaveBeenCalled();
     expect(prisma.chapter.findMany).toHaveBeenCalledWith({
       where: { bookVersionId: 'v1' },
       orderBy: { number: 'asc' },
@@ -163,8 +172,13 @@ describe('ChapterService', () => {
 
   it('lists chapters with pagination when page and limit provided', async () => {
     (prisma.chapter.findMany as jest.Mock).mockResolvedValue([{ id: 'c1', number: 1 }]);
+    prisma.chapter.count.mockResolvedValue(11);
     const res = await service.listByVersion('v1', 1, 10);
-    expect(res.length).toBe(1);
+    expect(res.items).toHaveLength(1);
+    // Настоящий `total`, а не длина страницы: иначе потребитель не отличит недобор.
+    expect(res.pagination).toEqual({ page: 1, limit: 10, total: 11, totalPages: 2 });
+    expect(prisma.chapter.count).toHaveBeenCalledTimes(1);
+    expect(prisma.chapter.count).toHaveBeenCalledWith({ where: { bookVersionId: 'v1' } });
     expect(prisma.chapter.findMany).toHaveBeenCalledWith({
       where: { bookVersionId: 'v1' },
       orderBy: { number: 'asc' },
@@ -182,7 +196,7 @@ describe('ChapterService', () => {
     prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1', status: 'draft' });
     (prisma.chapter.findMany as jest.Mock).mockResolvedValue([{ id: 'c1', number: 1 }]);
     const res = await service.listAdminByVersion('v1');
-    expect(res.length).toBe(1);
+    expect(res.items).toHaveLength(1);
     expect(prisma.chapter.findMany).toHaveBeenCalledWith({
       where: { bookVersionId: 'v1' },
       orderBy: { number: 'asc' },

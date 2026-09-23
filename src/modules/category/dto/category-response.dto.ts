@@ -1,5 +1,4 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMeta } from '../../../shared/dto/pagination-meta.dto';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { CategoryType, Language } from '@prisma/client';
 
@@ -104,12 +103,4 @@ export class CategoryResponse {
 
   @ApiProperty({ type: [CategoryTranslationResponse] })
   translations: CategoryTranslationResponse[];
-}
-
-export class PaginatedCategoriesResponse {
-  @ApiProperty({ type: [CategoryResponse] })
-  data: CategoryResponse[];
-
-  @ApiProperty()
-  meta: PaginationMeta;
 }

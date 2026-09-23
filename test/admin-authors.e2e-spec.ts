@@ -368,8 +368,8 @@ describe('Admin authors routing (e2e)', () => {
     it('GET /en/authors отвечает 200 без токена', async () => {
       const response = await request(http()).get('/en/authors').expect(200);
 
-      const body = response.body as { data: unknown[] };
-      expect(Array.isArray(body.data)).toBe(true);
+      const body = response.body as { items: unknown[] };
+      expect(Array.isArray(body.items)).toBe(true);
     });
 
     it('GET /admin/authors без токена не уезжает в языковой маршрут', async () => {

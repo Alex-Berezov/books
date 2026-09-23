@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PublicBookVersionDto } from './book-detail-response.dto';
 import { BookVersionContentCountDto, BookVersionTagLinkDto } from './book-taxonomy-response.dto';
-import { BookCardsPaginationDto } from './paged-book-cards.dto';
 
 /**
  * Response DTO — Swagger only, no `class-validator` (`STYLE_GUIDE.md` §7).
@@ -59,21 +58,4 @@ export class BookListItemDto {
 
   @ApiProperty({ type: Boolean, description: 'A published version with a summary exists' })
   hasSummary!: boolean;
-}
-
-/**
- * Response of the **public** `GET /:lang/books` (`BookService.findAll`).
- *
- * ⚠️ Админское зеркало `GET /books` этим DTO больше не описывается: с `LEGACY-177`
- * оно отдаёт единую форму `{items, pagination}` (`BookController.findAll` оборачивает
- * результат сервиса). Публичный ответ остался `{data, meta}` намеренно — он лежит
- * в edge-кэше Cloudflare, и смена его формы требует сброса кэша на боевом домене
- * (решение арбитра 13.09.2026). Класс поэтому не удалён, а сужен до одного маршрута.
- */
-export class PaginatedBooksResponseDto {
-  @ApiProperty({ type: BookListItemDto, isArray: true })
-  data!: BookListItemDto[];
-
-  @ApiProperty({ type: BookCardsPaginationDto })
-  meta!: BookCardsPaginationDto;
 }

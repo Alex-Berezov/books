@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { PrismaService } from '../../prisma/prisma.service';
-import { paginated } from '../../shared/dto/paginated-response.dto';
+import { paginated, paginatedWithNext } from '../../shared/dto/paginated-response.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 
@@ -90,7 +90,7 @@ export class CommentsService {
       ratingScore: item.rating?.score || null,
     }));
 
-    return { items: mappedItems, total, page, limit, hasNext: page * limit < total };
+    return paginatedWithNext(mappedItems, { page, limit, total, hasNext: page * limit < total });
   }
 
   async create(userId: string, dto: CreateCommentDto) {

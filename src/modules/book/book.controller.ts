@@ -173,12 +173,8 @@ export class BookController {
   })
   @ApiResponse({ status: 500, description: 'Internal server error' })
   async findAll(@Query() paginationDto: PaginationDto) {
-    // 🔴 Форму меняет контроллер, а не `BookService.findAll` (`LEGACY-177`).
-    // Тот же метод обслуживает публичный `GET /:lang/books`
-    // (`public.controller.ts`), чей ответ лежит в edge-кэше Cloudflare: смена
-    // формы там потребовала бы сброса кэша на боевом домене и остаётся за
-    // владельцем (решение арбитра 13.09.2026). Поэтому `{data, meta}` сервиса
-    // сохраняется как есть, а единую обёртку получает только админское зеркало.
+    // Форму собирает контроллер, а не `BookService.findAll`: так же устроен
+    // публичный `GET /:lang/books` (`public.controller.ts`, `LEGACY-378`).
     const { data, meta } = await this.bookService.findAll(paginationDto);
     return paginated(data, meta);
   }

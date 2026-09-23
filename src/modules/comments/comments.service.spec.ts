@@ -478,10 +478,7 @@ describe('CommentsService', () => {
       );
       expect(res).toEqual({
         items: [{ id: 'c1', ratingScore: null }],
-        total: 2,
-        page: 1,
-        limit: 1,
-        hasNext: true,
+        pagination: { page: 1, limit: 1, total: 2, totalPages: 2, hasNext: true },
       });
 
       prisma.comment.findMany.mockClear();

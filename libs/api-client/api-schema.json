@@ -5797,36 +5797,6 @@
         ],
         "type": "object"
       },
-      "CommentListDto": {
-        "properties": {
-          "hasNext": {
-            "type": "boolean"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/CommentDetailDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "limit",
-          "hasNext"
-        ],
-        "type": "object"
-      },
       "CommentRatingDto": {
         "properties": {
           "bookId": {
@@ -11801,60 +11771,6 @@
         ],
         "type": "object"
       },
-      "PaginatedBooksResponseDto": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/BookListItemDto"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/BookCardsPaginationDto"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
-        ],
-        "type": "object"
-      },
-      "PaginatedCategoriesResponse": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/CategoryResponse"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/PaginationMeta"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
-        ],
-        "type": "object"
-      },
-      "PaginatedTagsResponse": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/TagResponse"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/PaginationMeta"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
-        ],
-        "type": "object"
-      },
       "PaginationInfoDto": {
         "properties": {
           "limit": {
@@ -11871,29 +11787,6 @@
           },
           "totalPages": {
             "description": "Total number of pages at this page size",
-            "type": "number"
-          }
-        },
-        "required": [
-          "page",
-          "limit",
-          "total",
-          "totalPages"
-        ],
-        "type": "object"
-      },
-      "PaginationMeta": {
-        "properties": {
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          },
-          "totalPages": {
             "type": "number"
           }
         },
@@ -12598,24 +12491,6 @@
           "language",
           "slug",
           "name"
-        ],
-        "type": "object"
-      },
-      "PublicAuthorsListResponseDto": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/PublicAuthorListItemDto"
-            },
-            "type": "array"
-          },
-          "meta": {
-            "$ref": "#/components/schemas/BookCardsPaginationDto"
-          }
-        },
-        "required": [
-          "data",
-          "meta"
         ],
         "type": "object"
       },
@@ -32005,10 +31880,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ChapterResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/ChapterResponseDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -35044,7 +34931,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommentListDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CommentDetailDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationWithNextDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -37364,10 +37266,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ChapterResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/ChapterResponseDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -38371,7 +38285,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PublicAuthorsListResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/PublicAuthorListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -38665,7 +38594,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedBooksResponseDto"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/BookListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -39014,7 +38958,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedCategoriesResponse"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -39508,7 +39467,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedTagsResponse"
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/TagResponse"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
                 }
               }
             },

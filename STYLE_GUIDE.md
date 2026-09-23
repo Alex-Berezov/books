@@ -282,12 +282,9 @@ export class BookService {
   Для маршрута без пагинации, отдающего всё одной страницей, — `paginatedAll(items)`.
   В `@ApiOkResponse` схема ставится через `paginatedSchema(ItemDto)`, а `ItemDto`
   и `PaginationInfoDto` объявляются в `@ApiExtraModels` контроллера.
-  ⚠️ **Публичные маршруты на прежних формах** (`{data, meta}` у `/:lang/books`, `/:lang/tags`
-  и соседей; `{items, total, page, limit, hasNext}` у `GET /comments`): их ответы лежат
-  в edge-кэше Cloudflare, и смена формы требует сброса кэша на боевом домене — это решение
-  владельца, а не недоделка. Форму маршрута смотреть в
-  `books-app-docs/ai-context/api-contracts.md`, раздел «Форма списочного ответа»,
-  а не по соседней ручке.
+  Публичные списки — та же форма (`LEGACY-378`, 23.09.2026); бесконечный список кладёт
+  `hasNext` внутрь `pagination` через `paginatedWithNext()`.
+  ⚠️ Исключение — два списка аудиоглав (`GET /versions/:id/audio-chapters`, `GET /admin/versions/:id/audio-chapters`): плоская `{items,total,page,limit,totalPages}` (`PagedAudioChaptersDto`), в перечень `LEGACY-378` не входили.
 - **`$transaction`** для мульти-мутаций
 - **`Promise.all`** для параллельных независимых запросов
 - **Идемпотентность**: если существует — вернуть существующее

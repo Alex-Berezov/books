@@ -37,11 +37,11 @@ describe('Public books/tags query validation (LEGACY-298) e2e', () => {
   describe('GET /:lang/books', () => {
     it('без параметров отдаёт первую страницу дефолтного размера', async () => {
       const res = await request(http()).get('/en/books').expect(200);
-      const body = res.body as { data: unknown[]; meta: { page: number; limit: number } };
+      const body = res.body as { items: unknown[]; pagination: { page: number; limit: number } };
 
-      expect(Array.isArray(body.data)).toBe(true);
-      expect(body.meta.page).toBe(1);
-      expect(body.meta.limit).toBe(10);
+      expect(Array.isArray(body.items)).toBe(true);
+      expect(body.pagination.page).toBe(1);
+      expect(body.pagination.limit).toBe(10);
     });
 
     it.each(['?page=abc', '?page=', '?page=0', '?page=-1'])(
@@ -57,7 +57,9 @@ describe('Public books/tags query validation (LEGACY-298) e2e', () => {
         .expect(400);
 
       const res = await request(http()).get(`/en/books?limit=${PAGINATION_MAX_LIMIT}`).expect(200);
-      expect((res.body as { meta: { limit: number } }).meta.limit).toBe(PAGINATION_MAX_LIMIT);
+      expect((res.body as { pagination: { limit: number } }).pagination.limit).toBe(
+        PAGINATION_MAX_LIMIT,
+      );
     });
 
     it('неизвестный параметр не принимается молча', async () => {
@@ -68,11 +70,11 @@ describe('Public books/tags query validation (LEGACY-298) e2e', () => {
   describe('GET /:lang/tags', () => {
     it('без параметров отдаёт первую страницу дефолтного размера', async () => {
       const res = await request(http()).get('/en/tags').expect(200);
-      const body = res.body as { data: unknown[]; meta: { page: number; limit: number } };
+      const body = res.body as { items: unknown[]; pagination: { page: number; limit: number } };
 
-      expect(Array.isArray(body.data)).toBe(true);
-      expect(body.meta.page).toBe(1);
-      expect(body.meta.limit).toBe(50);
+      expect(Array.isArray(body.items)).toBe(true);
+      expect(body.pagination.page).toBe(1);
+      expect(body.pagination.limit).toBe(50);
     });
 
     it.each(['?page=abc', '?page=', '?page=0', '?page=-1'])(
@@ -88,7 +90,9 @@ describe('Public books/tags query validation (LEGACY-298) e2e', () => {
         .expect(400);
 
       const res = await request(http()).get(`/en/tags?limit=${PAGINATION_MAX_LIMIT}`).expect(200);
-      expect((res.body as { meta: { limit: number } }).meta.limit).toBe(PAGINATION_MAX_LIMIT);
+      expect((res.body as { pagination: { limit: number } }).pagination.limit).toBe(
+        PAGINATION_MAX_LIMIT,
+      );
     });
 
     it('неизвестный параметр не принимается молча', async () => {

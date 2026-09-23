@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiExtraModels,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -23,6 +24,7 @@ import {
 import { ChapterService } from './chapter.service';
 import { ListChaptersQueryDto } from './dto/list-chapters-query.dto';
 import { ChapterResponseDto } from './dto/chapter-response.dto';
+import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
 import { UseGuards } from '@nestjs/common';
@@ -44,6 +46,7 @@ interface RequestUser {
 }
 
 @ApiTags('chapters')
+@ApiExtraModels(ChapterResponseDto, PaginationInfoDto)
 @Controller()
 export class ChapterController {
   constructor(
@@ -57,7 +60,7 @@ export class ChapterController {
       'List chapters by book version (returns all by default; pass page & limit for pagination)',
   })
   @ApiParam({ name: 'bookVersionId' })
-  @ApiOkResponse({ type: ChapterResponseDto, isArray: true })
+  @ApiOkResponse({ schema: paginatedSchema(ChapterResponseDto) })
   list(
     @Param('bookVersionId') bookVersionId: string,
     @Query() query: ListChaptersQueryDto,
@@ -76,7 +79,7 @@ export class ChapterController {
     summary: 'Admin: list chapters by book version (any status, including drafts)',
   })
   @ApiParam({ name: 'bookVersionId' })
-  @ApiOkResponse({ type: ChapterResponseDto, isArray: true })
+  @ApiOkResponse({ schema: paginatedSchema(ChapterResponseDto) })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

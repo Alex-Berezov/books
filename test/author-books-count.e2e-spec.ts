@@ -111,7 +111,7 @@ describe('Authors: books count (e2e)', () => {
    *
    * ⚠️ Ровно потолок ручки (`PUBLIC_AUTHORS_MAX_LIMIT`), а не «побольше на всякий
    * случай». Раньше здесь стояла тысяча, и это работало лишь потому, что потолка
-   * не было вовсе: `?limit=1000` теперь отдаёт 400, `res.body.data` становится
+   * не было вовсе: `?limit=1000` теперь отдаёт 400, `res.body.items` становится
    * `undefined`, и `findAuthor` падает на `.find()`. Авторов в тестовой базе
    * единицы, так что сотни хватает с запасом; перестанет хватать — спека
    * обязана начать листать, а не просить ещё больше.
@@ -120,7 +120,7 @@ describe('Authors: books count (e2e)', () => {
 
   type ListedAuthor = { id: string; slug: string; name: string; booksCount: number };
   const findAuthor = (body: unknown, id: string): ListedAuthor | undefined =>
-    (body as { data: ListedAuthor[] }).data.find((a) => a.id === id);
+    (body as { items: ListedAuthor[] }).items.find((a) => a.id === id);
 
   // 🔴 Сам дефект: книга связана строкой, FK пуст — и счётчик обязан её увидеть.
   it('counts a book linked only by the author name string', async () => {

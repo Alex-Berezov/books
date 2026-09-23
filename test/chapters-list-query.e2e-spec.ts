@@ -114,7 +114,7 @@ describe('Chapters list query validation (LEGACY-178) e2e', () => {
         .get(`/versions/${versionId}/chapters`)
         .query({ page: 1, limit: PAGINATION_MAX_LIMIT });
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
+      expect(Array.isArray((res.body as { items: unknown[] }).items)).toBe(true);
     });
 
     it('пагинация работает: limit=2 отдаёт две первые главы по номеру', async () => {
@@ -122,9 +122,14 @@ describe('Chapters list query validation (LEGACY-178) e2e', () => {
         .get(`/versions/${versionId}/chapters`)
         .query({ page: 1, limit: 2 })
         .expect(200);
-      const body = res.body as Array<{ number: number }>;
-      expect(body).toHaveLength(2);
-      expect(body.map((c) => c.number)).toEqual([1, 2]);
+      const body = res.body as {
+        items: Array<{ number: number }>;
+        pagination: { page: number; limit: number; total: number; totalPages: number };
+      };
+      expect(body.items.map((c) => c.number)).toEqual([1, 2]);
+      // `LEGACY-098`: `total` — вся выдача, а не длина страницы; без него последняя
+      // страница неотличима от недобора.
+      expect(body.pagination).toEqual({ page: 1, limit: 2, total: 3, totalPages: 2 });
     });
 
     // 🔴 Дыра, найденная ревью 13.09.2026: `listInternal` паджинирует по условию
@@ -145,7 +150,9 @@ describe('Chapters list query validation (LEGACY-178) e2e', () => {
 
     it('без параметров отдаёт все главы — режим сохранён сознательно', async () => {
       const res = await request(http()).get(`/versions/${versionId}/chapters`).expect(200);
-      expect(res.body as unknown[]).toHaveLength(3);
+      const body = res.body as { items: unknown[]; pagination: { total: number } };
+      expect(body.items).toHaveLength(3);
+      expect(body.pagination.total).toBe(3);
     });
   });
 
@@ -163,7 +170,9 @@ describe('Chapters list query validation (LEGACY-178) e2e', () => {
         .get(`/admin/versions/${versionId}/chapters`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
-      expect(res.body as unknown[]).toHaveLength(3);
+      const body = res.body as { items: unknown[]; pagination: { total: number } };
+      expect(body.items).toHaveLength(3);
+      expect(body.pagination.total).toBe(3);
     });
   });
 });

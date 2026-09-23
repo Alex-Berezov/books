@@ -31,8 +31,8 @@ describe('Public categories pagination (LEGACY-056) e2e', () => {
   }
 
   interface ListResponse {
-    data: CategoryRow[];
-    meta: { page: number; limit: number; total: number; totalPages: number };
+    items: CategoryRow[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
   }
 
   beforeAll(async () => {
@@ -71,30 +71,30 @@ describe('Public categories pagination (LEGACY-056) e2e', () => {
     const first = await list('?type=collection&page=1&limit=3');
     const second = await list('?type=collection&page=2&limit=3');
 
-    expect(first.data.length).toBe(3);
-    expect(second.data.length).toBeGreaterThan(0);
+    expect(first.items.length).toBe(3);
+    expect(second.items.length).toBeGreaterThan(0);
 
-    const firstIds = first.data.map((row) => row.id);
-    const secondIds = second.data.map((row) => row.id);
+    const firstIds = first.items.map((row) => row.id);
+    const secondIds = second.items.map((row) => row.id);
     expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
   });
 
   it('makes every row reachable: walking the pages yields exactly total distinct rows', async () => {
     const limit = 3;
     const head = await list(`?type=collection&page=1&limit=${limit}`);
-    const total = head.meta.total;
+    const total = head.pagination.total;
     expect(total).toBeGreaterThanOrEqual(SEEDED);
 
     const seen = new Set<string>();
     const pages = Math.ceil(total / limit);
     for (let page = 1; page <= pages; page += 1) {
       const chunk = await list(`?type=collection&page=${page}&limit=${limit}`);
-      for (const row of chunk.data) seen.add(row.id);
+      for (const row of chunk.items) seen.add(row.id);
     }
 
     // Ровно total: меньше — строки недостижимы, больше — страницы пересекаются.
     expect(seen.size).toBe(total);
-    expect(head.meta.totalPages).toBe(pages);
+    expect(head.pagination.totalPages).toBe(pages);
   });
 
   it('LEGACY-377: refuses a limit above the ceiling with 400 instead of capping it silently', async () => {
@@ -106,12 +106,12 @@ describe('Public categories pagination (LEGACY-056) e2e', () => {
     await request(http()).get('/en/categories?limit=100000').expect(400);
 
     const res = await list(`?type=collection&limit=${PUBLIC_CATEGORIES_MAX_LIMIT}`);
-    expect(res.meta.limit).toBe(PUBLIC_CATEGORIES_MAX_LIMIT);
+    expect(res.pagination.limit).toBe(PUBLIC_CATEGORIES_MAX_LIMIT);
   });
 
   it('keeps the default at 50 — five storefronts depend on it', async () => {
     const res = await list('?type=collection');
-    expect(res.meta.limit).toBe(50);
+    expect(res.pagination.limit).toBe(50);
   });
 
   it('answers 400 on a junk type instead of failing with 500', async () => {

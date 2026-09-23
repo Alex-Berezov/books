@@ -117,15 +117,15 @@ describe('Chapters e2e', () => {
     const list1 = await request(http())
       .get(`/versions/${versionId}/chapters?limit=1&page=1`)
       .expect(200);
-    expect(Array.isArray(list1.body)).toBe(true);
-    expect(list1.body.length).toBe(1);
-    expect(list1.body[0].number).toBe(1);
+    expect(Array.isArray(list1.body.items)).toBe(true);
+    expect(list1.body.items.length).toBe(1);
+    expect(list1.body.items[0].number).toBe(1);
 
     const list2 = await request(http())
       .get(`/versions/${versionId}/chapters?limit=1&page=2`)
       .expect(200);
-    expect(list2.body.length).toBe(1);
-    expect(list2.body[0].number).toBe(2);
+    expect(list2.body.items.length).toBe(1);
+    expect(list2.body.items[0].number).toBe(2);
 
     // Get
     await request(http()).get(`/chapters/${chapterId}`).expect(200);

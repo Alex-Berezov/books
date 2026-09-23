@@ -426,11 +426,11 @@ describe('Draft and rights exposure (e2e)', () => {
       const res = await request(http()).get('/en/books?limit=100').expect(200);
 
       expect(JSON.stringify(res.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
-      expect((res.body as { data: unknown[] }).data.length).toBeGreaterThan(0);
+      expect((res.body as { items: unknown[] }).items.length).toBeGreaterThan(0);
     });
 
     /**
-     * ⚠️ `meta.total` считается тем же `where`, что и выборка. Расхождение не
+     * ⚠️ `pagination.total` считается тем же `where`, что и выборка. Расхождение не
      * дало бы ошибки — по этому числу карта сайта решает, сколько файлов
      * запрашивать, и лишние страницы молча отвечали бы 404 при живом индексе,
      * который их перечисляет.
@@ -438,12 +438,12 @@ describe('Draft and rights exposure (e2e)', () => {
     it('total публичного списка согласован с выдачей', async () => {
       // `LEGACY-298`: маршрут зажат `PAGINATION_MAX_LIMIT`, `?limit=1000` теперь
       // отбивается 400. Тестовый каталог этого набора укладывается в потолок,
-      // поэтому равенство `total === data.length` продолжает проверяться на
+      // поэтому равенство `total === items.length` продолжает проверяться на
       // единственной странице.
       const page = await request(http()).get(`/en/books?limit=${PAGINATION_MAX_LIMIT}`).expect(200);
-      const body = page.body as { data: unknown[]; meta: { total: number } };
+      const body = page.body as { items: unknown[]; pagination: { total: number } };
 
-      expect(body.meta.total).toBe(body.data.length);
+      expect(body.pagination.total).toBe(body.items.length);
     });
   });
 

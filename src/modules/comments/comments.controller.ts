@@ -28,11 +28,11 @@ import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 import { ListCommentsQueryDto } from './dto/list-comments.dto';
-import { CommentListDto } from './dto/comment-list.dto';
 import { CommentBareDto, CommentDetailDto } from './dto/comment.dto';
 import { AdminCommentDto, AdminCommentsQueryDto } from './dto/admin-comments.dto';
 import {
   PaginationInfoDto,
+  PaginationWithNextDto,
   paginatedSchema,
   type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
@@ -60,7 +60,8 @@ export class CommentsController {
   @ApiQuery({ name: 'sortBy', required: false, enum: ['date', 'popularity'] })
   @ApiQuery({ name: 'page', required: false, schema: { type: 'integer', minimum: 1 } })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1 } })
-  @ApiOkResponse({ type: CommentListDto })
+  @ApiExtraModels(CommentDetailDto, PaginationWithNextDto)
+  @ApiOkResponse({ schema: paginatedSchema(CommentDetailDto, PaginationWithNextDto) })
   list(@Query() q: ListCommentsQueryDto) {
     const { target, targetId, sortBy = 'date', page = 1, limit = 10 } = q;
     return this.service.list({ target, targetId, sortBy, page, limit });

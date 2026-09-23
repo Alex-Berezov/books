@@ -5,9 +5,14 @@ import { UpdateChapterDto } from './dto/update-chapter.dto';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
-import { Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
+import { Prisma, AdminAuditAction, AdminAuditTargetType, type Chapter } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
+import {
+  paginated,
+  paginatedAll,
+  type PaginatedResult,
+} from '../../shared/dto/paginated-response.dto';
 
 @Injectable()
 export class ChapterService {
@@ -47,20 +52,24 @@ export class ChapterService {
     return this.listInternal(bookVersionId, page, limit);
   }
 
-  private listInternal(bookVersionId: string, page?: number, limit?: number) {
+  // `total` считается всегда, когда выдача режется: без него последняя страница
+  // неотличима от недобора (`LEGACY-098`, остаток `LEGACY-379`).
+  private async listInternal(
+    bookVersionId: string,
+    page?: number,
+    limit?: number,
+  ): Promise<PaginatedResult<Chapter>> {
+    const where = { bookVersionId };
+    const orderBy = { number: 'asc' } as const;
     if (page && limit) {
-      const skip = (page - 1) * limit;
-      return this.prisma.chapter.findMany({
-        where: { bookVersionId },
-        orderBy: { number: 'asc' },
-        skip,
-        take: limit,
-      });
+      // Одним снимком: `total` из другого момента, чем страница, дал бы тот же недобор.
+      const [items, total] = await this.prisma.$transaction([
+        this.prisma.chapter.findMany({ where, orderBy, skip: (page - 1) * limit, take: limit }),
+        this.prisma.chapter.count({ where }),
+      ]);
+      return paginated(items, { page, limit, total });
     }
-    return this.prisma.chapter.findMany({
-      where: { bookVersionId },
-      orderBy: { number: 'asc' },
-    });
+    return paginatedAll(await this.prisma.chapter.findMany({ where, orderBy }));
   }
 
   async create(bookVersionId: string, dto: CreateChapterDto) {

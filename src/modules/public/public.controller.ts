@@ -49,10 +49,11 @@ import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { SlugRedirectResponseDto } from './dto/slug-redirect-response.dto';
 import { PublicPageDto } from './dto/public-page-response.dto';
 import { PublicTagBooksResponseDto } from './dto/public-tag-books-response.dto';
-import { PublicAuthorsListResponseDto } from './dto/public-authors-list-response.dto';
+import { PublicAuthorListItemDto } from './dto/public-authors-list-response.dto';
 import { AuthorLetterCountDto } from './dto/author-letter-count.dto';
 import {
   PaginationInfoDto,
+  paginated,
   paginatedAll,
   paginatedSchema,
   type PaginatedResult,
@@ -60,13 +61,13 @@ import {
 import { PagedBookCardsDto, RelatedBooksResponseDto } from '../book/dto/paged-book-cards.dto';
 import { CategoryBookCardsResponseDto } from '../book/dto/category-book-cards-response.dto';
 import { BookOverviewResponseDto } from '../book/dto/book-overview-response.dto';
-import { PaginatedBooksResponseDto } from '../book/dto/paged-books.dto';
+import { BookListItemDto } from '../book/dto/paged-books.dto';
 import { ReaderBootstrapResponseDto } from '../book/dto/reader-bootstrap-response.dto';
 import { PublicCategoryBooksResponseDto } from './dto/public-category-books-response.dto';
 import { PublicCategoryBooksQueryDto } from './dto/public-category-books-query.dto';
 import { PublicAuthorDetailResponseDto } from './dto/public-author-detail-response.dto';
-import { PaginatedCategoriesResponse } from '../category/dto/category-response.dto';
-import { PaginatedTagsResponse } from '../tags/dto/tag-response.dto';
+import { CategoryResponse } from '../category/dto/category-response.dto';
+import { TagResponse } from '../tags/dto/tag-response.dto';
 import { TagBookCardsResponseDto } from '../book/dto/tag-book-cards-response.dto';
 
 // Helper to validate and coerce path lang to enum
@@ -155,9 +156,13 @@ export class PublicController {
   // Localized books list
   @Get('books')
   @ApiOperation({ summary: 'Public books list with language prefix' })
-  @ApiOkResponse({ type: PaginatedBooksResponseDto })
+  @ApiExtraModels(BookListItemDto, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(BookListItemDto) })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  findAll(@Param('lang', LangParamPipe) pathLang: PrismaLanguage, @Query() query: PaginationDto) {
+  async findAll(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query() query: PaginationDto,
+  ) {
     // Публичная витрина видит только опубликованное (`LEGACY-093`). Раньше
     // фильтра не было ни здесь, ни в сервисе, и правило «только published»
     // существовало **тремя копиями на клиенте**: в каталоге, в карте сайта и в
@@ -173,7 +178,11 @@ export class PublicController {
     // `limit=10`) и потолок совпадают дословно, и заводить своё DTO ради этого было
     // бы четвёртой копией того же класса, который закрывала `LEGACY-353` (найдено
     // ревью архитектуры).
-    return this.books.findAll({ page: query.page, limit: query.limit }, { publishedOnly: true });
+    const { data, meta } = await this.books.findAll(
+      { page: query.page, limit: query.limit },
+      { publishedOnly: true },
+    );
+    return paginated(data, meta);
   }
 
   // Related books (compact BookCard) for a book page: same-author + similar-by-category
@@ -319,21 +328,23 @@ export class PublicController {
   // Public category/genre listing with translations and book counts
   @Get('categories')
   @ApiOperation({ summary: 'Public category/genre listing for catalog sidebar' })
-  @ApiOkResponse({ type: PaginatedCategoriesResponse })
+  @ApiExtraModels(CategoryResponse, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(CategoryResponse) })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  categoriesList(
+  async categoriesList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query() query: PublicCategoriesQueryDto,
   ) {
     // Потолок стоит в `PublicCategoriesQueryDto` (`@Max`, `LEGACY-377`): запрос сверх
     // него получает 400, а не 200 с урезанной страницей. Сервис общий с админским
     // `GET /admin/categories`, у которого свой DTO и свой потолок, — его это не задевает.
-    return this.categories.list(
+    const { data, meta } = await this.categories.list(
       query.page ?? 1,
       query.limit ?? PUBLIC_CATEGORIES_DEFAULT_LIMIT,
       query.type,
       pathLang,
     );
+    return paginated(data, meta);
   }
 
   // Localized tags by translation slug
@@ -359,16 +370,18 @@ export class PublicController {
   // Public tags listing for homepage
   @Get('tags')
   @ApiOperation({ summary: 'Public tags listing for homepage' })
-  @ApiOkResponse({ type: PaginatedTagsResponse })
+  @ApiExtraModels(TagResponse, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(TagResponse) })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  tagsList(
+  async tagsList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query() query: PublicTagsQueryDto,
   ) {
     // 🔴 `page`/`limit` раньше принимались голым `@Query('page') page?: number` и шли
     // в сервис через идиому `page ? Number(page) : N`, которая не отличает `0` от
     // отсутствия значения и молча подставляет дефолт на любой мусор (`LEGACY-298`).
-    return this.tags.list(query.page, query.limit, undefined, pathLang);
+    const { data, meta } = await this.tags.list(query.page, query.limit, undefined, pathLang);
+    return paginated(data, meta);
   }
 
   // Compact paginated book cards for a tag
@@ -395,9 +408,10 @@ export class PublicController {
   // Localized authors list
   @Get('authors')
   @ApiOperation({ summary: 'Public authors list with language prefix' })
-  @ApiOkResponse({ type: PublicAuthorsListResponseDto })
+  @ApiExtraModels(PublicAuthorListItemDto, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(PublicAuthorListItemDto) })
   @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
-  authorsList(
+  async authorsList(
     @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
     @Query() query: PublicAuthorsQueryDto,
   ) {
@@ -410,7 +424,8 @@ export class PublicController {
     // ⚠️ `listPublic`, а не `list`: у списка три читателя, и ни одному из них
     // не нужны биография, цитаты, FAQ и `Seo` каждого перевода, которые `list`
     // отдаёт анониму до сих пор (`LEGACY-214`). `list` остался за админкой.
-    return this.authors.listPublic(pathLang, query);
+    const { data, meta } = await this.authors.listPublic(pathLang, query);
+    return paginated(data, meta);
   }
 
   /**

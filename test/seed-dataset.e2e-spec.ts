@@ -256,8 +256,8 @@ describe('Seeded dataset (e2e)', () => {
     const res = await get(`/ru/authors?search=${encodeURIComponent('Роулинг')}&limit=100`).expect(
       200,
     );
-    const body = res.body as { data: Array<{ name: string }> };
-    expect(body.data.filter((a) => a.name === 'Джоан Роулинг')).toHaveLength(1);
+    const body = res.body as { items: Array<{ name: string }> };
+    expect(body.items.filter((a) => a.name === 'Джоан Роулинг')).toHaveLength(1);
 
     // 🔴 Второй прогон не должен ни добавлять привязок, ни перевешивать их на другую
     // языковую версию. До 02.09.2026 версия у книги была одна, и `book.versions[0]`
@@ -391,9 +391,9 @@ describe('Seeded dataset (e2e)', () => {
 
     it('сид даёт хабу tags линкуемый термин classics', async () => {
       const res = await get(`/${lang}/tags?limit=100`).expect(200);
-      const body = res.body as { data: Parameters<typeof linkableIn>[0] };
+      const body = res.body as { items: Parameters<typeof linkableIn>[0] };
 
-      expect(linkableIn(body.data).map((t) => t.key)).toContain('classics');
+      expect(linkableIn(body.items).map((t) => t.key)).toContain('classics');
     });
   });
 

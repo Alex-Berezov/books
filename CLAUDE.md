@@ -194,14 +194,15 @@ Swagger отдаётся по `/docs-json`, не по `/api/docs-json`.
   `/* eslint-disable */` в репозитории не осталось. Возврат любого `any` красит `yarn lint`,
   а значит и оба конвейера. ⚠️ `noImplicitAny` в `tsconfig.json` по-прежнему выключен:
   переменная без типа и без инициализатора компилятором не ловится, это отдельная работа.
-- **Форма списочного ответа одна за логином и прежние - на публичных** (`LEGACY-177`,
-  13.09.2026). За логином - `{items, pagination:{page,limit,total,totalPages}}`, собирается
-  хелпером `paginated()` из `src/shared/dto/paginated-response.dto.ts`. Публичные маршруты
-  остались на `{data, meta}` и (у `GET /comments`) на плоской форме: их ответы в edge-кэше
-  Cloudflare, смена формы требует сброса кэша на боевом домене - это решение владельца.
-  Новая ручка берёт форму **не у соседней ручки**, а по контуру: за логином - общая обёртка;
-  таблица маршрутов - `books-app-docs/ai-context/api-contracts.md`, раздел «Форма списочного
-  ответа».
+- **Форма списочного ответа одна** (`LEGACY-177` за логином 13.09.2026,
+  `LEGACY-378`/`379` на публичном контуре 23.09.2026): `{items, pagination:{page,limit,total,totalPages}}`,
+  собирается хелпером `paginated()` из `src/shared/dto/paginated-response.dto.ts`; бесконечные
+  списки кладут `hasNext` внутрь `pagination` (`paginatedWithNext()`). Исключение — два списка аудиоглав (`GET /versions/:id/audio-chapters`, `GET /admin/versions/:id/audio-chapters`): плоская `{items,total,page,limit,totalPages}` (`PagedAudioChaptersDto`), в перечень `LEGACY-378` не входили.
+  ⚠️ Смена формы публичного
+  списка - ломающая правка под edge-кэшем Cloudflare: выкат парный с фронтом и сбросом кэша
+  владельцем (решение арбитра по `W7` в `books-app-docs/ai-context/decisions-log.md`, для `W9`
+  повторено строкой очереди `work-queue.md`). Составные
+  ответы-страницы (`tags/:slug/books`, `categories/:slug/books`) списками не считаются.
 - **Контроллеры исключений не ловят** (`LEGACY-179`, 13.09.2026). `BookController` был
   единственным нарушителем - десять обработчиков в `try/catch` с собственным телом 500;
   снято. Тело ошибки формирует стандартный фильтр Nest: `{statusCode, message, error}`.

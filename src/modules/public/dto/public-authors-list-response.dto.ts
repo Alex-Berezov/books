@@ -1,6 +1,5 @@
 import { Language } from '@prisma/client';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { BookCardsPaginationDto } from '../../book/dto/paged-book-cards.dto';
 
 /** `PublicAuthorTranslation` — one language alternative of an author list item. */
 export class PublicAuthorTranslationDto {
@@ -46,13 +45,4 @@ export class PublicAuthorListItemDto {
 
   @ApiProperty({ type: [PublicAuthorTranslationDto] })
   translations!: PublicAuthorTranslationDto[];
-}
-
-/** Response of `GET /:lang/authors` (`AuthorService.listPublic`). */
-export class PublicAuthorsListResponseDto {
-  @ApiProperty({ type: [PublicAuthorListItemDto] })
-  data!: PublicAuthorListItemDto[];
-
-  @ApiProperty({ type: BookCardsPaginationDto })
-  meta!: BookCardsPaginationDto;
 }

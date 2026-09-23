@@ -117,7 +117,10 @@ describe('PublicController (unit)', () => {
   });
 
   it('authorsList: passes the whole validated query through to listPublic', async () => {
-    authors.listPublic.mockResolvedValueOnce({ data: [], meta: { total: 0 } });
+    authors.listPublic.mockResolvedValueOnce({
+      data: [],
+      meta: { page: 2, limit: 24, total: 0, totalPages: 0 },
+    });
     const query = {
       page: 2,
       limit: 24,
@@ -129,7 +132,11 @@ describe('PublicController (unit)', () => {
 
     const res = await controller.authorsList(PrismaLanguage.ru, query);
 
-    expect(res).toEqual({ data: [], meta: { total: 0 } });
+    // `LEGACY-378`: наружу — `{items, pagination}`, а не `{data, meta}` сервиса.
+    expect(res).toEqual({
+      items: [],
+      pagination: { page: 2, limit: 24, total: 0, totalPages: 0 },
+    });
     expect(authors.listPublic).toHaveBeenCalledTimes(1);
     expect(authors.listPublic).toHaveBeenCalledWith(PrismaLanguage.ru, query);
   });

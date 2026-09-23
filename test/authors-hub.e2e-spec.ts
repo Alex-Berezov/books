@@ -137,9 +137,10 @@ describe('Authors hub (e2e)', () => {
     translations: Array<{ language: string; slug: string; name: string }>;
   };
 
+  // `LEGACY-378`: список — `{items, pagination}`, а не `{data, meta}`.
   interface ListResponse {
-    data: Card[];
-    meta: { page: number; limit: number; total: number; totalPages: number };
+    items: Card[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
   }
 
   type LettersResponse = Array<{ letter: string; count: number }>;
@@ -151,7 +152,7 @@ describe('Authors hub (e2e)', () => {
   const letters = (res: request.Response): LettersResponse =>
     (res.body as { items: LettersResponse }).items;
 
-  const find = (res: request.Response, id: string) => list(res).data.find((a) => a.id === id);
+  const find = (res: request.Response, id: string) => list(res).items.find((a) => a.id === id);
 
   it('serves the list and counts books and audiobooks of the path language', async () => {
     const res = await get('/ru/authors?limit=100').expect(200);
@@ -191,20 +192,20 @@ describe('Authors hub (e2e)', () => {
     const res = await get('/ru/authors?letter=Д&limit=100').expect(200);
 
     expect(find(res, withBookId)).toBeDefined();
-    expect(list(res).data.every((a: Card) => a.name.toUpperCase().startsWith('Д'))).toBe(true);
+    expect(list(res).items.every((a: Card) => a.name.toUpperCase().startsWith('Д'))).toBe(true);
   });
 
   // Диакритика сворачивается в базовую букву: `Édouard` живёт под `E`, не под `#`.
   it('folds diacritics into the base letter', async () => {
     const res = await get('/fr/authors?letter=E&limit=100').expect(200);
 
-    expect(list(res).data.some((a: Card) => a.name === edouard)).toBe(true);
+    expect(list(res).items.some((a: Card) => a.name === edouard)).toBe(true);
   });
 
   it('puts names that start with neither letter into the # group', async () => {
     const res = await get('/en/authors?letter=%23&limit=100').expect(200);
 
-    expect(list(res).data.some((a: Card) => a.name === numeric)).toBe(true);
+    expect(list(res).items.some((a: Card) => a.name === numeric)).toBe(true);
   });
 
   // 🔴 `?letter=W` на `/ru/` сводился к литералу `'#'` и отдавал 200 с пустым
@@ -217,10 +218,10 @@ describe('Authors hub (e2e)', () => {
 
   it('drops authors without books only when asked', async () => {
     const withoutFilter = await get('/ru/authors?limit=100').expect(200);
-    expect(list(withoutFilter).data.some((a: Card) => a.name === emptyRu)).toBe(true);
+    expect(list(withoutFilter).items.some((a: Card) => a.name === emptyRu)).toBe(true);
 
     const filtered = await get('/ru/authors?limit=100&hasBooks=true').expect(200);
-    expect(list(filtered).data.some((a: Card) => a.name === emptyRu)).toBe(false);
+    expect(list(filtered).items.some((a: Card) => a.name === emptyRu)).toBe(false);
     expect(find(filtered, withBookId)).toBeDefined();
   });
 
@@ -228,11 +229,11 @@ describe('Authors hub (e2e)', () => {
   it('understands the usual spellings of a boolean and rejects the rest', async () => {
     for (const value of ['true', '1', 'yes']) {
       const res = await get(`/ru/authors?limit=100&hasBooks=${value}`).expect(200);
-      expect(list(res).data.some((a: Card) => a.name === emptyRu)).toBe(false);
+      expect(list(res).items.some((a: Card) => a.name === emptyRu)).toBe(false);
     }
     for (const value of ['false', '0', 'no']) {
       const res = await get(`/ru/authors?limit=100&hasBooks=${value}`).expect(200);
-      expect(list(res).data.some((a: Card) => a.name === emptyRu)).toBe(true);
+      expect(list(res).items.some((a: Card) => a.name === emptyRu)).toBe(true);
     }
     await get('/ru/authors?hasBooks=maybe').expect(400);
   });
@@ -249,13 +250,13 @@ describe('Authors hub (e2e)', () => {
   it('escapes LIKE wildcards instead of matching everything', async () => {
     const res = await get('/ru/authors?search=%25&limit=100').expect(200);
 
-    expect(list(res).data).toHaveLength(0);
+    expect(list(res).items).toHaveLength(0);
   });
 
   it('sorts by book count in the database, not in memory', async () => {
     const res = await get('/ru/authors?sort=books&limit=100').expect(200);
 
-    const counts = list(res).data.map((a: Card) => a.booksCount);
+    const counts = list(res).items.map((a: Card) => a.booksCount);
     expect([...counts].sort((a: number, b: number) => b - a)).toEqual(counts);
   });
 
@@ -264,7 +265,7 @@ describe('Authors hub (e2e)', () => {
     await get('/ru/authors?limit=0').expect(400);
 
     const capped = await get('/ru/authors?limit=100').expect(200);
-    expect(list(capped).meta.limit).toBe(100);
+    expect(list(capped).pagination.limit).toBe(100);
   });
 
   it('rejects an unknown query parameter rather than ignoring it', async () => {
@@ -301,7 +302,7 @@ describe('Authors hub (e2e)', () => {
       const cards = await get('/ru/authors?letter=Д&limit=100&hasBooks=true').expect(200);
 
       const de = letters(index).find((l) => l.letter === 'Д');
-      expect(de?.count).toBe(list(cards).meta.total);
+      expect(de?.count).toBe(list(cards).pagination.total);
     });
 
     it('narrows the counts by the same search the grid uses', async () => {
@@ -310,7 +311,7 @@ describe('Authors hub (e2e)', () => {
       const cards = await get(`/ru/authors?search=${term}&limit=100&hasBooks=true`).expect(200);
 
       const total = letters(index).reduce((sum, l) => sum + l.count, 0);
-      expect(total).toBe(list(cards).meta.total);
+      expect(total).toBe(list(cards).pagination.total);
     });
 
     it('rejects an unknown query parameter', async () => {
