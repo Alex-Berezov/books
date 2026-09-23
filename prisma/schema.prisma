@@ -1128,9 +1128,6 @@ model EditionRights {
 
   status String
   notesRu String? @db.Text
-  /// LEGACY-033: своего правового основания у языковой редакции нет, основание привязано
-  /// к стране. Колонку не называет ни один запрос; снимается миграцией по команде владельца.
-  legalBasisRu String? @db.Text @ignore
 
   /// Происхождение текста на этом языке: оригинал, перевод Bibliaris, сторонний перевод.
   translationOrigin String @default("UNKNOWN")
