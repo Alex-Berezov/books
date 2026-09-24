@@ -17,7 +17,7 @@ const makeCleanup = (
   },
 ) => {
   const cleanup = jest.fn().mockResolvedValue(result);
-  return { service: { cleanup } as unknown as MediaCleanupService, cleanup };
+  return { service: { cleanupIfIdle: cleanup } as unknown as MediaCleanupService, cleanup };
 };
 
 /**
@@ -36,8 +36,8 @@ describe('MediaCleanupSchedulerService', () => {
   });
 
   /**
-   * 🔴 Главная посадка правки. Уборка необратима (stage 2 делает `storage.delete`), критерий
-   * сироты проверяет четыре адресных колонки из девяти, а `LEGACY-058` требует прогнать
+   * 🔴 Главная посадка правки. Уборка необратима (stage 2 делает `storage.delete`), а
+   * `LEGACY-058` требует прогнать
    * `dryRun` и сверить список до включения. Решение арбитра 21.09.2026: opt-in.
    * Верните умолчание «включено» — этот кейс покраснеет.
    */
@@ -190,10 +190,35 @@ describe('MediaCleanupSchedulerService', () => {
     service.onModuleDestroy();
   });
 
+  it('skips a tick while another run holds the cleanup lock and keeps the last status', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-05T04:59:59.000Z'));
+    const cleanupFn = jest.fn().mockResolvedValue(null);
+    const cleanupService = { cleanupIfIdle: cleanupFn } as unknown as MediaCleanupService;
+
+    const service = new MediaCleanupSchedulerService(
+      cleanupService,
+      makeConfig(ON),
+      makeRegistry(),
+    );
+    service.onModuleInit();
+
+    await jest.advanceTimersByTimeAsync(1000);
+
+    const status = service.getStatus();
+    expect(cleanupFn).toHaveBeenCalledTimes(1);
+    expect(status.lastError).toBeNull();
+    expect(status.lastStartedAt).toBeNull();
+    expect(status.lastFinishedAt).toBeNull();
+    expect(status.lastScanned).toBeNull();
+    expect(status.isRunning).toBe(false);
+    expect(status.nextRunAt).toBe('2026-08-06T05:00:00.000Z');
+    service.onModuleDestroy();
+  });
+
   it('records a failure instead of dying with it', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-05T04:59:59.000Z'));
     const cleanupService = {
-      cleanup: jest.fn().mockRejectedValue(new Error('db down')),
+      cleanupIfIdle: jest.fn().mockRejectedValue(new Error('db down')),
     } as unknown as MediaCleanupService;
 
     const service = new MediaCleanupSchedulerService(
@@ -216,6 +241,39 @@ describe('MediaCleanupSchedulerService', () => {
     service.onModuleDestroy();
   });
 
+  it('clears the previous error while a new sweep is in flight', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-05T04:59:59.000Z'));
+    let resolveSecond: (() => void) | undefined;
+    const second = new Promise<null>((resolve) => {
+      resolveSecond = () => resolve(null);
+    });
+    const cleanupFn = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('db down'))
+      .mockReturnValueOnce(second);
+    const cleanupService = { cleanupIfIdle: cleanupFn } as unknown as MediaCleanupService;
+
+    const service = new MediaCleanupSchedulerService(
+      cleanupService,
+      makeConfig(ON),
+      makeRegistry(),
+    );
+    service.onModuleInit();
+
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(service.getStatus().lastError).toBe('db down');
+
+    await jest.advanceTimersByTimeAsync(24 * 3600 * 1000);
+    expect(service.getStatus().isRunning).toBe(true);
+    expect(service.getStatus().lastError).toBeNull();
+
+    // Второй тик упёрся в замок — статус возвращается к прошлому прогону целиком.
+    resolveSecond?.();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(service.getStatus().lastError).toBe('db down');
+    service.onModuleDestroy();
+  });
+
   it('reports isRunning while a sweep is in flight', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-05T04:59:59.000Z'));
     let resolveFirst: (() => void) | undefined;
@@ -231,7 +289,7 @@ describe('MediaCleanupSchedulerService', () => {
         });
     });
     const cleanupFn = jest.fn().mockReturnValueOnce(pending);
-    const cleanupService = { cleanup: cleanupFn } as unknown as MediaCleanupService;
+    const cleanupService = { cleanupIfIdle: cleanupFn } as unknown as MediaCleanupService;
 
     const service = new MediaCleanupSchedulerService(
       cleanupService,
@@ -242,6 +300,8 @@ describe('MediaCleanupSchedulerService', () => {
 
     await jest.advanceTimersByTimeAsync(1000);
     expect(service.getStatus().isRunning).toBe(true);
+    // Начало прогона видно, пока он идёт: иначе свежий прогон не отличить от зависшего.
+    expect(service.getStatus().lastStartedAt).toBe('2026-08-05T05:00:00.000Z');
 
     resolveFirst?.();
     await jest.advanceTimersByTimeAsync(0);
@@ -269,7 +329,7 @@ describe('MediaCleanupSchedulerService', () => {
         });
     });
     const cleanupFn = jest.fn().mockReturnValueOnce(pending);
-    const cleanupService = { cleanup: cleanupFn } as unknown as MediaCleanupService;
+    const cleanupService = { cleanupIfIdle: cleanupFn } as unknown as MediaCleanupService;
 
     const service = new MediaCleanupSchedulerService(
       cleanupService,

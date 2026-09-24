@@ -3,7 +3,7 @@ import { MediaService } from './media.service';
 import { MediaListQueryDto } from './dto/create-media.dto';
 
 describe('MediaService (unit)', () => {
-  const prisma = {
+  const known = {
     mediaAsset: {
       findUnique: jest.fn(),
       create: jest.fn(),
@@ -11,13 +11,18 @@ describe('MediaService (unit)', () => {
       findMany: jest.fn(),
       count: jest.fn(),
     },
-    // Ссылки на ассет живут строками URL в четырёх местах (LEGACY-060).
-    // По умолчанию — ни одной; конкретный тест подставляет свою.
+    // Ссылки на ассет — пять внешних ключей и колонки `media-url-columns.ts` (LEGACY-060,
+    // LEGACY-413). Явно объявлены только делегаты, которые тесты настраивают; любой другой
+    // отдаёт пусто, чтобы новая колонка в перечне не требовала правки мока.
     bookVersion: { findMany: jest.fn().mockResolvedValue([]) },
     audioChapter: { findMany: jest.fn().mockResolvedValue([]) },
-    user: { findMany: jest.fn().mockResolvedValue([]) },
-    authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
   };
+  const others: Record<string, { findMany: jest.Mock }> = {};
+  const prisma = new Proxy(known, {
+    get: (target, name: string) =>
+      (target as Record<string, unknown>)[name] ??
+      (others[name] ??= { findMany: jest.fn().mockResolvedValue([]) }),
+  });
   const storage = {
     getPublicUrl: jest.fn<string, [string]>(),
     delete: jest.fn<Promise<void>, [string]>(),
@@ -28,8 +33,7 @@ describe('MediaService (unit)', () => {
   const noReferences = () => {
     prisma.bookVersion.findMany.mockResolvedValue([]);
     prisma.audioChapter.findMany.mockResolvedValue([]);
-    prisma.user.findMany.mockResolvedValue([]);
-    prisma.authorTranslation.findMany.mockResolvedValue([]);
+    for (const delegate of Object.values(others)) delegate.findMany.mockResolvedValue([]);
   };
 
   beforeEach(() => {
@@ -187,7 +191,13 @@ describe('MediaService (unit)', () => {
 
     it('names what blocks the deletion — an operator has to know what to fix', async () => {
       prisma.mediaAsset.findUnique.mockResolvedValue({ id: 'm1', key: 'covers/x.jpg' });
-      prisma.bookVersion.findMany.mockResolvedValue([{ id: 'v1', title: 'War and Peace' }]);
+      // Только обложка: тот же делегат спрашивают и про превью, и про другие адресные колонки.
+      prisma.bookVersion.findMany.mockImplementation(
+        (args: { where?: { OR?: Array<{ coverImageUrl?: unknown }> } }) =>
+          Promise.resolve(
+            args?.where?.OR?.[0]?.coverImageUrl ? [{ id: 'v1', title: 'War and Peace' }] : [],
+          ),
+      );
 
       await expect(service.remove('m1')).rejects.toMatchObject({
         response: { references: ['book version "War and Peace" (v1)'] },

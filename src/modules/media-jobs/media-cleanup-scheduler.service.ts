@@ -52,20 +52,19 @@ export interface MediaCleanupSweepStatus {
  *
  * 🔴 **Выключен по умолчанию, и это не осторожность, а условие из `LEGACY-058`** (решение
  * арбитра 21.09.2026, `decisions-log.md`). Эта пачка закрывает причину смерти механизма
- * (зависимость от Redis), а не право на первое необратимое удаление. Критерий сироты
- * (`media/media-references.ts`, `MEDIA_URL_REFERENCE_FIELDS`) проверяет четыре адресных
- * колонки, а в схеме их девять: `Seo.ogImageUrl`, `Seo.eventImageUrl`,
- * `CategoryTranslation.ogImageUrl`, `TagTranslation.ogImageUrl` и `PersonTranslation.photoUrl`
- * он не читает. Ассет, на который ссылается только такая колонка, выглядит сиротой; stage 2
- * делает `storage.delete` и `prisma.mediaAsset.delete`, и `git revert` файл не вернёт.
- * Поэтому включение — осознанное действие владельца **после** прогона
- * `POST /admin/media/cleanup-orphans?dryRun=true` и сверки списка, а не побочный эффект
- * выката. Пока `MEDIA_CLEANUP_ENABLED` не выставлен в `1`/`true`, прод ведёт себя ровно так
- * же, как до этой правки, — но теперь это видно снаружи, а не выводится из отсутствия Redis.
+ * (зависимость от Redis), а не право на первое необратимое удаление: stage 2 делает
+ * `storage.delete` и `prisma.mediaAsset.delete`, и `git revert` файл не вернёт. Критерий
+ * сироты видит внешние ключи и строковые колонки-адреса (`media/media-references.ts`,
+ * LEGACY-413), но **не** картинки внутри HTML и Json и не перепроверяет ссылки на stage 2 —
+ * пока открыта `LEGACY-421`, включать таймер нельзя. После неё включение — осознанное
+ * действие владельца **после** прогона `POST /admin/media/cleanup-orphans?dryRun=true`
+ * и сверки списка, а не побочный эффект выката. Пока `MEDIA_CLEANUP_ENABLED` не выставлен
+ * в `1`/`true`, таймер не заводится вовсе.
  *
  * **Accepted limitations**, same as the taxonomy sweep:
- * - *Single instance assumed.* Two replicas would sweep concurrently; `getStatus()` would then
- *   show the state of whichever replica answered.
+ * - *Status is per replica.* Runs are serialised across replicas and against the manual
+ *   endpoint by `MediaCleanupService`'s advisory lock (LEGACY-413), but `getStatus()` shows the
+ *   state of whichever replica answered.
  * - *No persistence or retries.* A process that dies mid-sweep sweeps again at the next slot.
  */
 @Injectable()
@@ -193,11 +192,27 @@ export class MediaCleanupSchedulerService implements OnModuleInit, OnModuleDestr
     }
 
     this.isRunning = true;
-    this.lastStartedAt = new Date();
+    // Начало видно сразу, а ошибка прошлого прогона снимается: рядом с `isRunning: true`
+    // оператор видит свежий прогон, а не зависший и не упавший. Пропуск по замку возвращает
+    // прежние значения: иначе они легли бы рядом с числами прошлого прогона и читались бы
+    // как доказательство работы, которой не было.
+    const previousStartedAt = this.lastStartedAt;
+    const previousError = this.lastError;
+    const startedAt = new Date();
+    this.lastStartedAt = startedAt;
     this.lastError = null;
+    let isSkipped = false;
 
     try {
-      const result = await this.cleanup.cleanup();
+      const result = await this.cleanup.cleanupIfIdle();
+      if (!result) {
+        isSkipped = true;
+        this.lastStartedAt = previousStartedAt;
+        this.lastError = previousError;
+        // Идёт ручной прогон или таймер соседней реплики: пропуск, не ошибка.
+        this.logger.warn('Media cleanup sweep skipped: another run holds the cleanup lock');
+        return;
+      }
       this.lastScanned = result.scanned;
       this.lastSkippedByUrlReference = result.skippedByUrlReference;
       this.lastMarkedSoftDeleted = result.markedSoftDeleted;
@@ -221,8 +236,10 @@ export class MediaCleanupSchedulerService implements OnModuleInit, OnModuleDestr
       this.lastStorageErrors = null;
       this.logger.error(`Media cleanup sweep failed: ${this.lastError}`);
     } finally {
-      this.lastFinishedAt = new Date();
-      this.lastDurationMs = this.lastFinishedAt.getTime() - this.lastStartedAt.getTime();
+      if (!isSkipped) {
+        this.lastFinishedAt = new Date();
+        this.lastDurationMs = this.lastFinishedAt.getTime() - startedAt.getTime();
+      }
       this.isRunning = false;
     }
   }
