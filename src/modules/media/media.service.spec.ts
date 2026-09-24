@@ -16,6 +16,8 @@ describe('MediaService (unit)', () => {
     // отдаёт пусто, чтобы новая колонка в перечне не требовала правки мока.
     bookVersion: { findMany: jest.fn().mockResolvedValue([]) },
     audioChapter: { findMany: jest.fn().mockResolvedValue([]) },
+    // Json-колонки `media-json-columns.ts` ищутся сырым запросом (LEGACY-421).
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const others: Record<string, { findMany: jest.Mock }> = {};
   const prisma = new Proxy(known, {
@@ -34,6 +36,7 @@ describe('MediaService (unit)', () => {
     prisma.bookVersion.findMany.mockResolvedValue([]);
     prisma.audioChapter.findMany.mockResolvedValue([]);
     for (const delegate of Object.values(others)) delegate.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([]);
   };
 
   beforeEach(() => {
@@ -86,6 +89,26 @@ describe('MediaService (unit)', () => {
       expect(updateArg.data.isDeleted).toBe(false);
       expect(updateArg.data.size).toBe(10);
       expect(res.isDeleted).toBe(false);
+    });
+
+    it('clears the mark date when it un-deletes an asset (LEGACY-421)', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({
+        id: 'id-1',
+        key: 'k',
+        url: 'old',
+        isDeleted: true,
+        deletedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      prisma.mediaAsset.update.mockResolvedValue({ id: 'id-1', isDeleted: false, deletedAt: null });
+      storage.getPublicUrl.mockReturnValue('http://u/static/k');
+
+      await service.confirm({ key: 'k', url: 'http://u/static/k' }, 'user-2');
+
+      expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
+      const { data } = prisma.mediaAsset.update.mock.calls[0][0] as {
+        data: { isDeleted: boolean; deletedAt: Date | null };
+      };
+      expect(data).toMatchObject({ isDeleted: false, deletedAt: null });
     });
 
     it('throws for invalid url (not http)', async () => {
@@ -157,12 +180,53 @@ describe('MediaService (unit)', () => {
       storage.delete.mockResolvedValue();
 
       const res = await service.remove('m1');
+      // `deletedAt` обязателен: без него stage 2 уборки строку не выберет никогда (LEGACY-421).
+      expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
       expect(prisma.mediaAsset.update).toHaveBeenCalledWith({
         where: { id: 'm1' },
-        data: { isDeleted: true },
+        data: { isDeleted: true, deletedAt: expect.any(Date) },
       });
       expect(storage.delete).toHaveBeenCalledWith('covers/x.jpg');
       expect(res).toEqual({ success: true, storageDeleted: true });
+    });
+
+    it('a repeated DELETE keeps the first deletedAt: the cleanup deadline does not move', async () => {
+      const first = new Date('2026-09-01T00:00:00Z');
+      prisma.mediaAsset.findUnique.mockResolvedValue({
+        id: 'm1',
+        key: 'covers/x.jpg',
+        isDeleted: true,
+        deletedAt: first,
+      });
+      prisma.mediaAsset.update.mockResolvedValue({});
+      storage.delete.mockResolvedValue();
+
+      await service.remove('m1');
+      expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
+      expect(prisma.mediaAsset.update).toHaveBeenCalledWith({
+        where: { id: 'm1' },
+        data: { isDeleted: true, deletedAt: first },
+      });
+    });
+
+    it('a re-confirmed asset gets a fresh deletedAt, not the stale one confirm left behind', async () => {
+      const stale = new Date('2026-01-01T00:00:00Z');
+      prisma.mediaAsset.findUnique.mockResolvedValue({
+        id: 'm1',
+        key: 'covers/x.jpg',
+        isDeleted: false,
+        deletedAt: stale,
+      });
+      prisma.mediaAsset.update.mockResolvedValue({});
+      storage.delete.mockResolvedValue();
+
+      const before = Date.now();
+      await service.remove('m1');
+      expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
+      const { data } = prisma.mediaAsset.update.mock.calls[0][0] as {
+        data: { deletedAt: Date };
+      };
+      expect(data.deletedAt.getTime()).toBeGreaterThanOrEqual(before);
     });
 
     // 🔴 Главная посадка LEGACY-060. Один запрос сносил обложку опубликованной книги,

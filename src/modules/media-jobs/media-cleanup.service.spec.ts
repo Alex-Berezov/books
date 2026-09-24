@@ -6,13 +6,21 @@ import {
   MEDIA_CLEANUP_LOCK_KEY,
   MediaCleanupService,
 } from './media-cleanup.service';
-import { MEDIA_FOREIGN_KEY_RELATIONS } from '../media/media-references';
+import { MEDIA_FOREIGN_KEY_RELATIONS, MEDIA_UNREFERENCED_BY_FK } from '../media/media-references';
 
 interface Setup {
   locked?: boolean;
   fkCandidates?: Array<{ id: string; key: string }>;
   hardCandidates?: Array<{ id: string; key: string }>;
   urlRows?: Record<string, Array<Record<string, unknown>>>;
+  /** Ключи, которые сырой запрос найдёт в тексте полей-текстов или Json. */
+  textKeys?: string[];
+  /** Ассеты, которые к моменту удаления строки прикрепили или вернули: `deleteMany` даёт 0. */
+  attachedIds?: string[];
+  /** Ассеты stage 2, на которые к моменту удаления сослались внешним ключом. */
+  fkReferencedIds?: string[];
+  /** Ключи, чьи файлы есть в хранилище; по умолчанию — все. */
+  storedKeys?: string[];
 }
 
 const makeService = ({
@@ -20,18 +28,36 @@ const makeService = ({
   fkCandidates = [],
   hardCandidates = [],
   urlRows = {},
+  textKeys = [],
+  attachedIds = [],
+  fkReferencedIds = [],
+  storedKeys,
 }: Setup = {}) => {
   const queryRaw = jest.fn().mockResolvedValue([{ locked }]);
   const tx = { $queryRaw: queryRaw };
   const mediaAsset = {
-    findMany: jest.fn((args: { where: { isDeleted: boolean } }) =>
-      Promise.resolve(args.where.isDeleted ? hardCandidates : fkCandidates),
+    findMany: jest.fn(
+      (args: { where: { isDeleted?: boolean; NOT?: unknown; id?: { in: string[] } } }) =>
+        Promise.resolve(
+          args.where.NOT
+            ? (args.where.id?.in ?? [])
+                .filter((id) => fkReferencedIds.includes(id))
+                .map((id) => ({ id }))
+            : args.where.isDeleted
+              ? hardCandidates
+              : fkCandidates,
+        ),
     ),
     updateMany: jest.fn((args: { where: { id: { in: string[] } } }) =>
       Promise.resolve({ count: args.where.id.in.length }),
     ),
-    delete: jest.fn().mockResolvedValue({}),
+    deleteMany: jest.fn((args: { where: { id: string } }) =>
+      Promise.resolve({ count: attachedIds.includes(args.where.id) ? 0 : 1 }),
+    ),
   };
+  // Короткая транзакция удаления строки stage 2 — отдельная от транзакции замка.
+  const forUpdate = jest.fn().mockResolvedValue([]);
+  const rowTx = { $queryRaw: forUpdate, mediaAsset };
   // Любой делегат адресной колонки: отдаёт строки `urlRows`, чьи поля содержат ключ из `OR`.
   // Список моделей не выписывается — новая колонка в перечне не требует правки мока.
   const urlDelegates: Record<string, { findMany: jest.Mock }> = {};
@@ -52,11 +78,23 @@ const makeService = ({
         ),
       }),
   });
-  const $transaction = jest.fn((fn: (client: typeof tx) => Promise<unknown>) => fn(tx));
-  const prisma = new Proxy({ $transaction, mediaAsset } as Record<string, unknown>, {
-    get: (target, name: string) => target[name] ?? (urlProxy as Record<string, unknown>)[name],
-  }) as unknown as PrismaService;
-  const storage = { delete: jest.fn().mockResolvedValue(undefined) };
+  const $transaction = jest.fn((fn: (client: unknown) => Promise<unknown>) =>
+    fn($transaction.mock.calls.length === 1 ? tx : rowTx),
+  );
+  // Сырой поиск по полям-текстам и Json: первый параметр — пачка ключей.
+  const textQuery = jest.fn((_sql: TemplateStringsArray, keys: string[]) =>
+    Promise.resolve(keys.filter((key) => textKeys.includes(key)).map((key) => ({ key }))),
+  );
+  const prisma = new Proxy(
+    { $transaction, mediaAsset, $queryRaw: textQuery } as Record<string, unknown>,
+    {
+      get: (target, name: string) => target[name] ?? (urlProxy as Record<string, unknown>)[name],
+    },
+  ) as unknown as PrismaService;
+  const storage = {
+    delete: jest.fn().mockResolvedValue(undefined),
+    exists: jest.fn((key: string) => Promise.resolve(storedKeys ? storedKeys.includes(key) : true)),
+  };
   const service = new MediaCleanupService(prisma, storage as unknown as StorageService);
   return {
     service,
@@ -65,6 +103,8 @@ const makeService = ({
     mediaAsset,
     storage,
     urlDelegates,
+    textQuery,
+    forUpdate,
   };
 };
 
@@ -88,7 +128,7 @@ describe('MediaCleanupService lock (LEGACY-413)', () => {
     await expect(service.cleanupIfIdle()).resolves.toBeNull();
     expect(mediaAsset.findMany).not.toHaveBeenCalled();
     expect(mediaAsset.updateMany).not.toHaveBeenCalled();
-    expect(mediaAsset.delete).not.toHaveBeenCalled();
+    expect(mediaAsset.deleteMany).not.toHaveBeenCalled();
     expect(storage.delete).not.toHaveBeenCalled();
   });
 
@@ -121,15 +161,17 @@ describe('MediaCleanupService lost lock (LEGACY-413)', () => {
         { id: 'a3', key: 'k3' },
       ],
     });
-    // Замок, первый `SELECT 1` проходит, второй видит закрытую по timeout транзакцию.
+    // Замок; `SELECT 1` перед перепроверкой ссылок и перед первым файлом проходят, третий
+    // видит закрытую по timeout транзакцию.
     queryRaw
       .mockResolvedValueOnce([{ locked: true }])
+      .mockResolvedValueOnce([{ '?column?': 1 }])
       .mockResolvedValueOnce([{ '?column?': 1 }])
       .mockRejectedValueOnce(new Error('Transaction already closed'));
 
     await expect(service.cleanup()).rejects.toThrow('Transaction already closed');
     expect(storage.delete).toHaveBeenCalledTimes(1);
-    expect(mediaAsset.delete).toHaveBeenCalledTimes(1);
+    expect(mediaAsset.deleteMany).toHaveBeenCalledTimes(1);
   });
 
   it('does not mark soft-deletes once the lock transaction is closed', async () => {
@@ -217,26 +259,108 @@ describe('MediaCleanupService rights references without FK (LEGACY-413)', () => 
 });
 
 describe('MediaCleanupService stage 2 failures', () => {
-  it('survives a missing storage object and a row already deleted by someone else', async () => {
-    const { service, mediaAsset, storage } = makeService({
+  it('counts a storage failure, and keeps the file of a row attached meanwhile', async () => {
+    const { service, storage } = makeService({
       hardCandidates: [
-        { id: 'gone-file', key: 'k1' },
-        { id: 'gone-row', key: 'k2' },
+        { id: 'broken-storage', key: 'k1' },
+        { id: 'attached', key: 'k2' },
         { id: 'ok', key: 'k3' },
       ],
+      attachedIds: ['attached'],
     });
     storage.delete.mockImplementation((key: string) =>
-      key === 'k1' ? Promise.reject(new Error('NoSuchKey')) : Promise.resolve(),
-    );
-    mediaAsset.delete.mockImplementation((args: { where: { id: string } }) =>
-      args.where.id === 'gone-row'
-        ? Promise.reject(Object.assign(new Error('Record not found'), { code: 'P2025' }))
-        : Promise.resolve({}),
+      key === 'k1' ? Promise.reject(new Error('AccessDenied')) : Promise.resolve(),
     );
 
     const result = await service.cleanup();
+    expect(storage.delete.mock.calls).toEqual([['k1'], ['k3']]);
     expect(result.storageErrors).toBe(1);
-    expect(result.storageFilesRemoved).toBe(2);
+    expect(result.storageFilesRemoved).toBe(1);
     expect(result.hardDeleted).toBe(2);
+  });
+});
+
+describe('MediaCleanupService stage 2 row delete (LEGACY-421, FK window)', () => {
+  it('locks the row, re-checks the flag and every foreign key in the delete itself, then removes the file', async () => {
+    const { service, storage, mediaAsset, forUpdate } = makeService({
+      hardCandidates: [{ id: 'a1', key: 'k1' }],
+    });
+
+    await service.cleanup();
+
+    const [strings, id] = forUpdate.mock.calls[0] as [TemplateStringsArray, string];
+    expect(strings.join('?')).toContain('FOR UPDATE');
+    expect(id).toBe('a1');
+    expect(mediaAsset.deleteMany.mock.calls).toEqual([
+      [{ where: { id: 'a1', isDeleted: true, ...MEDIA_UNREFERENCED_BY_FK } }],
+    ]);
+    expect(forUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mediaAsset.deleteMany.mock.invocationCallOrder[0],
+    );
+    expect(mediaAsset.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      storage.delete.mock.invocationCallOrder[0],
+    );
+  });
+});
+
+describe('MediaCleanupService stage 2 re-check (LEGACY-421)', () => {
+  const marked = [
+    { id: 'orphan', key: 'k/orphan.webp' },
+    { id: 'in-html', key: 'k/html.webp' },
+    { id: 'in-json', key: 'k/json.webp' },
+    { id: 'by-fk', key: 'k/fk.webp' },
+  ];
+  const referenced = {
+    textKeys: ['k/html.webp', 'k/json.webp'],
+    fkReferencedIds: ['by-fk'],
+  };
+
+  it('deletes only the file nobody references and restores the rest', async () => {
+    const { service, storage, mediaAsset } = makeService({ hardCandidates: marked, ...referenced });
+
+    const result = await service.cleanup();
+
+    expect(storage.delete.mock.calls).toEqual([['k/orphan.webp']]);
+    expect(mediaAsset.deleteMany).toHaveBeenCalledTimes(1);
+    expect(mediaAsset.deleteMany.mock.calls[0][0]).toMatchObject({ where: { id: 'orphan' } });
+    expect(result.hardDeleted).toBe(1);
+    expect(mediaAsset.updateMany).toHaveBeenCalledTimes(1);
+    expect(mediaAsset.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['in-html', 'in-json', 'by-fk'] }, isDeleted: true },
+      data: { isDeleted: false, deletedAt: null },
+    });
+  });
+
+  it('leaves a referenced asset without a file marked: neither restored nor deleted', async () => {
+    const { service, storage, mediaAsset } = makeService({
+      hardCandidates: [{ id: 'in-html', key: 'k/html.webp' }],
+      textKeys: referenced.textKeys,
+      storedKeys: [],
+    });
+
+    await service.cleanup();
+
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(mediaAsset.deleteMany).not.toHaveBeenCalled();
+    expect(mediaAsset.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('dry run lists only unreferenced assets and writes nothing', async () => {
+    const { service, storage, mediaAsset } = makeService({ hardCandidates: marked, ...referenced });
+
+    const result = await service.cleanup({ dryRun: true });
+
+    expect(result.hardDeletedCandidates).toEqual(['orphan']);
+    expect(result.hardDeleted).toBe(1);
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(mediaAsset.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a failed re-check aborts the run before any file is removed', async () => {
+    const { service, storage, textQuery } = makeService({ hardCandidates: marked });
+    textQuery.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(service.cleanup()).rejects.toThrow('connection reset');
+    expect(storage.delete).not.toHaveBeenCalled();
   });
 });

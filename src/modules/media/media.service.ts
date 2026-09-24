@@ -56,7 +56,10 @@ export class MediaService {
             width: dto.width,
             height: dto.height,
             hash: dto.hash,
+            // Ожившему ассету дата пометки не принадлежит (LEGACY-421): stage 2 и повторный
+            // DELETE читают её как срок.
             isDeleted: false,
+            deletedAt: null,
           },
         });
         await afterCommit(updated.id);
@@ -127,12 +130,20 @@ export class MediaService {
       });
     }
 
-    await this.prisma.mediaAsset.update({ where: { id }, data: { isDeleted: true } });
+    // `deletedAt` обязателен: без него stage 2 уборки строку не выбирает никогда (LEGACY-421).
+    await this.prisma.mediaAsset.update({
+      where: { id },
+      // Повторный DELETE срок не отодвигает: у ассета, помеченного сейчас, дата первой пометки
+      // остаётся. Проверка `isDeleted` страхует от даты, оставшейся у ожившей строки.
+      data: {
+        isDeleted: true,
+        deletedAt: asset.isDeleted && asset.deletedAt ? asset.deletedAt : new Date(),
+      },
+    });
 
-    // Ошибка хранилища больше не проглатывается. Запись остаётся помеченной удалённой
-    // ради идемпотентности повтора, но объект в этом случае живёт дальше и не находится
-    // ни одним критерием по базе — это сирота, и о ней должно остаться свидетельство
-    // (LEGACY-058: критерий сироты по FK такие объекты не видит в принципе).
+    // Ошибка хранилища не проглатывается. Запись остаётся помеченной удалённой; включённая уборка
+    // через `hardDays` сделает одну повторную попытку, а при новом отказе удалит строку и оставит
+    // объект сиротой с error-логом. Свидетельство до тех пор — этот лог.
     let storageDeleted = true;
     try {
       await this.storage.delete(key);
@@ -140,8 +151,8 @@ export class MediaService {
       storageDeleted = false;
       this.logger.error(
         `Storage object was not deleted for media ${id} (key: ${key}). ` +
-          'The database record is marked deleted, so the object is now an orphan and ' +
-          'has to be removed by hand.',
+          'The database record is marked deleted; the media cleanup, if enabled, tries once more ' +
+          'after MEDIA_CLEANUP_HARD_DAYS, otherwise the object has to be removed by hand.',
         error instanceof Error ? error.stack : String(error),
       );
     }

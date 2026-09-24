@@ -8,6 +8,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { Readable } from 'node:stream';
 import { StorageService, StorageSaveOptions, StorageStat } from './storage.interface';
+import { encodeKeyPath } from './storage-key';
 
 @Injectable()
 export class R2StorageService implements StorageService {
@@ -136,9 +137,7 @@ export class R2StorageService implements StorageService {
   }
 
   getPublicUrl(key: string): string {
-    const objectKey = this.prefixedKey(key);
-    const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
-    return `${this.publicBaseUrl}/${encodedKey}`;
+    return `${this.publicBaseUrl}/${encodeKeyPath(this.prefixedKey(key))}`;
   }
 
   getLocalPath(_key: string): string | null {

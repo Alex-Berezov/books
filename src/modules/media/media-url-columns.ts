@@ -31,8 +31,8 @@ export interface MediaUrlColumn {
  * приватного хранилища прав, которые пишет сервер; их перечень с причинами лежит в сторож-спеке
  * `media-references.spec.ts`, и он сверяет оба списка со схемой через `Prisma.dmmf`.
  *
- * ⚠️ HTML- и Json-поля (текст главы с картинкой из редактора, `Page.sections`) здесь
- * не проверяются вовсе и сторожем не ловятся — `LEGACY-421`.
+ * Поля-тексты (HTML редактора) и Json ищутся не здесь, а SQL-поиском по таблицам
+ * `media-text-columns.ts` и `media-json-columns.ts` (`LEGACY-421`).
  */
 export const MEDIA_URL_COLUMNS: readonly MediaUrlColumn[] = [
   {

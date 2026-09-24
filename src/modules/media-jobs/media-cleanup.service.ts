@@ -3,8 +3,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
 import {
   MEDIA_UNREFERENCED_BY_FK,
+  MEDIA_JSON_REFERENCE_FIELDS,
+  MEDIA_TEXT_REFERENCE_FIELDS,
   MEDIA_URL_REFERENCE_FIELDS,
-  findUrlReferencedKeys,
+  findStringReferencedKeys,
+  findReferencedAssetIds,
 } from '../media/media-references';
 
 export interface CleanupResult {
@@ -21,7 +24,11 @@ export interface CleanupResult {
    * всегда, а не только в `dryRun`.
    */
   scanned: number;
-  /** Из посмотренных: сколько спасла проверка ссылок по URL (`MEDIA_URL_REFERENCE_FIELDS`). */
+  /**
+   * Из посмотренных stage 1: сколько спасла ссылка строкой — адрес, текст или Json
+   * (`MEDIA_URL_REFERENCE_FIELDS`, `MEDIA_TEXT_REFERENCE_FIELDS`, `MEDIA_JSON_REFERENCE_FIELDS`).
+   * Имя поля — контракт ответа.
+   */
   skippedByUrlReference: number;
   softDeletedCandidates?: string[];
   hardDeletedCandidates?: string[];
@@ -68,11 +75,15 @@ export class MediaCleanupService {
    * Stage 1: MediaAsset rows with no inbound references older than `softDays` days
    *          and not yet soft-deleted → set isDeleted=true, deletedAt=now.
    * Stage 2: MediaAsset rows already soft-deleted and deletedAt older than `hardDays`
-   *          → remove storage file and delete row.
+   *          → re-check references by the same rule (LEGACY-421): a referenced asset with its
+   *          file is restored, one without its file stays marked; the rest lose the row first
+   *          (short transaction, `FOR UPDATE`, foreign keys re-checked in the delete itself) and
+   *          the storage file after the commit.
    *
    * All five foreign keys to MediaAsset are `ON DELETE SET NULL`: deleting a referenced row
-   * does not fail, it silently nulls the reference. Stage 1 therefore has to see every one of
-   * them (`MEDIA_UNREFERENCED_BY_FK`) plus every URL column — nothing downstream refuses.
+   * does not fail, it silently nulls the reference. Both stages therefore see every one of
+   * them (`MEDIA_UNREFERENCED_BY_FK`) plus every address, text and Json column — nothing
+   * downstream refuses.
    */
   async cleanup(options?: CleanupOptions): Promise<CleanupResult> {
     const result = await this.cleanupIfIdle(options);
@@ -143,7 +154,7 @@ export class MediaCleanupService {
       select: { id: true, key: true },
     });
 
-    const referencedKeys = await findUrlReferencedKeys(
+    const referencedKeys = await findStringReferencedKeys(
       this.prisma,
       fkCandidates.map((asset) => asset.key),
     );
@@ -154,8 +165,13 @@ export class MediaCleanupService {
       // Не «шум», а полезный сигнал: это ровно те объекты, которые прежний критерий
       // пометил бы на удаление.
       this.logger.log(
-        `Skipped ${skippedByUrlReference} asset(s) referenced only by a URL or key column ` +
-          `(${MEDIA_URL_REFERENCE_FIELDS.length} columns checked, media-url-columns.ts).`,
+        `Skipped ${skippedByUrlReference} asset(s) referenced only by a string: address, text ` +
+          `or Json (${
+            MEDIA_URL_REFERENCE_FIELDS.length +
+            MEDIA_TEXT_REFERENCE_FIELDS.length +
+            MEDIA_JSON_REFERENCE_FIELDS.length
+          } ` +
+          `columns checked, media-references.ts).`,
       );
     }
 
@@ -173,7 +189,7 @@ export class MediaCleanupService {
     }
 
     // Stage 2: find already soft-deleted assets past hardCutoff
-    const hardCandidates = await this.prisma.mediaAsset.findMany({
+    const markedCandidates = await this.prisma.mediaAsset.findMany({
       where: {
         isDeleted: true,
         deletedAt: { lt: hardCutoff, not: null },
@@ -181,25 +197,49 @@ export class MediaCleanupService {
       select: { id: true, key: true },
     });
 
+    // 🔴 Пометка устаревает (LEGACY-421): за `hardDays` на ассет могли сослаться. Перед
+    // удалением — то же правило, что в stage 1; ошибка проверки обрывает прогон. Окно между
+    // этой проверкой и удалением закрыто только для внешних ключей (`hardDeleteRow`), для
+    // текстов и Json оно открыто, как и в stage 1.
+    if (!dryRun && markedCandidates.length > 0) await assertLockHeld();
+    const referencedIds = await findReferencedAssetIds(this.prisma, markedCandidates);
+    const hardCandidates = markedCandidates.filter((asset) => !referencedIds.has(asset.id));
+    if (!dryRun && referencedIds.size > 0) {
+      await this.keepReferenced(
+        markedCandidates.filter((asset) => referencedIds.has(asset.id)),
+        assertLockHeld,
+      );
+    }
+
     let hardDeleted = 0;
     let storageFilesRemoved = 0;
     let storageErrors = 0;
     if (!dryRun) {
       for (const asset of hardCandidates) {
-        // Вне обоих `try`: ошибка закрытой транзакции обязана оборвать цикл, а не уйти в warn.
+        // Вне `try`: ошибка закрытой транзакции замка обязана оборвать цикл, а не уйти в warn.
         await assertLockHeld();
+        let isRowDeleted = false;
+        try {
+          isRowDeleted = await this.hardDeleteRow(asset.id);
+        } catch (e) {
+          this.logger.warn(`Failed to hard-delete MediaAsset ${asset.id}: ${(e as Error).message}`);
+          continue;
+        }
+        if (!isRowDeleted) {
+          this.logger.log(`MediaAsset ${asset.id} was attached or restored meanwhile; kept.`);
+          continue;
+        }
+        hardDeleted += 1;
+        // Строки уже нет: отказ хранилища оставляет объект сиротой, и след — только этот лог.
         try {
           await this.storage.delete(asset.key);
           storageFilesRemoved += 1;
         } catch (e) {
           storageErrors += 1;
-          this.logger.warn(`Failed to remove storage object ${asset.key}: ${(e as Error).message}`);
-        }
-        try {
-          await this.prisma.mediaAsset.delete({ where: { id: asset.id } });
-          hardDeleted += 1;
-        } catch (e) {
-          this.logger.warn(`Failed to hard-delete MediaAsset ${asset.id}: ${(e as Error).message}`);
+          this.logger.error(
+            `Storage object ${asset.key} of deleted MediaAsset ${asset.id} was not removed and ` +
+              `is now an orphan; remove it by hand: ${(e as Error).message}`,
+          );
         }
       }
     }
@@ -213,7 +253,7 @@ export class MediaCleanupService {
       hardDeleted: dryRun ? hardCandidates.length : hardDeleted,
       storageFilesRemoved,
       storageErrors,
-      scanned: fkCandidates.length + hardCandidates.length,
+      scanned: fkCandidates.length + markedCandidates.length,
       skippedByUrlReference,
     };
     if (dryRun) {
@@ -232,5 +272,54 @@ export class MediaCleanupService {
       totalMarkedSoftDeleted: this.totalMarkedSoftDeleted,
       totalHardDeleted: this.totalHardDeleted,
     };
+  }
+
+  /**
+   * Удаляет строку, только если она всё ещё помечена и ни один внешний ключ на неё не ссылается.
+   * `FOR UPDATE` сериализует удаление с прикреплением: без него прикрепление, закоммиченное
+   * за блокировкой `KEY SHARE`, не перепроверяется, и `onDelete: SetNull` молча теряет ссылку
+   * (решение арбитра T53). Файл удаляется после коммита, вне транзакции.
+   */
+  private async hardDeleteRow(id: string): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "MediaAsset" WHERE id = ${id} FOR UPDATE`;
+      const res = await tx.mediaAsset.deleteMany({
+        where: { id, isDeleted: true, ...MEDIA_UNREFERENCED_BY_FK },
+      });
+      return res.count === 1;
+    });
+  }
+
+  /**
+   * Занятый ассет с файлом возвращается в медиатеку. Без файла (его уже удалил ручной
+   * `DELETE /media/:id`) — остаётся помеченным: воскресший ассет показал бы битую картинку,
+   * а удаление строки стёрло бы след. Сбой хранилища — тоже «не трогать».
+   */
+  private async keepReferenced(
+    assets: ReadonlyArray<{ id: string; key: string }>,
+    assertLockHeld: () => Promise<void>,
+  ): Promise<void> {
+    const restore: string[] = [];
+    for (const asset of assets) {
+      let hasFile = false;
+      try {
+        hasFile = await this.storage.exists(asset.key);
+      } catch (e) {
+        this.logger.warn(`Cannot check storage object ${asset.key}: ${(e as Error).message}`);
+        continue;
+      }
+      if (hasFile) restore.push(asset.id);
+      else
+        this.logger.warn(
+          `MediaAsset ${asset.id} is referenced but its file is gone; left marked, not deleted.`,
+        );
+    }
+    if (restore.length === 0) return;
+    await assertLockHeld();
+    await this.prisma.mediaAsset.updateMany({
+      where: { id: { in: restore }, isDeleted: true },
+      data: { isDeleted: false, deletedAt: null },
+    });
+    this.logger.log(`Restored ${restore.length} referenced asset(s) marked for deletion.`);
   }
 }
