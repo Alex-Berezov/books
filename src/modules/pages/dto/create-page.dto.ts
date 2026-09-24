@@ -10,10 +10,13 @@ import {
   MinLength,
   ValidateNested,
   IsUUID,
+  MaxLength,
 } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SeoInputDto } from './seo-input.dto';
+import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class CreatePageDto {
   @ApiProperty({ description: 'Page slug', pattern: SLUG_PATTERN })
@@ -32,6 +35,7 @@ export class CreatePageDto {
 
   @ApiProperty({ description: 'Page content (markdown/HTML/text)' })
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.body)
   content!: string;
 
   @ApiPropertyOptional({ description: 'SEO H1 heading (overrides title for display purposes)' })
@@ -42,6 +46,7 @@ export class CreatePageDto {
   @ApiPropertyOptional({ description: 'Short description for overview cards/previews' })
   @IsOptional()
   @IsString()
+  @MaxLength(SHORT_TEXT_MAX_LENGTH)
   shortDescription?: string;
 
   @ApiPropertyOptional({

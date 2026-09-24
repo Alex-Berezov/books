@@ -11,6 +11,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class ImportTagTranslationDto {
   @ApiProperty()
@@ -26,6 +27,7 @@ export class ImportTagTranslationDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string | null;
 
   @ApiPropertyOptional()

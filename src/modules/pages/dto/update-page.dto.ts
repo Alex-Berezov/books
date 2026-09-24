@@ -9,10 +9,13 @@ import {
   Matches,
   MinLength,
   ValidateNested,
+  MaxLength,
 } from 'class-validator';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SeoInputDto } from './seo-input.dto';
+import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class UpdatePageDto {
   @ApiPropertyOptional({ description: 'Page slug', pattern: SLUG_PATTERN })
@@ -35,6 +38,7 @@ export class UpdatePageDto {
   @ApiPropertyOptional({ description: 'Page content (markdown/HTML/text)' })
   @IsOptional()
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.body)
   content?: string;
 
   @ApiPropertyOptional({
@@ -51,6 +55,7 @@ export class UpdatePageDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(SHORT_TEXT_MAX_LENGTH)
   shortDescription?: string | null;
 
   @ApiPropertyOptional({

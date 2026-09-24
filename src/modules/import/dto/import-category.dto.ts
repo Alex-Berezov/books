@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { CategoryType } from '@prisma/client';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class ImportCategoryTranslationDto {
   @ApiProperty()
@@ -28,6 +29,7 @@ export class ImportCategoryTranslationDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string | null;
 
   @ApiPropertyOptional()

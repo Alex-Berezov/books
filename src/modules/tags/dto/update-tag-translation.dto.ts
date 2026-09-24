@@ -17,6 +17,7 @@ import { SeoInputDto } from '../../pages/dto/seo-input.dto';
 // Один класс на оба DTO: Swagger именует схему по имени класса, и второе объявление
 // с тем же именем молча вытесняло первое из `components.schemas` (`LEGACY-016`).
 import { TagFaqDto } from './create-tag-translation.dto';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class UpdateTagTranslationDto {
   @ApiPropertyOptional({ enum: Object.values(Language) })
@@ -50,6 +51,7 @@ export class UpdateTagTranslationDto {
   @ApiPropertyOptional({ description: 'HTML description for the tag page' })
   @IsOptional()
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string | null;
 
   @ApiPropertyOptional({ description: 'H1 heading for the tag page' })

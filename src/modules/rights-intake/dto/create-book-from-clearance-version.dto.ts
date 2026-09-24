@@ -13,6 +13,8 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import { BookType } from '@prisma/client';
+import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class CreateBookFromClearanceVersionDto {
   @ApiProperty({ enum: Language, description: 'Language of the book version' })
@@ -47,6 +49,7 @@ export class CreateBookFromClearanceVersionDto {
   // валидация одного поля означала бы 201 в одной форме и 400 в другой на одинаковом теле.
   @ValidateIf((_o, value) => value !== undefined)
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string | null;
 
   /**
@@ -118,6 +121,7 @@ export class CreateBookFromClearanceVersionDto {
   @ApiPropertyOptional({ description: 'Short description' })
   @IsOptional()
   @IsString()
+  @MaxLength(SHORT_TEXT_MAX_LENGTH)
   shortDescription?: string | null;
 
   @ApiPropertyOptional({ description: 'Short summary' })

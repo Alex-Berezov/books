@@ -4,6 +4,18 @@
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
+    "^.+\\.js$": [
+      "ts-jest",
+      {
+        "isolatedModules": true,
+        "tsconfig": {
+          "allowJs": true,
+          "module": "commonjs",
+          "target": "es2022",
+          "esModuleInterop": true
+        }
+      }
+    ],
     "^.+\\.(t|j)s$": [
       "ts-jest",
       {
@@ -11,6 +23,10 @@
       }
     ]
   },
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(htmlparser2|domutils|dom-serializer|domhandler|domelementtype|entities)/)(?!.*/node_modules/(htmlparser2|domutils|dom-serializer|domhandler|domelementtype|entities)/)"
+  ],
+  "_comment_transformIgnorePatterns": "sanitize-html 2.17.6+ тянет ESM-only htmlparser2 12 и его соседей; прод на Node 22 грузит их через require(esm), а CJS-среде Jest их надо транспилировать (LEGACY-414).",
   "maxWorkers": 2,
   "_comment_testTimeout": "Дефолтные 5 секунд Jest относятся и к beforeAll, а там поднимается всё приложение. На CI это укладывается, на медленной машине — нет, и падение выглядит как сломанный тест, а не как медленный старт (08.08.2026: media-jobs падал целиком на семи тестах из семи). 30 секунд хватает старту и по-прежнему ловит настоящее зависание.",
   "testTimeout": 30000,

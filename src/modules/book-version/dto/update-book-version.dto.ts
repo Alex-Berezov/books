@@ -22,6 +22,8 @@ import {
   BookVersionSymbolDto,
 } from '../../../shared/dto/book-version-json.dto';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
+import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @ApiPropertyOptional({ enum: Object.values(PrismaLanguage), example: 'es' })
@@ -55,6 +57,7 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   // `null` в колонку `NOT NULL` не ложится: его отбивает валидатор, а не Prisma.
   @ValidateIf((_o, value) => value !== undefined)
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string;
 
   @ApiPropertyOptional({ example: 'https://cdn.example.com/covers/hp1-new.jpg' })
@@ -175,6 +178,7 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(SHORT_TEXT_MAX_LENGTH)
   shortDescription?: string | null;
 
   @ApiPropertyOptional({

@@ -12,6 +12,7 @@ import {
 import { Type } from 'class-transformer';
 import { UpdateSeoDto } from '../../seo/dto/update-seo.dto';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class AuthorQuoteDto {
   @ApiProperty({ description: 'Text of the quote' })
@@ -56,6 +57,7 @@ export class AuthorTranslationDto {
   @ApiPropertyOptional({ description: 'Biography of the author in this language' })
   @IsOptional()
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   biography?: string;
 
   @ApiPropertyOptional({

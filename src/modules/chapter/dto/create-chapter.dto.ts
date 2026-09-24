@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class CreateChapterDto {
   @ApiProperty({
@@ -21,5 +22,6 @@ export class CreateChapterDto {
     example: 'Once upon a time...',
   })
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.body)
   content!: string;
 }

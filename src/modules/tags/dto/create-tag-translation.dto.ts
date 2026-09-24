@@ -14,6 +14,7 @@ import {
 import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class TagFaqDto {
   @ApiProperty({ description: 'Question text' })
@@ -43,6 +44,7 @@ export class CreateTagTranslationDto {
   @ApiPropertyOptional({ description: 'HTML description for the tag page' })
   @IsOptional()
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string | null;
 
   @ApiPropertyOptional({ description: 'H1 heading for the tag page' })

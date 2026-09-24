@@ -21,6 +21,8 @@ import {
   BookVersionSymbolDto,
 } from '../../../shared/dto/book-version-json.dto';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
+import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
+import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class CreateBookVersionDto {
   @ApiProperty({
@@ -61,6 +63,7 @@ export class CreateBookVersionDto {
   // `@IsOptional()` пропустил бы его молча и превратил бы отказ в 500.
   @ValidateIf((_o, value) => value !== undefined)
   @IsString()
+  @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string;
 
   @ApiPropertyOptional({
@@ -163,6 +166,7 @@ export class CreateBookVersionDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(SHORT_TEXT_MAX_LENGTH)
   shortDescription?: string | null;
 
   @ApiPropertyOptional({
