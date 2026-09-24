@@ -27,9 +27,9 @@
     "check:response-schema:snapshot": "node scripts/check-response-schema.mjs --update",
     "check:env": "node scripts/check-env.mjs",
     "check:env:self-test": "node scripts/check-env.mjs --self-test",
-    "test": "jest --maxWorkers=50%",
+    "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage --maxWorkers=50%",
+    "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --forceExit",
     "test:e2e:parallel": "NODE_OPTIONS=\"--max-old-space-size=8192 --expose-gc\" jest --config ./test/jest-e2e.json --forceExit --logHeapUsage",
@@ -172,6 +172,8 @@
       }
     },
     "testEnvironment": "node",
+    "maxWorkers": 4,
+    "workerIdleMemoryLimit": "1GB",
     "transformIgnorePatterns": [
       "/node_modules/(?!(htmlparser2|domutils|dom-serializer|domhandler|domelementtype|entities)/)(?!.*/node_modules/(htmlparser2|domutils|dom-serializer|domhandler|domelementtype|entities)/)"
     ]
