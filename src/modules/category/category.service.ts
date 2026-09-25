@@ -178,6 +178,7 @@ export class CategoryService {
         slug: item.slug,
         key: item.key,
         type: item.type,
+        parentId: item.parentId,
         booksCount: countMap.get(item.id) || 0,
         langBookCount: langTranslation?.bookCount,
         autoIndexable: langTranslation?.autoIndexable,

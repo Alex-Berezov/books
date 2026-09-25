@@ -1873,6 +1873,49 @@ describe('CategoryService', () => {
     expect(res.data[0].langBookCount).toBe(1);
   });
 
+  // LEGACY-416. Публичный список отдавал термины без `parentId`, поэтому боковая
+  // колонка страницы таксономии (`TaxonomyDetailPage.tsx`) сравнивала
+  // `undefined === category.id` и `undefined === null` — оба условия ложны
+  // всегда, и дети/соседи не отрисовывались ни на одной странице категории.
+  it('LEGACY-416: list проецирует parentId, включая null для корневого термина', async () => {
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+    prisma.category.count.mockResolvedValue(2);
+    prisma.category.findMany.mockResolvedValue([
+      {
+        id: 'root',
+        name: 'Fiction',
+        slug: 'fiction',
+        key: 'fiction',
+        type: 'category',
+        parentId: null,
+        indexable: true,
+        isVisible: true,
+        sortOrder: 0,
+        translations: [],
+      },
+      {
+        id: 'child',
+        name: 'Poetry',
+        slug: 'poetry',
+        key: 'poetry',
+        type: 'category',
+        parentId: 'root',
+        indexable: true,
+        isVisible: true,
+        sortOrder: 0,
+        translations: [],
+      },
+    ]);
+    prisma.$queryRaw.mockResolvedValue([]);
+
+    const res = await service.list(1, 20, 'category');
+
+    expect(res.data.find((item) => item.id === 'root')?.parentId).toBeNull();
+    expect(res.data.find((item) => item.id === 'child')?.parentId).toBe('root');
+  });
+
   // LEGACY-117. `Prisma.join([])` бросает TypeError на сборке условия, и публичный
   // список уходил в 500 на пустой выборке. Проверяется именно **отсутствие вызова**
   // `$queryRaw`: код, который зовёт raw и глотает исключение, тоже вернёт пустой

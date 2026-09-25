@@ -4843,6 +4843,10 @@
           "name": {
             "type": "string"
           },
+          "parentId": {
+            "nullable": true,
+            "type": "string"
+          },
           "slug": {
             "type": "string"
           },
@@ -4871,6 +4875,7 @@
           "slug",
           "key",
           "type",
+          "parentId",
           "booksCount",
           "indexable",
           "isVisible",

@@ -70,6 +70,9 @@ export class CategoryResponse {
   @ApiProperty({ enum: CategoryType })
   type: CategoryType;
 
+  @ApiProperty({ type: String, nullable: true })
+  parentId: string | null;
+
   @ApiProperty({ type: Number })
   booksCount: number;
 
