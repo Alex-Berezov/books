@@ -112,6 +112,32 @@ const slugLockValues = (queryRaw: jest.Mock): unknown[] =>
     })
     .flatMap((call): unknown[] => call.slice(1));
 
+/**
+ * 🔴 `LEGACY-320`. `update` читает свою строку тем же запросом, что её запирает
+ * (`SELECT ... FOR NO KEY UPDATE`), а не `category.findUnique`. Ответ на этот запрос
+ * берётся из `category.findUnique` того же клиента — у спеки остаётся одна фикстура
+ * «что видит транзакция»; прочие `$queryRaw` (замки дерева и слага) ничего не отдают.
+ */
+const isRowLock = (parts?: { raw?: readonly string[] }): boolean =>
+  (parts?.raw ?? []).join(' ').includes('FOR NO KEY UPDATE');
+
+type RowLockClient = { category: { findUnique: jest.Mock } };
+
+const lockedRow = async (client: RowLockClient, values: unknown[]): Promise<unknown[]> => {
+  const row: unknown = await client.category.findUnique({
+    where: { id: values[0] },
+    select: { id: true, type: true, slug: true, parentId: true },
+  });
+  return row ? [row] : [];
+};
+
+// ⚠️ Клиент отдаётся функцией с явным типом результата: спеки передают `() => tx`
+// изнутри инициализатора самого `tx`, и без аннотации тип выводится как `any`.
+const rowLockVia = (client: () => RowLockClient) =>
+  jest.fn((parts?: { raw?: readonly string[] }, ...values: unknown[]) =>
+    isRowLock(parts) ? lockedRow(client(), values) : Promise.resolve([]),
+  );
+
 describe('CategoryService', () => {
   let service: CategoryService;
   let prisma: PrismaStub;
@@ -121,6 +147,7 @@ describe('CategoryService', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    prisma.$queryRaw = rowLockVia(() => prisma);
     prisma.$transaction = jest
       .fn()
       .mockImplementation((cb: (tx: PrismaStub) => unknown) => cb(prisma as unknown as PrismaStub));
@@ -200,7 +227,7 @@ describe('CategoryService', () => {
     prisma.category.findUnique = readVia('pool');
     const txUpdate = jest.fn().mockResolvedValue({ id: 'A', parentId: 'B' });
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
+      $queryRaw: rowLockVia((): RowLockClient => tx),
       category: { findUnique: readVia('tx'), update: txUpdate },
     };
     prisma.$transaction = jest
@@ -498,7 +525,7 @@ describe('CategoryService', () => {
     );
     const txUpdate = jest.fn();
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
+      $queryRaw: rowLockVia((): RowLockClient => tx),
       category: { findUnique: txFindUnique, update: txUpdate },
     };
     prisma.$transaction = jest
@@ -526,7 +553,7 @@ describe('CategoryService', () => {
     prisma.category.findUnique.mockResolvedValue(stale);
     prisma.category.findFirst.mockResolvedValue(null);
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
+      $queryRaw: rowLockVia((): RowLockClient => tx),
       category: {
         findUnique: jest.fn().mockResolvedValue(fresh),
         // `LEGACY-276`: с 19.09.2026 занятость слага проверяется клиентом
@@ -583,7 +610,7 @@ describe('CategoryService', () => {
 
     const txUpdate = jest.fn();
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
+      $queryRaw: rowLockVia((): RowLockClient => tx),
       category: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'A',
@@ -637,11 +664,17 @@ describe('CategoryService', () => {
     prisma.category.findFirst.mockResolvedValue(null);
 
     const tx = {
-      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
-        const sql = (parts?.raw ?? []).join(' ');
-        order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
-        return Promise.resolve([]);
-      }),
+      $queryRaw: jest.fn(
+        (parts?: { raw?: readonly string[] }, ...values: unknown[]): Promise<unknown[]> => {
+          const sql = (parts?.raw ?? []).join(' ');
+          if (isRowLock(parts)) {
+            order.push('lock-row');
+            return lockedRow(tx as RowLockClient, values);
+          }
+          order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
+          return Promise.resolve([]);
+        },
+      ),
       category: {
         findUnique: jest.fn(() => {
           order.push('read');
@@ -665,11 +698,14 @@ describe('CategoryService', () => {
 
     expect(order[0]).toBe('lock-slug');
     expect(order).not.toContain('lock-tree');
+    // `LEGACY-320`: строка запирается после замка слага и до чтения термина.
+    expect(order[1]).toBe('lock-row');
+    expect(order[2]).toBe('read');
     expect(order.indexOf('lock-slug')).toBeLessThan(order.indexOf('slug-check'));
     expect(order.indexOf('slug-check')).toBeLessThan(order.indexOf('write'));
     // Ключ замка — слаг из тела запроса, а не из строки базы: иначе замок
     // берётся по адресу, который освобождают, а не по тому, который занимают.
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     expect(slugLockValues(tx.$queryRaw)).toContain('a-new');
   });
 
@@ -678,6 +714,36 @@ describe('CategoryService', () => {
    * слага не является: замок он брать не должен вовсе, иначе переименование
    * без смены адреса встаёт в чужую очередь просто так.
    */
+  /**
+   * 🔴 `LEGACY-320`. Термин снесли, пока PATCH ждал замка: строка есть на пуле, но замок
+   * возвращает ноль строк. Ответ — 404 без записи, а не запись по несуществующей строке.
+   */
+  it('PATCH отвечает 404 без записи, если замок строки не нашёл термин (LEGACY-320)', async () => {
+    prisma.category.findUnique.mockResolvedValue({
+      id: 'A',
+      type: 'genre',
+      slug: 'a',
+      parentId: null,
+      key: 'a',
+    });
+    const update = jest.fn();
+    const recordBaseSlugChange = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: { findFirst: jest.fn().mockResolvedValue(null), update },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+    slugRedirects.recordBaseSlugChange = recordBaseSlugChange;
+
+    await expect(service.update('A', { slug: 'a-new' })).rejects.toBeInstanceOf(NotFoundException);
+    expect(update).not.toHaveBeenCalled();
+    expect(recordBaseSlugChange).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ Метка `lock-row` ставится только на `FOR NO KEY UPDATE` (`isRowLock`): возврат
+  // к `FOR UPDATE` на PATCH без слага снова держал бы FK-вставки и уронил бы ожидание ниже.
   it('PATCH без слага замка слага не берёт (LEGACY-276)', async () => {
     const order: string[] = [];
     prisma.category.findUnique.mockResolvedValue({
@@ -689,11 +755,17 @@ describe('CategoryService', () => {
     });
 
     const tx = {
-      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
-        const sql = (parts?.raw ?? []).join(' ');
-        order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
-        return Promise.resolve([]);
-      }),
+      $queryRaw: jest.fn(
+        (parts?: { raw?: readonly string[] }, ...values: unknown[]): Promise<unknown[]> => {
+          const sql = (parts?.raw ?? []).join(' ');
+          if (isRowLock(parts)) {
+            order.push('lock-row');
+            return lockedRow(tx as RowLockClient, values);
+          }
+          order.push(sql.includes('hashtext') ? 'lock-slug' : 'lock-tree');
+          return Promise.resolve([]);
+        },
+      ),
       category: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'A',
@@ -714,8 +786,9 @@ describe('CategoryService', () => {
 
     await service.update('A', { name: 'Renamed' });
 
-    expect(order).toEqual(['write']);
-    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    // Замок строки (`LEGACY-320`) берётся всегда, замок слага — нет.
+    expect(order).toEqual(['lock-row', 'write']);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -739,7 +812,7 @@ describe('CategoryService', () => {
       meta: { target: ['slug'] },
     });
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
+      $queryRaw: rowLockVia((): RowLockClient => tx),
       category: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'A',
@@ -779,10 +852,16 @@ describe('CategoryService', () => {
       key: 'a',
     });
     const tx = {
-      $queryRaw: jest.fn(() => {
-        order.push('lock');
-        return Promise.resolve([]);
-      }),
+      $queryRaw: jest.fn(
+        (parts?: { raw?: readonly string[] }, ...values: unknown[]): Promise<unknown[]> => {
+          if (isRowLock(parts)) {
+            order.push('lock-row');
+            return lockedRow(tx as RowLockClient, values);
+          }
+          order.push('lock');
+          return Promise.resolve([]);
+        },
+      ),
       category: {
         findUnique: jest.fn(() => {
           order.push('read');
@@ -802,8 +881,9 @@ describe('CategoryService', () => {
     await service.update('A', { parentId: null });
 
     expect(order[0]).toBe('lock');
+    expect(order[1]).toBe('lock-row');
     expect(order).toContain('write');
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
 
     // 🔴 Обратная сторона: PATCH, не несущий ни `parentId`, ни `type`, дерева
     // не касается и блокировку брать не должен. Безусловный вызов стоил бы 500

@@ -368,10 +368,18 @@ export class CategoryService {
       //
       // Проверка существования при этом не дублирующая: между чтением на пуле
       // и этим местом термин мог быть удалён.
-      const current = await tx.category.findUnique({
-        where: { id },
-        select: { id: true, type: true, slug: true, parentId: true },
-      });
+      //
+      // 🔴 `LEGACY-320`. Чтения внутри транзакции мало: на `read committed` оно
+      // не видит незакоммиченной встречной смены слага, и редирект уходил со слага,
+      // которого после её коммита в базе уже нет. Строка запирается и читается
+      // одним запросом первым оператором тела, после advisory-замков `runIn*`:
+      // порядок «дерево, слаг, строка». Сила — `FOR NO KEY UPDATE`: писателей
+      // строки сериализует, а вставки со ссылкой на термин (`FOR KEY SHARE`
+      // проверки FK) не держит; смена слага сама поднимает замок до `FOR UPDATE`
+      // (решения арбитра 25.09.2026).
+      const [current] = await tx.$queryRaw<
+        Pick<PrismaCategory, 'id' | 'type' | 'slug' | 'parentId'>[]
+      >`SELECT id, type, slug, "parentId" FROM "Category" WHERE id = ${id} FOR NO KEY UPDATE`;
       if (!current) throw new NotFoundException('Category not found');
 
       // 🔴 `LEGACY-276`. Вторая проверка — та, что решает. Идёт клиентом

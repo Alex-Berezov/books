@@ -11,7 +11,13 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 
 interface PrismaStub {
-  book: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock; delete: jest.Mock };
+  book: {
+    findUnique: jest.Mock;
+    findMany: jest.Mock;
+    count: jest.Mock;
+    delete: jest.Mock;
+    update: jest.Mock;
+  };
   bookVersion: { findMany: jest.Mock; findFirst: jest.Mock; groupBy: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -32,7 +38,13 @@ interface PrismaStub {
 
 const createPrismaStub = (): PrismaStub => {
   const stub: PrismaStub = {
-    book: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), delete: jest.fn() },
+    book: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      delete: jest.fn(),
+      update: jest.fn(),
+    },
     bookVersion: {
       findMany: jest.fn(),
       findFirst: jest.fn().mockResolvedValue(null),
@@ -1040,6 +1052,100 @@ describe('BookService.getOverview', () => {
       expect(res.similar.map((card) => card.slug)).toEqual(['newer', 'older', 'undated']);
       expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+/**
+ * 🔴 `LEGACY-320`, пачка `T32`. Старый слаг для редиректа берётся из строки, запертой
+ * `FOR NO KEY UPDATE` внутри транзакции, а не из чтения на пуле: иначе встречная смена слага,
+ * закоммиченная между ними, остаётся без редиректа. Живая гонка — в
+ * `test/slug-redirect-row-lock.e2e-spec.ts`; здесь порядок и ветка пустого замка.
+ */
+describe('BookService.update (LEGACY-320)', () => {
+  let service: BookService;
+  let adminAudit: { record: jest.Mock };
+  let prisma: PrismaStub;
+  let slugRedirects: {
+    record: jest.Mock;
+    recordBaseSlugChange: jest.Mock;
+    resolve: jest.Mock;
+    cleanupDeadRedirects: jest.Mock;
+  };
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
+    slugRedirects = createSlugRedirectStub() as unknown as typeof slugRedirects;
+    service = new BookService(
+      prisma as unknown as PrismaService,
+      createGeoBlockRuleServiceStub(),
+      new RelatedTaxonomyService(prisma as unknown as PrismaService),
+      slugRedirects as unknown as SlugRedirectService,
+      createModeratorRolesStub(),
+      // LEGACY-006: настоящий AuthorService на том же стабе prisma — добор слагов
+      // по-прежнему управляется моками `authorTranslation.findMany`.
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        // `LEGACY-015`, пачка `T21`: писатель журнала обязателен по конструктору, но этот
+        // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
+      adminAudit as unknown as AdminAuditService,
+    );
+  });
+
+  it('locks the book row first and records the redirect from the locked slug', async () => {
+    const order: string[] = [];
+    prisma.$queryRaw.mockImplementation((...call: unknown[]) => {
+      order.push('lock');
+      // Сила — `FOR NO KEY UPDATE`: вставки версий, лайков и оценок по FK не ждут PATCH
+      // (решение арбитра 25.09.2026). `FOR UPDATE` здесь — регресс, а не «надёжнее».
+      expect(renderSql(call)).toContain('FOR NO KEY UPDATE');
+      return Promise.resolve([{ slug: 'committed-meanwhile' }]);
+    });
+    slugRedirects.recordBaseSlugChange.mockImplementation(() => {
+      order.push('redirect');
+      return Promise.resolve();
+    });
+    prisma.book.update.mockImplementation(() => {
+      order.push('write');
+      return Promise.resolve({ id: 'b1', slug: 'new-slug' });
+    });
+
+    await service.update('b1', { slug: 'new-slug' });
+
+    expect(order).toEqual(['lock', 'redirect', 'write']);
+    // Чтения на пуле больше нет: слаг берётся только из запертой строки.
+    expect(prisma.book.findUnique).not.toHaveBeenCalled();
+    expect(slugRedirects.recordBaseSlugChange).toHaveBeenCalledWith(
+      'book',
+      'committed-meanwhile',
+      'new-slug',
+      prisma,
+    );
+  });
+
+  it('writes no redirect when the locked slug already equals the requested one', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ slug: 'same' }]);
+    prisma.book.update.mockResolvedValue({ id: 'b1', slug: 'same' });
+
+    await service.update('b1', { slug: 'same' });
+
+    expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    expect(prisma.book.update).toHaveBeenCalledTimes(1);
+    expect(prisma.book.update).toHaveBeenCalledWith({
+      where: { id: 'b1' },
+      data: { slug: 'same' },
+    });
+  });
+
+  it('answers 404, not 500, when the lock finds no book row', async () => {
+    prisma.$queryRaw.mockResolvedValue([]);
+
+    await expect(service.update('b1', { slug: 'b' })).rejects.toThrow(NotFoundException);
+    expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    expect(prisma.book.update).not.toHaveBeenCalled();
   });
 });
 

@@ -1538,24 +1538,55 @@ export class BookService {
   }
 
   async update(id: string, data: UpdateBookDto) {
-    const book = await this.prisma.book.findUnique({ where: { id } });
-    if (!book) {
-      throw new NotFoundException(`Book with ID ${id} not found`);
-    }
-
     // Базовый слаг книги участвует в резолве публичного URL как фолбэк, когда у
     // версии слага нет, поэтому его смена ломает адрес во всех языках сразу
     // (LEGACY-062). Транзакция здесь появилась именно ради этого: без неё
     // существовал бы момент, когда слаг уже новый, а редиректа со старого ещё нет.
-    const baseSlugChanged = !!data.slug && data.slug !== book.slug;
-
+    // 🔴 `LEGACY-320`. Старый слаг для редиректа берётся из строки, запертой внутри
+    // транзакции, а не из чтения на пуле: иначе встречная смена слага, закоммиченная
+    // между чтением и записью, оставалась без редиректа со своего слага. Замок
+    // `FOR NO KEY UPDATE`: писателей строки сериализует, а вставки версий, лайков
+    // и оценок (`FOR KEY SHARE` проверки FK) не держит до записи слага; сама запись
+    // уникального `slug` поднимает замок до `FOR UPDATE`, как и до правки
+    // (решения арбитра 25.09.2026).
     return this.prisma.$transaction(async (tx) => {
-      if (baseSlugChanged && data.slug) {
-        await this.slugRedirects.recordBaseSlugChange('book', book.slug, data.slug, tx);
+      const currentSlug = await this.lockBookRow(tx, id, 'noKeyUpdate');
+
+      if (data.slug && data.slug !== currentSlug) {
+        await this.slugRedirects.recordBaseSlugChange('book', currentSlug, data.slug, tx);
       }
 
       return tx.book.update({ where: { id }, data });
     });
+  }
+
+  /**
+   * Замок строки книги — одна точка на всех писателей (`LEGACY-320`, образец —
+   * `TagLockService`). Отдаёт слаг запертой строки.
+   *
+   * Сила замка — аргумент: `update` берёт `FOR NO KEY UPDATE` и FK-вставок не держит,
+   * `remove` — `FOR UPDATE`, который обязан с ними конфликтовать (см. `remove`).
+   * Два литерала, а не подстановка: `$queryRaw` параметризует значения, не ключевые слова.
+   *
+   * Ноль строк — книгу снёс встречный запрос, пока мы ждали замка. Идти дальше
+   * нельзя: запись ответит `P2025`, глобального фильтра Prisma в проекте нет,
+   * и наружу уйдёт 500 вместо 404. Приём взят у `lockLicenseSnapshot`.
+   */
+  private async lockBookRow(
+    tx: Prisma.TransactionClient,
+    id: string,
+    strength: 'update' | 'noKeyUpdate',
+  ): Promise<string> {
+    const locked =
+      strength === 'update'
+        ? await tx.$queryRaw<{ slug: string }[]>`
+            SELECT slug FROM "Book" WHERE id = ${id} FOR UPDATE`
+        : await tx.$queryRaw<{ slug: string }[]>`
+            SELECT slug FROM "Book" WHERE id = ${id} FOR NO KEY UPDATE`;
+    if (locked.length === 0) {
+      throw new NotFoundException(`Book with ID ${id} not found`);
+    }
+    return locked[0].slug;
   }
 
   /**
@@ -1578,11 +1609,6 @@ export class BookService {
    */
   async remove(id: string, actorUserId: string | null) {
     return this.prisma.$transaction(async (tx) => {
-      const book = await tx.book.findUnique({ where: { id } });
-      if (!book) {
-        throw new NotFoundException(`Book with ID ${id} not found`);
-      }
-
       // Два замка, и ни один не лишний — иначе список каскадных версий разойдётся
       // с тем, что реально снесёт каскад. Обе дыры найдены ревью 20.09.2026.
       //
@@ -1590,17 +1616,7 @@ export class BookService {
       // конфликтует с `FOR KEY SHARE`, который берёт на родительскую строку проверка
       // внешнего ключа. По существующим строкам такую вставку не поймать — новой
       // строки ещё нет, поэтому одним замком версий не обойтись.
-      const lockedBook = await tx.$queryRaw<
-        { id: string }[]
-      >`SELECT id FROM "Book" WHERE id = ${id} FOR UPDATE`;
-
-      // Ноль строк — книгу снёс встречный запрос, пока мы ждали замка. Идти дальше
-      // нельзя: `tx.book.delete` ответит `P2025`, глобального фильтра Prisma в проекте
-      // нет, и наружу уйдёт 500 вместо 404. Приём взят у `lockLicenseSnapshot`,
-      // который так же превращает пустой замок в отказ.
-      if (lockedBook.length === 0) {
-        throw new NotFoundException(`Book with ID ${id} not found`);
-      }
+      await this.lockBookRow(tx, id, 'update');
 
       // Второй замок и чтение снимков — одним запросом общего помощника. Он же
       // держит состав колонок снимка в одном месте с `VERSION_PUBLISHED`
