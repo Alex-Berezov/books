@@ -35629,11 +35629,17 @@
             }
           },
           {
-            "description": "Filter by content type prefix (e.g., image/, audio/)",
+            "description": "Filter by media category. `document` matches anything not image/video/audio.",
             "in": "query",
             "name": "type",
             "required": false,
             "schema": {
+              "enum": [
+                "image",
+                "video",
+                "audio",
+                "document"
+              ],
               "type": "string"
             }
           },

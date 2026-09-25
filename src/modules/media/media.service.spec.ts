@@ -135,7 +135,7 @@ describe('MediaService (unit)', () => {
       prisma.mediaAsset.findMany.mockResolvedValue([{ id: '1' }]);
       prisma.mediaAsset.count.mockResolvedValue(1);
 
-      const res = await service.list({ q: 'covers', type: 'image/' } as MediaListQueryDto);
+      const res = await service.list({ q: 'covers', type: 'image' } as MediaListQueryDto);
 
       const fmArg = prisma.mediaAsset.findMany.mock.calls[0][0] as {
         where: {
@@ -160,6 +160,22 @@ describe('MediaService (unit)', () => {
         items: [{ id: '1' }],
         pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
       });
+    });
+
+    it('filters "document" as not image/video/audio, not as an application/ prefix', async () => {
+      prisma.mediaAsset.findMany.mockResolvedValue([]);
+      prisma.mediaAsset.count.mockResolvedValue(0);
+
+      await service.list({ type: 'document' } as MediaListQueryDto);
+
+      const fmArg = prisma.mediaAsset.findMany.mock.calls[0][0] as {
+        where: { AND: Array<{ NOT: { contentType: { startsWith: string } } }> };
+      };
+      expect(fmArg.where.AND).toEqual([
+        { NOT: { contentType: { startsWith: 'image/' } } },
+        { NOT: { contentType: { startsWith: 'video/' } } },
+        { NOT: { contentType: { startsWith: 'audio/' } } },
+      ]);
     });
 
     it('supports pagination', async () => {

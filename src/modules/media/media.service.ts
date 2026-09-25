@@ -14,6 +14,25 @@ import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.in
 import { MediaProbeService } from '../media-jobs/media-probe.service';
 import { findMediaReferenceDescriptors } from './media-references';
 import { paginated } from '../../shared/dto/paginated-response.dto';
+import { MEDIA_CATEGORIES, MediaCategory } from './dto/create-media.dto';
+
+// `document` — не MIME-префикс, а «всё остальное» (LEGACY-415): та же категоризация,
+// что фронт применяет к ответу (`mapBackendItemToMediaFile`). Список префиксов выводится
+// из `MEDIA_CATEGORIES`, а не дублируется: новая категория в DTO не разойдётся с этим фильтром.
+const KNOWN_CONTENT_TYPE_PREFIXES = MEDIA_CATEGORIES.filter((c) => c !== 'document').map(
+  (c) => `${c}/`,
+);
+
+function contentTypeFilterFor(type: MediaCategory): Prisma.MediaAssetWhereInput {
+  if (type === 'document') {
+    return {
+      AND: KNOWN_CONTENT_TYPE_PREFIXES.map((prefix) => ({
+        NOT: { contentType: { startsWith: prefix } },
+      })),
+    };
+  }
+  return { contentType: { startsWith: `${type}/` } };
+}
 
 @Injectable()
 export class MediaService {
@@ -97,7 +116,7 @@ export class MediaService {
       ...(params.q
         ? { OR: [{ key: { contains: params.q } }, { url: { contains: params.q } }] }
         : {}),
-      ...(params.type ? { contentType: { startsWith: params.type } } : {}),
+      ...(params.type ? contentTypeFilterFor(params.type) : {}),
     };
     const [items, total] = await Promise.all([
       this.prisma.mediaAsset.findMany({

@@ -71,7 +71,7 @@ describe('Media e2e', () => {
 
     // List
     await request(http())
-      .get('/media?page=1&limit=5&q=covers&type=image/')
+      .get('/media?page=1&limit=5&q=covers&type=image')
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
 
@@ -80,6 +80,35 @@ describe('Media e2e', () => {
       .delete(`/media/${id}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
+  });
+
+  it('LEGACY-415: "document" finds a text/plain upload, not just application/*', async () => {
+    const key = `docs/legacy-415/${Date.now()}.txt`;
+    const url = `http://localhost:3000/${key}`;
+
+    const confirmRes = await request(http())
+      .post('/media/confirm')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ key, url, contentType: 'text/plain', size: 10 })
+      .expect(201);
+    const id = confirmRes.body.id as string;
+
+    const asDocument = await request(http())
+      .get('/media?type=document&limit=100')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect((asDocument.body.items as Array<{ id: string }>).some((i) => i.id === id)).toBe(true);
+
+    const asImage = await request(http())
+      .get('/media?type=image&limit=100')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect((asImage.body.items as Array<{ id: string }>).some((i) => i.id === id)).toBe(false);
+
+    await request(http())
+      .get('/media?type=application/')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400);
   });
 
   it('LEGACY-377: rejects a limit above the ceiling with 400 instead of an unbounded take', async () => {

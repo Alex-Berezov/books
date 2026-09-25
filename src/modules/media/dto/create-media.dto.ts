@@ -1,7 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PAGINATION_MAX_LIMIT } from '../../../shared/dto/pagination.dto';
+
+export const MEDIA_CATEGORIES = ['image', 'video', 'audio', 'document'] as const;
+export type MediaCategory = (typeof MEDIA_CATEGORIES)[number];
 
 export class ConfirmMediaDto {
   @ApiProperty({
@@ -53,10 +56,13 @@ export class MediaListQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
-  @ApiPropertyOptional({ description: 'Filter by content type prefix (e.g., image/, audio/)' })
+  @ApiPropertyOptional({
+    description: 'Filter by media category. `document` matches anything not image/video/audio.',
+    enum: MEDIA_CATEGORIES,
+  })
   @IsOptional()
-  @IsString()
-  type?: string;
+  @IsIn(MEDIA_CATEGORIES)
+  type?: MediaCategory;
 
   @ApiPropertyOptional({ description: 'Page', default: 1 })
   @IsOptional()
