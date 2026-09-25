@@ -12,6 +12,7 @@ import {
   RightsContentHashComputationDto,
   RightsContentHashCheckDto,
 } from './dto/rights-content-hash.dto';
+import type { LockedClearanceScope } from './rights-clearance-lock.service';
 
 type Trigger =
   | 'INITIAL_VERSION_SNAPSHOT'
@@ -124,8 +125,9 @@ export const SOURCE_FILE_FIRST_UPLOAD_REASON_CODE = 'SOURCE_FILE_FIRST_UPLOAD';
  * соединения в пуле, а не про объём записи.
  *
  * ⚠️ Возврат фан-аута под `inTransaction` оживит дедлок 40P01 на путях без своего `tx`:
- * замок группы (`RightsClearanceLockService`, `LEGACY-368`) берут только 11 писателей через
- * `runInLockedClearance`. Путь без `tx` цикла не лишён: `markSelf` ручной проверки хеша
+ * замок группы (`RightsClearanceLockService`, `LEGACY-368`) берут 11 писателей через
+ * `runInLockedClearance` и пересчёт по персоне и профилю через `runInLockedClearanceScope`.
+ * Путь без `tx` цикла не лишён: `markSelf` ручной проверки хеша
  * (`POST admin/versions/:id/rights-content-hash/check`) пишет свою версию, затем проверку
  * прав и профиль, и встречается с фан-аутом запертой правки главы (тело `LEGACY-368`).
  */
@@ -1188,15 +1190,14 @@ export class RightsContentHashService {
    * WP-8.1. Правка персоны и связей профиля не проходит через версию, поэтому проверка
    * разворачивается в обратную сторону: от участника ко всем версиям, где он учтён —
    * напрямую (`BookVersionContributor`) или через профиль прав (`RightsProfileContributor`).
+   *
+   * Только чтение: набор уходит в `RightsClearanceLockService.runInLockedClearanceScope`,
+   * а пересчёт идёт по запертому набору (`checkStalenessForLockedScope`, `LEGACY-368`, T33).
    */
-  async checkStalenessForPerson(
+  async resolveStalenessVersionIdsForPerson(
     personId: string,
-    trigger: Trigger,
-    userId?: string | null,
-    tx?: Prisma.TransactionClient,
-  ): Promise<RightsContentHashCheckDto[]> {
-    const client = tx ?? this.prisma;
-
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<string[]> {
     const directLinks = await client.bookVersionContributor.findMany({
       where: { personId },
       select: { bookVersionId: true },
@@ -1220,32 +1221,49 @@ export class RightsContentHashService {
       }
     }
 
-    return this.checkStalenessForVersions([...versionIds], trigger, userId, tx);
+    return [...versionIds];
+  }
+
+  /** Версии профиля прав — вход `runInLockedClearanceScope` для правки участника профиля. */
+  async resolveStalenessVersionIdsForRightsProfile(
+    rightsProfileId: string,
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<string[]> {
+    const versions = await client.bookVersion.findMany({
+      where: { rightsProfileId },
+      select: { id: true },
+    });
+    return versions.map((version) => version.id);
   }
 
   /**
-   * Версии профиля прав: используется при привязке и отвязке участника профиля, где
-   * конкретная персона может быть неизвестна (связь допускает `personId = null`).
+   * Пересчёт версий нескольких групп в транзакции вызывающего. Набор берётся только из
+   * `runInLockedClearanceScope`: без замка групп и строк фан-ауты разных версий встают в цикл
+   * со встречной правкой главы (`LEGACY-368`).
+   */
+  async checkStalenessForLockedScope(
+    scope: LockedClearanceScope,
+    trigger: Trigger,
+    userId: string | null,
+    tx: Prisma.TransactionClient,
+  ): Promise<RightsContentHashCheckDto[]> {
+    return this.checkStalenessForVersions([...scope.versionIds], trigger, userId, tx);
+  }
+
+  /**
+   * Версии профиля прав без транзакции вызывающего (замена суммы файла источника,
+   * `rights-files.service.ts`): каждая версия помечается в своей транзакции.
    */
   async checkStalenessForRightsProfile(
     rightsProfileId: string,
     trigger: Trigger,
     userId?: string | null,
-    tx?: Prisma.TransactionClient,
   ): Promise<RightsContentHashCheckDto[]> {
-    const client = tx ?? this.prisma;
-
-    const versions = await client.bookVersion.findMany({
-      where: { rightsProfileId },
-      select: { id: true },
-    });
-
-    return this.checkStalenessForVersions(
-      versions.map((version) => version.id),
-      trigger,
-      userId,
-      tx,
+    const versionIds = await this.resolveStalenessVersionIdsForRightsProfile(
+      rightsProfileId,
+      this.prisma,
     );
+    return this.checkStalenessForVersions(versionIds, trigger, userId);
   }
 
   private async checkStalenessForVersions(

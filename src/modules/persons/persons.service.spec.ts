@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 
 /**
  * WP-8.1 (R1-01). Год смерти переводчика решает, находится ли перевод в public domain,
@@ -21,18 +22,24 @@ describe('PersonsService — content hash triggers', () => {
     notesRu: null,
   };
 
-  let prisma: {
+  let db: {
     person: {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
     $transaction: jest.Mock;
   };
-  let hashService: { checkStalenessForPerson: jest.Mock };
+  let hashService: {
+    resolveStalenessVersionIdsForPerson: jest.Mock;
+    checkStalenessForLockedScope: jest.Mock;
+  };
+  // Двойник замка: открывает «транзакцию» на `db`, берёт набор у `resolve` и запирает его
+  // (`locked` — отметка порядка), затем отдаёт телу `tx` и набор — так же, как настоящий.
+  let lockService: { runInLockedClearanceScope: jest.Mock; locked: jest.Mock };
   let service: PersonsService;
 
   beforeEach(() => {
-    prisma = {
+    db = {
       person: {
         findUnique: jest.fn().mockResolvedValue(person),
         update: jest.fn().mockImplementation((args: { data: Record<string, unknown> }) => ({
@@ -40,13 +47,31 @@ describe('PersonsService — content hash triggers', () => {
           ...args.data,
         })),
       },
-      $transaction: jest.fn().mockImplementation((fn: (tx: unknown) => unknown) => fn(prisma)),
+      $transaction: jest.fn(),
     };
-    hashService = { checkStalenessForPerson: jest.fn().mockResolvedValue([]) };
+    hashService = {
+      resolveStalenessVersionIdsForPerson: jest.fn().mockResolvedValue(['v1', 'v2']),
+      checkStalenessForLockedScope: jest.fn().mockResolvedValue([]),
+    };
+    const locked = jest.fn();
+    lockService = {
+      locked,
+      runInLockedClearanceScope: jest.fn(
+        async (
+          resolve: (tx: unknown) => Promise<string[]>,
+          work: (tx: unknown, scope: { versionIds: string[] }) => Promise<unknown>,
+        ) => {
+          const versionIds = await resolve(db);
+          locked(versionIds);
+          return work(db, { versionIds });
+        },
+      ),
+    };
 
     service = new PersonsService(
-      prisma as unknown as PrismaService,
+      db as unknown as PrismaService,
       hashService as unknown as RightsContentHashService,
+      lockService as unknown as RightsClearanceLockService,
       // `LEGACY-015`, пачка `T21`: этот блок удаление персоны не трогает вовсе —
       // писатель обязателен по конструктору, но не зовётся ни разу.
       { record: jest.fn() } as unknown as AdminAuditService,
@@ -56,30 +81,64 @@ describe('PersonsService — content hash triggers', () => {
   it('marks the clearance of every affected version when the death year changes', async () => {
     await service.update('person-1', { deathYear: 1990 });
 
-    expect(hashService.checkStalenessForPerson).toHaveBeenCalledWith(
-      'person-1',
+    expect(hashService.checkStalenessForLockedScope).toHaveBeenCalledTimes(1);
+    expect(hashService.checkStalenessForLockedScope).toHaveBeenCalledWith(
+      { versionIds: ['v1', 'v2'] },
       'CONTRIBUTOR_PERSON_CHANGED',
       null,
-      prisma,
+      db,
     );
   });
 
   it('marks the clearance when the public domain year changes', async () => {
     await service.update('person-1', { publicDomainFromYear: 2061 });
 
-    expect(hashService.checkStalenessForPerson).toHaveBeenCalled();
+    expect(hashService.checkStalenessForLockedScope).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * `LEGACY-368` (T33): версии участника стоят на разных профилях и проверках прав. Правка идёт
+   * одной транзакцией замка: набор версий запирается один раз и до записи персоны, пересчёт —
+   * один раз, после неё и ровно по запертому набору, без повторного чтения связей.
+   */
+  it('runs the update inside one locked-scope transaction: lock once, write, recheck once', async () => {
+    await service.update('person-1', { deathYear: 1990 });
+
+    expect(lockService.runInLockedClearanceScope).toHaveBeenCalledTimes(1);
+    expect(hashService.resolveStalenessVersionIdsForPerson).toHaveBeenCalledTimes(1);
+    expect(hashService.resolveStalenessVersionIdsForPerson).toHaveBeenCalledWith('person-1', db);
+    expect(lockService.locked).toHaveBeenCalledTimes(1);
+    expect(lockService.locked).toHaveBeenCalledWith(['v1', 'v2']);
+    expect(db.person.update).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).not.toHaveBeenCalled();
+
+    const [lockOrder] = lockService.locked.mock.invocationCallOrder;
+    const [updateOrder] = db.person.update.mock.invocationCallOrder;
+    const [checkOrder] = hashService.checkStalenessForLockedScope.mock.invocationCallOrder;
+    expect(lockOrder).toBeLessThan(updateOrder);
+    expect(updateOrder).toBeLessThan(checkOrder);
+  });
+
+  it('locks nothing and rechecks nothing when the change does not touch rights', async () => {
+    await service.update('person-1', { notesRu: 'уточнил источник даты' });
+
+    expect(hashService.resolveStalenessVersionIdsForPerson).not.toHaveBeenCalled();
+    expect(lockService.runInLockedClearanceScope).toHaveBeenCalledTimes(1);
+    expect(lockService.locked).toHaveBeenCalledTimes(1);
+    expect(lockService.locked).toHaveBeenCalledWith([]);
+    expect(hashService.checkStalenessForLockedScope).not.toHaveBeenCalled();
   });
 
   it('does not touch the clearance when only editorial fields change', async () => {
     await service.update('person-1', { notesRu: 'уточнил источник даты' });
 
-    expect(hashService.checkStalenessForPerson).not.toHaveBeenCalled();
+    expect(hashService.checkStalenessForLockedScope).not.toHaveBeenCalled();
   });
 
   it('does not touch the clearance when the value is submitted unchanged', async () => {
     await service.update('person-1', { deathYear: 1940 });
 
-    expect(hashService.checkStalenessForPerson).not.toHaveBeenCalled();
+    expect(hashService.checkStalenessForLockedScope).not.toHaveBeenCalled();
   });
 });
 
@@ -103,8 +162,10 @@ describe('PersonsService.findAll — обёртка ответа', () => {
     service = new PersonsService(
       db as unknown as PrismaService,
       {
-        checkStalenessForPerson: jest.fn(),
+        resolveStalenessVersionIdsForPerson: jest.fn(),
+        checkStalenessForLockedScope: jest.fn(),
       } as unknown as RightsContentHashService,
+      { runInLockedClearanceScope: jest.fn() } as unknown as RightsClearanceLockService,
       // Список персон журнала не пишет: писатель обязателен по конструктору,
       // но не зовётся ни разу.
       { record: jest.fn() } as unknown as AdminAuditService,
@@ -239,7 +300,11 @@ describe('PersonsService.remove — проверка связей падает �
       // а вопрос здесь другой — каким клиентом ушла запись.
       service: new PersonsService(
         client as unknown as PrismaService,
-        { checkStalenessForPerson: jest.fn() } as unknown as RightsContentHashService,
+        {
+          resolveStalenessVersionIdsForPerson: jest.fn(),
+          checkStalenessForLockedScope: jest.fn(),
+        } as unknown as RightsContentHashService,
+        { runInLockedClearanceScope: jest.fn() } as unknown as RightsClearanceLockService,
         new AdminAuditService(),
       ),
     };

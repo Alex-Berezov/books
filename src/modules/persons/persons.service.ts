@@ -3,6 +3,7 @@ import {
   RIGHTS_RELEVANT_PERSON_FIELDS,
   RightsContentHashService,
 } from '../rights-intake/rights-content-hash.service';
+import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { QueryPersonsDto } from './dto/query-persons.dto';
@@ -17,6 +18,7 @@ export class PersonsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rightsContentHashService: RightsContentHashService,
+    private readonly rightsClearanceLockService: RightsClearanceLockService,
     private readonly adminAudit: AdminAuditService,
   ) {}
 
@@ -193,8 +195,17 @@ export class PersonsService {
       (field) => field in data && data[field] !== before[field],
     );
 
-    return this.prisma.$transaction(
-      async (tx) => {
+    // LEGACY-368 (T33): версии участника стоят на разных профилях и проверках прав. Транзакцию
+    // открывает замок: он первым делом запирает их группы и строки, пересчёт идёт ровно по ним.
+    // Пересчёт по всем версиям участника читает главы целиком — отсюда границы
+    // `CLEARANCE_TX_OPTIONS`: у автора с очень большим каталогом правка упрётся в таймаут
+    // и откатится целиком, клиренс останется прежним, гейт пересчитает живой хеш (ADR-010).
+    return this.rightsClearanceLockService.runInLockedClearanceScope(
+      (tx) =>
+        touchesRights
+          ? this.rightsContentHashService.resolveStalenessVersionIdsForPerson(id, tx)
+          : Promise.resolve([]),
+      async (tx, scope) => {
         const updated = await this.personModelOf(tx).update({
           where: { id },
           data,
@@ -204,8 +215,8 @@ export class PersonsService {
         });
 
         if (touchesRights) {
-          await this.rightsContentHashService.checkStalenessForPerson(
-            id,
+          await this.rightsContentHashService.checkStalenessForLockedScope(
+            scope,
             'CONTRIBUTOR_PERSON_CHANGED',
             null,
             tx,
@@ -214,14 +225,6 @@ export class PersonsService {
 
         return updated;
       },
-      /**
-       * Пересчёт идёт по всем версиям участника, а хеш версии читает главы целиком, поэтому
-       * дефолтных 5 секунд Prisma на транзакцию не хватает уже на десятке версий. Предел
-       * всё равно есть: у автора с очень большим каталогом правка упрётся в таймаут и
-       * откатится целиком. Это безопасный отказ — клиренс остаётся прежним, а гейт
-       * пересчитывает живой хеш при каждой попытке публикации (ADR-010).
-       */
-      { timeout: 30_000, maxWait: 10_000 },
     );
   }
 

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma, RightsProfileContributor } from '@prisma/client';
 import { PersonsService } from '../persons/persons.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateContributorDto } from './dto/create-contributor.dto';
 import { LinkRightsComponentContributorDto } from './dto/link-rights-component-contributor.dto';
@@ -31,6 +32,7 @@ export class ContributorsService {
     private readonly prisma: PrismaService,
     private readonly personsService: PersonsService,
     private readonly rightsContentHashService: RightsContentHashService,
+    private readonly rightsClearanceLockService: RightsClearanceLockService,
   ) {}
 
   private toContributorResponse(person: PersonRecord): ContributorResponseDto {
@@ -347,13 +349,23 @@ export class ContributorsService {
     rightsProfileId: string | null,
     work: (tx: Prisma.TransactionClient) => Promise<T>,
   ): Promise<T> {
-    return this.prisma.$transaction(
-      async (tx) => {
+    // LEGACY-368 (T33): версии одного профиля стоят на разных проверках прав. Транзакцию
+    // открывает замок: он первым делом запирает их группы и строки — до самой связи, — а пересчёт
+    // идёт ровно по запертому набору. Пересчёт читает главы целиком — отсюда `CLEARANCE_TX_OPTIONS`.
+    return this.rightsClearanceLockService.runInLockedClearanceScope(
+      (tx) =>
+        rightsProfileId
+          ? this.rightsContentHashService.resolveStalenessVersionIdsForRightsProfile(
+              rightsProfileId,
+              tx,
+            )
+          : Promise.resolve([]),
+      async (tx, scope) => {
         const result = await work(tx);
 
         if (rightsProfileId) {
-          await this.rightsContentHashService.checkStalenessForRightsProfile(
-            rightsProfileId,
+          await this.rightsContentHashService.checkStalenessForLockedScope(
+            scope,
             'PROFILE_CONTRIBUTOR_CHANGED',
             null,
             tx,
@@ -362,8 +374,6 @@ export class ContributorsService {
 
         return result;
       },
-      // Пересчёт по всем версиям профиля читает главы целиком — дефолтных 5 секунд мало.
-      { timeout: 30_000, maxWait: 10_000 },
     );
   }
 }

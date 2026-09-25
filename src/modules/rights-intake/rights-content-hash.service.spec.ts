@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { RightsContentHashService } from './rights-content-hash.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { Prisma } from '@prisma/client';
+import type { LockedClearanceScope } from './rights-clearance-lock.service';
 import {
   RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
   sha256Hex,
@@ -1729,7 +1731,12 @@ describe('RightsContentHashService', () => {
    * WP-8.1: правка данных персоны и связей профиля не проходит через версию, поэтому
    * пересчёт разворачивается от участника ко всем затронутым версиям.
    */
-  describe('checkStalenessForPerson', () => {
+  /**
+   * WP-8.1 + `LEGACY-368` (T33). Набор версий участника — прямые связи и версии профилей, где он
+   * учтён. Пересчёт идёт только по набору, который запер `lockClearanceScope`: заново его
+   * не перечитывает, иначе связь, заведённая чужой транзакцией после замка, ушла бы мимо него.
+   */
+  describe('resolveStalenessVersionIdsForPerson / checkStalenessForLockedScope', () => {
     let checkVersionStaleness: jest.SpyInstance;
 
     beforeEach(() => {
@@ -1747,65 +1754,84 @@ describe('RightsContentHashService', () => {
       });
     });
 
-    it('checks every version the person contributes to', async () => {
+    const client = () => mockPrisma as unknown as PrismaService;
+
+    it('returns an empty set for a person linked to nothing', async () => {
+      mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
+      mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
+
+      const ids = await service.resolveStalenessVersionIdsForPerson('person-1', client());
+
+      expect(ids).toEqual([]);
+      expect(mockPrisma.bookVersionContributor.findMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.rightsProfileContributor.findMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.bookVersion.findMany).not.toHaveBeenCalled();
+    });
+
+    it('finds every version the person contributes to directly', async () => {
       mockPrisma.bookVersionContributor.findMany.mockResolvedValue([
         { bookVersionId: 'version-1' },
         { bookVersionId: 'version-2' },
       ]);
       mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
-      mockPrisma.bookVersion.findMany.mockResolvedValue([]);
 
-      const result = await service.checkStalenessForPerson(
-        'person-1',
-        'CONTRIBUTOR_PERSON_CHANGED',
-      );
+      const ids = await service.resolveStalenessVersionIdsForPerson('person-1', client());
 
-      expect(result).toHaveLength(2);
-      expect(checkVersionStaleness.mock.calls.map((call) => call[0] as string).sort()).toEqual([
-        'version-1',
-        'version-2',
-      ]);
-      expect(checkVersionStaleness).toHaveBeenCalledTimes(2);
-      expect(checkVersionStaleness).toHaveBeenCalledWith(
-        'version-1',
-        'CONTRIBUTOR_PERSON_CHANGED',
-        null,
-        true,
-        undefined,
-      );
+      expect(ids.sort()).toEqual(['version-1', 'version-2']);
+      expect(mockPrisma.bookVersion.findMany).not.toHaveBeenCalled();
     });
 
     it('reaches versions through the rights profile the person is listed in', async () => {
-      mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
+      mockPrisma.bookVersionContributor.findMany.mockResolvedValue([
+        { bookVersionId: 'version-1' },
+      ]);
       mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([
         { rightsProfileId: 'profile-1' },
       ]);
-      mockPrisma.bookVersion.findMany.mockResolvedValue([{ id: 'version-3' }]);
+      mockPrisma.bookVersion.findMany.mockResolvedValue([{ id: 'version-3' }, { id: 'version-1' }]);
 
-      const result = await service.checkStalenessForPerson(
-        'person-1',
-        'CONTRIBUTOR_PERSON_CHANGED',
-      );
+      const ids = await service.resolveStalenessVersionIdsForPerson('person-1', client());
 
-      expect(result).toHaveLength(1);
-      expect(mockPrisma.bookVersion.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ rightsProfileId: { in: ['profile-1'] } }),
-        }),
-      );
+      expect(ids.sort()).toEqual(['version-1', 'version-3']);
+      expect(mockPrisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.bookVersion.findMany).toHaveBeenCalledWith({
+        where: { rightsProfileId: { in: ['profile-1'] } },
+        select: { id: true },
+      });
     });
 
-    it('does nothing when the person is not linked to any version', async () => {
-      mockPrisma.bookVersionContributor.findMany.mockResolvedValue([]);
-      mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
+    it('lists the versions standing on a rights profile', async () => {
+      mockPrisma.bookVersion.findMany.mockResolvedValue([{ id: 'version-4' }, { id: 'version-5' }]);
 
-      const result = await service.checkStalenessForPerson(
-        'person-1',
+      const ids = await service.resolveStalenessVersionIdsForRightsProfile('profile-1', client());
+
+      expect(ids).toEqual(['version-4', 'version-5']);
+      expect(mockPrisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.bookVersion.findMany).toHaveBeenCalledWith({
+        where: { rightsProfileId: 'profile-1' },
+        select: { id: true },
+      });
+    });
+
+    it('rechecks exactly the locked scope in the caller transaction and reads no links again', async () => {
+      const tx = mockPrisma as unknown as Prisma.TransactionClient;
+      const scope = { versionIds: ['version-1', 'version-2'] } as unknown as LockedClearanceScope;
+
+      const result = await service.checkStalenessForLockedScope(
+        scope,
         'CONTRIBUTOR_PERSON_CHANGED',
+        null,
+        tx,
       );
 
-      expect(result).toEqual([]);
-      expect(checkVersionStaleness).not.toHaveBeenCalled();
+      expect(result).toHaveLength(2);
+      expect(checkVersionStaleness.mock.calls).toEqual([
+        ['version-1', 'CONTRIBUTOR_PERSON_CHANGED', null, true, tx],
+        ['version-2', 'CONTRIBUTOR_PERSON_CHANGED', null, true, tx],
+      ]);
+      expect(mockPrisma.bookVersionContributor.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsProfileContributor.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.bookVersion.findMany).not.toHaveBeenCalled();
     });
   });
 });

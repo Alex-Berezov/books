@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ContributorRole } from '../persons/person-interface';
 import { PersonsService } from '../persons/persons.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
+import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { ContributorsService } from './contributors.service';
 
 describe('ContributorsService', () => {
@@ -66,7 +67,24 @@ describe('ContributorsService', () => {
   };
 
   const mockRightsContentHashService = {
-    checkStalenessForRightsProfile: jest.fn().mockResolvedValue([]),
+    resolveStalenessVersionIdsForRightsProfile: jest.fn().mockResolvedValue(['version-1']),
+    checkStalenessForLockedScope: jest.fn().mockResolvedValue([]),
+  };
+
+  // Двойник замка: «транзакция» на `mockPrismaService`, набор берётся у `resolve` и запирается
+  // (`locked` — отметка порядка), тело получает `tx` и набор — так же, как у настоящего.
+  const locked = jest.fn();
+  const mockRightsClearanceLockService = {
+    runInLockedClearanceScope: jest.fn(
+      async (
+        resolve: (tx: unknown) => Promise<string[]>,
+        work: (tx: unknown, scope: { versionIds: string[] }) => Promise<unknown>,
+      ) => {
+        const versionIds = await resolve(mockPrismaService);
+        locked(versionIds);
+        return work(mockPrismaService, { versionIds });
+      },
+    ),
   };
 
   beforeEach(async () => {
@@ -78,6 +96,7 @@ describe('ContributorsService', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: PersonsService, useValue: mockPersonsService },
         { provide: RightsContentHashService, useValue: mockRightsContentHashService },
+        { provide: RightsClearanceLockService, useValue: mockRightsClearanceLockService },
       ],
     }).compile();
 
@@ -231,8 +250,9 @@ describe('ContributorsService', () => {
         'user-1',
       );
 
-      expect(mockRightsContentHashService.checkStalenessForRightsProfile).toHaveBeenCalledWith(
-        'profile-1',
+      expect(mockRightsContentHashService.checkStalenessForLockedScope).toHaveBeenCalledTimes(1);
+      expect(mockRightsContentHashService.checkStalenessForLockedScope).toHaveBeenCalledWith(
+        { versionIds: ['version-1'] },
         'PROFILE_CONTRIBUTOR_CHANGED',
         null,
         mockPrismaService,
@@ -242,12 +262,42 @@ describe('ContributorsService', () => {
     it('checks the clearance of the profile when a contributor is unlinked', async () => {
       await service.unlinkRightsComponent('rc-1', 'rpc-1', 'user-1');
 
-      expect(mockRightsContentHashService.checkStalenessForRightsProfile).toHaveBeenCalledWith(
-        'profile-1',
+      expect(mockRightsContentHashService.checkStalenessForLockedScope).toHaveBeenCalledTimes(1);
+      expect(mockRightsContentHashService.checkStalenessForLockedScope).toHaveBeenCalledWith(
+        { versionIds: ['version-1'] },
         'PROFILE_CONTRIBUTOR_CHANGED',
         null,
         mockPrismaService,
       );
+    });
+
+    /**
+     * `LEGACY-368` (T33): версии одного профиля стоят на разных проверках прав. Связь меняется
+     * одной транзакцией замка: набор запирается один раз и до самой связи, пересчёт — один раз,
+     * после неё и ровно по запертому набору. Иначе встречная правка главы соседней версии даёт 40P01.
+     */
+    it('changes the link inside one locked-scope transaction: lock once, write, recheck once', async () => {
+      await service.unlinkRightsComponent('rc-1', 'rpc-1', 'user-1');
+
+      expect(mockRightsClearanceLockService.runInLockedClearanceScope).toHaveBeenCalledTimes(1);
+      expect(
+        mockRightsContentHashService.resolveStalenessVersionIdsForRightsProfile,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        mockRightsContentHashService.resolveStalenessVersionIdsForRightsProfile,
+      ).toHaveBeenCalledWith('profile-1', mockPrismaService);
+      expect(locked).toHaveBeenCalledTimes(1);
+      expect(locked).toHaveBeenCalledWith(['version-1']);
+      expect(mockPrismaService.rightsProfileContributor.delete).toHaveBeenCalledTimes(1);
+      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
+
+      const [lockOrder]: number[] = locked.mock.invocationCallOrder;
+      const [deleteOrder]: number[] =
+        mockPrismaService.rightsProfileContributor.delete.mock.invocationCallOrder;
+      const [checkOrder]: number[] =
+        mockRightsContentHashService.checkStalenessForLockedScope.mock.invocationCallOrder;
+      expect(lockOrder).toBeLessThan(deleteOrder);
+      expect(deleteOrder).toBeLessThan(checkOrder);
     });
   });
 });
@@ -350,15 +400,28 @@ describe('ContributorsService — след отвязки участника (WP
 
   const build = (
     double: ReturnType<typeof createDouble>,
-    hash: { checkStalenessForRightsProfile: jest.Mock },
+    hash: {
+      resolveStalenessVersionIdsForRightsProfile: jest.Mock;
+      checkStalenessForLockedScope: jest.Mock;
+    },
   ) =>
     new ContributorsService(
       double.prisma as unknown as PrismaService,
       { findOne: jest.fn().mockResolvedValue(personForDouble) } as unknown as PersonsService,
       hash as unknown as RightsContentHashService,
+      {
+        runInLockedClearanceScope: <T>(
+          resolve: (tx: unknown) => Promise<string[]>,
+          work: (tx: unknown, scope: { versionIds: string[] }) => Promise<T>,
+        ): Promise<T> =>
+          double.prisma.$transaction(async (tx) => work(tx, { versionIds: await resolve(tx) })),
+      } as unknown as RightsClearanceLockService,
     );
 
-  const passingHash = () => ({ checkStalenessForRightsProfile: jest.fn().mockResolvedValue([]) });
+  const passingHash = () => ({
+    resolveStalenessVersionIdsForRightsProfile: jest.fn().mockResolvedValue(['version-1']),
+    checkStalenessForLockedScope: jest.fn().mockResolvedValue([]),
+  });
 
   it('пишет событие UNLINKED с обеими сторонами связи, автором и временем', async () => {
     const double = createDouble();
@@ -402,7 +465,8 @@ describe('ContributorsService — след отвязки участника (WP
   it('откат транзакции не оставляет ни удаления связи, ни события', async () => {
     const double = createDouble();
     const failingHash = {
-      checkStalenessForRightsProfile: jest.fn().mockRejectedValue(new Error('DB gone')),
+      resolveStalenessVersionIdsForRightsProfile: jest.fn().mockResolvedValue(['version-1']),
+      checkStalenessForLockedScope: jest.fn().mockRejectedValue(new Error('DB gone')),
     };
     const service = build(double, failingHash);
 
