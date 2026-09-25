@@ -4,7 +4,19 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { Language } from '@prisma/client';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Language, Prisma } from '@prisma/client';
+
+const p2002 = () =>
+  new Prisma.PrismaClientKnownRequestError('unique violation', {
+    code: 'P2002',
+    clientVersion: 'test',
+  });
+const p2003 = () =>
+  new Prisma.PrismaClientKnownRequestError('foreign key violation', {
+    code: 'P2003',
+    clientVersion: 'test',
+  });
 
 interface PrismaStub {
   $transaction: jest.Mock;
@@ -24,7 +36,13 @@ interface PrismaStub {
     deleteMany: jest.Mock;
   };
   bookVersion: { findMany: jest.Mock; findUnique: jest.Mock; count: jest.Mock };
-  bookTag: { findFirst: jest.Mock; create: jest.Mock; delete: jest.Mock; deleteMany: jest.Mock };
+  bookTag: {
+    findFirst: jest.Mock;
+    create: jest.Mock;
+    createMany: jest.Mock;
+    delete: jest.Mock;
+    deleteMany: jest.Mock;
+  };
   bookRating: { groupBy: jest.Mock };
 }
 
@@ -46,7 +64,13 @@ const createPrismaStub = (): PrismaStub => ({
     deleteMany: jest.fn(),
   },
   bookVersion: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn() },
-  bookTag: { findFirst: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
+  bookTag: {
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    createMany: jest.fn().mockResolvedValue({ count: 0 }),
+    delete: jest.fn(),
+    deleteMany: jest.fn(),
+  },
   bookRating: { groupBy: jest.fn() },
 });
 
@@ -290,6 +314,11 @@ describe('TagsService', () => {
     const res = await service.attach('v1', 't1');
     expect(res).toEqual({ id: 'link1' });
     expect(prisma.bookTag.create).not.toHaveBeenCalled();
+    expect(prisma.bookTag.createMany).toHaveBeenCalledTimes(1);
+    expect(prisma.bookTag.createMany).toHaveBeenCalledWith({
+      data: [{ bookVersionId: 'v1', tagId: 't1' }],
+      skipDuplicates: true,
+    });
   });
 
   it('detach is idempotent when link absent', async () => {
@@ -799,6 +828,46 @@ describe('TagsService — писатели тега идут под замком
     expect(advisoryArgs.slice(1)).toEqual([expect.any(Number), 'n-key']);
   });
 
+  /**
+   * `LEGACY-399`, п.4. Advisory-замок в `runInLockedTag` серилизует только два
+   * `create` с одним ключом друг относительно друга — он не проверяет, занят
+   * ли ключ строкой, закоммиченной раньше. Слепой `tx.tag.create` в этом случае
+   * бьёт в уникальный индекс напрямую, и `P2002` должен читаться как 409
+   * (`STYLE_GUIDE.md` §8), а не как 500.
+   */
+  it('create: P2002 (ключ занят) — 409', async () => {
+    const { tagsService } = setup({
+      'tag.create': () => {
+        throw p2002();
+      },
+    });
+
+    await expect(
+      tagsService.create({ name: 'N', slug: 'n-slug', key: 'n-key' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  /**
+   * `LEGACY-399`, п.2. Проверка дубля перед записью видит только переводы
+   * ДРУГИХ тегов, закоммиченные до старта этой транзакции; замок держит
+   * только строку своего тега (`LEGACY-360`). Два разных тега, ставящие
+   * одну и ту же пару `(language, slug)` одновременно, оба проходят
+   * проверку — и второй получает `P2002` на самой записи.
+   */
+  it('updateTranslation: P2002 на финальной записи (гонка двух тегов) — 400', async () => {
+    const { tagsService } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: null }),
+      'tagTranslation.findFirst': () => null, // дубль другого тега ещё не закоммичен на момент проверки
+      'tagTranslation.update': () => {
+        throw p2002();
+      },
+    });
+
+    await expect(
+      tagsService.updateTranslation('t1', Language.en, { slug: 'new' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('путь по id advisory-замка не берёт', async () => {
     const { tagsService, log } = setup({ 'tag.findUnique': () => ({ id: 't1', slug: 's' }) });
 
@@ -806,6 +875,51 @@ describe('TagsService — писатели тега идут под замком
 
     expect(log).not.toContain('tx.advisory');
     expect(log[0]).toBe('tx.forUpdate');
+  });
+
+  /**
+   * `LEGACY-399`, п.1. Тег и версии читаются на пуле до транзакции и без замка
+   * (`attach` идёт мимо `TagLockService`). Тег или версия-сестра, удалённые в этом
+   * окне, дают вставке связи `P2003` — это 404, не 500, и пересчёт не запускается.
+   * Встречная привязка той же пары — не отказ вовсе: `createMany` с `skipDuplicates`.
+   */
+  it('attach: связи пишутся одной вставкой через tx и без отказа на встречной привязке', async () => {
+    const { tagsService, tx, log } = setup({
+      'bookVersion.findUnique': () => ({ id: 'v1', bookId: 'b1' }),
+      'tag.findUnique': () => ({ id: 't1' }),
+      'bookVersion.findMany': () => [{ id: 'v1' }, { id: 'v2' }],
+    });
+
+    await tagsService.attach('v1', 't1');
+
+    const createMany = (tx.bookTag as Record<string, jest.Mock>).createMany;
+    expect(createMany).toHaveBeenCalledTimes(1);
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        { bookVersionId: 'v1', tagId: 't1' },
+        { bookVersionId: 'v2', tagId: 't1' },
+      ],
+      skipDuplicates: true,
+    });
+    expect(rootCalls(log).filter((call) => call.startsWith('root.bookTag.create'))).toEqual([]);
+  });
+
+  it('attach: тег или версия удалены в окне гонки — P2003 читается как 404', async () => {
+    const recompute = jest.fn();
+    const { tagsService } = setup({
+      'bookVersion.findUnique': () => ({ id: 'v1', bookId: 'b1' }),
+      'tag.findUnique': () => ({ id: 't1' }),
+      'bookVersion.findMany': () => [{ id: 'v1' }],
+      'bookTag.createMany': () => {
+        throw p2003();
+      },
+    });
+    (
+      tagsService as unknown as { taxonomyIndexabilityService: unknown }
+    ).taxonomyIndexabilityService = { recomputeForTerms: recompute };
+
+    await expect(tagsService.attach('v1', 't1')).rejects.toBeInstanceOf(NotFoundException);
+    expect(recompute).not.toHaveBeenCalled();
   });
 
   it('attach и detach открывают транзакцию с явными границами', async () => {

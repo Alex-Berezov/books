@@ -99,8 +99,8 @@ const REMINDER_NOTIFICATION: Partial<
  * Value chosen not to collide with it. The two-argument overload used elsewhere keys off its
  * own `int4` namespaces and cannot collide with a `bigint` key at all:
  * `TAG_KEY_LOCK_NAMESPACE` (`831_427_002`), `CATEGORY_SLUG_LOCK_NAMESPACE` (`831_427_003`),
- * `RIGHTS_PROFILE_LOCK_NAMESPACE` (`831_427_101`), `RIGHTS_REVIEW_LOCK_NAMESPACE`
- * (`831_427_102`).
+ * `BOOK_SUMMARY_LOCK_NAMESPACE` (`831_427_004`), `RIGHTS_PROFILE_LOCK_NAMESPACE` (`831_427_101`),
+ * `RIGHTS_REVIEW_LOCK_NAMESPACE` (`831_427_102`).
  */
 const RECHECK_SCAN_LOCK_KEY = 8_314_270_002n;
 

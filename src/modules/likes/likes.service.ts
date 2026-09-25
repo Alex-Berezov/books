@@ -4,12 +4,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Like, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CACHE_SERVICE, CacheService } from '../../shared/cache/cache.interface';
 import { Inject } from '@nestjs/common';
 import { LikeRequestDto, LikeCountQueryDto } from './dto/like.dto';
 import { LikeCountDto, ToggleLikeResponseDto } from './dto/like-response.dto';
 import { msgExactlyOne } from '../../shared/constants/validation';
+
+const isPrismaCode = (e: unknown, code: string): boolean =>
+  e instanceof Prisma.PrismaClientKnownRequestError && e.code === code;
+
+// LEGACY-398: the reader's reaction is still being changed by a parallel request.
+const CONCURRENT_REACTION = 'Reaction is being changed concurrently, retry';
 
 @Injectable()
 export class LikesService {
@@ -29,6 +36,47 @@ export class LikesService {
     return `likes:count:${target}:${targetId}`;
   }
 
+  private async invalidateCount(dto: LikeRequestDto) {
+    if (dto.commentId) await this.cache.del(this.countCacheKey('comment', dto.commentId));
+    if (dto.bookVersionId)
+      await this.cache.del(this.countCacheKey('bookVersion', dto.bookVersionId));
+  }
+
+  private findReaction(userId: string, dto: LikeRequestDto) {
+    return this.prisma.like.findFirst({
+      where: {
+        userId,
+        commentId: dto.commentId ?? undefined,
+        bookVersionId: dto.bookVersionId ?? undefined,
+      },
+    });
+  }
+
+  /** The row vanishing under a parallel request (P2025) is 409, not 500. */
+  private async updateReaction(id: string, isLike: boolean): Promise<Like> {
+    try {
+      return await this.prisma.like.update({ where: { id }, data: { isLike } });
+    } catch (e: unknown) {
+      if (isPrismaCode(e, 'P2025')) throw new ConflictException(CONCURRENT_REACTION);
+      throw e;
+    }
+  }
+
+  /** Toggle decision on an existing row; the row vanishing under a parallel request is 409, not 500. */
+  private async toggleExisting(row: { id: string; isLike: boolean }, isLike: boolean) {
+    try {
+      if (row.isLike === isLike) {
+        await this.prisma.like.delete({ where: { id: row.id } });
+        return false;
+      }
+      await this.updateReaction(row.id, isLike);
+      return true;
+    } catch (e: unknown) {
+      if (isPrismaCode(e, 'P2025')) throw new ConflictException(CONCURRENT_REACTION);
+      throw e;
+    }
+  }
+
   async like(userId: string, dto: LikeRequestDto) {
     this.ensureSingleTarget(dto);
     const isLike = dto.isLike !== false;
@@ -45,25 +93,14 @@ export class LikesService {
     }
 
     // idempotent create/update
-    const liked = await this.prisma.like.findFirst({
-      where: {
-        userId,
-        commentId: dto.commentId ?? undefined,
-        bookVersionId: dto.bookVersionId ?? undefined,
-      },
-    });
+    const liked = await this.findReaction(userId, dto);
 
     if (liked) {
       if (liked.isLike === isLike) {
         throw new ConflictException('Already reacted in this way');
       }
-      const updated = await this.prisma.like.update({
-        where: { id: liked.id },
-        data: { isLike },
-      });
-      if (dto.commentId) await this.cache.del(this.countCacheKey('comment', dto.commentId));
-      if (dto.bookVersionId)
-        await this.cache.del(this.countCacheKey('bookVersion', dto.bookVersionId));
+      const updated = await this.updateReaction(liked.id, isLike);
+      await this.invalidateCount(dto);
       return updated;
     }
 
@@ -71,49 +108,35 @@ export class LikesService {
       const created = await this.prisma.like.create({
         data: { userId, commentId: dto.commentId, bookVersionId: dto.bookVersionId, isLike },
       });
-      // invalidate cache
-      if (dto.commentId) await this.cache.del(this.countCacheKey('comment', dto.commentId));
-      if (dto.bookVersionId)
-        await this.cache.del(this.countCacheKey('bookVersion', dto.bookVersionId));
+      await this.invalidateCount(dto);
       return created;
-    } catch {
-      // unique race fallback
-      const again = await this.prisma.like.findFirst({
-        where: {
-          userId,
-          commentId: dto.commentId ?? undefined,
-          bookVersionId: dto.bookVersionId ?? undefined,
-        },
-      });
-      if (again) {
-        if (again.isLike === isLike) throw new ConflictException('Already reacted in this way');
-        const updated = await this.prisma.like.update({
-          where: { id: again.id },
-          data: { isLike },
-        });
-        return updated;
-      }
-      throw new BadRequestException('Unable to like');
+    } catch (e: unknown) {
+      // The target was checked before, without a lock: deleted in between, it is a 404.
+      if (isPrismaCode(e, 'P2003')) throw new NotFoundException('Like target not found');
+      // Unique race fallback — only for P2002; any other DB error reaches the client as itself.
+      if (!isPrismaCode(e, 'P2002')) throw e;
+      const again = await this.findReaction(userId, dto);
+      if (!again) throw new ConflictException(CONCURRENT_REACTION);
+      if (again.isLike === isLike) throw new ConflictException('Already reacted in this way');
+      const updated = await this.updateReaction(again.id, isLike);
+      await this.invalidateCount(dto);
+      return updated;
     }
   }
 
   async unlike(userId: string, dto: LikeRequestDto) {
     this.ensureSingleTarget(dto);
 
-    const existing = await this.prisma.like.findFirst({
-      where: {
-        userId,
-        commentId: dto.commentId ?? undefined,
-        bookVersionId: dto.bookVersionId ?? undefined,
-      },
-    });
+    const existing = await this.findReaction(userId, dto);
     if (!existing) return { success: true };
 
-    await this.prisma.like.delete({ where: { id: existing.id } });
-    // invalidate cache
-    if (dto.commentId) await this.cache.del(this.countCacheKey('comment', dto.commentId));
-    if (dto.bookVersionId)
-      await this.cache.del(this.countCacheKey('bookVersion', dto.bookVersionId));
+    try {
+      await this.prisma.like.delete({ where: { id: existing.id } });
+    } catch (e: unknown) {
+      // A parallel unlike already removed it: the requested state is reached (LEGACY-398).
+      if (!isPrismaCode(e, 'P2025')) throw e;
+    }
+    await this.invalidateCount(dto);
     return { success: true };
   }
 
@@ -158,31 +181,26 @@ export class LikesService {
       if (!existing) throw new NotFoundException('BookVersion not found');
     }
 
-    const existingLike = await this.prisma.like.findFirst({
-      where: {
-        userId,
-        commentId: dto.commentId ?? undefined,
-        bookVersionId: dto.bookVersionId ?? undefined,
-      },
-    });
+    const existingLike = await this.findReaction(userId, dto);
 
-    let liked = false;
+    let liked: boolean;
     if (existingLike) {
-      if (existingLike.isLike === isLike) {
-        await this.prisma.like.delete({ where: { id: existingLike.id } });
-        liked = false;
-      } else {
-        await this.prisma.like.update({
-          where: { id: existingLike.id },
-          data: { isLike },
+      liked = await this.toggleExisting(existingLike, isLike);
+    } else {
+      try {
+        await this.prisma.like.create({
+          data: { userId, commentId: dto.commentId, bookVersionId: dto.bookVersionId, isLike },
         });
         liked = true;
+      } catch (e: unknown) {
+        // Two concurrent toggles with no prior reaction both miss the read above; the
+        // loser's create hits the unique index. Re-read and take the same decision.
+        if (isPrismaCode(e, 'P2003')) throw new NotFoundException('Like target not found');
+        if (!isPrismaCode(e, 'P2002')) throw e;
+        const again = await this.findReaction(userId, dto);
+        if (!again) throw new ConflictException(CONCURRENT_REACTION);
+        liked = await this.toggleExisting(again, isLike);
       }
-    } else {
-      await this.prisma.like.create({
-        data: { userId, commentId: dto.commentId, bookVersionId: dto.bookVersionId, isLike },
-      });
-      liked = true;
     }
 
     await this.cache.del(this.countCacheKey(target, targetId));

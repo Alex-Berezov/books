@@ -13,8 +13,9 @@ export const CLEARANCE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as cons
 /**
  * Пространства имён двухаргументного `pg_advisory_xact_lock(int4, int4)`. Свои у каждого ключа:
  * `RightsProfile.id` и `RightsReview.id` — разные строки, и совпадение хешей двух разных
- * сущностей не должно ставить их в одну очередь. С `TAG_KEY_LOCK_NAMESPACE` и
- * `CATEGORY_TREE_LOCK_KEY` не пересекаются.
+ * сущностей не должно ставить их в одну очередь. С `TAG_KEY_LOCK_NAMESPACE` (`831_427_002`),
+ * `CATEGORY_SLUG_LOCK_NAMESPACE` (`831_427_003`), `BOOK_SUMMARY_LOCK_NAMESPACE` (`831_427_004`)
+ * и `CATEGORY_TREE_LOCK_KEY` не пересекаются.
  */
 const RIGHTS_PROFILE_LOCK_NAMESPACE = 831_427_101;
 const RIGHTS_REVIEW_LOCK_NAMESPACE = 831_427_102;

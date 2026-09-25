@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import {
   AdminAuditAction,
   AdminAuditTargetType,
@@ -145,18 +151,29 @@ export class TagsService {
    */
   async create(dto: CreateTagDto) {
     const key = dto.key || dto.slug;
-    return this.tagLock.runInLockedTag({ key }, (tx) =>
-      tx.tag.create({
-        data: {
-          name: dto.name,
-          slug: dto.slug,
-          key,
-          ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
-          ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
-          ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
-        },
-      }),
-    );
+    try {
+      return await this.tagLock.runInLockedTag({ key }, (tx) =>
+        tx.tag.create({
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            key,
+            ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
+            ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
+            ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+          },
+        }),
+      );
+    } catch (e: unknown) {
+      // The advisory lock in runInLockedTag only serializes two creates racing on
+      // the same key — it does not check whether the key is already taken by a
+      // row committed earlier. That blind create() hits the unique index on `key`
+      // (the only unique column of Tag), and P2002 must become 409, not 500.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('Tag with same key already exists');
+      }
+      throw e;
+    }
   }
 
   /**
@@ -546,26 +563,38 @@ export class TagsService {
         );
       }
 
-      return tx.tagTranslation.update({
-        where: { tagId_language: { tagId, language } },
-        data: {
-          name: dto.name,
-          slug: dto.slug,
-          ...(dto.description !== undefined ? { description: dto.description } : {}),
-          ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
-          ...(dto.relatedGenreSlugs !== undefined
-            ? { relatedGenreSlugs: dto.relatedGenreSlugs }
-            : {}),
-          ...(dto.relatedCategorySlugs !== undefined
-            ? { relatedCategorySlugs: dto.relatedCategorySlugs }
-            : {}),
-          ...(dto.relatedCollectionSlugs !== undefined
-            ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
-            : {}),
-          ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
-        },
-        include: { seo: true },
-      });
+      try {
+        return await tx.tagTranslation.update({
+          where: { tagId_language: { tagId, language } },
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            ...(dto.description !== undefined ? { description: dto.description } : {}),
+            ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
+            ...(dto.relatedGenreSlugs !== undefined
+              ? { relatedGenreSlugs: dto.relatedGenreSlugs }
+              : {}),
+            ...(dto.relatedCategorySlugs !== undefined
+              ? { relatedCategorySlugs: dto.relatedCategorySlugs }
+              : {}),
+            ...(dto.relatedCollectionSlugs !== undefined
+              ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
+              : {}),
+            ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
+          },
+          include: { seo: true },
+        });
+      } catch (e: unknown) {
+        // `dup` above only sees translations of OTHER tags committed before this
+        // transaction started; the lock this transaction holds is on its own tag
+        // row (LEGACY-360), not on the (language, slug) pair. Two different tags
+        // racing to claim the same pair both pass the check above and one loses
+        // here — that loss must be 400, not 500.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          throw new BadRequestException('Translation with same (language, slug) already exists');
+        }
+        throw e;
+      }
     });
   }
 
@@ -615,17 +644,27 @@ export class TagsService {
       select: { id: true },
     });
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const sibling of siblings) {
-        const exists = await tx.bookTag.findFirst({
-          where: { bookVersionId: sibling.id, tagId },
-          select: { id: true },
-        });
-        if (!exists) {
-          await tx.bookTag.create({ data: { bookVersionId: sibling.id, tagId } });
-        }
+    try {
+      // `skipDuplicates` is `ON CONFLICT DO NOTHING` on `@@unique([bookVersionId, tagId])`:
+      // a concurrent attach of the same pair is a no-op, not a P2002 (LEGACY-399).
+      await this.prisma.$transaction(
+        (tx) =>
+          tx.bookTag.createMany({
+            data: siblings.map((sibling) => ({ bookVersionId: sibling.id, tagId })),
+            skipDuplicates: true,
+          }),
+        TAG_TX_OPTIONS,
+      );
+    } catch (e: unknown) {
+      // The existence checks above ran on the pool, before this transaction and
+      // without a lock (attach/detach do not go through TagLockService). A tag or
+      // a sibling version deleted in between makes the insert violate a foreign
+      // key (P2003) — a 404, not a 500.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+        throw new NotFoundException('Tag or book version not found');
       }
-    }, TAG_TX_OPTIONS);
+      throw e;
+    }
 
     // The link now exists for every language of the book, so every language's
     // counter for this term is stale.

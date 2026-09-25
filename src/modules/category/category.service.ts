@@ -276,7 +276,7 @@ export class CategoryService {
    * лишь `assertSlugFree` (тот ловит ожидаемый дубль до записи, но не гонку,
    * добравшуюся до базы).
    * Переводы сюда не заводить: у `createTranslation` свой текст ошибки
-   * и свой откат `seo`, и общий обработчик подменил бы сообщение про занятую
+   * и своя транзакция с `seo` (`LEGACY-400`), и общий обработчик подменил бы сообщение про занятую
    * пару «язык — слаг» сообщением про слаг термина.
    */
   private async writeCategoryRow<T>(write: () => Promise<T>): Promise<T> {
@@ -808,51 +808,66 @@ export class CategoryService {
     });
   }
 
+  /**
+   * `LEGACY-400`. `Seo` и перевод — одна транзакция, а не запись плюс
+   * компенсация: прежний `catch` удалял `Seo` вызовом
+   * `seo.delete(...).catch(() => {})`, и отказ самой уборки (после отказа
+   * `categoryTranslation.create` из-за конфликта слага) глушился, оставляя
+   * `Seo`-сироту. Тот же приём, что и в `tags.service.ts` (`createTranslation`,
+   * `LEGACY-360`), которая уже держит обе записи под общим `tx`.
+   */
   async createTranslation(categoryId: string, dto: CreateCategoryTranslationDto) {
     const exists = await this.prisma.category.findUnique({ where: { id: categoryId } });
     if (!exists) throw new NotFoundException('Category not found');
 
-    let seoId: number | undefined;
-    if (dto.seo) {
-      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
-      if (hasSeoData) {
-        const newSeo = await this.prisma.seo.create({ data: dto.seo });
-        seoId = newSeo.id;
-      }
-    }
-
     try {
-      return await this.prisma.categoryTranslation.create({
-        data: {
-          categoryId,
-          language: dto.language,
-          name: dto.name,
-          slug: dto.slug,
-          description: dto.description ?? null,
-          // A brand-new term has no books yet, so it must not be born indexable.
-          // Written explicitly rather than relying on the column default, which
-          // is `true` — that default is what put every empty taxonomy into the
-          // sitemap on 05.08.2026. The recompute opens the term once it earns it.
-          bookCount: 0,
-          autoIndexable: false,
-          ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
-          ...(dto.shortDescription !== undefined ? { shortDescription: dto.shortDescription } : {}),
-          ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
-          ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
-          ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
-          ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
-          ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
-          ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
-          ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
-          ...(seoId !== undefined ? { seoId } : {}),
-        },
-        include: { seo: true },
+      return await this.prisma.$transaction(async (tx) => {
+        let seoId: number | undefined;
+        if (dto.seo) {
+          const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+          if (hasSeoData) {
+            const newSeo = await tx.seo.create({ data: dto.seo });
+            seoId = newSeo.id;
+          }
+        }
+
+        return tx.categoryTranslation.create({
+          data: {
+            categoryId,
+            language: dto.language,
+            name: dto.name,
+            slug: dto.slug,
+            description: dto.description ?? null,
+            // A brand-new term has no books yet, so it must not be born indexable.
+            // Written explicitly rather than relying on the column default, which
+            // is `true` — that default is what put every empty taxonomy into the
+            // sitemap on 05.08.2026. The recompute opens the term once it earns it.
+            bookCount: 0,
+            autoIndexable: false,
+            ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
+            ...(dto.shortDescription !== undefined
+              ? { shortDescription: dto.shortDescription }
+              : {}),
+            ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
+            ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
+            ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
+            ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
+            ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
+            ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
+            ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
+            ...(seoId !== undefined ? { seoId } : {}),
+          },
+          include: { seo: true },
+        });
       });
     } catch (e: unknown) {
-      if (seoId) {
-        await this.prisma.seo.delete({ where: { id: seoId } }).catch(() => {});
+      // The whole transaction rolled back — including the Seo insert, if any —
+      // so there is nothing left to compensate for here. The category was checked
+      // on the pool before it; deleted in between, the insert hits the FK (P2003).
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+        throw new NotFoundException('Category not found');
       }
-      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new BadRequestException('Translation with same (language, slug) already exists');
       }
       throw e;

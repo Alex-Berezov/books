@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LikesService } from './likes.service';
 import { CacheService } from '../../shared/cache/cache.interface';
@@ -95,6 +96,112 @@ describe('LikesService', () => {
       expect(res).toEqual(created);
       expect(cache.del).toHaveBeenCalledWith('likes:count:comment:c1');
     });
+
+    /**
+     * `LEGACY-398`, второе место. Голый `catch {}` раньше принимал за гонку
+     * по уникальному индексу любую ошибку базы и отвечал 400 «Unable to like»,
+     * пряча причину. Ловится должен только `P2002` — остальное пробрасывается.
+     */
+    it('пробрасывает не-P2002 отказ create, а не отвечает "Unable to like"', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      const dbDown = new Prisma.PrismaClientKnownRequestError('connection reset', {
+        code: 'P1001',
+        clientVersion: 'test',
+      });
+      prisma.like.create.mockRejectedValueOnce(dbDown);
+      await expect(service.like('u1', { commentId: 'c1' })).rejects.toBe(dbDown);
+      expect(prisma.like.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * `LEGACY-398`. Гонка по уникальному индексу: `create` бьёт в `P2002`,
+     * повторный `findFirst` находит строку соперника — ответ не 500.
+     */
+    it('на P2002 перечитывает строку соперника вместо 500', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      const p2002 = new Prisma.PrismaClientKnownRequestError('unique violation', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+      prisma.like.create.mockRejectedValueOnce(p2002);
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'rival', isLike: false });
+      prisma.like.update.mockResolvedValueOnce({ id: 'rival', isLike: true });
+      const res = await service.like('u1', { commentId: 'c1', isLike: true });
+      expect(res).toEqual({ id: 'rival', isLike: true });
+    });
+  });
+
+  describe('like() — гонки (LEGACY-398)', () => {
+    it('цель удалена между проверкой и записью — P2003 читается как 404', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      prisma.like.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('x', { code: 'P2003', clientVersion: 'test' }),
+      );
+      await expect(service.like('u1', { commentId: 'c1' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('ветка перечитки сбрасывает кэш счётчика, как и обычная запись', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      prisma.like.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('x', { code: 'P2002', clientVersion: 'test' }),
+      );
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'rival', isLike: false });
+      prisma.like.update.mockResolvedValueOnce({ id: 'rival', isLike: true });
+      await service.like('u1', { commentId: 'c1', isLike: true });
+      expect(cache.del).toHaveBeenCalledTimes(1);
+      expect(cache.del).toHaveBeenCalledWith('likes:count:comment:c1');
+    });
+
+    it('строка соперника исчезла до update — P2025 читается как 409', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      prisma.like.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('x', { code: 'P2002', clientVersion: 'test' }),
+      );
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'rival', isLike: false });
+      prisma.like.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('x', { code: 'P2025', clientVersion: 'test' }),
+      );
+      await expect(service.like('u1', { commentId: 'c1', isLike: true })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+  });
+
+  describe('like()/unlike() — встречные запросы (LEGACY-398)', () => {
+    const p = (code: string) =>
+      new Prisma.PrismaClientKnownRequestError('x', { code, clientVersion: 'test' });
+
+    it('like(): перечитка после P2002 не нашла строку — 409, а не 400', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      prisma.like.create.mockRejectedValueOnce(p('P2002'));
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      await expect(service.like('u1', { commentId: 'c1' })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it('like(): смена реакции, строку снял встречный unlike — 409, а не 500', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1', isLike: true });
+      prisma.like.update.mockRejectedValueOnce(p('P2025'));
+      await expect(service.like('u1', { commentId: 'c1', isLike: false })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it('unlike(): строку уже снял встречный unlike — успех, а не 500', async () => {
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1' });
+      prisma.like.delete.mockRejectedValueOnce(p('P2025'));
+      await expect(service.unlike('u1', { commentId: 'c1' })).resolves.toEqual({ success: true });
+    });
   });
 
   describe('unlike()', () => {
@@ -152,6 +259,85 @@ describe('LikesService', () => {
       prisma.like.count.mockResolvedValueOnce(1); // dislikes
       const res2 = await service.toggle('u1', { commentId: 'c1', isLike: false });
       expect(res2).toEqual({ liked: true, isLike: false, likes: 0, dislikes: 1, count: 0 });
+    });
+
+    /**
+     * `LEGACY-398`. Два одновременных `toggle` без предыдущей реакции оба
+     * видят пустой `findFirst`, и второй `create` бьёт в уникальный индекс.
+     * Раньше это не ловилось вовсе — 500 вместо ответа.
+     */
+    it('на P2002 перечитывает строку соперника и решает delete/update, а не 500', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      const p2002 = new Prisma.PrismaClientKnownRequestError('unique violation', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+      prisma.like.create.mockRejectedValueOnce(p2002);
+      // Соперник уже поставил ту же реакцию — toggle отвечает "снял".
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'rival', isLike: true });
+      cache.get.mockResolvedValueOnce(undefined);
+      prisma.like.count.mockResolvedValueOnce(1);
+      prisma.like.count.mockResolvedValueOnce(0);
+
+      const res = await service.toggle('u1', { commentId: 'c1', isLike: true });
+
+      expect(prisma.like.delete).toHaveBeenCalledTimes(1);
+      expect(prisma.like.delete).toHaveBeenCalledWith({ where: { id: 'rival' } });
+      expect(res.liked).toBe(false);
+    });
+
+    it('на P2002, если строка соперника уже исчезла, отвечает 409, а не сырым P2002', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      prisma.like.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('unique violation', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+
+      await expect(service.toggle('u1', { commentId: 'c1', isLike: true })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it('пробрасывает не-P2002 отказ create в toggle тоже', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      const dbDown = new Prisma.PrismaClientKnownRequestError('connection reset', {
+        code: 'P1001',
+        clientVersion: 'test',
+      });
+      prisma.like.create.mockRejectedValueOnce(dbDown);
+      await expect(service.toggle('u1', { commentId: 'c1', isLike: true })).rejects.toBe(dbDown);
+    });
+
+    it('две встречные отмены одной реакции — P2025 у второй читается как 409, а не 500', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'l1', isLike: true });
+      prisma.like.delete.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('x', { code: 'P2025', clientVersion: 'test' }),
+      );
+      await expect(service.toggle('u1', { commentId: 'c1', isLike: true })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it('после перечитки строка соперника исчезла до delete — 409, а не 500', async () => {
+      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'c1' });
+      prisma.like.findFirst.mockResolvedValueOnce(null);
+      prisma.like.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('x', { code: 'P2002', clientVersion: 'test' }),
+      );
+      prisma.like.findFirst.mockResolvedValueOnce({ id: 'rival', isLike: true });
+      prisma.like.delete.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('x', { code: 'P2025', clientVersion: 'test' }),
+      );
+      await expect(service.toggle('u1', { commentId: 'c1', isLike: true })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
     });
   });
 });

@@ -4,11 +4,13 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { BookSummaryService } from '../src/modules/book-summary/book-summary.service';
 import { createBookFixture } from './helpers/book-fixture';
 
 describe('BookSummary e2e', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let bookSummaries: BookSummaryService;
   let versionId: string;
   let userAccess: string;
   let adminAccess: string;
@@ -20,6 +22,7 @@ describe('BookSummary e2e', () => {
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
+    bookSummaries = moduleRef.get(BookSummaryService);
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -121,4 +124,55 @@ describe('BookSummary e2e', () => {
 
     expect(put2.body.summary).toBe('Updated summary');
   });
+
+  /**
+   * `LEGACY-420`, посадка. Раньше `upsertForVersion` шёл «прочитал -> создал»
+   * без транзакции и без уникального ключа: два параллельных сохранения одной
+   * версии обе видели пустой `findFirst` и обе звали `create`, оставляя две
+   * строки `BookSummary` на одну версию. Теперь чтение и запись идут
+   * в транзакции под advisory-замком по версии: второй писатель ждёт коммита
+   * первого. Уникального индекса нет (чистка старых дублей — за владельцем),
+   * поэтому держит именно замок, и этот тест — его единственный сторож.
+   *
+   * ⚠️ Юнит этого не воспроизводит: мок `$transaction` исполняет тело
+   * последовательно, двух одновременных транзакций там нет. Нужен живой Postgres.
+   *
+   * ⚠️ Сервис зовётся напрямую, не через HTTP (по образцу
+   * `category-parent-race.e2e-spec.ts`): гвардов и вадилации-пайпа достаточно
+   * джиттера, чтобы окно гонки почти всегда закрывалось само по себе — один
+   * прогон через `supertest` эту гонку не ловит вовсе. Пар тоже несколько
+   * (`ATTEMPTS`), по той же причине: единичная попытка расходится не каждый
+   * раз, и красное было бы плавающим.
+   */
+  it('LEGACY-420: параллельные сохранения одной версии не плодят вторую строку', async () => {
+    const ATTEMPTS = 20;
+
+    for (let i = 0; i < ATTEMPTS; i += 1) {
+      const book = await createBookFixture(prisma, `book-sum-race-${Date.now()}-${i}`);
+      const raceVersion = await prisma.bookVersion.create({
+        data: {
+          bookId: book.id,
+          language: 'en',
+          title: `Version For Summary Race ${i}`,
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/c.jpg',
+          type: 'text',
+          isFree: true,
+          status: 'published',
+        },
+      });
+
+      const results = await Promise.allSettled([
+        bookSummaries.upsertForVersion(raceVersion.id, { summary: 'Race summary A' }),
+        bookSummaries.upsertForVersion(raceVersion.id, { summary: 'Race summary B' }),
+      ]);
+      for (const res of results) expect(res.status).toBe('fulfilled');
+
+      const rows = await prisma.bookSummary.findMany({
+        where: { bookVersionId: raceVersion.id },
+      });
+      expect(rows).toHaveLength(1);
+    }
+  }, 60_000);
 });

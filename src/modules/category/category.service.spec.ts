@@ -5,7 +5,7 @@ import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexa
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Language } from '@prisma/client';
+import { Language, Prisma } from '@prisma/client';
 
 interface PrismaStub {
   $transaction: jest.Mock;
@@ -43,6 +43,11 @@ interface PrismaStub {
   };
   slugRedirect: {
     deleteMany: jest.Mock;
+  };
+  seo: {
+    create: jest.Mock;
+    update: jest.Mock;
+    delete: jest.Mock;
   };
   /**
    * Модель `book` общая заглушка не заводит: её подставляют точечно те тесты,
@@ -84,6 +89,7 @@ const createPrismaStub = (): PrismaStub => ({
   },
   bookRating: { groupBy: jest.fn() },
   slugRedirect: { deleteMany: jest.fn() },
+  seo: { create: jest.fn(), update: jest.fn(), delete: jest.fn() },
 });
 
 /**
@@ -2098,6 +2104,76 @@ describe('CategoryService', () => {
         data: expect.objectContaining({ bookCount: 0, autoIndexable: false }),
       }),
     );
+  });
+
+  /**
+   * `LEGACY-400`. `Seo` и перевод пишутся одной транзакцией: раньше это была
+   * компенсация — запись `Seo` на пуле, затем `categoryTranslation.create`
+   * на пуле, и при её отказе `catch` удалял `Seo` вызовом
+   * `seo.delete(...).catch(() => {})`, глотая отказ самой уборки.
+   */
+  // `tx` здесь отдельный объект, а не `prisma`: запись мимо `tx` иначе прошла бы незамеченной (`L-016`).
+  const withSeparateTx = () => {
+    const tx = {
+      seo: { create: jest.fn().mockResolvedValue({ id: 7 }), delete: jest.fn() },
+      categoryTranslation: { create: jest.fn().mockResolvedValue({ id: 'tr1' }) },
+    };
+    prisma.$transaction = jest.fn((cb: (client: typeof tx) => unknown) => cb(tx));
+    return tx;
+  };
+
+  it('createTranslation: Seo и перевод пишутся одной транзакцией', async () => {
+    prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    const tx = withSeparateTx();
+
+    await service.createTranslation('c1', {
+      language: Language.en,
+      name: 'Poetry',
+      slug: 'poetry',
+      seo: { metaTitle: 'T' },
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.seo.create).toHaveBeenCalledTimes(1);
+    expect(tx.seo.create).toHaveBeenCalledWith({ data: { metaTitle: 'T' } });
+    expect(tx.categoryTranslation.create).toHaveBeenCalledTimes(1);
+    expect(tx.categoryTranslation.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ seoId: 7 }) }),
+    );
+    expect(prisma.seo.create).not.toHaveBeenCalled();
+    expect(prisma.categoryTranslation.create).not.toHaveBeenCalled();
+  });
+
+  it('createTranslation: категория удалена в окне гонки — P2003 читается как 404', async () => {
+    prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    const tx = withSeparateTx();
+    tx.categoryTranslation.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('fk', { code: 'P2003', clientVersion: 'test' }),
+    );
+    await expect(
+      service.createTranslation('c1', { language: Language.en, name: 'P', slug: 'p' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('createTranslation: P2002 — 400 без ручной уборки Seo', async () => {
+    prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    const tx = withSeparateTx();
+    tx.categoryTranslation.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'test' }),
+    );
+
+    await expect(
+      service.createTranslation('c1', {
+        language: Language.en,
+        name: 'Poetry',
+        slug: 'poetry',
+        seo: { metaTitle: 'T' },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    // Транзакция откатила и Seo сама — ручной компенсации нет ни через tx, ни через пул.
+    expect(tx.seo.delete).not.toHaveBeenCalled();
+    expect(prisma.seo.delete).not.toHaveBeenCalled();
   });
 
   /**

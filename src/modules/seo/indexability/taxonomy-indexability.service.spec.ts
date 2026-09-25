@@ -82,6 +82,27 @@ describe('TaxonomyIndexabilityService', () => {
       await expect(service.recomputeForTerms(['c1'], [])).resolves.toBeUndefined();
     });
 
+    /**
+     * `LEGACY-399`, п.3. `attach`/`detach` зовут `recomputeForTerms` уже после
+     * коммита связи; перевод, удалённый в этом окне (`DELETE
+     * /tags/:id/translations/:language`), даёт `tagTranslation.update` `P2025`
+     * («Record to update not found»). Именно этот отказ (а не общая ошибка
+     * базы из теста выше) должен глохнуть здесь же, а не всплывать 500-м
+     * у вызывающей ручки — свойство держит catch на уровне метода, не код
+     * ошибки, поэтому кейс написан отдельно.
+     */
+    it('глушит P2025 от tagTranslation.update — перевод, удалённый в окне гонки', async () => {
+      prisma.bookTag.groupBy.mockResolvedValue([{ tagId: 't1', _count: { _all: 5 } }]);
+      prisma.tagTranslation.findMany.mockResolvedValue([
+        { id: 'tr-en', tagId: 't1', bookCount: 0, autoIndexable: false },
+      ]);
+      prisma.tagTranslation.update.mockRejectedValue(
+        Object.assign(new Error('Record to update not found.'), { code: 'P2025' }),
+      );
+
+      await expect(service.recomputeForTerms([], ['t1'])).resolves.toBeUndefined();
+    });
+
     it('opens a tag once it reaches the upper threshold', async () => {
       prisma.bookTag.groupBy.mockResolvedValue([{ tagId: 't1', _count: { _all: 5 } }]);
       prisma.tagTranslation.findMany.mockImplementation(
