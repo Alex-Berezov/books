@@ -24,6 +24,7 @@ import {
 } from '@prisma/client';
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
+import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 
 export type CategoryTreeNode = {
   id: string;
@@ -866,7 +867,7 @@ export class CategoryService {
             ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
             ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
             ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
-            ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
+            ...(dto.faq !== undefined ? { faq: toJsonInput(dto.faq) } : {}),
             ...(seoId !== undefined ? { seoId } : {}),
           },
           include: { seo: true },
@@ -952,7 +953,11 @@ export class CategoryService {
             ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
             ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
             ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
-            ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
+            // `toJsonInput` годится только созданию: там нет разницы между «не пришло»
+            // и «стёрто». На правке `null` обязан явно очищать колонку — `jsonField`
+            // пишет для него `Prisma.DbNull`; голый `null` Prisma для `Json?` не принимает
+            // (`LEGACY-402`, круг ревью `T34`).
+            ...jsonField('faq', dto.faq),
             ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
           },
           include: { seo: true },

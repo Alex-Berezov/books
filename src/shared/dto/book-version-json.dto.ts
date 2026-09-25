@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
 
 /**
  * Формы Json-колонок версии книги: `characters`, `quotes`, `symbols`.
@@ -9,33 +10,40 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * `book <-> book-version` на уровне файлов. При круговом импорте класс на момент исполнения
  * декоратора ещё `undefined`, и `@ApiProperty({ type: [X] })` собрал бы схему из пустого места.
  *
- * ⚠️ Форму на входе не держит ничто: у `CreateBookVersionDto.characters/quotes/symbols` стоят
- * `@IsOptional() @IsArray()` с элементами `any`, без `@ValidateNested()` и `@Type()`
- * (`book-version/dto/create-book-version.dto.ts`). Обязательность полей здесь описывает
- * намерение, а не проверенный инвариант.
+ * Форму на входе держат `@ValidateNested({ each: true })` + `@Type()` у
+ * `CreateBookVersionDto`/`UpdateBookVersionDto.characters/quotes/symbols` (`LEGACY-402`,
+ * закрыта) — сами эти классы несут декораторы полей, иначе `class-validator` внутрь
+ * вложенного объекта не заглянет.
  */
 export class BookVersionCharacterDto {
   @ApiProperty({ type: String })
+  @IsString()
   name!: string;
 
   @ApiProperty({ type: String })
+  @IsString()
   description!: string;
 }
 
 /** Цитата из книги (Json-колонка `quotes`). */
 export class BookVersionQuoteDto {
   @ApiProperty({ type: String })
+  @IsString()
   text!: string;
 
   @ApiPropertyOptional({ type: String })
+  @IsOptional()
+  @IsString()
   author?: string;
 }
 
 /** Символ книги (Json-колонка `symbols`). */
 export class BookVersionSymbolDto {
   @ApiProperty({ type: String })
+  @IsString()
   title!: string;
 
   @ApiProperty({ type: String })
+  @IsString()
   description!: string;
 }

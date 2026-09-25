@@ -14,12 +14,13 @@ import { IsString } from 'class-validator';
  * необязательными, и рукописный `FaqItem` фронта (оба поля обязательны) переставал
  * сходиться со схемой машинно (`LEGACY-374`).
  *
- * `question`/`answer` несут `@IsString()` ради страниц (`CreatePageDto`/`UpdatePageDto` берут
- * класс под `@ValidateNested({ each: true })` + `@Type()`, `LEGACY-381`) — декораторы не мешают
- * модулям, где класс стоит только в ответе и `validate()` по нему не зовётся (книга, категория,
- * тег - у них свой вход со своими декораторами, не через этот класс). `CreateBookVersionDto`/
- * `UpdateBookVersionDto.faq` держит форму на входе этим же классом, но без `@ValidateNested()` -
- * та же мягкость, что закрыта здесь только для страниц (`LEGACY-402`).
+ * `question`/`answer` несут `@IsString()` ради входа — с 25.09.2026 (`LEGACY-402`) на этот класс
+ * под `@ValidateNested({ each: true })` + `@Type()` заведены `CreatePageDto`/`UpdatePageDto`
+ * (`LEGACY-381`), `CreateBookVersionDto`/`UpdateBookVersionDto.faq`,
+ * `CreateCategoryTranslationDto`/`UpdateCategoryTranslationDto.faq` и `faq` в DTO импорта тега
+ * и категории. Декораторы не мешают модулям, где класс стоит только в ответе и `validate()`
+ * по нему не зовётся (`TagTranslation`/`CategoryTranslation` в выдаче) - там свой путь чтения,
+ * не через `validateSync`.
  */
 export class FaqItemDto {
   @ApiProperty({ type: String, example: 'What is this?' })

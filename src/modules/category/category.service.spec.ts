@@ -2419,6 +2419,44 @@ describe('CategoryService', () => {
         service.updateTranslation('c1', Language.en, { slug: 'taken' } as never),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    /**
+     * `LEGACY-402`, круг ревью `T34`. До правки голый `null` уходил в Prisma и давал 500;
+     * `toJsonInput` на правке превратил бы его в `undefined` и молча не стёр колонку.
+     * `jsonField` пишет для явного `null` `Prisma.DbNull`.
+     */
+    it('faq: null стирает колонку через Prisma.DbNull, а не молчит', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: null });
+
+      await service.updateTranslation('c1', Language.en, { faq: null } as never);
+
+      expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+      expect(tx.categoryTranslation.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ faq: Prisma.DbNull }) }),
+      );
+    });
+
+    it('faq не пришёл — ключ в data не появляется', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: null });
+
+      await service.updateTranslation('c1', Language.en, { name: 'N' } as never);
+
+      expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+      const data = (tx.categoryTranslation.update.mock.calls[0][0] as { data: object }).data;
+      expect(data).not.toHaveProperty('faq');
+    });
+
+    it('faq: [...] пишется как есть', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: null });
+      const faq = [{ question: 'Q', answer: 'A' }];
+
+      await service.updateTranslation('c1', Language.en, { faq } as never);
+
+      expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+      expect(tx.categoryTranslation.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ faq }) }),
+      );
+    });
   });
 
   /**

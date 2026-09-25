@@ -77,7 +77,8 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
   @ApiPropertyOptional({
     type: [BookVersionCharacterDto],
     nullable: true,
-    description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.characters`.',
+    description:
+      'Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.characters`.',
     example: [{ name: 'Dorian Gray', description: 'Main character' }],
   })
   characters!: BookVersionCharacterDto[] | null;
@@ -85,7 +86,8 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
   @ApiPropertyOptional({
     type: [BookVersionQuoteDto],
     nullable: true,
-    description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.quotes`.',
+    description:
+      'Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.quotes`.',
     example: [{ text: 'To live is the rarest thing in the world.', author: 'Oscar Wilde' }],
   })
   quotes!: BookVersionQuoteDto[] | null;
@@ -93,7 +95,8 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
   @ApiPropertyOptional({
     type: [FaqItemDto],
     nullable: true,
-    description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.faq`.',
+    description:
+      'Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.faq`.',
     example: [{ question: 'What is the genre?', answer: 'Gothic fiction' }],
   })
   faq!: FaqItemDto[] | null;
@@ -111,7 +114,8 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
   @ApiPropertyOptional({
     type: [BookVersionSymbolDto],
     nullable: true,
-    description: 'Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.symbols`.',
+    description:
+      'Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.symbols`.',
     example: [{ title: 'Portrait', description: 'Represents the soul' }],
   })
   symbols!: BookVersionSymbolDto[] | null;

@@ -2,7 +2,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
   IsEnum,
-  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -15,6 +14,7 @@ import { Language } from '@prisma/client';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 
 export class UpdateCategoryTranslationDto {
   @ApiPropertyOptional({ enum: Object.values(Language) })
@@ -86,11 +86,12 @@ export class UpdateCategoryTranslationDto {
   @IsString()
   ogImageAlt?: string;
 
-  @ApiPropertyOptional({ description: 'FAQ items as JSON array' })
+  @ApiPropertyOptional({ description: 'FAQ items as JSON array', type: [FaqItemDto] })
   @IsOptional()
   @IsArray()
-  @IsObject({ each: true })
-  faq?: Array<{ question: string; answer: string }>;
+  @ValidateNested({ each: true })
+  @Type(() => FaqItemDto)
+  faq?: FaqItemDto[];
 
   @ApiPropertyOptional({ description: 'SEO metadata', type: SeoInputDto })
   @IsOptional()

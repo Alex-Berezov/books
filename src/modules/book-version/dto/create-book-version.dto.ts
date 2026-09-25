@@ -13,7 +13,9 @@ import {
   Max,
   IsArray,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 import {
   BookVersionCharacterDto,
@@ -184,6 +186,8 @@ export class CreateBookVersionDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BookVersionSymbolDto)
   symbols?: BookVersionSymbolDto[];
 
   @ApiPropertyOptional({
@@ -217,6 +221,8 @@ export class CreateBookVersionDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BookVersionCharacterDto)
   characters?: BookVersionCharacterDto[];
 
   @ApiPropertyOptional({
@@ -226,6 +232,8 @@ export class CreateBookVersionDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BookVersionQuoteDto)
   quotes?: BookVersionQuoteDto[];
 
   @ApiPropertyOptional({
@@ -235,6 +243,8 @@ export class CreateBookVersionDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FaqItemDto)
   faq?: FaqItemDto[];
 
   @ApiPropertyOptional({ description: 'Темы книги', example: ['Art', 'Morality'] })

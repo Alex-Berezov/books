@@ -9,9 +9,13 @@ import {
   Matches,
   Min,
   MinLength,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 
 export class ImportTagTranslationDto {
   @ApiProperty()
@@ -80,36 +84,45 @@ export class ImportTagTranslationDto {
   @IsString()
   robots?: string;
 
+  // `TagTranslation.indexable` — `NOT NULL` (`prisma/schema.prisma:793`), поэтому `null`
+  // отбивается валидатором, а не Prisma (`LEGACY-363`, `LEGACY-401`, по образцу
+  // `create-tag-translation.dto.ts`).
   @ApiPropertyOptional({ default: true })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()
   indexable?: boolean;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  // `faq`/`related*Slugs` — `Json?` (`prisma/schema.prisma:794-798`), но голый `null` Prisma
+  // для Json-колонки не принимает («Provide `Prisma.DbNull`») — `buildTagTranslationData`
+  // (`import.service.ts`) пишет значение как есть, сентинела не расставляет. `@ValidateIf`
+  // превращает это в понятный 400 вместо необработанного отказа Prisma (`LEGACY-401`).
+  @ApiPropertyOptional({ type: [FaqItemDto] })
+  @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
-  faq?: Array<{ question: string; answer: string }>;
+  @ValidateNested({ each: true })
+  @Type(() => FaqItemDto)
+  faq?: FaqItemDto[];
 
   @ApiPropertyOptional({ type: [String] })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
   relatedTagSlugs?: string[];
 
   @ApiPropertyOptional({ type: [String] })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
   relatedGenreSlugs?: string[];
 
   @ApiPropertyOptional({ type: [String] })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
   relatedCategorySlugs?: string[];
 
   @ApiPropertyOptional({ type: [String] })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
   relatedCollectionSlugs?: string[];

@@ -22,6 +22,7 @@ import { UpdateBookVersionContributorDto } from './dto/update-version-contributo
 import { ReorderBookVersionContributorsDto } from './dto/reorder-version-contributors.dto';
 import { randomUUID } from 'crypto';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { GeoBlockScope, GeoCountrySourceStatus } from '../geo-block/dto/geo-block.dto';
 import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
@@ -58,29 +59,6 @@ interface RightsIntakeWithLanguages {
   /** `RightsIntake.targetLanguages` is a JSON column: the shape has to be checked, not assumed. */
   targetLanguages: unknown;
 }
-
-// Классы Json-колонок описывают форму тела запроса, а Prisma ждёт `InputJsonValue`.
-// Необязательные поля класса дают `| undefined`, которого в JSON не бывает, поэтому граница
-// между DTO и записью в базу проходит ровно здесь — одним местом, а не кастом на каждом поле.
-const toJsonInput = (value: unknown): Prisma.InputJsonValue | undefined =>
-  value === undefined || value === null ? undefined : (value as Prisma.InputJsonValue);
-
-// Три разных входа — три разных итога, и путать их нельзя. Поля нет в правке: колонка
-// не трогается, ключа в `data` не будет вовсе. Пришёл `null`: колонка очищается, и очищается
-// именно `DbNull` — тем же SQL NULL, что лежит у никогда не заполнявшихся строк, иначе
-// «не заполняли» и «очистили» разойдутся в фильтрах по Json. Пришёл массив: пишется как есть.
-// `null` здесь не блажь: админка шлёт его при каждом сохранении пустого списка
-// (`books-front/.../BookForm/buildVersionRequest.ts`), пустого массива она не отправляет никогда.
-type JsonFieldInput = Prisma.InputJsonValue | typeof Prisma.DbNull;
-
-const jsonField = <K extends string>(
-  key: K,
-  value: unknown,
-): Partial<Record<K, JsonFieldInput>> => {
-  if (value === undefined) return {};
-  const written: JsonFieldInput = value === null ? Prisma.DbNull : (value as Prisma.InputJsonValue);
-  return { [key]: written } as Record<K, JsonFieldInput>;
-};
 
 /**
  * Форма, которой отвечают `publish` и `unpublish`: строка версии вместе с блоком SEO.
@@ -1058,6 +1036,8 @@ export class BookVersionService {
         const { seoMetaTitle, seoMetaDescription, ...withoutSeo } = dto;
         const { characters, quotes, faq, themes, alternativeTitles, symbols, ...updateRest } =
           withoutSeo;
+        // `null` здесь не блажь: админка шлёт его при каждом сохранении пустого списка
+        // (`books-front/.../BookForm/buildVersionRequest.ts`), пустого массива не отправляет никогда.
         const updateData = {
           ...updateRest,
           ...jsonField('characters', characters),

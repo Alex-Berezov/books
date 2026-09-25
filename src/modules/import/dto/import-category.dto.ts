@@ -10,10 +10,14 @@ import {
   Matches,
   Min,
   MinLength,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { CategoryType } from '@prisma/client';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
+import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 
 export class ImportCategoryTranslationDto {
   @ApiProperty()
@@ -72,10 +76,16 @@ export class ImportCategoryTranslationDto {
   @IsString()
   ogImageAlt?: string;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  // `faq` — `Json?` (`prisma/schema.prisma`), но голый `null` Prisma для Json-колонки
+  // не принимает («Provide `Prisma.DbNull`») — `buildCategoryTranslationData`
+  // (`import.service.ts`) пишет значение как есть, сентинела не расставляет. `@ValidateIf`
+  // превращает это в понятный 400 вместо необработанного отказа Prisma (`LEGACY-401`).
+  @ApiPropertyOptional({ type: [FaqItemDto] })
+  @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
-  faq?: Array<{ question: string; answer: string }>;
+  @ValidateNested({ each: true })
+  @Type(() => FaqItemDto)
+  faq?: FaqItemDto[];
 }
 
 export class ImportCategoryDto {

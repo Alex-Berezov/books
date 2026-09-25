@@ -60,7 +60,7 @@ export class CategoryTranslationEntityDto {
     type: [FaqItemDto],
     nullable: true,
     description:
-      'Json column. Shape held by `@IsArray() @IsObject({ each: true })` on `CreateCategoryTranslationDto.faq`.',
+      'Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.',
     example: [{ question: 'What is this?', answer: 'This is...' }],
   })
   faq?: FaqItemDto[] | null;

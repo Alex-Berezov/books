@@ -483,10 +483,12 @@ export class ImportService {
    * поля не менять и второй копии правил не писать, а прогнать каждое значение
    * словаря через уже объявленный класс перевода (`checkPlain`).
    *
-   * ⚠️ Проверено ровно то, что объявлено декораторами, и не больше. `faq`
-   * проверяется только как массив (`@IsArray()`), его элементы — нет. Перевод
+   * ⚠️ Проверено ровно то, что объявлено декораторами, и не больше. С 25.09.2026
+   * (`LEGACY-401`, `LEGACY-402`) `faq` проверяется и как массив, и по форме
+   * каждого элемента (`@ValidateNested`). Остаток `LEGACY-401` — форма URL
+   * (`canonicalUrl`/`ogImageUrl` по-прежнему только `@IsString()`). Перевод
    * категории с полями тега (`canonicalUrl`, `robots`, `indexable`,
-   * `related*Slugs`) теперь отвергается `forbidNonWhitelisted`, а не молча
+   * `related*Slugs`) отвергается `forbidNonWhitelisted`, а не молча
    * теряет эти поля: у `ImportCategoryTranslationDto` их нет.
    */
   private validateTranslations<T extends TranslationInput>(

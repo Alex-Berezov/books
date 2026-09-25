@@ -2493,7 +2493,7 @@
             "type": "string"
           },
           "characters": {
-            "description": "Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.characters`.",
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.characters`.",
             "example": [
               {
                 "description": "Main character",
@@ -2533,7 +2533,7 @@
             "type": "number"
           },
           "faq": {
-            "description": "Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.faq`.",
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.faq`.",
             "example": [
               {
                 "answer": "Gothic fiction",
@@ -2580,7 +2580,7 @@
             "type": "string"
           },
           "quotes": {
-            "description": "Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.quotes`.",
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.quotes`.",
             "example": [
               {
                 "author": "Oscar Wilde",
@@ -2609,7 +2609,7 @@
             "type": "string"
           },
           "symbols": {
-            "description": "Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.symbols`.",
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.symbols`.",
             "example": [
               {
                 "description": "Represents the soul",
@@ -4906,7 +4906,7 @@
             "type": "string"
           },
           "faq": {
-            "description": "Json column. Shape held by `@IsArray() @IsObject({ each: true })` on `CreateCategoryTranslationDto.faq`.",
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.",
             "example": [
               {
                 "answer": "This is...",
@@ -5099,7 +5099,7 @@
             "type": "string"
           },
           "faq": {
-            "description": "Json column. Shape held by `@IsArray() @IsObject({ each: true })` on `CreateCategoryTranslationDto.faq`.",
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.",
             "example": [
               {
                 "answer": "This is...",
@@ -6965,7 +6965,7 @@
           "faq": {
             "description": "FAQ items as JSON array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "type": "array"
           },
@@ -12996,7 +12996,7 @@
             "type": "string"
           },
           "faq": {
-            "description": "Json column. Shape held by `@IsArray() @IsObject({ each: true })` on `CreateCategoryTranslationDto.faq`.",
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.",
             "example": [
               {
                 "answer": "This is...",
@@ -21973,7 +21973,7 @@
           "faq": {
             "description": "FAQ items as JSON array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/FaqItemDto"
             },
             "type": "array"
           },
