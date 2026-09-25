@@ -175,4 +175,34 @@ describe('BookSummary e2e', () => {
       expect(rows).toHaveLength(1);
     }
   }, 60_000);
+
+  /**
+   * 🔴 `LEGACY-420`, второй рубеж (пачка `T54`): уникальный индекс в базе. Писатель
+   * мимо замка — вставка напрямую — получает `P2002`, а обычная правка через сервис
+   * (код не менялся с `v1.0.128`, образ отката) идёт как прежде.
+   */
+  it('LEGACY-420: вторая сводка на ту же версию отвергается базой, правка через сервис идёт', async () => {
+    const book = await createBookFixture(prisma, `book-sum-unique-${Date.now()}`);
+    const v = await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: 'en',
+        title: 'Version For Summary Unique',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+      },
+    });
+
+    await bookSummaries.upsertForVersion(v.id, { summary: 'first' });
+    await bookSummaries.upsertForVersion(v.id, { summary: 'second' });
+    const rows = await prisma.bookSummary.findMany({ where: { bookVersionId: v.id } });
+    expect(rows.map((r) => r.summary)).toEqual(['second']);
+
+    await expect(
+      prisma.bookSummary.create({ data: { bookVersionId: v.id, summary: 'bypass' } }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
 });

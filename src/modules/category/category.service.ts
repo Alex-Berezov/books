@@ -7,7 +7,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { CategoryTreeService, CATEGORY_SLUG_TAKEN_MESSAGE } from './category-tree.service';
+import {
+  CATEGORY_TREE_TX_OPTIONS,
+  CategoryTreeService,
+  CATEGORY_SLUG_TAKEN_MESSAGE,
+} from './category-tree.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -887,68 +891,82 @@ export class CategoryService {
     language: Language,
     dto: UpdateCategoryTranslationDto,
   ) {
-    const tr = await this.prisma.categoryTranslation.findUnique({
-      where: { categoryId_language: { categoryId, language } },
-    });
-    if (!tr) throw new NotFoundException('Translation not found');
+    try {
+      // Не `runInTree`: этот вход — перечень писателей базового слага, замороженный
+      // `category-slug-writers.spec.ts` (`LEGACY-276`); перевод базовый слаг не пишет.
+      return await this.prisma.$transaction(async (tx) => {
+        // 🔴 `LEGACY-320`: слаг для редиректа берётся из строки под замком, а не из
+        // снимка на пуле — встречная смена слага иначе оставалась без редиректа.
+        const tr = await this.categoryTree.lockTranslation(tx, categoryId, language);
+        if (!tr) throw new NotFoundException('Translation not found');
 
-    if (dto.slug) {
-      const dup = await this.prisma.categoryTranslation.findFirst({
-        where: { language, slug: dto.slug, NOT: { id: tr.id } },
-      });
-      if (dup)
-        throw new BadRequestException('Translation with same (language, slug) already exists');
-    }
-
-    let finalSeoId: number | null | undefined = undefined;
-    if (dto.seo) {
-      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
-      if (hasSeoData) {
-        if (tr.seoId) {
-          await this.prisma.seo.update({ where: { id: tr.seoId }, data: dto.seo });
-          finalSeoId = tr.seoId;
-        } else {
-          const newSeo = await this.prisma.seo.create({ data: dto.seo });
-          finalSeoId = newSeo.id;
+        if (dto.slug) {
+          const dup = await tx.categoryTranslation.findFirst({
+            where: { language, slug: dto.slug, NOT: { id: tr.id } },
+            select: { id: true },
+          });
+          if (dup)
+            throw new BadRequestException('Translation with same (language, slug) already exists');
         }
-      } else if (tr.seoId) {
-        finalSeoId = null;
-        await this.prisma.seo.delete({ where: { id: tr.seoId } });
+
+        // 🔴 `LEGACY-400`: `Seo` пишется той же транзакцией, что и перевод, — откат
+        // вместо сироты при отказе записи перевода.
+        let finalSeoId: number | null | undefined = undefined;
+        if (dto.seo) {
+          const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+          if (hasSeoData) {
+            if (tr.seoId) {
+              await tx.seo.update({ where: { id: tr.seoId }, data: dto.seo });
+              finalSeoId = tr.seoId;
+            } else {
+              const newSeo = await tx.seo.create({ data: dto.seo });
+              finalSeoId = newSeo.id;
+            }
+          } else if (tr.seoId) {
+            finalSeoId = null;
+            await tx.seo.delete({ where: { id: tr.seoId } });
+          }
+        }
+
+        // Смена слага и запись редиректа — одна транзакция (LEGACY-062).
+        if (dto.slug && dto.slug !== tr.slug) {
+          await this.slugRedirects.record(
+            { entityType: 'category', language, oldSlug: tr.slug, newSlug: dto.slug },
+            tx,
+          );
+        }
+
+        return tx.categoryTranslation.update({
+          where: { categoryId_language: { categoryId, language } },
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            ...(dto.description !== undefined ? { description: dto.description } : {}),
+            ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
+            ...(dto.shortDescription !== undefined
+              ? { shortDescription: dto.shortDescription }
+              : {}),
+            ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
+            ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
+            ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
+            ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
+            ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
+            ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
+            ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
+            ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
+          },
+          include: { seo: true },
+        });
+      }, CATEGORY_TREE_TX_OPTIONS);
+    } catch (e: unknown) {
+      // Проверка дубля видит только закоммиченные переводы других категорий: две
+      // категории, одновременно ставящие одну пару, обе её проходят, и проигравшая
+      // получает `P2002` здесь — это 400, как у тегов, а не 500 (LEGACY-400).
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException('Translation with same (language, slug) already exists');
       }
+      throw e;
     }
-
-    // Смена слага и запись редиректа — одна транзакция (LEGACY-062). Порознь
-    // существовал бы момент, когда слаг уже новый, а старый адрес ведёт в 404.
-    const slugChanged = !!dto.slug && dto.slug !== tr.slug;
-
-    return this.prisma.$transaction(async (tx) => {
-      if (slugChanged && dto.slug) {
-        await this.slugRedirects.record(
-          { entityType: 'category', language, oldSlug: tr.slug, newSlug: dto.slug },
-          tx,
-        );
-      }
-
-      return tx.categoryTranslation.update({
-        where: { categoryId_language: { categoryId, language } },
-        data: {
-          name: dto.name,
-          slug: dto.slug,
-          ...(dto.description !== undefined ? { description: dto.description } : {}),
-          ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
-          ...(dto.shortDescription !== undefined ? { shortDescription: dto.shortDescription } : {}),
-          ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
-          ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
-          ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
-          ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
-          ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
-          ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
-          ...(dto.faq !== undefined ? { faq: dto.faq } : {}),
-          ...(finalSeoId !== undefined ? { seoId: finalSeoId } : {}),
-        },
-        include: { seo: true },
-      });
-    });
   }
 
   /**
@@ -1325,23 +1343,25 @@ export class CategoryService {
       select: { id: true },
     });
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const sibling of siblings) {
-        const exists = await tx.bookCategory.findFirst({
-          where: { bookVersionId: sibling.id, categoryId },
-          select: { id: true },
-        });
-        if (!exists) {
-          await tx.bookCategory.create({
-            data: { bookVersionId: sibling.id, categoryId },
-            // `create` возвращает запись целиком (`INSERT ... RETURNING` все скаляры),
-            // (`LEGACY-005`). Результат здесь не нужен вовсе —
-            // белый список сводит `RETURNING` к ключу.
-            select: { id: true },
-          });
-        }
+    try {
+      // `skipDuplicates` — `ON CONFLICT DO NOTHING` по `@@unique([bookVersionId, categoryId])`:
+      // встречная привязка той же пары не отказ, а пустая операция (LEGACY-399).
+      await this.prisma.$transaction(
+        (tx) =>
+          tx.bookCategory.createMany({
+            data: siblings.map((sibling) => ({ bookVersionId: sibling.id, categoryId })),
+            skipDuplicates: true,
+          }),
+        CATEGORY_TREE_TX_OPTIONS,
+      );
+    } catch (e: unknown) {
+      // Проверки выше шли на пуле без замка: категория или версия-сестра, удалённые
+      // в окне, дают нарушение внешнего ключа — это 404, а не 500.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+        throw new NotFoundException('Category or book version not found');
       }
-    });
+      throw e;
+    }
 
     // The link now exists for every language of the book, so every language's
     // counter for this term is stale.
@@ -1370,19 +1390,15 @@ export class CategoryService {
       select: { id: true },
     });
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const sibling of siblings) {
-        const link = await tx.bookCategory.findFirst({
-          where: { bookVersionId: sibling.id, categoryId },
-          select: { id: true },
-        });
-        if (link) {
-          // `delete` тоже возвращает запись целиком (`DELETE ... RETURNING`), поэтому
-          // белый список нужен и ему: читается только ключ (`LEGACY-005`).
-          await tx.bookCategory.delete({ where: { id: link.id }, select: { id: true } });
-        }
-      }
-    });
+    // Одно удаление по условию вместо «нашёл — удалил»: строка, снятая встречной
+    // отвязкой в окне, просто не попадает в счёт, а не даёт P2025 (LEGACY-399).
+    await this.prisma.$transaction(
+      (tx) =>
+        tx.bookCategory.deleteMany({
+          where: { bookVersionId: { in: siblings.map((sibling) => sibling.id) }, categoryId },
+        }),
+      CATEGORY_TREE_TX_OPTIONS,
+    );
 
     // Must run after the delete and by term id: the version no longer points at
     // this category, so a version-scoped recompute would miss exactly it.

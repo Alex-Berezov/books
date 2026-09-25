@@ -1,4 +1,4 @@
-import { CategoryTreeService } from './category-tree.service';
+import { CATEGORY_TREE_TX_OPTIONS, CategoryTreeService } from './category-tree.service';
 import { CategoryService } from './category.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
@@ -35,6 +35,7 @@ interface PrismaStub {
   bookCategory: {
     findFirst: jest.Mock;
     create: jest.Mock;
+    createMany: jest.Mock;
     delete: jest.Mock;
     deleteMany: jest.Mock;
   };
@@ -84,6 +85,7 @@ const createPrismaStub = (): PrismaStub => ({
   bookCategory: {
     findFirst: jest.fn(),
     create: jest.fn(),
+    createMany: jest.fn(),
     delete: jest.fn(),
     deleteMany: jest.fn(),
   },
@@ -2158,14 +2160,79 @@ describe('CategoryService', () => {
     // Число вызовов зафиксировано рядом (`L-005`): без него допишут ниже по методу
     // ещё один `findFirst`, «последний вызов» станет другим запросом, и `select`
     // на проверяемом можно будет снять, не покраснив ничего.
+    // С `LEGACY-399` проверки существования по версиям нет — вставка одна,
+    // `createMany` со `skipDuplicates`, и `findFirst` остаётся единственным.
     const calls = prisma.bookCategory.findFirst.mock.calls;
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(1);
     const [args] = calls[calls.length - 1] as [Record<string, unknown>];
     expect(args.select).toEqual({
       id: true,
       bookVersionId: true,
       categoryId: true,
       sortOrder: true,
+    });
+  });
+
+  /**
+   * `LEGACY-399`, остаток. Привязка и отвязка шли циклом «нашёл — записал»:
+   * встречная привязка давала `P2002`, встречная отвязка — `P2025`, удалённая
+   * в окне категория — `P2003`, и всё это уходило клиенту 500.
+   */
+  describe('привязка к версии без гонки «нашёл — записал» (LEGACY-399)', () => {
+    const p = (code: string) =>
+      new Prisma.PrismaClientKnownRequestError(code, { code, clientVersion: 'test' });
+
+    beforeEach(() => {
+      prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+      prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }, { id: 'v2' }]);
+      prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    });
+
+    it('attach: вставка одна со skipDuplicates, без цикла «нашёл — создал»', async () => {
+      prisma.bookCategory.findFirst.mockResolvedValue(null);
+
+      await service.attachCategoryToVersion('v1', 'c1');
+
+      expect(prisma.bookCategory.create).not.toHaveBeenCalled();
+      expect(prisma.bookCategory.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.bookCategory.createMany).toHaveBeenCalledWith({
+        data: [
+          { bookVersionId: 'v1', categoryId: 'c1' },
+          { bookVersionId: 'v2', categoryId: 'c1' },
+        ],
+        skipDuplicates: true,
+      });
+    });
+
+    it('attach: категория удалена в окне гонки — P2003 читается как 404 без пересчёта', async () => {
+      prisma.bookCategory.createMany.mockRejectedValue(p('P2003'));
+
+      await expect(service.attachCategoryToVersion('v1', 'c1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(indexability.recomputeForTerms).not.toHaveBeenCalled();
+    });
+
+    it('detach: удаление одно по условию, без «нашёл — удалил» и P2025', async () => {
+      await expect(service.detachCategoryFromVersion('v1', 'c1')).resolves.toEqual({
+        success: true,
+      });
+      expect(prisma.bookCategory.findFirst).not.toHaveBeenCalled();
+      expect(prisma.bookCategory.delete).not.toHaveBeenCalled();
+      expect(prisma.bookCategory.deleteMany).toHaveBeenCalledTimes(1);
+      expect(prisma.bookCategory.deleteMany).toHaveBeenCalledWith({
+        where: { bookVersionId: { in: ['v1', 'v2'] }, categoryId: 'c1' },
+      });
+    });
+
+    it('attach и detach открывают транзакцию с явными границами', async () => {
+      await service.attachCategoryToVersion('v1', 'c1');
+      await service.detachCategoryFromVersion('v1', 'c1');
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      for (const call of prisma.$transaction.mock.calls as unknown[][]) {
+        expect(call[1]).toEqual(CATEGORY_TREE_TX_OPTIONS);
+      }
     });
   });
 
@@ -2254,6 +2321,104 @@ describe('CategoryService', () => {
     // Транзакция откатила и Seo сама — ручной компенсации нет ни через tx, ни через пул.
     expect(tx.seo.delete).not.toHaveBeenCalled();
     expect(prisma.seo.delete).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-400` и `LEGACY-320`, остатки. `updateTranslation` писал `Seo` на пуле до
+   * транзакции перевода, не ловил `P2002` гонки двух категорий за одну пару и брал
+   * старый слаг для редиректа из снимка без замка строки.
+   */
+  describe('updateTranslation: одна транзакция под замком строки перевода', () => {
+    const withLockedTx = (locked: { id: string; slug: string; seoId: number | null } | null) => {
+      const log: string[] = [];
+      const note =
+        (name: string, value?: unknown) =>
+        (...args: unknown[]) => {
+          log.push(name);
+          return Promise.resolve(typeof value === 'function' ? value(...args) : value);
+        };
+      const tx = {
+        $queryRaw: jest.fn(note('lock', locked ? [locked] : [])),
+        categoryTranslation: {
+          findFirst: jest.fn(note('findFirst', null)),
+          update: jest.fn(note('update', { id: 'tr1' })),
+        },
+        seo: {
+          create: jest.fn(note('seo.create', { id: 9 })),
+          update: jest.fn(note('seo.update')),
+          delete: jest.fn(note('seo.delete')),
+        },
+      };
+      prisma.$transaction = jest.fn((cb: (client: typeof tx) => unknown) => cb(tx));
+      slugRedirects.record.mockImplementation(note('redirect'));
+      return { tx, log };
+    };
+
+    it('замок строки — первый оператор, Seo и редирект идут через tx', async () => {
+      const { tx, log } = withLockedTx({ id: 'tr1', slug: 'old', seoId: null });
+
+      await service.updateTranslation('c1', Language.en, {
+        slug: 'new',
+        seo: { metaTitle: 'T' },
+      } as never);
+
+      expect(log[0]).toBe('lock');
+      expect(tx.seo.create).toHaveBeenCalledTimes(1);
+      expect(tx.seo.create).toHaveBeenCalledWith({ data: { metaTitle: 'T' } });
+      expect(prisma.seo.create).not.toHaveBeenCalled();
+      expect(prisma.seo.update).not.toHaveBeenCalled();
+      expect(prisma.seo.delete).not.toHaveBeenCalled();
+      expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+      expect(slugRedirects.record).toHaveBeenCalledWith(
+        { entityType: 'category', language: Language.en, oldSlug: 'old', newSlug: 'new' },
+        tx,
+      );
+      expect(prisma.$transaction.mock.calls[0][1]).toEqual(CATEGORY_TREE_TX_OPTIONS);
+    });
+
+    it('редирект пишется со слага из строки под замком', async () => {
+      withLockedTx({ id: 'tr1', slug: 'locked-fresh', seoId: null });
+
+      await service.updateTranslation('c1', Language.en, { slug: 'next' } as never);
+
+      expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+      expect(slugRedirects.record).toHaveBeenCalledWith(
+        expect.objectContaining({ oldSlug: 'locked-fresh', newSlug: 'next' }),
+        expect.anything(),
+      );
+    });
+
+    it('очистка Seo удаляет его через tx', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: 5 });
+
+      await service.updateTranslation('c1', Language.en, {
+        seo: { metaTitle: null },
+      } as never);
+
+      expect(tx.seo.delete).toHaveBeenCalledTimes(1);
+      expect(tx.seo.delete).toHaveBeenCalledWith({ where: { id: 5 } });
+      expect(prisma.seo.delete).not.toHaveBeenCalled();
+    });
+
+    it('перевода нет под замком — 404 без записи', async () => {
+      const { log } = withLockedTx(null);
+
+      await expect(
+        service.updateTranslation('c1', Language.en, { name: 'N' } as never),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(log).toEqual(['lock']);
+    });
+
+    it('P2002 гонки двух категорий за пару (language, slug) — 400, а не 500', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 'old', seoId: null });
+      tx.categoryTranslation.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'test' }),
+      );
+
+      await expect(
+        service.updateTranslation('c1', Language.en, { slug: 'taken' } as never),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   /**

@@ -922,6 +922,21 @@ describe('TagsService — писатели тега идут под замком
     expect(recompute).not.toHaveBeenCalled();
   });
 
+  it('detach: удаление одно по условию через tx, без «нашёл — удалил» и P2025', async () => {
+    const { tagsService, tx, log } = setup({
+      'bookVersion.findUnique': () => ({ id: 'v1', bookId: 'b1' }),
+      'bookVersion.findMany': () => [{ id: 'v1' }, { id: 'v2' }],
+    });
+
+    await expect(tagsService.detach('v1', 't1')).resolves.toEqual({ success: true });
+    expect(log.filter((call) => /bookTag.(findFirst|delete)$/.test(call))).toEqual([]);
+    expect((tx.bookTag as Record<string, jest.Mock>).deleteMany).toHaveBeenCalledTimes(1);
+    expect((tx.bookTag as Record<string, jest.Mock>).deleteMany).toHaveBeenCalledWith({
+      where: { bookVersionId: { in: ['v1', 'v2'] }, tagId: 't1' },
+    });
+    expect(rootCalls(log).filter((call) => call.startsWith('root.bookTag.'))).toEqual([]);
+  });
+
   it('attach и detach открывают транзакцию с явными границами', async () => {
     const { tagsService, $transaction } = setup({
       'bookVersion.findUnique': () => ({ id: 'v1', bookId: 'b1' }),

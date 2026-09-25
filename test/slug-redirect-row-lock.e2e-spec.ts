@@ -1,10 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { Language } from '@prisma/client';
+import { Language, Prisma } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { BookService } from '../src/modules/book/book.service';
 import { CategoryService } from '../src/modules/category/category.service';
 import { SlugRedirectService } from '../src/modules/slug-redirect/slug-redirect.service';
+import { PagesService } from '../src/modules/pages/pages.service';
+import { BookVersionService } from '../src/modules/book-version/book-version.service';
+import { AuthorService } from '../src/modules/author/author.service';
 import { createBookFixture } from './helpers/book-fixture';
 
 /**
@@ -26,8 +29,12 @@ describe('LEGACY-320 — редирект базового слага пишет
   let books: BookService;
   let categories: CategoryService;
   let slugRedirects: SlugRedirectService;
+  let pages: PagesService;
+  let versions: BookVersionService;
+  let authors: AuthorService;
 
   const stamp = Date.now();
+  const authorIds: string[] = [];
   const prefix = `rowlock-${stamp}`;
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,12 +45,20 @@ describe('LEGACY-320 — редирект базового слага пишет
     books = moduleRef.get(BookService);
     categories = moduleRef.get(CategoryService);
     slugRedirects = moduleRef.get(SlugRedirectService);
+    pages = moduleRef.get(PagesService);
+    versions = moduleRef.get(BookVersionService);
+    authors = moduleRef.get(AuthorService);
     await moduleRef.init();
   });
 
   afterAll(async () => {
     try {
       await prisma?.slugRedirect.deleteMany({ where: { oldSlug: { startsWith: prefix } } });
+      await prisma?.page.deleteMany({ where: { slug: { startsWith: prefix } } });
+      await prisma?.authorTranslation.deleteMany({ where: { slug: { startsWith: prefix } } });
+      await prisma?.author.deleteMany({
+        where: { translations: { none: {} }, id: { in: authorIds } },
+      });
       await prisma?.book.deleteMany({ where: { slug: { startsWith: prefix } } });
       await prisma?.category.deleteMany({
         where: { key: { startsWith: prefix }, parentId: { not: null } },
@@ -59,10 +74,31 @@ describe('LEGACY-320 — редирект базового слага пишет
    * Пока она открыта, запускается `write`; после коммита держателя `write` обязан
    * увидеть `midSlug`, а не слаг до него.
    */
-  const raceAgainstHeldRename = async (
+  const raceAgainstHeldRename = (
     table: 'Book' | 'Category',
     id: string,
     midSlug: string,
+    write: () => Promise<unknown>,
+  ) =>
+    raceAgainstHeld(
+      async (tx) => {
+        if (table === 'Book') {
+          await tx.$executeRaw`UPDATE "Book" SET slug = ${midSlug} WHERE id = ${id}`;
+        } else {
+          await tx.$executeRaw`UPDATE "Category" SET slug = ${midSlug} WHERE id = ${id}`;
+        }
+      },
+      table,
+      write,
+    );
+
+  /**
+   * То же для любой строки: `hold` меняет слаг сырым SQL и держит строку, `table` —
+   * таблица, на которой второй писатель встаёт в ожидание (по тексту его запроса).
+   */
+  const raceAgainstHeld = async (
+    hold: (tx: Prisma.TransactionClient) => Promise<void>,
+    table: string | string[],
     write: () => Promise<unknown>,
   ) => {
     let release: () => void = () => undefined;
@@ -76,11 +112,7 @@ describe('LEGACY-320 — редирект базового слага пишет
 
     const holder = prisma.$transaction(
       async (tx) => {
-        if (table === 'Book') {
-          await tx.$executeRaw`UPDATE "Book" SET slug = ${midSlug} WHERE id = ${id}`;
-        } else {
-          await tx.$executeRaw`UPDATE "Category" SET slug = ${midSlug} WHERE id = ${id}`;
-        }
+        await hold(tx);
         locked();
         await gate;
       },
@@ -112,21 +144,21 @@ describe('LEGACY-320 — редирект базового слага пишет
    * чтения. Ожидание отбирается по таблице в тексте запроса: соседний набор, стоящий
    * на своём замке, иначе отпустил бы держателя раньше времени.
    */
-  const waitUntilWriterWaitsOnLock = async (table: 'Book' | 'Category') => {
-    const pattern = `%"${table}"%`;
+  const waitUntilWriterWaitsOnLock = async (table: string | string[]) => {
+    const patterns = (Array.isArray(table) ? table : [table]).map((name) => `%"${name}"%`);
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const [{ waiting }] = await prisma.$queryRaw<{ waiting: number }[]>`
         SELECT count(*)::int AS waiting FROM pg_stat_activity
         WHERE datname = current_database() AND wait_event_type = 'Lock'
-          AND query LIKE ${pattern}`;
+          AND query LIKE ANY (${patterns})`;
       if (waiting > 0) return;
       await sleep(50);
     }
     throw new Error('второй писатель так и не встал на замок строки');
   };
 
-  const redirectsFrom = (entityType: 'book' | 'category', oldSlug: string) =>
+  const redirectsFrom = (entityType: 'book' | 'category' | 'page' | 'author', oldSlug: string) =>
     prisma.slugRedirect.findMany({
       where: { entityType, oldSlug, language: Language.en },
       select: { newSlug: true },
@@ -168,6 +200,127 @@ describe('LEGACY-320 — редирект базового слага пишет
     // committed` незакоммиченная смена не видна, редирект уходил с `-cat-a`.
     expect(await redirectsFrom('category', `${prefix}-cat-b`)).toEqual([
       { newSlug: `${prefix}-cat-c` },
+    ]);
+  }, 120_000);
+
+  /**
+   * 🔴 `LEGACY-320`, остаток (пачка `T54`). Те же гонки у писателей редиректа слага
+   * перевода категории, страницы и версии книги: старый слаг брался из снимка
+   * без замка строки.
+   */
+  it('перевод категории: вторая смена слага пишет редирект с промежуточного слага', async () => {
+    const category = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Tr lock ${stamp}`,
+        slug: `${prefix}-trcat`,
+        key: `${prefix}-trcat`,
+        translations: {
+          create: { language: Language.en, name: 'Tr', slug: `${prefix}-tr-a` },
+        },
+      },
+      include: { translations: true },
+    });
+    const trId = category.translations[0].id;
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "CategoryTranslation" SET slug = ${`${prefix}-tr-b`} WHERE id = ${trId}`;
+      },
+      'CategoryTranslation',
+      () => categories.updateTranslation(category.id, Language.en, { slug: `${prefix}-tr-c` }),
+    );
+
+    // 🔴 До правки слаг брался из чтения на пуле (`-tr-a`), и `-tr-b` оставался без редиректа.
+    expect(await redirectsFrom('category', `${prefix}-tr-b`)).toEqual([
+      { newSlug: `${prefix}-tr-c` },
+    ]);
+  }, 120_000);
+
+  it('страница: вторая смена слага пишет редирект с промежуточного слага', async () => {
+    const page = await prisma.page.create({
+      data: {
+        slug: `${prefix}-page-a`,
+        title: 'Row lock',
+        type: 'generic',
+        content: 'c',
+        language: Language.en,
+      },
+    });
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "Page" SET slug = ${`${prefix}-page-b`} WHERE id = ${page.id}`;
+      },
+      'Page',
+      () => pages.update(page.id, { slug: `${prefix}-page-c` }, 'e2e-actor'),
+    );
+
+    expect(await redirectsFrom('page', `${prefix}-page-b`)).toEqual([
+      { newSlug: `${prefix}-page-c` },
+    ]);
+  }, 120_000);
+
+  it('версия книги: вторая смена слага пишет редирект с промежуточного слага', async () => {
+    const book = await createBookFixture(prisma, `${prefix}-vbook`);
+    const version = await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: Language.en,
+        slug: `${prefix}-ver-a`,
+        title: 'Row lock',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+      },
+    });
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "BookVersion" SET slug = ${`${prefix}-ver-b`} WHERE id = ${version.id}`;
+      },
+      'BookVersion',
+      () => versions.update(version.id, { slug: `${prefix}-ver-c` }),
+    );
+
+    expect(await redirectsFrom('book', `${prefix}-ver-b`)).toEqual([
+      { newSlug: `${prefix}-ver-c` },
+    ]);
+  }, 120_000);
+
+  /**
+   * У автора слаг живёт только в переводах, которые правка удаляет и создаёт заново,
+   * поэтому запирается строка `Author`. Встречный писатель держит её так же, как
+   * держала бы вторая правка того же автора. Ожидание засчитывается и на переводах:
+   * без правки второй писатель встаёт не на `Author`, а на удалении переводов —
+   * уже после чтения устаревшего слага.
+   */
+  it('автор: встречная правка того же автора ждёт замка, редирект — с промежуточного слага', async () => {
+    const author = await prisma.author.create({
+      data: {
+        translations: {
+          create: { language: Language.en, name: 'Row lock', slug: `${prefix}-auth-a` },
+        },
+      },
+    });
+    authorIds.push(author.id);
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "Author" SET "updatedAt" = now() WHERE id = ${author.id}`;
+        await tx.$executeRaw`UPDATE "AuthorTranslation" SET slug = ${`${prefix}-auth-b`} WHERE "authorId" = ${author.id}`;
+      },
+      ['Author', 'AuthorTranslation'],
+      () =>
+        authors.update(author.id, {
+          translations: [{ language: Language.en, name: 'Row lock', slug: `${prefix}-auth-c` }],
+        }),
+    );
+
+    expect(await redirectsFrom('author', `${prefix}-auth-b`)).toEqual([
+      { newSlug: `${prefix}-auth-c` },
     ]);
   }, 120_000);
 

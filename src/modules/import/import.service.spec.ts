@@ -67,7 +67,15 @@ interface FakeClient {
   tagTranslation: Pick<FakeModel, 'create' | 'update'>;
 }
 
-const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
+type LockedTranslationRow = { id?: string; language: Language; slug: string };
+
+// Строки переводов категории, которые отдаёт замок строки перевода (`LEGACY-320`).
+// ⚠️ Массив живёт вне клиента: поле на `tx` `delegate-check` читает как делегат Prisma.
+const makeClient = (
+  label: 'root' | 'tx',
+  log: WriteLog,
+  lockedTranslations: LockedTranslationRow[] = [],
+): FakeClient => {
   const note = (op: string, result: unknown) =>
     jest.fn().mockImplementation(() => {
       log.push(`${label}.${op}`);
@@ -82,7 +90,7 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
     update: note(`${name}.update`, created),
   });
 
-  return {
+  const client: FakeClient = {
     // ⚠️ Метка через двоеточие, а не через точку, намеренно: `delegate-check.mjs`
     // разбирает вид «клиент, точка, имя» как обращение к делегату Prisma
     // и печатает заведомо ложную строку — за ней прячется настоящая находка.
@@ -108,6 +116,12 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
             : // Неизвестное пространство — не повод молча подписать его соседом:
               // так метка и соврала бы, ради чего весь этот разбор и написан.
               `lockUnknown(${String(namespace)})`;
+      // Замок строки перевода категории (`LEGACY-320`) отдаёт саму строку:
+      // от неё импорт решает «создать или обновить» и берёт старый слаг.
+      if (sql.includes('"CategoryTranslation"')) {
+        log.push(`${label}:lockCategoryTranslation`);
+        return Promise.resolve(lockedTranslations.filter((row) => row.language === values[1]));
+      }
       const lock = sql.includes('FOR UPDATE')
         ? 'lockTagRow'
         : sql.includes('hashtext')
@@ -127,6 +141,7 @@ const makeClient = (label: 'root' | 'tx', log: WriteLog): FakeClient => {
       update: note('tagTranslation.update', {}),
     },
   };
+  return client;
 };
 
 /** Только записи: чтения ходят мимо транзакции законно. */
@@ -140,7 +155,8 @@ const writesOf = (log: WriteLog): string[] =>
   );
 
 const makeService = (log: WriteLog) => {
-  const tx = makeClient('tx', log);
+  const lockedTranslations: LockedTranslationRow[] = [];
+  const tx = makeClient('tx', log, lockedTranslations);
   const root = makeClient('root', log);
   const $transaction = jest
     .fn()
@@ -170,7 +186,7 @@ const makeService = (log: WriteLog) => {
     new TagLockService(prisma as unknown as PrismaService),
   );
 
-  return { service, prisma, root, tx, $transaction, slugRedirects };
+  return { service, prisma, root, tx, $transaction, slugRedirects, lockedTranslations };
 };
 
 const categoryDto = (parentKey?: string): ImportCategoryDto =>
@@ -518,7 +534,7 @@ describe('ImportService — обновление термина одной тр�
 
   it('пишет базовую строку, родителя, историю слагов и оба перевода одним tx', async () => {
     const log: WriteLog = [];
-    const { service, root, tx, $transaction } = makeService(log);
+    const { service, root, tx, $transaction, lockedTranslations } = makeService(log);
 
     root.category.findUnique.mockImplementation((args: { where?: { key?: string } }) => {
       log.push('root.category.findUnique');
@@ -541,6 +557,7 @@ describe('ImportService — обновление термина одной тр�
       if (where.id === 'parent-1') return Promise.resolve({ parentId: null });
       return Promise.resolve(null);
     });
+    lockedTranslations.push(...existingCategory.translations);
 
     const result = await service.importCategories([categoryDto('classic-literature')]);
 
@@ -561,6 +578,31 @@ describe('ImportService — обновление термина одной тр�
       where: { key: 'victorian-literature' },
       data: { parentId: 'parent-1' },
     });
+  });
+
+  /**
+   * 🔴 `LEGACY-320`. Старый слаг для редиректа — из строки перевода под замком,
+   * а не из снимка `existing.translations`: админская смена слага перевода,
+   * закоммиченная между ними, иначе оставалась без редиректа.
+   */
+  it('редирект перевода категории пишется со слага строки под замком, а не из снимка', async () => {
+    const log: WriteLog = [];
+    const { service, tx, slugRedirects, lockedTranslations } = makeService(log);
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) =>
+      Promise.resolve(args?.where?.key === 'victorian-literature' ? existingCategory : null),
+    );
+    lockedTranslations.push({ id: 'tr-1', language: Language.en, slug: 'victorian-lit-mid' });
+
+    await service.importCategories([categoryDto()]);
+
+    expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+    expect(slugRedirects.record).toHaveBeenCalledWith(
+      expect.objectContaining({ oldSlug: 'victorian-lit-mid' }),
+      tx,
+    );
+    const lockAt = log.indexOf('tx:lockCategoryTranslation');
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(lockAt).toBeLessThan(log.indexOf('tx.slugRedirect.record'));
   });
 
   it('не считает категорию обновлённой, если перевод упал на середине', async () => {

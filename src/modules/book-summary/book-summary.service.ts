@@ -48,9 +48,10 @@ export class BookSummaryService {
   /**
    * `LEGACY-420`. «Прочитал -> создал» идёт в транзакции под advisory-замком
    * по версии: второй писатель ждёт коммита первого и видит его строку.
-   * Уникального индекса на `bookVersionId` нет намеренно — чистка уже
-   * существующих дублей перед ним правит живые данные и остаётся за владельцем
-   * (ADR-018, прецедент W8 в `decisions-log.md`); `upsert` без индекса падал бы 42P10.
+   * С пачки `T54` в базе есть и `@unique` на `bookVersionId` — второй рубеж
+   * к писателю мимо замка. Замок и «прочитал — создал» оставлены намеренно:
+   * если миграция индекса на проде упадёт (23505, индекса нет), `upsert` отвечал бы
+   * 42P10, а этот путь работает на обеих схемах.
    */
   async upsertForVersion(bookVersionId: string, dto: UpdateBookSummaryDto) {
     const version = await this.prisma.bookVersion.findUnique({ where: { id: bookVersionId } });

@@ -24,6 +24,7 @@ type PrismaStub = {
   seo: { findUnique: jest.Mock };
   adminAuditEvent: { create: jest.Mock };
   $transaction: jest.Mock;
+  $queryRaw: jest.Mock;
 };
 
 const createPrismaStub = (): PrismaStub => {
@@ -41,7 +42,16 @@ const createPrismaStub = (): PrismaStub => {
     seo: { findUnique: jest.fn() },
     adminAuditEvent: { create: jest.fn() },
     $transaction: jest.fn(),
+    $queryRaw: jest.fn(),
   };
+
+  // Замок строки (`LEGACY-320`) отдаёт ту же страницу, что последним вернул
+  // `findUnique`: стенд держит одну строку на тест, а не две разошедшиеся копии.
+  stub.$queryRaw.mockImplementation(async () => {
+    const results = stub.page.findUnique.mock.results;
+    const row = results.length ? ((await results[results.length - 1].value) as unknown) : null;
+    return row ? [row] : [];
+  });
 
   // Транзакция отдаёт тот же стаб как `tx`: запись истории слагов обязана идти
   // внутри неё, и подмена клиента здесь скрыла бы нарушение этого порядка.
@@ -451,6 +461,46 @@ describe('PagesService (unit)', () => {
       expect(prisma.page.update).not.toHaveBeenCalled();
       expect(slugRedirects.record).not.toHaveBeenCalled();
       expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 `LEGACY-320`. Старый слаг и язык для редиректа — из строки под замком,
+     * а не из снимка `findUnique` на пуле: встречная смена слага между ними иначе
+     * оставалась без редиректа.
+     */
+    it('пишет редирект со слага строки под замком, а не из снимка на пуле', async () => {
+      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
+      prisma.page.findFirst.mockResolvedValueOnce(null);
+      prisma.page.update.mockResolvedValueOnce({ id: 'p1', slug: 'about-us' });
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about-mid', language: 'en' }]);
+
+      await service.update(
+        'p1',
+        { slug: 'about-us' } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+        'admin-1',
+      );
+
+      expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+      expect(slugRedirects.record).toHaveBeenCalledWith(
+        { entityType: 'page', language: 'en', oldSlug: 'about-mid', newSlug: 'about-us' },
+        prisma,
+      );
+    });
+
+    it('страница удалена в окне до замка — 404 без редиректа и записи', async () => {
+      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
+      prisma.page.findFirst.mockResolvedValueOnce(null);
+      prisma.$queryRaw.mockResolvedValueOnce([]);
+
+      await expect(
+        service.update(
+          'p1',
+          { slug: 'about-us' } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+          'admin-1',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(slugRedirects.record).not.toHaveBeenCalled();
+      expect(prisma.page.update).not.toHaveBeenCalled();
     });
 
     it('still lets a page already sitting on a reserved slug be edited', async () => {

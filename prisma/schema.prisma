@@ -199,7 +199,8 @@ model BookVersion {
 
 model BookSummary {
   id            String      @id @default(uuid())
-  bookVersionId String
+  /// Одна сводка на версию (LEGACY-420): рубеж в базе ко второму писателю мимо замка.
+  bookVersionId String      @unique
   summary       String
   analysis      String?
   themes        String?

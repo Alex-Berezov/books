@@ -3,6 +3,7 @@ import {
   AdminAuditAction,
   AdminAuditTargetType,
   Language,
+  Page,
   Prisma,
   PublicationStatus,
 } from '@prisma/client';
@@ -366,18 +367,24 @@ export class PagesService {
       // полем — то есть его смена больше ничего не ломает функционально и ровно
       // поэтому обязана оставлять 308 (LEGACY-062).
       //
-      // Язык берётся СТАРЫЙ (`exists.language`), а не `dto.language`: резолв идёт по
+      // Язык берётся СТАРЫЙ (`locked.language` — строки под замком), а не `dto.language`: резолв идёт по
       // паре (entityType, language, oldSlug), а старый адрес жил именно под старым
       // языком. Запись под новым выглядит интуитивнее и не сработала бы нигде.
-      const slugChanged = !!dto.slug && dto.slug !== exists.slug;
-
       return await this.prisma.$transaction(async (tx) => {
-        if (slugChanged && dto.slug) {
+        // 🔴 `LEGACY-320`: старый слаг и язык для редиректа — из строки под замком,
+        // а не из снимка `exists` на пуле: встречная смена слага, закоммиченная между
+        // ними, иначе оставалась без редиректа. `FOR NO KEY UPDATE` — как у книги
+        // и категории (решение арбитра 25.09.2026).
+        const [locked] = await tx.$queryRaw<Pick<Page, 'slug' | 'language'>[]>`
+          SELECT slug, language FROM "Page" WHERE id = ${id} FOR NO KEY UPDATE`;
+        if (!locked) throw new NotFoundException('Page not found');
+
+        if (dto.slug && dto.slug !== locked.slug) {
           await this.slugRedirects.record(
             {
               entityType: 'page',
-              language: exists.language,
-              oldSlug: exists.slug,
+              language: locked.language,
+              oldSlug: locked.slug,
               newSlug: dto.slug,
             },
             tx,

@@ -687,16 +687,15 @@ export class TagsService {
       select: { id: true },
     });
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const sibling of siblings) {
-        const link = await tx.bookTag.findFirst({
-          where: { bookVersionId: sibling.id, tagId },
-        });
-        if (link) {
-          await tx.bookTag.delete({ where: { id: link.id } });
-        }
-      }
-    }, TAG_TX_OPTIONS);
+    // One conditional delete instead of find-then-delete: a link removed by a
+    // concurrent detach just drops out of the count instead of raising P2025 (LEGACY-399).
+    await this.prisma.$transaction(
+      (tx) =>
+        tx.bookTag.deleteMany({
+          where: { bookVersionId: { in: siblings.map((sibling) => sibling.id) }, tagId },
+        }),
+      TAG_TX_OPTIONS,
+    );
 
     // Must run after the delete and by term id: the version no longer points at
     // this tag, so a version-scoped recompute would miss exactly it.

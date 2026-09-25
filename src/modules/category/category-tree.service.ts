@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Prisma, Category as PrismaCategory } from '@prisma/client';
+import { Language, Prisma, Category as PrismaCategory } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
@@ -9,6 +9,8 @@ import { PrismaService } from '../../prisma/prisma.service';
  * видит незакоммиченных строк этой транзакции.
  */
 export type PrismaLike = Prisma.TransactionClient | PrismaService;
+
+export type LockedCategoryTranslation = { id: string; slug: string; seoId: number | null };
 
 export type CategoryAncestor = {
   id: string;
@@ -192,6 +194,26 @@ export class CategoryTreeService {
     // вызывающих. Вызов из `FROM` — как у `lockTree`, по той же причине.
     await tx.$queryRaw`SELECT true AS locked
       FROM pg_advisory_xact_lock(${CATEGORY_SLUG_LOCK_NAMESPACE}::int4, hashtext(${slug}::text))`;
+  }
+
+  /**
+   * 🔴 `LEGACY-320`. Запирает строку перевода категории и отдаёт её свежий слаг:
+   * редирект слага перевода пишется от значения под замком, а не от снимка.
+   * Писателей два — `CategoryService.updateTranslation` и импорт категории, —
+   * поэтому SQL живёт здесь, в одном месте. Сила `FOR NO KEY UPDATE` — как у строки
+   * `Category` (решение арбитра 25.09.2026): писателей сериализует, FK-вставок не держит.
+   * Пустой результат — перевода нет или он удалён в окне.
+   */
+  async lockTranslation(
+    tx: Prisma.TransactionClient,
+    categoryId: string,
+    language: Language,
+  ): Promise<LockedCategoryTranslation | null> {
+    const [row] = await tx.$queryRaw<LockedCategoryTranslation[]>`
+      SELECT id, slug, "seoId" FROM "CategoryTranslation"
+      WHERE "categoryId" = ${categoryId} AND language = ${language}::"Language"
+      FOR NO KEY UPDATE`;
+    return row ?? null;
   }
 
   /**

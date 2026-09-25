@@ -178,6 +178,8 @@ const SLUG_SUGGESTION_BATCH = 20;
  * а не закрытый здесь случай (`L-019`: транзакция без замка гонку не сужает).
  */
 const AUTHOR_DELETE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+// Правка ждёт замка строки (`LEGACY-320`): дефолтных 5 с на ожидание не хватит (`L-020`).
+const AUTHOR_UPDATE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 @Injectable()
 export class AuthorService {
@@ -776,6 +778,18 @@ export class AuthorService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+        // 🔴 `LEGACY-320`: строка автора запирается первым оператором, до чтения
+        // старых слагов переводов. `tx.author.update` ниже замка не даёт: при пустых
+        // `birthDate`/`deathDate` Prisma не шлёт `UPDATE` вовсе, и встречная правка
+        // того же автора читала переводы до коммита соседа — редирект уходил
+        // с устаревшего слага. `FOR NO KEY UPDATE` — как у книги (решение арбитра
+        // 25.09.2026).
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "Author" WHERE id = ${id} FOR NO KEY UPDATE`;
+        if (locked.length === 0) {
+          throw new NotFoundException(`Author with ID '${id}' not found`);
+        }
+
         // Update main fields
         await tx.author.update({
           where: { id },
@@ -880,7 +894,7 @@ export class AuthorService {
             },
           },
         });
-      });
+      }, AUTHOR_UPDATE_TX_OPTIONS);
     } catch (error) {
       throw this.internalFailure('Failed to update author', error);
     }

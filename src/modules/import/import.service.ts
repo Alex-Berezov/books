@@ -652,10 +652,9 @@ export class ImportService {
     // ту самую гонку — между чтением, выбравшим ветку обновления, и записью
     // сосед успевает создать термин на этот слаг.
     return this.categoryTree.runInLockedTree(async (tx) => {
-      const existing = await tx.category.findUnique({
-        where: { key: dto.key },
-        include: { translations: true },
-      });
+      // Переводы здесь не выбираются (`LEGACY-320`): их читает замок строки ниже,
+      // а снимок `translations` звал бы решать по незапертому значению.
+      const existing = await tx.category.findUnique({ where: { key: dto.key } });
 
       if (!existing) {
         // 🔴 `LEGACY-276`. Дубли `Category.slug` заводит именно этот путь, а не
@@ -785,7 +784,11 @@ export class ImportService {
 
       for (const [langCode, tr] of Object.entries(dto.translations)) {
         const language = langCode as Language;
-        const existingTr = existing.translations.find((t) => t.language === language);
+        // 🔴 `LEGACY-320`: перевод читается под замком строки, а не из снимка
+        // `existing.translations` — замок дерева админскую правку перевода
+        // (`CategoryService.updateTranslation`) не ставит в очередь, и её смена слага
+        // между снимком и записью оставалась без редиректа.
+        const existingTr = await this.categoryTree.lockTranslation(tx, existing.id, language);
         if (existingTr) {
           // Импорт — такой же путь смены слага, как форма в админке, и до 09.08.2026
           // он шёл в обход истории: класс считался закрытым для категорий и тегов,

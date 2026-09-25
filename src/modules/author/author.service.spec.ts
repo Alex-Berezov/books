@@ -80,7 +80,15 @@ const createPrismaStub = (): PrismaStub => {
       groupBy: jest.fn().mockResolvedValue([]),
     },
     $transaction: jest.fn(),
-    $queryRaw: jest.fn(),
+    // Замок строки автора в `update` (`LEGACY-320`) по умолчанию находит строку:
+    // существование автора стенды задают через `author.findUnique` до транзакции.
+    $queryRaw: jest.fn<Promise<unknown>, [unknown]>((strings: unknown) =>
+      Promise.resolve(
+        Array.isArray(strings) && strings.join('?').includes('FOR NO KEY UPDATE')
+          ? [{ id: 'locked' }]
+          : [],
+      ),
+    ),
   };
 
   stub.$transaction.mockImplementation(async (callback: unknown) => {
@@ -343,6 +351,48 @@ describe('AuthorService', () => {
 
       const result = await service.update('auth1', dto);
       expect(result).toBeDefined();
+    });
+
+    /**
+     * `LEGACY-320`. Строка автора запирается первым оператором транзакции, до чтения
+     * старых слагов; транзакция — с явными границами (`L-020`), замок ждёт соседа.
+     */
+    it('запирает строку автора первым оператором, транзакция с явными границами', async () => {
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+      const order: string[] = [];
+      prisma.$queryRaw.mockImplementationOnce(() => {
+        order.push('lock');
+        return Promise.resolve([{ id: 'auth1' }]);
+      });
+      prisma.author.update.mockImplementationOnce(() => {
+        order.push('author.update');
+        return Promise.resolve({ id: 'auth1' });
+      });
+
+      await service.update('auth1', {
+        translations: [{ language: Language.en, name: 'N', slug: 'n' }],
+      });
+
+      expect(order.slice(0, 2)).toEqual(['lock', 'author.update']);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 30_000, maxWait: 10_000 });
+    });
+
+    it('автор удалён в окне до замка — 404 без записи и без редиректа', async () => {
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.$queryRaw.mockResolvedValueOnce([]);
+
+      await expect(
+        service.update('auth1', {
+          translations: [{ language: Language.en, name: 'N', slug: 'n' }],
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.author.update).not.toHaveBeenCalled();
+      expect(prisma.authorTranslation.deleteMany).not.toHaveBeenCalled();
+      expect(slugRedirects.record).not.toHaveBeenCalled();
     });
 
     /**
