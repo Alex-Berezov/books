@@ -6,13 +6,12 @@ import type { RightsProfileContributorEventDto } from './dto/rights-profile-resp
  * `LEGACY-037`: потолок журнала связей участников в ответе профиля.
  *
  * Ответ профиля и так тяжёлый, а история привязок растёт без потолка — отдаются последние
- * события, свежие сверху. Константа одна на оба пути сборки профиля: свой лимит в дашборде
- * версии заводить нельзя, иначе два ответа об одной сущности режут историю по-разному
- * (решение арбитра 21.09.2026, `decisions-log.md`).
+ * события, свежие сверху. С 26.09.2026 (`LEGACY-412`) путь сборки профиля один: дашборд версии
+ * зовёт `RightsProfileService.getById`, своей выборки журнала у него нет и заводить её нельзя.
  */
 export const CONTRIBUTOR_EVENTS_LIMIT = 200;
 
-/** Аргументы выборки журнала — одни и те же у обоих путей. */
+/** Аргументы выборки журнала. */
 export const contributorEventsQuery = (rightsProfileId: string) =>
   ({
     where: { rightsProfileId },
@@ -26,13 +25,11 @@ export type RightsProfileContributorEventRecord = Awaited<
 >[number];
 
 /**
- * Единая проекция события связи участника в DTO — используется и ручкой профиля
- * (`rights-profile.service.ts`), и дашбордом версии (`book-version.service.ts`).
+ * Проекция события связи участника в DTO для `RightsProfileService.mapToDetail` — единственной
+ * сборки профиля (дашборд версии получает её через `getById`, `LEGACY-412`).
  *
  * Колонка `payload` наружу сырым `Json` не идёт: её содержимое раскладывается в типизированный
- * `snapshot` (решение арбитра 21.09.2026). Общая проекция здесь не украшение — до неё дашборд
- * собирал профиль своей сборкой, и поле, добавленное в ручку профиля, на второй экран
- * не доезжало вовсе.
+ * `snapshot` (решение арбитра 21.09.2026).
  */
 export const mapContributorEvent = (
   record: RightsProfileContributorEventRecord,

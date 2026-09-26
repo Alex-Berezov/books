@@ -14,7 +14,8 @@ import {
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lock.service';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
-import { loadContributorEvents } from '../rights-intake/rights-profile-contributor-event.mapper';
+import { RightsProfileService } from '../rights-intake/rights-profile.service';
+import type { RightsProfileDetailDto } from '../rights-intake/dto/rights-profile-response.dto';
 import { Language, BookType, Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { ContributorRole } from '../persons/person-interface';
 import { CreateBookVersionContributorDto } from './dto/create-version-contributor.dto';
@@ -124,6 +125,10 @@ export class BookVersionService {
     // версий двое, и второй (`RightsBookCreationService`) не может видеть приватный метод
     // этого сервиса — `BookVersionModule` сам импортирует `RightsIntakeModule`.
     private authorService: AuthorService,
+    // LEGACY-412: дашборд зовёт ту же проекцию профиля, что и ручка профиля
+    // (`RightsProfileService.getById` → `mapToDetail`), а не собирает её заново сырой
+    // выборкой Prisma — два независимых пути молча расходились составом полей.
+    private rightsProfileService: RightsProfileService,
     private regionAggregationService?: TerritoryRegionAggregationService,
     // Optional so existing direct instantiations in unit tests keep working; a
     // missing counter only means the taxonomy state is refreshed by the admin
@@ -541,47 +546,29 @@ export class BookVersionService {
     }
 
     const profileId = version.rightsProfileId || version.book.currentRightsProfileId;
+    // Типизированная проекция — все чтения полей профиля в методе идут через неё, имена полей
+    // сверяет компилятор; `currentProfile` — она же в широком типе контракта дашборда.
+    let profileDetail: RightsProfileDetailDto | null = null;
     let currentProfile: Record<string, unknown> | null = null;
     let reviewHistory: Record<string, unknown>[] = [];
     let approvedReview: Record<string, unknown> | null = null;
 
     if (profileId) {
-      const foundProfile = await this.prisma.rightsProfile.findUnique({
-        where: { id: profileId },
-        include: {
-          sourceEdition: {
-            include: {
-              editionRights: true,
-            },
-          },
-          components: {
-            include: {
-              territoryAssessments: {
-                orderBy: [{ countryCode: 'asc' }],
-              },
-            },
-          },
-          territoryDecisions: true,
-          evidence: true,
-          actions: true,
-          contributors: {
-            include: {
-              person: true,
-            },
-          },
-        },
-      });
-      if (foundProfile) {
-        // LEGACY-037: журнал связей участников. Дашборд собирает профиль своей выборкой мимо
-        // `RightsProfileService.mapToDetail`, поэтому поле, добавленное в ручку профиля, сюда
-        // само не попадает — и вкладка «Права» книжной карточки молча оставалась без истории.
-        // Через `include` сырой выборки его класть нельзя: под тем же именем уехали бы `payload`
-        // сырым `Json` и `createdAt` объектом `Date`, то есть другая форма того же поля.
-        // Выборка, потолок и проекция берутся из общей точки (решение арбитра 21.09.2026).
-        currentProfile = {
-          ...(foundProfile as Record<string, unknown>),
-          contributorEvents: await loadContributorEvents(this.prisma, profileId),
-        };
+      // LEGACY-412: дашборд раньше собирал профиль своей сырой выборкой Prisma мимо
+      // `RightsProfileService.mapToDetail` — два независимых пути отдавали разный состав
+      // полей, и добавленное в ручку профиля поле сюда само не попадало (так уже вышло
+      // с журналом участников, LEGACY-037). Теперь оба пути — одна проекция.
+      // `getById` бросает `NotFoundException`, если `profileId` указывает на удалённую
+      // строку; дашборд в этом случае просто остаётся без блока профиля, как и раньше.
+      try {
+        profileDetail = await this.rightsProfileService.getById(profileId);
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) {
+          throw error;
+        }
+      }
+      if (profileDetail) {
+        currentProfile = profileDetail as unknown as Record<string, unknown>;
         const foundReviews = await this.prisma.rightsReview.findMany({
           where: { rightsProfileId: profileId },
           include: {
@@ -609,11 +596,14 @@ export class BookVersionService {
     const hasClearance = !!intakeId || !!profileId;
     const canPublishCurrentVersion = publicationGate.canPublish;
 
-    const territoryDecisions =
-      (currentProfile?.['territoryDecisions'] as Array<Record<string, unknown>>) || [];
-    const actions = (currentProfile?.['actions'] as Array<Record<string, unknown>>) || [];
-    const components = (currentProfile?.['components'] as Array<Record<string, unknown>>) || [];
-    const evidence = (currentProfile?.['evidence'] as Array<Record<string, unknown>>) || [];
+    const territoryDecisions = (profileDetail?.territoryDecisions ?? []) as unknown as Array<
+      Record<string, unknown>
+    >;
+    const actions = (profileDetail?.actions ?? []) as unknown as Array<Record<string, unknown>>;
+    const components = (profileDetail?.components ?? []) as unknown as Array<
+      Record<string, unknown>
+    >;
+    const evidence = (profileDetail?.evidence ?? []) as unknown as Array<Record<string, unknown>>;
     const componentTerritoryAssessments = components.flatMap((component) =>
       Array.isArray(component['territoryAssessments'])
         ? (component['territoryAssessments'] as Array<Record<string, unknown>>)
@@ -674,21 +664,24 @@ export class BookVersionService {
         )
       : [];
 
+    // Сводка регионов на дашборде считается по целевым странам интейка книги — того же `intake`,
+    // что отдаётся в этом ответе; проекция профиля берёт интейк профиля, и при снимке профиля
+    // из другого интейка доли NOT_TARGETED разошлись бы. Как и покрытие, подменяется в профиле.
     const regionalTerritorySummary =
-      (currentProfile?.['regionalTerritorySummary'] as Array<Record<string, unknown>>) ||
       (this.regionAggregationService?.aggregateTerritoryDecisions(
         territoryDecisions,
         intakeTargetCountryCodes,
       ) as unknown as Array<Record<string, unknown>>) ||
+      (profileDetail?.regionalTerritorySummary as unknown as Array<Record<string, unknown>>) ||
       [];
 
-    const profileContributors =
-      (currentProfile?.['contributors'] as Array<Record<string, unknown>>) || [];
-    const contributorsCount = profileContributors.length;
-    const authorsCount = profileContributors.filter((c) => c['role'] === 'AUTHOR').length;
-    const translatorsCount = profileContributors.filter((c) => c['role'] === 'TRANSLATOR').length;
-    const narratorsCount = profileContributors.filter((c) => c['role'] === 'NARRATOR').length;
-    const contributorsWithoutPersonCount = profileContributors.filter((c) => !c['personId']).length;
+    // LEGACY-412: счётчики участников уже посчитаны проекцией профиля — второе правило
+    // подсчёта рядом с ней разошлось бы с `currentProfile` в одном ответе.
+    const contributorsCount = profileDetail?.contributorsCount ?? 0;
+    const authorsCount = profileDetail?.authorsCount ?? 0;
+    const translatorsCount = profileDetail?.translatorsCount ?? 0;
+    const narratorsCount = profileDetail?.narratorsCount ?? 0;
+    const contributorsWithoutPersonCount = profileDetail?.contributorsWithoutPersonCount ?? 0;
 
     // Phase 15: licenses reachable from the profile plus the version's own coverage
     const profileLicenses = profileId
@@ -750,11 +743,17 @@ export class BookVersionService {
     }
 
     if (currentProfile) {
+      // Покрытие на дашборде — по версии, а не по профилю; счётчики стран подменяются вместе
+      // с ним, иначе в одном объекте `licenseCoverage` и три счётчика описывали бы разное.
+      // `licenses` не подменяется: проекция отдаёт полную `RightsLicenseSummaryDto` по тем же
+      // привязкам, а узкая дашбордная форма роняла `LicensesPanel` (нет `languageCodes`).
       currentProfile = {
         ...currentProfile,
         regionalTerritorySummary,
-        licenses: licenseSummaries,
         licenseCoverage,
+        licenseRequiredCountriesCount: licenseCoverage.requiredCountryCodes.length,
+        licenseCoveredCountriesCount: licenseCoverage.coveredCountryCodes.length,
+        licenseUncoveredCountriesCount: licenseCoverage.uncoveredCountryCodes.length,
       };
     }
 
@@ -872,8 +871,8 @@ export class BookVersionService {
         hasClearance,
         canPublishCurrentVersion,
         publicationGate: canPublishCurrentVersion ? 'ALLOW' : 'BLOCK',
-        overallStatus: (currentProfile?.['overallStatus'] as string | null) || null,
-        confidence: (currentProfile?.['confidence'] as string | null) || null,
+        overallStatus: profileDetail?.overallStatus || null,
+        confidence: profileDetail?.confidence || null,
         blockedCountriesCount,
         licenseRequiredCountriesCount,
         pendingCountriesCount,

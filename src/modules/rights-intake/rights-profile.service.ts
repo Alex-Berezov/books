@@ -298,9 +298,8 @@ export class RightsProfileService {
       },
     });
 
-    // LEGACY-037: журнал связей участников. Выборка и проекция — общие с дашбордом версии
-    // (`rights-profile-contributor-event.mapper.ts`): до общей точки поле, добавленное сюда,
-    // на второй экран админки не доезжало вовсе (решение арбитра 21.09.2026).
+    // LEGACY-037: журнал связей участников (`rights-profile-contributor-event.mapper.ts`).
+    // Дашборд версии получает весь профиль отсюда же, через `getById` (LEGACY-412).
     const contributorEventsData = await loadContributorEvents(this.prisma, profileId);
 
     // LEGACY-410: единственная строка риска, которой у маппинга ещё нет. Остальной вход

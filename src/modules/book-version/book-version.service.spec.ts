@@ -6,6 +6,7 @@ import {
   createClearanceLockFake,
 } from '../../common/testing/clearance-lock-fake';
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
+import { RightsProfileService } from '../rights-intake/rights-profile.service';
 import { AuthorService } from '../author/author.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoIpCountryService } from '../geo-block/geo-ip-country.service';
@@ -86,14 +87,6 @@ interface PrismaStub {
   rightsReviewApproval: {
     findMany: jest.Mock;
   };
-  rightsProfile: {
-    findUnique: jest.Mock;
-  };
-  // LEGACY-037: дашборд добирает журнал связей участников общей точкой
-  // (`rights-profile-contributor-event.mapper.ts`), а не `include` сырой выборки профиля.
-  rightsProfileContributorEvent: {
-    findMany: jest.Mock;
-  };
   rightsReview: {
     findMany: jest.Mock;
   };
@@ -132,12 +125,6 @@ const createPrismaStub = (): PrismaStub => {
     },
     rightsReviewApproval: {
       findMany: jest.fn(),
-    },
-    rightsProfile: {
-      findUnique: jest.fn(),
-    },
-    rightsProfileContributorEvent: {
-      findMany: jest.fn().mockResolvedValue([]),
     },
     rightsReview: {
       findMany: jest.fn(),
@@ -232,6 +219,9 @@ describe('BookVersionService', () => {
     resolve: jest.Mock;
     cleanupDeadRedirects: jest.Mock;
   };
+  // LEGACY-412: дашборд зовёт ту же проекцию, что и ручка профиля (`RightsProfileService.getById`),
+  // а не собирает профиль сам — сырых `prisma.rightsProfile.findUnique` в дашборде больше нет.
+  let rightsProfileService: { getById: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -347,6 +337,7 @@ describe('BookVersionService', () => {
       resolve: jest.fn().mockResolvedValue(null),
       cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
     };
+    rightsProfileService = { getById: jest.fn().mockResolvedValue(null) };
     service = new BookVersionService(
       prisma as unknown as PrismaService,
       gateService as unknown as PublicationGateService,
@@ -363,6 +354,7 @@ describe('BookVersionService', () => {
       adminAudit as unknown as AdminAuditService,
       clearanceLock.service,
       authorService as unknown as AuthorService,
+      rightsProfileService as unknown as RightsProfileService,
       new TerritoryRegionAggregationService(),
     );
   });
@@ -1638,6 +1630,7 @@ describe('BookVersionService', () => {
         adminAudit as unknown as AdminAuditService,
         clearanceLock.service,
         authorService as unknown as AuthorService,
+        rightsProfileService as unknown as RightsProfileService,
         new TerritoryRegionAggregationService(),
         {
           // Отказ **однократный**: иначе тест проходил бы и при широком обработчике —
@@ -2541,7 +2534,8 @@ describe('BookVersionService', () => {
                 countryCode: 'GB',
                 accessPolicy: 'BLOCK',
                 geoBlockRequired: true,
-                rightsExpireAt: expiringComponentRightsAt,
+                // Проекция `mapToDetail` отдаёт дату строкой ISO, а не `Date`.
+                rightsExpireAt: expiringComponentRightsAt.toISOString(),
               },
               {
                 id: 'assessment-2',
@@ -2589,7 +2583,15 @@ describe('BookVersionService', () => {
       ]);
       (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue(mockIntake);
       prisma.rightsReviewApproval.findMany.mockResolvedValue([mockApproval]);
-      prisma.rightsProfile.findUnique.mockResolvedValue(mockProfile);
+      // Проекция `mapToDetail` всегда несёт сводку регионов: без неё фикстура гоняла бы
+      // запасную ветку дашборда, которой при найденном профиле в проде не бывает.
+      rightsProfileService.getById.mockResolvedValue({
+        ...mockProfile,
+        regionalTerritorySummary:
+          new TerritoryRegionAggregationService().aggregateTerritoryDecisions(
+            mockProfile.territoryDecisions,
+          ),
+      });
       prisma.rightsReview.findMany.mockResolvedValue([mockReview]);
 
       (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
@@ -2632,19 +2634,9 @@ describe('BookVersionService', () => {
           'territoryAssessments'
         ] as unknown[],
       ).toHaveLength(3);
-      expect(prisma.rightsProfile.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({
-          include: expect.objectContaining({
-            components: {
-              include: {
-                territoryAssessments: {
-                  orderBy: [{ countryCode: 'asc' }],
-                },
-              },
-            },
-          }),
-        }),
-      );
+      // LEGACY-412: дашборд зовёт ту же проекцию, что и ручка профиля, вместо своей выборки.
+      expect(rightsProfileService.getById).toHaveBeenCalledTimes(1);
+      expect(rightsProfileService.getById).toHaveBeenCalledWith('profile-1');
       expect(res.reviewHistory).toHaveLength(1);
       expect(res.approvalHistory).toHaveLength(1);
     });
@@ -2690,7 +2682,15 @@ describe('BookVersionService', () => {
       (prisma.bookVersion.findMany as jest.Mock).mockResolvedValue([]);
       (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue(null);
       prisma.rightsReviewApproval.findMany.mockResolvedValue([]);
-      prisma.rightsProfile.findUnique.mockResolvedValue({
+      // Полная форма `RightsLicenseSummaryDto`, как её строит `mapSummary` проекции профиля.
+      const projectedLicense = {
+        ...licenseRow,
+        effectiveStatus: 'ACTIVE',
+        languageCodes: ['es'],
+        mediaFormats: ['EBOOK'],
+        countryCodes: ['ES'],
+      };
+      rightsProfileService.getById.mockResolvedValue({
         id: 'profile-1',
         overallStatus: 'PUBLISHABLE',
         confidence: 'HIGH',
@@ -2699,6 +2699,7 @@ describe('BookVersionService', () => {
         evidence: [],
         actions: [],
         contributors: [],
+        licenses: [projectedLicense],
       });
       prisma.rightsReview.findMany.mockResolvedValue([]);
 
@@ -2737,7 +2738,9 @@ describe('BookVersionService', () => {
       expect(res.summary.licenseCoverageStatus).toBe('COVERED');
       expect(res.summary.licenseCoveredCountriesCount).toBe(1);
       expect(res.summary.licenseUncoveredCountriesCount).toBe(0);
-      expect(res.currentProfile?.['licenses'] as unknown[]).toHaveLength(1);
+      // Лицензии профиля — из проекции целиком: узкая дашбордная форма без `languageCodes`
+      // роняла `LicensesPanel` на вкладке «Права» (LEGACY-412, ревью 26.09.2026).
+      expect(res.currentProfile?.['licenses']).toEqual([projectedLicense]);
       expect(res.currentVersion.rightsLicenseCoverageStatus).toBe('COVERED');
       expect(res.currentVersion.rightsLicenseIds).toEqual(['lic-1']);
     });
