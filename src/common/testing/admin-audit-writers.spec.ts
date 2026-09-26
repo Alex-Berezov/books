@@ -48,13 +48,6 @@ type Site = { file: string; op: string };
  */
 const EXPECTED: Array<Site & { count: number; via: 'tx'; why: string }> = [
   {
-    file: 'modules/users/users.service.ts',
-    op: 'createMany',
-    count: 1,
-    via: 'tx',
-    why: 'ролевой писатель — приватный recordRoleAuditEvents, зовётся с четырёх путей смены ролей; переезд на общий писатель ниже идёт остатком LEGACY-015',
-  },
-  {
     file: 'shared/admin-audit/admin-audit.service.ts',
     op: 'create',
     count: 1,

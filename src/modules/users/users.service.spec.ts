@@ -280,7 +280,6 @@ describe('UsersService (unit)', () => {
         { role: { name: 'user' as RoleName } },
       ]);
     const txRolesDeleteMany = jest.fn().mockResolvedValue({ count: 2 });
-    const txAudit = jest.fn().mockResolvedValue({ count: 2 });
     const txUserDelete = jest.fn().mockResolvedValue(baseUser);
     let txClient: unknown;
     prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
@@ -293,7 +292,6 @@ describe('UsersService (unit)', () => {
           findMany: txRolesFindMany,
           deleteMany: txRolesDeleteMany,
         },
-        adminAuditEvent: { createMany: txAudit },
       };
       return arg(txClient as PrismaStub);
     });
@@ -309,35 +307,32 @@ describe('UsersService (unit)', () => {
     });
     expect(txUserDelete).toHaveBeenCalledTimes(1);
 
-    // Ролевые события — ролевым писателем, одной записью на обе роли, и клиентом
-    // транзакции: корневой клиент здесь остался пустым.
-    expect(txAudit).toHaveBeenCalledTimes(1);
+    // Модель `adminAuditEvent` больше не трогается напрямую: ролевой писатель переехал
+    // на общий `AdminAuditService` (`LEGACY-015`, пункт 6).
     expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
     expect(prismaMock.user.delete).not.toHaveBeenCalled();
-    expect(txAudit).toHaveBeenCalledWith({
-      data: [
-        {
-          actorUserId: 'admin-7',
-          action: AdminAuditAction.ROLE_REVOKED,
-          targetType: AdminAuditTargetType.USER,
-          targetId: 'u1',
-          payload: { role: 'admin' },
-        },
-        {
-          actorUserId: 'admin-7',
-          action: AdminAuditAction.ROLE_REVOKED,
-          targetType: AdminAuditTargetType.USER,
-          targetId: 'u1',
-          payload: { role: 'user' },
-        },
-      ],
-    });
 
-    // Событие о самой строке — общим писателем и **клиентом транзакции**: сравнение
-    // идёт с тем самым объектом, который стенд отдал в колбэк, а он не равен
-    // `prismaMock`, то есть подмена `tx` на `this.prisma` красит эту строку.
-    expect(adminAudit.record).toHaveBeenCalledTimes(1);
-    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+    // Ролевые события — по одному вызову общего писателя на снятую роль, тем же
+    // клиентом транзакции: сравнение идёт с тем самым объектом, который стенд отдал
+    // в колбэк, а он не равен `prismaMock`, то есть подмена `tx` на `this.prisma`
+    // красит эти строки. Событие о самой строке пользователя пишется третьим, после
+    // обоих отзывов ролей — тем же клиентом.
+    expect(adminAudit.record).toHaveBeenCalledTimes(3);
+    expect(adminAudit.record).toHaveBeenNthCalledWith(1, txClient, {
+      action: AdminAuditAction.ROLE_REVOKED,
+      targetType: AdminAuditTargetType.USER,
+      targetId: 'u1',
+      actorUserId: 'admin-7',
+      payload: { role: 'admin' },
+    });
+    expect(adminAudit.record).toHaveBeenNthCalledWith(2, txClient, {
+      action: AdminAuditAction.ROLE_REVOKED,
+      targetType: AdminAuditTargetType.USER,
+      targetId: 'u1',
+      actorUserId: 'admin-7',
+      payload: { role: 'user' },
+    });
+    expect(adminAudit.record).toHaveBeenNthCalledWith(3, txClient, {
       action: AdminAuditAction.USER_DELETED,
       targetType: AdminAuditTargetType.USER,
       targetId: 'u1',
@@ -412,17 +407,14 @@ describe('UsersService (unit)', () => {
       data: [{ userId: 'u1', roleId: 'r1' }],
       skipDuplicates: true,
     });
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
-      data: [
-        {
-          actorUserId: 'admin-1',
-          action: 'ROLE_ASSIGNED',
-          targetType: 'USER',
-          targetId: 'u1',
-          payload: { role: 'admin' },
-        },
-      ],
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(expect.anything(), {
+      actorUserId: 'admin-1',
+      action: 'ROLE_ASSIGNED',
+      targetType: 'USER',
+      targetId: 'u1',
+      payload: { role: 'admin' },
     });
   });
 
@@ -452,17 +444,14 @@ describe('UsersService (unit)', () => {
 
     await service.revokeRole('u1', 'admin', 'admin-1');
 
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
-      data: [
-        {
-          actorUserId: 'admin-1',
-          action: 'ROLE_REVOKED',
-          targetType: 'USER',
-          targetId: 'u1',
-          payload: { role: 'admin' },
-        },
-      ],
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(expect.anything(), {
+      actorUserId: 'admin-1',
+      action: 'ROLE_REVOKED',
+      targetType: 'USER',
+      targetId: 'u1',
+      payload: { role: 'admin' },
     });
   });
 
@@ -478,20 +467,27 @@ describe('UsersService (unit)', () => {
     prismaMock.user.findUnique.mockResolvedValue(baseUser);
     prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
     const txWrite = jest.fn().mockResolvedValue({ count: 1 });
-    const txAudit = jest.fn().mockResolvedValue({ count: 1 });
+    let txClient: unknown;
     prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
       if (typeof arg !== 'function') return Promise.all(arg);
-      return arg({
+      txClient = {
         ...prismaMock,
         userRole: { ...prismaMock.userRole, createMany: txWrite },
-        adminAuditEvent: { createMany: txAudit },
-      } as unknown as PrismaStub);
+      };
+      return arg(txClient as PrismaStub);
     });
 
     await service.assignRole('u1', 'admin', 'admin-1');
 
     expect(txWrite).toHaveBeenCalled();
-    expect(txAudit).toHaveBeenCalled();
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+      actorUserId: 'admin-1',
+      action: AdminAuditAction.ROLE_ASSIGNED,
+      targetType: AdminAuditTargetType.USER,
+      targetId: 'u1',
+      payload: { role: 'admin' },
+    });
     expect(prismaMock.userRole.createMany).not.toHaveBeenCalled();
     expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
   });
@@ -500,20 +496,27 @@ describe('UsersService (unit)', () => {
     prismaMock.user.findUnique.mockResolvedValue(baseUser);
     prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
     const txDelete = jest.fn().mockResolvedValue({});
-    const txAudit = jest.fn().mockResolvedValue({});
+    let txClient: unknown;
     prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
       if (typeof arg !== 'function') return Promise.all(arg);
-      return arg({
+      txClient = {
         ...prismaMock,
         userRole: { ...prismaMock.userRole, delete: txDelete },
-        adminAuditEvent: { createMany: txAudit },
-      } as unknown as PrismaStub);
+      };
+      return arg(txClient as PrismaStub);
     });
 
     await service.revokeRole('u1', 'admin', 'admin-1');
 
     expect(txDelete).toHaveBeenCalled();
-    expect(txAudit).toHaveBeenCalled();
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+      actorUserId: 'admin-1',
+      action: AdminAuditAction.ROLE_REVOKED,
+      targetType: AdminAuditTargetType.USER,
+      targetId: 'u1',
+      payload: { role: 'admin' },
+    });
     expect(prismaMock.userRole.delete).not.toHaveBeenCalled();
     expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
   });
@@ -554,24 +557,21 @@ describe('UsersService (unit)', () => {
 
     await service.update('u1', { roles: ['content_manager'] }, 'admin-1');
 
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
-      data: [
-        {
-          actorUserId: 'admin-1',
-          action: 'ROLE_ASSIGNED',
-          targetType: 'USER',
-          targetId: 'u1',
-          payload: { role: 'content_manager' },
-        },
-        {
-          actorUserId: 'admin-1',
-          action: 'ROLE_REVOKED',
-          targetType: 'USER',
-          targetId: 'u1',
-          payload: { role: 'admin' },
-        },
-      ],
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+    expect(adminAudit.record).toHaveBeenCalledTimes(2);
+    expect(adminAudit.record).toHaveBeenNthCalledWith(1, expect.anything(), {
+      actorUserId: 'admin-1',
+      action: 'ROLE_ASSIGNED',
+      targetType: 'USER',
+      targetId: 'u1',
+      payload: { role: 'content_manager' },
+    });
+    expect(adminAudit.record).toHaveBeenNthCalledWith(2, expect.anything(), {
+      actorUserId: 'admin-1',
+      action: 'ROLE_REVOKED',
+      targetType: 'USER',
+      targetId: 'u1',
+      payload: { role: 'admin' },
     });
   });
 
@@ -596,12 +596,12 @@ describe('UsersService (unit)', () => {
   it('update: смена ролей и запись журнала идут одной транзакцией', async () => {
     prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', firstName: null, lastName: null });
     prismaMock.userRole.findMany.mockResolvedValue([]);
-    const txAudit = jest.fn().mockResolvedValue({ count: 1 });
     const txDeleteMany = jest.fn().mockResolvedValue({ count: 0 });
     const txCreateMany = jest.fn().mockResolvedValue({ count: 1 });
+    let txClient: unknown;
     prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
       if (typeof arg !== 'function') return Promise.all(arg);
-      return arg({
+      txClient = {
         ...prismaMock,
         user: { ...prismaMock.user, update: jest.fn().mockResolvedValue(baseUser) },
         role: {
@@ -614,14 +614,21 @@ describe('UsersService (unit)', () => {
           deleteMany: txDeleteMany,
           createMany: txCreateMany,
         },
-        adminAuditEvent: { createMany: txAudit },
-      } as unknown as PrismaStub);
+      };
+      return arg(txClient as PrismaStub);
     });
 
     await service.update('u1', { roles: ['admin'] }, 'admin-1');
 
     expect(txCreateMany).toHaveBeenCalled();
-    expect(txAudit).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+      actorUserId: 'admin-1',
+      action: AdminAuditAction.ROLE_ASSIGNED,
+      targetType: AdminAuditTargetType.USER,
+      targetId: 'u1',
+      payload: { role: 'admin' },
+    });
     expect(prismaMock.userRole.createMany).not.toHaveBeenCalled();
     expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
   });
@@ -707,24 +714,21 @@ describe('UsersService (unit)', () => {
       'admin-1',
     );
 
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledTimes(1);
-    expect(prismaMock.adminAuditEvent.createMany).toHaveBeenCalledWith({
-      data: [
-        {
-          actorUserId: 'admin-1',
-          action: 'ROLE_ASSIGNED',
-          targetType: 'USER',
-          targetId: 'u1',
-          payload: { role: 'admin' },
-        },
-        {
-          actorUserId: 'admin-1',
-          action: 'ROLE_ASSIGNED',
-          targetType: 'USER',
-          targetId: 'u1',
-          payload: { role: 'user' },
-        },
-      ],
+    expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+    expect(adminAudit.record).toHaveBeenCalledTimes(2);
+    expect(adminAudit.record).toHaveBeenNthCalledWith(1, expect.anything(), {
+      actorUserId: 'admin-1',
+      action: 'ROLE_ASSIGNED',
+      targetType: 'USER',
+      targetId: 'u1',
+      payload: { role: 'admin' },
+    });
+    expect(adminAudit.record).toHaveBeenNthCalledWith(2, expect.anything(), {
+      actorUserId: 'admin-1',
+      action: 'ROLE_ASSIGNED',
+      targetType: 'USER',
+      targetId: 'u1',
+      payload: { role: 'user' },
     });
   });
 
@@ -735,18 +739,18 @@ describe('UsersService (unit)', () => {
   it('create: создание пользователя и запись журнала идут одной транзакцией', async () => {
     prismaMock.user.findUnique.mockResolvedValue(null);
     prismaMock.userRole.findMany.mockResolvedValue([]);
-    const txAudit = jest.fn().mockResolvedValue({ count: 1 });
     const txCreate = jest.fn().mockResolvedValue({
       ...baseUser,
       roles: [{ role: { name: 'admin' } }],
     });
+    let txClient: unknown;
     prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
       if (typeof arg !== 'function') return Promise.all(arg);
-      return arg({
+      txClient = {
         ...prismaMock,
         user: { ...prismaMock.user, create: txCreate },
-        adminAuditEvent: { createMany: txAudit },
-      } as unknown as PrismaStub);
+      };
+      return arg(txClient as PrismaStub);
     });
 
     await service.create(
@@ -755,7 +759,14 @@ describe('UsersService (unit)', () => {
     );
 
     expect(txCreate).toHaveBeenCalled();
-    expect(txAudit).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledTimes(1);
+    expect(adminAudit.record).toHaveBeenCalledWith(txClient, {
+      actorUserId: 'admin-1',
+      action: AdminAuditAction.ROLE_ASSIGNED,
+      targetType: AdminAuditTargetType.USER,
+      targetId: 'u1',
+      payload: { role: 'admin' },
+    });
     expect(prismaMock.user.create).not.toHaveBeenCalled();
     expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
   });
