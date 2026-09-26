@@ -20,14 +20,15 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/health': {
+  '/admin/audio-chapters/{id}': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get: operations['AppController_getHealth'];
+    /** Admin: get audio chapter by id (any status) */
+    get: operations['AudioChapterController_getAdmin'];
     put?: never;
     post?: never;
     delete?: never;
@@ -36,25 +37,61 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/books': {
+  '/admin/authors': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Get all books with pagination */
-    get: operations['BookController_findAll'];
+    /** List authors for admin */
+    get: operations['AuthorController_list'];
     put?: never;
-    /** Create new book */
-    post: operations['BookController_create'];
+    /** Create author */
+    post: operations['AuthorController_create'];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/books/{slug}/overview': {
+  '/admin/authors/check-slug': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Check slug uniqueness for an author */
+    get: operations['AuthorController_checkSlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/authors/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get author by id */
+    get: operations['AuthorController_findOne'];
+    /** Update author */
+    put: operations['AuthorController_update'];
+    post?: never;
+    /** Delete author */
+    delete: operations['AuthorController_delete'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/background-jobs': {
     parameters: {
       query?: never;
       header?: never;
@@ -62,10 +99,10 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Get book overview by slug
-     * @description Aggregated book overview: available languages, presence of text/audio/summary, version IDs, and SEO bundle. Publicly shows only published versions.
+     * Which background mechanisms are actually running
+     * @description Three states per mechanism: ACTIVE, DEGRADED (runs, but not the way it was designed to) and DISABLED, with a mandatory reason for the last two. Exists because three mechanisms in one week turned out never to have run, and none of them gave a sign: no error, no metric, no log line — the absence of work was indistinguishable from normal work. DISABLED here is not automatically a fault: a mechanism switched off by an environment flag is a decision, and only the reason tells the two apart.
      */
-    get: operations['BookController_overview'];
+    get: operations['BackgroundJobsController_list'];
     put?: never;
     post?: never;
     delete?: never;
@@ -74,15 +111,15 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/books/slug/{slug}': {
+  '/admin/books/{id}/rights-claims': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Get book by slug */
-    get: operations['BookController_findBySlug'];
+    /** Admin: List rights claims for a book across all versions */
+    get: operations['BookVersionController_getBookRightsClaims'];
     put?: never;
     post?: never;
     delete?: never;
@@ -91,26 +128,95 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/books/{id}': {
+  '/admin/categories': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Get book by ID */
-    get: operations['BookController_findOne'];
+    /** List categories for admin pickers */
+    get: operations['CategoryController_adminList'];
     put?: never;
     post?: never;
-    /** Delete book */
-    delete: operations['BookController_remove'];
+    delete?: never;
     options?: never;
     head?: never;
-    /** Update book */
-    patch: operations['BookController_update'];
+    patch?: never;
     trace?: never;
   };
-  '/auth/register': {
+  '/admin/comments': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List all comments for moderation (admin) */
+    get: operations['CommentsController_adminList'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/contributors': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List contributors with search and filters */
+    get: operations['ContributorsController_findAll'];
+    put?: never;
+    /** Create a new contributor */
+    post: operations['ContributorsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/contributors/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get contributor detail by ID */
+    get: operations['ContributorsController_findOne'];
+    put?: never;
+    post?: never;
+    /** Delete a contributor */
+    delete: operations['ContributorsController_remove'];
+    options?: never;
+    head?: never;
+    /** Update contributor details */
+    patch: operations['ContributorsController_update'];
+    trace?: never;
+  };
+  '/admin/geo-block/country-source': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Health of the GeoIP country source (Phase 12 depends on an upstream proxy header) */
+    get: operations['GeoCountrySourceController_getCountrySource'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/media/cleanup-orphans': {
     parameters: {
       query?: never;
       header?: never;
@@ -119,92 +225,23 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Register new user */
-    post: operations['AuthController_register'];
+    /** Run two-stage cleanup of orphan MediaAssets (soft-delete + hard-delete) */
+    post: operations['MediaJobsController_cleanupOrphans'];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/auth/login': {
+  '/admin/media/cleanup-status': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get?: never;
-    put?: never;
-    /** Login by email/password */
-    post: operations['AuthController_login'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/auth/refresh': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Refresh tokens */
-    post: operations['AuthController_refresh'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/auth/logout': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Logout (stateless placeholder) */
-    post: operations['AuthController_logout'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/users/me': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get current user profile */
-    get: operations['UsersController_me'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    /** Update current user profile */
-    patch: operations['UsersController_updateMe'];
-    trace?: never;
-  };
-  '/users': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List users (admin only) */
-    get: operations['UsersController_list'];
+    /** Last run of the daily media cleanup sweep */
+    get: operations['MediaJobsController_cleanupStatus'];
     put?: never;
     post?: never;
     delete?: never;
@@ -213,42 +250,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/users/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get user by id (admin only) */
-    get: operations['UsersController_getById'];
-    put?: never;
-    post?: never;
-    /** Delete user by id (admin only) */
-    delete: operations['UsersController_deleteById'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/users/{id}/roles': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List user roles (admin only) */
-    get: operations['UsersController_listRoles'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/users/{id}/roles/{role}': {
+  '/admin/media/probe': {
     parameters: {
       query?: never;
       header?: never;
@@ -257,16 +259,49 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Assign role to user (admin only) */
-    post: operations['UsersController_assignRole'];
-    /** Revoke role from user (admin only) */
-    delete: operations['UsersController_revokeRole'];
+    /** Enqueue ffprobe for a single MediaAsset by id */
+    post: operations['MediaJobsController_probeOne'];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/books/{bookId}/versions': {
+  '/admin/media/reprobe': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Enqueue ffprobe for all audio MediaAssets with missing duration */
+    post: operations['MediaJobsController_reprobe'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/pages': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get all pages grouped by translation group (language agnostic) */
+    get: operations['PagesController_findAllGrouped'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/pages/check-slug': {
     parameters: {
       query?: never;
       header?: never;
@@ -274,20 +309,2127 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List versions for a book (public)
-     * @description Public list of book versions. Returns only published versions (status=published).
+     * Check slug uniqueness for a page
+     * @description Quick availability check for a slug. Returns info about an existing page and suggests a unique option if the slug is taken.
      */
-    get: operations['BookVersionController_list'];
+    get: operations['PagesController_checkSlug'];
     put?: never;
-    /**
-     * Create book version
-     * @description Creates a book version with draft status. Can be published via PATCH /versions/:id/publish.
-     */
-    post: operations['BookVersionController_create'];
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  '/admin/pages/group/{groupId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get all pages in a translation group */
+    get: operations['PagesController_findByGroup'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/pages/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get page by ID (admin): any status */
+    get: operations['PagesController_findById'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/persons': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get list of persons with filters */
+    get: operations['PersonsController_findAll'];
+    put?: never;
+    /** Create new person */
+    post: operations['PersonsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/persons/search': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Search persons by query */
+    get: operations['PersonsController_search'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/persons/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get person details by ID */
+    get: operations['PersonsController_findOne'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update person details */
+    patch: operations['PersonsController_update'];
+    trace?: never;
+  };
+  '/admin/rights-components/{id}/contributors': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Link contributor to a rights component */
+    post: operations['ContributorsController_linkRightsComponent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights-components/{id}/contributors/{linkId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Unlink contributor from a rights component */
+    delete: operations['ContributorsController_unlinkRightsComponent'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/actions/{actionId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get a required rights action by id */
+    get: operations['RightsActionController_getById'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update a required rights action (status, assignee, due date, comment)
+     * @description WP-5.2: действие предлагает агент, закрывает человек. Комментарий обязателен при WAIVED; каждое изменение пишет неудаляемое событие в той же транзакции.
+     */
+    patch: operations['RightsActionController_update'];
+    trace?: never;
+  };
+  '/admin/rights/agent-submissions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Global agent submission log */
+    get: operations['RightsAgentAdminController_listSubmissions'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/agent-submissions/{submissionId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Agent submission details */
+    get: operations['RightsAgentAdminController_getSubmission'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/agent-tokens/{tokenId}/revoke': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Revoke an upload token */
+    post: operations['RightsAgentAdminController_revokeToken'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List rights claims / DMCA notices */
+    get: operations['RightsClaimsController_findAll'];
+    put?: never;
+    /** Register a rights claim */
+    post: operations['RightsClaimsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get a claim with components, blocks, attachments and audit trail */
+    get: operations['RightsClaimsController_findOne'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update a rights claim (claims are never deleted) */
+    patch: operations['RightsClaimsController_update'];
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/assign': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Assign a claim to an editor */
+    post: operations['RightsClaimsController_assign'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/attachments': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Attach a document to a claim */
+    post: operations['RightsClaimsController_addAttachment'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/attachments/{attachmentId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Soft-delete an attachment (the record is preserved) */
+    delete: operations['RightsClaimsController_removeAttachment'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/blocks': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Apply a temporary access block for a claim */
+    post: operations['RightsClaimsController_applyBlock'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/blocks/{blockId}/lift': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Lift a temporary access block */
+    post: operations['RightsClaimsController_liftBlock'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/components': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Link an affected component to a claim */
+    post: operations['RightsClaimsController_linkComponent'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/components/{claimComponentId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Unlink an affected component */
+    delete: operations['RightsClaimsController_unlinkComponent'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/counter-notice': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Record a counter notice */
+    post: operations['RightsClaimsController_recordCounterNotice'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/reopen': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reopen a resolved or closed claim (admin only) */
+    post: operations['RightsClaimsController_reopen'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/resolve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Resolve a claim */
+    post: operations['RightsClaimsController_resolve'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/response': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Record the response sent to the claimant */
+    post: operations['RightsClaimsController_recordResponse'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/claims/{id}/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Change the workflow status of a claim */
+    post: operations['RightsClaimsController_changeStatus'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/evidence/{evidenceId}/archive-copy': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Download the archived copy of the evidence document */
+    get: operations['RightsFilesController_downloadEvidenceArchiveCopy'];
+    put?: never;
+    /**
+     * Upload an archived copy of the evidence document
+     * @description WP-9.3 (R3-08): доказательство хранилось одним URL, который завтра отдаст 404 вместе с обоснованием блокировки страны. Копию загружает редактор — сервер по внешним адресам не ходит.
+     */
+    post: operations['RightsFilesController_uploadEvidenceArchiveCopy'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/evidence/{evidenceId}/supersede': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Mark the evidence as superseded by another one
+     * @description WP-9.3: удалить доказательство нельзя (ADR-009), поэтому «оно больше не действует» выражается ссылкой на преемника.
+     */
+    patch: operations['RightsFilesController_supersedeEvidence'];
+    trace?: never;
+  };
+  '/admin/rights/files/limits': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Limits and allowed content types for rights file uploads */
+    get: operations['RightsFilesController_getLimits'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List rights intakes */
+    get: operations['RightsIntakeController_list'];
+    put?: never;
+    /** Create rights intake */
+    post: operations['RightsIntakeController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get rights intake by ID */
+    get: operations['RightsIntakeController_getById'];
+    put?: never;
+    post?: never;
+    /** Archive rights intake (soft delete) */
+    delete: operations['RightsIntakeController_archive'];
+    options?: never;
+    head?: never;
+    /** Update rights intake */
+    patch: operations['RightsIntakeController_update'];
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/agent-manifest': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Export agent manifest for external ChatGPT-based rights check */
+    get: operations['RightsIntakeController_agentManifest'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/agent-submissions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Agent submission history of an intake */
+    get: operations['RightsAgentAdminController_listIntakeSubmissions'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/agent-tokens': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List upload tokens of an intake */
+    get: operations['RightsAgentAdminController_listTokens'];
+    put?: never;
+    /** Issue a one-time upload token. The raw token is returned only here. */
+    post: operations['RightsAgentAdminController_issueToken'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/create-book': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create book from approved rights clearance */
+    post: operations['RightsIntakeController_createBookFromClearance'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/force': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Archive rights intake from any status (admin only, still a soft delete) */
+    delete: operations['RightsIntakeController_forceArchive'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/lawyer-reviews': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Legal reviews of an intake */
+    get: operations['RightsLawyerReviewController_listByIntake'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/readiness': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Non-blocking readiness check of a rights intake before sending it to the agent */
+    get: operations['RightsIntakeController_readiness'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/recheck-tasks': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Recheck tasks of an intake */
+    get: operations['RightsRecheckController_listIntakeTasks'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/review-chain': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Ordered history of rights reviews of an intake */
+    get: operations['RightsRecheckController_getReviewChain'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/review-imports': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List review imports for a rights intake */
+    get: operations['RightsReviewImportController_listByIntake'];
+    put?: never;
+    /** Import a review result for a rights intake */
+    post: operations['RightsReviewImportController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/rights-profile': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get rights profile(s) for an intake */
+    get: operations['RightsProfileController_getByIntake'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{id}/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Change rights intake status */
+    patch: operations['RightsIntakeController_changeStatus'];
+    trace?: never;
+  };
+  '/admin/rights/intakes/{intakeId}/approvals': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get all approvals for a rights intake */
+    get: operations['RightsIntakeController_getApprovalsByIntake'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{intakeId}/reviews/{reviewId}/approve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Approve a rights review (human approval) */
+    post: operations['RightsIntakeController_approveReview'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/intakes/{intakeId}/reviews/{reviewId}/reject': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reject a rights review (human rejection) */
+    post: operations['RightsIntakeController_rejectReview'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Legal review inbox */
+    get: operations['RightsLawyerReviewController_list'];
+    put?: never;
+    /** Request a legal review */
+    post: operations['RightsLawyerReviewController_request'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/expiry-scan': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Materialise expired legal opinions (admin only) */
+    post: operations['RightsLawyerReviewController_runExpiryScan'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Legal review details, conditions, opinions and timeline */
+    get: operations['RightsLawyerReviewController_getById'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/assign': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Assign a lawyer (a lawyer may only assign themselves) */
+    post: operations['RightsLawyerReviewController_assign'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/conditions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Add a mandatory condition */
+    post: operations['RightsLawyerReviewController_addCondition'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/conditions/{conditionId}/satisfy': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Mark a condition as satisfied */
+    post: operations['RightsLawyerReviewController_satisfyCondition'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/conditions/{conditionId}/waive': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Waive a condition, reason required (admin only) */
+    post: operations['RightsLawyerReviewController_waiveCondition'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/decide': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Record the lawyer verdict */
+    post: operations['RightsLawyerReviewController_decide'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/notes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Append a note to the timeline */
+    post: operations['RightsLawyerReviewController_addNote'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/opinions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Legal opinions attached to a review */
+    get: operations['RightsLawyerReviewController_listOpinions'];
+    put?: never;
+    /** Attach a legal opinion; creates LEGAL_OPINION evidence */
+    post: operations['RightsLawyerReviewController_attachOpinion'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/opinions/{opinionId}/archive': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Archive a legal opinion (soft), reason required */
+    post: operations['RightsLawyerReviewController_archiveOpinion'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/reopen': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reopen a closed legal review (admin only) */
+    post: operations['RightsLawyerReviewController_reopen'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/start': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Take a legal review into work */
+    post: operations['RightsLawyerReviewController_start'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyer-reviews/{id}/withdraw': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Withdraw a legal review, reason required */
+    post: operations['RightsLawyerReviewController_withdraw'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyers': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List lawyers */
+    get: operations['RightsLawyerController_list'];
+    put?: never;
+    /** Create a lawyer (admin only) */
+    post: operations['RightsLawyerController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyers/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Lawyer details */
+    get: operations['RightsLawyerController_getById'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update a lawyer (admin only) */
+    patch: operations['RightsLawyerController_update'];
+    trace?: never;
+  };
+  '/admin/rights/lawyers/{id}/activate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Bring a lawyer back into service (admin only) */
+    post: operations['RightsLawyerController_activate'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/lawyers/{id}/deactivate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Deactivate a lawyer, reason required (admin only) */
+    post: operations['RightsLawyerController_deactivate'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/legal-changes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List declared legal changes */
+    get: operations['RightsLegalChangeController_list'];
+    put?: never;
+    /** Declare a legal change (DRAFT) */
+    post: operations['RightsLegalChangeController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/legal-changes/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Legal change details with the tasks it opened */
+    get: operations['RightsLegalChangeController_getById'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Edit a DRAFT legal change */
+    patch: operations['RightsLegalChangeController_update'];
+    trace?: never;
+  };
+  '/admin/rights/legal-changes/{id}/apply': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Apply a legal change: open recheck tasks in bulk (admin only) */
+    post: operations['RightsLegalChangeController_apply'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/legal-changes/{id}/archive': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Archive a legal change (admin only) */
+    post: operations['RightsLegalChangeController_archive'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/licenses': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List rights licenses */
+    get: operations['RightsLicensesController_findAll'];
+    put?: never;
+    /** Create a rights license */
+    post: operations['RightsLicensesController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/licenses/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get a rights license with links and audit events */
+    get: operations['RightsLicensesController_findOne'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update a rights license */
+    patch: operations['RightsLicensesController_update'];
+    trace?: never;
+  };
+  '/admin/rights/licenses/{id}/links': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Link a license to a rights entity */
+    post: operations['RightsLicensesController_link'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/licenses/{id}/links/{linkId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Remove a license link (the license itself is preserved) */
+    delete: operations['RightsLicensesController_unlink'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/licenses/{id}/revoke': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Revoke a rights license (licenses are never deleted) */
+    post: operations['RightsLicensesController_revoke'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/notifications': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List in-app rights notifications visible to the current user */
+    get: operations['RightsNotificationsController_list'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/notifications/read-all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Mark every visible notification as read */
+    post: operations['RightsNotificationsController_markAllRead'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/notifications/unread-count': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Number of unread notifications */
+    get: operations['RightsNotificationsController_unreadCount'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/notifications/{id}/read': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Mark one notification as read */
+    post: operations['RightsNotificationsController_markRead'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/profiles/{id}/recheck-schedule': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Recheck schedule of a rights profile */
+    get: operations['RightsRecheckController_getSchedule'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update the recheck schedule / policy of a rights profile */
+    patch: operations['RightsRecheckController_updateSchedule'];
+    trace?: never;
+  };
+  '/admin/rights/profiles/{id}/require-lawyer-review': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Force a legal review for a rights profile */
+    post: operations['RightsLawyerReviewController_requireForProfile'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/profiles/{id}/risk-assessment': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Risk assessment of a rights profile; refreshes the snapshot */
+    get: operations['RightsLawyerReviewController_getRiskAssessment'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/profiles/{profileId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get rights profile detail by ID */
+    get: operations['RightsProfileController_getById'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/profiles/{profileId}/license-coverage': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Evaluate license coverage for a rights profile */
+    get: operations['RightsLicensesController_profileCoverage'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/profiles/{profileId}/licenses': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List licenses reachable from a rights profile */
+    get: operations['RightsLicensesController_listForProfile'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/profiles/{profileId}/source-file': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Download the source edition file */
+    get: operations['RightsFilesController_downloadSourceFile'];
+    put?: never;
+    /**
+     * Upload the source edition file
+     * @description WP-8.3 (R3-05): контрольная сумма файла входит в content hash клиренса, поэтому загрузка пересчитывает свежесть всех версий профиля. Замена запрещена.
+     */
+    post: operations['RightsFilesController_uploadSourceFile'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/scan': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Run the recheck scan now (admin only) */
+    post: operations['RightsRecheckController_runScan'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/scan-runs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** History of recheck scan runs */
+    get: operations['RightsRecheckController_listScanRuns'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/tasks': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List recheck tasks */
+    get: operations['RightsRecheckController_listTasks'];
+    put?: never;
+    /** Open a recheck task manually */
+    post: operations['RightsRecheckController_createTask'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/tasks/{taskId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Recheck task details and event timeline */
+    get: operations['RightsRecheckController_getTask'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/tasks/{taskId}/complete': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Close a recheck task */
+    post: operations['RightsRecheckController_completeTask'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/tasks/{taskId}/dismiss': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Dismiss a recheck task as not applicable */
+    post: operations['RightsRecheckController_dismissTask'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/tasks/{taskId}/reopen': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reopen a closed recheck task (admin only) */
+    post: operations['RightsRecheckController_reopenTask'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/tasks/{taskId}/snooze': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Postpone reminders of a recheck task */
+    post: operations['RightsRecheckController_snoozeTask'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/recheck/tasks/{taskId}/start': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Take a recheck task into work */
+    post: operations['RightsRecheckController_startTask'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/review-imports/{importId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get a specific review import by ID */
+    get: operations['RightsReviewImportController_getById'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/review-imports/{importId}/materialize': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Materialize a rights profile from a validated review import */
+    post: operations['RightsProfileController_materialize'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/rights/review-imports/{importId}/report-pdf': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Download the PDF version of the rights report */
+    get: operations['RightsFilesController_downloadReportPdf'];
+    put?: never;
+    /**
+     * Upload the PDF version of the rights report
+     * @description WP-9.2 (R4-02): требование roadmap фазы 3, не реализованное ни одной из 20 фаз. Контрольную сумму считает сервер. Замена уже загруженного файла запрещена — исправленный отчёт загружается новым импортом.
+     */
+    post: operations['RightsFilesController_uploadReportPdf'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/seo/system-pages/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Do the keys the public site resolves by still land on a published page?
+     * @description The homepage and the four taxonomy hubs are found by an immutable systemKey. When one no longer resolves — unpublished, deleted, or a language added after the backfill — nothing errors: the page falls back to dictionary strings and silently loses its meta, H1, SEO text and FAQ. This names the pages that no longer resolve, per language, with their current public slug. Also logged at startup.
+     */
+    get: operations['SeoController_systemPagesStatus'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/seo/taxonomy-indexability/recompute': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Recompute bookCount / autoIndexable for every taxonomy translation (hysteresis: close <=2, open >=5) */
+    post: operations['SeoController_recomputeTaxonomyIndexability'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/seo/taxonomy-indexability/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Last run of the daily taxonomy indexability sweep
+     * @description The sweep is the safety net that catches a counter no targeted hook updated. It runs in-process, so this is the only way to confirm from outside that it actually ran.
+     */
+    get: operations['SeoController_taxonomyIndexabilityStatus'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/source-editions/{id}/contributors': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Link contributor to a source edition */
+    post: operations['ContributorsController_linkSourceEdition'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/source-editions/{id}/contributors/{linkId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Unlink contributor from a source edition */
+    delete: operations['ContributorsController_unlinkSourceEdition'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/tags': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List tags for admin pickers (supports search) */
+    get: operations['TagsController_adminList'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{bookVersionId}/audio-chapters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Admin: list audio chapters by book version (any status, including drafts) */
+    get: operations['AudioChapterController_listAdmin'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{bookVersionId}/chapters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Admin: list chapters by book version (any status, including drafts) */
+    get: operations['ChapterController_listAdmin'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Admin: Get version by id (any status)
+     * @description Возвращает версию в любом статусе (draft, published). Требует авторизации.
+     */
+    get: operations['BookVersionController_getAdmin'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/contributors': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get list of contributors for a book version */
+    get: operations['BookVersionController_getVersionContributors'];
+    put?: never;
+    /** Add a contributor to a book version */
+    post: operations['BookVersionController_addVersionContributor'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/contributors/reorder': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reorder contributors for a book version */
+    post: operations['BookVersionController_reorderVersionContributors'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/contributors/{contributorId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Remove a contributor from a book version */
+    delete: operations['BookVersionController_removeVersionContributor'];
+    options?: never;
+    head?: never;
+    /** Update a contributor for a book version */
+    patch: operations['BookVersionController_updateVersionContributor'];
+    trace?: never;
+  };
+  '/admin/versions/{id}/geo-block-check': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Test runtime access for a country and content scope */
+    post: operations['GeoBlockController_checkAccess'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/geo-block-rules': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List generated geo-block rules for a book version */
+    get: operations['GeoBlockController_getRules'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/geo-block-rules/generate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Generate runtime rules from country-level territory decisions */
+    post: operations['GeoBlockController_generateRules'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/geo-block-rules/verify': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Verify generated geo-block rules and enable publication gate state */
+    post: operations['GeoBlockController_verifyRules'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/lawyer-review': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Legal state of a book version */
+    get: operations['RightsLawyerReviewController_getVersionLawyerReview'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/license-coverage': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Admin: Evaluate license coverage for a book version
+     * @description Возвращает покрытие лицензиями рынков со статусом LICENSE_REQUIRED: по странам, блокеры и предупреждения.
+     */
+    get: operations['BookVersionController_getLicenseCoverage'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/publication-gate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Check publication gate for a version
+     * @description Возвращает структурированный результат проверки publication gate: может ли версия быть опубликована, и если нет — причины блокировки.
+     */
+    get: operations['BookVersionController_checkPublicationGate'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/recheck': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Recheck state of a book version */
+    get: operations['RightsRecheckController_getVersionRecheck'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/rights-claims': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Admin: List rights claims affecting a book version
+     * @description Возвращает претензии, поданные на эту версию, и претензии на книгу целиком (без bookVersionId).
+     */
+    get: operations['BookVersionController_getVersionRightsClaims'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/rights-content-hash': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get computed rights content hash for a version
+     * @description Вычисляет текущий content hash версии без изменения состояния. Возвращает результат сравнения с baseline.
+     */
+    get: operations['BookVersionController_getRightsContentHash'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/rights-content-hash/check': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Check rights content hash and mark stale if mismatch
+     * @description Вычисляет текущий content hash, сравнивает с baseline. Если есть расхождение, фиксирует stale.
+     */
+    post: operations['BookVersionController_checkRightsContentHash'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/rights-dashboard': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Admin: Get consolidated rights dashboard for a book version
+     * @description Возвращает агрегированный дашборд авторских прав: статус заявки, профиль прав, геоблокировку, проверки и историю.
+     */
+    get: operations['BookVersionController_getRightsDashboard'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/rights-geo-block': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Mark geo-block as configured for a version
+     * @deprecated
+     * @description Deprecated compatibility wrapper. Verification now requires generated active rules.
+     */
+    patch: operations['BookVersionController_updateRightsGeoBlock'];
     trace?: never;
   };
   '/admin/{lang}/books/{bookId}/versions': {
@@ -302,829 +2444,6 @@ export interface paths {
     put?: never;
     /** Admin: create book version in selected admin language */
     post: operations['BookVersionController_createAdmin'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/versions/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get version by id */
-    get: operations['BookVersionController_get'];
-    put?: never;
-    post?: never;
-    /** Delete version by id */
-    delete: operations['BookVersionController_remove'];
-    options?: never;
-    head?: never;
-    /** Update version by id */
-    patch: operations['BookVersionController_update'];
-    trace?: never;
-  };
-  '/versions/{id}/publish': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    /** Publish version */
-    patch: operations['BookVersionController_publish'];
-    trace?: never;
-  };
-  '/versions/{id}/unpublish': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    /** Unpublish version (set draft) */
-    patch: operations['BookVersionController_unpublish'];
-    trace?: never;
-  };
-  '/versions/{bookVersionId}/chapters': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List chapters by book version */
-    get: operations['ChapterController_list'];
-    put?: never;
-    /** Create chapter for a book version */
-    post: operations['ChapterController_create'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/chapters/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get chapter by id */
-    get: operations['ChapterController_get'];
-    put?: never;
-    post?: never;
-    /** Delete chapter by id */
-    delete: operations['ChapterController_remove'];
-    options?: never;
-    head?: never;
-    /** Update chapter by id */
-    patch: operations['ChapterController_update'];
-    trace?: never;
-  };
-  '/versions/{bookVersionId}/audio-chapters': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List audio chapters by book version */
-    get: operations['AudioChapterController_list'];
-    put?: never;
-    /** Create audio chapter for a book version */
-    post: operations['AudioChapterController_create'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/audio-chapters/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get audio chapter by id */
-    get: operations['AudioChapterController_get'];
-    put?: never;
-    post?: never;
-    /** Delete audio chapter by id */
-    delete: operations['AudioChapterController_remove'];
-    options?: never;
-    head?: never;
-    /** Update audio chapter by id */
-    patch: operations['AudioChapterController_update'];
-    trace?: never;
-  };
-  '/versions/{bookVersionId}/seo': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get SEO meta for a book version */
-    get: operations['SeoController_get'];
-    /** Create or update SEO meta for a book version (upsert) */
-    put: operations['SeoController_upsert'];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/seo/resolve': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Resolve SEO bundle (meta/OG/Twitter/canonical) with fallbacks */
-    get: operations['SeoController_resolve'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/{lang}/seo/resolve': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Resolve SEO bundle (public) for specific language (by path prefix) */
-    get: operations['SeoController_resolveWithLang'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/versions/{bookVersionId}/summary': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get book summary for a version */
-    get: operations['BookSummaryController_get'];
-    /** Create or update summary for a version (upsert) */
-    put: operations['BookSummaryController_upsert'];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/categories': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List categories */
-    get: operations['CategoryController_list'];
-    put?: never;
-    /** Create category */
-    post: operations['CategoryController_create'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/categories/tree': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get full categories tree (root nodes with nested children) */
-    get: operations['CategoryController_tree'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/categories/{id}/children': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get direct children of the category */
-    get: operations['CategoryController_children'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/categories/{id}/ancestors': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get ancestors path of the category (root → ... → parent) */
-    get: operations['CategoryController_ancestors'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/categories/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Delete category */
-    delete: operations['CategoryController_remove'];
-    options?: never;
-    head?: never;
-    /** Update category */
-    patch: operations['CategoryController_update'];
-    trace?: never;
-  };
-  '/categories/{slug}/books': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Public list of book versions by category (without language prefix) */
-    get: operations['CategoryController_publicBySlug'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/{lang}/categories/{slug}/books': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Public list of book versions by localized category */
-    get: operations['PublicController_categoriesBySlug'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/categories/{id}/translations': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List category translations (admin) */
-    get: operations['CategoryController_listTranslations'];
-    put?: never;
-    /** Create category translation (admin) */
-    post: operations['CategoryController_createTranslation'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/categories/{id}/translations/{language}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Delete category translation (admin) */
-    delete: operations['CategoryController_deleteTranslation'];
-    options?: never;
-    head?: never;
-    /** Update category translation (admin) */
-    patch: operations['CategoryController_updateTranslation'];
-    trace?: never;
-  };
-  '/versions/{id}/categories': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Attach category to a book version */
-    post: operations['CategoryController_attach'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/versions/{id}/categories/{categoryId}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Detach category from a book version */
-    delete: operations['CategoryController_detach'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/me/bookshelf': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List my bookshelf */
-    get: operations['BookshelfController_list'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/me/bookshelf/{versionId}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Add version to my bookshelf */
-    post: operations['BookshelfController_add'];
-    /** Remove version from my bookshelf */
-    delete: operations['BookshelfController_remove'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/comments': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List comments by target */
-    get: operations['CommentsController_list'];
-    put?: never;
-    /** Create comment */
-    post: operations['CommentsController_create'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/comments/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get comment */
-    get: operations['CommentsController_get'];
-    put?: never;
-    post?: never;
-    /** Delete (soft) comment. Owner or admin/content_manager. */
-    delete: operations['CommentsController_remove'];
-    options?: never;
-    head?: never;
-    /** Update comment (owner can edit text; admins/moderators can also hide/unhide) */
-    patch: operations['CommentsController_update'];
-    trace?: never;
-  };
-  '/likes': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Like a comment or a book version (exactly one target) */
-    post: operations['LikesController_like'];
-    /** Remove like (idempotent) */
-    delete: operations['LikesController_unlike'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/likes/count': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get like count for a target */
-    get: operations['LikesController_count'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/likes/toggle': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    /** Toggle like; returns current state and count */
-    patch: operations['LikesController_toggle'];
-    trace?: never;
-  };
-  '/me/progress/{versionId}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get my reading/listening progress for a book version */
-    get: operations['ReadingProgressController_get'];
-    /** Create or update my reading/listening progress for a book version */
-    put: operations['ReadingProgressController_upsert'];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/views': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Record a view (anonymous or authorized) */
-    post: operations['ViewStatsController_create'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/views/aggregate': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Aggregate views by day for a version */
-    get: operations['ViewStatsController_aggregate'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/views/top': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Top viewed versions for a period */
-    get: operations['ViewStatsController_top'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/uploads/presign': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Get a presigned direct-upload token and URL */
-    post: operations['UploadsController_presign'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/uploads/direct': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Direct binary upload by token (local driver) */
-    post: operations['UploadsController_direct'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/uploads/confirm': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Confirm an uploaded object and return its public URL */
-    post: operations['UploadsController_confirm'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/uploads': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Delete uploaded object by key */
-    delete: operations['UploadsController_delete'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/status/rate-limit': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Rate limit configuration */
-    get: operations['StatusController_getRateLimit'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/status/sentry-test': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Generate a test error to verify Sentry integration */
-    post: operations['StatusController_sentryTest'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/tags': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List tags */
-    get: operations['TagsController_list'];
-    put?: never;
-    /** Create tag */
-    post: operations['TagsController_create'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/tags/{id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Delete tag */
-    delete: operations['TagsController_remove'];
-    options?: never;
-    head?: never;
-    /** Update tag */
-    patch: operations['TagsController_update'];
-    trace?: never;
-  };
-  '/tags/{slug}/books': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Public list of book versions by tag (without language prefix) */
-    get: operations['TagsController_publicBySlug'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/versions/{id}/tags': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Attach tag to a book version */
-    post: operations['TagsController_attach'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/versions/{id}/tags/{tagId}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Detach tag from a book version */
-    delete: operations['TagsController_detach'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/tags/{id}/translations': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List tag translations (admin) */
-    get: operations['TagsController_listTranslations'];
-    put?: never;
-    /** Create tag translation (admin) */
-    post: operations['TagsController_createTranslation'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/tags/{id}/translations/{language}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Delete tag translation (admin) */
-    delete: operations['TagsController_deleteTranslation'];
-    options?: never;
-    head?: never;
-    /** Update tag translation (admin) */
-    patch: operations['TagsController_updateTranslation'];
-    trace?: never;
-  };
-  '/pages/{slug}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Public page by slug (only published) */
-    get: operations['PagesController_getPublic'];
-    put?: never;
-    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1201,7 +2520,26 @@ export interface paths {
     patch: operations['PagesController_unpublish'];
     trace?: never;
   };
-  '/media/confirm': {
+  '/audio-chapters/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get audio chapter by id (public, published version only) */
+    get: operations['AudioChapterController_get'];
+    put?: never;
+    post?: never;
+    /** Delete audio chapter by id */
+    delete: operations['AudioChapterController_remove'];
+    options?: never;
+    head?: never;
+    /** Update audio chapter by id */
+    patch: operations['AudioChapterController_update'];
+    trace?: never;
+  };
+  '/auth/login': {
     parameters: {
       query?: never;
       header?: never;
@@ -1210,32 +2548,15 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Confirm uploaded object and create/update MediaAsset */
-    post: operations['MediaController_confirm'];
+    /** Login by email/password */
+    post: operations['AuthController_login'];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/media': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List media assets */
-    get: operations['MediaController_list'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/media/upload': {
+  '/auth/logout': {
     parameters: {
       query?: never;
       header?: never;
@@ -1244,15 +2565,272 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** One-step upload: multipart file -> presign -> direct -> media.confirm */
-    post: operations['MediaController_uploadOne'];
+    /** Logout (stateless placeholder) */
+    post: operations['AuthController_logout'];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/media/{id}': {
+  '/auth/refresh': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Refresh tokens */
+    post: operations['AuthController_refresh'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/auth/register': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Register new user */
+    post: operations['AuthController_register'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/auth/social': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Login or Register via OAuth (Google, Facebook) */
+    post: operations['AuthController_socialLogin'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get all books with pagination (admin: includes drafts) */
+    get: operations['BookController_findAll'];
+    put?: never;
+    /** Create new book (DISABLED - use rights intake workflow) */
+    post: operations['BookController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/check-slug': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Check slug uniqueness for a book
+     * @description Quick availability check for a slug. Returns info about an existing book and suggests a unique option if the slug is taken.
+     */
+    get: operations['BookController_checkSlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/slug/{slug}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get book by slug (drafts are visible to moderators only) */
+    get: operations['BookController_findBySlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/themes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get list of all unique themes
+     * @description Returns a list of all unique themes used in book versions. Admin only.
+     */
+    get: operations['BookController_getThemes'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{bookId}/versions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List versions for a book (public; drafts are visible to moderators only)
+     * @description Публичный список версий книги. Возвращает только опубликованные версии (status=published).
+     */
+    get: operations['BookVersionController_list'];
+    put?: never;
+    /**
+     * Create book version
+     * @description Создаёт версию книги в статусе draft. Опубликовать можно через PATCH /versions/:id/publish.
+     */
+    post: operations['BookVersionController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get book by ID (drafts are visible to moderators only) */
+    get: operations['BookController_findOne'];
+    put?: never;
+    post?: never;
+    /** Delete book */
+    delete: operations['BookController_remove'];
+    options?: never;
+    head?: never;
+    /** Update book */
+    patch: operations['BookController_update'];
+    trace?: never;
+  };
+  '/books/{id}/my-rating': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get current user rating for a book */
+    get: operations['BookController_getMyRating'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/books/{id}/rate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Rate a book */
+    post: operations['BookController_rate'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/categories': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create category */
+    post: operations['CategoryController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/categories/check-slug': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Check slug uniqueness for a category
+     * @description Quick availability check for a slug. Returns info about an existing category and suggests a unique option if the slug is taken.
+     */
+    get: operations['CategoryController_checkSlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/categories/tree': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get categories tree (optionally filtered by type) */
+    get: operations['CategoryController_tree'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/categories/{id}': {
     parameters: {
       query?: never;
       header?: never;
@@ -1262,22 +2840,23 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    /** Soft-delete media asset and try to remove file */
-    delete: operations['MediaController_remove'];
+    /** Delete category */
+    delete: operations['CategoryController_remove'];
     options?: never;
     head?: never;
-    patch?: never;
+    /** Update category */
+    patch: operations['CategoryController_update'];
     trace?: never;
   };
-  '/{lang}/books/{slug}/overview': {
+  '/categories/{id}/ancestors': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Public book overview with language prefix */
-    get: operations['PublicController_overview'];
+    /** Get ancestors path of the category (root → ... → parent) */
+    get: operations['CategoryController_ancestors'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1286,15 +2865,15 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/{lang}/pages/{slug}': {
+  '/categories/{id}/children': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Public CMS page with language prefix */
-    get: operations['PublicController_getPage'];
+    /** Get direct children of the category */
+    get: operations['CategoryController_children'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1303,15 +2882,106 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/{lang}/tags/{slug}/books': {
+  '/categories/{id}/translations': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Public list of book versions by localized tag */
-    get: operations['PublicController_tagsBySlug'];
+    /** List category translations (admin) */
+    get: operations['CategoryController_listTranslations'];
+    put?: never;
+    /** Create category translation (admin) */
+    post: operations['CategoryController_createTranslation'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/categories/{id}/translations/{language}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete category translation (admin) */
+    delete: operations['CategoryController_deleteTranslation'];
+    options?: never;
+    head?: never;
+    /** Update category translation (admin) */
+    patch: operations['CategoryController_updateTranslation'];
+    trace?: never;
+  };
+  '/chapters/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get chapter by id */
+    get: operations['ChapterController_get'];
+    put?: never;
+    post?: never;
+    /** Delete chapter by id */
+    delete: operations['ChapterController_remove'];
+    options?: never;
+    head?: never;
+    /** Update chapter by id */
+    patch: operations['ChapterController_update'];
+    trace?: never;
+  };
+  '/comments': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List comments by target */
+    get: operations['CommentsController_list'];
+    put?: never;
+    /** Create comment */
+    post: operations['CommentsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/comments/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get comment (hidden ones are visible to moderators only) */
+    get: operations['CommentsController_get'];
+    put?: never;
+    post?: never;
+    /** Delete (soft) comment. Owner or admin/content_manager. */
+    delete: operations['CommentsController_remove'];
+    options?: never;
+    head?: never;
+    /** Update comment (owner can edit text; admins/moderators can also hide/unhide) */
+    patch: operations['CommentsController_update'];
+    trace?: never;
+  };
+  '/health': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['AppController_getHealth'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1354,6 +3024,213 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/import/categories': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Import categories/genres/collections from JSON */
+    post: operations['ImportController_importCategories'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/import/tags': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Import tags from JSON */
+    post: operations['ImportController_importTags'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/likes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Like a comment or a book version (exactly one target) */
+    post: operations['LikesController_like'];
+    /** Remove like (idempotent) */
+    delete: operations['LikesController_unlike'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/likes/count': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get like count for a target */
+    get: operations['LikesController_count'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/likes/toggle': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Toggle like; returns current state and count */
+    patch: operations['LikesController_toggle'];
+    trace?: never;
+  };
+  '/me/bookshelf': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List my bookshelf */
+    get: operations['BookshelfController_list'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/me/bookshelf/{versionId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Add version to my bookshelf */
+    post: operations['BookshelfController_add'];
+    /** Remove version from my bookshelf */
+    delete: operations['BookshelfController_remove'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/me/progress/{versionId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get my reading/listening progress for a book version */
+    get: operations['ReadingProgressController_get'];
+    /** Create or update my reading/listening progress for a book version */
+    put: operations['ReadingProgressController_upsert'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/media': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List media assets */
+    get: operations['MediaController_list'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/media/confirm': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Confirm uploaded object and create/update MediaAsset */
+    post: operations['MediaController_confirm'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/media/upload': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** One-step upload: multipart file -> presign -> direct -> media.confirm */
+    post: operations['MediaController_uploadOne'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/media/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Soft-delete media asset and try to remove file */
+    delete: operations['MediaController_remove'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/metrics': {
     parameters: {
       query?: never;
@@ -1370,144 +3247,3044 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/rights/agent/manifest': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Manifest of the intake bound to the upload token */
+    get: operations['RightsAgentController_getManifest'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/rights/agent/report-schema': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** JSON Schema of the latest supported report version */
+    get: operations['RightsAgentController_getLatestSchema'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/rights/agent/report-schema/{version}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** JSON Schema of a specific report version */
+    get: operations['RightsAgentController_getSchemaByVersion'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/rights/agent/submissions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Submit a clearance report. Never auto-approves. */
+    post: operations['RightsAgentController_submit'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/status/rate-limit': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Rate limit configuration */
+    get: operations['StatusController_getRateLimit'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/status/sentry-test': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Generate a test error to verify Sentry integration */
+    post: operations['StatusController_sentryTest'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/tags': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create tag */
+    post: operations['TagsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/tags/check-slug': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Check slug uniqueness for a tag
+     * @description Quick availability check for a slug. Returns info about an existing tag and suggests a unique option if the slug is taken.
+     */
+    get: operations['TagsController_checkSlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/tags/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete tag */
+    delete: operations['TagsController_remove'];
+    options?: never;
+    head?: never;
+    /** Update tag */
+    patch: operations['TagsController_update'];
+    trace?: never;
+  };
+  '/tags/{id}/translations': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List tag translations (admin) */
+    get: operations['TagsController_listTranslations'];
+    put?: never;
+    /** Create tag translation (admin) */
+    post: operations['TagsController_createTranslation'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/tags/{id}/translations/{language}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete tag translation (admin) */
+    delete: operations['TagsController_deleteTranslation'];
+    options?: never;
+    head?: never;
+    /** Update tag translation (admin) */
+    patch: operations['TagsController_updateTranslation'];
+    trace?: never;
+  };
+  '/uploads': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete uploaded object by key */
+    delete: operations['UploadsController_delete'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/uploads/confirm': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Confirm an uploaded object and return its public URL */
+    post: operations['UploadsController_confirm'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/uploads/direct': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Direct binary upload by token (local driver) */
+    post: operations['UploadsController_direct'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/uploads/limits': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public upload limits (max size, allowed content types) */
+    get: operations['UploadsController_limits'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/uploads/presign': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Get a presigned direct-upload token and URL */
+    post: operations['UploadsController_presign'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/users': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List users (admin only) */
+    get: operations['UsersController_list'];
+    put?: never;
+    /** Create user (admin only) */
+    post: operations['UsersController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/users/me': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get current user profile */
+    get: operations['UsersController_me'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update current user profile */
+    patch: operations['UsersController_updateMe'];
+    trace?: never;
+  };
+  '/users/me/activities': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get current user activities (comments & replies) */
+    get: operations['UsersController_meActivities'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/users/profile': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Update current user profile (alternative profile path) */
+    patch: operations['UsersController_updateProfile'];
+    trace?: never;
+  };
+  '/users/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get user by id (admin only) */
+    get: operations['UsersController_getById'];
+    put?: never;
+    post?: never;
+    /** Delete user by id (admin only) */
+    delete: operations['UsersController_deleteById'];
+    options?: never;
+    head?: never;
+    /** Update user (admin only) */
+    patch: operations['UsersController_update'];
+    trace?: never;
+  };
+  '/users/{id}/roles': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List user roles (admin only) */
+    get: operations['UsersController_listRoles'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/users/{id}/roles/{role}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Assign role to user (admin only) */
+    post: operations['UsersController_assignRole'];
+    /** Revoke role from user (admin only) */
+    delete: operations['UsersController_revokeRole'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/audio-chapters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List audio chapters by book version (public, published only) */
+    get: operations['AudioChapterController_list'];
+    put?: never;
+    /** Create audio chapter for a book version */
+    post: operations['AudioChapterController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/audio-chapters/reorder': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reorder audio chapters atomically by id list (1-based numbering) */
+    post: operations['AudioChapterController_reorder'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/chapters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List chapters by book version (returns all by default; pass page & limit for pagination) */
+    get: operations['ChapterController_list'];
+    put?: never;
+    /** Create chapter for a book version */
+    post: operations['ChapterController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/seo': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get SEO meta for a book version */
+    get: operations['SeoController_get'];
+    /** Create or update SEO meta for a book version (upsert) */
+    put: operations['SeoController_upsert'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/summary': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get book summary for a version (drafts are visible to editors only) */
+    get: operations['BookSummaryController_get'];
+    /** Create or update summary for a version (upsert) */
+    put: operations['BookSummaryController_upsert'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get version by id */
+    get: operations['BookVersionController_get'];
+    put?: never;
+    post?: never;
+    /** Delete version by id */
+    delete: operations['BookVersionController_remove'];
+    options?: never;
+    head?: never;
+    /** Update version by id */
+    patch: operations['BookVersionController_update'];
+    trace?: never;
+  };
+  '/versions/{id}/categories': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Attach category to a book version */
+    post: operations['CategoryController_attach'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{id}/categories/{categoryId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Detach category from a book version */
+    delete: operations['CategoryController_detach'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{id}/preview': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get preview audio for a version (public)
+     * @description Возвращает URL и длительность preview-аудио для версии. 404, если preview не задан или версия не опубликована.
+     */
+    get: operations['BookVersionController_getPreview'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{id}/publish': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Publish version */
+    patch: operations['BookVersionController_publish'];
+    trace?: never;
+  };
+  '/versions/{id}/tags': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Attach tag to a book version */
+    post: operations['TagsController_attach'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{id}/tags/{tagId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Detach tag from a book version */
+    delete: operations['TagsController_detach'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{id}/unpublish': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Unpublish version (set draft) */
+    patch: operations['BookVersionController_unpublish'];
+    trace?: never;
+  };
+  '/views': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Record a view (anonymous or authorized) */
+    post: operations['ViewStatsController_create'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/views/aggregate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Aggregate views by day for a version */
+    get: operations['ViewStatsController_aggregate'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/views/top': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Top viewed versions for a period */
+    get: operations['ViewStatsController_top'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/authors': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public authors list with language prefix */
+    get: operations['PublicController_authorsList'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/authors/letters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Author alphabet index with per-letter counts */
+    get: operations['PublicController_authorLetters'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/authors/{slug}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public author details by slug with language prefix */
+    get: operations['PublicController_authorBySlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/authors/{slug}/books/cards': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Compact paginated book cards for an author (author page fallback) */
+    get: operations['PublicController_authorBookCards'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/books': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public books list with language prefix */
+    get: operations['PublicController_findAll'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/books/cards': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Compact paginated book cards for a language (homepage/catalog) */
+    get: operations['PublicController_bookCards'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/books/{slug}/overview': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public book overview with language prefix */
+    get: operations['PublicController_overview'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/books/{slug}/reader-bootstrap': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get reader bootstrap info in a single query
+     * @description Reading progress is returned only for the bearer of the token. Anonymous callers get the book without the personal part.
+     */
+    get: operations['PublicController_getReaderBootstrap'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/books/{slug}/related': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Related books (compact cards) for a book page */
+    get: operations['PublicController_related'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/categories': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public category/genre listing for catalog sidebar */
+    get: operations['PublicController_categoriesList'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/categories/{slug}/books': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public list of book versions by localized category */
+    get: operations['PublicController_categoriesBySlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/categories/{slug}/books/cards': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Compact paginated book cards for a category/genre/collection */
+    get: operations['PublicController_categoryBookCards'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/pages/by-key/{systemKey}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public CMS page by immutable system key */
+    get: operations['PublicController_getPageByKey'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/pages/{slug}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public CMS page with language prefix */
+    get: operations['PublicController_getPage'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/seo/resolve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Resolve SEO bundle (public) for specific language (by path prefix) */
+    get: operations['SeoController_resolveWithLang'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/slug-redirect': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Resolve a retired slug to its current one */
+    get: operations['PublicController_slugRedirect'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/tags': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public tags listing for homepage */
+    get: operations['PublicController_tagsList'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/tags/{slug}/books': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public list of book versions by localized tag */
+    get: operations['PublicController_tagsBySlug'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/tags/{slug}/books/cards': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Compact paginated book cards for a tag */
+    get: operations['PublicController_tagBookCards'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    CreateBookDto: {
-      /**
-       * @description Unique book slug. Lowercase: Latin letters and digits, separator is hyphen. No spaces, no double/trailing hyphens. Examples: "harry-potter", "book-123"
-       * @example harry-potter
-       */
+    ActivityBookVersionDto: {
+      author: string;
+      /** Format: uri */
+      coverImageUrl: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @description Slug of the book the version belongs to */
       slug: string;
+      title: string;
     };
-    UpdateBookDto: {
+    ActivityCommentDto: {
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      text: string;
+      user: components['schemas']['CommentUserDto'];
+    };
+    ActivityReplyDto: {
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      isHidden: boolean;
+      text: string;
+      user: components['schemas']['CommentUserDto'];
+    };
+    AddLawyerReviewNoteDto: {
+      messageRu: string;
+    };
+    AdminAuthorItemDto: {
+      /** @example 1854-10-16 */
+      birthDate: string | null;
+      /** @description Number of published books of this author */
+      booksCount: number;
+      /** @example 1900-11-30 */
+      deathDate: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @description Name of the picked translation, empty string if there is none */
+      name: string;
+      photoUrl: string | null;
+      /** @description Slug of the picked translation, empty string if there is none */
+      slug: string;
+      translations: components['schemas']['AuthorTranslationResponseDto'][];
+      wikidataUrl: string | null;
+      wikipediaUrl: string | null;
+    };
+    AdminCommentAuthorDto: {
+      avatarUrl?: string | null;
+      email: string;
+      id: string;
+      name?: string | null;
+      nickname?: string | null;
+    };
+    AdminCommentDto: {
+      author: components['schemas']['AdminCommentAuthorDto'];
+      bookId?: string | null;
+      bookTitle?: string | null;
+      bookVersionId?: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      isHidden: boolean;
+      parentId?: string | null;
+      repliesCount: number;
+      text: string;
+    };
+    AgentSubmissionDto: {
+      agentName: string | null;
+      agentVersion: string | null;
+      createdAt: string;
+      declaredSchemaVersion: string | null;
+      id: string;
+      /** @enum {string} */
+      materialization: 'NOT_ATTEMPTED' | 'SKIPPED' | 'SUCCEEDED' | 'FAILED';
+      materializationError: string | null;
+      materializedProfileId: string | null;
+      payloadSizeBytes: number | null;
+      processedAt: string | null;
+      rejectionCode: string | null;
+      rejectionMessageRu: string | null;
+      reportJsonSha256: string | null;
+      rightsIntakeId: string;
+      rightsReviewImportId: string | null;
+      sourceFileName: string | null;
+      /** @enum {string} */
+      status: 'RECEIVED' | 'VALIDATED' | 'VALIDATION_FAILED' | 'REJECTED' | 'FAILED';
+      /** @description Display prefix of the token used */
+      tokenPrefix: string | null;
+      uploadTokenId: string | null;
+      validationErrorCount: number;
+      validationWarningCount: number;
+    };
+    AgentSubmitReportDto: {
+      /** @description Agent self-identification (audit only) */
+      agentName?: Record<string, never>;
+      /** @description Agent self-identification (audit only) */
+      agentVersion?: Record<string, never>;
+      /** @description Must match the intake the token was issued for */
+      intakeId?: string;
+      /** @description Raw agent output (up to 1M chars) */
+      rawAgentOutput?: Record<string, never>;
+      /** @description The JSON clearance report */
+      report: Record<string, never>;
+      /** @description Markdown report (up to 500K chars) */
+      reportMarkdown?: Record<string, never>;
+      sourceFileName?: Record<string, never>;
+    };
+    AgentSubmitResponseDto: {
       /**
-       * @description Unique book slug. Lowercase: Latin letters and digits, separator is hyphen. No spaces, no double/trailing hyphens. Examples: "harry-potter", "book-123"
-       * @example harry-potter-updated
+       * @description Always true — an agent submission is never approved automatically
+       * @example true
        */
-      slug?: string;
+      humanApprovalRequired: boolean;
+      intakeId: string;
+      /** @enum {string} */
+      materialization: 'NOT_ATTEMPTED' | 'SKIPPED' | 'SUCCEEDED' | 'FAILED';
+      messageRu: string;
+      /** @description ISO timestamp */
+      receivedAt: string;
+      reportJsonSha256: string | null;
+      reviewImportId: string | null;
+      schemaVersion: string | null;
+      /** @enum {string} */
+      status: 'VALIDATED' | 'VALIDATION_FAILED';
+      submissionId: string;
+      validationErrors: components['schemas']['AgentValidationIssueDto'][];
+      validationWarnings: components['schemas']['AgentValidationIssueDto'][];
     };
-    RegisterDto: Record<string, never>;
-    AuthResponse: Record<string, never>;
-    LoginDto: Record<string, never>;
-    RefreshDto: Record<string, never>;
-    PublicUserDto: Record<string, never>;
-    PagedUsersDto: Record<string, never>;
-    UpdateMeDto: Record<string, never>;
-    CreateBookVersionDto: {
+    AgentTokenDto: {
+      allowRetryOnValidationError: boolean;
+      allowedSchemaVersions: string[] | null;
+      autoMaterialize: boolean;
+      createdAt: string;
+      expiresAt: string;
+      failedAttempts: number;
+      firstUsedAt: string | null;
+      id: string;
+      isExpired: boolean;
+      /** @description Token can still be used for a submission */
+      isUsable: boolean;
+      issuedByUserId: string | null;
+      labelRu: string | null;
+      lastUsedAt: string | null;
+      maxFailedAttempts: number;
+      maxUses: number;
+      remainingUses: number;
+      revokeReasonRu: string | null;
+      revokedAt: string | null;
+      rightsIntakeId: string;
+      /** @enum {string} */
+      status: 'ACTIVE' | 'USED' | 'REVOKED' | 'EXPIRED';
+      /** @description First 12 characters of the token, for display only */
+      tokenPrefix: string;
+      updatedAt: string;
+      usedCount: number;
+    };
+    AgentTokenIssuedDto: {
+      allowRetryOnValidationError: boolean;
+      allowedSchemaVersions: string[] | null;
+      autoMaterialize: boolean;
+      createdAt: string;
+      expiresAt: string;
+      failedAttempts: number;
+      firstUsedAt: string | null;
+      id: string;
+      isExpired: boolean;
+      /** @description Token can still be used for a submission */
+      isUsable: boolean;
+      issuedByUserId: string | null;
+      labelRu: string | null;
+      lastUsedAt: string | null;
+      maxFailedAttempts: number;
+      maxUses: number;
+      remainingUses: number;
+      revokeReasonRu: string | null;
+      revokedAt: string | null;
+      rightsIntakeId: string;
+      /** @enum {string} */
+      status: 'ACTIVE' | 'USED' | 'REVOKED' | 'EXPIRED';
+      /** @description Raw token. Shown exactly once, at issue time. */
+      token: string;
+      /** @description First 12 characters of the token, for display only */
+      tokenPrefix: string;
+      updatedAt: string;
+      usedCount: number;
+    };
+    AgentValidationIssueDto: {
+      code: string;
+      message: string;
+      path: string;
+    };
+    AggregatePointDto: {
+      count: number;
+      /** @example 2025-08-01 */
+      date: string;
+    };
+    AggregateResponseDto: {
+      series: components['schemas']['AggregatePointDto'][];
+      total: number;
+    };
+    AppHealthResponseDto: {
+      /** @example ok */
+      status: string;
+      timestamp: string;
+      uptime: number;
+    };
+    ApplyClaimBlockDto: {
+      /** @description Defaults to the claim target book */
+      bookId?: string;
+      /** @description Defaults to the claim target version */
+      bookVersionId?: string;
+      /** @description Empty or omitted = a single worldwide block (countryCode = null) */
+      countryCodes?: string[];
+      /** @description ISO date; the block stops applying after it */
+      expiresAt?: string;
+      reasonRu: string;
       /**
-       * @description Book version language
+       * @description SPECIFIC_ASSET is forbidden (LEGACY-027): a block with that scope never matches any request. Point-level blocking of a single file is done by hand, not through a claim.
+       * @enum {string}
+       */
+      scope: 'ENTIRE_BOOK' | 'LANGUAGE_EDITION' | 'TEXT_READER' | 'DOWNLOADS' | 'AUDIO';
+      /**
+       * @description Also move the published version to draft
+       * @default false
+       */
+      unpublishVersion: boolean;
+    };
+    ApproveRightsReviewDto: {
+      /** @description Approval notes in Russian */
+      notesRu?: string;
+    };
+    ArchiveOpinionDto: {
+      reasonRu: string;
+    };
+    AssignLawyerReviewDto: {
+      /** @description Юрист из справочника RightsLawyer */
+      lawyerId: string;
+    };
+    AssignRightsClaimDto: {
+      /** @description null clears the assignment */
+      assignedToUserId?: Record<string, never> | null;
+      notesRu?: string;
+    };
+    AttachCategoryDto: {
+      /** @description Category ID */
+      categoryId: string;
+    };
+    AttachTagDto: {
+      /** @description Tag ID */
+      tagId: string;
+    };
+    AudioChapterResponseDto: {
+      audioUrl: string;
+      bookVersionId: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string | null;
+      duration: number;
+      id: string;
+      mediaId: string | null;
+      number: number;
+      title: string;
+      transcript: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    AuthResponse: {
+      /** @description JWT access token */
+      accessToken: string;
+      /** @description JWT refresh token */
+      refreshToken: string;
+      user: components['schemas']['AuthUserResponse'];
+    };
+    AuthTokensResponse: {
+      /** @description JWT access token */
+      accessToken: string;
+      /** @description JWT refresh token */
+      refreshToken: string;
+    };
+    AuthUserResponse: {
+      /** Format: uri */
+      avatarUrl: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** @example user@example.com */
+      email: string;
+      /** @example John */
+      firstName: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @example true */
+      isActive: boolean;
+      /**
        * @example en
        * @enum {string}
        */
-      language: 'en' | 'es' | 'fr' | 'pt';
+      languagePreference: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      lastLogin: string | null;
+      /** @example Doe */
+      lastName: string | null;
+      /** @example John Doe */
+      name: string | null;
+      /** @example johnny */
+      nickname: string | null;
       /**
-       * @description Title
-       * @example Harry Potter and the Philosopher's Stone
+       * @example [
+       *       "user"
+       *     ]
        */
-      title: string;
+      roles: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
+    };
+    AuthorFaqDto: {
+      /** @description Answer text */
+      answer: string;
+      /** @description Question text */
+      question: string;
+    };
+    AuthorLetterCountDto: {
+      count: number;
+      letter: string;
+    };
+    AuthorQuoteDto: {
+      /** @description Source of the quote */
+      source?: string;
+      /** @description Text of the quote */
+      text: string;
+    };
+    AuthorResponseDto: {
+      /** @example 1854-10-16 */
+      birthDate: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** @example 1900-11-30 */
+      deathDate: string | null;
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      personId: string | null;
+      translations: components['schemas']['AuthorTranslationResponseDto'][];
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    AuthorTranslationDto: {
+      /** @description Biography of the author in this language */
+      biography?: string;
+      /** @description FAQ array */
+      faq?: components['schemas']['AuthorFaqDto'][];
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Name of the author in this language */
+      name: string;
       /**
-       * @description Author
-       * @example J.K. Rowling
+       * @description Author photo URL for this language
+       * @example https://example.com/author.jpg
+       */
+      photoUrl?: string;
+      /** @description Quotes array */
+      quotes?: components['schemas']['AuthorQuoteDto'][];
+      /** @description SEO metadata for this language */
+      seo?: components['schemas']['UpdateSeoDto'];
+      /** @description Slugs of similar authors */
+      similarSlugs?: string[];
+      /**
+       * @description Author unique slug for this language
+       * @example oscar-wilde
+       */
+      slug: string;
+      /**
+       * @description Wikidata URL for this language
+       * @example https://www.wikidata.org/wiki/Q30875
+       */
+      wikidataUrl?: string;
+      /**
+       * @description Wikipedia URL for this language
+       * @example https://en.wikipedia.org/wiki/Oscar_Wilde
+       */
+      wikipediaUrl?: string;
+    };
+    AuthorTranslationResponseDto: {
+      /** Format: uuid */
+      authorId: string;
+      biography: string | null;
+      faq: components['schemas']['AuthorFaqDto'][] | null;
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      name: string;
+      photoUrl: string | null;
+      quotes: components['schemas']['AuthorQuoteDto'][] | null;
+      seo: components['schemas']['AuthorTranslationSeoResponseDto'] | null;
+      seoId: number | null;
+      similarSlugs: string[] | null;
+      slug: string;
+      wikidataUrl: string | null;
+      wikipediaUrl: string | null;
+    };
+    AuthorTranslationSeoResponseDto: {
+      canonicalUrl: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      eventDescription: string | null;
+      /** Format: date-time */
+      eventEndDate: string | null;
+      eventImageUrl: string | null;
+      eventLocationCity: string | null;
+      eventLocationCountry: string | null;
+      eventLocationName: string | null;
+      eventLocationPostal: string | null;
+      eventLocationRegion: string | null;
+      eventLocationStreet: string | null;
+      eventName: string | null;
+      /** Format: date-time */
+      eventStartDate: string | null;
+      eventUrl: string | null;
+      /** @example 1 */
+      id: number;
+      metaDescription: string | null;
+      metaTitle: string | null;
+      ogDescription: string | null;
+      ogImageAlt: string | null;
+      ogImageUrl: string | null;
+      ogTitle: string | null;
+      ogType: string | null;
+      ogUrl: string | null;
+      robots: string | null;
+      twitterCard: string | null;
+      twitterCreator: string | null;
+      twitterSite: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BackgroundJobStatusDto: {
+      /** @description Устойчивое имя механизма — оно же ключ в ответе эндпоинта. */
+      name: string;
+      purpose: string;
+      /** @description Обязательна для DEGRADED и DISABLED. */
+      reason?: string;
+      /** @description Расписание для активных: «daily at 03:00 UTC». */
+      schedule?: string;
+      /** @enum {string} */
+      state: 'ACTIVE' | 'DEGRADED' | 'DISABLED';
+    };
+    BackgroundJobsCountsDto: {
+      ACTIVE: number;
+      DEGRADED: number;
+      DISABLED: number;
+    };
+    BackgroundJobsStatusResponseDto: {
+      checkedAt: string;
+      counts: components['schemas']['BackgroundJobsCountsDto'];
+      jobs: components['schemas']['BackgroundJobStatusDto'][];
+    };
+    BookCardDto: {
+      /**
+       * @description Localized display author name
+       * @example William Shakespeare
        */
       author: string;
       /**
-       * @description Description
-       * @example First book of the series
+       * @description Stable author slug for the author page link. null when authorId is null (legacy data).
+       * @example william-shakespeare
        */
-      description: string;
+      authorSlug: string | null;
       /**
-       * @description Cover URL
-       * @example https://cdn.example.com/covers/hp1.jpg
+       * @description Stable category IDs attached to this book version (for homepage category-based filtering).
+       * @example [
+       *       "b176b984-e62e-4d50-9f76-873ab0925956"
+       *     ]
        */
-      coverImageUrl: string;
+      categoryIds: string[];
       /**
-       * @description Content type
-       * @example text
-       * @enum {string}
+       * @description Localized cover image URL
+       * @example https://api.bibliaris.com/covers/...png
        */
-      type: 'text' | 'audio' | 'referral';
+      coverImageUrl: string | null;
       /**
-       * @description Is version free
+       * @description Whether a published audio version exists for this language
+       * @example false
+       */
+      hasAudio: boolean;
+      /**
+       * @description Whether a published text version exists for this language
        * @example true
        */
-      isFree: boolean;
+      hasText: boolean;
       /**
-       * @description Referral link
-       * @example https://amazon.com/ref123
+       * @description Canonical Book.id (bookId)
+       * @example 4a23a1fe-b335-4f0d-98fa-a65d187821fe
        */
-      referralUrl?: string;
+      id: string;
       /**
-       * @description Optional SEO metaTitle
-       * @example Harry Potter — Summary
+       * Format: date-time
+       * @description ISO date the language version was published (BookVersion.publishedAt). null if unpublished.
+       * @example 2026-07-01T00:00:00.000Z
        */
-      seoMetaTitle?: string;
+      publishedAt: string | null;
       /**
-       * @description Optional SEO metaDescription
-       * @example Overview, themes and details about the book
+       * @description Average rating (0-5)
+       * @example 4.5
        */
-      seoMetaDescription?: string;
-    };
-    UpdateBookVersionDto: {
+      rating: number | null;
       /**
-       * @example es
-       * @enum {string}
+       * @description Number of ratings
+       * @example 12
        */
-      language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @example Harry Potter and the Sorcerer's Stone */
-      title?: string;
-      /** @example J.K. Rowling */
-      author?: string;
-      /** @example Updated description text */
-      description?: string;
-      /** @example https://cdn.example.com/covers/hp1-new.jpg */
-      coverImageUrl?: string;
+      ratingsCount: number;
       /**
-       * @example audio
-       * @enum {string}
+       * @description BookVersion.slug for the requested language
+       * @example hamlet
        */
-      type?: 'text' | 'audio' | 'referral';
-      /** @example false */
-      isFree?: boolean;
-      /** @example https://partner.example.com/ref/456 */
-      referralUrl?: string;
-      /** @example HP1 — Summary (Updated) */
-      seoMetaTitle?: string;
-      /** @example New meta description text */
-      seoMetaDescription?: string;
-    };
-    CreateChapterDto: {
+      slug: string;
       /**
-       * @description Chapter number within version
-       * @example 1
-       */
-      number: number;
-      /**
-       * @description Chapter title
-       * @example Chapter 1. The Boy Who Lived
+       * @description Localized title
+       * @example Hamlet
        */
       title: string;
-      /**
-       * @description Chapter content (markdown/html/plain)
-       * @example Once upon a time...
-       */
-      content: string;
     };
-    UpdateChapterDto: {
+    BookCategoryDto: {
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      sortOrder: number;
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    BookCategoryWithTranslationsDto: {
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      sortOrder: number;
+      translations: components['schemas']['CategoryTranslationScalarsDto'][];
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    BookDetailResponseDto: {
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      /** @description Average rating (0-5) */
+      rating?: number | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+      versions: components['schemas']['BookDetailVersionDto'][];
+    };
+    BookDetailVersionDto: {
+      author: string;
+      authorId?: string | null;
+      bookId: string;
+      categories: components['schemas']['BookCategoryDto'][];
+      coverAlt?: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      publishedAt?: string | null;
+      shortDescription?: string | null;
+      slug?: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      tags: components['schemas']['BookTagDto'][];
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookEntityDto: {
+      approvedRightsReviewId?: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      currentRightsProfileId?: string | null;
+      id: string;
+      /** Format: date-time */
+      rightsCreatedAt?: string | null;
+      rightsIntakeId?: string | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookListItemDto: {
+      /** Format: date-time */
+      createdAt: string;
+      /** @description A published version with audio chapters exists */
+      hasAudio: boolean;
+      /** @description A published version with a summary exists */
+      hasSummary: boolean;
+      /** @description A published version with chapters or of type `text` exists */
+      hasText: boolean;
+      id: string;
+      /** @description Average rating (0-5) */
+      rating?: number | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+      versions: components['schemas']['BookListVersionDto'][];
+    };
+    BookListVersionDto: {
+      _count: components['schemas']['BookVersionContentCountDto'];
+      author: string;
+      authorId?: string | null;
+      bookId: string;
+      coverAlt?: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      publishedAt?: string | null;
+      shortDescription?: string | null;
+      slug?: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      tags: components['schemas']['BookVersionTagLinkDto'][];
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookOverviewBookRefDto: {
+      id: string;
+      slug: string;
+    };
+    BookOverviewCategoryDto: {
+      /** @description Published books carrying this category in the rendered language. Floor of `isTaxonomyLinkable` on the client. */
+      booksCount: number;
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      sortOrder: number;
+      translations: components['schemas']['CategoryTranslationScalarsDto'][];
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    BookOverviewResponseDto: {
+      author: string;
+      /** @example sun-czy */
+      authorSlug?: string | null;
+      availableLanguages: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
+      book: components['schemas']['BookOverviewBookRefDto'];
+      categories: components['schemas']['BookOverviewCategoryDto'][];
+      /** @description `coverImageUrl` of the resolved version, empty string when none */
+      coverUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      /** @description Description with the boilerplate intro stripped */
+      description: string;
+      editionPublishedYear?: number | null;
+      firstPublishedYear?: number | null;
+      hasAudio: boolean;
+      hasSummary: boolean;
+      hasText: boolean;
+      /** @description Canonical `Book.id` */
+      id: string;
       /**
-       * @description Chapter number
-       * @example 2
+       * @description Language actually rendered. Undefined when no version matched a request.
+       * @enum {string}
        */
-      number?: number;
-      /** @description Chapter title */
-      title?: string;
-      /** @description Chapter content */
-      content?: string;
+      language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      primaryCategory?: components['schemas']['BookCategoryWithTranslationsDto'] | null;
+      primaryCategoryId?: string | null;
+      /** @description First published year, else edition year, else the year of `publishedAt` */
+      publicationYear?: number | null;
+      /** @description Average rating (0-5) */
+      rating?: number | null;
+      seo: components['schemas']['BookOverviewSeoDto'];
+      /** @description Slug of the resolved version, or the requested one */
+      slug: string;
+      tags: components['schemas']['BookOverviewTagDto'][];
+      title: string;
+      /** Format: date-time */
+      updatedAt: string;
+      versionIds: components['schemas']['BookOverviewVersionIdsDto'];
+      versions: components['schemas']['BookOverviewVersionDto'][];
+    };
+    BookOverviewSeoDto: {
+      listen?: components['schemas']['BookOverviewSeoEntryDto'] | null;
+      main?: components['schemas']['BookOverviewSeoEntryDto'] | null;
+      read?: components['schemas']['BookOverviewSeoEntryDto'] | null;
+      summary?: components['schemas']['BookOverviewSeoEntryDto'] | null;
+    };
+    BookOverviewSeoEntryDto: {
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+    };
+    BookOverviewTagDto: {
+      /** @description Published books carrying this tag in the rendered language. Floor of `isTaxonomyLinkable` on the client. */
+      booksCount: number;
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      name: string;
+      slug: string;
+      sortOrder: number;
+      translations: components['schemas']['TagTranslationDto'][];
+    };
+    BookOverviewVersionDto: {
+      _count: components['schemas']['BookVersionContentCountDto'];
+      /**
+       * @description Json column. Shape held by `@IsArray()` on `CreateBookVersionDto.alternativeTitles`.
+       * @example [
+       *       "Dorian Gray"
+       *     ]
+       */
+      alternativeTitles?: string[] | null;
+      author: string;
+      authorId?: string | null;
+      authorPageUrl?: string | null;
+      /** @example sun-czy */
+      authorSlug?: string | null;
+      bookId: string;
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.characters`.
+       * @example [
+       *       {
+       *         "description": "Main character",
+       *         "name": "Dorian Gray"
+       *       }
+       *     ]
+       */
+      characters?: components['schemas']['BookVersionCharacterDto'][] | null;
+      copyrightStatus?: string | null;
+      coverAlt?: string | null;
+      coverImageUrl: string;
+      /** @description Compatibility alias of `coverImageUrl` */
+      coverUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      editionPublishedYear?: number | null;
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "Gothic fiction",
+       *         "question": "What is the genre?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      firstPublishedYear?: number | null;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      originalLanguage?: string | null;
+      originalTitle?: string | null;
+      /** Format: date-time */
+      publishedAt?: string | null;
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.quotes`.
+       * @example [
+       *       {
+       *         "author": "Oscar Wilde",
+       *         "text": "To live is the rarest thing in the world."
+       *       }
+       *     ]
+       */
+      quotes?: components['schemas']['BookVersionQuoteDto'][] | null;
+      shortDescription?: string | null;
+      slug?: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateBookVersionDto.symbols`.
+       * @example [
+       *       {
+       *         "description": "Represents the soul",
+       *         "title": "Portrait"
+       *       }
+       *     ]
+       */
+      symbols?: components['schemas']['BookVersionSymbolDto'][] | null;
+      /**
+       * @description Json column. Shape held by `@IsArray() @IsString({ each: true })` on `CreateBookVersionDto.themes`.
+       * @example [
+       *       "Art",
+       *       "Morality"
+       *     ]
+       */
+      themes?: string[] | null;
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookOverviewVersionIdsDto: {
+      audio?: string | null;
+      text?: string | null;
+    };
+    BookRatingDto: {
+      bookId: string;
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      /** @description Score from 1 to 5 */
+      score: number;
+      /** Format: date-time */
+      updatedAt: string;
+      userId: string;
+    };
+    BookRatingScoreDto: {
+      /** @description User rating score (1-5), null if not rated */
+      score?: number | null;
+    };
+    BookRightsDashboardBookSummaryDto: {
+      /** @example review-uuid */
+      approvedRightsReviewId: string | null;
+      /** @example profile-uuid */
+      currentRightsProfileId: string | null;
+      /** @example a1111111-b222-4c33-d444-555555555555 */
+      id: string;
+      /** @example 2026-07-25T12:00:00.000Z */
+      rightsCreatedAt: string | null;
+      /** @example intake-uuid */
+      rightsIntakeId: string | null;
+      /** @example the-odyssey */
+      slug: string;
+    };
+    BookRightsDashboardCurrentVersionDto: {
+      /** @example review-uuid */
+      approvedRightsReviewId: string | null;
+      /** @example v1111111-b222-4c33-d444-555555555555 */
+      id: string;
+      /** @example en */
+      language: string;
+      /** @example false */
+      rightsClaimBlockActive: boolean;
+      /** @example 2026-07-28T12:00:00.000Z */
+      rightsClaimBlockAppliedAt: string | null;
+      /** @example a1b2c3d4... */
+      rightsContentHash: string | null;
+      /** @example v1 */
+      rightsContentHashAlgorithmVersion: string | null;
+      /** @example 2026-07-25T12:00:00.000Z */
+      rightsContentHashCalculatedAt: string | null;
+      /** @example false */
+      rightsGeoBlockConfigured: boolean;
+      /** @example 2026-07-25T12:00:00.000Z */
+      rightsGeoBlockConfiguredAt: string | null;
+      /** @example 2026-07-26T11:30:00.000Z */
+      rightsGeoBlockLastGeneratedAt: string | null;
+      /** @example Notes */
+      rightsGeoBlockNotesRu: string | null;
+      /** @example false */
+      rightsGeoBlockRequired: boolean;
+      /** @example 2026-07-26T12:00:00.000Z */
+      rightsGeoBlockVerifiedAt: string | null;
+      /** @example user-uuid */
+      rightsGeoBlockVerifiedByUserId: string | null;
+      /** @example 2026-07-28T12:00:00.000Z */
+      rightsLicenseCheckedAt: string | null;
+      /** @example COVERED */
+      rightsLicenseCoverageStatus: string | null;
+      rightsLicenseIds: string[] | null;
+      /** @example profile-uuid */
+      rightsProfileId: string | null;
+      /** @example false */
+      rightsRecheckRequired: boolean;
+      /** @example 2026-07-25T12:00:00.000Z */
+      rightsStaleDetectedAt: string | null;
+      /** @example REVISION_STALE */
+      rightsStaleReasonCode: string | null;
+      /** @example Версия текста устарела */
+      rightsStaleReasonRu: string | null;
+      /** @example APPROVED */
+      rightsStatus: string | null;
+      /** @example published */
+      status: string;
+      /** @example text */
+      type: string;
+    };
+    BookRightsDashboardDto: {
+      approvalHistory: string[];
+      approvedReview: {
+        [key: string]: unknown;
+      } | null;
+      book: components['schemas']['BookRightsDashboardBookSummaryDto'];
+      /** @description Phase 16: up to 50 most recent claims for this version and its book */
+      claims: components['schemas']['RightsClaimSummaryDto'][];
+      contentHash: components['schemas']['RightsContentHashCheckDto'] | null;
+      currentProfile: {
+        [key: string]: unknown;
+      } | null;
+      currentVersion: components['schemas']['BookRightsDashboardCurrentVersionDto'];
+      /** @description WP-1.2а: health of the GeoIP country source Phase 12 depends on. Counters are per process */
+      geoCountrySource: components['schemas']['GeoCountrySourceHealthDto'] | null;
+      intake: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Phase 19: up to 50 legal reviews of the rights profile of this version */
+      lawyerReviews: components['schemas']['LawyerReviewDto'][];
+      pendingLawyerConditions: components['schemas']['LawyerConditionDto'][];
+      publicationGate: components['schemas']['PublicationGateResultDto'] | null;
+      recheckSchedule: components['schemas']['RecheckScheduleDto'] | null;
+      /** @description Phase 18: up to 50 recheck tasks of this version and its rights profile */
+      recheckTasks: components['schemas']['RecheckTaskDto'][];
+      reviewHistory: string[];
+      summary: components['schemas']['BookRightsDashboardMetricsDto'];
+      versions: components['schemas']['BookRightsDashboardVersionListItemDto'][];
+    };
+    BookRightsDashboardMetricsDto: {
+      /** @example 0 */
+      activeClaimBlocksCount: number;
+      /** @example 0 */
+      activeClaimsCount: number;
+      /** @example 1 */
+      activeLicensesCount: number;
+      /** @example 1 */
+      attributionRequiredLicensesCount: number;
+      /** @example 0 */
+      authorsCount: number;
+      /** @example 0 */
+      blockedComponentTerritoryAssessmentsCount: number;
+      /** @example 0 */
+      blockedCountriesCount: number;
+      /** @example 0 */
+      blockedRegionCount: number;
+      /** @example 0 */
+      blockingClaimsCount: number;
+      /** @example 0 */
+      blockingRecheckTasksCount: number;
+      /** @example true */
+      canPublishCurrentVersion: boolean;
+      /** @example 0 */
+      claimBlockedCountriesCount: number;
+      /** @example 0 */
+      claimsCount: number;
+      /** @example 0 */
+      componentTerritoryAssessmentsCount: number;
+      /** @example 0 */
+      componentsCount: number;
+      /** @example HIGH */
+      confidence: string | null;
+      /** @example 0 */
+      contributorsCount: number;
+      /** @example 0 */
+      contributorsWithoutPersonCount: number;
+      /** @example 0 */
+      criticalClaimsCount: number;
+      /** @example 0 */
+      evidenceCount: number;
+      /** @example 0 */
+      expiredLicensesCount: number;
+      /** @example 0 */
+      expiringComponentTerritoryAssessmentsCount: number;
+      /** @example 0 */
+      expiringSoonLicensesCount: number;
+      /** @example 0 */
+      geoBlockRequiredCount: number;
+      /** @example false */
+      geoCountrySourceWarning: boolean;
+      /** @example true */
+      hasClearance: boolean;
+      /** @example false */
+      hasWorldwideClaimBlock: boolean;
+      /** @example false */
+      isStale: boolean;
+      /** @example 2026-07-30T06:00:00.000Z */
+      lastRecheckScanAt: string | null;
+      /** @example false */
+      lawyerApproved: boolean;
+      /** @example 2026-07-31T00:00:00.000Z */
+      lawyerApprovedAt: string | null;
+      /** @example Иванова А. С. */
+      lawyerApprovedLawyerName: string | null;
+      /** @example 2028-07-31T00:00:00.000Z */
+      lawyerOpinionValidUntil: string | null;
+      /** @example false */
+      lawyerReviewRequired: boolean;
+      /** @example 0 */
+      lawyerReviewsCount: number;
+      /** @example COVERED */
+      licenseCoverageStatus: string;
+      /** @example 3 */
+      licenseCoveredCountriesCount: number;
+      /** @example 0 */
+      licenseRequiredCountriesCount: number;
+      /** @example 0 */
+      licenseRequiredRegionCount: number;
+      /** @example 0 */
+      licenseUncoveredCountriesCount: number;
+      /** @example 1 */
+      licensesCount: number;
+      /** @example 0 */
+      mixedRegionCount: number;
+      /** @example 0 */
+      narratorsCount: number;
+      /** @example 2027-07-30T00:00:00.000Z */
+      nextRecheckDueAt: string | null;
+      /** @example 0 */
+      notTargetedRegionCount: number;
+      /** @example 0 */
+      openLawyerReviewsCount: number;
+      /** @example 0 */
+      openRecheckTasksCount: number;
+      /** @example APPROVED */
+      overallStatus: string | null;
+      /** @example 0 */
+      overdueClaimsCount: number;
+      /** @example 0 */
+      overdueRecheckTasksCount: number;
+      /** @example 0 */
+      pendingCountriesCount: number;
+      /** @example 0 */
+      pendingLawyerConditionsCount: number;
+      /** @example 0 */
+      pendingReviewRegionCount: number;
+      /** @example ALLOW */
+      publicationGate: string | null;
+      /** @example INHERIT_REPORT */
+      recheckPolicy: string | null;
+      /** @example false */
+      recheckRequired: boolean;
+      /** @example 7 */
+      regionCount: number;
+      /** @example 0 */
+      reviewRequiredComponentTerritoryAssessmentsCount: number;
+      /** @example 0 */
+      reviewsCount: number;
+      /** @example 0 */
+      revokedLicensesCount: number;
+      /** @example HIGH */
+      riskLevel: string | null;
+      /** @example 0 */
+      translatorsCount: number;
+      /** @example 0 */
+      unresolvedBlockingActionsCount: number;
+      /** @example HIGH */
+      worstClaimSeverity: string | null;
+    };
+    BookRightsDashboardVersionListItemDto: {
+      /** @example review-uuid */
+      approvedRightsReviewId: string | null;
+      /** @example v1111111-b222-4c33-d444-555555555555 */
+      id: string;
+      /** @example en */
+      language: string;
+      /** @example false */
+      rightsGeoBlockConfigured: boolean;
+      /** @example false */
+      rightsGeoBlockRequired: boolean;
+      /** @example profile-uuid */
+      rightsProfileId: string | null;
+      /** @example false */
+      rightsRecheckRequired: boolean;
+      /** @example 2026-07-25T12:00:00.000Z */
+      rightsStaleDetectedAt: string | null;
+      /** @example REVISION_STALE */
+      rightsStaleReasonCode: string | null;
+      /** @example APPROVED */
+      rightsStatus: string | null;
+      /** @example published */
+      status: string;
+      /** @example The Odyssey */
+      title: string;
+      /** @example text */
+      type: string;
+    };
+    BookSummaryResponseDto: {
+      analysis: string | null;
+      bookVersionId: string;
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      summary: string;
+      themes: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookTagDto: {
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      name: string;
+      slug: string;
+      sortOrder: number;
+    };
+    BookTagWithTranslationsDto: {
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      name: string;
+      slug: string;
+      sortOrder: number;
+      translations: components['schemas']['TagTranslationDto'][];
+    };
+    BookVersionAdminBookSummaryDto: {
+      approvedRightsReviewId: string | null;
+      currentRightsProfileId: string | null;
+      id: string;
+      /** Format: date-time */
+      rightsCreatedAt: string | null;
+      rightsIntakeId: string | null;
+      slug: string;
+    };
+    BookVersionAdminDetailResponseDto: {
+      /** @description Альтернативные названия книги (Json-колонка: массив строк) */
+      alternativeTitles: string[] | null;
+      approvedRightsReviewId: string | null;
+      author: string;
+      authorId: string | null;
+      authorPageUrl: string | null;
+      book: components['schemas']['BookVersionAdminBookSummaryDto'];
+      bookId: string;
+      bookSlug: string;
+      categories: components['schemas']['BookCategoryDto'][];
+      /** @description Персонажи книги (Json-колонка; форма задана CreateBookVersionDto.characters) */
+      characters: components['schemas']['BookVersionCharacterDto'][] | null;
+      copyrightStatus: string | null;
+      coverAlt: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      editionPublishedYear: number | null;
+      /** @description FAQ по книге (Json-колонка; форма задана CreateBookVersionDto.faq) */
+      faq: components['schemas']['FaqItemDto'][] | null;
+      firstPublishedYear: number | null;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      originalLanguage: string | null;
+      originalTitle: string | null;
+      previewMediaId: string | null;
+      primaryCategoryId: string | null;
+      /** Format: date-time */
+      publishedAt: string | null;
+      /** @description Цитаты из книги (Json-колонка; форма задана CreateBookVersionDto.quotes) */
+      quotes: components['schemas']['BookVersionQuoteDto'][] | null;
+      referralUrl: string | null;
+      /** @description Разрешённые страны клиренса (Json в базе, произвольная форма) */
+      rightsAllowedCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Заблокированные страны клиренса (Json в базе, произвольная форма) */
+      rightsBlockedCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      rightsClaimBlockActive: boolean;
+      /** Format: date-time */
+      rightsClaimBlockAppliedAt: string | null;
+      rightsContentHash: string | null;
+      rightsContentHashAlgorithmVersion: string | null;
+      /** Format: date-time */
+      rightsContentHashCalculatedAt: string | null;
+      /** @description Снимок содержимого для расчёта content hash (Json в базе, произвольная форма) */
+      rightsContentHashInput: {
+        [key: string]: unknown;
+      } | null;
+      rightsGeoBlockConfigured: boolean;
+      /** Format: date-time */
+      rightsGeoBlockConfiguredAt: string | null;
+      /** Format: date-time */
+      rightsGeoBlockLastGeneratedAt: string | null;
+      rightsGeoBlockNotesRu: string | null;
+      rightsGeoBlockRequired: boolean;
+      /** Format: date-time */
+      rightsGeoBlockVerifiedAt: string | null;
+      rightsGeoBlockVerifiedByUserId: string | null;
+      rightsLicenseAttributionTextRu: string | null;
+      /** Format: date-time */
+      rightsLicenseCheckedAt: string | null;
+      rightsLicenseCoverageStatus: string | null;
+      /** @description Идентификаторы лицензий, покрывающих версию (Json в базе, произвольная форма) */
+      rightsLicenseIds: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Страны, требующие лицензии (Json в базе, произвольная форма) */
+      rightsLicenseRequiredCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Страны без лицензионного покрытия (Json в базе, произвольная форма) */
+      rightsLicenseUncoveredCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Страны с ожидающей проверкой (Json в базе, произвольная форма) */
+      rightsPendingCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      rightsProfileId: string | null;
+      rightsRecheckRequired: boolean;
+      /** @description Требуемые правовые действия (Json в базе, произвольная форма) */
+      rightsRequiredActions: {
+        [key: string]: unknown;
+      } | null;
+      /** Format: date-time */
+      rightsStaleDetectedAt: string | null;
+      rightsStaleReasonCode: string | null;
+      rightsStaleReasonRu: string | null;
+      rightsStatus: string | null;
+      seo: components['schemas']['SeoResponseDto'] | null;
+      seoId: number | null;
+      shortDescription: string | null;
+      slug: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      summaryShort: string | null;
+      /** @description Символы в книге (Json-колонка; форма задана CreateBookVersionDto.symbols) */
+      symbols: components['schemas']['BookVersionSymbolDto'][] | null;
+      tags: components['schemas']['BookTagDto'][];
+      /** @description Темы книги (Json-колонка: массив строк) */
+      themes: string[] | null;
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookVersionCharacterDto: {
+      description: string;
+      name: string;
+    };
+    BookVersionContentCountDto: {
+      audioChapters: number;
+      chapters: number;
+      summaries: number;
+    };
+    BookVersionContributorResponseDto: {
+      bookVersionId: string;
+      /** @enum {string|null} */
+      confidence: 'HIGH' | 'MEDIUM' | 'LOW' | null;
+      contributionNoteRu: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      creditedLanguage: string | null;
+      creditedName: string | null;
+      displayOrder: number;
+      id: string;
+      isPrimary: boolean;
+      person: components['schemas']['PersonListItemDto'];
+      personId: string;
+      /** @enum {string} */
+      role:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER';
+      roleOtherRu: string | null;
+      /** @description Идентификаторы доказательств, из которых взята роль (Json в базе) */
+      sourceEvidenceIds: string[] | null;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookVersionDto: {
+      author: string;
+      book: components['schemas']['BookshelfBookDto'];
+      bookId: string;
+      /** @description Число глав версии */
+      chaptersCount: number;
+      /** @example https://example.com/c.jpg */
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      id: string;
+      isFree: boolean;
+      /** @example en */
+      language: string;
+      /** @example portret-doriana-greya */
+      slug: string | null;
+      title: string;
+      /** @example text */
+      type: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookVersionQuoteDto: {
+      author?: string;
+      text: string;
+    };
+    BookVersionResponseDto: {
+      /** @description Альтернативные названия книги (Json-колонка: массив строк) */
+      alternativeTitles: string[] | null;
+      approvedRightsReviewId: string | null;
+      author: string;
+      authorId: string | null;
+      authorPageUrl: string | null;
+      bookId: string;
+      /** @description Персонажи книги (Json-колонка; форма задана CreateBookVersionDto.characters) */
+      characters: components['schemas']['BookVersionCharacterDto'][] | null;
+      copyrightStatus: string | null;
+      coverAlt: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      editionPublishedYear: number | null;
+      /** @description FAQ по книге (Json-колонка; форма задана CreateBookVersionDto.faq) */
+      faq: components['schemas']['FaqItemDto'][] | null;
+      firstPublishedYear: number | null;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      originalLanguage: string | null;
+      originalTitle: string | null;
+      previewMediaId: string | null;
+      primaryCategoryId: string | null;
+      /** Format: date-time */
+      publishedAt: string | null;
+      /** @description Цитаты из книги (Json-колонка; форма задана CreateBookVersionDto.quotes) */
+      quotes: components['schemas']['BookVersionQuoteDto'][] | null;
+      referralUrl: string | null;
+      /** @description Разрешённые страны клиренса (Json в базе, произвольная форма) */
+      rightsAllowedCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Заблокированные страны клиренса (Json в базе, произвольная форма) */
+      rightsBlockedCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      rightsClaimBlockActive: boolean;
+      /** Format: date-time */
+      rightsClaimBlockAppliedAt: string | null;
+      rightsContentHash: string | null;
+      rightsContentHashAlgorithmVersion: string | null;
+      /** Format: date-time */
+      rightsContentHashCalculatedAt: string | null;
+      /** @description Снимок содержимого для расчёта content hash (Json в базе, произвольная форма) */
+      rightsContentHashInput: {
+        [key: string]: unknown;
+      } | null;
+      rightsGeoBlockConfigured: boolean;
+      /** Format: date-time */
+      rightsGeoBlockConfiguredAt: string | null;
+      /** Format: date-time */
+      rightsGeoBlockLastGeneratedAt: string | null;
+      rightsGeoBlockNotesRu: string | null;
+      rightsGeoBlockRequired: boolean;
+      /** Format: date-time */
+      rightsGeoBlockVerifiedAt: string | null;
+      rightsGeoBlockVerifiedByUserId: string | null;
+      rightsLicenseAttributionTextRu: string | null;
+      /** Format: date-time */
+      rightsLicenseCheckedAt: string | null;
+      rightsLicenseCoverageStatus: string | null;
+      /** @description Идентификаторы лицензий, покрывающих версию (Json в базе, произвольная форма) */
+      rightsLicenseIds: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Страны, требующие лицензии (Json в базе, произвольная форма) */
+      rightsLicenseRequiredCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Страны без лицензионного покрытия (Json в базе, произвольная форма) */
+      rightsLicenseUncoveredCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      /** @description Страны с ожидающей проверкой (Json в базе, произвольная форма) */
+      rightsPendingCountryCodes: {
+        [key: string]: unknown;
+      } | null;
+      rightsProfileId: string | null;
+      rightsRecheckRequired: boolean;
+      /** @description Требуемые правовые действия (Json в базе, произвольная форма) */
+      rightsRequiredActions: {
+        [key: string]: unknown;
+      } | null;
+      /** Format: date-time */
+      rightsStaleDetectedAt: string | null;
+      rightsStaleReasonCode: string | null;
+      rightsStaleReasonRu: string | null;
+      rightsStatus: string | null;
+      seo: components['schemas']['SeoResponseDto'] | null;
+      seoId: number | null;
+      shortDescription: string | null;
+      slug: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      summaryShort: string | null;
+      /** @description Символы в книге (Json-колонка; форма задана CreateBookVersionDto.symbols) */
+      symbols: components['schemas']['BookVersionSymbolDto'][] | null;
+      /** @description Темы книги (Json-колонка: массив строк) */
+      themes: string[] | null;
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookVersionSymbolDto: {
+      description: string;
+      title: string;
+    };
+    BookVersionTagLinkDto: {
+      tag: components['schemas']['BookTagWithTranslationsDto'];
+    };
+    BookshelfBookDto: {
+      id: string;
+      /** @example portret-doriana-greya */
+      slug: string;
+    };
+    BookshelfEntryDto: {
+      /** Format: date-time */
+      addedAt: string;
+      bookVersionId: string;
+      id: string;
+      userId: string;
+    };
+    BookshelfItemDto: {
+      /** Format: date-time */
+      addedAt: string;
+      bookVersion: components['schemas']['BookVersionDto'];
+      id: string;
+    };
+    CategoryAncestorDto: {
+      id: string;
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    CategoryBookCardsResponseDto: {
+      category?: components['schemas']['CategoryCardSummaryDto'] | null;
+      items: components['schemas']['BookCardDto'][];
+      pagination: components['schemas']['PaginationInfoDto'];
+    };
+    CategoryCardSummaryDto: {
+      booksCount: number;
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      sortOrder: number;
+      translation?: components['schemas']['CategoryTranslationScalarsDto'] | null;
+      translations: components['schemas']['CategoryTranslationScalarsDto'][];
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    CategoryEntityDto: {
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      key: string;
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      /** @default 0 */
+      sortOrder: number;
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    CategoryResponse: {
+      /** @description Automatic indexability (hysteresis state) for the requested ?lang. Mirrors what meta robots and the sitemap decide. Undefined when lang is not passed or the term has no translation for it. */
+      autoIndexable?: boolean;
+      booksCount: number;
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      key: string;
+      /** @description Cached per-language book count (CategoryTranslation.bookCount) for the requested ?lang. Undefined when lang is not passed or the term has no translation for it. */
+      langBookCount?: number;
+      name: string;
+      parentId: string | null;
+      slug: string;
+      /** @default 0 */
+      sortOrder: number;
+      translations: components['schemas']['CategoryTranslationResponse'][];
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    CategoryTranslationEntityDto: {
+      /** @default true */
+      autoIndexable: boolean;
+      /** @default 0 */
+      bookCount: number;
+      categoryId: string;
+      /** Format: date-time */
+      createdAt: string;
+      description?: string | null;
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      seo?: components['schemas']['SeoResponseDto'] | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    CategoryTranslationResponse: {
+      /** @description Automatic indexability derived from bookCount with hysteresis (close <=2, open >=5). Drives meta robots, the sitemap and internal linking alike. */
+      autoIndexable?: boolean;
+      /** @description Cached number of published books in this language. */
+      bookCount?: number;
+      description?: string | null;
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      shortDescription?: string | null;
+      slug: string;
+    };
+    CategoryTranslationScalarsDto: {
+      /** @default true */
+      autoIndexable: boolean;
+      /** @default 0 */
+      bookCount: number;
+      categoryId: string;
+      /** Format: date-time */
+      createdAt: string;
+      description?: string | null;
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    CategoryTreeNodeDto: {
+      /** @description Automatic indexability (hysteresis state) for the requested ?lang. Mirrors what meta robots and the sitemap decide. Undefined when lang is not passed or the term has no translation for it. */
+      autoIndexable?: boolean;
+      /** @description Number of books in this category */
+      booksCount: number;
+      children: components['schemas']['CategoryTreeNodeDto'][];
+      /** Format: uuid */
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      key: string;
+      /** @description Cached per-language book count (CategoryTranslation.bookCount) for the requested ?lang. Undefined when lang is not passed or the term has no translation for it. */
+      langBookCount?: number;
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      /** @default 0 */
+      sortOrder: number;
+      translations: components['schemas']['CategoryTranslationResponse'][];
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    ChangeRightsClaimStatusDto: {
+      notesRu?: string;
+      /** @enum {string} */
+      status:
+        | 'RECEIVED'
+        | 'UNDER_REVIEW'
+        | 'ACTION_REQUIRED'
+        | 'AWAITING_CLAIMANT'
+        | 'CONTENT_REMOVED'
+        | 'CONTENT_RESTRICTED'
+        | 'COUNTER_NOTICE_FILED'
+        | 'ESCALATED_TO_LAWYER'
+        | 'RESOLVED_VALID'
+        | 'RESOLVED_INVALID'
+        | 'WITHDRAWN'
+        | 'CLOSED';
+    };
+    ChangeRightsIntakeStatusDto: {
+      /**
+       * @description New status
+       * @enum {string}
+       */
+      status:
+        | 'DRAFT'
+        | 'READY_FOR_AGENT'
+        | 'REVIEW_IMPORTED'
+        | 'HUMAN_REVIEW_REQUIRED'
+        | 'APPROVED'
+        | 'REJECTED'
+        | 'BOOK_CREATED'
+        | 'ARCHIVED'
+        | 'LAWYER_REVIEW_REQUIRED';
+    };
+    ChapterResponseDto: {
+      bookVersionId: string;
+      content: string;
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      number: number;
+      title: string;
+    };
+    CheckAuthorSlugResponseDto: {
+      /** @description Information about the existing author (if exists = true) */
+      existingAuthor?: components['schemas']['ExistingAuthorDto'];
+      /**
+       * @description true if the slug is already taken
+       * @example false
+       */
+      exists: boolean;
+      /**
+       * @description First free slug in the same language (if exists = true)
+       * @example stephen-king-2
+       */
+      suggestedSlug?: string;
+    };
+    CheckBookSlugResponseDto: {
+      /** @description Information about the existing book (if exists = true) */
+      existingBook?: components['schemas']['ExistingBookDto'];
+      /**
+       * @description true if the slug is already taken
+       * @example false
+       */
+      exists: boolean;
+      /**
+       * @description Suggested unique slug (if exists = true)
+       * @example harry-potter-2
+       */
+      suggestedSlug?: string;
+    };
+    CheckCategorySlugResponseDto: {
+      /** @description Information about the existing category (if exists = true) */
+      existingCategory?: components['schemas']['ExistingCategoryDto'];
+      /**
+       * @description true if the slug is already taken
+       * @example false
+       */
+      exists: boolean;
+      /**
+       * @description Suggested unique slug (if exists = true)
+       * @example fantasy-2
+       */
+      suggestedSlug?: string;
+    };
+    CheckGeoBlockAccessDto: {
+      /** @example GB */
+      countryCode: string;
+      /** @enum {string} */
+      scope:
+        | 'ENTIRE_BOOK'
+        | 'LANGUAGE_EDITION'
+        | 'TEXT_READER'
+        | 'DOWNLOADS'
+        | 'AUDIO'
+        | 'SPECIFIC_ASSET';
+    };
+    CheckPageSlugResponseDto: {
+      /** @description Information about the existing page (if exists = true) */
+      existingPage?: components['schemas']['ExistingPageDto'];
+      /**
+       * @description true if the slug is already taken
+       * @example false
+       */
+      exists: boolean;
+      /**
+       * @description true if the slug is reserved by a site route and can never be reached, even though no page holds it
+       * @example false
+       */
+      reserved?: boolean;
+      /**
+       * @description Suggested unique slug (if exists = true)
+       * @example about-us-2
+       */
+      suggestedSlug?: string;
+    };
+    CheckTagSlugResponseDto: {
+      /** @description Information about the existing tag (if exists = true) */
+      existingTag?: components['schemas']['ExistingTagDto'];
+      /**
+       * @description true if the slug is already taken
+       * @example false
+       */
+      exists: boolean;
+      /**
+       * @description Suggested unique slug (if exists = true)
+       * @example aestheticism-2
+       */
+      suggestedSlug?: string;
+    };
+    ClaimMutationResultDto: {
+      /** @example true */
+      success: boolean;
+    };
+    CleanupOrphansResponseDto: {
+      hardDeleted: number;
+      hardDeletedCandidates?: string[];
+      markedSoftDeleted: number;
+      /** @description How many assets the run looked at. Without it "deleted 0" is indistinguishable from a run that scanned nothing. */
+      scanned: number;
+      /** @description Of those scanned: how many the URL-reference check saved. */
+      skippedByUrlReference: number;
+      softDeletedCandidates?: string[];
+      storageErrors: number;
+      storageFilesRemoved: number;
+    };
+    CommentBareDto: {
+      audioChapterId: string | null;
+      bookVersionId: string | null;
+      chapterId: string | null;
+      createdAt: string;
+      id: string;
+      isDeleted: boolean;
+      isHidden: boolean;
+      parentId: string | null;
+      rating: components['schemas']['CommentRatingDto'] | null;
+      ratingId: string | null;
+      /** @description Rating score associated with this review (1-5) */
+      ratingScore?: number | null;
+      text: string;
+      updatedAt: string;
+      /** @description Автор комментария; публичный профиль лежит в `user` */
+      userId: string;
+    };
+    CommentDetailDto: {
+      audioChapterId: string | null;
+      bookVersionId: string | null;
+      chapterId: string | null;
+      children: components['schemas']['CommentDto'][];
+      createdAt: string;
+      id: string;
+      isDeleted: boolean;
+      isHidden: boolean;
+      parentId: string | null;
+      rating: components['schemas']['CommentRatingDto'] | null;
+      ratingId: string | null;
+      /** @description Rating score associated with this review (1-5) */
+      ratingScore?: number | null;
+      text: string;
+      updatedAt: string;
+      user: components['schemas']['CommentUserDto'];
+      /** @description Автор комментария; публичный профиль лежит в `user` */
+      userId: string;
+    };
+    CommentDto: {
+      audioChapterId: string | null;
+      bookVersionId: string | null;
+      chapterId: string | null;
+      children: components['schemas']['CommentDto'][];
+      createdAt: string;
+      id: string;
+      isDeleted: boolean;
+      isHidden: boolean;
+      parentId: string | null;
+      ratingId: string | null;
+      /** @description Rating score associated with this review (1-5) */
+      ratingScore?: number | null;
+      text: string;
+      updatedAt: string;
+      user: components['schemas']['CommentUserDto'];
+      /** @description Автор комментария; публичный профиль лежит в `user` */
+      userId: string;
+    };
+    CommentRatingDto: {
+      bookId: string;
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      /** @description Оценка книги, 1-5 */
+      score: number;
+      /** Format: date-time */
+      updatedAt: string;
+      userId: string;
+    };
+    CommentUserDto: {
+      avatarUrl?: string | null;
+      id: string;
+      name?: string | null;
+      nickname?: string | null;
+    };
+    CompleteRecheckTaskDto: {
+      /** @description The review that closed this task */
+      completedReviewId?: string;
+      notesRu?: string;
+      /**
+       * @default MANUALLY_CLOSED
+       * @enum {string}
+       */
+      resolution:
+        | 'NEW_REVIEW_APPROVED'
+        | 'SUPERSEDED_BY_NEW_REVIEW'
+        | 'NO_CHANGE_NEEDED'
+        | 'CONTENT_REVERTED'
+        | 'MANUALLY_CLOSED'
+        | 'DISMISSED_NOT_APPLICABLE'
+        | 'OTHER';
+    };
+    ComponentTerritoryAssessmentDto: {
+      accessPolicy: string;
+      confidence: string | null;
+      countryCode: string;
+      createdAt: string;
+      geoBlockRequired: boolean;
+      id: string;
+      legalBasisRu: string | null;
+      licenseId: string | null;
+      licenseTitle: string | null;
+      notesRu: string | null;
+      publicDomainFromYear: number | null;
+      reasonRu: string | null;
+      rightsComponentId: string;
+      rightsExpireAt: string | null;
+      sourceEvidenceIds: string[] | null;
+      status: string;
+      updatedAt: string;
+    };
+    ConfirmMediaDto: {
+      /**
+       * @description Content type (MIME)
+       * @example image/jpeg
+       */
+      contentType?: string;
+      /** @description Optional content hash for dedupe (e.g., sha256) */
+      hash?: string;
+      /** @description Height in px (images) */
+      height?: number;
+      /**
+       * @description Storage object key (from /uploads)
+       * @example covers/2025/08/26/uuid.jpg
+       */
+      key: string;
+      /** @description Size in bytes */
+      size?: number;
+      /**
+       * @description Public URL resolved by storage
+       * @example http://localhost:3000/static/covers/2025/08/26/uuid.jpg
+       */
+      url: string;
+      /** @description Width in px (images) */
+      width?: number;
+    };
+    ContributorLinkResponseDto: {
+      birthYear: number | null;
+      canonicalName: string | null;
+      /** @enum {string|null} */
+      confidence: 'HIGH' | 'MEDIUM' | 'LOW' | null;
+      /** Format: date-time */
+      createdAt: string;
+      creditedLanguage: string | null;
+      creditedName: string | null;
+      deathYear: number | null;
+      displayName: string;
+      gutenbergAgentId: string | null;
+      id: string;
+      isni: string | null;
+      /** @description 2-letter country code */
+      nationalityCountryCode: string | null;
+      notesRu: string | null;
+      personId: string | null;
+      publicDomainFromYear: number | null;
+      rightsComponentId: string | null;
+      rightsProfileId: string;
+      /** @enum {string} */
+      role:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER';
+      roleOtherRu: string | null;
+      /** @description Идентификаторы доказательств, из которых взята роль (Json в базе) */
+      sourceEvidenceIds: string[] | null;
+      /** Format: date-time */
+      updatedAt: string;
+      viafId: string | null;
+      wikidataId: string | null;
+    };
+    ContributorResponseDto: {
+      birthDate: string | null;
+      birthYear: number | null;
+      /** Format: date-time */
+      createdAt: string;
+      deathDate: string | null;
+      deathYear: number | null;
+      displayName: string;
+      gutenbergAgentId: string | null;
+      /** @description Person ID — участники хранятся в справочнике Person */
+      id: string;
+      isni: string | null;
+      /** @description 2-letter country code */
+      nationalityCountry: string | null;
+      notesRu: string | null;
+      publicDomainFromYear: number | null;
+      sortName: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+      viafId: string | null;
+      wikidataId: string | null;
+    };
+    CountryCoverageResultDto: {
+      /** @example ES */
+      countryCode: string;
+      covered: boolean;
+      issues: components['schemas']['LicenseIssueDto'][];
+      licenseIds: string[];
+    };
+    CreateAgentTokenDto: {
+      /**
+       * @description A failed validation does not consume a use of the token
+       * @default true
+       */
+      allowRetryOnValidationError: boolean;
+      /** @description Report schema versions this token accepts. Omit to accept all supported ones. */
+      allowedSchemaVersions?: string[];
+      /**
+       * @description Materialize the rights profile right after a successful validation
+       * @default true
+       */
+      autoMaterialize: boolean;
+      /** @description Human-readable label for the editor */
+      labelRu?: Record<string, never>;
+      /**
+       * @description How many successful submissions the token allows
+       * @default 1
+       */
+      maxUses: number;
+      /**
+       * @description Token lifetime in hours
+       * @default 72
+       */
+      ttlHours: number;
     };
     CreateAudioChapterDto: {
       /**
-       * @description Audio chapter number within version
+       * @description Audio file URL
+       * @example https://cdn.example.com/audio/1.mp3
+       */
+      audioUrl: string;
+      /** @description Short description of the chapter (plain/markdown, ≤ 5000 chars) */
+      description?: string;
+      /**
+       * @description Duration in seconds (0..86400)
+       * @example 360
+       */
+      duration: number;
+      /** @description Associated MediaAsset id (from Media Library) */
+      mediaId?: string;
+      /**
+       * @description Sequential number of the audio chapter within the version
        * @example 1
        */
       number: number;
@@ -1516,278 +6293,953 @@ export interface components {
        * @example Chapter 1. The Beginning
        */
       title: string;
-      /**
-       * @description Audio file URL
-       * @example https://cdn.example.com/audio/1.mp3
-       */
-      audioUrl: string;
-      /**
-       * @description Duration in seconds
-       * @example 360
-       */
-      duration: number;
+      /** @description Full transcript of the chapter (markdown) */
+      transcript?: string;
     };
-    UpdateAudioChapterDto: {
+    CreateAuthorDto: {
       /**
-       * @description Audio chapter number
-       * @example 2
+       * @description Date of birth YYYY-MM-DD
+       * @example 1854-10-16
        */
-      number?: number;
-      /** @description Audio chapter title */
-      title?: string;
-      /** @description Audio file URL */
-      audioUrl?: string;
-      /** @description Duration in seconds */
-      duration?: number;
+      birthDate?: string;
+      /**
+       * @description Date of death YYYY-MM-DD
+       * @example 1900-11-30
+       */
+      deathDate?: string;
+      /**
+       * @description Author unique slug (optional for creation compatibility)
+       * @example oscar-wilde
+       */
+      slug?: string;
+      /** @description Author translations */
+      translations: components['schemas']['AuthorTranslationDto'][];
     };
-    UpdateBookSummaryDto: {
-      /** @description Short summary text */
-      summary: string;
-      /** @description Optional analysis */
-      analysis?: string;
-      /** @description Optional themes */
-      themes?: string;
-    };
-    CategoryTreeNodeDto: {
-      /** Format: uuid */
-      id: string;
-      name: string;
+    CreateBookDto: {
+      /**
+       * @description Unique book slug. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123"
+       * @example harry-potter
+       */
       slug: string;
+    };
+    CreateBookFromClearanceDto: {
+      /**
+       * @description Attach the clearance to the existing book with this slug instead of creating one
+       * @default false
+       */
+      attachToExistingBook: boolean;
+      /**
+       * @description Book slug
+       * @example the-picture-of-dorian-gray
+       */
+      slug: string;
+      /** @description Book versions to create. Not allowed when attaching to an existing book. */
+      versions?: components['schemas']['CreateBookFromClearanceVersionDto'][];
+    };
+    CreateBookFromClearanceResponseBookDto: {
+      approvedRightsReviewId: string | null;
+      createdAt: string;
+      currentRightsProfileId: string | null;
+      id: string;
+      rightsCreatedAt: string | null;
+      rightsIntakeId: string | null;
+      slug: string;
+      updatedAt: string;
+    };
+    CreateBookFromClearanceResponseDto: {
+      approvedRightsReviewId: string;
+      book: components['schemas']['CreateBookFromClearanceResponseBookDto'];
+      rightsProfileId: string;
+      versions: components['schemas']['CreateBookFromClearanceResponseVersionDto'][];
+    };
+    CreateBookFromClearanceResponseVersionDto: {
+      bookId: string;
+      id: string;
+      language: string;
+      rightsStatus: string | null;
+      status: string;
+      title: string;
+    };
+    CreateBookFromClearanceVersionDto: {
+      /** @description Author of the book */
+      author: string;
+      /** @description Author ID */
+      authorId?: Record<string, never>;
+      /** @description Author page URL */
+      authorPageUrl?: Record<string, never>;
+      /** @description Copyright status */
+      copyrightStatus?: Record<string, never>;
+      /** @description Cover alt text */
+      coverAlt?: Record<string, never>;
+      /** @description Cover image URL */
+      coverImageUrl?: Record<string, never>;
+      /** @description Description of the book */
+      description?: Record<string, never>;
+      /** @description Edition published year */
+      editionPublishedYear?: Record<string, never>;
+      /** @description First published year */
+      firstPublishedYear?: Record<string, never>;
+      /** @description Whether the book is free */
+      isFree: boolean;
+      /**
+       * @description Language of the book version
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Original language */
+      originalLanguage?: Record<string, never>;
+      /** @description Original title */
+      originalTitle?: Record<string, never>;
+      /** @description Primary category ID */
+      primaryCategoryId?: Record<string, never>;
+      /** @description Referral URL (for referral type) */
+      referralUrl?: Record<string, never>;
+      /** @description Short description */
+      shortDescription?: Record<string, never>;
+      /** @description Short summary */
+      summaryShort?: Record<string, never>;
+      /** @description Title of the book */
+      title: string;
+      /**
+       * @description Type of the book
+       * @enum {string}
+       */
+      type: 'text' | 'audio' | 'referral';
+    };
+    CreateBookVersionContributorDto: {
       /** @enum {string} */
-      type: 'genre' | 'author' | 'popular' | 'etc';
-      parentId?: string | null;
-      children: components['schemas']['CategoryTreeNodeDto'][];
+      confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+      contributionNoteRu?: string;
+      creditedLanguage?: string;
+      /** @description Credited name as shown in the book edition */
+      creditedName?: string;
+      /** @default 0 */
+      displayOrder: number;
+      /** @default false */
+      isPrimary: boolean;
+      /** @description Target Person ID */
+      personId: string;
+      /** @enum {string} */
+      role:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER';
+      /** @description Role name in Russian if role=OTHER */
+      roleOtherRu?: string;
+    };
+    CreateBookVersionDto: {
+      /**
+       * @description Альтернативные названия книги
+       * @example [
+       *       "Dorian Gray"
+       *     ]
+       */
+      alternativeTitles?: string[];
+      /**
+       * @description Автор
+       * @example J.K. Rowling
+       */
+      author: string;
+      /**
+       * @description Идентификатор автора (UUID)
+       * @example 123e4567-e89b-12d3-a456-426614174000
+       */
+      authorId?: Record<string, never>;
+      /**
+       * @description Ссылка на страницу автора
+       * @example https://example.com/author/oscar-wilde
+       */
+      authorPageUrl?: Record<string, never>;
+      /**
+       * @description Персонажи книги
+       * @example [
+       *       {
+       *         "description": "Main character",
+       *         "name": "Dorian Gray"
+       *       }
+       *     ]
+       */
+      characters?: components['schemas']['BookVersionCharacterDto'][];
+      /**
+       * @description Статус авторских прав
+       * @example public_domain
+       */
+      copyrightStatus?: Record<string, never>;
+      /**
+       * @description Альт-текст обложки
+       * @example Vintage cover art
+       */
+      coverAlt?: Record<string, never>;
+      /**
+       * @description URL обложки
+       * @example https://cdn.example.com/covers/hp1.jpg
+       */
+      coverImageUrl?: string;
+      /**
+       * @description Описание
+       * @example First book of the series
+       */
+      description?: string;
+      /**
+       * @description Год публикации данного издания
+       * @example 1891
+       */
+      editionPublishedYear?: Record<string, never>;
+      /**
+       * @description FAQ по книге
+       * @example [
+       *       {
+       *         "answer": "Gothic fiction",
+       *         "question": "What is the genre?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][];
+      /**
+       * @description Год первой публикации книги
+       * @example 1890
+       */
+      firstPublishedYear?: Record<string, never>;
+      /**
+       * @description Бесплатная ли версия
+       * @example true
+       */
+      isFree: boolean;
+      /**
+       * @description Язык версии книги
+       * @example en
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /**
+       * @description Оригинальный язык книги
+       * @example en
+       */
+      originalLanguage?: Record<string, never>;
+      /**
+       * @description Оригинальное название книги
+       * @example The Picture of Dorian Gray
+       */
+      originalTitle?: Record<string, never>;
+      /**
+       * @description ID основной категории книги для хлебных крошек
+       * @example 550e8400-e29b-41d4-a716-446655440000
+       */
+      primaryCategoryId?: Record<string, never>;
+      /**
+       * @description Цитаты из книги
+       * @example [
+       *       {
+       *         "author": "Oscar Wilde",
+       *         "text": "To live is the rarest thing in the world."
+       *       }
+       *     ]
+       */
+      quotes?: components['schemas']['BookVersionQuoteDto'][];
+      /**
+       * @description Реферальная ссылка
+       * @example https://amazon.com/ref123
+       */
+      referralUrl?: string;
+      /**
+       * @description Опциональные SEO metaDescription
+       * @example Overview, themes and details about the book
+       */
+      seoMetaDescription?: string;
+      /**
+       * @description Опциональные SEO metaTitle
+       * @example Harry Potter — Summary
+       */
+      seoMetaTitle?: string;
+      /**
+       * @description Краткое описание книги
+       * @example A classic story of youth...
+       */
+      shortDescription?: Record<string, never>;
+      /**
+       * @description Слаг версии книги
+       * @example harry-potter
+       */
+      slug?: string;
+      /**
+       * @description Краткое содержание книги
+       * @example The story follows Dorian...
+       */
+      summaryShort?: Record<string, never>;
+      /**
+       * @description Символы в книге
+       * @example [
+       *       {
+       *         "description": "Represents the soul",
+       *         "title": "Portrait"
+       *       }
+       *     ]
+       */
+      symbols?: components['schemas']['BookVersionSymbolDto'][];
+      /**
+       * @description Темы книги
+       * @example [
+       *       "Art",
+       *       "Morality"
+       *     ]
+       */
+      themes?: string[];
+      /**
+       * @description Заголовок
+       * @example Harry Potter and the Philosopher's Stone
+       */
+      title: string;
+      /**
+       * @description Тип контента
+       * @example text
+       * @enum {string}
+       */
+      type: 'text' | 'audio' | 'referral';
     };
     CreateCategoryDto: {
       /**
-       * @description Category type
-       * @enum {string}
+       * @description Whether the page is indexable by search engines
+       * @default true
        */
-      type: 'genre' | 'author' | 'popular' | 'etc';
+      indexable: boolean;
+      /**
+       * @description Whether the category is visible in public lists
+       * @default true
+       */
+      isVisible: boolean;
+      /**
+       * @description Stable unique key
+       * @example epic-fantasy
+       */
+      key: string;
       /**
        * @description Category name
        * @example Fantasy
        */
       name: string;
+      /** @description Parent category (optional) */
+      parentId?: Record<string, never> | null;
       /**
        * @description Category slug
        * @example fantasy
        */
       slug: string;
-      /** @description Parent category (optional) */
-      parentId?: Record<string, never> | null;
-    };
-    UpdateCategoryDto: {
-      /** @enum {string} */
-      type?: 'genre' | 'author' | 'popular' | 'etc';
-      /** @description Category name */
-      name?: string;
-      /** @description Category slug */
-      slug?: string;
-      /** @description Parent category */
-      parentId?: Record<string, never> | null;
+      /**
+       * @description Sort order in lists
+       * @default 0
+       */
+      sortOrder: number;
+      /**
+       * @description Category type
+       * @enum {string}
+       */
+      type: 'category' | 'genre' | 'collection';
     };
     CreateCategoryTranslationDto: {
+      /** @description HTML description for the category page */
+      description?: Record<string, never>;
+      /** @description FAQ items as JSON array */
+      faq?: components['schemas']['FaqItemDto'][];
+      /** @description H1 heading for the page */
+      h1?: string;
       /** @enum {string} */
-      language: 'en' | 'es' | 'fr' | 'pt';
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Meta description for SEO */
+      metaDescription?: string;
+      /** @description Meta title for SEO */
+      metaTitle?: string;
       /** @description Localized category name */
       name: string;
+      /** @description Open Graph description */
+      ogDescription?: string;
+      /** @description Open Graph image alt text */
+      ogImageAlt?: string;
+      /** @description Open Graph image URL */
+      ogImageUrl?: string;
+      /** @description Open Graph title */
+      ogTitle?: string;
+      /** @description SEO metadata */
+      seo?: components['schemas']['SeoInputDto'];
+      /** @description Short description for cards/lists */
+      shortDescription?: string;
       /** @description Localized category slug */
       slug: string;
     };
-    UpdateCategoryTranslationDto: {
-      /** @enum {string} */
-      language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @description Localized category name */
-      name?: string;
-      /** @description Localized category slug */
-      slug?: string;
-    };
-    AttachCategoryDto: {
-      /** @description Category ID */
-      categoryId: string;
-    };
-    BookVersionDto: {
-      id: string;
-      bookId: string;
-      /** @example en */
-      language: string;
+    CreateChapterDto: {
+      /**
+       * @description Chapter content (markdown/html/plain)
+       * @example Once upon a time...
+       */
+      content: string;
+      /**
+       * @description Chapter order number within the version (auto-assigned if omitted)
+       * @example 1
+       */
+      number?: number;
+      /**
+       * @description Chapter title
+       * @example Chapter 1. The Boy Who Lived
+       */
       title: string;
-      author: string;
-      description: string;
-      /** @example https://example.com/c.jpg */
-      coverImageUrl: string;
-      /** @example text */
-      type: string;
-      isFree: boolean;
-      /** Format: date-time */
-      createdAt: string;
-      /** Format: date-time */
-      updatedAt: string;
     };
-    BookshelfItemDto: {
-      id: string;
-      /** Format: date-time */
-      addedAt: string;
-      bookVersion: components['schemas']['BookVersionDto'];
-    };
-    BookshelfListDto: {
-      items: components['schemas']['BookshelfItemDto'][];
-      /** @example 1 */
-      page: number;
-      /** @example 10 */
-      limit: number;
-      /** @example 1 */
-      total: number;
-      /** @example false */
-      hasNext: boolean;
-    };
-    CommentUserDto: {
-      id: string;
-      email: string;
-      name?: Record<string, never> | null;
-    };
-    CommentDto: {
-      id: string;
-      parentId: Record<string, never> | null;
-      bookVersionId: Record<string, never> | null;
-      chapterId: Record<string, never> | null;
-      audioChapterId: Record<string, never> | null;
-      text: string;
-      isHidden: boolean;
-      isDeleted: boolean;
-      createdAt: string;
-      updatedAt: string;
-      user: components['schemas']['CommentUserDto'];
-      children: components['schemas']['CommentDto'][];
-    };
-    CommentListDto: {
-      items: components['schemas']['CommentDto'][];
-      total: number;
-      page: number;
-      limit: number;
-      hasNext: boolean;
+    CreateClaimAttachmentDto: {
+      /**
+       * @default EVIDENCE
+       * @enum {string}
+       */
+      attachmentType:
+        | 'CLAIM_NOTICE'
+        | 'EVIDENCE'
+        | 'POWER_OF_ATTORNEY'
+        | 'LICENSE_DOCUMENT'
+        | 'CORRESPONDENCE'
+        | 'COUNTER_NOTICE'
+        | 'RESPONSE_LETTER'
+        | 'LEGAL_OPINION'
+        | 'SCREENSHOT'
+        | 'OTHER';
+      contentType?: string;
+      fileName?: string;
+      /** @description One of mediaAssetId / storageKey / url is required */
+      mediaAssetId?: string;
+      notesRu?: string;
+      /** @description 64 hex characters */
+      sha256?: string;
+      sizeBytes?: number;
+      storageKey?: string;
+      title: string;
+      url?: string;
     };
     CreateCommentDto: {
+      /** @description AudioChapter ID */
+      audioChapterId?: string;
       /** @description BookVersion ID */
       bookVersionId?: string;
       /** @description Chapter ID */
       chapterId?: string;
-      /** @description AudioChapter ID */
-      audioChapterId?: string;
       /** @description Parent comment ID (for replies) */
       parentId?: string;
+      /** @description Book rating score (1-5) */
+      rating?: number;
       /** @description Comment text */
       text: string;
     };
-    UpdateCommentDto: {
-      /** @description Updated text */
-      text?: string;
-      /** @description Moderation: hide/show */
-      isHidden?: boolean;
+    CreateConditionDto: {
+      affectedCountryCodes?: string[];
+      /** @description Машинный код: REMOVE_ILLUSTRATIONS, GEO_BLOCK_US, … */
+      code: string;
+      /** @default true */
+      isBlocking: boolean;
+      textRu: string;
     };
-    LikeRequestDto: {
-      /** @description ID of comment to like */
-      commentId?: string | null;
-      /** @description ID of book version to like */
-      bookVersionId?: string | null;
-    };
-    LikeDto: {
-      id: string;
-      userId: string;
-      bookVersionId?: string | null;
-      commentId?: string | null;
-      /** Format: date-time */
-      createdAt: string;
-    };
-    LikeCountDto: {
-      count: number;
-    };
-    ToggleLikeResponseDto: {
-      liked: boolean;
-      count: number;
-    };
-    ReadingProgressDto: {
-      chapterNumber: Record<string, never> | null;
-      audioChapterNumber: Record<string, never> | null;
-      position: number;
-    };
-    UpdateReadingProgressDto: {
-      /** @description Chapter number for text reading (>=1) */
-      chapterNumber?: number;
-      /** @description Audio chapter number for audio listening (>=1) */
-      audioChapterNumber?: number;
+    CreateContributorDto: {
+      /** @description Optional legacy catalog Author ID to bridge with this person */
+      authorId?: string;
       /**
-       * @description Playback/scroll position; seconds for audio or fraction for text
-       * @example 12.5
+       * @description Date of birth as recorded in sources
+       * @example 1688-05-21
        */
-      position?: number;
-    };
-    /** @enum {string} */
-    ViewSource: 'text' | 'audio' | 'referral';
-    CreateViewDto: {
-      /** Format: uuid */
-      bookVersionId: string;
-      source: components['schemas']['ViewSource'];
-      /** @description ISO date-time, must be <= now() */
-      timestamp?: string;
-    };
-    /** @enum {string} */
-    ViewsPeriod: 'day' | 'week' | 'month' | 'all';
-    PresignRequestDto: {
+      birthDate?: string;
       /**
-       * @example cover
+       * @description Birth year
+       * @example 1688
+       */
+      birthYear?: number;
+      /**
+       * @description Date of death as recorded in sources
+       * @example 1744-05-30
+       */
+      deathDate?: string;
+      /**
+       * @description Death year
+       * @example 1744
+       */
+      deathYear?: number;
+      /**
+       * @description Display name of contributor
+       * @example Alexander Pope
+       */
+      displayName: string;
+      /**
+       * @description Project Gutenberg agent ID
+       * @example 53
+       */
+      gutenbergAgentId?: string;
+      /**
+       * @description ISNI
+       * @example 0000000121174572
+       */
+      isni?: string;
+      /**
+       * @description 2-letter country code (nationality)
+       * @example GB
+       */
+      nationalityCountry?: string;
+      /** @description Notes in Russian */
+      notesRu?: string;
+      /**
+       * @description Year the works enter public domain
+       * @example 1815
+       */
+      publicDomainFromYear?: number;
+      /**
+       * @description VIAF ID
+       * @example 24606633
+       */
+      viafId?: string;
+      /**
+       * @description Wikidata ID
+       * @example Q7245
+       */
+      wikidataId?: string;
+    };
+    CreateLawyerDto: {
+      barId?: string;
+      email?: string;
+      fullName: string;
+      /** @description ISO 3166-1 alpha-2 */
+      jurisdictionCodes?: string[];
+      /** @enum {string} */
+      lawyerType?: 'IN_HOUSE' | 'EXTERNAL_COUNSEL' | 'LAW_FIRM' | 'OTHER';
+      notesRu?: string;
+      organization?: string;
+      phone?: string;
+      specializationRu?: string;
+      /** @description Пользователь платформы, от лица которого работает юрист */
+      userId?: Record<string, never>;
+    };
+    CreateLegalChangeDto: {
+      /** @default false */
+      appliesToAllCountries: boolean;
+      /** @enum {string} */
+      changeType:
+        | 'COPYRIGHT_TERM_CHANGE'
+        | 'PUBLIC_DOMAIN_RULE_CHANGE'
+        | 'TRANSLATION_RIGHTS_CHANGE'
+        | 'NEIGHBOURING_RIGHTS_CHANGE'
+        | 'COURT_DECISION'
+        | 'TREATY_RATIFICATION'
+        | 'PLATFORM_POLICY_CHANGE'
+        | 'OTHER';
+      descriptionRu: string;
+      effectiveFrom?: string;
+      /** @description ISO-3166-1 alpha-2 codes */
+      jurisdictionCodes: string[];
+      /**
+       * @default WARNING
        * @enum {string}
        */
-      type: 'cover' | 'audio';
-      /**
-       * @description MIME type of the file
-       * @example image/jpeg
-       */
-      contentType: string;
-      /**
-       * @description Estimated file size in bytes
-       * @example 1048576
-       */
-      size: number;
+      severity: 'INFO' | 'WARNING' | 'BLOCKING';
+      sourceTitle?: string;
+      sourceUrl?: string;
+      titleRu: string;
     };
-    RateLimitConfigDto: {
+    CreateLegalOpinionDto: {
+      bodyRu: string;
+      /** @description sha256 в нижнем регистре */
+      documentSha256?: string;
+      documentUrl?: string;
+      fileName?: string;
+      /** @description ISO 8601 */
+      issuedAt?: string;
+      /** @description ISO 3166-1 alpha-2 */
+      jurisdictionCodes?: string[];
+      /** @enum {string} */
+      kind?:
+        | 'EXTERNAL_COUNSEL_MEMO'
+        | 'IN_HOUSE_MEMO'
+        | 'EMAIL_CONFIRMATION'
+        | 'COURT_FILING'
+        | 'REGULATOR_RESPONSE'
+        | 'OTHER';
+      /** @description Если не задан — берётся назначенный юрист проверки */
+      lawyerId?: string;
+      mimeType?: string;
+      titleRu: string;
+    };
+    CreatePageDto: {
+      /** @description Page content (markdown/HTML/text) */
+      content: string;
+      /** @description FAQ structured data as JSON array of {question, answer} */
+      faq?: components['schemas']['FaqItemDto'][];
+      /** @description SEO H1 heading (overrides title for display purposes) */
+      h1?: string;
+      /** @enum {string} */
+      language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Homepage sections configuration (JSON object with block data) */
+      sections?: Record<string, never>;
+      /** @description SEO data (automatically creates the SEO entity) */
+      seo?: components['schemas']['SeoInputDto'];
+      /** @description SEO entity ID (legacy, use seo instead) */
+      seoId?: Record<string, never> | null;
+      /** @description Short description for overview cards/previews */
+      shortDescription?: string;
+      /** @description Page slug */
+      slug: string;
+      /** @description Page title */
+      title: string;
+      /** @description Translation Group ID (UUID) to link translations */
+      translationGroupId?: string;
+      /** @enum {string} */
+      type: 'generic' | 'category_index' | 'author_index' | 'homepage';
+    };
+    CreatePersonDto: {
+      /** @example 1835-11-30 */
+      birthDate?: string;
+      /** @example 1835 */
+      birthYear?: number;
+      /** @example Mark Twain */
+      canonicalName: string;
+      /** @example 1910-04-21 */
+      deathDate?: string;
+      /** @example 1910 */
+      deathYear?: number;
+      /** @example 53 */
+      gutenbergAgentId?: string;
+      /** @example 0000-0001-2345-6789 */
+      isni?: string;
+      /** @example US */
+      nationalityCountryCode?: string;
+      /** @example Американский писатель, журналист и общественный деятель. */
+      notesRu?: string;
+      /** @example 1981 */
+      publicDomainFromYear?: number;
+      /** @example mark-twain */
+      slug?: string;
+      /** @example Twain, Mark */
+      sortName?: string;
       /**
-       * @description Is rate limiting enabled
-       * @example false
+       * @example NATURAL_PERSON
+       * @enum {string}
        */
-      enabled: boolean;
+      type: 'NATURAL_PERSON' | 'ORGANIZATION' | 'UNKNOWN';
+      /** @example 505050 */
+      viafId?: string;
+      /** @example Q7245 */
+      wikidataId?: string;
+    };
+    CreateRecheckTaskDto: {
+      bookVersionId?: string;
+      descriptionRu: string;
+      dueAt?: string;
       /**
-       * @description Window size in milliseconds
-       * @example 60000
+       * @description SCHEDULED_DUE is reserved for the scheduler and is coerced to MANUAL_REQUEST.
+       * @enum {string}
        */
-      windowMs: number;
+      reason?:
+        | 'SCHEDULED_DUE'
+        | 'CONTENT_CHANGED'
+        | 'RIGHTS_DATA_CHANGED'
+        | 'LANGUAGE_ADDED'
+        | 'AUDIO_ADDED'
+        | 'COMPONENT_ADDED'
+        | 'LEGAL_CHANGE'
+        | 'REVIEW_STALE'
+        | 'MANUAL_REQUEST'
+        | 'OTHER';
+      rightsIntakeId?: string;
+      rightsProfileId?: string;
+      /** @enum {string} */
+      severity?: 'INFO' | 'WARNING' | 'BLOCKING';
+      titleRu: string;
+    };
+    CreateRightsClaimDto: {
+      /** @description Empty = the claim applies worldwide */
+      affectedCountryCodes?: string[];
+      affectedLanguages?: string[];
+      assignedToUserId?: string;
+      /** @default true */
+      blocksPublication: boolean;
+      /** @description Required when blocksPublication is set to false */
+      blocksPublicationOverrideReasonRu?: string;
+      bookId?: string;
+      bookVersionId?: string;
       /**
-       * @description Max actions allowed in window
-       * @example 10
+       * @default EMAIL
+       * @enum {string}
        */
-      maxPoints: number;
+      channel:
+        | 'EMAIL'
+        | 'WEB_FORM'
+        | 'POSTAL'
+        | 'PHONE'
+        | 'LEGAL_COUNSEL'
+        | 'PLATFORM_NOTICE'
+        | 'OTHER';
+      /** @enum {string} */
+      claimType:
+        | 'DMCA_TAKEDOWN'
+        | 'COPYRIGHT_INFRINGEMENT'
+        | 'LICENSE_VIOLATION'
+        | 'ATTRIBUTION_MISSING'
+        | 'TERRITORY_VIOLATION'
+        | 'TRADEMARK'
+        | 'PRIVACY_PERSONAL_DATA'
+        | 'DEFAMATION'
+        | 'COUNTER_NOTICE'
+        | 'OTHER';
+      claimantAddress?: string;
+      claimantEmail?: string;
+      /** @default false */
+      claimantIsAuthorized: boolean;
+      claimantName: string;
+      claimantOrganization?: string;
+      claimantPersonId?: string;
+      claimantPhone?: string;
       /**
-       * @description Current driver name
-       * @example inmemory
+       * @default UNKNOWN
+       * @enum {string}
        */
-      driver: string;
+      claimantType:
+        | 'RIGHTS_HOLDER'
+        | 'AUTHOR'
+        | 'PUBLISHER'
+        | 'AGENT'
+        | 'LAW_FIRM'
+        | 'COLLECTING_SOCIETY'
+        | 'PLATFORM'
+        | 'INDIVIDUAL'
+        | 'UNKNOWN';
+      claimedRightsDescriptionRu?: string;
+      claimedWorkAuthor?: string;
+      claimedWorkTitle?: string;
+      /** @description ISO date the claim must be answered by */
+      deadlineAt?: string;
+      descriptionRu: string;
+      /** @default false */
+      goodFaithStatement: boolean;
+      infringingUrls?: string[];
+      internalNotesRu?: string;
+      mediaAssetId?: string;
+      originalNoticeText?: string;
+      originalNoticeUrl?: string;
+      parentClaimId?: string;
+      /** @description ISO date the claim was received */
+      receivedAt?: string;
+      /** @default false */
+      requiresLawyerReview: boolean;
+      rightsIntakeId?: string;
+      rightsProfileId?: string;
       /**
-       * @description Keying strategy
-       * @example userId|ip
+       * @default MEDIUM
+       * @enum {string}
        */
-      scope: string;
+      severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      /** @default false */
+      swornStatement: boolean;
+    };
+    CreateRightsIntakeDto: {
+      /** @description Author birth year */
+      authorBirthYear?: Record<string, never>;
+      /** @description Author death year */
+      authorDeathYear?: Record<string, never>;
+      /** @description Candidate author */
+      candidateAuthor: string;
+      /** @description Candidate title (name of the work) */
+      candidateTitle: string;
+      /** @description Notes in Russian */
+      notesRu?: Record<string, never>;
+      /** @description Original language code */
+      originalLanguage?: Record<string, never>;
+      /** @description Original title of the work */
+      originalTitle?: Record<string, never>;
+      /** @description Planned components */
+      plannedComponents?: Record<string, never>[];
       /**
-       * @description Endpoints protected by the rate limiter
+       * @description Planned content types
        * @example [
-       *       "POST /comments",
-       *       "PATCH /comments/:id",
-       *       "DELETE /comments/:id"
+       *       "TEXT",
+       *       "AUDIO"
        *     ]
        */
-      endpoints: unknown[][];
+      plannedContentTypes: unknown[][];
+      /** @description Source external ID (e.g. Gutenberg eBook ID) */
+      sourceExternalId?: Record<string, never>;
+      /** @description Source language code */
+      sourceLanguage?: Record<string, never>;
+      /**
+       * @description Source provider
+       * @default UNKNOWN
+       * @enum {string}
+       */
+      sourceProvider: 'PROJECT_GUTENBERG' | 'OTHER' | 'UNKNOWN';
+      /**
+       * @description Source text type
+       * @default UNKNOWN
+       * @enum {string}
+       */
+      sourceTextType:
+        | 'ORIGINAL_TEXT'
+        | 'TRANSLATION'
+        | 'ADAPTATION'
+        | 'ABRIDGMENT'
+        | 'COMPILATION'
+        | 'UNKNOWN';
+      /** @description Source title */
+      sourceTitle?: Record<string, never>;
+      /** @description Source URL */
+      sourceUrl?: Record<string, never>;
+      /**
+       * @description Target country codes (ISO alpha-2 uppercase)
+       * @example [
+       *       "US",
+       *       "GB",
+       *       "FR"
+       *     ]
+       */
+      targetCountryCodes: unknown[][];
+      /**
+       * @description Target languages (en, es, fr, pt, ru)
+       * @example [
+       *       "en",
+       *       "fr"
+       *     ]
+       */
+      targetLanguages: unknown[][];
+    };
+    CreateRightsLicenseDto: {
+      /** @default false */
+      attributionRequired: boolean;
+      /** @default false */
+      commercialUseAllowed: boolean;
+      /** @enum {string} */
+      confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+      /**
+       * @example [
+       *       "ES",
+       *       "MX",
+       *       "AR"
+       *     ]
+       */
+      countryCodes?: string[];
+      documentMediaAssetId?: string;
+      /** @description 64 hex characters */
+      documentSha256?: string;
+      /** @example rights/licenses/prh-2019-4471.pdf */
+      documentStorageKey?: string;
+      /** @example https://example.org/license.pdf */
+      documentUrl?: string;
+      /** @example 2019-06-01 */
+      effectiveFrom?: string;
+      /**
+       * @example [
+       *       "US"
+       *     ]
+       */
+      excludedCountryCodes?: string[];
+      /** @default false */
+      exclusive: boolean;
+      /** @example 2029-06-01 */
+      expiresAt?: string;
+      /** @example 2019-05-01 */
+      grantedAt?: string;
+      /** @default false */
+      isPerpetual: boolean;
+      /**
+       * @example [
+       *       "es"
+       *     ]
+       */
+      languageCodes?: string[];
+      /** @example license:penguin-2019 */
+      licenseKey?: string;
+      /**
+       * @default DIRECT_LICENSE
+       * @enum {string}
+       */
+      licenseType:
+        | 'DIRECT_LICENSE'
+        | 'DIRECT_PERMISSION'
+        | 'RIGHTS_ASSIGNMENT'
+        | 'WORK_FOR_HIRE'
+        | 'OPEN_LICENSE'
+        | 'PUBLIC_DOMAIN_DEDICATION'
+        | 'OTHER';
+      /** @example Bibliaris */
+      licensee?: string;
+      /** @example Penguin Random House */
+      licensor: string;
+      mediaFormats?: (
+        | 'TEXT_ONLINE'
+        | 'TEXT_DOWNLOAD'
+        | 'EBOOK'
+        | 'AUDIO_STREAMING'
+        | 'AUDIO_DOWNLOAD'
+        | 'IMAGE'
+        | 'PRINT'
+        | 'OTHER'
+      )[];
+      /** @default false */
+      modificationAllowed: boolean;
+      notesRu?: string;
+      /** @example Запрещено использование обложки издателя. */
+      otherConditionsRu?: string;
+      /** @example PRH-2019-4471 */
+      referenceNumber?: string;
+      /** @example © Penguin Random House, 2019 */
+      requiredAttributionText?: string;
+      /** @default true */
+      revocable: boolean;
+      /** @example Penguin Random House */
+      rightsHolder?: string;
+      /** @example 8% от выручки, ежеквартально. */
+      royaltyTermsRu?: string;
+      sourceEvidenceIds?: string[];
+      /**
+       * @default DRAFT
+       * @enum {string}
+       */
+      status: 'DRAFT' | 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'UNCERTAIN' | 'SUPERSEDED';
+      /** @default false */
+      sublicensingAllowed: boolean;
+      /**
+       * @default UNKNOWN
+       * @enum {string}
+       */
+      territoryScope: 'WORLDWIDE' | 'COUNTRY_LIST' | 'EXCEPT_COUNTRY_LIST' | 'UNKNOWN';
+      /** @example Лицензия на испанский перевод (Penguin, 2019) */
+      title: string;
+      /** @default false */
+      translationAllowed: boolean;
+    };
+    CreateRightsReviewImportDto: {
+      /** @description Agent model self-identification (audit only) */
+      agentModel?: Record<string, never>;
+      /** @description Raw agent output (up to 1M chars) */
+      rawAgentOutput?: Record<string, never>;
+      /** @description Agent JSON report */
+      reportJson: Record<string, never>;
+      /** @description Markdown report (up to 500K chars) */
+      reportMarkdown?: Record<string, never>;
+      /** @description Source file name */
+      sourceFileName?: Record<string, never>;
     };
     CreateTagDto: {
+      /**
+       * @description Whether the page is indexable by search engines
+       * @default true
+       */
+      indexable: boolean;
+      /**
+       * @description Whether the tag is visible in public lists
+       * @default true
+       */
+      isVisible: boolean;
+      /**
+       * @description Stable unique key
+       * @example motivation
+       */
+      key: string;
       /**
        * @description Tag name
        * @example Motivation
@@ -1798,90 +7250,5256 @@ export interface components {
        * @example motivation
        */
       slug: string;
-    };
-    UpdateTagDto: {
-      /** @description Tag name */
-      name?: string;
-      /** @description Tag slug */
-      slug?: string;
-    };
-    AttachTagDto: {
-      /** @description Tag ID */
-      tagId: string;
+      /**
+       * @description Sort order in lists
+       * @default 0
+       */
+      sortOrder: number;
     };
     CreateTagTranslationDto: {
+      /** @description Canonical URL */
+      canonicalUrl?: string;
+      /** @description HTML description for the tag page */
+      description?: Record<string, never>;
+      /**
+       * @description FAQ items
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['TagFaqDto'][];
+      /** @description H1 heading for the tag page */
+      h1?: string;
+      /**
+       * @description Whether this tag should be indexed
+       * @default true
+       */
+      indexable: boolean;
       /** @enum {string} */
-      language: 'en' | 'es' | 'fr' | 'pt';
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Meta description for SEO */
+      metaDescription?: Record<string, never>;
+      /** @description Meta title for SEO */
+      metaTitle?: string;
       /** @description Localized tag name */
       name: string;
+      /** @description Open Graph description */
+      ogDescription?: Record<string, never>;
+      /** @description Open Graph image alt text */
+      ogImageAlt?: string;
+      /** @description Open Graph image URL */
+      ogImageUrl?: Record<string, never>;
+      /** @description Open Graph title */
+      ogTitle?: string;
+      /**
+       * @description Related category slugs
+       * @example [
+       *       "classic-literature",
+       *       "victorian-literature"
+       *     ]
+       */
+      relatedCategorySlugs?: string[];
+      /**
+       * @description Related collection slugs
+       * @example [
+       *       "short-reads",
+       *       "feel-good-books"
+       *     ]
+       */
+      relatedCollectionSlugs?: string[];
+      /**
+       * @description Related genre/category slugs
+       * @example [
+       *       "classic-literature",
+       *       "philosophical-fiction"
+       *     ]
+       */
+      relatedGenreSlugs?: string[];
+      /**
+       * @description Related tag slugs
+       * @example [
+       *       "aestheticism",
+       *       "beauty"
+       *     ]
+       */
+      relatedTagSlugs?: string[];
+      /**
+       * @description Robots directive
+       * @example index, follow
+       */
+      robots?: string;
+      /** @description SEO metadata */
+      seo?: components['schemas']['SeoInputDto'];
+      /** @description Short description for cards/lists */
+      shortDescription?: Record<string, never>;
       /** @description Localized tag slug */
       slug: string;
     };
-    UpdateTagTranslationDto: {
+    CreateUserDto: {
+      /** @example user@example.com */
+      email: string;
+      /** @example John */
+      firstName?: string;
+      /**
+       * @default true
+       * @example true
+       */
+      isActive: boolean;
+      /** @example Doe */
+      lastName?: string;
+      /** @example securePassword123 */
+      password: string;
+      /**
+       * @example [
+       *       "user"
+       *     ]
+       */
+      roles?: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
+    };
+    CreateViewDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      source: components['schemas']['ViewSource'];
+      /** @description ISO date-time, must be <= now() */
+      timestamp?: string;
+    };
+    CreateViewResponseDto: {
+      /** @example true */
+      success: boolean;
+    };
+    DeactivateLawyerDto: {
+      reasonRu: string;
+    };
+    DecideLawyerReviewDto: {
+      approvedCountryCodes?: string[];
+      blockedCountryCodes?: string[];
+      conditions?: components['schemas']['CreateConditionDto'][];
       /** @enum {string} */
-      language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @description Localized tag name */
-      name?: string;
-      /** @description Localized tag slug */
-      slug?: string;
+      decision: 'APPROVED' | 'APPROVED_WITH_CONDITIONS' | 'REJECTED';
+      /** @description Обязателен — источник снимка имени юриста */
+      lawyerId: string;
+      opinionSummaryRu: string;
+      restrictionsRu?: string;
+      /** @description ISO 8601; не в прошлом */
+      validUntil?: string;
     };
-    CreatePageDto: {
-      /** @description Page slug */
+    DecidedByUserDto: {
+      email: string;
+      id: string;
+      name?: string;
+    };
+    DeleteBookResponseDto: {
+      /** @description Книга удалена */
+      success: boolean;
+    };
+    DeleteContributorResponseDto: {
+      id: string;
+    };
+    DeleteMediaResponseDto: {
+      /** @description Объект удалён и из хранилища. `false` — запись удалена, а объект остался сиротой и требует ручной уборки. */
+      storageDeleted: boolean;
+      /** @description Запись помечена удалённой */
+      success: boolean;
+    };
+    DirectUploadResponseDto: {
+      key: string;
+      publicUrl: string;
+    };
+    DismissRecheckTaskDto: {
+      /** @description Why the task does not apply. Mandatory — dismissals are audited. */
+      reasonRu: string;
+    };
+    EditionRightsDto: {
+      createdAt: string;
+      id: string;
+      languageCode: string;
+      notesRu: string | null;
+      requiresGeoBlock: boolean;
+      sourceEditionId: string;
+      status: string;
+      translationOrigin: string;
+      translationSourceLanguage: string | null;
+      updatedAt: string;
+    };
+    ExistingAuthorDto: {
+      /**
+       * @description Author UUID
+       * @example 770e8400-e29b-41d4-a716-446655440002
+       */
+      id: string;
+      /**
+       * @description Author slug in the requested language
+       * @example stephen-king
+       */
       slug: string;
-      /** @description Page title */
+    };
+    ExistingBookDto: {
+      /**
+       * @description Book UUID
+       * @example 660e8400-e29b-41d4-a716-446655440001
+       */
+      id: string;
+      /**
+       * @description Book slug
+       * @example harry-potter
+       */
+      slug: string;
+    };
+    ExistingCategoryDto: {
+      /**
+       * @description Category UUID
+       * @example 550e8400-e29b-41d4-a716-446655440000
+       */
+      id: string;
+      /**
+       * @description Category name
+       * @example Fantasy
+       */
+      name: string;
+      /**
+       * @description Category slug
+       * @example fantasy
+       */
+      slug: string;
+    };
+    ExistingPageDto: {
+      /**
+       * @description Page UUID
+       * @example 550e8400-e29b-41d4-a716-446655440000
+       */
+      id: string;
+      /**
+       * @description Publication status
+       * @example published
+       * @enum {string}
+       */
+      status: 'draft' | 'published';
+      /**
+       * @description Page title
+       * @example About Us
+       */
+      title: string;
+    };
+    ExistingTagDto: {
+      /**
+       * @description Tag UUID
+       * @example 550e8400-e29b-41d4-a716-446655440000
+       */
+      id: string;
+      /**
+       * @description Tag name
+       * @example Aestheticism
+       */
+      name: string;
+      /**
+       * @description Tag slug
+       * @example aestheticism
+       */
+      slug: string;
+    };
+    FaqItemDto: {
+      /** @example This is... */
+      answer: string;
+      /** @example What is this? */
+      question: string;
+    };
+    GeoAccessCheckResultDto: {
+      allowed: boolean;
+      bookVersionId: string | null;
+      /** @example GB */
+      countryCode: string;
+      matchedRuleId: string | null;
+      messageRu: string | null;
+      reasonCode: string | null;
+      /** @enum {string} */
+      scope:
+        | 'ENTIRE_BOOK'
+        | 'LANGUAGE_EDITION'
+        | 'TEXT_READER'
+        | 'DOWNLOADS'
+        | 'AUDIO'
+        | 'SPECIFIC_ASSET';
+    };
+    GeoBlockRuleDto: {
+      accessPolicy: string;
+      bookId: string | null;
+      bookVersionId: string | null;
+      /** @example GB */
+      countryCode: string;
+      createdAt: string;
+      generatedAt: string;
+      generatedFrom: string;
+      id: string;
+      isActive: boolean;
+      legalBasisRu: string | null;
+      reasonRu: string | null;
+      rightsProfileId: string | null;
+      /** @enum {string} */
+      scope:
+        | 'ENTIRE_BOOK'
+        | 'LANGUAGE_EDITION'
+        | 'TEXT_READER'
+        | 'DOWNLOADS'
+        | 'AUDIO'
+        | 'SPECIFIC_ASSET';
+      sourceFinalStatus: string | null;
+      territoryDecisionId: string | null;
+      updatedAt: string;
+      verificationNotesRu: string | null;
+      verifiedAt: string | null;
+      verifiedByUserId: string | null;
+    };
+    GeoBlockRulesResponseDto: {
+      bookVersionId: string;
+      rules: components['schemas']['GeoBlockRuleDto'][];
+      summary: components['schemas']['GeoBlockRulesSummaryDto'];
+    };
+    GeoBlockRulesSummaryDto: {
+      activeRulesCount: number;
+      blockedCountries: string[];
+      configured: boolean;
+      geoBlockRequired: boolean;
+      lastGeneratedAt: string | null;
+      scopes: (
+        | 'ENTIRE_BOOK'
+        | 'LANGUAGE_EDITION'
+        | 'TEXT_READER'
+        | 'DOWNLOADS'
+        | 'AUDIO'
+        | 'SPECIFIC_ASSET'
+      )[];
+      totalRulesCount: number;
+      verifiedAt: string | null;
+      verifiedRulesCount: number;
+    };
+    GeoCountrySourceHealthDto: {
+      /** @example 2026-07-31T12:00:00.000Z */
+      lastResolvedAt: string | null;
+      /**
+       * @description Header that supplied the most recent country
+       * @example cf-ipcountry
+       */
+      lastResolvedHeader: string | null;
+      /** @example 2026-07-31T11:59:00.000Z */
+      lastUnknownAt: string | null;
+      /**
+       * @description Requests whose country was resolved
+       * @example 1240
+       */
+      resolvedCount: number;
+      /** @enum {string} */
+      status: 'NO_DATA' | 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE';
+      /** @example 1243 */
+      totalCount: number;
+      /**
+       * @description Requests that arrived without a resolvable country
+       * @example 3
+       */
+      unknownCount: number;
+      /**
+       * @description unknownCount / totalCount, 0 when no requests yet
+       * @example 0.0024
+       */
+      unknownRatio: number;
+      /**
+       * @description Counters live in process memory and reset on restart; this is when they started
+       * @example 2026-07-31T09:00:00.000Z
+       */
+      windowStartedAt: string;
+    };
+    ImportCategoryDto: {
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      /** @example victorian-literature */
+      key: string;
+      /** @example classic-literature */
+      parentKey?: Record<string, never> | null;
+      /** @default 0 */
+      sortOrder: number;
+      /**
+       * @description Translations keyed by language code
+       * @example {
+       *       "en": {
+       *         "name": "Victorian Literature",
+       *         "slug": "victorian-literature"
+       *       }
+       *     }
+       */
+      translations: Record<string, never>;
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    ImportErrorDto: {
+      key: string;
+      message: string;
+    };
+    ImportResultDto: {
+      errors: components['schemas']['ImportErrorDto'][];
+      imported: number;
+      updated: number;
+    };
+    ImportTagDto: {
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      /** @example aestheticism */
+      key: string;
+      name: string;
+      slug: string;
+      /** @default 0 */
+      sortOrder: number;
+      /**
+       * @description Translations keyed by language code
+       * @example {
+       *       "en": {
+       *         "name": "Aestheticism",
+       *         "slug": "aestheticism"
+       *       }
+       *     }
+       */
+      translations: Record<string, never>;
+    };
+    LawyerConditionDto: {
+      affectedCountryCodes: string[];
+      code: string;
+      createdAt: string;
+      id: string;
+      isBlocking: boolean;
+      rightsLawyerReviewId: string;
+      satisfiedAt: string | null;
+      satisfiedNotesRu: string | null;
+      /** @enum {string} */
+      status: 'PENDING' | 'SATISFIED' | 'WAIVED';
+      textRu: string;
+      waiveReasonRu: string | null;
+      waivedAt: string | null;
+    };
+    LawyerDetailDto: {
+      barId: string | null;
+      createdAt: string;
+      deactivateReasonRu: string | null;
+      deactivatedAt: string | null;
+      decidedReviewsCount: number;
+      email: string | null;
+      fullName: string;
+      hasLawyerRole: boolean;
+      id: string;
+      isActive: boolean;
+      jurisdictionCodes: string[];
+      /** @enum {string} */
+      lawyerType: 'IN_HOUSE' | 'EXTERNAL_COUNSEL' | 'LAW_FIRM' | 'OTHER';
+      notesRu: string | null;
+      openReviewsCount: number;
+      opinionsCount: number;
+      organization: string | null;
+      phone: string | null;
+      specializationRu: string | null;
+      updatedAt: string;
+      userEmail: string | null;
+      userId: string | null;
+    };
+    LawyerDto: {
+      barId: string | null;
+      createdAt: string;
+      deactivateReasonRu: string | null;
+      deactivatedAt: string | null;
+      email: string | null;
+      fullName: string;
+      hasLawyerRole: boolean;
+      id: string;
+      isActive: boolean;
+      jurisdictionCodes: string[];
+      /** @enum {string} */
+      lawyerType: 'IN_HOUSE' | 'EXTERNAL_COUNSEL' | 'LAW_FIRM' | 'OTHER';
+      notesRu: string | null;
+      organization: string | null;
+      phone: string | null;
+      specializationRu: string | null;
+      updatedAt: string;
+      userEmail: string | null;
+      userId: string | null;
+    };
+    LawyerExpiryScanResultDto: {
+      checkedCount: number;
+      expiredCount: number;
+      expiringSoonCount: number;
+      notificationsSent: number;
+      reviewIds: string[];
+      runAt: string;
+    };
+    LawyerGateReasonDto: {
+      code: string;
+      /** @description Free-form by design: each gate reason `code` attaches its own keys, built inline per blocker/warning in `rights-lawyer-review.service.ts`. Nothing validates the composition. */
+      details: {
+        [key: string]: unknown;
+      } | null;
+      lawyerReviewId: string | null;
+      messageRu: string;
+    };
+    LawyerReviewDetailDto: {
+      activeOpinionsCount: number;
+      affectedComponentIds: string[];
+      affectedCountryCodes: string[];
+      affectedLanguages: string[];
+      approvedCountryCodes: string[];
+      assignedAt: string | null;
+      assignedLawyerId: string | null;
+      assignedLawyerName: string | null;
+      blockedCountryCodes: string[];
+      blockingConditionsCount: number;
+      blocksApproval: boolean;
+      blocksPublication: boolean;
+      bookId: string | null;
+      bookSlug: string | null;
+      bookVersionId: string | null;
+      conditions: components['schemas']['LawyerConditionDto'][];
+      contextRu: string | null;
+      createdAt: string;
+      daysUntilDue: number | null;
+      daysUntilExpiry: number | null;
+      decidedAt: string | null;
+      decidedByUserId: string | null;
+      decidedLawyerId: string | null;
+      /** @enum {string|null} */
+      decision: 'APPROVED' | 'APPROVED_WITH_CONDITIONS' | 'REJECTED' | null;
+      dueAt: string | null;
+      /** @enum {string} */
+      effectiveStatus:
+        | 'PENDING'
+        | 'IN_PROGRESS'
+        | 'APPROVED'
+        | 'APPROVED_WITH_CONDITIONS'
+        | 'REJECTED'
+        | 'WITHDRAWN'
+        | 'EXPIRED';
+      events: components['schemas']['LawyerReviewEventDto'][];
+      expiredAt: string | null;
+      id: string;
+      intakeTitle: string | null;
+      isExpiringSoon: boolean;
+      isOverdue: boolean;
+      lawyerNameSnapshot: string | null;
+      opinionSummaryRu: string | null;
+      opinions: components['schemas']['LegalOpinionDto'][];
+      opinionsCount: number;
+      pendingConditionsCount: number;
+      questionRu: string;
+      reopenedAt: string | null;
+      requestedAt: string;
+      requestedByUserId: string | null;
+      restrictionsRu: string | null;
+      reviewNumber: string;
+      rightsClaimId: string | null;
+      rightsIntakeId: string | null;
+      rightsProfileId: string | null;
+      rightsReviewId: string | null;
+      riskFactors: components['schemas']['RiskFactorDto'][];
+      /** @enum {string} */
+      riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      satisfiedConditionsCount: number;
+      startedAt: string | null;
+      /** @enum {string} */
+      status:
+        | 'PENDING'
+        | 'IN_PROGRESS'
+        | 'APPROVED'
+        | 'APPROVED_WITH_CONDITIONS'
+        | 'REJECTED'
+        | 'WITHDRAWN'
+        | 'EXPIRED';
+      titleRu: string;
+      /** @enum {string} */
+      trigger:
+        | 'AGENT_REQUESTED'
+        | 'HIGH_RISK_POLICY'
+        | 'MANUAL_REQUEST'
+        | 'RIGHTS_CLAIM'
+        | 'LEGAL_CHANGE'
+        | 'LICENSE_REQUIRED'
+        | 'OTHER';
+      updatedAt: string;
+      validUntil: string | null;
+      versionLanguage: string | null;
+      withdrawReasonRu: string | null;
+      withdrawnAt: string | null;
+    };
+    LawyerReviewDto: {
+      activeOpinionsCount: number;
+      affectedComponentIds: string[];
+      affectedCountryCodes: string[];
+      affectedLanguages: string[];
+      approvedCountryCodes: string[];
+      assignedAt: string | null;
+      assignedLawyerId: string | null;
+      assignedLawyerName: string | null;
+      blockedCountryCodes: string[];
+      blockingConditionsCount: number;
+      blocksApproval: boolean;
+      blocksPublication: boolean;
+      bookId: string | null;
+      bookSlug: string | null;
+      bookVersionId: string | null;
+      contextRu: string | null;
+      createdAt: string;
+      daysUntilDue: number | null;
+      daysUntilExpiry: number | null;
+      decidedAt: string | null;
+      decidedByUserId: string | null;
+      decidedLawyerId: string | null;
+      /** @enum {string|null} */
+      decision: 'APPROVED' | 'APPROVED_WITH_CONDITIONS' | 'REJECTED' | null;
+      dueAt: string | null;
+      /** @enum {string} */
+      effectiveStatus:
+        | 'PENDING'
+        | 'IN_PROGRESS'
+        | 'APPROVED'
+        | 'APPROVED_WITH_CONDITIONS'
+        | 'REJECTED'
+        | 'WITHDRAWN'
+        | 'EXPIRED';
+      expiredAt: string | null;
+      id: string;
+      intakeTitle: string | null;
+      isExpiringSoon: boolean;
+      isOverdue: boolean;
+      lawyerNameSnapshot: string | null;
+      opinionSummaryRu: string | null;
+      opinionsCount: number;
+      pendingConditionsCount: number;
+      questionRu: string;
+      reopenedAt: string | null;
+      requestedAt: string;
+      requestedByUserId: string | null;
+      restrictionsRu: string | null;
+      reviewNumber: string;
+      rightsClaimId: string | null;
+      rightsIntakeId: string | null;
+      rightsProfileId: string | null;
+      rightsReviewId: string | null;
+      /** @enum {string} */
+      riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      satisfiedConditionsCount: number;
+      startedAt: string | null;
+      /** @enum {string} */
+      status:
+        | 'PENDING'
+        | 'IN_PROGRESS'
+        | 'APPROVED'
+        | 'APPROVED_WITH_CONDITIONS'
+        | 'REJECTED'
+        | 'WITHDRAWN'
+        | 'EXPIRED';
+      titleRu: string;
+      /** @enum {string} */
+      trigger:
+        | 'AGENT_REQUESTED'
+        | 'HIGH_RISK_POLICY'
+        | 'MANUAL_REQUEST'
+        | 'RIGHTS_CLAIM'
+        | 'LEGAL_CHANGE'
+        | 'LICENSE_REQUIRED'
+        | 'OTHER';
+      updatedAt: string;
+      validUntil: string | null;
+      versionLanguage: string | null;
+      withdrawReasonRu: string | null;
+      withdrawnAt: string | null;
+    };
+    LawyerReviewEventDto: {
+      createdAt: string;
+      createdByUserId: string | null;
+      /** @enum {string} */
+      eventType:
+        | 'REQUESTED'
+        | 'ASSIGNED'
+        | 'UNASSIGNED'
+        | 'STARTED'
+        | 'OPINION_ATTACHED'
+        | 'OPINION_ARCHIVED'
+        | 'CONDITION_ADDED'
+        | 'CONDITION_SATISFIED'
+        | 'CONDITION_WAIVED'
+        | 'DECIDED'
+        | 'WITHDRAWN'
+        | 'REOPENED'
+        | 'EXPIRED'
+        | 'DUE_DATE_CHANGED'
+        | 'NOTE_ADDED';
+      /** @enum {string|null} */
+      fromStatus:
+        | 'PENDING'
+        | 'IN_PROGRESS'
+        | 'APPROVED'
+        | 'APPROVED_WITH_CONDITIONS'
+        | 'REJECTED'
+        | 'WITHDRAWN'
+        | 'EXPIRED'
+        | null;
+      id: string;
+      messageRu: string;
+      /** @description Free-form by design: each `RightsLawyerReviewEventType` writes its own keys (`{ trigger, riskLevel, blocksApproval }`, `{ lawyerId, lawyerName }`, `{ conditionId, code }`, `{ reviewNumber, withdrawReasonRu }`, …). `appendEvent` takes `payload: unknown`. */
+      payload: {
+        [key: string]: unknown;
+      } | null;
+      /** @enum {string|null} */
+      toStatus:
+        | 'PENDING'
+        | 'IN_PROGRESS'
+        | 'APPROVED'
+        | 'APPROVED_WITH_CONDITIONS'
+        | 'REJECTED'
+        | 'WITHDRAWN'
+        | 'EXPIRED'
+        | null;
+    };
+    LegalChangeDetailDto: {
+      affectedProfilesCount: number;
+      appliedAt: string | null;
+      appliedByUserId: string | null;
+      appliesToAllCountries: boolean;
+      archivedAt: string | null;
+      /** @enum {string} */
+      changeType:
+        | 'COPYRIGHT_TERM_CHANGE'
+        | 'PUBLIC_DOMAIN_RULE_CHANGE'
+        | 'TRANSLATION_RIGHTS_CHANGE'
+        | 'NEIGHBOURING_RIGHTS_CHANGE'
+        | 'COURT_DECISION'
+        | 'TREATY_RATIFICATION'
+        | 'PLATFORM_POLICY_CHANGE'
+        | 'OTHER';
+      createdAt: string;
+      createdByUserId: string | null;
+      createdTasksCount: number;
+      descriptionRu: string;
+      effectiveFrom: string | null;
+      id: string;
+      jurisdictionCodes: string[];
+      /** @enum {string} */
+      severity: 'INFO' | 'WARNING' | 'BLOCKING';
+      sourceTitle: string | null;
+      sourceUrl: string | null;
+      /** @enum {string} */
+      status: 'DRAFT' | 'APPLIED' | 'ARCHIVED';
+      tasks: components['schemas']['RecheckTaskDto'][];
+      tasksCount: number;
+      titleRu: string;
+      updatedAt: string;
+    };
+    LegalChangeDto: {
+      affectedProfilesCount: number;
+      appliedAt: string | null;
+      appliedByUserId: string | null;
+      appliesToAllCountries: boolean;
+      archivedAt: string | null;
+      /** @enum {string} */
+      changeType:
+        | 'COPYRIGHT_TERM_CHANGE'
+        | 'PUBLIC_DOMAIN_RULE_CHANGE'
+        | 'TRANSLATION_RIGHTS_CHANGE'
+        | 'NEIGHBOURING_RIGHTS_CHANGE'
+        | 'COURT_DECISION'
+        | 'TREATY_RATIFICATION'
+        | 'PLATFORM_POLICY_CHANGE'
+        | 'OTHER';
+      createdAt: string;
+      createdByUserId: string | null;
+      createdTasksCount: number;
+      descriptionRu: string;
+      effectiveFrom: string | null;
+      id: string;
+      jurisdictionCodes: string[];
+      /** @enum {string} */
+      severity: 'INFO' | 'WARNING' | 'BLOCKING';
+      sourceTitle: string | null;
+      sourceUrl: string | null;
+      /** @enum {string} */
+      status: 'DRAFT' | 'APPLIED' | 'ARCHIVED';
+      titleRu: string;
+      updatedAt: string;
+    };
+    LegalOpinionDto: {
+      archiveReasonRu: string | null;
+      archivedAt: string | null;
+      bodyRu: string;
+      createdAt: string;
+      documentSha256: string | null;
+      documentUrl: string | null;
+      fileName: string | null;
+      id: string;
+      issuedAt: string | null;
+      jurisdictionCodes: string[];
+      /** @enum {string} */
+      kind:
+        | 'EXTERNAL_COUNSEL_MEMO'
+        | 'IN_HOUSE_MEMO'
+        | 'EMAIL_CONFIRMATION'
+        | 'COURT_FILING'
+        | 'REGULATOR_RESPONSE'
+        | 'OTHER';
+      lawyerId: string | null;
+      lawyerNameSnapshot: string | null;
+      mimeType: string | null;
+      rightsEvidenceId: string | null;
+      rightsLawyerReviewId: string;
+      titleRu: string;
+    };
+    LicenseCoverageResultDto: {
+      attributionTextsRu: string[];
+      blockers: components['schemas']['LicenseIssueDto'][];
+      checkedAt: string;
+      countries: components['schemas']['CountryCoverageResultDto'][];
+      coveredCountryCodes: string[];
+      licenseIds: string[];
+      requiredCountryCodes: string[];
+      /** @enum {string} */
+      status: 'NOT_REQUIRED' | 'COVERED' | 'PARTIAL' | 'NOT_COVERED';
+      uncoveredCountryCodes: string[];
+      warnings: components['schemas']['LicenseIssueDto'][];
+    };
+    LicenseIssueDto: {
+      /** @example LICENSE_MISSING_FOR_COUNTRY */
+      code: string;
+      countryCode?: string;
+      licenseId?: string;
+      messageRu: string;
+      /** @enum {string} */
+      severity: 'BLOCKER' | 'WARNING';
+    };
+    LiftClaimBlockDto: {
+      /** @description Why the temporary block is being lifted */
+      liftReasonRu: string;
+    };
+    LikeCountDto: {
+      count?: number;
+      dislikes: number;
+      likes: number;
+    };
+    LikeDto: {
+      bookVersionId?: string | null;
+      commentId?: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      isLike: boolean;
+      userId: string;
+    };
+    LikeRequestDto: {
+      /** @description ID of book version to like */
+      bookVersionId?: string | null;
+      /** @description ID of comment to like */
+      commentId?: string | null;
+      /**
+       * @description True for like, false for dislike
+       * @default true
+       */
+      isLike: boolean;
+    };
+    LinkClaimComponentDto: {
+      /**
+       * @description Used when there is no profile
+       * @enum {string}
+       */
+      componentType?:
+        | 'ORIGINAL_TEXT'
+        | 'TRANSLATION'
+        | 'ADAPTATION'
+        | 'ABRIDGMENT'
+        | 'INTRODUCTION'
+        | 'PREFACE'
+        | 'AFTERWORD'
+        | 'ANNOTATIONS'
+        | 'FOOTNOTES'
+        | 'BIOGRAPHY'
+        | 'GLOSSARY'
+        | 'INDEX'
+        | 'EDITORIAL_REVISION'
+        | 'COMPILATION_STRUCTURE'
+        | 'ILLUSTRATION'
+        | 'PHOTOGRAPH'
+        | 'MAP'
+        | 'COVER'
+        | 'TYPOGRAPHIC_LAYOUT'
+        | 'AUDIO_NARRATION'
+        | 'AUDIO_RECORDING'
+        | 'OTHER';
+      notesRu?: string;
+      /** @description Existing rights profile component */
+      rightsComponentId?: string;
+      titleRu?: string;
+    };
+    LinkRightsComponentContributorDto: {
+      /** @description ID of the person to link as contributor */
+      contributorId: string;
+      /** @description Credited name */
+      creditedName?: string;
+      /** @description Notes in Russian */
+      notesRu?: string;
+      /**
+       * @description Role of the contributor for this rights component
+       * @enum {string}
+       */
+      role:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER';
+    };
+    LinkRightsLicenseDto: {
+      bookVersionId?: string;
+      componentTerritoryAssessmentId?: string;
+      /**
+       * @example [
+       *       "ES"
+       *     ]
+       */
+      coversCountryCodes?: string[];
+      /** @enum {string} */
+      linkType:
+        | 'RIGHTS_PROFILE'
+        | 'RIGHTS_COMPONENT'
+        | 'COMPONENT_TERRITORY_ASSESSMENT'
+        | 'TERRITORY_DECISION'
+        | 'SOURCE_EDITION'
+        | 'RIGHTS_EVIDENCE'
+        | 'BOOK_VERSION';
+      notesRu?: string;
+      rightsComponentId?: string;
+      rightsEvidenceId?: string;
+      rightsProfileId?: string;
+      sourceEditionId?: string;
+      territoryDecisionId?: string;
+    };
+    LinkSourceEditionContributorDto: {
+      /** @description ID of the person to link as contributor */
+      contributorId: string;
+      /** @description Credited name as printed in source edition */
+      creditedName?: string;
+      /** @description Notes in Russian */
+      notesRu?: string;
+      /**
+       * @description Role of the contributor in this source edition
+       * @enum {string}
+       */
+      role:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER';
+    };
+    LivenessResponseDto: {
+      /** @enum {string} */
+      status: 'up' | 'down';
+      timestamp: string;
+      uptime: number;
+      /** @description Тег образа, с которым был запущен контейнер; "unknown", если деплой его не передал. */
+      version: string;
+    };
+    LoginDto: {
+      /** @example user@example.com */
+      email: string;
+      /** @example securePassword123 */
+      password: string;
+    };
+    ManifestAgentTaskDto: {
+      importantRules: string[];
+      objective: string;
+      requiredChecks: string[];
+      requiredOutputs: string[];
+    };
+    ManifestExpectedResultSchemaDto: {
+      /** @example json */
+      format: string;
+      notes: string[];
+      requiredTopLevelFields: string[];
+      /** @example https://api.bibliaris.com/api/rights/agent/report-schema/1.0 */
+      schemaUrl: string;
+      schemaVersion: string;
+      submission: components['schemas']['ManifestSubmissionDto'];
+    };
+    ManifestGeneratedByDto: {
+      module: string;
+      product: string;
+    };
+    ManifestIntakeDto: {
+      authorBirthYear: number | null;
+      authorDeathYear: number | null;
+      candidateAuthor: string;
+      candidateTitle: string;
+      id: string;
+      notesRu: string | null;
+      originalLanguage: string | null;
+      originalTitle: string | null;
+      workflowStatus: string;
+    };
+    ManifestPublicationPlanDto: {
+      plannedComponents: string[];
+      plannedContentTypes: string[];
+      targetCountryCodes: string[];
+      targetLanguages: string[];
+    };
+    ManifestReadinessDto: {
+      missing: components['schemas']['RightsIntakeReadinessItemDto'][];
+      warnings: components['schemas']['RightsIntakeReadinessItemDto'][];
+    };
+    ManifestSourceDto: {
+      /** @example false */
+      derivedFromUrl: boolean;
+      externalId: string | null;
+      language: string | null;
+      provider: string;
+      /** @example Wikisource (ru) */
+      providerHint: string | null;
+      textType: string;
+      title: string | null;
+      url: string | null;
+    };
+    ManifestSubmissionDto: {
+      /** @example X-Bibliaris-Agent-Token */
+      authHeader: string;
+      /** @example https://api.bibliaris.com/api/rights/agent/submissions */
+      endpoint: string;
+      /** @example POST */
+      method: string;
+      note: string;
+    };
+    MediaAssetResponseDto: {
+      contentType: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      createdById: string | null;
+      /** Format: date-time */
+      deletedAt: string | null;
+      duration: number | null;
+      hash: string | null;
+      height: number | null;
+      id: string;
+      isDeleted: boolean;
+      key: string;
+      size: number | null;
+      url: string;
+      width: number | null;
+    };
+    MediaCleanupStatusResponseDto: {
+      enabled: boolean;
+      isRunning: boolean;
+      lastDurationMs: number | null;
+      lastError: string | null;
+      lastFinishedAt: string | null;
+      lastHardDeleted: number | null;
+      lastMarkedSoftDeleted: number | null;
+      /** @description How many assets the sweep looked at. Without it "deleted 0" is indistinguishable from a sweep that scanned nothing. */
+      lastScanned: number | null;
+      lastSkippedByUrlReference: number | null;
+      lastStartedAt: string | null;
+      lastStorageErrors: number | null;
+      lastStorageFilesRemoved: number | null;
+      nextRunAt: string | null;
+      /** @description Wall-clock hour (UTC) the sweep is pinned to. */
+      scheduledHourUtc: number;
+    };
+    PageGroupResponse: {
+      pages: components['schemas']['PageResponse'][];
+      /** @example uuid-group */
+      translationGroupId: string;
+    };
+    PageResponse: {
+      /** @example Page content here... */
+      content: string;
+      /**
+       * Format: date-time
+       * @example 2024-01-01T00:00:00.000Z
+       */
+      createdAt: string;
+      /**
+       * @description FAQ structured data as JSON array. Shape declared by `CreatePageDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq: components['schemas']['FaqItemDto'][] | null;
+      /** @example Browse Book Categories */
+      h1: string | null;
+      /** @example uuid-here */
+      id: string;
+      /**
+       * @example en
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Homepage sections configuration (JSON object with block data). Free-form by design: `CreatePageDto.sections` is `Record<string, unknown>` with no per-key validation, and the front reads it as the same type. */
+      sections: {
+        [key: string]: unknown;
+      } | null;
+      seo: components['schemas']['SeoResponse'] | null;
+      /** @example 1 */
+      seoId: number | null;
+      /** @example Explore book categories on Bibliaris. */
+      shortDescription: string | null;
+      /** @example about-us */
+      slug: string;
+      /**
+       * @example draft
+       * @enum {string}
+       */
+      status: 'draft' | 'published';
+      /**
+       * @description Системный ключ страницы: по нему страницу зовут по адресу /pages/by-key/{systemKey}
+       * @example privacy
+       */
+      systemKey: string | null;
+      /** @example About Us */
+      title: string;
+      /** @example uuid-group */
+      translationGroupId: string | null;
+      /** @enum {string} */
+      type: 'generic' | 'category_index' | 'author_index' | 'homepage';
+      /**
+       * Format: date-time
+       * @example 2024-01-01T00:00:00.000Z
+       */
+      updatedAt: string;
+    };
+    PageTranslation: {
+      /** @example uuid-here */
+      id: string;
+      /**
+       * @example fr
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @example a-propos */
+      slug: string;
+      /** @example À propos */
+      title: string;
+    };
+    PageWithTranslationsResponse: {
+      /** @example Page content here... */
+      content: string;
+      /**
+       * Format: date-time
+       * @example 2024-01-01T00:00:00.000Z
+       */
+      createdAt: string;
+      /**
+       * @description FAQ structured data as JSON array. Shape declared by `CreatePageDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq: components['schemas']['FaqItemDto'][] | null;
+      /** @example Browse Book Categories */
+      h1: string | null;
+      /** @example uuid-here */
+      id: string;
+      /**
+       * @example en
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Homepage sections configuration (JSON object with block data). Free-form by design: `CreatePageDto.sections` is `Record<string, unknown>` with no per-key validation, and the front reads it as the same type. */
+      sections: {
+        [key: string]: unknown;
+      } | null;
+      seo: components['schemas']['SeoResponse'] | null;
+      /** @example 1 */
+      seoId: number | null;
+      /** @example Explore book categories on Bibliaris. */
+      shortDescription: string | null;
+      /** @example about-us */
+      slug: string;
+      /**
+       * @example draft
+       * @enum {string}
+       */
+      status: 'draft' | 'published';
+      /**
+       * @description Системный ключ страницы: по нему страницу зовут по адресу /pages/by-key/{systemKey}
+       * @example privacy
+       */
+      systemKey: string | null;
+      /** @example About Us */
+      title: string;
+      /** @example uuid-group */
+      translationGroupId: string | null;
+      /** @description Языковые версии страницы из той же группы перевода; пустой массив, если их нет */
+      translations: components['schemas']['PageTranslation'][];
+      /** @enum {string} */
+      type: 'generic' | 'category_index' | 'author_index' | 'homepage';
+      /**
+       * Format: date-time
+       * @example 2024-01-01T00:00:00.000Z
+       */
+      updatedAt: string;
+    };
+    PagedAudioChaptersDto: {
+      items: components['schemas']['AudioChapterResponseDto'][];
+      /** @example 50 */
+      limit: number;
+      /** @example 1 */
+      page: number;
+      /** @example 42 */
+      total: number;
+      /** @example 1 */
+      totalPages: number;
+    };
+    PagedBookCardsDto: {
+      items: components['schemas']['BookCardDto'][];
+      pagination: components['schemas']['PaginationInfoDto'];
+    };
+    PaginationInfoDto: {
+      /** @description Applied page size */
+      limit: number;
+      /** @description Applied page number, 1-based */
+      page: number;
+      /** @description Total number of rows matching the query */
+      total: number;
+      /** @description Total number of pages at this page size */
+      totalPages: number;
+    };
+    PaginationWithNextDto: {
+      /**
+       * @description Whether a next page exists
+       * @example false
+       */
+      hasNext: boolean;
+      /** @description Applied page size */
+      limit: number;
+      /** @description Applied page number, 1-based */
+      page: number;
+      /** @description Total number of rows matching the query */
+      total: number;
+      /** @description Total number of pages at this page size */
+      totalPages: number;
+    };
+    PersonDetailDto: {
+      birthDate?: string | null;
+      birthYear?: number | null;
+      canonicalName: string;
+      /** Format: date-time */
+      createdAt: string;
+      deathDate?: string | null;
+      deathYear?: number | null;
+      gutenbergAgentId?: string | null;
+      id: string;
+      isni?: string | null;
+      nationalityCountryCode?: string | null;
+      notesRu?: string | null;
+      publicDomainFromYear?: number | null;
+      slug?: string | null;
+      sortName?: string | null;
+      translations: components['schemas']['PersonTranslationResponseDto'][];
+      /** @enum {string} */
+      type: 'NATURAL_PERSON' | 'ORGANIZATION' | 'UNKNOWN';
+      /** Format: date-time */
+      updatedAt: string;
+      viafId?: string | null;
+      wikidataId?: string | null;
+    };
+    PersonListItemDto: {
+      birthDate?: string | null;
+      birthYear?: number | null;
+      canonicalName: string;
+      /** Format: date-time */
+      createdAt: string;
+      deathDate?: string | null;
+      deathYear?: number | null;
+      gutenbergAgentId?: string | null;
+      id: string;
+      isni?: string | null;
+      nationalityCountryCode?: string | null;
+      notesRu?: string | null;
+      publicDomainFromYear?: number | null;
+      slug?: string | null;
+      sortName?: string | null;
+      /** @enum {string} */
+      type: 'NATURAL_PERSON' | 'ORGANIZATION' | 'UNKNOWN';
+      /** Format: date-time */
+      updatedAt: string;
+      viafId?: string | null;
+      wikidataId?: string | null;
+    };
+    PersonSummaryDto: {
+      birthYear: number | null;
+      canonicalName: string;
+      deathYear: number | null;
+      gutenbergAgentId: string | null;
+      id: string;
+      isni: string | null;
+      nationalityCountryCode: string | null;
+      slug: string | null;
+      sortName: string | null;
+      type: string;
+      viafId: string | null;
+      wikidataId: string | null;
+    };
+    PersonTranslationResponseDto: {
+      biography?: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      displayName: string;
+      id: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      personId: string;
+      photoUrl?: string | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+      wikidataUrl?: string | null;
+      wikipediaUrl?: string | null;
+    };
+    PresignRequestDto: {
+      /**
+       * @description MIME type of the file
+       * @example image/jpeg
+       */
+      contentType: string;
+      /**
+       * @description Estimated file size in bytes
+       * @example 1048576
+       */
+      size: number;
+      /**
+       * @example cover
+       * @enum {string}
+       */
+      type: 'cover' | 'audio';
+    };
+    PresignResponseDto: {
+      /** @description Headers to include with upload request */
+      headers?: {
+        [key: string]: string;
+      };
+      key: string;
+      /**
+       * @description HTTP method to use
+       * @example POST
+       * @enum {string}
+       */
+      method: 'POST' | 'PUT';
+      /** @description Token required by direct upload endpoint */
+      token: string;
+      /** @description Time-to-live in seconds */
+      ttlSec: number;
+      /** @description Direct upload URL (for local driver this is API endpoint) */
+      url: string;
+    };
+    ProbeResponseDto: {
+      /** @description Всегда `true`: задача поставлена в очередь */
+      ok: boolean;
+    };
+    PublicAuthorBookDto: {
+      author: string;
+      /** @description Canonical `Book.id` */
+      bookId: string;
+      coverImageUrl: string;
+      /** @description Compatibility alias of `coverImageUrl` */
+      coverUrl: string;
+      /** @description `BookVersion.id` of the matched version */
+      id: string;
+      isFree: boolean;
+      /** @description Average rating (0-5) */
+      rating?: number | null;
+      /** @description `BookVersion.slug`, falling back to `Book.slug` */
+      slug: string;
       title: string;
       /** @enum {string} */
-      type: 'generic' | 'category_index' | 'author_index';
-      /** @description Page content (markdown/HTML/text) */
-      content: string;
+      type: 'text' | 'audio' | 'referral';
+      versions: components['schemas']['PublicAuthorBookVersionDto'][];
+    };
+    PublicAuthorBookVersionDto: {
+      coverImageUrl: string;
+      /** @description Compatibility alias of `coverImageUrl` */
+      coverUrl: string;
       /** @enum {string} */
-      language?: 'en' | 'es' | 'fr' | 'pt';
-      /** @description SEO entity ID */
-      seoId?: Record<string, never> | null;
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+    };
+    PublicAuthorDetailResponseDto: {
+      biography?: string | null;
+      /** @description YYYY-MM-DD */
+      birthDate?: string | null;
+      books: components['schemas']['PublicAuthorBookDto'][];
+      /** @description YYYY-MM-DD */
+      deathDate?: string | null;
+      /** @description Empty array when unset */
+      faq: components['schemas']['AuthorFaqDto'][];
+      /** @description Canonical `Author.id` */
+      id: string;
+      name: string;
+      photoUrl?: string | null;
+      /** @description Empty array when unset */
+      quotes: components['schemas']['AuthorQuoteDto'][];
+      seo?: components['schemas']['SeoResponseDto'] | null;
+      similarAuthors: components['schemas']['PublicSimilarAuthorDto'][];
+      /** @description Slug of the matched translation */
+      slug: string;
+      wikidataUrl?: string | null;
+      wikipediaUrl?: string | null;
+    };
+    PublicAuthorListItemDto: {
+      audioCount: number;
+      birthDate?: string | null;
+      booksCount: number;
+      deathDate?: string | null;
+      id: string;
+      name: string;
+      photoUrl?: string | null;
+      shortBio?: string | null;
+      slug: string;
+      translations: components['schemas']['PublicAuthorTranslationDto'][];
+    };
+    PublicAuthorTranslationDto: {
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      name: string;
+      slug: string;
+    };
+    PublicBookVersionDetailResponseDto: {
+      author: string;
+      authorId?: string | null;
+      bookId: string;
+      categories: components['schemas']['BookCategoryDto'][];
+      coverAlt?: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      publishedAt?: string | null;
+      seo: components['schemas']['SeoResponseDto'] | null;
+      shortDescription?: string | null;
+      slug?: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      tags: components['schemas']['BookTagDto'][];
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    PublicBookVersionListItemDto: {
+      author: string;
+      authorId?: string | null;
+      bookId: string;
+      coverAlt?: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      publishedAt?: string | null;
+      seo: components['schemas']['SeoMetaSummaryDto'] | null;
+      shortDescription?: string | null;
+      slug?: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    PublicCategoryBookDto: {
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      /** @description Average rating (0-5) */
+      rating?: number | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+      versions: components['schemas']['PublicCategoryBookVersionDto'][];
+    };
+    PublicCategoryBookVersionDto: {
+      author: string;
+      authorId?: string | null;
+      bookId: string;
+      coverAlt?: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      publishedAt?: string | null;
+      shortDescription?: string | null;
+      slug?: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      tags: components['schemas']['BookVersionTagLinkDto'][];
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    PublicCategoryBooksResponseDto: {
+      availableLanguages: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
+      category: components['schemas']['PublicCategoryInfoDto'];
+      data: components['schemas']['PublicCategoryBookDto'][];
+      meta: components['schemas']['PaginationInfoDto'];
+      seo?: components['schemas']['SeoResponseDto'] | null;
+    };
+    PublicCategoryInfoDto: {
+      /** @description Description of the resolved translation, lifted for convenience */
+      description?: string | null;
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      /**
+       * @description Path language the page was resolved for
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      name: string;
+      parentId?: string | null;
+      slug: string;
+      sortOrder: number;
+      translation?: components['schemas']['PublicCategoryTranslationDto'] | null;
+      /** @enum {string} */
+      type: 'category' | 'genre' | 'collection';
+    };
+    PublicCategoryTranslationDto: {
+      /** @default true */
+      autoIndexable: boolean;
+      /** @default 0 */
+      bookCount: number;
+      categoryId: string;
+      /** Format: date-time */
+      createdAt: string;
+      description?: string | null;
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      seo?: components['schemas']['SeoResponseDto'] | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    PublicPageDto: {
+      content: string;
+      /** Format: date-time */
+      createdAt: string;
+      /**
+       * @description Json column. Shape declared by `CreatePageDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Json column. Free-form by design: `CreatePageDto.sections` is `Record<string, unknown>` with no per-key validation, and the front reads it as the same type. */
+      sections?: {
+        [key: string]: unknown;
+      } | null;
+      seo?: components['schemas']['SeoResponseDto'] | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      /** @description Immutable key for the pages the site looks up for itself (homepage, hubs) */
+      systemKey?: string | null;
+      title: string;
+      translationGroupId?: string | null;
+      /** @enum {string} */
+      type: 'generic' | 'category_index' | 'author_index' | 'homepage';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    PublicSimilarAuthorDto: {
+      name: string;
+      slug: string;
+    };
+    PublicTagBookVersionDto: {
+      author: string;
+      authorId?: string | null;
+      bookId: string;
+      coverAlt?: string | null;
+      coverImageUrl: string;
+      /** Format: date-time */
+      createdAt: string;
+      description: string;
+      id: string;
+      isFree: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      publishedAt?: string | null;
+      /** @description Average rating (0-5) of the book */
+      rating: number | null;
+      seo: components['schemas']['TagBookVersionSeoDto'] | null;
+      shortDescription?: string | null;
+      slug?: string | null;
+      /** @enum {string} */
+      status: 'draft' | 'published';
+      title: string;
+      /** @enum {string} */
+      type: 'text' | 'audio' | 'referral';
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    PublicTagBooksResponseDto: {
+      availableLanguages: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
+      data: components['schemas']['PublicTagBookVersionDto'][];
+      meta: components['schemas']['PaginationInfoDto'];
+      seo: components['schemas']['SeoResponseDto'] | null;
+      tag: components['schemas']['TagWithTranslationDto'];
+    };
+    PublicUserDto: {
+      /** Format: uri */
+      avatarUrl: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** @example user@example.com */
+      email: string;
+      /** @example John */
+      firstName: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @example true */
+      isActive: boolean;
+      /**
+       * @example en
+       * @enum {string}
+       */
+      languagePreference: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      lastLogin: string | null;
+      /** @example Doe */
+      lastName: string | null;
+      /** @example John Doe */
+      name: string | null;
+      /** @example johnny */
+      nickname: string | null;
+    };
+    PublicUserWithRolesDto: {
+      /** Format: uri */
+      avatarUrl: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** @example user@example.com */
+      email: string;
+      /** @example John */
+      firstName: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @example true */
+      isActive: boolean;
+      /**
+       * @example en
+       * @enum {string}
+       */
+      languagePreference: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** Format: date-time */
+      lastLogin: string | null;
+      /** @example Doe */
+      lastName: string | null;
+      /** @example John Doe */
+      name: string | null;
+      /** @example johnny */
+      nickname: string | null;
+      /**
+       * @example [
+       *       "user"
+       *     ]
+       */
+      roles: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
+    };
+    PublicationGateReasonDto: {
+      /** @description Unique reason code */
+      code: string;
+      details?: {
+        [key: string]: unknown;
+      };
+      messageEn?: string;
+      /** @description Russian message for admin UI */
+      messageRu: string;
+      /** @enum {string} */
+      severity: 'BLOCKER' | 'WARNING';
+    };
+    PublicationGateResultDto: {
+      activeClaimsCount: number;
+      approvedRightsReviewId: string | null;
+      blockingClaimsCount: number;
+      blockingReasons: components['schemas']['PublicationGateReasonDto'][];
+      blockingRecheckTasksCount: number;
+      bookId: string;
+      /** @description Можно ли готовить материал версии, пока публикация ещё закрыта. Публикацию не разрешает. */
+      canPrepare: boolean;
+      canPublish: boolean;
+      checkedAt: string;
+      claimBlockedCountryCodes: string[];
+      claimIds: string[];
+      contentHashBaseline: string | null;
+      contentHashCurrent: string | null;
+      contentHashMatches: boolean | null;
+      criticalClaimsCount: number;
+      hasWorldwideClaimBlock: boolean;
+      lawyerApproved: boolean;
+      lawyerOpinionValidUntil: string | null;
+      lawyerReviewIds: string[];
+      lawyerReviewRequired: boolean;
+      licenseCoverageStatus: string | null;
+      licenseCoveredCountryCodes: string[];
+      licenseIds: string[];
+      licenseRequiredCountryCodes: string[];
+      licenseUncoveredCountryCodes: string[];
+      nextRecheckDueAt: string | null;
+      openLawyerReviewsCount: number;
+      openRecheckTasksCount: number;
+      overdueClaimsCount: number;
+      overdueRecheckTasksCount: number;
+      pendingLawyerConditionsCount: number;
+      /** @description Подмножество blockingReasons, запрещающее даже подготовку материала. */
+      preparationBlockingReasons: components['schemas']['PublicationGateReasonDto'][];
+      recheckTaskIds: string[];
+      rightsProfileId: string | null;
+      rightsRecheckRequired: boolean;
+      rightsStatus: string | null;
+      riskLevel: string | null;
+      versionId: string;
+      warnings: components['schemas']['PublicationGateReasonDto'][];
+      worstClaimSeverity: string | null;
+    };
+    RateBookDto: {
+      /**
+       * @description Rating score, integer from 1 to 5
+       * @example 5
+       */
+      score: number;
+    };
+    RateLimitConfigDto: {
+      /**
+       * @description Current driver name
+       * @example inmemory
+       */
+      driver: string;
+      /**
+       * @description Is rate limiting enabled
+       * @example false
+       */
+      enabled: boolean;
+      /**
+       * @description Endpoints protected by the rate limiter
+       * @example [
+       *       "POST /comments",
+       *       "PATCH /comments/:id",
+       *       "DELETE /comments/:id"
+       *     ]
+       */
+      endpoints: string[];
+      /**
+       * @description Max actions allowed in window
+       * @example 10
+       */
+      maxPoints: number;
+      /**
+       * @description Keying strategy
+       * @example userId|ip
+       */
+      scope: string;
+      /**
+       * @description Window size in milliseconds
+       * @example 60000
+       */
+      windowMs: number;
+    };
+    ReaderBootstrapChapterDto: {
+      /** @description Full chapter text */
+      content: string;
+      id: string;
+      /** @description Chapter number, ascending */
+      number: number;
+      title: string;
+    };
+    ReaderBootstrapProgressDto: {
+      chapterNumber?: number | null;
+      /** @description Offset inside the chapter */
+      position: number;
+    };
+    ReaderBootstrapResponseDto: {
+      author: string;
+      /** @description Canonical `Book.id` */
+      bookId: string;
+      chapters: components['schemas']['ReaderBootstrapChapterDto'][];
+      /** @description Null for anonymous callers and for a reader with no saved progress */
+      lastProgress?: components['schemas']['ReaderBootstrapProgressDto'] | null;
+      slug: string;
+      title: string;
+      /** @description Id of the resolved text version */
+      versionId: string;
+    };
+    ReadinessDetailsDto: {
+      /** @enum {string} */
+      prisma: 'up' | 'down';
+      /** @enum {string} */
+      redis?: 'up' | 'down' | 'skipped';
+    };
+    ReadinessResponseDto: {
+      details: components['schemas']['ReadinessDetailsDto'];
+      /** @enum {string} */
+      status: 'up' | 'down';
+    };
+    ReadingProgressDto: {
+      audioChapterNumber: number | null;
+      bookVersionId: string;
+      chapterNumber: number | null;
+      id: string;
+      position: number;
+      /** Format: date-time */
+      updatedAt: string;
+      userId: string;
+    };
+    RecheckGateReasonDto: {
+      code: string;
+      /** @description Free-form by design: each gate reason `code` attaches its own keys, assembled inline in `RightsRecheckService` (`{ code, messageRu, taskId, details }`). Nothing validates the composition. */
+      details: {
+        [key: string]: unknown;
+      } | null;
+      messageRu: string;
+      taskId: string | null;
+    };
+    RecheckScanRunDto: {
+      durationMs: number | null;
+      errorMessage: string | null;
+      finishedAt: string | null;
+      id: string;
+      profilesScanned: number;
+      remindersSent: number;
+      /** @enum {string} */
+      source: 'SCHEDULER' | 'CONTENT_HASH' | 'VERSION_CREATED' | 'LEGAL_CHANGE' | 'MANUAL';
+      startedAt: string;
+      /** @enum {string} */
+      status: 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+      tasksAutoClosed: number;
+      tasksCreated: number;
+      tasksEscalated: number;
+      triggeredByUserId: string | null;
+      versionsScanned: number;
+    };
+    RecheckScheduleDto: {
+      computedDueAt: string | null;
+      lastRecheckScanAt: string | null;
+      nextReviewAt: string | null;
+      openTasksCount: number;
+      recheckIntervalDays: number | null;
+      recheckPauseReasonRu: string | null;
+      recheckPausedUntil: string | null;
+      /** @enum {string} */
+      recheckPolicy: 'INHERIT_REPORT' | 'FIXED_INTERVAL' | 'MANUAL_ONLY' | 'PAUSED';
+      rightsProfileId: string;
+    };
+    RecheckScheduleWithTasksDto: {
+      computedDueAt: string | null;
+      lastRecheckScanAt: string | null;
+      nextReviewAt: string | null;
+      openTasks: components['schemas']['RecheckTaskDto'][];
+      openTasksCount: number;
+      recheckIntervalDays: number | null;
+      recheckPauseReasonRu: string | null;
+      recheckPausedUntil: string | null;
+      /** @enum {string} */
+      recheckPolicy: 'INHERIT_REPORT' | 'FIXED_INTERVAL' | 'MANUAL_ONLY' | 'PAUSED';
+      rightsProfileId: string;
+    };
+    RecheckTaskDetailDto: {
+      affectedCountryCodes: string[];
+      baselineReviewId: string | null;
+      bookId: string | null;
+      bookVersionId: string | null;
+      completedAt: string | null;
+      completedByUserId: string | null;
+      completedReviewId: string | null;
+      completionNotesRu: string | null;
+      createdAt: string;
+      createdByUserId: string | null;
+      daysUntilDue: number;
+      descriptionRu: string;
+      dismissReasonRu: string | null;
+      dismissedAt: string | null;
+      dismissedByUserId: string | null;
+      dueAt: string;
+      /** @enum {string} */
+      effectiveSeverity: 'INFO' | 'WARNING' | 'BLOCKING';
+      events: components['schemas']['RecheckTaskEventDto'][];
+      id: string;
+      isOpen: boolean;
+      isOverdue: boolean;
+      isSnoozed: boolean;
+      lastReminderAt: string | null;
+      legalChangeEventId: string | null;
+      /** @enum {string} */
+      reason:
+        | 'SCHEDULED_DUE'
+        | 'CONTENT_CHANGED'
+        | 'RIGHTS_DATA_CHANGED'
+        | 'LANGUAGE_ADDED'
+        | 'AUDIO_ADDED'
+        | 'COMPONENT_ADDED'
+        | 'LEGAL_CHANGE'
+        | 'REVIEW_STALE'
+        | 'MANUAL_REQUEST'
+        | 'OTHER';
+      reasonRu: string;
+      /** @enum {string} */
+      reminderStage: 'NONE' | 'LEAD_30' | 'LEAD_7' | 'DUE' | 'OVERDUE' | 'ESCALATED';
+      remindersSentCount: number;
+      /** @enum {string|null} */
+      resolution:
+        | 'NEW_REVIEW_APPROVED'
+        | 'SUPERSEDED_BY_NEW_REVIEW'
+        | 'NO_CHANGE_NEEDED'
+        | 'CONTENT_REVERTED'
+        | 'MANUALLY_CLOSED'
+        | 'DISMISSED_NOT_APPLICABLE'
+        | 'OTHER'
+        | null;
+      resolutionRu: string | null;
+      rightsIntakeId: string | null;
+      rightsProfileId: string | null;
+      /** @enum {string} */
+      severity: 'INFO' | 'WARNING' | 'BLOCKING';
+      snoozeReasonRu: string | null;
+      snoozedUntil: string | null;
+      /** @enum {string} */
+      source: 'SCHEDULER' | 'CONTENT_HASH' | 'VERSION_CREATED' | 'LEGAL_CHANGE' | 'MANUAL';
+      startedAt: string | null;
+      startedByUserId: string | null;
+      /** @enum {string} */
+      status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED';
+      targets: components['schemas']['RecheckTaskTargetsDto'];
+      titleRu: string;
+      triggerCode: string | null;
+      updatedAt: string;
+    };
+    RecheckTaskDto: {
+      affectedCountryCodes: string[];
+      baselineReviewId: string | null;
+      bookId: string | null;
+      bookVersionId: string | null;
+      completedAt: string | null;
+      completedByUserId: string | null;
+      completedReviewId: string | null;
+      completionNotesRu: string | null;
+      createdAt: string;
+      createdByUserId: string | null;
+      daysUntilDue: number;
+      descriptionRu: string;
+      dismissReasonRu: string | null;
+      dismissedAt: string | null;
+      dismissedByUserId: string | null;
+      dueAt: string;
+      /** @enum {string} */
+      effectiveSeverity: 'INFO' | 'WARNING' | 'BLOCKING';
+      id: string;
+      isOpen: boolean;
+      isOverdue: boolean;
+      isSnoozed: boolean;
+      lastReminderAt: string | null;
+      legalChangeEventId: string | null;
+      /** @enum {string} */
+      reason:
+        | 'SCHEDULED_DUE'
+        | 'CONTENT_CHANGED'
+        | 'RIGHTS_DATA_CHANGED'
+        | 'LANGUAGE_ADDED'
+        | 'AUDIO_ADDED'
+        | 'COMPONENT_ADDED'
+        | 'LEGAL_CHANGE'
+        | 'REVIEW_STALE'
+        | 'MANUAL_REQUEST'
+        | 'OTHER';
+      reasonRu: string;
+      /** @enum {string} */
+      reminderStage: 'NONE' | 'LEAD_30' | 'LEAD_7' | 'DUE' | 'OVERDUE' | 'ESCALATED';
+      remindersSentCount: number;
+      /** @enum {string|null} */
+      resolution:
+        | 'NEW_REVIEW_APPROVED'
+        | 'SUPERSEDED_BY_NEW_REVIEW'
+        | 'NO_CHANGE_NEEDED'
+        | 'CONTENT_REVERTED'
+        | 'MANUALLY_CLOSED'
+        | 'DISMISSED_NOT_APPLICABLE'
+        | 'OTHER'
+        | null;
+      resolutionRu: string | null;
+      rightsIntakeId: string | null;
+      rightsProfileId: string | null;
+      /** @enum {string} */
+      severity: 'INFO' | 'WARNING' | 'BLOCKING';
+      snoozeReasonRu: string | null;
+      snoozedUntil: string | null;
+      /** @enum {string} */
+      source: 'SCHEDULER' | 'CONTENT_HASH' | 'VERSION_CREATED' | 'LEGAL_CHANGE' | 'MANUAL';
+      startedAt: string | null;
+      startedByUserId: string | null;
+      /** @enum {string} */
+      status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED';
+      titleRu: string;
+      triggerCode: string | null;
+      updatedAt: string;
+    };
+    RecheckTaskEventDto: {
+      createdAt: string;
+      createdByUserId: string | null;
+      /** @enum {string} */
+      eventType:
+        | 'TASK_CREATED'
+        | 'REMINDER_SENT'
+        | 'SEVERITY_ESCALATED'
+        | 'SNOOZED'
+        | 'STARTED'
+        | 'COMPLETED'
+        | 'DISMISSED'
+        | 'REOPENED'
+        | 'DUE_DATE_CHANGED'
+        | 'LINKED_TO_REVIEW'
+        | 'NOTE_ADDED';
+      /** @enum {string|null} */
+      fromStatus: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED' | null;
+      id: string;
+      messageRu: string;
+      /** @description Free-form by design: each `RightsRecheckEventType` writes its own keys (`{ stage, previousStage }`, `{ from, to }`, `{ snoozedUntil }`, `{ resolution }`, …). `appendEvent` takes `payload: unknown`. */
+      payload: {
+        [key: string]: unknown;
+      } | null;
+      /** @enum {string|null} */
+      toStatus: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED' | null;
+    };
+    RecheckTaskTargetsDto: {
+      intakeStatus?: string | null;
+      intakeTitle?: string | null;
+      profileStatus?: string | null;
+      versionLanguage?: string | null;
+      versionTitle?: string | null;
+    };
+    RecomputeTaxonomyIndexabilityResponseDto: {
+      categoryTranslations: number;
+      changed: number;
+      /** @description `autoIndexable` true → false. */
+      closed: number;
+      /** @description `autoIndexable` false → true. */
+      opened: number;
+      tagTranslations: number;
+    };
+    RecordClaimResponseDto: {
+      /** @enum {string} */
+      responseChannel?:
+        | 'EMAIL'
+        | 'WEB_FORM'
+        | 'POSTAL'
+        | 'PHONE'
+        | 'LEGAL_COUNSEL'
+        | 'PLATFORM_NOTICE'
+        | 'OTHER';
+      /** @description ISO date the answer was sent; defaults to now */
+      responseSentAt?: string;
+      /** @description Text of the answer sent to the claimant */
+      responseTextRu: string;
+    };
+    RecordCounterNoticeDto: {
+      counterNoticeClaimantName?: string;
+      /** @description ISO date the counter notice arrived; defaults to now */
+      counterNoticeReceivedAt?: string;
+      /** @description Text of the counter notice */
+      counterNoticeTextRu: string;
+    };
+    RefreshDto: {
+      /** @description JWT refresh token issued by login or a previous refresh */
+      refreshToken: string;
+    };
+    RegisterDto: {
+      /** @example user@example.com */
+      email: string;
+      /** @enum {string} */
+      languagePreference?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @example John Doe */
+      name?: string;
+      /** @example securePassword123 */
+      password: string;
+    };
+    RejectRightsReviewDto: {
+      /** @description Rejection reason in Russian (min 10 characters) */
+      reasonRu: string;
+    };
+    RelatedBooksResponseDto: {
+      sameAuthor: components['schemas']['BookCardDto'][];
+      similar: components['schemas']['BookCardDto'][];
+    };
+    RelatedTermDto: {
+      autoIndexable: boolean;
+      indexable: boolean;
+      isVisible: boolean;
+      langBookCount: number;
+      name: string;
+      slug: string;
+    };
+    RelatedTermsDto: {
+      categories: components['schemas']['RelatedTermDto'][];
+      collections: components['schemas']['RelatedTermDto'][];
+      genres: components['schemas']['RelatedTermDto'][];
+      tags: components['schemas']['RelatedTermDto'][];
+    };
+    RemoveVersionContributorResponseDto: {
+      /** @description Связь с контрибьютором снята */
+      success: boolean;
+      /** @description Предупреждение: снят основной AUTHOR и авторов у версии не осталось. Приходит только в этой ветке. */
+      warning?: string;
+    };
+    ReopenRightsClaimDto: {
+      reasonRu: string;
+    };
+    ReorderAudioChaptersDto: {
+      /** @description Ordered list of audio chapter ids. Number is reassigned by position (1-based). */
+      audioChapterIds: string[];
+    };
+    ReorderBookVersionContributorsDto: {
+      /** @description Array of BookVersionContributor IDs in desired order */
+      contributorIds: string[];
+    };
+    ReprobeResponseDto: {
+      /** @description Number of audio MediaAssets enqueued for ffprobe */
+      enqueued: number;
+    };
+    RequestLawyerReviewDto: {
+      affectedComponentIds?: string[];
+      /** @description ISO 3166-1 alpha-2 */
+      affectedCountryCodes?: string[];
+      affectedLanguages?: string[];
+      assignedLawyerId?: string;
+      /** @description По умолчанию — из политики высокого риска */
+      blocksApproval?: boolean;
+      bookId?: string;
+      bookVersionId?: string;
+      contextRu?: string;
+      /** @description ISO 8601; не в прошлом */
+      dueAt?: string;
+      questionRu: string;
+      /** @description Навигационная ссылка на претензию фазы 16 */
+      rightsClaimId?: string;
+      rightsIntakeId?: string;
+      /** @description Хотя бы одно из rightsProfileId / rightsIntakeId */
+      rightsProfileId?: string;
+      /** @description Проверка агента, из-за которой возникла эскалация */
+      rightsReviewId?: string;
+      /**
+       * @description Если не задан — вычисляется
+       * @enum {string}
+       */
+      riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      titleRu: string;
+      /** @enum {string} */
+      trigger?:
+        | 'AGENT_REQUESTED'
+        | 'HIGH_RISK_POLICY'
+        | 'MANUAL_REQUEST'
+        | 'RIGHTS_CLAIM'
+        | 'LEGAL_CHANGE'
+        | 'LICENSE_REQUIRED'
+        | 'OTHER';
+    };
+    RequireLawyerReviewDto: {
+      assignedLawyerId?: string;
+      blocksApproval?: boolean;
+      /** @description ISO 8601; не в прошлом */
+      dueAt?: string;
+      /** @description Если не задан — генерируется из факторов риска */
+      questionRu?: string;
+    };
+    ResolveRightsClaimDto: {
+      /**
+       * @description Overrides the status derived from the resolution
+       * @enum {string}
+       */
+      finalStatus?: 'RESOLVED_VALID' | 'RESOLVED_INVALID';
+      /**
+       * @description Lift every active access block of the claim
+       * @default false
+       */
+      liftActiveBlocks: boolean;
+      /** @enum {string} */
+      resolution:
+        | 'VALID_CONTENT_REMOVED'
+        | 'VALID_LICENSE_OBTAINED'
+        | 'VALID_GEO_RESTRICTED'
+        | 'VALID_ATTRIBUTION_ADDED'
+        | 'INVALID_REJECTED'
+        | 'WITHDRAWN_BY_CLAIMANT'
+        | 'COUNTER_NOTICE_UPHELD'
+        | 'NO_ACTION_NEEDED'
+        | 'OTHER';
+      resolutionNotesRu: string;
+    };
+    ReviewChainDiffDto: {
+      changedCountryCount: number;
+      confidenceChanged: boolean;
+      overallStatusChanged: boolean;
+      publicationGateChanged: boolean;
+    };
+    ReviewChainItemDto: {
+      approvedAt: string | null;
+      approvedByUserId: string | null;
+      approvedByUserName: string | null;
+      chainRootReviewId: string | null;
+      confidence: string;
+      createdAt: string;
+      diffFromPrevious: components['schemas']['ReviewChainDiffDto'] | null;
+      id: string;
+      isCurrent: boolean;
+      nextReviewAt: string | null;
+      overallStatus: string;
+      previousReviewId: string | null;
+      publicationGate: string;
+      revisionNumber: number;
+      rightsProfileId: string;
+      rightsReviewImportId: string;
+      status: string;
+    };
+    RevokeAgentTokenDto: {
+      /** @description Why the token is being revoked */
+      reasonRu: string;
+    };
+    RevokeRightsLicenseDto: {
+      /** @example Правообладатель расторг договор. */
+      reasonRu: string;
+    };
+    RightsActionDto: {
+      actionType: string;
+      /** @description Коды стран, которых касается действие (Json в базе) */
+      affectedCountryCodes: string[];
+      assignedToUserId: string | null;
+      completedAt: string | null;
+      completedByUserId: string | null;
+      completionNotesRu: string | null;
+      createdAt: string;
+      descriptionRu: string;
+      dueAt: string | null;
+      id: string;
+      isBlocking: boolean;
+      isResolved: boolean;
+      rightsProfileId: string;
+      status: string;
+      updatedAt: string;
+    };
+    RightsAgentManifestDto: {
+      agentTask: components['schemas']['ManifestAgentTaskDto'];
+      expectedResultSchema: components['schemas']['ManifestExpectedResultSchemaDto'];
+      generatedAt: string;
+      generatedBy: components['schemas']['ManifestGeneratedByDto'];
+      intake: components['schemas']['ManifestIntakeDto'];
+      /** @example BIBLIARIS_RIGHTS_CLEARANCE_INPUT */
+      manifestType: string;
+      manifestVersion: string;
+      publicationPlan: components['schemas']['ManifestPublicationPlanDto'];
+      readiness: components['schemas']['ManifestReadinessDto'];
+      source: components['schemas']['ManifestSourceDto'];
+    };
+    RightsClaimAccessBlockDto: {
+      appliedAt: string;
+      appliedByUserId?: string | null;
+      bookId?: string | null;
+      bookVersionId?: string | null;
+      /** @description null = worldwide */
+      countryCode?: string | null;
+      createdAt: string;
+      /**
+       * @description Status computed at request time (expiry applied)
+       * @enum {string}
+       */
+      effectiveStatus: 'ACTIVE' | 'LIFTED' | 'EXPIRED';
+      expiresAt?: string | null;
+      id: string;
+      liftReasonRu?: string | null;
+      liftedAt?: string | null;
+      liftedByUserId?: string | null;
+      reasonRu: string;
+      rightsClaimId: string;
+      /** @enum {string} */
+      scope:
+        | 'ENTIRE_BOOK'
+        | 'LANGUAGE_EDITION'
+        | 'TEXT_READER'
+        | 'DOWNLOADS'
+        | 'AUDIO'
+        | 'SPECIFIC_ASSET';
+      /** @enum {string} */
+      status: 'ACTIVE' | 'LIFTED' | 'EXPIRED';
+    };
+    RightsClaimAttachmentDto: {
+      /** @enum {string} */
+      attachmentType:
+        | 'CLAIM_NOTICE'
+        | 'EVIDENCE'
+        | 'POWER_OF_ATTORNEY'
+        | 'LICENSE_DOCUMENT'
+        | 'CORRESPONDENCE'
+        | 'COUNTER_NOTICE'
+        | 'RESPONSE_LETTER'
+        | 'LEGAL_OPINION'
+        | 'SCREENSHOT'
+        | 'OTHER';
+      contentType?: string | null;
+      createdAt: string;
+      fileName?: string | null;
+      id: string;
+      mediaAssetId?: string | null;
+      notesRu?: string | null;
+      rightsClaimId: string;
+      sha256?: string | null;
+      sizeBytes?: number | null;
+      storageKey?: string | null;
+      title: string;
+      uploadedByUserId?: string | null;
+      url?: string | null;
+    };
+    RightsClaimComponentDto: {
+      componentType?: string | null;
+      createdAt: string;
+      id: string;
+      notesRu?: string | null;
+      rightsClaimId: string;
+      rightsComponentId?: string | null;
+      titleRu?: string | null;
+    };
+    RightsClaimDetailDto: {
+      accessBlocks: components['schemas']['RightsClaimAccessBlockDto'][];
+      activeBlocksCount: number;
+      affectedCountryCodes: string[];
+      affectedLanguages: string[];
+      assignedToUserId?: string | null;
+      attachments: components['schemas']['RightsClaimAttachmentDto'][];
+      blockedCountryCodes: string[];
+      blocksPublication: boolean;
+      blocksPublicationOverrideReasonRu?: string | null;
+      bookId?: string | null;
+      bookVersionId?: string | null;
+      /** @enum {string} */
+      channel:
+        | 'EMAIL'
+        | 'WEB_FORM'
+        | 'POSTAL'
+        | 'PHONE'
+        | 'LEGAL_COUNSEL'
+        | 'PLATFORM_NOTICE'
+        | 'OTHER';
+      /** @example CLM-2026-000042 */
+      claimNumber: string;
+      /** @enum {string} */
+      claimType:
+        | 'DMCA_TAKEDOWN'
+        | 'COPYRIGHT_INFRINGEMENT'
+        | 'LICENSE_VIOLATION'
+        | 'ATTRIBUTION_MISSING'
+        | 'TERRITORY_VIOLATION'
+        | 'TRADEMARK'
+        | 'PRIVACY_PERSONAL_DATA'
+        | 'DEFAMATION'
+        | 'COUNTER_NOTICE'
+        | 'OTHER';
+      claimantAddress?: string | null;
+      claimantEmail?: string | null;
+      claimantIsAuthorized: boolean;
+      claimantName: string;
+      claimantOrganization?: string | null;
+      claimantPersonId?: string | null;
+      claimantPhone?: string | null;
+      /** @enum {string} */
+      claimantType:
+        | 'RIGHTS_HOLDER'
+        | 'AUTHOR'
+        | 'PUBLISHER'
+        | 'AGENT'
+        | 'LAW_FIRM'
+        | 'COLLECTING_SOCIETY'
+        | 'PLATFORM'
+        | 'INDIVIDUAL'
+        | 'UNKNOWN';
+      claimedRightsDescriptionRu?: string | null;
+      claimedWorkAuthor?: string | null;
+      claimedWorkTitle?: string | null;
+      closedAt?: string | null;
+      components: components['schemas']['RightsClaimComponentDto'][];
+      counterNoticeClaimantName?: string | null;
+      counterNoticeReceivedAt?: string | null;
+      counterNoticeTextRu?: string | null;
+      createdAt: string;
+      createdByUserId?: string | null;
+      /** @description May be negative for overdue claims */
+      daysUntilDeadline?: number | null;
+      deadlineAt?: string | null;
+      descriptionRu: string;
+      events: components['schemas']['RightsClaimEventDto'][];
+      goodFaithStatement: boolean;
+      hasWorldwideBlock: boolean;
+      id: string;
+      infringingUrls: string[];
+      internalNotesRu?: string | null;
+      /** @description The claim status belongs to OPEN_CLAIM_STATUSES */
+      isOpen: boolean;
+      /** @description Open claim whose deadline has already passed */
+      isOverdue: boolean;
+      mediaAssetId?: string | null;
+      originalNoticeText?: string | null;
+      originalNoticeUrl?: string | null;
+      parentClaimId?: string | null;
+      receivedAt: string;
+      requiresLawyerReview: boolean;
+      /** @enum {string|null} */
+      resolution?:
+        | 'VALID_CONTENT_REMOVED'
+        | 'VALID_LICENSE_OBTAINED'
+        | 'VALID_GEO_RESTRICTED'
+        | 'VALID_ATTRIBUTION_ADDED'
+        | 'INVALID_REJECTED'
+        | 'WITHDRAWN_BY_CLAIMANT'
+        | 'COUNTER_NOTICE_UPHELD'
+        | 'NO_ACTION_NEEDED'
+        | 'OTHER'
+        | null;
+      resolutionNotesRu?: string | null;
+      resolvedAt?: string | null;
+      resolvedByUserId?: string | null;
+      responseByUserId?: string | null;
+      /** @enum {string|null} */
+      responseChannel?:
+        | 'EMAIL'
+        | 'WEB_FORM'
+        | 'POSTAL'
+        | 'PHONE'
+        | 'LEGAL_COUNSEL'
+        | 'PLATFORM_NOTICE'
+        | 'OTHER'
+        | null;
+      responseSentAt?: string | null;
+      responseTextRu?: string | null;
+      rightsIntakeId?: string | null;
+      rightsProfileId?: string | null;
+      /** @enum {string} */
+      severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      /** @enum {string} */
+      status:
+        | 'RECEIVED'
+        | 'UNDER_REVIEW'
+        | 'ACTION_REQUIRED'
+        | 'AWAITING_CLAIMANT'
+        | 'CONTENT_REMOVED'
+        | 'CONTENT_RESTRICTED'
+        | 'COUNTER_NOTICE_FILED'
+        | 'ESCALATED_TO_LAWYER'
+        | 'RESOLVED_VALID'
+        | 'RESOLVED_INVALID'
+        | 'WITHDRAWN'
+        | 'CLOSED';
+      swornStatement: boolean;
+      updatedAt: string;
+    };
+    RightsClaimEventDto: {
+      createdAt: string;
+      createdByUserId?: string | null;
+      /** @enum {string|null} */
+      currentStatus?:
+        | 'RECEIVED'
+        | 'UNDER_REVIEW'
+        | 'ACTION_REQUIRED'
+        | 'AWAITING_CLAIMANT'
+        | 'CONTENT_REMOVED'
+        | 'CONTENT_RESTRICTED'
+        | 'COUNTER_NOTICE_FILED'
+        | 'ESCALATED_TO_LAWYER'
+        | 'RESOLVED_VALID'
+        | 'RESOLVED_INVALID'
+        | 'WITHDRAWN'
+        | 'CLOSED'
+        | null;
+      /** @enum {string} */
+      eventType:
+        | 'CREATED'
+        | 'UPDATED'
+        | 'STATUS_CHANGED'
+        | 'ASSIGNED'
+        | 'BLOCK_APPLIED'
+        | 'BLOCK_LIFTED'
+        | 'BLOCK_EXPIRED'
+        | 'RESPONSE_RECORDED'
+        | 'COUNTER_NOTICE_RECORDED'
+        | 'RESOLVED'
+        | 'REOPENED'
+        | 'ESCALATED'
+        | 'DEADLINE_CHANGED'
+        | 'COMPONENT_LINKED'
+        | 'COMPONENT_UNLINKED'
+        | 'ATTACHMENT_ADDED'
+        | 'ATTACHMENT_REMOVED'
+        | 'VERSION_UNPUBLISHED';
+      id: string;
+      notesRu?: string | null;
+      /** @enum {string|null} */
+      previousStatus?:
+        | 'RECEIVED'
+        | 'UNDER_REVIEW'
+        | 'ACTION_REQUIRED'
+        | 'AWAITING_CLAIMANT'
+        | 'CONTENT_REMOVED'
+        | 'CONTENT_RESTRICTED'
+        | 'COUNTER_NOTICE_FILED'
+        | 'ESCALATED_TO_LAWYER'
+        | 'RESOLVED_VALID'
+        | 'RESOLVED_INVALID'
+        | 'WITHDRAWN'
+        | 'CLOSED'
+        | null;
+    };
+    RightsClaimSummaryDto: {
+      activeBlocksCount: number;
+      affectedCountryCodes: string[];
+      affectedLanguages: string[];
+      assignedToUserId?: string | null;
+      blockedCountryCodes: string[];
+      blocksPublication: boolean;
+      bookId?: string | null;
+      bookVersionId?: string | null;
+      /** @enum {string} */
+      channel:
+        | 'EMAIL'
+        | 'WEB_FORM'
+        | 'POSTAL'
+        | 'PHONE'
+        | 'LEGAL_COUNSEL'
+        | 'PLATFORM_NOTICE'
+        | 'OTHER';
+      /** @example CLM-2026-000042 */
+      claimNumber: string;
+      /** @enum {string} */
+      claimType:
+        | 'DMCA_TAKEDOWN'
+        | 'COPYRIGHT_INFRINGEMENT'
+        | 'LICENSE_VIOLATION'
+        | 'ATTRIBUTION_MISSING'
+        | 'TERRITORY_VIOLATION'
+        | 'TRADEMARK'
+        | 'PRIVACY_PERSONAL_DATA'
+        | 'DEFAMATION'
+        | 'COUNTER_NOTICE'
+        | 'OTHER';
+      claimantEmail?: string | null;
+      claimantIsAuthorized: boolean;
+      claimantName: string;
+      claimantOrganization?: string | null;
+      /** @enum {string} */
+      claimantType:
+        | 'RIGHTS_HOLDER'
+        | 'AUTHOR'
+        | 'PUBLISHER'
+        | 'AGENT'
+        | 'LAW_FIRM'
+        | 'COLLECTING_SOCIETY'
+        | 'PLATFORM'
+        | 'INDIVIDUAL'
+        | 'UNKNOWN';
+      claimedWorkAuthor?: string | null;
+      claimedWorkTitle?: string | null;
+      closedAt?: string | null;
+      createdAt: string;
+      /** @description May be negative for overdue claims */
+      daysUntilDeadline?: number | null;
+      deadlineAt?: string | null;
+      descriptionRu: string;
+      hasWorldwideBlock: boolean;
+      id: string;
+      /** @description The claim status belongs to OPEN_CLAIM_STATUSES */
+      isOpen: boolean;
+      /** @description Open claim whose deadline has already passed */
+      isOverdue: boolean;
+      receivedAt: string;
+      requiresLawyerReview: boolean;
+      /** @enum {string|null} */
+      resolution?:
+        | 'VALID_CONTENT_REMOVED'
+        | 'VALID_LICENSE_OBTAINED'
+        | 'VALID_GEO_RESTRICTED'
+        | 'VALID_ATTRIBUTION_ADDED'
+        | 'INVALID_REJECTED'
+        | 'WITHDRAWN_BY_CLAIMANT'
+        | 'COUNTER_NOTICE_UPHELD'
+        | 'NO_ACTION_NEEDED'
+        | 'OTHER'
+        | null;
+      resolvedAt?: string | null;
+      rightsIntakeId?: string | null;
+      rightsProfileId?: string | null;
+      /** @enum {string} */
+      severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      /** @enum {string} */
+      status:
+        | 'RECEIVED'
+        | 'UNDER_REVIEW'
+        | 'ACTION_REQUIRED'
+        | 'AWAITING_CLAIMANT'
+        | 'CONTENT_REMOVED'
+        | 'CONTENT_RESTRICTED'
+        | 'COUNTER_NOTICE_FILED'
+        | 'ESCALATED_TO_LAWYER'
+        | 'RESOLVED_VALID'
+        | 'RESOLVED_INVALID'
+        | 'WITHDRAWN'
+        | 'CLOSED';
+      updatedAt: string;
+    };
+    RightsComponentDto: {
+      componentType: string;
+      confidence: string;
+      contributors: components['schemas']['RightsProfileContributorDto'][];
+      createdAt: string;
+      id: string;
+      languageCode: string | null;
+      licenses: components['schemas']['RightsLicenseSummaryDto'][];
+      notesRu: string | null;
+      requiredAction: string;
+      rightsProfileId: string;
+      status: string;
+      territoryAssessments: components['schemas']['ComponentTerritoryAssessmentDto'][];
+      titleRu: string;
+      updatedAt: string;
+    };
+    RightsContentHashCheckDto: {
+      algorithmVersion: string;
+      baselineHash: string | null;
+      checkedAt: string;
+      currentHash: string;
+      isStale: boolean;
+      matchesBaseline: boolean;
+      reasonCode: string | null;
+      reasonRu: string | null;
+      recheckRequired: boolean;
+      versionId: string;
+    };
+    RightsEvidenceDto: {
+      accessedAt: string | null;
+      archivedAt: string | null;
+      authority: string;
+      contentType: string | null;
+      createdAt: string;
+      evidenceType: string;
+      fileName: string | null;
+      fileSha256: string | null;
+      id: string;
+      /** @description Архивная копия документа загружена */
+      isArchivedCopy: boolean;
+      isCurrent: boolean;
+      jurisdictionCode: string | null;
+      relevantExcerpt: string | null;
+      rightsProfileId: string;
+      sizeBytes: number | null;
+      sourceLevel: string;
+      summaryRu: string;
+      supersededById: string | null;
+      title: string;
+      updatedAt: string;
+      url: string | null;
+    };
+    RightsFileAllowedContentTypesDto: {
+      /**
+       * @example [
+       *       "application/pdf",
+       *       "image/png",
+       *       "image/jpeg"
+       *     ]
+       */
+      evidence: string[];
+      /**
+       * @example [
+       *       "application/pdf"
+       *     ]
+       */
+      reportPdf: string[];
+      /**
+       * @example [
+       *       "application/pdf",
+       *       "application/epub+zip",
+       *       "text/plain"
+       *     ]
+       */
+      sourceFile: string[];
+    };
+    RightsFileDescriptorDto: {
+      contentType: string | null;
+      fileName: string | null;
+      sha256: string;
+      sizeBytes: number | null;
+      storageKey: string;
+      uploadedAt: string | null;
+    };
+    RightsFileLimitsDto: {
+      allowedContentTypes: components['schemas']['RightsFileAllowedContentTypesDto'];
+      /**
+       * @description Максимальный размер загружаемого файла в мегабайтах
+       * @example 25
+       */
+      maxSizeMb: number;
+    };
+    RightsIntakeListItemDto: {
+      approvedReviewId: string | null;
+      archivedAt: string | null;
+      authorBirthYear: number | null;
+      authorDeathYear: number | null;
+      candidateAuthor: string;
+      candidateTitle: string;
+      createdAt: string;
+      createdBookId: string | null;
+      createdByUserId: string | null;
+      currentReviewImport?: components['schemas']['RightsIntakeReviewImportSummaryDto'] | null;
+      currentRightsProfile?: components['schemas']['RightsIntakeRightsProfileSummaryDto'] | null;
+      id: string;
+      manifestGeneratedAt: string | null;
+      manifestSha256: string | null;
+      manifestStorageKey: string | null;
+      manifestVersion: string | null;
+      notesRu: string | null;
+      originalLanguage: string | null;
+      originalTitle: string | null;
+      plannedComponents: string[] | null;
+      plannedContentTypes: string[];
+      sourceExternalId: string | null;
+      sourceLanguage: string | null;
+      /** @enum {string} */
+      sourceProvider: 'PROJECT_GUTENBERG' | 'OTHER' | 'UNKNOWN';
+      /** @enum {string} */
+      sourceTextType:
+        | 'ORIGINAL_TEXT'
+        | 'TRANSLATION'
+        | 'ADAPTATION'
+        | 'ABRIDGMENT'
+        | 'COMPILATION'
+        | 'UNKNOWN';
+      sourceTitle: string | null;
+      sourceUrl: string | null;
+      targetCountryCodes: string[];
+      targetLanguages: string[];
+      updatedAt: string;
+      /** @enum {string} */
+      workflowStatus:
+        | 'DRAFT'
+        | 'READY_FOR_AGENT'
+        | 'REVIEW_IMPORTED'
+        | 'HUMAN_REVIEW_REQUIRED'
+        | 'APPROVED'
+        | 'REJECTED'
+        | 'BOOK_CREATED'
+        | 'ARCHIVED'
+        | 'LAWYER_REVIEW_REQUIRED';
+    };
+    RightsIntakeReadinessDto: {
+      intakeId: string;
+      isReady: boolean;
+      missing: components['schemas']['RightsIntakeReadinessItemDto'][];
+      warnings: components['schemas']['RightsIntakeReadinessItemDto'][];
+    };
+    RightsIntakeReadinessItemDto: {
+      /** @example TARGET_COUNTRIES_EMPTY */
+      code: string;
+      /** @example targetCountryCodes */
+      field: string;
+      messageRu: string;
+    };
+    RightsIntakeResponseDto: {
+      approvedReviewId: string | null;
+      archivedAt: string | null;
+      authorBirthYear: number | null;
+      authorDeathYear: number | null;
+      candidateAuthor: string;
+      candidateTitle: string;
+      createdAt: string;
+      createdBookId: string | null;
+      createdByUserId: string | null;
+      id: string;
+      manifestGeneratedAt: string | null;
+      manifestSha256: string | null;
+      manifestStorageKey: string | null;
+      manifestVersion: string | null;
+      notesRu: string | null;
+      originalLanguage: string | null;
+      originalTitle: string | null;
+      plannedComponents: string[] | null;
+      plannedContentTypes: string[];
+      sourceExternalId: string | null;
+      sourceLanguage: string | null;
+      /** @enum {string} */
+      sourceProvider: 'PROJECT_GUTENBERG' | 'OTHER' | 'UNKNOWN';
+      /** @enum {string} */
+      sourceTextType:
+        | 'ORIGINAL_TEXT'
+        | 'TRANSLATION'
+        | 'ADAPTATION'
+        | 'ABRIDGMENT'
+        | 'COMPILATION'
+        | 'UNKNOWN';
+      sourceTitle: string | null;
+      sourceUrl: string | null;
+      targetCountryCodes: string[];
+      targetLanguages: string[];
+      updatedAt: string;
+      /** @enum {string} */
+      workflowStatus:
+        | 'DRAFT'
+        | 'READY_FOR_AGENT'
+        | 'REVIEW_IMPORTED'
+        | 'HUMAN_REVIEW_REQUIRED'
+        | 'APPROVED'
+        | 'REJECTED'
+        | 'BOOK_CREATED'
+        | 'ARCHIVED'
+        | 'LAWYER_REVIEW_REQUIRED';
+    };
+    RightsIntakeReviewImportSummaryDto: {
+      createdAt: string;
+      id: string;
+      /** @enum {string} */
+      importStatus: 'VALIDATED' | 'VALIDATION_FAILED' | 'SUPERSEDED';
+      isCurrent: boolean;
+      validationErrorsCount: number;
+      validationWarningsCount: number;
+    };
+    RightsIntakeRightsProfileSummaryDto: {
+      blockedCountriesCount: number;
+      blockingActionsCount: number;
+      confidence: string;
+      geoBlockRequiredCount: number;
+      id: string;
+      licenseRequiredCountriesCount: number;
+      overallStatus: string;
+      publicationGate: string;
+      status: string;
+    };
+    RightsLicenseDetailDto: {
+      attributionRequired: boolean;
+      commercialUseAllowed: boolean;
+      confidence: string | null;
+      countryCodes: string[];
+      createdAt: string;
+      createdByUserId: string | null;
+      documentMediaAssetId: string | null;
+      documentSha256: string | null;
+      documentStorageKey: string | null;
+      documentUrl: string | null;
+      effectiveFrom: string | null;
+      /**
+       * @description Status computed at request time (expiry, revocation, effective date applied)
+       * @enum {string}
+       */
+      effectiveStatus:
+        | 'DRAFT'
+        | 'PENDING'
+        | 'ACTIVE'
+        | 'EXPIRED'
+        | 'REVOKED'
+        | 'UNCERTAIN'
+        | 'SUPERSEDED';
+      events: components['schemas']['RightsLicenseEventDto'][];
+      excludedCountryCodes: string[];
+      exclusive: boolean;
+      expiresAt: string | null;
+      grantedAt: string | null;
+      id: string;
+      isPerpetual: boolean;
+      languageCodes: string[];
+      licenseKey: string | null;
+      /** @enum {string} */
+      licenseType:
+        | 'DIRECT_LICENSE'
+        | 'DIRECT_PERMISSION'
+        | 'RIGHTS_ASSIGNMENT'
+        | 'WORK_FOR_HIRE'
+        | 'OPEN_LICENSE'
+        | 'PUBLIC_DOMAIN_DEDICATION'
+        | 'OTHER';
+      licensee: string | null;
+      licensor: string;
+      links: components['schemas']['RightsLicenseLinkDto'][];
+      mediaFormats: (
+        | 'TEXT_ONLINE'
+        | 'TEXT_DOWNLOAD'
+        | 'EBOOK'
+        | 'AUDIO_STREAMING'
+        | 'AUDIO_DOWNLOAD'
+        | 'IMAGE'
+        | 'PRINT'
+        | 'OTHER'
+      )[];
+      modificationAllowed: boolean;
+      notesRu: string | null;
+      otherConditionsRu: string | null;
+      referenceNumber: string | null;
+      requiredAttributionText: string | null;
+      revocable: boolean;
+      revocationReasonRu: string | null;
+      revokedAt: string | null;
+      revokedByUserId: string | null;
+      rightsHolder: string | null;
+      royaltyTermsRu: string | null;
+      sourceEvidenceIds: string[];
+      /** @enum {string} */
+      status: 'DRAFT' | 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'UNCERTAIN' | 'SUPERSEDED';
+      sublicensingAllowed: boolean;
+      /** @enum {string} */
+      territoryScope: 'WORLDWIDE' | 'COUNTRY_LIST' | 'EXCEPT_COUNTRY_LIST' | 'UNKNOWN';
+      title: string;
+      translationAllowed: boolean;
+      updatedAt: string;
+      /** @description Non-blocking notices produced by the last action */
+      warnings: string[];
+    };
+    RightsLicenseEventDto: {
+      createdAt: string;
+      createdByUserId: string | null;
+      /** @enum {string|null} */
+      currentStatus:
+        | 'DRAFT'
+        | 'PENDING'
+        | 'ACTIVE'
+        | 'EXPIRED'
+        | 'REVOKED'
+        | 'UNCERTAIN'
+        | 'SUPERSEDED'
+        | null;
+      /** @enum {string} */
+      eventType:
+        | 'CREATED'
+        | 'UPDATED'
+        | 'ACTIVATED'
+        | 'REVOKED'
+        | 'EXPIRED'
+        | 'RENEWED'
+        | 'LINKED'
+        | 'UNLINKED'
+        | 'DOCUMENT_ATTACHED'
+        | 'IMPORTED_FROM_REVIEW';
+      id: string;
+      notesRu: string | null;
+      /** @enum {string|null} */
+      previousStatus:
+        | 'DRAFT'
+        | 'PENDING'
+        | 'ACTIVE'
+        | 'EXPIRED'
+        | 'REVOKED'
+        | 'UNCERTAIN'
+        | 'SUPERSEDED'
+        | null;
+    };
+    RightsLicenseLinkDto: {
+      bookVersionId: string | null;
+      componentTerritoryAssessmentId: string | null;
+      coversCountryCodes: string[];
+      createdAt: string;
+      id: string;
+      /** @enum {string} */
+      linkType:
+        | 'RIGHTS_PROFILE'
+        | 'RIGHTS_COMPONENT'
+        | 'COMPONENT_TERRITORY_ASSESSMENT'
+        | 'TERRITORY_DECISION'
+        | 'SOURCE_EDITION'
+        | 'RIGHTS_EVIDENCE'
+        | 'BOOK_VERSION';
+      notesRu: string | null;
+      rightsComponentId: string | null;
+      rightsEvidenceId: string | null;
+      rightsLicenseId: string;
+      rightsProfileId: string | null;
+      sourceEditionId: string | null;
+      territoryDecisionId: string | null;
+    };
+    RightsLicenseSummaryDto: {
+      attributionRequired: boolean;
+      commercialUseAllowed: boolean;
+      confidence: string | null;
+      countryCodes: string[];
+      createdAt: string;
+      effectiveFrom: string | null;
+      /**
+       * @description Status computed at request time (expiry, revocation, effective date applied)
+       * @enum {string}
+       */
+      effectiveStatus:
+        | 'DRAFT'
+        | 'PENDING'
+        | 'ACTIVE'
+        | 'EXPIRED'
+        | 'REVOKED'
+        | 'UNCERTAIN'
+        | 'SUPERSEDED';
+      excludedCountryCodes: string[];
+      exclusive: boolean;
+      expiresAt: string | null;
+      grantedAt: string | null;
+      id: string;
+      isPerpetual: boolean;
+      languageCodes: string[];
+      licenseKey: string | null;
+      /** @enum {string} */
+      licenseType:
+        | 'DIRECT_LICENSE'
+        | 'DIRECT_PERMISSION'
+        | 'RIGHTS_ASSIGNMENT'
+        | 'WORK_FOR_HIRE'
+        | 'OPEN_LICENSE'
+        | 'PUBLIC_DOMAIN_DEDICATION'
+        | 'OTHER';
+      licensee: string | null;
+      licensor: string;
+      mediaFormats: (
+        | 'TEXT_ONLINE'
+        | 'TEXT_DOWNLOAD'
+        | 'EBOOK'
+        | 'AUDIO_STREAMING'
+        | 'AUDIO_DOWNLOAD'
+        | 'IMAGE'
+        | 'PRINT'
+        | 'OTHER'
+      )[];
+      modificationAllowed: boolean;
+      referenceNumber: string | null;
+      requiredAttributionText: string | null;
+      revocable: boolean;
+      revocationReasonRu: string | null;
+      revokedAt: string | null;
+      rightsHolder: string | null;
+      /** @enum {string} */
+      status: 'DRAFT' | 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'UNCERTAIN' | 'SUPERSEDED';
+      sublicensingAllowed: boolean;
+      /** @enum {string} */
+      territoryScope: 'WORLDWIDE' | 'COUNTRY_LIST' | 'EXCEPT_COUNTRY_LIST' | 'UNKNOWN';
+      title: string;
+      translationAllowed: boolean;
+      updatedAt: string;
+    };
+    RightsNotificationDto: {
+      agentSubmissionId: string | null;
+      bookVersionId: string | null;
+      createdAt: string;
+      id: string;
+      isRead: boolean;
+      messageRu: string;
+      /** @description Free-form by design: every notification type writes its own keys (`RightsNotificationsService.create` takes `payload: unknown`; callers pass `{ tokenPrefix, maxUses, expiresAt }`, `{ warningCount }`, `{ lawyerReviewId, reviewNumber }`, `{ recheckTaskId, stage }` and so on). No validation constrains the composition. */
+      payload: {
+        [key: string]: unknown;
+      } | null;
+      readAt: string | null;
+      rightsIntakeId: string | null;
+      rightsProfileId: string | null;
+      rightsReviewImportId: string | null;
+      /** @enum {string} */
+      severity: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
+      titleRu: string;
+      /** @enum {string} */
+      type:
+        | 'AGENT_REPORT_RECEIVED'
+        | 'AGENT_REPORT_VALIDATION_FAILED'
+        | 'AGENT_REPORT_MATERIALIZED'
+        | 'AGENT_REPORT_MATERIALIZATION_FAILED'
+        | 'AGENT_TOKEN_ISSUED'
+        | 'AGENT_TOKEN_REVOKED'
+        | 'HUMAN_REVIEW_REQUIRED'
+        | 'RECHECK_DUE'
+        | 'RECHECK_OVERDUE'
+        | 'RECHECK_TASK_OPENED'
+        | 'RECHECK_COMPLETED'
+        | 'LEGAL_CHANGE_APPLIED'
+        | 'LAWYER_REVIEW_REQUIRED'
+        | 'OTHER'
+        | 'LAWYER_REVIEW_ASSIGNED'
+        | 'LAWYER_REVIEW_APPROVED'
+        | 'LAWYER_REVIEW_REJECTED'
+        | 'LAWYER_REVIEW_WITHDRAWN'
+        | 'LAWYER_OPINION_EXPIRING'
+        | 'LAWYER_OPINION_EXPIRED';
+    };
+    RightsNotificationsMarkAllReadDto: {
+      updated: number;
+    };
+    RightsNotificationsUnreadCountDto: {
+      unreadCount: number;
+    };
+    RightsProfileContributorDto: {
+      birthYear: number | null;
+      canonicalName: string | null;
+      confidence: string | null;
+      createdAt: string;
+      creditedLanguage: string | null;
+      creditedName: string | null;
+      deathYear: number | null;
+      displayName: string;
+      gutenbergAgentId: string | null;
+      id: string;
+      isni: string | null;
+      nationalityCountryCode: string | null;
+      notesRu: string | null;
+      person: components['schemas']['PersonSummaryDto'] | null;
+      personId: string | null;
+      publicDomainFromYear: number | null;
+      rightsComponentId: string | null;
+      rightsProfileId: string;
+      role: string;
+      roleOtherRu: string | null;
+      sourceEvidenceIds: string[] | null;
+      updatedAt: string;
+      viafId: string | null;
+      wikidataId: string | null;
+    };
+    RightsProfileContributorEventDto: {
+      createdAt: string;
+      createdByUserId: string | null;
+      creditedName: string | null;
+      displayName: string | null;
+      /** @enum {string} */
+      eventType: 'LINKED' | 'UNLINKED';
+      id: string;
+      personId: string | null;
+      rightsComponentId: string | null;
+      rightsProfileContributorId: string;
+      /** @enum {string|null} */
+      role?:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER'
+        | null;
+      snapshot: components['schemas']['RightsProfileContributorEventSnapshotDto'] | null;
+      sourceEditionId: string | null;
+    };
+    RightsProfileContributorEventSnapshotDto: {
+      birthYear: number | null;
+      canonicalName: string | null;
+      deathYear: number | null;
+      linkedAt: string | null;
+      nationalityCountryCode: string | null;
+      notesRu: string | null;
+    };
+    RightsProfileDetailDto: {
+      actions: components['schemas']['RightsActionDto'][];
+      activeLicensesCount: number;
+      archivedAt: string | null;
+      authorsCount: number;
+      components: components['schemas']['RightsComponentDto'][];
+      conclusionRu: string;
+      confidence: string;
+      contributorEvents: components['schemas']['RightsProfileContributorEventDto'][];
+      contributors: components['schemas']['RightsProfileContributorDto'][];
+      contributorsCount: number;
+      contributorsWithoutPersonCount: number;
+      createdAt: string;
+      currentLawyerReviewId: string | null;
+      currentReviewImportId: string | null;
+      evidence: components['schemas']['RightsEvidenceDto'][];
+      expiredLicensesCount: number;
+      expiringSoonLicensesCount: number;
+      id: string;
+      isCurrent: boolean;
+      lawyerApprovedAt: string | null;
+      lawyerApprovedLawyerName: string | null;
+      lawyerOpinionValidUntil: string | null;
+      lawyerReviewBlocking?: boolean;
+      lawyerReviewRequired?: boolean;
+      licenseCoverage: components['schemas']['LicenseCoverageResultDto'] | null;
+      licenseCoveredCountriesCount: number;
+      licenseRequiredCountriesCount: number;
+      licenseUncoveredCountriesCount: number;
+      licenses: components['schemas']['RightsLicenseSummaryDto'][];
+      licensesCount: number;
+      narratorsCount: number;
+      nextReviewAt: string | null;
+      overallStatus: string;
+      publicationGate: string;
+      reasoningRu: string | null;
+      regionalTerritorySummary: components['schemas']['TerritoryRegionSummaryDto'][];
+      reviews: components['schemas']['RightsReviewDto'][];
+      revokedLicensesCount: number;
+      rightsIntakeId: string;
+      riskAssessedAt: string | null;
+      riskFactors?: Record<string, never>[];
+      riskLevel?: string;
+      sourceEdition: components['schemas']['SourceEditionDto'] | null;
+      status: string;
+      summaryRu: string;
+      supersededAt: string | null;
+      territoryDecisions: components['schemas']['TerritoryDecisionDto'][];
+      translatorsCount: number;
+      updatedAt: string;
+    };
+    RightsProfileSummaryDto: {
+      archivedAt: string | null;
+      conclusionRu: string;
+      confidence: string;
+      createdAt: string;
+      currentReviewImportId: string | null;
+      id: string;
+      isCurrent: boolean;
+      nextReviewAt: string | null;
+      overallStatus: string;
+      publicationGate: string;
+      reasoningRu: string | null;
+      rightsIntakeId: string;
+      status: string;
+      summaryRu: string;
+      supersededAt: string | null;
+      updatedAt: string;
+    };
+    RightsReportSchemaDocumentDto: {
+      $defs?: {
+        [key: string]: unknown;
+      };
+      $id: string;
+      $schema: string;
+      additionalProperties: boolean;
+      description: string;
+      properties: {
+        [key: string]: unknown;
+      };
+      required: string[];
+      schemaVersion: string;
+      title: string;
+      /** @enum {string} */
+      type: 'object';
+    };
+    RightsReviewApprovalDto: {
+      createdAt: string;
+      decidedByUser: components['schemas']['DecidedByUserDto'] | null;
+      decision: string;
+      id: string;
+      notesRu: string | null;
+      rightsIntakeId: string;
+      rightsProfileId: string;
+      rightsReviewId: string;
+    };
+    RightsReviewDto: {
+      approvalNotesRu: string | null;
+      approvals: components['schemas']['RightsReviewApprovalDto'][];
+      approvedAt: string | null;
+      approvedByUser?: {
+        email: string;
+        id: string;
+        name?: string;
+      } | null;
+      approvedByUserId: string | null;
+      chainRootReviewId: string | null;
+      conclusionRu: string;
+      confidence: string;
+      createdAt: string;
+      id: string;
+      nextReviewAt: string | null;
+      overallStatus: string;
+      previousReviewId: string | null;
+      publicationGate: string;
+      reasoningRu: string | null;
+      rejectedAt: string | null;
+      rejectedByUser?: {
+        email: string;
+        id: string;
+        name?: string;
+      } | null;
+      rejectedByUserId: string | null;
+      rejectionReasonRu: string | null;
+      reviewerType: string;
+      revisionNumber: number;
+      rightsProfileId: string;
+      rightsReviewImportId: string;
+      schemaVersion: string | null;
+      status: string;
+      summaryRu: string;
+      updatedAt: string;
+    };
+    RightsReviewImportDetailDto: {
+      agentModel: string | null;
+      createdAt: string;
+      /** @description PDF-версия отчёта загружена */
+      hasReportPdf: boolean;
+      id: string;
+      importStatus: string;
+      importedByUserId: string | null;
+      inputManifestSha256: string | null;
+      inputManifestVersion: string | null;
+      isCurrent: boolean;
+      promptVersion: string | null;
+      rawAgentOutput: string | null;
+      rawAgentOutputSha256: string | null;
+      reportJson: {
+        [key: string]: unknown;
+      };
+      reportJsonSha256: string | null;
+      reportMarkdown: string | null;
+      reportMarkdownSha256: string | null;
+      reportPdfContentType: string | null;
+      reportPdfFileName: string | null;
+      reportPdfSha256: string | null;
+      reportPdfSizeBytes: number | null;
+      reportPdfUploadedAt: string | null;
+      rightsIntakeId: string;
+      schemaVersion: string | null;
+      sourceFileName: string | null;
+      supersededAt: string | null;
+      updatedAt: string;
+      validationErrors: components['schemas']['ValidationIssueDto'][] | null;
+      validationWarnings: components['schemas']['ValidationIssueDto'][] | null;
+    };
+    RightsReviewImportListItemDto: {
+      createdAt: string;
+      id: string;
+      importStatus: string;
+      importedByUserId: string | null;
+      isCurrent: boolean;
+      rightsIntakeId: string;
+      schemaVersion: string | null;
+      sourceFileName: string | null;
+      supersededAt: string | null;
+      updatedAt: string;
+      validationErrorsCount: number;
+      validationWarningsCount: number;
+    };
+    RightsReviewImportRecordDto: {
+      agentModel: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      id: string;
+      /** @enum {string} */
+      importStatus: 'VALIDATED' | 'VALIDATION_FAILED' | 'SUPERSEDED';
+      importedByUserId: string | null;
+      inputManifestSha256: string | null;
+      inputManifestStorageKey: string | null;
+      inputManifestVersion: string | null;
+      isCurrent: boolean;
+      promptVersion: string | null;
+      rawAgentOutput: string | null;
+      rawAgentOutputSha256: string | null;
+      rawAgentOutputStorageKey: string | null;
+      /** @description Отчёт агента как есть */
+      reportJson: {
+        [key: string]: unknown;
+      };
+      reportJsonSha256: string | null;
+      reportJsonStorageKey: string | null;
+      reportMarkdown: string | null;
+      reportMarkdownSha256: string | null;
+      reportMarkdownStorageKey: string | null;
+      reportPdfContentType: string | null;
+      reportPdfFileName: string | null;
+      reportPdfSha256: string | null;
+      reportPdfSizeBytes: number | null;
+      reportPdfStorageKey: string | null;
+      /** Format: date-time */
+      reportPdfUploadedAt: string | null;
+      reportPdfUploadedByUserId: string | null;
+      rightsIntakeId: string;
+      schemaVersion: string | null;
+      sourceFileName: string | null;
+      /** Format: date-time */
+      supersededAt: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+      validationErrors: components['schemas']['ValidationIssueDto'][] | null;
+      validationWarnings: components['schemas']['ValidationIssueDto'][] | null;
+    };
+    RiskAssessmentSnapshotDto: {
+      assessedAt: string | null;
+      blockApprovalEnabled: boolean;
+      currentLawyerReview: components['schemas']['LawyerReviewDto'] | null;
+      explicitLawyerRequest: boolean;
+      factors: components['schemas']['RiskFactorDto'][];
+      lawyerApproved: boolean;
+      lawyerApprovedAt: string | null;
+      lawyerApprovedLawyerName: string | null;
+      lawyerOpinionValidUntil: string | null;
+      lawyerReviewRequired: boolean;
+      /** @enum {string} */
+      minRiskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      rightsProfileId: string;
+      /** @enum {string} */
+      riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      /** @enum {string} */
+      suggestedTrigger:
+        | 'AGENT_REQUESTED'
+        | 'HIGH_RISK_POLICY'
+        | 'MANUAL_REQUEST'
+        | 'RIGHTS_CLAIM'
+        | 'LEGAL_CHANGE'
+        | 'LICENSE_REQUIRED'
+        | 'OTHER';
+    };
+    RiskFactorDto: {
+      /** @enum {string} */
+      code:
+        | 'PUBLICATION_GATE_BLOCK'
+        | 'OVERALL_STATUS_REJECTED'
+        | 'CLAIM_ESCALATED_TO_LAWYER'
+        | 'CRITICAL_CLAIM_OPEN'
+        | 'AGENT_REQUESTED_LAWYER_REVIEW'
+        | 'CONFIDENCE_LOW'
+        | 'OVERALL_STATUS_INSUFFICIENT_DATA'
+        | 'OVERALL_STATUS_LICENSE_REQUIRED'
+        | 'UNCERTAIN_COMPONENT'
+        | 'COPYRIGHTED_COMPONENT_KEPT'
+        | 'LICENSE_REQUIRED_TERRITORY'
+        | 'UNRESOLVED_BLOCKING_ACTION'
+        | 'PENDING_REVIEW_TERRITORY'
+        | 'CONFIDENCE_MEDIUM'
+        | 'DERIVATIVE_SOURCE_TEXT'
+        | 'CONTRIBUTOR_DEATH_YEAR_UNKNOWN'
+        | 'BLOCKED_TERRITORY';
+      /** @description Free-form by design: each `RightsRiskFactorCode` carries its own keys, copied through by `RightsRiskAssessmentService` (`details: factor.details ?? null`) without a shared shape. */
+      details: {
+        [key: string]: unknown;
+      } | null;
+      /** @enum {string} */
+      level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      messageRu: string;
+    };
+    SatisfyConditionDto: {
+      notesRu?: string;
+    };
+    SeoInputDto: {
+      /** @description Canonical URL */
+      canonicalUrl?: Record<string, never>;
+      /** @description Meta description */
+      metaDescription?: Record<string, never>;
+      /** @description Meta title */
+      metaTitle?: Record<string, never>;
+      /** @description Open Graph description */
+      ogDescription?: Record<string, never>;
+      /** @description Open Graph image alt text */
+      ogImageAlt?: Record<string, never>;
+      /** @description Open Graph image URL */
+      ogImageUrl?: Record<string, never>;
+      /** @description Open Graph title */
+      ogTitle?: Record<string, never>;
+      /** @description Open Graph type */
+      ogType?: Record<string, never>;
+      /** @description Open Graph URL */
+      ogUrl?: Record<string, never>;
+      /** @description Robots meta tag */
+      robots?: Record<string, never>;
+      /** @description Twitter card type */
+      twitterCard?: Record<string, never>;
+      /** @description Twitter creator handle */
+      twitterCreator?: Record<string, never>;
+      /** @description Twitter site handle */
+      twitterSite?: Record<string, never>;
+    };
+    SeoMetaSummaryDto: {
+      metaDescription: string | null;
+      metaTitle: string | null;
+    };
+    SeoResolveBreadcrumbDto: {
+      name: string;
+      /** @description Слаг звена — последний сегмент его канонического адреса. */
+      slug: string;
+      /**
+       * @description Тип звена. Отдаёт только ветка `book`; у страниц термина его нет.
+       * @enum {string}
+       */
+      type?: 'category' | 'genre' | 'collection';
+    };
+    SeoResolveHreflangDto: {
+      /** @description Абсолютный адрес страницы на этом языке. */
+      href: string;
+      /**
+       * @description Код языка либо `x-default`.
+       * @example en
+       */
+      hreflang: string;
+      /** @enum {string} */
+      rel: 'alternate';
+    };
+    SeoResolveMetaDto: {
+      /** @description Канонический адрес страницы, абсолютный. */
+      canonicalUrl: string;
+      /** @description Мета-описание. Отсутствует, если его нет ни в записи `Seo`, ни в тексте. */
+      description?: string;
+      /**
+       * @description Значение мета-тега `robots`.
+       * @example index, follow
+       */
+      robots: string;
+      /** @description Заголовок страницы (`<title>`). */
+      title: string;
+    };
+    SeoResolveOpenGraphDto: {
+      description?: string;
+      image?: components['schemas']['SeoResolveOpenGraphImageDto'];
+      title: string;
+      /**
+       * @description `book` — у страницы книги и версии, `website` — у остальных.
+       * @enum {string}
+       */
+      type: 'website' | 'book';
+      /** @description `Seo.ogUrl`, а при его отсутствии — канонический адрес. */
+      url: string;
+    };
+    SeoResolveOpenGraphImageDto: {
+      /** @description `Seo.ogImageAlt`, а при его отсутствии — заголовок страницы. */
+      alt: string;
+      /** @description Абсолютный адрес картинки: `Seo.ogImageUrl` или обложка версии. */
+      url: string;
+    };
+    SeoResolveResponseDto: {
+      /** @description Крошки между главной и самой страницей. Отдают `book` и страницы термина; у `version`, `page` и `catalog` поля нет. */
+      breadcrumbPath?: components['schemas']['SeoResolveBreadcrumbDto'][];
+      /** @description Альтернативные языковые адреса. Ветка `version` их не отдаёт: адрес у неё один. */
+      hreflangs?: components['schemas']['SeoResolveHreflangDto'][];
+      meta: components['schemas']['SeoResolveMetaDto'];
+      openGraph: components['schemas']['SeoResolveOpenGraphDto'];
+      /** @description Граф JSON-LD: `@context` и `@graph`. Состав графа зависит от типа страницы, схемой не описывается. */
+      schema: {
+        [key: string]: unknown;
+      };
+      twitter: components['schemas']['SeoResolveTwitterDto'];
+    };
+    SeoResolveTwitterDto: {
+      /**
+       * @description Тип карточки: большой становится от наличия картинки, а не от типа страницы.
+       * @example summary_large_image
+       */
+      card: string;
+      creator?: string;
+      image?: string;
+      site?: string;
+    };
+    SeoResponse: {
+      /** @example https://example.com/page */
+      canonicalUrl: string | null;
+      /**
+       * Format: date-time
+       * @example 2024-01-01T00:00:00.000Z
+       */
+      createdAt: string;
+      /** @example Annual book fair */
+      eventDescription: string | null;
+      /**
+       * Format: date-time
+       * @example 2026-05-03T18:00:00.000Z
+       */
+      eventEndDate: string | null;
+      /** @example https://example.com/fair.jpg */
+      eventImageUrl: string | null;
+      /** @example Lisbon */
+      eventLocationCity: string | null;
+      /** @example PT */
+      eventLocationCountry: string | null;
+      /** @example City Library */
+      eventLocationName: string | null;
+      /** @example 1000-001 */
+      eventLocationPostal: string | null;
+      /** @example Lisboa */
+      eventLocationRegion: string | null;
+      /** @example 1 Main St */
+      eventLocationStreet: string | null;
+      /** @example Book fair */
+      eventName: string | null;
+      /**
+       * Format: date-time
+       * @example 2026-05-01T10:00:00.000Z
+       */
+      eventStartDate: string | null;
+      /** @example https://example.com/fair */
+      eventUrl: string | null;
+      /** @example 1 */
+      id: number;
+      /** @example SEO Description */
+      metaDescription: string | null;
+      /** @example SEO Title */
+      metaTitle: string | null;
+      /** @example OG Description */
+      ogDescription: string | null;
+      /** @example Image alt text */
+      ogImageAlt: string | null;
+      /** @example https://example.com/image.jpg */
+      ogImageUrl: string | null;
+      /** @example OG Title */
+      ogTitle: string | null;
+      /** @example website */
+      ogType: string | null;
+      /** @example https://example.com/page */
+      ogUrl: string | null;
+      /** @example index, follow */
+      robots: string | null;
+      /** @example summary_large_image */
+      twitterCard: string | null;
+      /** @example @creator */
+      twitterCreator: string | null;
+      /** @example @site */
+      twitterSite: string | null;
+      /**
+       * Format: date-time
+       * @example 2024-01-01T00:00:00.000Z
+       */
+      updatedAt: string;
+    };
+    SeoResponseDto: {
+      canonicalUrl: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      eventDescription: string | null;
+      /** Format: date-time */
+      eventEndDate: string | null;
+      eventImageUrl: string | null;
+      eventLocationCity: string | null;
+      eventLocationCountry: string | null;
+      eventLocationName: string | null;
+      eventLocationPostal: string | null;
+      eventLocationRegion: string | null;
+      eventLocationStreet: string | null;
+      eventName: string | null;
+      /** Format: date-time */
+      eventStartDate: string | null;
+      eventUrl: string | null;
+      id: number;
+      metaDescription: string | null;
+      metaTitle: string | null;
+      ogDescription: string | null;
+      ogImageAlt: string | null;
+      ogImageUrl: string | null;
+      ogTitle: string | null;
+      ogType: string | null;
+      ogUrl: string | null;
+      robots: string | null;
+      twitterCard: string | null;
+      twitterCreator: string | null;
+      twitterSite: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    SlugRedirectResponseDto: {
+      /** @description Current slug the retired one redirects to, null when there is none */
+      newSlug?: string | null;
+    };
+    SnoozeRecheckTaskDto: {
+      reasonRu?: string;
+      /** @description Reminders stay silent until this moment */
+      until: string;
+    };
+    SocialLoginDto: {
+      /** @enum {string} */
+      languagePreference?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @enum {string} */
+      provider: 'google' | 'facebook';
+      /** @description google: id_token; facebook: access_token */
+      token: string;
+    };
+    SourceEditionDto: {
+      createdAt: string;
+      editionRights: components['schemas']['EditionRightsDto'][];
+      externalId: string | null;
+      gutenbergStatus: string | null;
+      /** @description Файл загружен и доступен для скачивания */
+      hasSourceFile: boolean;
+      id: string;
+      notesRu: string | null;
+      provider: string;
+      rightsProfileId: string;
+      sourceFileContentType: string | null;
+      sourceFileName: string | null;
+      sourceFileSha256: string | null;
+      sourceFileSizeBytes: number | null;
+      sourceFileUploadedAt: string | null;
+      sourceLanguage: string | null;
+      sourceTextType: string;
+      sourceTitle: string | null;
+      sourceUrl: string | null;
+      status: string;
+      updatedAt: string;
+    };
+    SupersedeRightsEvidenceDto: {
+      /** @description Id доказательства, которое приходит на смену */
+      supersededById: string;
+    };
+    SupersedeRightsEvidenceResponseDto: {
+      id: string;
+      /** @description Всегда `false`: доказательство перестало быть текущим */
+      isCurrent: boolean;
+      /** @description Идентификатор заменяющего доказательства */
+      supersededById: string;
+    };
+    SystemPageSlugsDto: {
+      en?: string;
+      es?: string;
+      fr?: string;
+      pt?: string;
+      ru?: string;
+    };
+    SystemPageStateDto: {
+      draftIn: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
+      missingIn: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
+      publishedIn: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
+      purpose: string;
+      /** @description Публичный слаг страницы по языку — только для чтения человеком. */
+      slugs: components['schemas']['SystemPageSlugsDto'];
+      systemKey: string;
+    };
+    SystemPagesStatusResponseDto: {
+      checkedAt: string;
+      /** @description Заполнено только если сама проверка не смогла выполниться. */
+      error?: string;
+      expectedLanguages: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
+      ok: boolean;
+      pages: components['schemas']['SystemPageStateDto'][];
+      problems: components['schemas']['SystemPageStateDto'][];
+    };
+    TagBookCardsResponseDto: {
+      items: components['schemas']['BookCardDto'][];
+      pagination: components['schemas']['PaginationInfoDto'];
+      tag?: components['schemas']['TagCardSummaryDto'] | null;
+    };
+    TagBookVersionSeoDto: {
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+    };
+    TagCardSummaryDto: {
+      booksCount: number;
+      id: string;
+      indexable: boolean;
+      isVisible: boolean;
+      key: string;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      name: string;
+      relatedTerms: components['schemas']['RelatedTermsDto'];
+      slug: string;
+      sortOrder: number;
+      translation?: components['schemas']['TagTranslationDto'] | null;
+      translations: components['schemas']['TagTranslationDto'][];
+    };
+    TagEntityDto: {
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      key: string;
+      name: string;
+      slug: string;
+      /** @default 0 */
+      sortOrder: number;
+    };
+    TagFaqDto: {
+      /** @description Answer text */
+      answer: string;
+      /** @description Question text */
+      question: string;
+    };
+    TagResponse: {
+      /** @description Automatic indexability (hysteresis state) for the requested ?lang. Mirrors what meta robots and the sitemap decide. Undefined when lang is not passed or the tag has no translation for it. */
+      autoIndexable?: boolean;
+      booksCount: number;
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      key: string;
+      /** @description Cached per-language book count (TagTranslation.bookCount) for the requested ?lang. Undefined when lang is not passed or the tag has no translation for it. */
+      langBookCount?: number;
+      name: string;
+      slug: string;
+      /** @default 0 */
+      sortOrder: number;
+      translations: components['schemas']['TagTranslationResponse'][];
+    };
+    TagTranslationDto: {
+      /** @default true */
+      autoIndexable: boolean;
+      /** @default 0 */
+      bookCount: number;
+      canonicalUrl?: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      description?: string | null;
+      /**
+       * @description Json column. Shape held by `TagFaqDto` on `CreateTagTranslationDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.
+       * @example [
+       *       "classic-literature",
+       *       "victorian-literature"
+       *     ]
+       */
+      relatedCategorySlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.
+       * @example [
+       *       "short-reads",
+       *       "feel-good-books"
+       *     ]
+       */
+      relatedCollectionSlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.
+       * @example [
+       *       "classic-literature",
+       *       "philosophical-fiction"
+       *     ]
+       */
+      relatedGenreSlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.
+       * @example [
+       *       "aestheticism",
+       *       "beauty"
+       *     ]
+       */
+      relatedTagSlugs?: string[] | null;
+      /** @example index, follow */
+      robots?: string | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      tagId: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    TagTranslationEntityDto: {
+      /** @default true */
+      autoIndexable: boolean;
+      /** @default 0 */
+      bookCount: number;
+      canonicalUrl?: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      description?: string | null;
+      /**
+       * @description Json column. Shape held by `TagFaqDto` on `CreateTagTranslationDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.
+       * @example [
+       *       "classic-literature",
+       *       "victorian-literature"
+       *     ]
+       */
+      relatedCategorySlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.
+       * @example [
+       *       "short-reads",
+       *       "feel-good-books"
+       *     ]
+       */
+      relatedCollectionSlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.
+       * @example [
+       *       "classic-literature",
+       *       "philosophical-fiction"
+       *     ]
+       */
+      relatedGenreSlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.
+       * @example [
+       *       "aestheticism",
+       *       "beauty"
+       *     ]
+       */
+      relatedTagSlugs?: string[] | null;
+      /** @example index, follow */
+      robots?: string | null;
+      seo?: components['schemas']['SeoResponseDto'] | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      tagId: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    TagTranslationResponse: {
+      /** @description Automatic indexability derived from bookCount with hysteresis (close <=2, open >=5). Drives meta robots, the sitemap and internal linking alike. */
+      autoIndexable?: boolean;
+      /** @description Cached number of published books in this language. */
+      bookCount?: number;
+      canonicalUrl?: string | null;
+      description?: string | null;
+      /**
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      /** @default true */
+      indexable: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      /**
+       * @example [
+       *       "classic-literature",
+       *       "victorian-literature"
+       *     ]
+       */
+      relatedCategorySlugs?: string[] | null;
+      /**
+       * @example [
+       *       "short-reads",
+       *       "feel-good-books"
+       *     ]
+       */
+      relatedCollectionSlugs?: string[] | null;
+      /**
+       * @example [
+       *       "classic-literature",
+       *       "philosophical-fiction"
+       *     ]
+       */
+      relatedGenreSlugs?: string[] | null;
+      /**
+       * @example [
+       *       "aestheticism",
+       *       "beauty"
+       *     ]
+       */
+      relatedTagSlugs?: string[] | null;
+      /** @example index, follow */
+      robots?: string | null;
+      shortDescription?: string | null;
+      slug: string;
+    };
+    TagTranslationWithRelationsDto: {
+      /** @default true */
+      autoIndexable: boolean;
+      /** @default 0 */
+      bookCount: number;
+      canonicalUrl?: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      description?: string | null;
+      /**
+       * @description Json column. Shape held by `TagFaqDto` on `CreateTagTranslationDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.
+       * @example [
+       *       "classic-literature",
+       *       "victorian-literature"
+       *     ]
+       */
+      relatedCategorySlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.
+       * @example [
+       *       "short-reads",
+       *       "feel-good-books"
+       *     ]
+       */
+      relatedCollectionSlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.
+       * @example [
+       *       "classic-literature",
+       *       "philosophical-fiction"
+       *     ]
+       */
+      relatedGenreSlugs?: string[] | null;
+      /**
+       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.
+       * @example [
+       *       "aestheticism",
+       *       "beauty"
+       *     ]
+       */
+      relatedTagSlugs?: string[] | null;
+      /** @example index, follow */
+      robots?: string | null;
+      seo?: components['schemas']['SeoResponseDto'] | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      tag: components['schemas']['TagEntityDto'];
+      tagId: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    TagWithTranslationDto: {
+      description?: string | null;
+      id: string;
+      /** @default true */
+      indexable: boolean;
+      /** @default true */
+      isVisible: boolean;
+      key: string;
+      name: string;
+      slug: string;
+      /** @default 0 */
+      sortOrder: number;
+      translation?: components['schemas']['TagTranslationWithRelationsDto'] | null;
+    };
+    TaxonomyIndexabilityStatusResponseDto: {
+      enabled: boolean;
+      isRunning: boolean;
+      lastChanged: number | null;
+      lastClosed: number | null;
+      lastDurationMs: number | null;
+      lastError: string | null;
+      lastFinishedAt: string | null;
+      lastOpened: number | null;
+      lastScanned: number | null;
+      lastStartedAt: string | null;
+      nextRunAt: string | null;
+      /** @description Wall-clock hour (UTC) the sweep is pinned to. */
+      scheduledHourUtc: number;
+    };
+    TerritoryDecisionDto: {
+      accessPolicy: string;
+      confidence: string;
+      countryCode: string;
+      createdAt: string;
+      finalStatus: string;
+      geoBlockRequired: boolean;
+      geoBlockScope: string | null;
+      id: string;
+      legalBasisRu: string | null;
+      nextReviewAt: string | null;
+      reasonRu: string;
+      rightsProfileId: string;
+      updatedAt: string;
+    };
+    TerritoryRegionCountryDto: {
+      accessPolicy: string;
+      confidence: string;
+      countryCode: string;
+      finalStatus: string;
+      geoBlockRequired: boolean;
+      geoBlockScope: string | null;
+      legalBasisRu: string | null;
+      nextReviewAt: string | null;
+      reasonRu: string;
+    };
+    TerritoryRegionReasonDto: {
+      accessPolicy: string;
+      countryCode: string;
+      finalStatus: string;
+      legalBasisRu: string | null;
+      reasonRu: string;
+    };
+    TerritoryRegionSummaryDto: {
+      allowedCountryCount: number;
+      blockedCountryCount: number;
+      blockingReasons: components['schemas']['TerritoryRegionReasonDto'][];
+      countries: components['schemas']['TerritoryRegionCountryDto'][];
+      countryCount: number;
+      geoBlockRequiredCount: number;
+      label: string;
+      licenseRequiredCountryCount: number;
+      licensedCountryCount: number;
+      notTargetedCountryCount: number;
+      pendingReviewCountryCount: number;
+      regionCode: string;
+      /** @enum {string} */
+      status:
+        | 'ALLOWED'
+        | 'BLOCKED'
+        | 'LICENSE_REQUIRED'
+        | 'PENDING_REVIEW'
+        | 'NOT_TARGETED'
+        | 'MIXED';
+      targetAllowedCountryCount: number;
+      targetCountryCount: number;
+      targetedCountryCount: number;
+      undecidedCountryCount: number;
+    };
+    ToggleLikeResponseDto: {
+      dislikes: number;
+      isLike: boolean;
+      liked: boolean;
+      likes: number;
+    };
+    TopViewsItemDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      count: number;
+    };
+    TopViewsResponseDto: {
+      items: components['schemas']['TopViewsItemDto'][];
+      totalVersions: number;
+    };
+    UnlinkRightsLicenseResponseDto: {
+      /** @example true */
+      success: boolean;
+    };
+    UpdateAudioChapterDto: {
+      /** @description Audio file URL */
+      audioUrl?: string;
+      /** @description Short description of the chapter */
+      description?: string;
+      /** @description Duration in seconds (0..86400) */
+      duration?: number;
+      /** @description Associated MediaAsset id */
+      mediaId?: string;
+      /**
+       * @description Sequential number of the audio chapter
+       * @example 2
+       */
+      number?: number;
+      /** @description Audio chapter title */
+      title?: string;
+      /** @description Full transcript of the chapter (markdown) */
+      transcript?: string;
+    };
+    UpdateAuthorDto: {
+      /**
+       * @description Date of birth YYYY-MM-DD
+       * @example 1854-10-16
+       */
+      birthDate?: string;
+      /**
+       * @description Date of death YYYY-MM-DD
+       * @example 1900-11-30
+       */
+      deathDate?: string;
+      /**
+       * @description Author unique slug (optional for creation compatibility)
+       * @example oscar-wilde
+       */
+      slug?: string;
+      /** @description Author translations */
+      translations?: components['schemas']['AuthorTranslationDto'][];
+    };
+    UpdateBookDto: {
+      /**
+       * @description Unique book slug. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123"
+       * @example harry-potter-updated
+       */
+      slug?: string;
+    };
+    UpdateBookSummaryDto: {
+      /** @description Optional analysis */
+      analysis?: string;
+      /** @description Short summary text */
+      summary: string;
+      /** @description Optional themes */
+      themes?: string;
+    };
+    UpdateBookVersionContributorDto: {
+      /** @enum {string} */
+      confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+      contributionNoteRu?: string;
+      creditedLanguage?: string;
+      /** @description Credited name as shown in the book edition */
+      creditedName?: string;
+      /** @default 0 */
+      displayOrder: number;
+      /** @default false */
+      isPrimary: boolean;
+      /** @description Target Person ID */
+      personId?: string;
+      /** @enum {string} */
+      role?:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER';
+      /** @description Role name in Russian if role=OTHER */
+      roleOtherRu?: string;
+    };
+    UpdateBookVersionDto: {
+      /**
+       * @description Альтернативные названия книги
+       * @example [
+       *       "Dorian Gray"
+       *     ]
+       */
+      alternativeTitles?: string[] | null;
+      /** @example J.K. Rowling */
+      author?: string;
+      /**
+       * @description Идентификатор автора (UUID)
+       * @example 123e4567-e89b-12d3-a456-426614174000
+       */
+      authorId?: Record<string, never> | null;
+      /**
+       * @description Ссылка на страницу автора
+       * @example https://example.com/author/oscar-wilde
+       */
+      authorPageUrl?: Record<string, never> | null;
+      /**
+       * @description Персонажи книги
+       * @example [
+       *       {
+       *         "description": "Main character",
+       *         "name": "Dorian Gray"
+       *       }
+       *     ]
+       */
+      characters?: components['schemas']['BookVersionCharacterDto'][] | null;
+      /**
+       * @description Статус авторских прав
+       * @example public_domain
+       */
+      copyrightStatus?: Record<string, never> | null;
+      /**
+       * @description Альт-текст обложки
+       * @example Vintage cover art
+       */
+      coverAlt?: Record<string, never> | null;
+      /** @example https://cdn.example.com/covers/hp1-new.jpg */
+      coverImageUrl?: string;
+      /** @example Updated description text */
+      description?: string;
+      /**
+       * @description Год публикации данного издания. Pass null to clear.
+       * @example 1891
+       */
+      editionPublishedYear?: Record<string, never> | null;
+      /**
+       * @description FAQ по книге
+       * @example [
+       *       {
+       *         "answer": "Gothic fiction",
+       *         "question": "What is the genre?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      /**
+       * @description Год первой публикации книги. Pass null to clear.
+       * @example 1890
+       */
+      firstPublishedYear?: Record<string, never> | null;
+      /** @example false */
+      isFree?: boolean;
+      /**
+       * @example es
+       * @enum {string}
+       */
+      language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /**
+       * @description Оригинальный язык книги
+       * @example en
+       */
+      originalLanguage?: Record<string, never> | null;
+      /**
+       * @description Оригинальное название книги
+       * @example The Picture of Dorian Gray
+       */
+      originalTitle?: Record<string, never> | null;
+      /**
+       * @description Media asset id for audio preview (short audio sample). Pass null to clear.
+       * @example 550e8400-e29b-41d4-a716-446655440000
+       */
+      previewMediaId?: Record<string, never> | null;
+      /**
+       * @description ID основной категории книги для хлебных крошек. Pass null to clear.
+       * @example 550e8400-e29b-41d4-a716-446655440000
+       */
+      primaryCategoryId?: Record<string, never> | null;
+      /**
+       * @description Цитаты из книги
+       * @example [
+       *       {
+       *         "author": "Oscar Wilde",
+       *         "text": "To live is the rarest thing in the world."
+       *       }
+       *     ]
+       */
+      quotes?: components['schemas']['BookVersionQuoteDto'][] | null;
+      /** @example https://partner.example.com/ref/456 */
+      referralUrl?: string;
+      /** @example New meta description text */
+      seoMetaDescription?: string;
+      /** @example HP1 — Summary (Updated) */
+      seoMetaTitle?: string;
+      /**
+       * @description Краткое описание книги
+       * @example A classic story of youth...
+       */
+      shortDescription?: Record<string, never> | null;
+      /**
+       * @description Слаг версии книги
+       * @example harry-potter
+       */
+      slug?: string;
+      /**
+       * @description Краткое содержание книги
+       * @example The story follows Dorian...
+       */
+      summaryShort?: Record<string, never> | null;
+      /**
+       * @description Символы в книге
+       * @example [
+       *       {
+       *         "description": "Represents the soul",
+       *         "title": "Portrait"
+       *       }
+       *     ]
+       */
+      symbols?: components['schemas']['BookVersionSymbolDto'][] | null;
+      /**
+       * @description Темы книги
+       * @example [
+       *       "Art",
+       *       "Morality"
+       *     ]
+       */
+      themes?: string[] | null;
+      /** @example Harry Potter and the Sorcerer's Stone */
+      title?: string;
+      /**
+       * @example audio
+       * @enum {string}
+       */
+      type?: 'text' | 'audio' | 'referral';
+    };
+    UpdateCategoryDto: {
+      /** @description Whether the page is indexable by search engines */
+      indexable?: boolean;
+      /** @description Whether the category is visible in public lists */
+      isVisible?: boolean;
+      /** @description Stable unique key */
+      key?: string;
+      /** @description Category name */
+      name?: string;
+      /** @description Parent category */
+      parentId?: Record<string, never> | null;
+      /** @description Category slug */
+      slug?: string;
+      /** @description Sort order in lists */
+      sortOrder?: number;
+      /** @enum {string} */
+      type?: 'category' | 'genre' | 'collection';
+    };
+    UpdateCategoryTranslationDto: {
+      /** @description HTML description for the category page */
+      description?: Record<string, never>;
+      /** @description FAQ items as JSON array */
+      faq?: components['schemas']['FaqItemDto'][];
+      /** @description H1 heading for the page */
+      h1?: string;
+      /** @enum {string} */
+      language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Meta description for SEO */
+      metaDescription?: string;
+      /** @description Meta title for SEO */
+      metaTitle?: string;
+      /** @description Localized category name */
+      name?: string;
+      /** @description Open Graph description */
+      ogDescription?: string;
+      /** @description Open Graph image alt text */
+      ogImageAlt?: string;
+      /** @description Open Graph image URL */
+      ogImageUrl?: string;
+      /** @description Open Graph title */
+      ogTitle?: string;
+      /** @description SEO metadata */
+      seo?: components['schemas']['SeoInputDto'];
+      /** @description Short description for cards/lists */
+      shortDescription?: string;
+      /** @description Localized category slug */
+      slug?: string;
+    };
+    UpdateChapterDto: {
+      /** @description Chapter content */
+      content?: string;
+      /**
+       * @description Chapter order number
+       * @example 2
+       */
+      number?: number;
+      /** @description Chapter title */
+      title?: string;
+    };
+    UpdateCommentDto: {
+      /** @description Moderation: hide/show */
+      isHidden?: boolean;
+      /** @description Updated text */
+      text?: string;
+    };
+    UpdateContributorDto: {
+      /** @description Optional legacy catalog Author ID to bridge with this person */
+      authorId?: string;
+      /**
+       * @description Date of birth as recorded in sources
+       * @example 1688-05-21
+       */
+      birthDate?: string;
+      /**
+       * @description Birth year
+       * @example 1688
+       */
+      birthYear?: number;
+      /**
+       * @description Date of death as recorded in sources
+       * @example 1744-05-30
+       */
+      deathDate?: string;
+      /**
+       * @description Death year
+       * @example 1744
+       */
+      deathYear?: number;
+      /**
+       * @description Display name of contributor
+       * @example Alexander Pope
+       */
+      displayName?: string;
+      /**
+       * @description Project Gutenberg agent ID
+       * @example 53
+       */
+      gutenbergAgentId?: string;
+      /**
+       * @description ISNI
+       * @example 0000000121174572
+       */
+      isni?: string;
+      /**
+       * @description 2-letter country code (nationality)
+       * @example GB
+       */
+      nationalityCountry?: string;
+      /** @description Notes in Russian */
+      notesRu?: string;
+      /**
+       * @description Year the works enter public domain
+       * @example 1815
+       */
+      publicDomainFromYear?: number;
+      /**
+       * @description VIAF ID
+       * @example 24606633
+       */
+      viafId?: string;
+      /**
+       * @description Wikidata ID
+       * @example Q7245
+       */
+      wikidataId?: string;
+    };
+    UpdateLawyerDto: {
+      barId?: string;
+      email?: string;
+      fullName?: string;
+      /** @description ISO 3166-1 alpha-2 */
+      jurisdictionCodes?: string[];
+      /** @enum {string} */
+      lawyerType?: 'IN_HOUSE' | 'EXTERNAL_COUNSEL' | 'LAW_FIRM' | 'OTHER';
+      notesRu?: string;
+      organization?: string;
+      phone?: string;
+      specializationRu?: string;
+      /** @description Пользователь платформы, от лица которого работает юрист */
+      userId?: Record<string, never>;
+    };
+    UpdateLegalChangeDto: {
+      /** @default false */
+      appliesToAllCountries: boolean;
+      /** @enum {string} */
+      changeType?:
+        | 'COPYRIGHT_TERM_CHANGE'
+        | 'PUBLIC_DOMAIN_RULE_CHANGE'
+        | 'TRANSLATION_RIGHTS_CHANGE'
+        | 'NEIGHBOURING_RIGHTS_CHANGE'
+        | 'COURT_DECISION'
+        | 'TREATY_RATIFICATION'
+        | 'PLATFORM_POLICY_CHANGE'
+        | 'OTHER';
+      descriptionRu?: string;
+      effectiveFrom?: string;
+      /** @description ISO-3166-1 alpha-2 codes */
+      jurisdictionCodes?: string[];
+      /**
+       * @default WARNING
+       * @enum {string}
+       */
+      severity: 'INFO' | 'WARNING' | 'BLOCKING';
+      sourceTitle?: string;
+      sourceUrl?: string;
+      titleRu?: string;
+    };
+    UpdateMeDto: {
+      /** Format: uri */
+      avatarUrl?: string;
+      /** @enum {string} */
+      languagePreference?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @example John Doe */
+      name?: string;
+      /**
+       * @description Letters, numbers and underscores only
+       * @example johnny
+       */
+      nickname?: string;
     };
     UpdatePageDto: {
-      /** @description Page slug */
-      slug?: string;
-      /** @description Page title */
-      title?: string;
-      /** @enum {string} */
-      type?: 'generic' | 'category_index' | 'author_index';
       /** @description Page content (markdown/HTML/text) */
       content?: string;
+      /** @description FAQ structured data as JSON array of {question, answer} */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      /** @description SEO H1 heading (overrides title for display purposes) */
+      h1?: Record<string, never> | null;
       /** @enum {string} */
-      language?: 'en' | 'es' | 'fr' | 'pt';
+      language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Homepage sections configuration (JSON object with block data) */
+      sections?: Record<string, never>;
+      /** @description SEO data (automatically creates/updates the SEO entity) */
+      seo?: components['schemas']['SeoInputDto'];
       /** @description SEO entity ID */
       seoId?: Record<string, never> | null;
+      /** @description Short description for overview cards/previews */
+      shortDescription?: Record<string, never> | null;
+      /** @description Page slug */
+      slug?: string;
       /**
        * @description Publication status
        * @enum {string}
        */
       status?: 'draft' | 'published';
+      /** @description Page title */
+      title?: string;
+      /** @enum {string} */
+      type?: 'generic' | 'category_index' | 'author_index' | 'homepage';
     };
-    ConfirmMediaDto: {
+    UpdatePersonDto: {
+      /** @example 1835-11-30 */
+      birthDate?: string;
+      /** @example 1835 */
+      birthYear?: number;
+      /** @example Mark Twain */
+      canonicalName?: string;
+      /** @example 1910-04-21 */
+      deathDate?: string;
+      /** @example 1910 */
+      deathYear?: number;
+      /** @example 53 */
+      gutenbergAgentId?: string;
+      /** @example 0000-0001-2345-6789 */
+      isni?: string;
+      /** @example US */
+      nationalityCountryCode?: string;
+      /** @example Американский писатель, журналист и общественный деятель. */
+      notesRu?: string;
+      /** @example 1981 */
+      publicDomainFromYear?: number;
+      /** @example mark-twain */
+      slug?: string;
+      /** @example Twain, Mark */
+      sortName?: string;
       /**
-       * @description Storage object key (from /uploads)
-       * @example covers/2025/08/26/uuid.jpg
+       * @example NATURAL_PERSON
+       * @enum {string}
        */
-      key: string;
+      type?: 'NATURAL_PERSON' | 'ORGANIZATION' | 'UNKNOWN';
+      /** @example 505050 */
+      viafId?: string;
+      /** @example Q7245 */
+      wikidataId?: string;
+    };
+    UpdateReadingProgressDto: {
+      /** @description Audio chapter number for audio listening (>=1) */
+      audioChapterNumber?: number;
+      /** @description Chapter number for text reading (>=1) */
+      chapterNumber?: number;
       /**
-       * @description Public URL resolved by storage
-       * @example http://localhost:3000/static/covers/2025/08/26/uuid.jpg
+       * @description Playback/scroll position; seconds for audio or fraction for text
+       * @example 12.5
        */
-      url: string;
+      position?: number;
+    };
+    UpdateRecheckScheduleDto: {
+      /** @description null clears the planned date */
+      nextReviewAt?: Record<string, never> | null;
+      recheckIntervalDays?: Record<string, never>;
+      recheckPauseReasonRu?: Record<string, never> | null;
+      recheckPausedUntil?: Record<string, never> | null;
+      /** @enum {string} */
+      recheckPolicy?: 'INHERIT_REPORT' | 'FIXED_INTERVAL' | 'MANUAL_ONLY' | 'PAUSED';
+    };
+    UpdateRightsActionDto: {
+      /** @description Assignee user id, or null to unassign */
+      assignedToUserId?: Record<string, never> | null;
+      /** @description Comment on the change. Mandatory when the status becomes WAIVED. */
+      completionNotesRu?: string;
+      /** @description Due date (ISO 8601), or null to clear */
+      dueAt?: Record<string, never> | null;
       /**
-       * @description Content type (MIME)
-       * @example image/jpeg
+       * @description New action status
+       * @enum {string}
        */
-      contentType?: string;
-      /** @description Size in bytes */
-      size?: number;
-      /** @description Width in px (images) */
-      width?: number;
-      /** @description Height in px (images) */
-      height?: number;
-      /** @description Optional content hash for dedupe (e.g., sha256) */
-      hash?: string;
+      status?: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'WAIVED' | 'CANCELLED';
+    };
+    UpdateRightsClaimDto: {
+      /** @description Empty = the claim applies worldwide */
+      affectedCountryCodes?: string[];
+      affectedLanguages?: string[];
+      assignedToUserId?: string;
+      /** @default true */
+      blocksPublication: boolean;
+      /** @description Required when blocksPublication is set to false */
+      blocksPublicationOverrideReasonRu?: string;
+      bookId?: string;
+      bookVersionId?: string;
+      /**
+       * @default EMAIL
+       * @enum {string}
+       */
+      channel:
+        | 'EMAIL'
+        | 'WEB_FORM'
+        | 'POSTAL'
+        | 'PHONE'
+        | 'LEGAL_COUNSEL'
+        | 'PLATFORM_NOTICE'
+        | 'OTHER';
+      /** @enum {string} */
+      claimType?:
+        | 'DMCA_TAKEDOWN'
+        | 'COPYRIGHT_INFRINGEMENT'
+        | 'LICENSE_VIOLATION'
+        | 'ATTRIBUTION_MISSING'
+        | 'TERRITORY_VIOLATION'
+        | 'TRADEMARK'
+        | 'PRIVACY_PERSONAL_DATA'
+        | 'DEFAMATION'
+        | 'COUNTER_NOTICE'
+        | 'OTHER';
+      claimantAddress?: string;
+      claimantEmail?: string;
+      /** @default false */
+      claimantIsAuthorized: boolean;
+      claimantName?: string;
+      claimantOrganization?: string;
+      claimantPersonId?: string;
+      claimantPhone?: string;
+      /**
+       * @default UNKNOWN
+       * @enum {string}
+       */
+      claimantType:
+        | 'RIGHTS_HOLDER'
+        | 'AUTHOR'
+        | 'PUBLISHER'
+        | 'AGENT'
+        | 'LAW_FIRM'
+        | 'COLLECTING_SOCIETY'
+        | 'PLATFORM'
+        | 'INDIVIDUAL'
+        | 'UNKNOWN';
+      claimedRightsDescriptionRu?: string;
+      claimedWorkAuthor?: string;
+      claimedWorkTitle?: string;
+      /** @description ISO date the claim must be answered by */
+      deadlineAt?: string;
+      descriptionRu?: string;
+      /** @default false */
+      goodFaithStatement: boolean;
+      infringingUrls?: string[];
+      internalNotesRu?: string;
+      mediaAssetId?: string;
+      originalNoticeText?: string;
+      originalNoticeUrl?: string;
+      parentClaimId?: string;
+      /** @description ISO date the claim was received */
+      receivedAt?: string;
+      /** @default false */
+      requiresLawyerReview: boolean;
+      rightsIntakeId?: string;
+      rightsProfileId?: string;
+      /**
+       * @default MEDIUM
+       * @enum {string}
+       */
+      severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      /** @default false */
+      swornStatement: boolean;
+    };
+    UpdateRightsGeoBlockDto: {
+      configured: boolean;
+      notesRu?: string | null;
+    };
+    UpdateRightsIntakeDto: {
+      /** @description Author birth year */
+      authorBirthYear?: Record<string, never>;
+      /** @description Author death year */
+      authorDeathYear?: Record<string, never>;
+      /** @description Candidate author */
+      candidateAuthor?: string;
+      /** @description Candidate title (name of the work) */
+      candidateTitle?: string;
+      /** @description Notes in Russian */
+      notesRu?: Record<string, never>;
+      /** @description Original language code */
+      originalLanguage?: Record<string, never>;
+      /** @description Original title of the work */
+      originalTitle?: Record<string, never>;
+      /** @description Planned components */
+      plannedComponents?: Record<string, never>[];
+      /**
+       * @description Planned content types
+       * @example [
+       *       "TEXT",
+       *       "AUDIO"
+       *     ]
+       */
+      plannedContentTypes?: unknown[][];
+      /** @description Source external ID (e.g. Gutenberg eBook ID) */
+      sourceExternalId?: Record<string, never>;
+      /** @description Source language code */
+      sourceLanguage?: Record<string, never>;
+      /**
+       * @description Source provider
+       * @default UNKNOWN
+       * @enum {string}
+       */
+      sourceProvider: 'PROJECT_GUTENBERG' | 'OTHER' | 'UNKNOWN';
+      /**
+       * @description Source text type
+       * @default UNKNOWN
+       * @enum {string}
+       */
+      sourceTextType:
+        | 'ORIGINAL_TEXT'
+        | 'TRANSLATION'
+        | 'ADAPTATION'
+        | 'ABRIDGMENT'
+        | 'COMPILATION'
+        | 'UNKNOWN';
+      /** @description Source title */
+      sourceTitle?: Record<string, never>;
+      /** @description Source URL */
+      sourceUrl?: Record<string, never>;
+      /**
+       * @description Target country codes (ISO alpha-2 uppercase)
+       * @example [
+       *       "US",
+       *       "GB",
+       *       "FR"
+       *     ]
+       */
+      targetCountryCodes?: unknown[][];
+      /**
+       * @description Target languages (en, es, fr, pt, ru)
+       * @example [
+       *       "en",
+       *       "fr"
+       *     ]
+       */
+      targetLanguages?: unknown[][];
+    };
+    UpdateRightsLicenseDto: {
+      /** @default false */
+      attributionRequired: boolean;
+      /** @default false */
+      commercialUseAllowed: boolean;
+      /** @enum {string} */
+      confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+      /**
+       * @example [
+       *       "ES",
+       *       "MX",
+       *       "AR"
+       *     ]
+       */
+      countryCodes?: string[];
+      documentMediaAssetId?: string;
+      /** @description 64 hex characters */
+      documentSha256?: string;
+      /** @example rights/licenses/prh-2019-4471.pdf */
+      documentStorageKey?: string;
+      /** @example https://example.org/license.pdf */
+      documentUrl?: string;
+      /** @example 2019-06-01 */
+      effectiveFrom?: string;
+      /**
+       * @example [
+       *       "US"
+       *     ]
+       */
+      excludedCountryCodes?: string[];
+      /** @default false */
+      exclusive: boolean;
+      /** @example 2029-06-01 */
+      expiresAt?: string;
+      /** @example 2019-05-01 */
+      grantedAt?: string;
+      /** @default false */
+      isPerpetual: boolean;
+      /**
+       * @example [
+       *       "es"
+       *     ]
+       */
+      languageCodes?: string[];
+      /** @example license:penguin-2019 */
+      licenseKey?: string;
+      /**
+       * @default DIRECT_LICENSE
+       * @enum {string}
+       */
+      licenseType:
+        | 'DIRECT_LICENSE'
+        | 'DIRECT_PERMISSION'
+        | 'RIGHTS_ASSIGNMENT'
+        | 'WORK_FOR_HIRE'
+        | 'OPEN_LICENSE'
+        | 'PUBLIC_DOMAIN_DEDICATION'
+        | 'OTHER';
+      /** @example Bibliaris */
+      licensee?: string;
+      /** @example Penguin Random House */
+      licensor?: string;
+      mediaFormats?: (
+        | 'TEXT_ONLINE'
+        | 'TEXT_DOWNLOAD'
+        | 'EBOOK'
+        | 'AUDIO_STREAMING'
+        | 'AUDIO_DOWNLOAD'
+        | 'IMAGE'
+        | 'PRINT'
+        | 'OTHER'
+      )[];
+      /** @default false */
+      modificationAllowed: boolean;
+      notesRu?: string;
+      /** @example Запрещено использование обложки издателя. */
+      otherConditionsRu?: string;
+      /** @example PRH-2019-4471 */
+      referenceNumber?: string;
+      /** @example © Penguin Random House, 2019 */
+      requiredAttributionText?: string;
+      /** @default true */
+      revocable: boolean;
+      /** @example Penguin Random House */
+      rightsHolder?: string;
+      /** @example 8% от выручки, ежеквартально. */
+      royaltyTermsRu?: string;
+      sourceEvidenceIds?: string[];
+      /**
+       * @default DRAFT
+       * @enum {string}
+       */
+      status: 'DRAFT' | 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'UNCERTAIN' | 'SUPERSEDED';
+      /** @default false */
+      sublicensingAllowed: boolean;
+      /**
+       * @default UNKNOWN
+       * @enum {string}
+       */
+      territoryScope: 'WORLDWIDE' | 'COUNTRY_LIST' | 'EXCEPT_COUNTRY_LIST' | 'UNKNOWN';
+      /** @example Лицензия на испанский перевод (Penguin, 2019) */
+      title?: string;
+      /** @default false */
+      translationAllowed: boolean;
+    };
+    UpdateSeoDto: {
+      canonicalUrl?: string;
+      eventDescription?: string;
+      eventEndDate?: string;
+      eventImageUrl?: string;
+      eventLocationCity?: string;
+      eventLocationCountry?: string;
+      eventLocationName?: string;
+      eventLocationPostal?: string;
+      eventLocationRegion?: string;
+      eventLocationStreet?: string;
+      eventName?: string;
+      eventStartDate?: string;
+      eventUrl?: string;
+      metaDescription?: string;
+      metaTitle?: string;
+      ogDescription?: string;
+      ogImageAlt?: string;
+      ogImageUrl?: string;
+      ogTitle?: string;
+      ogType?: string;
+      ogUrl?: string;
+      robots?: string;
+      twitterCard?: string;
+      twitterCreator?: string;
+      twitterSite?: string;
+    };
+    UpdateTagDto: {
+      /** @description Whether the page is indexable by search engines */
+      indexable?: boolean;
+      /** @description Whether the tag is visible in public lists */
+      isVisible?: boolean;
+      /** @description Stable unique key */
+      key?: string;
+      /** @description Tag name */
+      name?: string;
+      /** @description Tag slug */
+      slug?: string;
+      /** @description Sort order in lists */
+      sortOrder?: number;
+    };
+    UpdateTagTranslationDto: {
+      /** @description Canonical URL */
+      canonicalUrl?: string;
+      /** @description HTML description for the tag page */
+      description?: Record<string, never>;
+      /**
+       * @description FAQ items
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['TagFaqDto'][];
+      /** @description H1 heading for the tag page */
+      h1?: string;
+      /**
+       * @description Whether this tag should be indexed
+       * @default true
+       */
+      indexable: boolean;
+      /** @enum {string} */
+      language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Meta description for SEO */
+      metaDescription?: Record<string, never>;
+      /** @description Meta title for SEO */
+      metaTitle?: string;
+      /** @description Localized tag name */
+      name?: string;
+      /** @description Open Graph description */
+      ogDescription?: Record<string, never>;
+      /** @description Open Graph image alt text */
+      ogImageAlt?: string;
+      /** @description Open Graph image URL */
+      ogImageUrl?: Record<string, never>;
+      /** @description Open Graph title */
+      ogTitle?: string;
+      /**
+       * @description Related category slugs
+       * @example [
+       *       "classic-literature",
+       *       "victorian-literature"
+       *     ]
+       */
+      relatedCategorySlugs?: string[];
+      /**
+       * @description Related collection slugs
+       * @example [
+       *       "short-reads",
+       *       "feel-good-books"
+       *     ]
+       */
+      relatedCollectionSlugs?: string[];
+      /**
+       * @description Related genre/category slugs
+       * @example [
+       *       "classic-literature",
+       *       "philosophical-fiction"
+       *     ]
+       */
+      relatedGenreSlugs?: string[];
+      /**
+       * @description Related tag slugs
+       * @example [
+       *       "aestheticism",
+       *       "beauty"
+       *     ]
+       */
+      relatedTagSlugs?: string[];
+      /**
+       * @description Robots directive
+       * @example index, follow
+       */
+      robots?: string;
+      /** @description SEO metadata */
+      seo?: components['schemas']['SeoInputDto'];
+      /** @description Short description for cards/lists */
+      shortDescription?: Record<string, never>;
+      /** @description Localized tag slug */
+      slug?: string;
+    };
+    UpdateUserDto: {
+      /** @example new-email@example.com */
+      email?: string;
+      /** @example NewName */
+      firstName?: string;
+      /** @example false */
+      isActive?: boolean;
+      /** @example NewSurname */
+      lastName?: string;
+      /** @example newPassword */
+      password?: string;
+      /**
+       * @example [
+       *       "user",
+       *       "admin"
+       *     ]
+       */
+      roles?: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
+    };
+    UploadKindLimitsDto: {
+      /**
+       * @example [
+       *       "image/jpeg",
+       *       "image/png"
+       *     ]
+       */
+      allowedContentTypes: string[];
+      /**
+       * @description Максимальный размер файла в мегабайтах
+       * @example 5
+       */
+      maxSizeMb: number;
+    };
+    UploadLimitsDto: {
+      audio: components['schemas']['UploadKindLimitsDto'];
+      image: components['schemas']['UploadKindLimitsDto'];
+      /**
+       * @description Срок жизни подписи прямой загрузки в секундах
+       * @example 600
+       */
+      presignTtlSec: number;
+    };
+    UserActivityDto: {
+      bookVersion: components['schemas']['ActivityBookVersionDto'] | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      isHidden: boolean;
+      parent: components['schemas']['ActivityCommentDto'] | null;
+      /** Format: uuid */
+      parentId: string | null;
+      replies: components['schemas']['ActivityReplyDto'][];
+      text: string;
+    };
+    UserRoleDto: {
+      /** @enum {string} */
+      role: 'user' | 'admin' | 'content_manager' | 'lawyer';
+      /** Format: uuid */
+      userId: string;
+    };
+    ValidationIssueDto: {
+      code: string;
+      message: string;
+      path: string;
+    };
+    VerifyGeoBlockRulesDto: {
+      /** @example Checked blocked GB and allowed US scenarios. */
+      notesRu?: string | null;
+      /** @example true */
+      verified: boolean;
+    };
+    VersionCategoryLinkDto: {
+      bookVersionId: string;
+      categoryId: string;
+      id: string;
+      /** @default 0 */
+      sortOrder: number;
+    };
+    VersionLawyerReviewDto: {
+      blockers: components['schemas']['LawyerGateReasonDto'][];
+      bookId: string | null;
+      isExpiringSoon: boolean;
+      lawyerApproved: boolean;
+      lawyerApprovedAt: string | null;
+      lawyerApprovedLawyerName: string | null;
+      lawyerOpinionValidUntil: string | null;
+      lawyerReviewRequired: boolean;
+      openReviewsCount: number;
+      pendingConditions: components['schemas']['LawyerConditionDto'][];
+      pendingConditionsCount: number;
+      reviewIds: string[];
+      reviews: components['schemas']['LawyerReviewDto'][];
+      rightsProfileId: string | null;
+      /** @enum {string|null} */
+      riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null;
+      versionId: string;
+      warnings: components['schemas']['LawyerGateReasonDto'][];
+    };
+    VersionRecheckDto: {
+      blockers: components['schemas']['RecheckGateReasonDto'][];
+      blockingTasksCount: number;
+      nextRecheckDueAt: string | null;
+      openTasksCount: number;
+      overdueTasksCount: number;
+      schedule: components['schemas']['RecheckScheduleDto'] | null;
+      taskIds: string[];
+      tasks: components['schemas']['RecheckTaskDto'][];
+      versionId: string;
+      warnings: components['schemas']['RecheckGateReasonDto'][];
+    };
+    VersionTagLinkDto: {
+      bookVersionId: string;
+      id: string;
+      tagId: string;
+    };
+    /** @enum {string} */
+    ViewSource: 'text' | 'audio' | 'referral';
+    /** @enum {string} */
+    ViewsPeriod: 'day' | 'week' | 'month' | 'all';
+    WaiveConditionDto: {
+      reasonRu: string;
+    };
+    WithdrawLawyerReviewDto: {
+      reasonRu: string;
     };
   };
   responses: never;
@@ -1909,7 +12527,423 @@ export interface operations {
       };
     };
   };
-  AppController_getHealth: {
+  AudioChapterController_getAdmin: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AudioChapterResponseDto'];
+        };
+      };
+    };
+  };
+  AuthorController_list: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+        /** @description Search by author name */
+        q?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['AdminAuthorItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  AuthorController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateAuthorDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthorResponseDto'];
+        };
+      };
+    };
+  };
+  AuthorController_checkSlug: {
+    parameters: {
+      query: {
+        /** @description Slug to check for uniqueness */
+        slug: string;
+        /** @description Author translation language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        /** @description Author ID to exclude from the check (when editing) */
+        excludeId?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CheckAuthorSlugResponseDto'];
+        };
+      };
+    };
+  };
+  AuthorController_findOne: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Author id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Author, same shape as a list item */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AdminAuthorItemDto'];
+        };
+      };
+      /** @description Author not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AuthorController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateAuthorDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthorResponseDto'];
+        };
+      };
+    };
+  };
+  AuthorController_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  BackgroundJobsController_list: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Every registered mechanism with its state and reason */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BackgroundJobsStatusResponseDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_getBookRightsClaims: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Records per page. Values above 100 are rejected with 400. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsClaimSummaryDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  CategoryController_adminList: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Rows per page. Values above 100 are rejected with 400. */
+        limit?: number;
+        /** @description Filter by category type */
+        type?: 'category' | 'genre' | 'collection';
+        /** @description Filter by language */
+        lang?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['CategoryResponse'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  CommentsController_adminList: {
+    parameters: {
+      query?: {
+        page?: number;
+        limit?: number;
+        /** @description Substring of the comment text, author name or e-mail */
+        search?: string;
+        status?: 'visible' | 'hidden' | 'all';
+        /** @description Limit to comments on a single book */
+        bookId?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['AdminCommentDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  ContributorsController_findAll: {
+    parameters: {
+      query?: {
+        /** @description Search term for name or authority identifiers */
+        q?: string;
+        /** @description Filter by contributor role */
+        role?:
+          | 'AUTHOR'
+          | 'TRANSLATOR'
+          | 'EDITOR'
+          | 'ILLUSTRATOR'
+          | 'NARRATOR'
+          | 'ADAPTER'
+          | 'COMPILER'
+          | 'COMMENTATOR'
+          | 'INTRODUCTION_AUTHOR'
+          | 'AFTERWORD_AUTHOR'
+          | 'COVER_ARTIST'
+          | 'RIGHTS_HOLDER'
+          | 'OTHER';
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['ContributorResponseDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  ContributorsController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateContributorDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContributorResponseDto'];
+        };
+      };
+    };
+  };
+  ContributorsController_findOne: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContributorResponseDto'];
+        };
+      };
+    };
+  };
+  ContributorsController_remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeleteContributorResponseDto'];
+        };
+      };
+    };
+  };
+  ContributorsController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateContributorDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContributorResponseDto'];
+        };
+      };
+    };
+  };
+  GeoCountrySourceController_getCountrySource: {
     parameters: {
       query?: never;
       header?: never;
@@ -1922,17 +12956,4311 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
+        content: {
+          'application/json': components['schemas']['GeoCountrySourceHealthDto'];
+        };
+      };
+    };
+  };
+  MediaJobsController_cleanupOrphans: {
+    parameters: {
+      query?: {
+        dryRun?: boolean;
+        softDays?: number;
+        hardDays?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CleanupOrphansResponseDto'];
+        };
+      };
+    };
+  };
+  MediaJobsController_cleanupStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MediaCleanupStatusResponseDto'];
+        };
+      };
+    };
+  };
+  MediaJobsController_probeOne: {
+    parameters: {
+      query: {
+        id: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Job enqueued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProbeResponseDto'];
+        };
+      };
+    };
+  };
+  MediaJobsController_reprobe: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Jobs enqueued */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ReprobeResponseDto'];
+        };
+      };
+    };
+  };
+  PagesController_findAllGrouped: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+        /** @description Search by title or slug */
+        search?: string;
+        /** @description Filter by publication status */
+        status?: 'draft' | 'published';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description List of page groups */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['PageGroupResponse'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PagesController_checkSlug: {
+    parameters: {
+      query: {
+        /** @description Slug to check for uniqueness */
+        slug: string;
+        /** @description Page language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        /** @description Page ID to exclude from the check (when editing) */
+        excludeId?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Slug check result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CheckPageSlugResponseDto'];
+        };
+      };
+      /** @description Invalid slug format */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
         content?: never;
+      };
+    };
+  };
+  PagesController_findByGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        groupId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Pages in the group, one page (`LEGACY-379`) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['PageResponse'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PagesController_findById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Page UUID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PageWithTranslationsResponse'];
+        };
+      };
+    };
+  };
+  PersonsController_findAll: {
+    parameters: {
+      query?: {
+        /** @description Search term for name, sortName, translation, or authority identifiers */
+        q?: string;
+        role?:
+          | 'AUTHOR'
+          | 'TRANSLATOR'
+          | 'EDITOR'
+          | 'ILLUSTRATOR'
+          | 'NARRATOR'
+          | 'ADAPTER'
+          | 'COMPILER'
+          | 'COMMENTATOR'
+          | 'INTRODUCTION_AUTHOR'
+          | 'AFTERWORD_AUTHOR'
+          | 'COVER_ARTIST'
+          | 'RIGHTS_HOLDER'
+          | 'OTHER';
+        type?: 'NATURAL_PERSON' | 'ORGANIZATION' | 'UNKNOWN';
+        language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        limit?: number;
+        offset?: number;
+        /** @description Page number, 1-based; takes priority over `offset` */
+        page?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['PersonDetailDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PersonsController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreatePersonDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PersonDetailDto'];
+        };
+      };
+    };
+  };
+  PersonsController_search: {
+    parameters: {
+      query: {
+        q: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['PersonDetailDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PersonsController_findOne: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PersonDetailDto'];
+        };
+      };
+    };
+  };
+  PersonsController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdatePersonDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PersonDetailDto'];
+        };
+      };
+    };
+  };
+  ContributorsController_linkRightsComponent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LinkRightsComponentContributorDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContributorLinkResponseDto'];
+        };
+      };
+    };
+  };
+  ContributorsController_unlinkRightsComponent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        linkId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContributorLinkResponseDto'];
+        };
+      };
+    };
+  };
+  RightsActionController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        actionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsActionDto'];
+        };
+      };
+    };
+  };
+  RightsActionController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        actionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateRightsActionDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsActionDto'];
+        };
+      };
+    };
+  };
+  RightsAgentAdminController_listSubmissions: {
+    parameters: {
+      query?: {
+        status?: 'RECEIVED' | 'VALIDATED' | 'VALIDATION_FAILED' | 'REJECTED' | 'FAILED';
+        /** @description Filter by intake (global list only) */
+        intakeId?: string;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['AgentSubmissionDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsAgentAdminController_getSubmission: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        submissionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AgentSubmissionDto'];
+        };
+      };
+    };
+  };
+  RightsAgentAdminController_revokeToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        tokenId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RevokeAgentTokenDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AgentTokenDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_findAll: {
+    parameters: {
+      query?: {
+        /** @description Search term for claimNumber, claimantName, claimantOrganization, claimantEmail, claimedWorkTitle, claimedWorkAuthor, descriptionRu */
+        q?: string;
+        status?:
+          | 'RECEIVED'
+          | 'UNDER_REVIEW'
+          | 'ACTION_REQUIRED'
+          | 'AWAITING_CLAIMANT'
+          | 'CONTENT_REMOVED'
+          | 'CONTENT_RESTRICTED'
+          | 'COUNTER_NOTICE_FILED'
+          | 'ESCALATED_TO_LAWYER'
+          | 'RESOLVED_VALID'
+          | 'RESOLVED_INVALID'
+          | 'WITHDRAWN'
+          | 'CLOSED';
+        claimType?:
+          | 'DMCA_TAKEDOWN'
+          | 'COPYRIGHT_INFRINGEMENT'
+          | 'LICENSE_VIOLATION'
+          | 'ATTRIBUTION_MISSING'
+          | 'TERRITORY_VIOLATION'
+          | 'TRADEMARK'
+          | 'PRIVACY_PERSONAL_DATA'
+          | 'DEFAMATION'
+          | 'COUNTER_NOTICE'
+          | 'OTHER';
+        severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+        resolution?:
+          | 'VALID_CONTENT_REMOVED'
+          | 'VALID_LICENSE_OBTAINED'
+          | 'VALID_GEO_RESTRICTED'
+          | 'VALID_ATTRIBUTION_ADDED'
+          | 'INVALID_REJECTED'
+          | 'WITHDRAWN_BY_CLAIMANT'
+          | 'COUNTER_NOTICE_UPHELD'
+          | 'NO_ACTION_NEEDED'
+          | 'OTHER';
+        channel?:
+          | 'EMAIL'
+          | 'WEB_FORM'
+          | 'POSTAL'
+          | 'PHONE'
+          | 'LEGAL_COUNSEL'
+          | 'PLATFORM_NOTICE'
+          | 'OTHER';
+        claimantType?:
+          | 'RIGHTS_HOLDER'
+          | 'AUTHOR'
+          | 'PUBLISHER'
+          | 'AGENT'
+          | 'LAW_FIRM'
+          | 'COLLECTING_SOCIETY'
+          | 'PLATFORM'
+          | 'INDIVIDUAL'
+          | 'UNKNOWN';
+        assignedToUserId?: string;
+        bookId?: string;
+        bookVersionId?: string;
+        rightsProfileId?: string;
+        /** @description Matches affectedCountryCodes */
+        countryCode?: string;
+        /** @description Only claims in an open status */
+        openOnly?: boolean;
+        /** @description Only open claims whose deadline has passed */
+        overdueOnly?: boolean;
+        /** @description Only claims with at least one active access block */
+        hasActiveBlock?: boolean;
+        /** @description Only claims whose deadline falls within N days */
+        deadlineWithinDays?: number;
+        /** @description ISO date — lower bound of receivedAt */
+        receivedFrom?: string;
+        /** @description ISO date — upper bound of receivedAt */
+        receivedTo?: string;
+        requiresLawyerReview?: boolean;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsClaimSummaryDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsClaimsController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateRightsClaimDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_findOne: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateRightsClaimDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_assign: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AssignRightsClaimDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_addAttachment: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateClaimAttachmentDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimAttachmentDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_removeAttachment: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        attachmentId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClaimMutationResultDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_applyBlock: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ApplyClaimBlockDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimAccessBlockDto'][];
+        };
+      };
+    };
+  };
+  RightsClaimsController_liftBlock: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        blockId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LiftClaimBlockDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimAccessBlockDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_linkComponent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LinkClaimComponentDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimComponentDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_unlinkComponent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        claimComponentId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClaimMutationResultDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_recordCounterNotice: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RecordCounterNoticeDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_reopen: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ReopenRightsClaimDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_resolve: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ResolveRightsClaimDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_recordResponse: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RecordClaimResponseDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsClaimsController_changeStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ChangeRightsClaimStatusDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+    };
+  };
+  RightsFilesController_downloadEvidenceArchiveCopy: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        evidenceId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  RightsFilesController_uploadEvidenceArchiveCopy: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        evidenceId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsFileDescriptorDto'];
+        };
+      };
+    };
+  };
+  RightsFilesController_supersedeEvidence: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        evidenceId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SupersedeRightsEvidenceDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SupersedeRightsEvidenceResponseDto'];
+        };
+      };
+    };
+  };
+  RightsFilesController_getLimits: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsFileLimitsDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_list: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Items per page */
+        limit?: number;
+        /** @description Filter by status */
+        status?:
+          | 'DRAFT'
+          | 'READY_FOR_AGENT'
+          | 'REVIEW_IMPORTED'
+          | 'HUMAN_REVIEW_REQUIRED'
+          | 'APPROVED'
+          | 'REJECTED'
+          | 'BOOK_CREATED'
+          | 'ARCHIVED'
+          | 'LAWYER_REVIEW_REQUIRED';
+        /** @description Search query */
+        q?: string;
+        /** @description Filter by source provider */
+        sourceProvider?: 'PROJECT_GUTENBERG' | 'OTHER' | 'UNKNOWN';
+        /** @description Filter by target language */
+        targetLanguage?: string;
+        /** @description Filter for intakes requiring action */
+        attentionOnly?: boolean;
+        /** @description Include summary indicators in list response */
+        includeSummary?: boolean;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsIntakeListItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsIntakeController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateRightsIntakeDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsIntakeResponseDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsIntakeResponseDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_archive: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsIntakeResponseDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateRightsIntakeDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsIntakeResponseDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_agentManifest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsAgentManifestDto'];
+        };
+      };
+    };
+  };
+  RightsAgentAdminController_listIntakeSubmissions: {
+    parameters: {
+      query?: {
+        status?: 'RECEIVED' | 'VALIDATED' | 'VALIDATION_FAILED' | 'REJECTED' | 'FAILED';
+        /** @description Filter by intake (global list only) */
+        intakeId?: string;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['AgentSubmissionDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsAgentAdminController_listTokens: {
+    parameters: {
+      query?: {
+        status?: 'ACTIVE' | 'USED' | 'REVOKED' | 'EXPIRED';
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['AgentTokenDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsAgentAdminController_issueToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateAgentTokenDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AgentTokenIssuedDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_createBookFromClearance: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateBookFromClearanceDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CreateBookFromClearanceResponseDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_forceArchive: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsIntakeResponseDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_listByIntake: {
+    parameters: {
+      query?: {
+        status?:
+          | 'PENDING'
+          | 'IN_PROGRESS'
+          | 'APPROVED'
+          | 'APPROVED_WITH_CONDITIONS'
+          | 'REJECTED'
+          | 'WITHDRAWN'
+          | 'EXPIRED';
+        trigger?:
+          | 'AGENT_REQUESTED'
+          | 'HIGH_RISK_POLICY'
+          | 'MANUAL_REQUEST'
+          | 'RIGHTS_CLAIM'
+          | 'LEGAL_CHANGE'
+          | 'LICENSE_REQUIRED'
+          | 'OTHER';
+        riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+        decision?: 'APPROVED' | 'APPROVED_WITH_CONDITIONS' | 'REJECTED';
+        assignedLawyerId?: string;
+        rightsIntakeId?: string;
+        rightsProfileId?: string;
+        bookId?: string;
+        bookVersionId?: string;
+        rightsClaimId?: string;
+        blocksApproval?: boolean;
+        /** @description Только открытые просроченные проверки */
+        overdueOnly?: boolean;
+        /** @description Только проверки без назначенного юриста */
+        unassignedOnly?: boolean;
+        /** @description Заключения, истекающие в течение N дней */
+        expiringWithinDays?: number;
+        /** @description Только проверки, назначенные на юриста текущего пользователя. Для не-юриста список пуст. */
+        mine?: boolean;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['LawyerReviewDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsIntakeController_readiness: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsIntakeReadinessDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_listIntakeTasks: {
+    parameters: {
+      query?: {
+        status?: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED';
+        reason?:
+          | 'SCHEDULED_DUE'
+          | 'CONTENT_CHANGED'
+          | 'RIGHTS_DATA_CHANGED'
+          | 'LANGUAGE_ADDED'
+          | 'AUDIO_ADDED'
+          | 'COMPONENT_ADDED'
+          | 'LEGAL_CHANGE'
+          | 'REVIEW_STALE'
+          | 'MANUAL_REQUEST'
+          | 'OTHER';
+        severity?: 'INFO' | 'WARNING' | 'BLOCKING';
+        source?: 'SCHEDULER' | 'CONTENT_HASH' | 'VERSION_CREATED' | 'LEGAL_CHANGE' | 'MANUAL';
+        rightsIntakeId?: string;
+        rightsProfileId?: string;
+        bookId?: string;
+        bookVersionId?: string;
+        legalChangeEventId?: string;
+        /** @description Only open tasks whose dueAt is already in the past */
+        overdueOnly?: boolean;
+        /** @description Only open tasks due within N days */
+        dueWithinDays?: number;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RecheckTaskDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsRecheckController_getReviewChain: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['ReviewChainItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsReviewImportController_listByIntake: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Items per page */
+        limit?: number;
+        /** @description Filter by import status */
+        status?: string;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsReviewImportListItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsReviewImportController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateRightsReviewImportDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsReviewImportRecordDto'];
+        };
+      };
+    };
+  };
+  RightsProfileController_getByIntake: {
+    parameters: {
+      query?: {
+        /** @description Return only current profile (default: true) */
+        currentOnly?: boolean;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json':
+            | components['schemas']['RightsProfileDetailDto']
+            | {
+                items: components['schemas']['RightsProfileSummaryDto'][];
+                pagination: components['schemas']['PaginationInfoDto'];
+              };
+        };
+      };
+    };
+  };
+  RightsIntakeController_changeStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ChangeRightsIntakeStatusDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsIntakeResponseDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_getApprovalsByIntake: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        intakeId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsReviewApprovalDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsIntakeController_approveReview: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        intakeId: string;
+        reviewId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ApproveRightsReviewDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsProfileDetailDto'];
+        };
+      };
+    };
+  };
+  RightsIntakeController_rejectReview: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        intakeId: string;
+        reviewId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RejectRightsReviewDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsProfileDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_list: {
+    parameters: {
+      query?: {
+        status?:
+          | 'PENDING'
+          | 'IN_PROGRESS'
+          | 'APPROVED'
+          | 'APPROVED_WITH_CONDITIONS'
+          | 'REJECTED'
+          | 'WITHDRAWN'
+          | 'EXPIRED';
+        trigger?:
+          | 'AGENT_REQUESTED'
+          | 'HIGH_RISK_POLICY'
+          | 'MANUAL_REQUEST'
+          | 'RIGHTS_CLAIM'
+          | 'LEGAL_CHANGE'
+          | 'LICENSE_REQUIRED'
+          | 'OTHER';
+        riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+        decision?: 'APPROVED' | 'APPROVED_WITH_CONDITIONS' | 'REJECTED';
+        assignedLawyerId?: string;
+        rightsIntakeId?: string;
+        rightsProfileId?: string;
+        bookId?: string;
+        bookVersionId?: string;
+        rightsClaimId?: string;
+        blocksApproval?: boolean;
+        /** @description Только открытые просроченные проверки */
+        overdueOnly?: boolean;
+        /** @description Только проверки без назначенного юриста */
+        unassignedOnly?: boolean;
+        /** @description Заключения, истекающие в течение N дней */
+        expiringWithinDays?: number;
+        /** @description Только проверки, назначенные на юриста текущего пользователя. Для не-юриста список пуст. */
+        mine?: boolean;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['LawyerReviewDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_request: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RequestLawyerReviewDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_runExpiryScan: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerExpiryScanResultDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_assign: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AssignLawyerReviewDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_addCondition: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateConditionDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_satisfyCondition: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        conditionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SatisfyConditionDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_waiveCondition: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        conditionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['WaiveConditionDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_decide: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DecideLawyerReviewDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_addNote: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AddLawyerReviewNoteDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_listOpinions: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['LegalOpinionDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_attachOpinion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateLegalOpinionDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LegalOpinionDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_archiveOpinion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        opinionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ArchiveOpinionDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LegalOpinionDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_reopen: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_start: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_withdraw: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['WithdrawLawyerReviewDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerController_list: {
+    parameters: {
+      query?: {
+        /** @description Поиск по имени, организации, email */
+        q?: string;
+        lawyerType?: 'IN_HOUSE' | 'EXTERNAL_COUNSEL' | 'LAW_FIRM' | 'OTHER';
+        isActive?: boolean;
+        /** @description ISO 3166-1 alpha-2 */
+        jurisdictionCode?: string;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['LawyerDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsLawyerController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateLawyerDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateLawyerDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerController_activate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerController_deactivate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DeactivateLawyerDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLegalChangeController_list: {
+    parameters: {
+      query?: {
+        status?: 'DRAFT' | 'APPLIED' | 'ARCHIVED';
+        changeType?:
+          | 'COPYRIGHT_TERM_CHANGE'
+          | 'PUBLIC_DOMAIN_RULE_CHANGE'
+          | 'TRANSLATION_RIGHTS_CHANGE'
+          | 'NEIGHBOURING_RIGHTS_CHANGE'
+          | 'COURT_DECISION'
+          | 'TREATY_RATIFICATION'
+          | 'PLATFORM_POLICY_CHANGE'
+          | 'OTHER';
+        severity?: 'INFO' | 'WARNING' | 'BLOCKING';
+        /** @description ISO-2 code; matched against jurisdictionCodes in memory */
+        countryCode?: string;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['LegalChangeDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsLegalChangeController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateLegalChangeDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LegalChangeDto'];
+        };
+      };
+    };
+  };
+  RightsLegalChangeController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LegalChangeDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLegalChangeController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateLegalChangeDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LegalChangeDto'];
+        };
+      };
+    };
+  };
+  RightsLegalChangeController_apply: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LegalChangeDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLegalChangeController_archive: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LegalChangeDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_findAll: {
+    parameters: {
+      query?: {
+        /** @description Search term for title, licensor, licensee, rightsHolder, referenceNumber, key */
+        q?: string;
+        status?:
+          | 'DRAFT'
+          | 'PENDING'
+          | 'ACTIVE'
+          | 'EXPIRED'
+          | 'REVOKED'
+          | 'UNCERTAIN'
+          | 'SUPERSEDED';
+        licenseType?:
+          | 'DIRECT_LICENSE'
+          | 'DIRECT_PERMISSION'
+          | 'RIGHTS_ASSIGNMENT'
+          | 'WORK_FOR_HIRE'
+          | 'OPEN_LICENSE'
+          | 'PUBLIC_DOMAIN_DEDICATION'
+          | 'OTHER';
+        territoryScope?: 'WORLDWIDE' | 'COUNTRY_LIST' | 'EXCEPT_COUNTRY_LIST' | 'UNKNOWN';
+        countryCode?: string;
+        languageCode?: string;
+        mediaFormat?:
+          | 'TEXT_ONLINE'
+          | 'TEXT_DOWNLOAD'
+          | 'EBOOK'
+          | 'AUDIO_STREAMING'
+          | 'AUDIO_DOWNLOAD'
+          | 'IMAGE'
+          | 'PRINT'
+          | 'OTHER';
+        rightsProfileId?: string;
+        bookVersionId?: string;
+        /** @description Only licenses expiring within N days */
+        expiringInDays?: number;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsLicenseSummaryDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsLicensesController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateRightsLicenseDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsLicenseDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_findOne: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsLicenseDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateRightsLicenseDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsLicenseDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_link: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LinkRightsLicenseDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsLicenseLinkDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_unlink: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        linkId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UnlinkRightsLicenseResponseDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_revoke: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RevokeRightsLicenseDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsLicenseDetailDto'];
+        };
+      };
+    };
+  };
+  RightsNotificationsController_list: {
+    parameters: {
+      query?: {
+        /** @description Only unread notifications */
+        unreadOnly?: boolean;
+        type?:
+          | 'AGENT_REPORT_RECEIVED'
+          | 'AGENT_REPORT_VALIDATION_FAILED'
+          | 'AGENT_REPORT_MATERIALIZED'
+          | 'AGENT_REPORT_MATERIALIZATION_FAILED'
+          | 'AGENT_TOKEN_ISSUED'
+          | 'AGENT_TOKEN_REVOKED'
+          | 'HUMAN_REVIEW_REQUIRED'
+          | 'RECHECK_DUE'
+          | 'RECHECK_OVERDUE'
+          | 'RECHECK_TASK_OPENED'
+          | 'RECHECK_COMPLETED'
+          | 'LEGAL_CHANGE_APPLIED'
+          | 'LAWYER_REVIEW_REQUIRED'
+          | 'OTHER'
+          | 'LAWYER_REVIEW_ASSIGNED'
+          | 'LAWYER_REVIEW_APPROVED'
+          | 'LAWYER_REVIEW_REJECTED'
+          | 'LAWYER_REVIEW_WITHDRAWN'
+          | 'LAWYER_OPINION_EXPIRING'
+          | 'LAWYER_OPINION_EXPIRED';
+        severity?: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
+        rightsIntakeId?: string;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsNotificationDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsNotificationsController_markAllRead: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsNotificationsMarkAllReadDto'];
+        };
+      };
+    };
+  };
+  RightsNotificationsController_unreadCount: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsNotificationsUnreadCountDto'];
+        };
+      };
+    };
+  };
+  RightsNotificationsController_markRead: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsNotificationDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_getSchedule: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckScheduleWithTasksDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_updateSchedule: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateRecheckScheduleDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckScheduleWithTasksDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_requireForProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RequireLawyerReviewDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LawyerReviewDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_getRiskAssessment: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RiskAssessmentSnapshotDto'];
+        };
+      };
+    };
+  };
+  RightsProfileController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        profileId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsProfileDetailDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_profileCoverage: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        profileId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LicenseCoverageResultDto'];
+        };
+      };
+    };
+  };
+  RightsLicensesController_listForProfile: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Records per page. Values above 100 are rejected with 400. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        profileId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsLicenseSummaryDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsFilesController_downloadSourceFile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        profileId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  RightsFilesController_uploadSourceFile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        profileId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsFileDescriptorDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_runScan: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckScanRunDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_listScanRuns: {
+    parameters: {
+      query?: {
+        status?: 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RecheckScanRunDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsRecheckController_listTasks: {
+    parameters: {
+      query?: {
+        status?: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED';
+        reason?:
+          | 'SCHEDULED_DUE'
+          | 'CONTENT_CHANGED'
+          | 'RIGHTS_DATA_CHANGED'
+          | 'LANGUAGE_ADDED'
+          | 'AUDIO_ADDED'
+          | 'COMPONENT_ADDED'
+          | 'LEGAL_CHANGE'
+          | 'REVIEW_STALE'
+          | 'MANUAL_REQUEST'
+          | 'OTHER';
+        severity?: 'INFO' | 'WARNING' | 'BLOCKING';
+        source?: 'SCHEDULER' | 'CONTENT_HASH' | 'VERSION_CREATED' | 'LEGAL_CHANGE' | 'MANUAL';
+        rightsIntakeId?: string;
+        rightsProfileId?: string;
+        bookId?: string;
+        bookVersionId?: string;
+        legalChangeEventId?: string;
+        /** @description Only open tasks whose dueAt is already in the past */
+        overdueOnly?: boolean;
+        /** @description Only open tasks due within N days */
+        dueWithinDays?: number;
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RecheckTaskDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  RightsRecheckController_createTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateRecheckTaskDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckTaskDetailDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_getTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        taskId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckTaskDetailDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_completeTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        taskId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CompleteRecheckTaskDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckTaskDetailDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_dismissTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        taskId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DismissRecheckTaskDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckTaskDetailDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_reopenTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        taskId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckTaskDetailDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_snoozeTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        taskId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SnoozeRecheckTaskDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckTaskDetailDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_startTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        taskId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecheckTaskDetailDto'];
+        };
+      };
+    };
+  };
+  RightsReviewImportController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        importId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsReviewImportDetailDto'];
+        };
+      };
+    };
+  };
+  RightsProfileController_materialize: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        importId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsProfileDetailDto'];
+        };
+      };
+    };
+  };
+  RightsFilesController_downloadReportPdf: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        importId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  RightsFilesController_uploadReportPdf: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        importId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsFileDescriptorDto'];
+        };
+      };
+    };
+  };
+  SeoController_systemPagesStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description State of every system page, plus the problems only */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SystemPagesStatusResponseDto'];
+        };
+      };
+    };
+  };
+  SeoController_recomputeTaxonomyIndexability: {
+    parameters: {
+      query?: {
+        /** @description Reset autoIndexable to false before recomputing, so the 3-4 book hysteresis band resolves downwards instead of inheriting the schema default. Erases real state history — use deliberately, not routinely. */
+        cold?: 'all' | 'tags' | 'categories';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Counters recomputed */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecomputeTaxonomyIndexabilityResponseDto'];
+        };
+      };
+    };
+  };
+  SeoController_taxonomyIndexabilityStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Scheduler state and last run result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TaxonomyIndexabilityStatusResponseDto'];
+        };
+      };
+    };
+  };
+  ContributorsController_linkSourceEdition: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LinkSourceEditionContributorDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContributorLinkResponseDto'];
+        };
+      };
+    };
+  };
+  ContributorsController_unlinkSourceEdition: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        linkId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContributorLinkResponseDto'];
+        };
+      };
+    };
+  };
+  TagsController_adminList: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+        /** @description Search query */
+        q?: string;
+        /** @description Language for per-language counters */
+        lang?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['TagEntityDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  AudioChapterController_listAdmin: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PagedAudioChaptersDto'];
+        };
+      };
+    };
+  };
+  ChapterController_listAdmin: {
+    parameters: {
+      query?: {
+        /** @description Page number, 1-based; required together with `limit` */
+        page?: number;
+        /** @description Page size; required together with `page`. Omit both to get every chapter at once */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['ChapterResponseDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  BookVersionController_getAdmin: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Version found (any status) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionAdminDetailResponseDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_getVersionContributors: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['BookVersionContributorResponseDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  BookVersionController_addVersionContributor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateBookVersionContributorDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionContributorResponseDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_reorderVersionContributors: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ReorderBookVersionContributorsDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionContributorResponseDto'][];
+        };
+      };
+    };
+  };
+  BookVersionController_removeVersionContributor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        contributorId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RemoveVersionContributorResponseDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_updateVersionContributor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        contributorId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookVersionContributorDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionContributorResponseDto'];
+        };
+      };
+    };
+  };
+  GeoBlockController_checkAccess: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CheckGeoBlockAccessDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['GeoAccessCheckResultDto'];
+        };
+      };
+    };
+  };
+  GeoBlockController_getRules: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['GeoBlockRulesResponseDto'];
+        };
+      };
+    };
+  };
+  GeoBlockController_generateRules: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['GeoBlockRulesResponseDto'];
+        };
+      };
+    };
+  };
+  GeoBlockController_verifyRules: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['VerifyGeoBlockRulesDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['GeoBlockRulesResponseDto'];
+        };
+      };
+    };
+  };
+  RightsLawyerReviewController_getVersionLawyerReview: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VersionLawyerReviewDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_getLicenseCoverage: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LicenseCoverageResultDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_checkPublicationGate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicationGateResultDto'];
+        };
+      };
+    };
+  };
+  RightsRecheckController_getVersionRecheck: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VersionRecheckDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_getVersionRightsClaims: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Records per page. Values above 100 are rejected with 400. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['RightsClaimSummaryDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  BookVersionController_getRightsContentHash: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsContentHashCheckDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_checkRightsContentHash: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsContentHashCheckDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_getRightsDashboard: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Consolidated rights dashboard payload */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookRightsDashboardDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_updateRightsGeoBlock: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateRightsGeoBlockDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['GeoBlockRulesResponseDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_listAdmin: {
+    parameters: {
+      query: {
+        language: string;
+        type: string;
+        isFree: string;
+      };
+      header: {
+        'x-admin-language': string;
+      };
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['BookVersionResponseDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  BookVersionController_createAdmin: {
+    parameters: {
+      query?: never;
+      header: {
+        'x-admin-language': string;
+        /** @description Приоритетнее языка пути */
+        'X-Admin-Language'?: string;
+      };
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateBookVersionDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionResponseDto'];
+        };
+      };
+    };
+  };
+  PagesController_adminList: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+      };
+      header: {
+        'x-admin-language': string;
+        /** @description Takes precedence over path language */
+        'X-Admin-Language'?: string;
+      };
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['PageResponse'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PagesController_create: {
+    parameters: {
+      query?: never;
+      header: {
+        'x-admin-language': string;
+        /** @description Takes precedence over the path language */
+        'X-Admin-Language'?: string;
+      };
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreatePageDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PageResponse'];
+        };
+      };
+    };
+  };
+  PagesController_remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  PagesController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdatePageDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PageResponse'];
+        };
+      };
+    };
+  };
+  PagesController_publish: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PageResponse'];
+        };
+      };
+    };
+  };
+  PagesController_unpublish: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PageResponse'];
+        };
+      };
+    };
+  };
+  AudioChapterController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AudioChapterResponseDto'];
+        };
+      };
+    };
+  };
+  AudioChapterController_remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AudioChapterController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateAudioChapterDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AudioChapterResponseDto'];
+        };
+      };
+      /** @description Audio chapter number already exists */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AuthController_login: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LoginDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthResponse'];
+        };
+      };
+    };
+  };
+  AuthController_logout: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @example true */
+            success?: boolean;
+          };
+        };
+      };
+    };
+  };
+  AuthController_refresh: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RefreshDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthTokensResponse'];
+        };
+      };
+    };
+  };
+  AuthController_register: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RegisterDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthResponse'];
+        };
+      };
+    };
+  };
+  AuthController_socialLogin: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SocialLoginDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthResponse'];
+        };
       };
     };
   };
   BookController_findAll: {
     parameters: {
-      query: {
+      query?: {
         /** @description Page number */
-        page: number;
+        page?: number;
         /** @description Number of records per page */
-        limit: number;
+        limit?: number;
       };
       header?: never;
       path?: never;
@@ -1945,7 +17273,12 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': {
+            items: components['schemas']['BookListItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
       };
       /** @description Internal server error */
       500: {
@@ -1963,28 +17296,10 @@ export interface operations {
       path?: never;
       cookie?: never;
     };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreateBookDto'];
-      };
-    };
+    requestBody?: never;
     responses: {
-      /** @description Book successfully created */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Invalid data format */
+      /** @description Books must be created from an approved rights intake */
       400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Internal server error */
-      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -1992,34 +17307,31 @@ export interface operations {
       };
     };
   };
-  BookController_overview: {
+  BookController_checkSlug: {
     parameters: {
-      query?: {
-        /** @description Requested language (en|es|fr|pt) */
-        lang?: string;
-      };
-      header: {
-        'accept-language': string;
-        /** @description RFC 7231 header, e.g. en-US,en;q=0.9,es;q=0.8 */
-        'Accept-Language'?: string;
-      };
-      path: {
-        /** @description Unique book slug */
+      query: {
+        /** @description Slug to check for uniqueness */
         slug: string;
+        /** @description Book ID to exclude from the check (when editing) */
+        excludeId?: string;
       };
+      header?: never;
+      path?: never;
       cookie?: never;
     };
     requestBody?: never;
     responses: {
-      /** @description Overview returned */
+      /** @description Slug check result */
       200: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['CheckBookSlugResponseDto'];
+        };
       };
-      /** @description Book not found */
-      404: {
+      /** @description Invalid slug format */
+      400: {
         headers: {
           [name: string]: unknown;
         };
@@ -2044,7 +17356,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['BookDetailResponseDto'];
+        };
       };
       /** @description Book not found */
       404: {
@@ -2059,6 +17373,99 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  BookController_getThemes: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description List of themes returned, one page (`LEGACY-379`) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: string[];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  BookVersionController_list: {
+    parameters: {
+      query?: {
+        language?: string;
+        type?: string;
+        isFree?: boolean;
+        /** @description Только для админов/контент-менеджеров (требует токена с ролью admin/content_manager). Если true и токен модератора предъявлен — возвращает также черновики; иначе параметр игнорируется. */
+        includeDrafts?: boolean;
+      };
+      header: {
+        'accept-language': string;
+        /** @description RFC 7231 header. Используется только если параметр language не задан: выбирает ближайший доступный язык из опубликованных версий. */
+        'Accept-Language'?: string;
+      };
+      path: {
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: (
+              | components['schemas']['PublicBookVersionListItemDto']
+              | components['schemas']['BookVersionResponseDto']
+            )[];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+      /** @description Заголовок Authorization предъявлен, но токен невалиден или истёк. Пустого заголовка OptionalJwtAuthGuard не требует: без него запрос идёт как анонимный и отвечает 200. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  BookVersionController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateBookVersionDto'];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionResponseDto'];
+        };
       };
     };
   };
@@ -2079,7 +17486,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['BookDetailResponseDto'];
+        };
       };
       /** @description Book not found */
       404: {
@@ -2114,7 +17523,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['DeleteBookResponseDto'];
+        };
       };
       /** @description Book not found */
       404: {
@@ -2153,7 +17564,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['BookEntityDto'];
+        };
       };
       /** @description Book not found */
       404: {
@@ -2171,198 +17584,29 @@ export interface operations {
       };
     };
   };
-  AuthController_register: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['RegisterDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['AuthResponse'];
-        };
-      };
-    };
-  };
-  AuthController_login: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['LoginDto'];
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['AuthResponse'];
-        };
-      };
-    };
-  };
-  AuthController_refresh: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['RefreshDto'];
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['AuthResponse'];
-        };
-      };
-    };
-  };
-  AuthController_logout: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** @example true */
-            success?: boolean;
-          };
-        };
-      };
-    };
-  };
-  UsersController_me: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['PublicUserDto'];
-        };
-      };
-    };
-  };
-  UsersController_updateMe: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['UpdateMeDto'];
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['PublicUserDto'];
-        };
-      };
-    };
-  };
-  UsersController_list: {
-    parameters: {
-      query?: {
-        /** @description Filter staff: 'only' to show only admins/content managers; 'exclude' to hide them */
-        staff?: 'only' | 'exclude';
-        /** @description Search by email or name */
-        q?: string;
-        limit?: number;
-        page?: number;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['PagedUsersDto'];
-        };
-      };
-    };
-  };
-  UsersController_getById: {
+  BookController_getMyRating: {
     parameters: {
       query?: never;
       header?: never;
       path: {
+        /** @description Unique book ID */
         id: string;
       };
       cookie?: never;
     };
     requestBody?: never;
     responses: {
+      /** @description User rating score (1-5 or null) */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['PublicUserDto'];
+          'application/json': components['schemas']['BookRatingScoreDto'];
         };
       };
-    };
-  };
-  UsersController_deleteById: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
+      /** @description Internal server error */
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -2370,674 +17614,47 @@ export interface operations {
       };
     };
   };
-  UsersController_listRoles: {
+  BookController_rate: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        /** @description User ID */
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  UsersController_assignRole: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        /** @description User ID */
-        id: string;
-        /** @description Role name */
-        role: 'user' | 'admin' | 'content_manager';
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  UsersController_revokeRole: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        /** @description User ID */
-        id: string;
-        /** @description Role name */
-        role: 'user' | 'admin' | 'content_manager';
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookVersionController_list: {
-    parameters: {
-      query?: {
-        language?: string;
-        type?: string;
-        isFree?: boolean;
-        /** @description For admins/content managers only (requires authorization and roles). If true - returns drafts as well. */
-        includeDrafts?: boolean;
-      };
-      header: {
-        'accept-language': string;
-        /** @description RFC 7231 header. Used only if language parameter is not set: selects the nearest available language from published versions. */
-        'Accept-Language'?: string;
-      };
-      path: {
-        bookId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookVersionController_create: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        bookId: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreateBookVersionDto'];
-      };
-    };
-    responses: {
-      /** @description Created */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-    };
-  };
-  BookVersionController_listAdmin: {
-    parameters: {
-      query: {
-        language: string;
-        type: string;
-        isFree: string;
-      };
-      header: {
-        'x-admin-language': string;
-      };
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-        bookId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookVersionController_createAdmin: {
-    parameters: {
-      query?: never;
-      header: {
-        'x-admin-language': string;
-        /** @description Higher priority than path language */
-        'X-Admin-Language'?: string;
-      };
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-        bookId: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreateBookVersionDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookVersionController_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Found (published only for public endpoint) */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-    };
-  };
-  BookVersionController_remove: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookVersionController_update: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
+        /** @description Unique book ID */
         id: string;
       };
       cookie?: never;
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['UpdateBookVersionDto'];
+        'application/json': components['schemas']['RateBookDto'];
       };
     };
     responses: {
-      /** @description Updated */
+      /** @description Book successfully rated */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': unknown;
+          'application/json': components['schemas']['BookRatingDto'];
         };
       };
-    };
-  };
-  BookVersionController_publish: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Published */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-    };
-  };
-  BookVersionController_unpublish: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Unpublished (set to draft) */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-    };
-  };
-  ChapterController_list: {
-    parameters: {
-      query?: {
-        /** @description Page number */
-        page?: number;
-        /** @description Number of records per page */
-        limit?: number;
-      };
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
+      /** @description Invalid rating score */
+      400: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-    };
-  };
-  ChapterController_create: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreateChapterDto'];
-      };
-    };
-    responses: {
-      /** @description Created */
-      201: {
+      /** @description Book not found */
+      404: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-    };
-  };
-  ChapterController_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  ChapterController_remove: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  ChapterController_update: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['UpdateChapterDto'];
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  AudioChapterController_list: {
-    parameters: {
-      query?: {
-        /** @description Page number */
-        page?: number;
-        /** @description Number of records per page */
-        limit?: number;
-      };
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  AudioChapterController_create: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreateAudioChapterDto'];
-      };
-    };
-    responses: {
-      /** @description Created */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  AudioChapterController_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  AudioChapterController_remove: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  AudioChapterController_update: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['UpdateAudioChapterDto'];
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  SeoController_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description SEO meta or null if not set */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  SeoController_upsert: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    /** @description Partial SEO fields to upsert */
-    requestBody: {
-      content: {
-        'application/json': {
-          /** @example My SEO title */
-          metaTitle?: string;
-          /** @example Concise description */
-          metaDescription?: string;
-          /** @example https://example.com/books/1 */
-          canonicalUrl?: string;
-          /** @example https://cdn.example.com/og.jpg */
-          ogImageUrl?: string;
-          /** @example 2025-08-17T12:00:00Z */
-          eventStartDate?: string;
-        };
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  SeoController_resolve: {
-    parameters: {
-      query: {
-        type: 'book' | 'version' | 'page';
-        /** @description Entity identifier or slug (book/page). For version: id only. */
-        id: string;
-        /** @description Requested language (en|es|fr|pt) */
-        lang?: string;
-      };
-      header: {
-        'accept-language': string;
-        'Accept-Language'?: string;
-      };
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Resolved SEO bundle */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  SeoController_resolveWithLang: {
-    parameters: {
-      query: {
-        type: 'book' | 'version' | 'page';
-        /** @description Entity identifier or slug (book/page). For version: id only. */
-        id: string;
-      };
-      header: {
-        'accept-language': string;
-        'Accept-Language'?: string;
-      };
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Resolved SEO bundle */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookSummaryController_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookSummaryController_upsert: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        bookVersionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['UpdateBookSummaryDto'];
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  CategoryController_list: {
-    parameters: {
-      query?: {
-        /** @description Page number */
-        page?: number;
-        /** @description Number of records per page */
-        limit?: number;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
+      /** @description Internal server error */
+      500: {
         headers: {
           [name: string]: unknown;
         };
@@ -3062,69 +17679,68 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['CategoryEntityDto'];
+        };
       };
     };
   };
-  CategoryController_tree: {
+  CategoryController_checkSlug: {
     parameters: {
-      query?: never;
+      query: {
+        /** @description Slug to check for uniqueness */
+        slug: string;
+        /** @description Category ID to exclude from the check (when editing) */
+        excludeId?: string;
+      };
       header?: never;
       path?: never;
       cookie?: never;
     };
     requestBody?: never;
     responses: {
-      /** @description Array of root categories with nested children */
+      /** @description Slug check result */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CategoryTreeNodeDto'][];
+          'application/json': components['schemas']['CheckCategorySlugResponseDto'];
         };
       };
-    };
-  };
-  CategoryController_children: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Array of direct child categories */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['CategoryTreeNodeDto'][];
-        };
-      };
-    };
-  };
-  CategoryController_ancestors: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Array from root to parent (excluding the node itself) */
-      200: {
+      /** @description Invalid slug format */
+      400: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  CategoryController_tree: {
+    parameters: {
+      query: {
+        /** @description Filter by category type (category|genre|collection) */
+        type?: 'category' | 'genre' | 'collection';
+        lang: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Root categories with nested children, one page (`LEGACY-379`) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['CategoryTreeNodeDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
       };
     };
   };
@@ -3139,6 +17755,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Deleted; no body */
       204: {
         headers: {
           [name: string]: unknown;
@@ -3166,53 +17783,59 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
-      };
-    };
-  };
-  CategoryController_publicBySlug: {
-    parameters: {
-      query?: {
-        /** @description Optional language (?lang=...) */
-        lang?: string;
-      };
-      header: {
-        'accept-language': string;
-        'Accept-Language'?: string;
-      };
-      path: {
-        slug: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
+        content: {
+          'application/json': components['schemas']['CategoryEntityDto'];
         };
-        content?: never;
       };
     };
   };
-  PublicController_categoriesBySlug: {
+  CategoryController_ancestors: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        /** @description Path language */
-        lang: 'en' | 'es' | 'fr' | 'pt';
-        slug: string;
+        id: string;
       };
       cookie?: never;
     };
     requestBody?: never;
     responses: {
+      /** @description Path from root to parent, excluding the node itself; one page (`LEGACY-379`) */
       200: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': {
+            items: components['schemas']['CategoryAncestorDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  CategoryController_children: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Direct child categories, one page (`LEGACY-379`) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['CategoryTreeNodeDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
       };
     };
   };
@@ -3231,7 +17854,12 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': {
+            items: components['schemas']['CategoryTranslationEntityDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
       };
     };
   };
@@ -3254,7 +17882,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['CategoryTranslationEntityDto'];
+        };
       };
     };
   };
@@ -3264,12 +17894,13 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        language: 'en' | 'es' | 'fr' | 'pt';
+        language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       };
       cookie?: never;
     };
     requestBody?: never;
     responses: {
+      /** @description Deleted; no body */
       204: {
         headers: {
           [name: string]: unknown;
@@ -3284,7 +17915,7 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        language: 'en' | 'es' | 'fr' | 'pt';
+        language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       };
       cookie?: never;
     };
@@ -3298,66 +17929,19 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['CategoryTranslationEntityDto'];
+        };
       };
     };
   };
-  CategoryController_attach: {
+  ChapterController_get: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        /** @description BookVersion id */
         id: string;
       };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['AttachCategoryDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  CategoryController_detach: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        /** @description BookVersion id */
-        id: string;
-        /** @description Category id */
-        categoryId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  BookshelfController_list: {
-    parameters: {
-      query?: {
-        /** @description Page number */
-        page?: number;
-        /** @description Number of records per page */
-        limit?: number;
-      };
-      header?: never;
-      path?: never;
       cookie?: never;
     };
     requestBody?: never;
@@ -3367,48 +17951,53 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['BookshelfListDto'];
+          'application/json': components['schemas']['ChapterResponseDto'];
         };
       };
     };
   };
-  BookshelfController_add: {
+  ChapterController_remove: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        versionId: string;
+        id: string;
       };
       cookie?: never;
     };
     requestBody?: never;
     responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['BookshelfItemDto'];
-        };
-      };
-    };
-  };
-  BookshelfController_remove: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        versionId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
+      /** @description Deleted; no body */
       204: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  ChapterController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateChapterDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterResponseDto'];
+        };
       };
     };
   };
@@ -3421,6 +18010,7 @@ export interface operations {
         limit?: number;
         target: 'version' | 'chapter' | 'audio';
         targetId: string;
+        sortBy?: 'date' | 'popularity';
       };
       header?: never;
       path?: never;
@@ -3433,7 +18023,10 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CommentListDto'];
+          'application/json': {
+            items: components['schemas']['CommentDetailDto'][];
+            pagination: components['schemas']['PaginationWithNextDto'];
+          };
         };
       };
     };
@@ -3451,12 +18044,12 @@ export interface operations {
       };
     };
     responses: {
-      200: {
+      201: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CommentDto'];
+          'application/json': components['schemas']['CommentDetailDto'];
         };
       };
       /** @description Rate limit exceeded */
@@ -3484,7 +18077,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CommentDto'];
+          'application/json': components['schemas']['CommentDetailDto'];
         };
       };
     };
@@ -3529,7 +18122,9 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['CommentDto'];
+          'application/json':
+            | components['schemas']['CommentDetailDto']
+            | components['schemas']['CommentBareDto'];
         };
       };
       /** @description Rate limit exceeded */
@@ -3538,6 +18133,113 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  AppController_getHealth: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AppHealthResponseDto'];
+        };
+      };
+    };
+  };
+  HealthController_liveness: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Process is alive */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LivenessResponseDto'];
+        };
+      };
+    };
+  };
+  HealthController_readiness: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Readiness status with details */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ReadinessResponseDto'];
+        };
+      };
+    };
+  };
+  ImportController_importCategories: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ImportCategoryDto'][];
+      };
+    };
+    responses: {
+      /** @description Import results with counts */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ImportResultDto'];
+        };
+      };
+    };
+  };
+  ImportController_importTags: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ImportTagDto'][];
+      };
+    };
+    responses: {
+      /** @description Import results with counts */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ImportResultDto'];
+        };
       };
     };
   };
@@ -3631,6 +18333,73 @@ export interface operations {
       };
     };
   };
+  BookshelfController_list: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['BookshelfItemDto'][];
+            pagination: components['schemas']['PaginationWithNextDto'];
+          };
+        };
+      };
+    };
+  };
+  BookshelfController_add: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        versionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookshelfEntryDto'];
+        };
+      };
+    };
+  };
+  BookshelfController_remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        versionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   ReadingProgressController_get: {
     parameters: {
       query?: never;
@@ -3677,58 +18446,112 @@ export interface operations {
       };
     };
   };
-  ViewStatsController_create: {
+  MediaController_list: {
     parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreateViewDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  ViewStatsController_aggregate: {
-    parameters: {
-      query: {
-        /** @description BookVersion id */
-        versionId: string;
-        period: components['schemas']['ViewsPeriod'];
-        from?: string;
-        to?: string;
-        source?: 'text' | 'audio' | 'referral';
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  ViewStatsController_top: {
-    parameters: {
-      query: {
-        period: 'day' | 'week' | 'month' | 'all';
+      query?: {
+        /** @description Search by key substring */
+        q?: string;
+        /** @description Filter by media category. `document` matches anything not image/video/audio. */
+        type?: 'image' | 'video' | 'audio' | 'document';
+        /** @description Page */
+        page?: number;
+        /** @description Limit */
         limit?: number;
-        source?: 'text' | 'audio' | 'referral';
       };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['MediaAssetResponseDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  MediaController_confirm: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ConfirmMediaDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MediaAssetResponseDto'];
+        };
+      };
+    };
+  };
+  MediaController_uploadOne: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string;
+          /** @enum {string} */
+          type?: 'cover' | 'audio';
+        };
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MediaAssetResponseDto'];
+        };
+      };
+    };
+  };
+  MediaController_remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeleteMediaResponseDto'];
+        };
+      };
+    };
+  };
+  MetricsController_getMetrics: {
+    parameters: {
+      query?: never;
       header?: never;
       path?: never;
       cookie?: never;
@@ -3743,75 +18566,9 @@ export interface operations {
       };
     };
   };
-  UploadsController_presign: {
+  RightsAgentController_getManifest: {
     parameters: {
       query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['PresignRequestDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  UploadsController_direct: {
-    parameters: {
-      query?: never;
-      header: {
-        'x-upload-token': string;
-      };
-      path?: never;
-      cookie?: never;
-    };
-    /** @description Binary file body */
-    requestBody: {
-      content: {
-        'application/json': string;
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  UploadsController_confirm: {
-    parameters: {
-      query: {
-        key: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  UploadsController_delete: {
-    parameters: {
-      query: {
-        key: string;
-      };
       header?: never;
       path?: never;
       cookie?: never;
@@ -3822,7 +18579,72 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['RightsAgentManifestDto'];
+        };
+      };
+    };
+  };
+  RightsAgentController_getLatestSchema: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsReportSchemaDocumentDto'];
+        };
+      };
+    };
+  };
+  RightsAgentController_getSchemaByVersion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        version: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsReportSchemaDocumentDto'];
+        };
+      };
+    };
+  };
+  RightsAgentController_submit: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AgentSubmitReportDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AgentSubmitResponseDto'];
+        };
       };
     };
   };
@@ -3862,28 +18684,6 @@ export interface operations {
       };
     };
   };
-  TagsController_list: {
-    parameters: {
-      query?: {
-        /** @description Page number */
-        page?: number;
-        /** @description Number of records per page */
-        limit?: number;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
   TagsController_create: {
     parameters: {
       query?: never;
@@ -3898,6 +18698,40 @@ export interface operations {
     };
     responses: {
       201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagEntityDto'];
+        };
+      };
+    };
+  };
+  TagsController_checkSlug: {
+    parameters: {
+      query: {
+        /** @description Slug to check for uniqueness */
+        slug: string;
+        /** @description Tag ID to exclude from the check (when editing) */
+        excludeId?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Slug check result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CheckTagSlugResponseDto'];
+        };
+      };
+      /** @description Invalid slug format */
+      400: {
         headers: {
           [name: string]: unknown;
         };
@@ -3916,6 +18750,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Deleted; no body */
       204: {
         headers: {
           [name: string]: unknown;
@@ -3943,22 +18778,18 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['TagEntityDto'];
+        };
       };
     };
   };
-  TagsController_publicBySlug: {
+  TagsController_listTranslations: {
     parameters: {
-      query?: {
-        /** @description Optional language (?lang=...) */
-        lang?: string;
-      };
-      header: {
-        'accept-language': string;
-        'Accept-Language'?: string;
-      };
+      query?: never;
+      header?: never;
       path: {
-        slug: string;
+        id: string;
       };
       cookie?: never;
     };
@@ -3968,7 +18799,889 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
+        content: {
+          'application/json': {
+            items: components['schemas']['TagTranslationEntityDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  TagsController_createTranslation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateTagTranslationDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagTranslationEntityDto'];
+        };
+      };
+    };
+  };
+  TagsController_deleteTranslation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
         content?: never;
+      };
+    };
+  };
+  TagsController_updateTranslation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateTagTranslationDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagTranslationEntityDto'];
+        };
+      };
+    };
+  };
+  UploadsController_delete: {
+    parameters: {
+      query: {
+        key: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  UploadsController_confirm: {
+    parameters: {
+      query: {
+        key: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DirectUploadResponseDto'];
+        };
+      };
+    };
+  };
+  UploadsController_direct: {
+    parameters: {
+      query?: never;
+      header: {
+        'x-upload-token': string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Binary file body */
+    requestBody: {
+      content: {
+        'application/json': string;
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DirectUploadResponseDto'];
+        };
+      };
+    };
+  };
+  UploadsController_limits: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UploadLimitsDto'];
+        };
+      };
+    };
+  };
+  UploadsController_presign: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PresignRequestDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PresignResponseDto'];
+        };
+      };
+    };
+  };
+  UsersController_list: {
+    parameters: {
+      query?: {
+        page?: number;
+        limit?: number;
+        /** @description Search by email or name */
+        q?: string;
+        staff?: 'only' | 'exclude';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['PublicUserWithRolesDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  UsersController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateUserDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicUserWithRolesDto'];
+        };
+      };
+    };
+  };
+  UsersController_me: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicUserWithRolesDto'];
+        };
+      };
+    };
+  };
+  UsersController_updateMe: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateMeDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicUserDto'];
+        };
+      };
+    };
+  };
+  UsersController_meActivities: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['UserActivityDto'][];
+            pagination: components['schemas']['PaginationWithNextDto'];
+          };
+        };
+      };
+    };
+  };
+  UsersController_updateProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateMeDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicUserDto'];
+        };
+      };
+    };
+  };
+  UsersController_getById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicUserWithRolesDto'];
+        };
+      };
+    };
+  };
+  UsersController_deleteById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicUserDto'];
+        };
+      };
+    };
+  };
+  UsersController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateUserDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicUserWithRolesDto'];
+        };
+      };
+    };
+  };
+  UsersController_listRoles: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description User ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Role names assigned to the user, one page (`LEGACY-379`) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  UsersController_assignRole: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description User ID */
+        id: string;
+        /** @description Role name */
+        role: 'user' | 'admin' | 'content_manager' | 'lawyer';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserRoleDto'];
+        };
+      };
+    };
+  };
+  UsersController_revokeRole: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description User ID */
+        id: string;
+        /** @description Role name */
+        role: 'user' | 'admin' | 'content_manager' | 'lawyer';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserRoleDto'];
+        };
+      };
+    };
+  };
+  AudioChapterController_list: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PagedAudioChaptersDto'];
+        };
+      };
+    };
+  };
+  AudioChapterController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateAudioChapterDto'];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AudioChapterResponseDto'];
+        };
+      };
+      /** @description Audio chapter number already exists */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AudioChapterController_reorder: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ReorderAudioChaptersDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AudioChapterResponseDto'][];
+        };
+      };
+    };
+  };
+  ChapterController_list: {
+    parameters: {
+      query?: {
+        /** @description Page number, 1-based; required together with `limit` */
+        page?: number;
+        /** @description Page size; required together with `page`. Omit both to get every chapter at once */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['ChapterResponseDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  ChapterController_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateChapterDto'];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ChapterResponseDto'];
+        };
+      };
+    };
+  };
+  SeoController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description SEO meta, or null when the version has no SEO record */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SeoResponseDto'] | null;
+        };
+      };
+    };
+  };
+  SeoController_upsert: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    /** @description Partial SEO fields to upsert */
+    requestBody: {
+      content: {
+        'application/json': {
+          /** @example https://example.com/books/1 */
+          canonicalUrl?: string;
+          /** @example 2025-08-17T12:00:00Z */
+          eventStartDate?: string;
+          /** @example Concise description */
+          metaDescription?: string;
+          /** @example My SEO title */
+          metaTitle?: string;
+          /** @example https://cdn.example.com/og.jpg */
+          ogImageUrl?: string;
+        };
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SeoResponseDto'];
+        };
+      };
+    };
+  };
+  BookSummaryController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Summary, or null when the version has none */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummaryResponseDto'] | null;
+        };
+      };
+    };
+  };
+  BookSummaryController_upsert: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookSummaryDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummaryResponseDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Found (published only for public endpoint) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicBookVersionDetailResponseDto'];
+        };
+      };
+    };
+  };
+  BookVersionController_remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  BookVersionController_update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookVersionDto'];
+      };
+    };
+    responses: {
+      /** @description Updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionResponseDto'];
+        };
+      };
+    };
+  };
+  CategoryController_attach: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description BookVersion id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AttachCategoryDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VersionCategoryLinkDto'];
+        };
+      };
+    };
+  };
+  CategoryController_detach: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description BookVersion id */
+        id: string;
+        /** @description Category id */
+        categoryId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  BookVersionController_getPreview: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Preview metadata */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @example audio/mpeg */
+            contentType?: string;
+            /** @example 45 */
+            duration?: number | null;
+            /** @example https://cdn.example.com/previews/hp1-en.mp3 */
+            previewUrl?: string;
+          };
+        };
+      };
+    };
+  };
+  BookVersionController_publish: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Published */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookVersionResponseDto'];
+        };
       };
     };
   };
@@ -3992,7 +19705,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['VersionTagLinkDto'];
+        };
       };
     };
   };
@@ -4010,6 +19725,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Deleted; no body */
       204: {
         headers: {
           [name: string]: unknown;
@@ -4018,7 +19734,7 @@ export interface operations {
       };
     };
   };
-  TagsController_listTranslations: {
+  BookVersionController_unpublish: {
     parameters: {
       query?: never;
       header?: never;
@@ -4029,26 +19745,27 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Unpublished (set to draft) */
       200: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['BookVersionResponseDto'];
+        };
       };
     };
   };
-  TagsController_createTranslation: {
+  ViewStatsController_create: {
     parameters: {
       query?: never;
       header?: never;
-      path: {
-        id: string;
-      };
+      path?: never;
       cookie?: never;
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['CreateTagTranslationDto'];
+        'application/json': components['schemas']['CreateViewDto'];
       };
     };
     responses: {
@@ -4056,65 +19773,134 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['CreateViewResponseDto'];
+        };
       };
     };
   };
-  TagsController_deleteTranslation: {
+  ViewStatsController_aggregate: {
     parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-        language: 'en' | 'es' | 'fr' | 'pt';
+      query: {
+        /** @description BookVersion id */
+        versionId: string;
+        period: components['schemas']['ViewsPeriod'];
+        from?: string;
+        to?: string;
+        source?: 'text' | 'audio' | 'referral';
       };
+      header?: never;
+      path?: never;
       cookie?: never;
     };
     requestBody?: never;
-    responses: {
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  TagsController_updateTranslation: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-        language: 'en' | 'es' | 'fr' | 'pt';
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['UpdateTagTranslationDto'];
-      };
-    };
     responses: {
       200: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['AggregateResponseDto'];
+        };
       };
     };
   };
-  PagesController_getPublic: {
+  ViewStatsController_top: {
+    parameters: {
+      query: {
+        period: 'day' | 'week' | 'month' | 'all';
+        limit?: number;
+        source?: 'text' | 'audio' | 'referral';
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TopViewsResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_authorsList: {
     parameters: {
       query?: {
-        /** @description Requested language (en|es|fr|pt) */
-        lang?: string;
+        /** @description Page number */
+        page?: number;
+        /** @description Rows per page. Values above 100 are rejected with 400; meta.limit reports the applied value. */
+        limit?: number;
+        /** @description Case-insensitive substring of the author name in the path language. */
+        search?: string;
+        /** @description Single letter of the path language alphabet, or "#" for names that start with neither. Diacritics fold into the base letter: "É" is listed under "E". A letter outside the path language alphabet is rejected with 400. */
+        letter?: string;
+        /** @description "name" — alphabetical (default). "books" — most published books first. */
+        sort?: 'name' | 'books';
+        /** @description Drop authors with no published book in the path language. Default false — the hub asks for it, the homepage and the sitemap do not. */
+        hasBooks?: boolean;
       };
-      header: {
-        'accept-language': string;
-        'Accept-Language'?: string;
-      };
+      header?: never;
       path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['PublicAuthorListItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PublicController_authorLetters: {
+    parameters: {
+      query?: {
+        /** @description Same name filter as the list. The index sits above the filtered grid, so its counts must describe that grid and not the whole alphabet. */
+        search?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['AuthorLetterCountDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PublicController_authorBySlug: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
         slug: string;
       };
       cookie?: never;
@@ -4125,11 +19911,50 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['PublicAuthorDetailResponseDto'];
+        };
       };
     };
   };
-  PagesController_adminList: {
+  PublicController_authorBookCards: {
+    parameters: {
+      query?: {
+        /** @description Page number. Default 1. */
+        page?: number;
+        /** @description Cards per page. Default 24, max 48. */
+        limit?: number;
+        /** @description Include tag details in response. Default false — returns tag: null for card-only use cases. */
+        includeTag?: boolean;
+        /** @description Sort order. "popular" = rating desc, publishedAt desc. "new" = publishedAt desc. */
+        sort?: 'popular' | 'new';
+        /** @description Filter by content type. "audio" = has audio chapters, "text" = has text chapters. */
+        type?: 'audio' | 'text';
+        /** @description Search query by title or author (case-insensitive contains). */
+        q?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        /** @description Author slug (resolved to stable authorId) */
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PagedBookCardsDto'];
+        };
+      };
+    };
+  };
+  PublicController_findAll: {
     parameters: {
       query?: {
         /** @description Page number */
@@ -4137,13 +19962,10 @@ export interface operations {
         /** @description Number of records per page */
         limit?: number;
       };
-      header: {
-        'x-admin-language': string;
-        /** @description Higher priority than path language */
-        'X-Admin-Language'?: string;
-      };
+      header?: never;
       path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       };
       cookie?: never;
     };
@@ -4153,200 +19975,35 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
-      };
-    };
-  };
-  PagesController_create: {
-    parameters: {
-      query?: never;
-      header: {
-        'x-admin-language': string;
-        /** @description Higher priority than path language */
-        'X-Admin-Language'?: string;
-      };
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CreatePageDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
+        content: {
+          'application/json': {
+            items: components['schemas']['BookListItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
         };
-        content?: never;
       };
     };
   };
-  PagesController_remove: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  PagesController_update: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['UpdatePageDto'];
-      };
-    };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  PagesController_publish: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  PagesController_unpublish: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lang: 'en' | 'es' | 'fr' | 'pt';
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  MediaController_confirm: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['ConfirmMediaDto'];
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  MediaController_list: {
+  PublicController_bookCards: {
     parameters: {
       query?: {
-        /** @description Search by key substring */
-        q?: string;
-        /** @description Filter by content type prefix (e.g., image/, audio/) */
-        type?: string;
-        /** @description Page */
+        /** @description Page number. Default 1. */
         page?: number;
-        /** @description Limit */
+        /** @description Cards per page. Default 24, max 48. */
         limit?: number;
+        /** @description Include tag details in response. Default false — returns tag: null for card-only use cases. */
+        includeTag?: boolean;
+        /** @description Sort order: popular, new. */
+        sort?: 'popular' | 'new';
+        /** @description Filter by type: audio, text. */
+        type?: 'audio' | 'text';
+        /** @description Search query by title/author. */
+        q?: string;
       };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  MediaController_uploadOne: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'multipart/form-data': {
-          /** Format: binary */
-          file: string;
-          /** @enum {string} */
-          type?: 'cover' | 'audio';
-        };
-      };
-    };
-    responses: {
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  MediaController_remove: {
-    parameters: {
-      query?: never;
       header?: never;
       path: {
-        id: string;
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       };
       cookie?: never;
     };
@@ -4356,25 +20013,20 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['PagedBookCardsDto'];
+        };
       };
     };
   };
   PublicController_overview: {
     parameters: {
-      query?: {
-        /** @description Optional query lang (ignored if path language is set) */
-        lang?: string;
-      };
-      header: {
-        'accept-language': string;
-        /** @description RFC 7231 header. When path language is present - has lower priority. */
-        'Accept-Language'?: string;
-      };
+      query?: never;
+      header?: never;
       path: {
-        slug: string;
         /** @description Path language */
-        lang: 'en' | 'es' | 'fr' | 'pt';
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        slug: string;
       };
       cookie?: never;
     };
@@ -4384,7 +20036,184 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['BookOverviewResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_getReaderBootstrap: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ReaderBootstrapResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_related: {
+    parameters: {
+      query?: {
+        /** @description Maximum total number of unique cards (sameAuthor + similar). Default 8, max 16. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RelatedBooksResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_categoriesList: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Rows per page. Values above 200 are rejected with 400. */
+        limit?: number;
+        /** @description Filter by term type */
+        type?: 'category' | 'genre' | 'collection';
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['CategoryResponse'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  PublicController_categoriesBySlug: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Books per page. Values above 100 are rejected with 400. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicCategoryBooksResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_categoryBookCards: {
+    parameters: {
+      query?: {
+        /** @description Page number. Default 1. */
+        page?: number;
+        /** @description Cards per page. Default 24, max 48. */
+        limit?: number;
+        /** @description Include tag details in response. Default false — returns tag: null for card-only use cases. */
+        includeTag?: boolean;
+        /** @description Sort order. "popular" = rating desc, publishedAt desc. "new" = publishedAt desc. */
+        sort?: 'popular' | 'new';
+        /** @description Filter by content type. "audio" = has audio chapters, "text" = has text chapters. */
+        type?: 'audio' | 'text';
+        /** @description Search query by title or author (case-insensitive contains). */
+        q?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        /** @description Category/Genre/Collection slug */
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CategoryBookCardsResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_getPageByKey: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        systemKey:
+          | 'homepage'
+          | 'taxonomy-categories'
+          | 'taxonomy-genres'
+          | 'taxonomy-collections'
+          | 'taxonomy-tags'
+          | 'authors-hub';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicPageDto'];
+        };
       };
     };
   };
@@ -4394,7 +20223,7 @@ export interface operations {
       header?: never;
       path: {
         /** @description Path language */
-        lang: 'en' | 'es' | 'fr' | 'pt';
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
         slug: string;
       };
       cookie?: never;
@@ -4405,17 +20234,109 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['PublicPageDto'];
+        };
+      };
+    };
+  };
+  SeoController_resolveWithLang: {
+    parameters: {
+      query: {
+        type: 'book' | 'version' | 'page' | 'category' | 'genre' | 'tag' | 'catalog' | 'collection';
+        /** @description Entity identifier or slug (book/page). For version: id only. */
+        id: string;
+        /** @description Translation slug (for category/genre/tag) */
+        slug?: string;
+      };
+      header?: never;
+      path: {
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Resolved SEO bundle */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SeoResolveResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_slugRedirect: {
+    parameters: {
+      query: {
+        /** @description Entity whose slug changed */
+        entityType: 'category' | 'tag' | 'book' | 'author' | 'page';
+        /** @description The slug that no longer resolves */
+        slug: string;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SlugRedirectResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_tagsList: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Tags per page. Values above 100 are rejected with 400. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['TagResponse'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
       };
     };
   };
   PublicController_tagsBySlug: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Rows per page. Values above 48 are rejected with 400. */
+        limit?: number;
+      };
       header?: never;
       path: {
         /** @description Path language */
-        lang: 'en' | 'es' | 'fr' | 'pt';
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
         slug: string;
       };
       cookie?: never;
@@ -4426,51 +20347,35 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
-      };
-    };
-  };
-  HealthController_liveness: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Process is alive */
-      200: {
-        headers: {
-          [name: string]: unknown;
+        content: {
+          'application/json': components['schemas']['PublicTagBooksResponseDto'];
         };
-        content?: never;
       };
     };
   };
-  HealthController_readiness: {
+  PublicController_tagBookCards: {
     parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Readiness status with details */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
+      query?: {
+        /** @description Page number. Default 1. */
+        page?: number;
+        /** @description Cards per page. Default 24, max 48. */
+        limit?: number;
+        /** @description Include tag details. Default false. */
+        includeTag?: boolean;
+        /** @description Sort order. "popular" = rating desc, publishedAt desc. "new" = publishedAt desc. */
+        sort?: 'popular' | 'new';
+        /** @description Filter by content type. "audio" = has audio chapters, "text" = has text chapters. */
+        type?: 'audio' | 'text';
+        /** @description Search query by title or author (case-insensitive contains). */
+        q?: string;
       };
-    };
-  };
-  MetricsController_getMetrics: {
-    parameters: {
-      query?: never;
       header?: never;
-      path?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        /** @description Tag slug */
+        slug: string;
+      };
       cookie?: never;
     };
     requestBody?: never;
@@ -4479,7 +20384,9 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['TagBookCardsResponseDto'];
+        };
       };
     };
   };

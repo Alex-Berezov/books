@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { NotFoundException } from '@nestjs/common';
 import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
@@ -16,6 +18,95 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
+const PROFILE_ID = 'profile-1';
+const VERSION_ID = 'version-1';
+
+const emptyFindMany = () => jest.fn().mockResolvedValue([]);
+
+const buildRightsDashboardService = (
+  getById: jest.Mock,
+  profileId: string | null,
+  versionCoverage: Record<string, unknown> = {
+    status: 'NOT_REQUIRED',
+    requiredCountryCodes: [],
+    coveredCountryCodes: [],
+    uncoveredCountryCodes: [],
+  },
+  versionRows: Array<Record<string, unknown>> = [],
+) => {
+  const prisma = {
+    bookVersion: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: VERSION_ID,
+        bookId: 'book-1',
+        rightsProfileId: profileId,
+        book: {
+          id: 'book-1',
+          slug: 'test-book',
+          rightsIntakeId: null,
+          currentRightsProfileId: profileId,
+          approvedRightsReviewId: null,
+          rightsCreatedAt: null,
+        },
+      }),
+      // Выборка списка версий отдаёт только колонки из `select`: поле, которого запрос
+      // не просит, в ответ не попадает — как у Prisma.
+      findMany: jest
+        .fn()
+        .mockImplementation(({ select }: { select: Record<string, boolean> }) =>
+          Promise.resolve(
+            versionRows.map((row) =>
+              Object.fromEntries(Object.entries(row).filter(([key]) => select[key])),
+            ),
+          ),
+        ),
+    },
+    rightsIntake: { findUnique: jest.fn().mockResolvedValue(null) },
+    rightsReviewApproval: { findMany: emptyFindMany() },
+    rightsReview: { findMany: emptyFindMany() },
+    rightsClaim: { findMany: emptyFindMany() },
+    rightsLicense: { findMany: emptyFindMany() },
+    rightsLicenseLink: { findMany: emptyFindMany() },
+    geoBlockRule: { findMany: emptyFindMany() },
+  };
+
+  const service = new BookVersionService(
+    prisma as unknown as PrismaService,
+    {
+      checkVersionCanPublish: jest.fn().mockResolvedValue({ canPublish: true, reasons: [] }),
+    } as unknown as PublicationGateService,
+    {
+      checkVersionStaleness: jest.fn().mockResolvedValue({ isStale: false }),
+    } as unknown as RightsContentHashService,
+    { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
+    {
+      loadLicensesForProfile: jest.fn().mockResolvedValue([]),
+      evaluateVersionCoverage: jest.fn().mockResolvedValue(versionCoverage),
+      effectiveStatus: jest.fn().mockReturnValue('ACTIVE'),
+      isActiveAt: jest.fn().mockReturnValue(false),
+    } as unknown as RightsLicenseCoverageService,
+    {
+      listForVersion: jest.fn().mockResolvedValue([]),
+      summarizeForVersion: jest.fn().mockResolvedValue(null),
+    } as unknown as RightsClaimsService,
+    {
+      getVersionRecheck: jest.fn().mockResolvedValue({ tasks: [], schedule: null }),
+    } as unknown as RightsRecheckService,
+    {
+      getVersionLawyerReview: jest.fn().mockResolvedValue(null),
+    } as unknown as RightsLawyerReviewService,
+    { getSourceHealth: jest.fn().mockReturnValue(null) } as unknown as GeoIpCountryService,
+    {} as unknown as SlugRedirectService,
+    {} as unknown as AdminAuditService,
+    {} as unknown as RightsClearanceLockService,
+    {} as unknown as AuthorService,
+    { getById } as unknown as RightsProfileService,
+    new TerritoryRegionAggregationService(),
+  );
+
+  return service;
+};
+
 /**
  * `LEGACY-412`. Дашборд версии раньше собирал профиль прав своей выборкой Prisma мимо
  * `RightsProfileService.mapToDetail`, и поле, добавленное в контракт ручки профиля, само на
@@ -26,84 +117,6 @@ import { PrismaService } from '../../prisma/prisma.service';
  * профиля, включая журнал участников, проверяет `rights-intake/rights-profile.service.spec.ts`.
  */
 describe('BookVersionService.getRightsDashboard — один источник профиля прав (LEGACY-412)', () => {
-  const PROFILE_ID = 'profile-1';
-  const VERSION_ID = 'version-1';
-
-  const emptyFindMany = () => jest.fn().mockResolvedValue([]);
-
-  const buildService = (
-    getById: jest.Mock,
-    profileId: string | null,
-    versionCoverage: Record<string, unknown> = {
-      status: 'NOT_REQUIRED',
-      requiredCountryCodes: [],
-      coveredCountryCodes: [],
-      uncoveredCountryCodes: [],
-    },
-  ) => {
-    const prisma = {
-      bookVersion: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: VERSION_ID,
-          bookId: 'book-1',
-          rightsProfileId: profileId,
-          book: {
-            id: 'book-1',
-            slug: 'test-book',
-            rightsIntakeId: null,
-            currentRightsProfileId: profileId,
-            approvedRightsReviewId: null,
-            rightsCreatedAt: null,
-          },
-        }),
-        findMany: emptyFindMany(),
-      },
-      rightsIntake: { findUnique: jest.fn().mockResolvedValue(null) },
-      rightsReviewApproval: { findMany: emptyFindMany() },
-      rightsReview: { findMany: emptyFindMany() },
-      rightsClaim: { findMany: emptyFindMany() },
-      rightsLicense: { findMany: emptyFindMany() },
-      rightsLicenseLink: { findMany: emptyFindMany() },
-      geoBlockRule: { findMany: emptyFindMany() },
-    };
-
-    const service = new BookVersionService(
-      prisma as unknown as PrismaService,
-      {
-        checkVersionCanPublish: jest.fn().mockResolvedValue({ canPublish: true, reasons: [] }),
-      } as unknown as PublicationGateService,
-      {
-        checkVersionStaleness: jest.fn().mockResolvedValue({ isStale: false }),
-      } as unknown as RightsContentHashService,
-      { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
-      {
-        loadLicensesForProfile: jest.fn().mockResolvedValue([]),
-        evaluateVersionCoverage: jest.fn().mockResolvedValue(versionCoverage),
-        effectiveStatus: jest.fn().mockReturnValue('ACTIVE'),
-        isActiveAt: jest.fn().mockReturnValue(false),
-      } as unknown as RightsLicenseCoverageService,
-      {
-        listForVersion: jest.fn().mockResolvedValue([]),
-        summarizeForVersion: jest.fn().mockResolvedValue(null),
-      } as unknown as RightsClaimsService,
-      {
-        getVersionRecheck: jest.fn().mockResolvedValue({ tasks: [], schedule: null }),
-      } as unknown as RightsRecheckService,
-      {
-        getVersionLawyerReview: jest.fn().mockResolvedValue(null),
-      } as unknown as RightsLawyerReviewService,
-      { getSourceHealth: jest.fn().mockReturnValue(null) } as unknown as GeoIpCountryService,
-      {} as unknown as SlugRedirectService,
-      {} as unknown as AdminAuditService,
-      {} as unknown as RightsClearanceLockService,
-      {} as unknown as AuthorService,
-      { getById } as unknown as RightsProfileService,
-      new TerritoryRegionAggregationService(),
-    );
-
-    return service;
-  };
-
   it('зовёт RightsProfileService.getById тем же id, что использует ручка профиля, и отдаёт его ответ как есть', async () => {
     const getById = jest.fn().mockResolvedValue({
       id: PROFILE_ID,
@@ -119,7 +132,7 @@ describe('BookVersionService.getRightsDashboard — один источник п
       contributorEvents: [{ id: 'event-1', eventType: 'UNLINKED' }],
       regionalTerritorySummary: [],
     });
-    const service = buildService(getById, PROFILE_ID);
+    const service = buildRightsDashboardService(getById, PROFILE_ID);
 
     const dashboard = (await service.getRightsDashboard(VERSION_ID)) as unknown as {
       currentProfile: { contributorEvents: Array<Record<string, unknown>> } | null;
@@ -134,7 +147,7 @@ describe('BookVersionService.getRightsDashboard — один источник п
 
   it('не зовёт getById и оставляет профиль пустым, когда клиренса нет', async () => {
     const getById = jest.fn();
-    const service = buildService(getById, null);
+    const service = buildRightsDashboardService(getById, null);
 
     const dashboard = (await service.getRightsDashboard(VERSION_ID)) as unknown as {
       currentProfile: unknown;
@@ -146,7 +159,7 @@ describe('BookVersionService.getRightsDashboard — один источник п
 
   it('не падает 500, если profileId указывает на уже удалённую строку профиля', async () => {
     const getById = jest.fn().mockRejectedValue(new NotFoundException('gone'));
-    const service = buildService(getById, PROFILE_ID);
+    const service = buildRightsDashboardService(getById, PROFILE_ID);
 
     const dashboard = (await service.getRightsDashboard(VERSION_ID)) as unknown as {
       currentProfile: unknown;
@@ -168,7 +181,7 @@ describe('BookVersionService.getRightsDashboard — один источник п
       narratorsCount: 1,
       contributorsWithoutPersonCount: 3,
     });
-    const service = buildService(getById, PROFILE_ID);
+    const service = buildRightsDashboardService(getById, PROFILE_ID);
 
     const dashboard = await service.getRightsDashboard(VERSION_ID);
 
@@ -191,7 +204,7 @@ describe('BookVersionService.getRightsDashboard — один источник п
       licenseCoveredCountriesCount: 0,
       licenseUncoveredCountriesCount: 0,
     });
-    const service = buildService(getById, PROFILE_ID, {
+    const service = buildRightsDashboardService(getById, PROFILE_ID, {
       status: 'PARTIAL',
       requiredCountryCodes: ['DE', 'FR'],
       coveredCountryCodes: ['DE'],
@@ -217,7 +230,7 @@ describe('BookVersionService.getRightsDashboard — один источник п
       territoryDecisions: [],
       regionalTerritorySummary: [{ regionCode: 'FROM_PROFILE_INTAKE', status: 'BLOCKED' }],
     });
-    const service = buildService(getById, PROFILE_ID);
+    const service = buildRightsDashboardService(getById, PROFILE_ID);
 
     const dashboard = (await service.getRightsDashboard(VERSION_ID)) as unknown as {
       currentProfile: { regionalTerritorySummary: unknown[] };
@@ -238,7 +251,7 @@ describe('BookVersionService.getRightsDashboard — один источник п
       mediaFormats: ['EBOOK'],
     };
     const getById = jest.fn().mockResolvedValue({ id: PROFILE_ID, licenses: [projectedLicense] });
-    const service = buildService(getById, PROFILE_ID);
+    const service = buildRightsDashboardService(getById, PROFILE_ID);
 
     const dashboard = (await service.getRightsDashboard(VERSION_ID)) as unknown as {
       currentProfile: { licenses: unknown[] };
@@ -251,8 +264,79 @@ describe('BookVersionService.getRightsDashboard — один источник п
   it('пробрасывает прочие отказы getById, а не выдаёт их за отсутствие профиля', async () => {
     const failure = new Error('connection lost');
     const getById = jest.fn().mockRejectedValue(failure);
-    const service = buildService(getById, PROFILE_ID);
+    const service = buildRightsDashboardService(getById, PROFILE_ID);
 
     await expect(service.getRightsDashboard(VERSION_ID)).rejects.toBe(failure);
+  });
+});
+
+/**
+ * `LEGACY-016`, пачка `T42`. `currentVersion` и `versions[]` — две разные формы: строка версии
+ * целиком без заголовка и узкая выборка с заголовком. До 26.09.2026 обе описывал один класс,
+ * и 16 полей в схеме были необязательными только потому, что в другой форме их нет. Здесь
+ * ключи настоящего ответа сверяются со схемой из снимка OpenAPI: каждое поле схемы
+ * обязательно и приходит, лишних полей нет.
+ */
+describe('BookVersionService.getRightsDashboard — формы версий совпадают со схемой (LEGACY-016)', () => {
+  type SchemaObject = { properties?: Record<string, unknown>; required?: string[]; $ref?: string };
+  const snapshot = JSON.parse(
+    readFileSync(resolve(__dirname, '../../../libs/api-client/api-schema.json'), 'utf8'),
+  ) as { components: { schemas: Record<string, SchemaObject> } };
+  const schemaByRef = (ref: string | undefined): SchemaObject => {
+    const name = String(ref).replace('#/components/schemas/', '');
+    const found = snapshot.components.schemas[name];
+    if (!found) throw new Error(`В снимке нет схемы ${name}`);
+    return found;
+  };
+  const dashboardSchema = snapshot.components.schemas.BookRightsDashboardDto;
+  const field = (name: string) =>
+    (dashboardSchema.properties ?? {})[name] as SchemaObject & { items?: SchemaObject };
+
+  const buildDashboard = async () => {
+    const service = buildRightsDashboardService(jest.fn(), null, undefined, [
+      {
+        id: 'version-2',
+        language: 'es',
+        type: 'text',
+        status: 'draft',
+        title: 'La Odisea',
+        rightsProfileId: null,
+        approvedRightsReviewId: null,
+        rightsStatus: null,
+        rightsGeoBlockRequired: false,
+        rightsGeoBlockConfigured: false,
+        rightsRecheckRequired: false,
+        rightsStaleDetectedAt: new Date('2026-09-20T10:00:00.000Z'),
+        rightsStaleReasonCode: 'REVISION_STALE',
+      },
+    ]);
+    return (await service.getRightsDashboard(VERSION_ID)) as unknown as {
+      currentVersion: Record<string, unknown>;
+      versions: Array<Record<string, unknown>>;
+    };
+  };
+
+  const expectShape = (value: Record<string, unknown>, schema: SchemaObject) => {
+    const keys = Object.keys(value).sort();
+    expect(keys).toEqual(Object.keys(schema.properties ?? {}).sort());
+    expect([...(schema.required ?? [])].sort()).toEqual(keys);
+  };
+
+  it('currentVersion: все поля схемы обязательны и совпадают с ответом', async () => {
+    const dashboard = await buildDashboard();
+    expectShape(dashboard.currentVersion, schemaByRef(field('currentVersion').$ref));
+  });
+
+  it('versions[]: все поля схемы обязательны и совпадают с ответом', async () => {
+    const dashboard = await buildDashboard();
+    expect(dashboard.versions).toHaveLength(1);
+    expectShape(dashboard.versions[0], schemaByRef(field('versions').items?.$ref));
+  });
+
+  it('versions[]: причина устаревания приходит из выборки, а не теряется', async () => {
+    const dashboard = await buildDashboard();
+    expect(dashboard.versions[0]).toEqual(
+      expect.objectContaining({ title: 'La Odisea', rightsStaleReasonCode: 'REVISION_STALE' }),
+    );
   });
 });

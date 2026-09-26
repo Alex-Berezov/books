@@ -399,7 +399,7 @@ VS Code задачи (Docker prod):
 ## Генерация OpenAPI типов для фронтенда
 
 - Скрипты:
-  - `yarn openapi:types` — генерирует типы в `libs/api-client/types.ts` из `http://localhost:5000/docs-json`.
+  - `yarn openapi:types` — генерирует типы в `libs/api-client/src/types.ts` из `http://localhost:5000/docs-json`.
   - `OPENAPI_URL=... yarn openapi:types` — указать произвольный URL спецификации.
   - `yarn openapi:types:prod` — shortcut для прод-URL (`https://api.bibliaris.com/docs-json`).
 - Зачем: единые типы контрактов для FE, без ручной синхронизации.

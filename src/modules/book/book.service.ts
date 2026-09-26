@@ -35,6 +35,7 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
+import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 
 /**
  * `related*Slugs` лежат в JSON-колонке, то есть их содержимое схемой не
@@ -924,7 +925,7 @@ export class BookService {
     q?: string,
   ): Promise<{
     items: BookCardDto[];
-    pagination: { page: number; limit: number; total: number; totalPages: number };
+    pagination: PaginationInfoDto;
   }> {
     const effectivePage = Math.max(page, 1);
     const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
@@ -1065,7 +1066,7 @@ export class BookService {
     limit = 24,
   ): Promise<{
     items: BookCardDto[];
-    pagination: { page: number; limit: number; total: number; totalPages: number };
+    pagination: PaginationInfoDto;
   }> {
     const effectivePage = Math.max(page, 1);
     const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
@@ -1124,7 +1125,7 @@ export class BookService {
   ): Promise<{
     category: Record<string, unknown> | null;
     items: BookCardDto[];
-    pagination: { page: number; limit: number; total: number; totalPages: number };
+    pagination: PaginationInfoDto;
   }> {
     const effectivePage = Math.max(page, 1);
     const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
@@ -1230,7 +1231,7 @@ export class BookService {
   ): Promise<{
     tag: Record<string, unknown> | null;
     items: BookCardDto[];
-    pagination: { page: number; limit: number; total: number; totalPages: number };
+    pagination: PaginationInfoDto;
   }> {
     const effectivePage = Math.max(page, 1);
     const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
@@ -1410,7 +1411,7 @@ export class BookService {
     total: number,
   ): Promise<{
     items: BookCardDto[];
-    pagination: { page: number; limit: number; total: number; totalPages: number };
+    pagination: PaginationInfoDto;
   }> {
     if (bookIds.length === 0) {
       return {

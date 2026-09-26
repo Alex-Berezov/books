@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CategoryType, Language } from '@prisma/client';
 import { BookCardDto } from './book-card.dto';
 import { CategoryTranslationScalarsDto } from './book-taxonomy-response.dto';
-import { BookCardsPaginationDto } from './paged-book-cards.dto';
+import { PaginationInfoDto } from '../../../shared/dto/paginated-response.dto';
 
 /**
  * `category` field of `BookService.findCardsByCategory` — built by hand from the
@@ -57,6 +57,6 @@ export class CategoryBookCardsResponseDto {
   @ApiProperty({ type: [BookCardDto] })
   items!: BookCardDto[];
 
-  @ApiProperty({ type: BookCardsPaginationDto })
-  pagination!: BookCardsPaginationDto;
+  @ApiProperty({ type: PaginationInfoDto })
+  pagination!: PaginationInfoDto;
 }

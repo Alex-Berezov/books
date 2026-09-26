@@ -1,35 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PaginationInfoDto } from '../../../shared/dto/paginated-response.dto';
 import { BookCardDto } from './book-card.dto';
-
-/**
- * Pagination summary `{page,limit,total,totalPages}`, all values applied (not
- * requested). Emitted by `BookService.findCards` / `findCardsByAuthor` /
- * `findCardsByCategory` / `findCardsByTag` (per `buildCardsResponse`) and reused
- * verbatim as the `meta` of the `{data,meta}` lists that carry the same four numbers
- * (`BookService.findAll`, `CategoryService.getByLangSlugWithBooks`,
- * `AuthorService.listPublic`).
- */
-export class BookCardsPaginationDto {
-  @ApiProperty({ type: Number })
-  page!: number;
-
-  @ApiProperty({ type: Number })
-  limit!: number;
-
-  @ApiProperty({ type: Number })
-  total!: number;
-
-  @ApiProperty({ type: Number })
-  totalPages!: number;
-}
 
 /** Response of `BookService.findCards` / `findCardsByAuthor`. */
 export class PagedBookCardsDto {
   @ApiProperty({ type: [BookCardDto] })
   items!: BookCardDto[];
 
-  @ApiProperty({ type: BookCardsPaginationDto })
-  pagination!: BookCardsPaginationDto;
+  @ApiProperty({ type: PaginationInfoDto })
+  pagination!: PaginationInfoDto;
 }
 
 /** Response of `BookService.findRelated` — `GET /books/:slug/related` and its

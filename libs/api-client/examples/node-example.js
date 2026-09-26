@@ -1,3 +1,4 @@
+// dist/ в гите не хранится (LEGACY-016): сперва yarn api-client:build из корня books.
 const { BooksApiClient } = require('../dist/index');
 
 // Initialize API client

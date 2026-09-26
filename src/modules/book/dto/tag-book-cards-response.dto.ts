@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import { BookCardDto } from './book-card.dto';
 import { TagTranslationDto } from '../../tags/dto/tag-translation-entity.dto';
-import { BookCardsPaginationDto } from './paged-book-cards.dto';
+import { PaginationInfoDto } from '../../../shared/dto/paginated-response.dto';
 
 /** One resolved related-taxonomy term (`RelatedTaxonomyService.resolve` / `RelatedTerm`). */
 export class RelatedTermDto {
@@ -91,6 +91,6 @@ export class TagBookCardsResponseDto {
   @ApiProperty({ type: [BookCardDto] })
   items!: BookCardDto[];
 
-  @ApiProperty({ type: BookCardsPaginationDto })
-  pagination!: BookCardsPaginationDto;
+  @ApiProperty({ type: PaginationInfoDto })
+  pagination!: PaginationInfoDto;
 }

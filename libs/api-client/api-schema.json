@@ -1665,29 +1665,6 @@
         ],
         "type": "object"
       },
-      "BookCardsPaginationDto": {
-        "properties": {
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          },
-          "totalPages": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "page",
-          "limit",
-          "total",
-          "totalPages"
-        ],
-        "type": "object"
-      },
       "BookCategoryDto": {
         "properties": {
           "id": {
@@ -2766,6 +2743,163 @@
         ],
         "type": "object"
       },
+      "BookRightsDashboardCurrentVersionDto": {
+        "properties": {
+          "approvedRightsReviewId": {
+            "example": "review-uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "example": "v1111111-b222-4c33-d444-555555555555",
+            "type": "string"
+          },
+          "language": {
+            "example": "en",
+            "type": "string"
+          },
+          "rightsClaimBlockActive": {
+            "example": false,
+            "type": "boolean"
+          },
+          "rightsClaimBlockAppliedAt": {
+            "example": "2026-07-28T12:00:00.000Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsContentHash": {
+            "example": "a1b2c3d4...",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsContentHashAlgorithmVersion": {
+            "example": "v1",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsContentHashCalculatedAt": {
+            "example": "2026-07-25T12:00:00.000Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsGeoBlockConfigured": {
+            "example": false,
+            "type": "boolean"
+          },
+          "rightsGeoBlockConfiguredAt": {
+            "example": "2026-07-25T12:00:00.000Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsGeoBlockLastGeneratedAt": {
+            "example": "2026-07-26T11:30:00.000Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsGeoBlockNotesRu": {
+            "example": "Notes",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsGeoBlockRequired": {
+            "example": false,
+            "type": "boolean"
+          },
+          "rightsGeoBlockVerifiedAt": {
+            "example": "2026-07-26T12:00:00.000Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsGeoBlockVerifiedByUserId": {
+            "example": "user-uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsLicenseCheckedAt": {
+            "example": "2026-07-28T12:00:00.000Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsLicenseCoverageStatus": {
+            "example": "COVERED",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsLicenseIds": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "rightsProfileId": {
+            "example": "profile-uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsRecheckRequired": {
+            "example": false,
+            "type": "boolean"
+          },
+          "rightsStaleDetectedAt": {
+            "example": "2026-07-25T12:00:00.000Z",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsStaleReasonCode": {
+            "example": "REVISION_STALE",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsStaleReasonRu": {
+            "example": "Версия текста устарела",
+            "nullable": true,
+            "type": "string"
+          },
+          "rightsStatus": {
+            "example": "APPROVED",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "example": "published",
+            "type": "string"
+          },
+          "type": {
+            "example": "text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "language",
+          "type",
+          "status",
+          "rightsProfileId",
+          "approvedRightsReviewId",
+          "rightsStatus",
+          "rightsGeoBlockRequired",
+          "rightsGeoBlockConfigured",
+          "rightsRecheckRequired",
+          "rightsStaleDetectedAt",
+          "rightsGeoBlockConfiguredAt",
+          "rightsGeoBlockNotesRu",
+          "rightsGeoBlockVerifiedAt",
+          "rightsGeoBlockVerifiedByUserId",
+          "rightsGeoBlockLastGeneratedAt",
+          "rightsContentHash",
+          "rightsContentHashAlgorithmVersion",
+          "rightsContentHashCalculatedAt",
+          "rightsStaleReasonCode",
+          "rightsStaleReasonRu",
+          "rightsLicenseCoverageStatus",
+          "rightsLicenseCheckedAt",
+          "rightsLicenseIds",
+          "rightsClaimBlockActive",
+          "rightsClaimBlockAppliedAt"
+        ],
+        "type": "object"
+      },
       "BookRightsDashboardDto": {
         "properties": {
           "approvalHistory": {
@@ -2803,7 +2937,7 @@
             "type": "object"
           },
           "currentVersion": {
-            "$ref": "#/components/schemas/BookRightsDashboardVersionSummaryDto"
+            "$ref": "#/components/schemas/BookRightsDashboardCurrentVersionDto"
           },
           "geoCountrySource": {
             "allOf": [
@@ -2866,7 +3000,7 @@
           },
           "versions": {
             "items": {
-              "$ref": "#/components/schemas/BookRightsDashboardVersionSummaryDto"
+              "$ref": "#/components/schemas/BookRightsDashboardVersionListItemDto"
             },
             "type": "array"
           }
@@ -3230,7 +3364,7 @@
         ],
         "type": "object"
       },
-      "BookRightsDashboardVersionSummaryDto": {
+      "BookRightsDashboardVersionListItemDto": {
         "properties": {
           "approvedRightsReviewId": {
             "example": "review-uuid",
@@ -3245,79 +3379,13 @@
             "example": "en",
             "type": "string"
           },
-          "rightsClaimBlockActive": {
-            "example": false,
-            "type": "boolean"
-          },
-          "rightsClaimBlockAppliedAt": {
-            "example": "2026-07-28T12:00:00.000Z",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsContentHash": {
-            "example": "a1b2c3d4...",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsContentHashAlgorithmVersion": {
-            "example": "v1",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsContentHashCalculatedAt": {
-            "example": "2026-07-25T12:00:00.000Z",
-            "nullable": true,
-            "type": "string"
-          },
           "rightsGeoBlockConfigured": {
             "example": false,
             "type": "boolean"
           },
-          "rightsGeoBlockConfiguredAt": {
-            "example": "2026-07-25T12:00:00.000Z",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsGeoBlockLastGeneratedAt": {
-            "example": "2026-07-26T11:30:00.000Z",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsGeoBlockNotesRu": {
-            "example": "Notes",
-            "nullable": true,
-            "type": "string"
-          },
           "rightsGeoBlockRequired": {
             "example": false,
             "type": "boolean"
-          },
-          "rightsGeoBlockVerifiedAt": {
-            "example": "2026-07-26T12:00:00.000Z",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsGeoBlockVerifiedByUserId": {
-            "example": "user-uuid",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsLicenseCheckedAt": {
-            "example": "2026-07-28T12:00:00.000Z",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsLicenseCoverageStatus": {
-            "example": "COVERED",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsLicenseIds": {
-            "items": {
-              "type": "string"
-            },
-            "nullable": true,
-            "type": "array"
           },
           "rightsProfileId": {
             "example": "profile-uuid",
@@ -3335,11 +3403,6 @@
           },
           "rightsStaleReasonCode": {
             "example": "REVISION_STALE",
-            "nullable": true,
-            "type": "string"
-          },
-          "rightsStaleReasonRu": {
-            "example": "Версия текста устарела",
             "nullable": true,
             "type": "string"
           },
@@ -3372,7 +3435,9 @@
           "rightsGeoBlockRequired",
           "rightsGeoBlockConfigured",
           "rightsRecheckRequired",
-          "rightsStaleDetectedAt"
+          "rightsStaleDetectedAt",
+          "title",
+          "rightsStaleReasonCode"
         ],
         "type": "object"
       },
@@ -4675,7 +4740,7 @@
             "type": "array"
           },
           "pagination": {
-            "$ref": "#/components/schemas/BookCardsPaginationDto"
+            "$ref": "#/components/schemas/PaginationInfoDto"
           }
         },
         "required": [
@@ -11767,7 +11832,7 @@
             "type": "array"
           },
           "pagination": {
-            "$ref": "#/components/schemas/BookCardsPaginationDto"
+            "$ref": "#/components/schemas/PaginationInfoDto"
           }
         },
         "required": [
@@ -12882,7 +12947,7 @@
             "type": "array"
           },
           "meta": {
-            "$ref": "#/components/schemas/BookCardsPaginationDto"
+            "$ref": "#/components/schemas/PaginationInfoDto"
           },
           "seo": {
             "allOf": [
@@ -13347,7 +13412,7 @@
             "type": "array"
           },
           "meta": {
-            "$ref": "#/components/schemas/BookCardsPaginationDto"
+            "$ref": "#/components/schemas/PaginationInfoDto"
           },
           "seo": {
             "allOf": [
@@ -20266,7 +20331,7 @@
             "type": "array"
           },
           "pagination": {
-            "$ref": "#/components/schemas/BookCardsPaginationDto"
+            "$ref": "#/components/schemas/PaginationInfoDto"
           },
           "tag": {
             "allOf": [

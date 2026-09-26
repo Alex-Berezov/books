@@ -14,11 +14,11 @@ import { join, resolve } from 'node:path';
  * 33 с после, набор предупреждений тот же.
  *
  * Отдельная ловушка: пути в `.eslintignore` были устаревшими. Он исключал
- * `libs/api-client/types.ts` (туда пишет `yarn openapi:types`, в гите такого файла нет)
+ * `libs/api-client/types.ts` (туда тогда писал `yarn openapi:types`, в гите такого файла нет)
  * и `libs/api-client/api-schema.json` (на день правки не существовал; заведён 07.09.2026
  * снапшотом контракта, `LEGACY-016`), а линтовался
- * `libs/api-client/src/types.ts`. Буквальный перенос строк ничего бы не ускорил — отсюда
- * ожидание на оба пути сразу.
+ * `libs/api-client/src/types.ts`. С 26.09.2026 (`LEGACY-016`, `T42`) `yarn openapi:types*`
+ * пишут в `src/types.ts`, и второй путь снят из исключений.
  *
  * ⚠️ С 11.09.2026 (`LEGACY-182`) цена этих строк выросла: `yarn lint` идёт
  * с `--max-warnings=0`, и предупреждение по сгенерированному файлу теперь красит конвейер,
@@ -53,8 +53,7 @@ describe('LEGACY-146: исключения линта', () => {
   });
 
   it.each([
-    ['libs/api-client/src/types.ts', 'версия в гите, её и линтовал прогон'],
-    ['libs/api-client/types.ts', 'куда пишет yarn openapi:types'],
+    ['libs/api-client/src/types.ts', 'версия в гите, туда же пишет yarn openapi:types'],
     ['libs/api-client/dist/**/*', 'сборка пакета'],
     ['libs/api-client/examples/**/*', 'примеры для потребителей'],
     ['dist/**/*', 'сборка сервиса'],

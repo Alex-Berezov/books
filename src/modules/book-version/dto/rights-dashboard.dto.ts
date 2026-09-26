@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { GeoCountrySourceHealthDto } from '../../geo-block/dto/geo-block.dto';
 import { PublicationGateResultDto } from './publication-gate-result.dto';
 import { RightsContentHashCheckDto } from '../../rights-intake/dto/rights-content-hash.dto';
@@ -32,7 +32,15 @@ export class BookRightsDashboardBookSummaryDto {
   rightsCreatedAt!: string | null;
 }
 
-export class BookRightsDashboardVersionSummaryDto {
+/**
+ * Поля версии, общие для обеих форм дашборда: текущей версии и строки списка `versions[]`.
+ *
+ * ⚠️ Формы две и описаны двумя классами (`LEGACY-016`, пачка `T42`). До 26.09.2026 один класс
+ * стоял на обоих полях, и 16 полей были необязательными только потому, что в другой форме
+ * их нет. Схема обещала фронту поля, которых в `versions[]` не бывает, и не обещала тех,
+ * что в `currentVersion` есть всегда.
+ */
+class BookRightsDashboardVersionCoreDto {
   @ApiProperty({ type: String, example: 'v1111111-b222-4c33-d444-555555555555' })
   id!: string;
 
@@ -44,9 +52,6 @@ export class BookRightsDashboardVersionSummaryDto {
 
   @ApiProperty({ type: String, example: 'published' })
   status!: string;
-
-  @ApiPropertyOptional({ type: String, example: 'The Odyssey' })
-  title?: string;
 
   @ApiProperty({ type: String, nullable: true, example: 'profile-uuid' })
   rightsProfileId!: string | null;
@@ -63,58 +68,70 @@ export class BookRightsDashboardVersionSummaryDto {
   @ApiProperty({ type: Boolean, example: false })
   rightsGeoBlockConfigured!: boolean;
 
-  @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
-  rightsGeoBlockConfiguredAt?: string | null;
-
-  @ApiPropertyOptional({ type: String, nullable: true, example: 'Notes' })
-  rightsGeoBlockNotesRu?: string | null;
-
-  @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-26T12:00:00.000Z' })
-  rightsGeoBlockVerifiedAt?: string | null;
-
-  @ApiPropertyOptional({ type: String, nullable: true, example: 'user-uuid' })
-  rightsGeoBlockVerifiedByUserId?: string | null;
-
-  @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-26T11:30:00.000Z' })
-  rightsGeoBlockLastGeneratedAt?: string | null;
-
-  @ApiPropertyOptional({ type: String, nullable: true, example: 'a1b2c3d4...' })
-  rightsContentHash?: string | null;
-
-  @ApiPropertyOptional({ type: String, nullable: true, example: 'v1' })
-  rightsContentHashAlgorithmVersion?: string | null;
-
-  @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
-  rightsContentHashCalculatedAt?: string | null;
-
   @ApiProperty({ type: Boolean, example: false })
   rightsRecheckRequired!: boolean;
 
   @ApiProperty({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
   rightsStaleDetectedAt!: string | null;
+}
 
-  @ApiPropertyOptional({ type: String, nullable: true, example: 'REVISION_STALE' })
-  rightsStaleReasonCode?: string | null;
+/** Строка списка версий книги (`versions[]`): узкая выборка плюс заголовок и причина устаревания. */
+export class BookRightsDashboardVersionListItemDto extends BookRightsDashboardVersionCoreDto {
+  @ApiProperty({ type: String, example: 'The Odyssey' })
+  title!: string;
 
-  @ApiPropertyOptional({ type: String, nullable: true, example: 'Версия текста устарела' })
-  rightsStaleReasonRu?: string | null;
+  @ApiProperty({ type: String, nullable: true, example: 'REVISION_STALE' })
+  rightsStaleReasonCode!: string | null;
+}
+
+/** Текущая версия (`currentVersion`): строка целиком, без заголовка. */
+export class BookRightsDashboardCurrentVersionDto extends BookRightsDashboardVersionCoreDto {
+  @ApiProperty({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
+  rightsGeoBlockConfiguredAt!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'Notes' })
+  rightsGeoBlockNotesRu!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: '2026-07-26T12:00:00.000Z' })
+  rightsGeoBlockVerifiedAt!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'user-uuid' })
+  rightsGeoBlockVerifiedByUserId!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: '2026-07-26T11:30:00.000Z' })
+  rightsGeoBlockLastGeneratedAt!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'a1b2c3d4...' })
+  rightsContentHash!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'v1' })
+  rightsContentHashAlgorithmVersion!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: '2026-07-25T12:00:00.000Z' })
+  rightsContentHashCalculatedAt!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'REVISION_STALE' })
+  rightsStaleReasonCode!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'Версия текста устарела' })
+  rightsStaleReasonRu!: string | null;
 
   // Phase 15: license snapshot recorded at publish / book creation time
-  @ApiPropertyOptional({ type: String, nullable: true, example: 'COVERED' })
-  rightsLicenseCoverageStatus?: string | null;
+  @ApiProperty({ type: String, nullable: true, example: 'COVERED' })
+  rightsLicenseCoverageStatus!: string | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-28T12:00:00.000Z' })
-  rightsLicenseCheckedAt?: string | null;
+  @ApiProperty({ type: String, nullable: true, example: '2026-07-28T12:00:00.000Z' })
+  rightsLicenseCheckedAt!: string | null;
 
-  @ApiPropertyOptional({ type: [String], nullable: true })
-  rightsLicenseIds?: string[] | null;
+  @ApiProperty({ type: [String], nullable: true })
+  rightsLicenseIds!: string[] | null;
 
   // Phase 16: denormalised rights-claim block state
-  @ApiPropertyOptional({ type: Boolean, example: false })
-  rightsClaimBlockActive?: boolean;
+  @ApiProperty({ type: Boolean, example: false })
+  rightsClaimBlockActive!: boolean;
 
-  @ApiPropertyOptional({ type: String, nullable: true, example: '2026-07-28T12:00:00.000Z' })
-  rightsClaimBlockAppliedAt?: string | null;
+  @ApiProperty({ type: String, nullable: true, example: '2026-07-28T12:00:00.000Z' })
+  rightsClaimBlockAppliedAt!: string | null;
 }
 
 export class BookRightsDashboardMetricsDto {
@@ -320,11 +337,11 @@ export class BookRightsDashboardDto {
   @ApiProperty({ type: BookRightsDashboardBookSummaryDto })
   book!: BookRightsDashboardBookSummaryDto;
 
-  @ApiProperty({ type: BookRightsDashboardVersionSummaryDto })
-  currentVersion!: BookRightsDashboardVersionSummaryDto;
+  @ApiProperty({ type: BookRightsDashboardCurrentVersionDto })
+  currentVersion!: BookRightsDashboardCurrentVersionDto;
 
-  @ApiProperty({ type: [BookRightsDashboardVersionSummaryDto] })
-  versions!: BookRightsDashboardVersionSummaryDto[];
+  @ApiProperty({ type: [BookRightsDashboardVersionListItemDto] })
+  versions!: BookRightsDashboardVersionListItemDto[];
 
   @ApiProperty({ type: 'object', additionalProperties: true, nullable: true })
   intake!: Record<string, unknown> | null;

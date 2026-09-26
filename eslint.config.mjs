@@ -13,9 +13,8 @@ export default tseslint.config(
       'libs/api-client/dist/**/*',
       'libs/api-client/examples/**/*',
       'dist/**/*',
-      // openapi-typescript output: committed at src/types.ts, regenerated at types.ts
+      // openapi-typescript output, regenerated in place by yarn openapi:types*
       'libs/api-client/src/types.ts',
-      'libs/api-client/types.ts',
       // Hand-written Node script that no lint can actually read. tsconfig.eslint.json
       // includes scripts/**/* while allowJs is off, so type-aware ESLint cannot put a
       // .js file in the program. Measured 26.08.2026: without this line

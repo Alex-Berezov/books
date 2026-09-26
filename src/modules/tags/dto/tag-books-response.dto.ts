@@ -13,10 +13,6 @@ import { TagTranslationDto } from './tag-translation-entity.dto';
  * ⚠️ Один класс на модель: форма описана здесь, а `public/dto/public-tag-books-response.dto.ts`
  * её импортирует, а не объявляет заново. `@nestjs/swagger` именует схему по имени
  * класса, и второй класс с тем же именем молча вытеснил бы первый из `components.schemas`.
- *
- * ⚠️ Имя файла отстало от содержимого: маршрут `GET /tags/:slug/books`, по которому
- * файл назван, снят 14.09.2026 (`LEGACY-010`), а классы пережили его, потому что их
- * читает языковой маршрут. Переименование файла — отдельная правка, строкой в `LEGACY-016`.
  */
 export class TagTranslationWithRelationsDto extends TagTranslationDto {
   @ApiProperty({ type: TagEntityDto })

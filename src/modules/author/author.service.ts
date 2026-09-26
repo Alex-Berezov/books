@@ -17,7 +17,7 @@ import {
   AuthorFaqDto as AuthorFaq,
 } from './dto/author-translation.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { paginated } from '../../shared/dto/paginated-response.dto';
+import { paginated, PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 import {
   PUBLIC_AUTHOR_PAGE_TRANSLATION_SELECT,
   PUBLIC_AUTHOR_SELECT,
@@ -115,14 +115,6 @@ export interface PublicAuthorsListOptions {
    * на главной и карта сайта авторов. Просит фильтр тот, кому он нужен: хаб и ручка букв.
    */
   hasBooks?: boolean;
-}
-
-/** Пагинация публичного списка. `limit` — применённый, а не запрошенный. */
-export interface PublicAuthorsListMeta {
-  page: number;
-  limit: number;
-  total: number;
-  totalPages: number;
 }
 
 /**
@@ -487,7 +479,7 @@ export class AuthorService {
   async listPublic(
     lang: Language,
     options: PublicAuthorsListOptions = {},
-  ): Promise<{ data: PublicAuthorListItem[]; meta: PublicAuthorsListMeta }> {
+  ): Promise<{ data: PublicAuthorListItem[]; meta: PaginationInfoDto }> {
     const { search, letter, sort = 'name', hasBooks = false } = options;
 
     // 🔴 Буква проверяется здесь, а не только в DTO: алфавит зависит от языка

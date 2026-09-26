@@ -29,6 +29,7 @@ import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 import { parseJsonStringArray } from '../../shared/prisma/json-string-array.util';
+import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 
 @Injectable()
 export class TagsService {
@@ -358,7 +359,7 @@ export class TagsService {
       rating: number | null;
       seo: { metaTitle: string | null; metaDescription: string | null } | null;
     })[];
-    meta: { page: number; limit: number; total: number; totalPages: number };
+    meta: PaginationInfoDto;
     availableLanguages: Language[];
   }> {
     const trans = await this.prisma.tagTranslation.findUnique({

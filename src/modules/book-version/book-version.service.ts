@@ -526,6 +526,7 @@ export class BookVersionService {
         rightsGeoBlockConfigured: true,
         rightsRecheckRequired: true,
         rightsStaleDetectedAt: true,
+        rightsStaleReasonCode: true,
       },
     });
 
@@ -854,6 +855,7 @@ export class BookVersionService {
         rightsStaleDetectedAt: v.rightsStaleDetectedAt
           ? v.rightsStaleDetectedAt.toISOString()
           : null,
+        rightsStaleReasonCode: v.rightsStaleReasonCode,
       })),
       intake,
       currentProfile,

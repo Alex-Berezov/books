@@ -5,7 +5,7 @@ import {
   BookVersionTagLinkDto,
   CategoryTranslationScalarsDto,
 } from '../../book/dto/book-taxonomy-response.dto';
-import { BookCardsPaginationDto } from '../../book/dto/paged-book-cards.dto';
+import { PaginationInfoDto } from '../../../shared/dto/paginated-response.dto';
 import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 
 /**
@@ -90,8 +90,8 @@ export class PublicCategoryBooksResponseDto {
   @ApiProperty({ type: PublicCategoryBookDto, isArray: true })
   data!: PublicCategoryBookDto[];
 
-  @ApiProperty({ type: BookCardsPaginationDto })
-  meta!: BookCardsPaginationDto;
+  @ApiProperty({ type: PaginationInfoDto })
+  meta!: PaginationInfoDto;
 
   @ApiProperty({ enum: Language, isArray: true })
   availableLanguages!: Language[];

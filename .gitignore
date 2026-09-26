@@ -1,5 +1,6 @@
 # compiled output
 /dist
+/libs/api-client/dist
 # outDir of test/tsconfig.json — `typecheck:test` runs with --noEmit, but keep it ignored
 # so a run without that flag cannot pollute the working tree.
 /dist-test

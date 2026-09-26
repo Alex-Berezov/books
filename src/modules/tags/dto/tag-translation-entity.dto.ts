@@ -12,7 +12,7 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
  * `TagsService.versionsByTagLangSlug` приводит запись к базовой модели (`tags.service.ts`),
  * но приведение компиляторное: в теле ответа связи `tag` и `seo` остаются, и Swagger
  * описывает то поле классом `TagTranslationWithRelationsDto`
- * (`tag-books-by-slug-response.dto.ts`), а не этим. Здесь — голые скалярные колонки.
+ * (`tag-books-response.dto.ts`), а не этим. Здесь — голые скалярные колонки.
  * Если нужен перевод со связью `seo`, см. `TagTranslationEntityDto` ниже.
  */
 export class TagTranslationDto {

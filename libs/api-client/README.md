@@ -38,7 +38,7 @@ yarn openapi:types:from-schema
 
 ```bash
 # From backend project root
-cp libs/api-client/types.ts ../frontend/src/types/api.ts
+cp libs/api-client/src/types.ts ../frontend/src/types/api.ts
 ```
 
 Or create an npm script in your frontend:
@@ -46,7 +46,7 @@ Or create an npm script in your frontend:
 ```json
 {
   "scripts": {
-    "api:types:update": "cp ../books-app-back/libs/api-client/types.ts ./src/types/api.ts"
+    "api:types:update": "cp ../books-app-back/libs/api-client/src/types.ts ./src/types/api.ts"
   }
 }
 ```
