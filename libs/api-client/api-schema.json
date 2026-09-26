@@ -20909,6 +20909,7 @@
             "items": {
               "type": "string"
             },
+            "nullable": true,
             "type": "array"
           },
           "relatedCollectionSlugs": {
@@ -20919,6 +20920,7 @@
             "items": {
               "type": "string"
             },
+            "nullable": true,
             "type": "array"
           },
           "relatedGenreSlugs": {
@@ -20929,6 +20931,7 @@
             "items": {
               "type": "string"
             },
+            "nullable": true,
             "type": "array"
           },
           "relatedTagSlugs": {
@@ -20939,6 +20942,7 @@
             "items": {
               "type": "string"
             },
+            "nullable": true,
             "type": "array"
           },
           "robots": {
@@ -23785,7 +23789,7 @@
             "description": "Page number",
             "in": "query",
             "name": "page",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 1,
               "example": 1,
@@ -23796,7 +23800,7 @@
             "description": "Number of records per page",
             "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 10,
               "example": 10,
@@ -24783,7 +24787,7 @@
             "description": "Page number",
             "in": "query",
             "name": "page",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 1,
               "example": 1,
@@ -24794,7 +24798,7 @@
             "description": "Number of records per page",
             "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 10,
               "example": 10,
@@ -31704,7 +31708,7 @@
             "description": "Page number",
             "in": "query",
             "name": "page",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 1,
               "example": 1,
@@ -31715,7 +31719,7 @@
             "description": "Number of records per page",
             "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 10,
               "example": 10,
@@ -33579,7 +33583,7 @@
             "description": "Page number",
             "in": "query",
             "name": "page",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 1,
               "example": 1,
@@ -33590,7 +33594,7 @@
             "description": "Number of records per page",
             "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 10,
               "example": 10,
@@ -36719,7 +36723,7 @@
             "description": "Page number",
             "in": "query",
             "name": "page",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 1,
               "example": 1,
@@ -36730,7 +36734,7 @@
             "description": "Number of records per page",
             "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 10,
               "example": 10,
@@ -38580,7 +38584,7 @@
             "description": "Page number",
             "in": "query",
             "name": "page",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 1,
               "example": 1,
@@ -38591,7 +38595,7 @@
             "description": "Number of records per page",
             "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "default": 10,
               "example": 10,

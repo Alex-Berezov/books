@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsInt, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -13,7 +13,7 @@ import { Type } from 'class-transformer';
 export const PAGINATION_MAX_LIMIT = 100;
 
 export class PaginationDto {
-  @ApiProperty({ description: 'Page number', example: 1, default: 1 })
+  @ApiPropertyOptional({ description: 'Page number', example: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -37,7 +37,7 @@ export class PaginationDto {
    * `books-front` уезжает первым. Обратный порядок отдаёт 400 карте сайта
    * (секция тегов) и двум админским экранам авторов - разбор в `LEGACY-217`.
    */
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Number of records per page',
     example: 10,
     default: 10,

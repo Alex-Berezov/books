@@ -116,6 +116,54 @@ describe('снапшот OpenAPI совпадает с собранной схе
     expect(built).toEqual(committed);
   });
 
+  // LEGACY-403. `PaginationDto.page`/`limit` необязательны (`@IsOptional` + дефолт), и
+  // схема обязана говорить о них то же самое — иначе клиент, собранный по схеме, требует
+  // параметр, без которого маршрут и так работает.
+  const requiredPaginationParams = (document: Paths): string[] => {
+    const offenders: string[] = [];
+    for (const [route, methods] of Object.entries(document.paths)) {
+      for (const [method, operation] of Object.entries(methods)) {
+        const parameters = (
+          operation as { parameters?: { in?: string; name?: string; required?: boolean }[] }
+        ).parameters;
+        for (const param of parameters ?? []) {
+          if (
+            param.in === 'query' &&
+            ['page', 'limit'].includes(param.name ?? '') &&
+            param.required === true
+          ) {
+            offenders.push(`${method.toUpperCase()} ${route}: ${param.name}`);
+          }
+        }
+      }
+    }
+    return offenders;
+  };
+
+  it('ни один query-параметр `page`/`limit` не помечен обязательным', () => {
+    expect(requiredPaginationParams(built as Paths)).toEqual([]);
+  });
+
+  it('проба на отказ: `page`, помеченный обязательным, краснеет', () => {
+    const broken = mutated(built, (copy) => {
+      const entry = Object.values(copy.paths)
+        .flatMap((methods) => Object.values(methods))
+        .find(
+          (
+            operation,
+          ): operation is { parameters: { in: string; name: string; required?: boolean }[] } =>
+            Array.isArray((operation as { parameters?: unknown }).parameters) &&
+            (operation as { parameters: { in: string; name: string }[] }).parameters.some(
+              (p) => p.in === 'query' && p.name === 'page',
+            ),
+        );
+      if (!entry) throw new Error('в схеме нет параметра page — разбор пробы сломан');
+      entry.parameters.find((p) => p.in === 'query' && p.name === 'page')!.required = true;
+    });
+
+    expect(requiredPaginationParams(broken)).not.toEqual([]);
+  });
+
   it('проба на отказ: снятый маршрут в собранной схеме краснеет', () => {
     const committed: unknown = JSON.parse(readFileSync(SNAPSHOT, 'utf8'));
     const broken = mutated(built, (copy) => {

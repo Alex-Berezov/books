@@ -208,6 +208,46 @@ describe('TagsService', () => {
       expect(res.meta).toEqual({ page: 99, limit: 20, total: 42, totalPages: 3 });
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
+
+    // LEGACY-417. `relatedTagSlugs` и три соседних поля - `Json?` в базе, и Prisma
+    // отдаёт их как есть. Правильная форма (массив строк) должна дойти до ответа
+    // как `string[]`; не-массив - как `null`; массив с посторонними элементами -
+    // как `string[]` без них (тот же приём, что уже стоит на этой колонке
+    // в `book.service.ts` `toSlugArray`).
+    it('parses related*Slugs Json into string[], filtering out non-string elements', async () => {
+      prisma.tag.findMany.mockResolvedValue([
+        {
+          id: 't1',
+          name: 'Adventure',
+          slug: 'adventure',
+          key: 'adventure',
+          indexable: true,
+          isVisible: true,
+          sortOrder: 0,
+          translations: [
+            {
+              ...translation(Language.en, 'adventure', 7, true),
+              relatedTagSlugs: ['aestheticism', 'beauty'],
+              relatedGenreSlugs: { not: 'an array' },
+              relatedCategorySlugs: [1, 'philosophy', 2],
+              relatedCollectionSlugs: null,
+            },
+          ],
+        },
+      ]);
+      prisma.tag.count.mockResolvedValue(1);
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      const res = await service.list(1, 20);
+      const tag = res.data.find((t) => t.id === 't1');
+
+      expect(tag?.translations[0]).toMatchObject({
+        relatedTagSlugs: ['aestheticism', 'beauty'],
+        relatedGenreSlugs: null,
+        relatedCategorySlugs: ['philosophy'],
+        relatedCollectionSlugs: null,
+      });
+    });
   });
 
   /**

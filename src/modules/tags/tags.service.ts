@@ -28,6 +28,7 @@ import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
+import { parseJsonStringArray } from '../../shared/prisma/json-string-array.util';
 
 @Injectable()
 export class TagsService {
@@ -126,7 +127,13 @@ export class TagsService {
         indexable: item.indexable ?? true,
         isVisible: item.isVisible ?? true,
         sortOrder: item.sortOrder ?? 0,
-        translations: item.translations,
+        translations: item.translations.map((t) => ({
+          ...t,
+          relatedTagSlugs: parseJsonStringArray(t.relatedTagSlugs),
+          relatedGenreSlugs: parseJsonStringArray(t.relatedGenreSlugs),
+          relatedCategorySlugs: parseJsonStringArray(t.relatedCategorySlugs),
+          relatedCollectionSlugs: parseJsonStringArray(t.relatedCollectionSlugs),
+        })),
         booksCount: countMap.get(item.id) || 0,
         langBookCount: langTranslation?.bookCount,
         autoIndexable: langTranslation?.autoIndexable,

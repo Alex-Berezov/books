@@ -55,20 +55,29 @@ export class TagTranslationResponse {
   })
   faq?: FaqItemDto[] | null;
 
-  @ApiPropertyOptional({ type: [String], example: ['aestheticism', 'beauty'] })
-  relatedTagSlugs?: unknown;
+  @ApiPropertyOptional({ type: [String], nullable: true, example: ['aestheticism', 'beauty'] })
+  relatedTagSlugs?: string[] | null;
 
   @ApiPropertyOptional({
     type: [String],
+    nullable: true,
     example: ['classic-literature', 'philosophical-fiction'],
   })
-  relatedGenreSlugs?: unknown;
+  relatedGenreSlugs?: string[] | null;
 
-  @ApiPropertyOptional({ type: [String], example: ['classic-literature', 'victorian-literature'] })
-  relatedCategorySlugs?: unknown;
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    example: ['classic-literature', 'victorian-literature'],
+  })
+  relatedCategorySlugs?: string[] | null;
 
-  @ApiPropertyOptional({ type: [String], example: ['short-reads', 'feel-good-books'] })
-  relatedCollectionSlugs?: unknown;
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    example: ['short-reads', 'feel-good-books'],
+  })
+  relatedCollectionSlugs?: string[] | null;
 
   @ApiPropertyOptional({
     description: 'Cached number of published books in this language.',
