@@ -21,7 +21,7 @@ type PrismaStub = {
     groupBy: jest.Mock;
     updateMany: jest.Mock;
   };
-  seo: { findUnique: jest.Mock };
+  seo: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
   adminAuditEvent: { create: jest.Mock };
   $transaction: jest.Mock;
   $queryRaw: jest.Mock;
@@ -39,19 +39,17 @@ const createPrismaStub = (): PrismaStub => {
       groupBy: jest.fn(),
       updateMany: jest.fn(),
     },
-    seo: { findUnique: jest.fn() },
+    seo: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
     adminAuditEvent: { create: jest.fn() },
     $transaction: jest.fn(),
     $queryRaw: jest.fn(),
   };
 
-  // Замок строки (`LEGACY-320`) отдаёт ту же страницу, что последним вернул
-  // `findUnique`: стенд держит одну строку на тест, а не две разошедшиеся копии.
-  stub.$queryRaw.mockImplementation(async () => {
-    const results = stub.page.findUnique.mock.results;
-    const row = results.length ? ((await results[results.length - 1].value) as unknown) : null;
-    return row ? [row] : [];
-  });
+  // Замок строки (`LEGACY-320`/`LEGACY-400`, `T55`): `update` больше не читает
+  // страницу на пуле вовсе, локед-строку каждый тест кладёт сам через
+  // `prisma.$queryRaw.mockResolvedValueOnce([...])` — общего вывода из `findUnique`
+  // тут больше нет, он маскировал бы пропущенный мок пустым результатом.
+  stub.$queryRaw.mockResolvedValue([]);
 
   // Транзакция отдаёт тот же стаб как `tx`: запись истории слагов обязана идти
   // внутри неё, и подмена клиента здесь скрыла бы нарушение этого порядка.
@@ -64,6 +62,15 @@ const createPrismaStub = (): PrismaStub => {
 
   return stub;
 };
+
+// Форма `meta` у `P2002` под `@prisma/adapter-pg` — `meta.target` там нет (живой замер, `T55`).
+const adapterMeta = (fields: string[]) => ({
+  modelName: 'Page',
+  driverAdapterError: {
+    name: 'DriverAdapterError',
+    cause: { kind: 'UniqueConstraintViolation', constraint: { fields } },
+  },
+});
 
 const createSlugRedirectStub = () => ({
   record: jest.fn().mockResolvedValue(undefined),
@@ -298,7 +305,9 @@ describe('PagesService (unit)', () => {
     const FORM_RESULT = { id: 'p1', status: 'published', marker: 'from-page-update' };
 
     const arrangeUpdate = () => {
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
+      // `update` больше не читает страницу на пуле (`LEGACY-400`, `T55`): строка
+      // приходит locked-запросом внутри транзакции.
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about', language: 'en', seoId: null }]);
       prisma.page.update.mockResolvedValueOnce(FORM_RESULT);
     };
 
@@ -430,9 +439,76 @@ describe('PagesService (unit)', () => {
     });
   });
 
+  /**
+   * `LEGACY-400`. `Seo` шёл на пуле до `page.create`: отказ вставки страницы
+   * (например, `P2002` на дубле `(language, slug)`) оставлял `Seo` сиротой —
+   * ничто её больше не находит. Приём — как у `CategoryService.updateTranslation`
+   * после `T54`: `Seo` пишется тем же клиентом транзакции, что и страница.
+   */
+  describe('create: Seo идёт в одной транзакции со страницей (LEGACY-400)', () => {
+    const arrange = (pageResult: unknown) => {
+      const tx = {
+        seo: { create: jest.fn().mockResolvedValue({ id: 9 }) },
+        page: { create: jest.fn().mockResolvedValue(pageResult) },
+      };
+      prisma.$transaction.mockImplementation((cb: unknown) =>
+        (cb as (client: typeof tx) => unknown)(tx),
+      );
+      return tx;
+    };
+
+    it('Seo создаётся клиентом транзакции, а не пулом', async () => {
+      const tx = arrange({ id: 'p1' });
+
+      await service.create(
+        {
+          slug: 'about',
+          title: 'About',
+          type: 'generic',
+          content: '',
+          seo: { metaTitle: 'T' },
+        } as unknown as import('./dto/create-page.dto').CreatePageDto,
+        'en' as Language,
+      );
+
+      expect(tx.seo.create).toHaveBeenCalledTimes(1);
+      expect(tx.seo.create).toHaveBeenCalledWith({ data: { metaTitle: 'T' } });
+      expect(tx.page.create).toHaveBeenCalledTimes(1);
+      expect(tx.page.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ seoId: 9 }) }),
+      );
+      expect(prisma.seo.create).not.toHaveBeenCalled();
+    });
+
+    // 🔴 Мок не показывает откат буквально — это делает Postgres на настоящей
+    // транзакции. Здесь проверяется предпосылка отката: запись, которая обязана
+    // откатиться вместе со страницей, идёт клиентом ЭТОЙ транзакции, а не пулом,
+    // где откат её не достал бы.
+    it('отказ вставки страницы не оставляет Seo на пуле', async () => {
+      arrange(null).page.create.mockRejectedValue(
+        Object.assign(new Error('dup'), { code: 'P2002' }),
+      );
+
+      await expect(
+        service.create(
+          {
+            slug: 'about',
+            title: 'About',
+            type: 'generic',
+            content: '',
+            seo: { metaTitle: 'T' },
+          } as unknown as import('./dto/create-page.dto').CreatePageDto,
+          'en' as Language,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prisma.seo.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('update (negative seoId cases)', () => {
     it('throws BadRequest when seoId points to non-existing SEO (pre-check)', async () => {
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about', language: 'en', seoId: null }]);
       prisma.seo.findUnique.mockResolvedValueOnce(null);
       await expect(
         service.update(
@@ -446,7 +522,7 @@ describe('PagesService (unit)', () => {
     });
 
     it('rejects renaming a page into a slug the router owns', async () => {
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about', language: 'en', seoId: null }]);
       await expect(
         service.update(
           'p1',
@@ -469,10 +545,9 @@ describe('PagesService (unit)', () => {
      * оставалась без редиректа.
      */
     it('пишет редирект со слага строки под замком, а не из снимка на пуле', async () => {
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
       prisma.page.findFirst.mockResolvedValueOnce(null);
       prisma.page.update.mockResolvedValueOnce({ id: 'p1', slug: 'about-us' });
-      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about-mid', language: 'en' }]);
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about-mid', language: 'en', seoId: null }]);
 
       await service.update(
         'p1',
@@ -488,7 +563,6 @@ describe('PagesService (unit)', () => {
     });
 
     it('страница удалена в окне до замка — 404 без редиректа и записи', async () => {
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
       prisma.page.findFirst.mockResolvedValueOnce(null);
       prisma.$queryRaw.mockResolvedValueOnce([]);
 
@@ -506,7 +580,7 @@ describe('PagesService (unit)', () => {
     it('still lets a page already sitting on a reserved slug be edited', async () => {
       // Such a page predates the rule. Refusing it would brick the only form its
       // owner could use to rename it away.
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'catalog', language: 'en' });
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'catalog', language: 'en', seoId: null }]);
       prisma.page.findFirst.mockResolvedValueOnce(null);
       prisma.page.update.mockResolvedValueOnce({ id: 'p1', slug: 'catalog', title: 'Renamed' });
 
@@ -526,7 +600,7 @@ describe('PagesService (unit)', () => {
       // The exemption is "leave the broken page where it is", not "let it
       // travel": moving `catalog` from en to ru mints a second unreachable
       // address in a language that was intact.
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'catalog', language: 'en' });
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'catalog', language: 'en', seoId: null }]);
       await expect(
         service.update(
           'p1',
@@ -540,7 +614,7 @@ describe('PagesService (unit)', () => {
     });
 
     it('maps Prisma P2003 (Page_seoId_fkey) to BadRequest', async () => {
-      prisma.page.findUnique.mockResolvedValueOnce({ id: 'p1', slug: 'about', language: 'en' });
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about', language: 'en', seoId: null }]);
       prisma.seo.findUnique.mockResolvedValueOnce({ id: 5 }); // pass pre-check
       const err = Object.assign(new Error('fk error'), {
         code: 'P2003',
@@ -556,6 +630,96 @@ describe('PagesService (unit)', () => {
           'admin-1',
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  /**
+   * `LEGACY-400`. Проверка дубля `(language, slug)` и запись `Seo` шли на пуле
+   * — вне транзакции, которая пишет саму страницу, и до её строки под замком.
+   * Дубль, вставленный встречной правкой в том же окне, доходил до уникального
+   * индекса и превращался в 500; отказ страницы после отдельного `Seo`-запроса
+   * оставлял его сиротой. Приём — как у `CategoryService.updateTranslation`
+   * после `T54`: замок строки первым, `Seo` и дубль — тем же `tx`.
+   */
+  describe('update: Seo и дубль идут через tx строки под замком (LEGACY-400)', () => {
+    const withLockedTx = (locked: { slug: string; language: string; seoId: number | null }) => {
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([locked]),
+        page: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          update: jest.fn().mockResolvedValue({ id: 'p1' }),
+          updateMany: jest.fn(),
+        },
+        seo: {
+          create: jest.fn().mockResolvedValue({ id: 9 }),
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue({ id: 5 }),
+        },
+      };
+      prisma.$transaction.mockImplementation((cb: unknown) =>
+        (cb as (client: typeof tx) => unknown)(tx),
+      );
+      return tx;
+    };
+
+    it('Seo создаётся через tx, когда у строки под замком его ещё нет', async () => {
+      const tx = withLockedTx({ slug: 'about', language: 'en', seoId: null });
+
+      await service.update(
+        'p1',
+        { seo: { metaTitle: 'T' } } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+        'admin-1',
+      );
+
+      expect(tx.seo.create).toHaveBeenCalledTimes(1);
+      expect(tx.seo.create).toHaveBeenCalledWith({ data: { metaTitle: 'T' } });
+      expect(prisma.seo.create).not.toHaveBeenCalled();
+    });
+
+    it('Seo обновляется через tx по seoId строки под замком', async () => {
+      const tx = withLockedTx({ slug: 'about', language: 'en', seoId: 7 });
+
+      await service.update(
+        'p1',
+        { seo: { metaTitle: 'T' } } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+        'admin-1',
+      );
+
+      expect(tx.seo.update).toHaveBeenCalledTimes(1);
+      expect(tx.seo.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { metaTitle: 'T' } });
+      expect(tx.seo.create).not.toHaveBeenCalled();
+      expect(prisma.seo.update).not.toHaveBeenCalled();
+    });
+
+    it('дубль (language, slug), вставленный встречной правкой, — 400, а не 500', async () => {
+      const tx = withLockedTx({ slug: 'about', language: 'en', seoId: null });
+      tx.page.update.mockRejectedValue(
+        Object.assign(new Error('dup'), { code: 'P2002', meta: adapterMeta(['language', 'slug']) }),
+      );
+
+      await expect(
+        service.update(
+          'p1',
+          { slug: 'about-2' } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+          'admin-1',
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    // Текст «same slug» ложен для чужих уникальных индексов `Page` (`seoId`,
+    // `(language, systemKey)`): такой отказ не маскируется под дубль слага.
+    it('P2002 не по слагу (seoId) не выдаётся за дубль слага', async () => {
+      const tx = withLockedTx({ slug: 'about', language: 'en', seoId: null });
+      const dup = Object.assign(new Error('dup'), { code: 'P2002', meta: adapterMeta(['seoId']) });
+      tx.page.update.mockRejectedValue(dup);
+
+      await expect(
+        service.update(
+          'p1',
+          { seoId: 5 } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+          'admin-1',
+        ),
+      ).rejects.toBe(dup);
     });
   });
 

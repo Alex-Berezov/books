@@ -15,6 +15,7 @@ import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/re
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { paginated } from '../../shared/dto/paginated-response.dto';
+import { uniqueViolationFields } from '../../shared/prisma/unique-violation.util';
 
 /**
  * Точная форма, которую реально возвращает Prisma с `include: { seo: true }` — используется как
@@ -52,6 +53,10 @@ const PAGE_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
  * арбитра 20.09.2026 в эту пачку не берётся (`decisions-log.md`). Признак изменения
  * состояния даёт не замок и не сравнение в коде, а сама условная запись — см.
  * `setStatus` ниже.
+ *
+ * Те же границы у `update()` и `create()` (`LEGACY-400`, пачка `T55`): обе открывают
+ * интерактивную транзакцию, и дефолтные 2 с ожидания соединения давали бы `P2024`
+ * под нагрузкой пула.
  */
 const PAGE_STATUS_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
@@ -219,52 +224,55 @@ export class PagesService {
     // it is a page with no address — the router answers that path first.
     if (isReservedSlug(dto.slug)) throw new BadRequestException(RESERVED_SLUG_MESSAGE);
 
-    // Handle SEO: if dto.seo is provided, create SEO entity first
-    let finalSeoId = dto.seoId;
-    if (dto.seo) {
-      // Check if SEO fields are not all null/undefined
-      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
-      if (hasSeoData) {
-        // Create new SEO entity
-        const newSeo = await this.prisma.seo.create({
-          data: dto.seo,
-        });
-        finalSeoId = newSeo.id;
-      }
-    } else if (dto.seoId !== undefined && dto.seoId !== null) {
-      // Legacy: seoId provided directly - validate it exists
-      const seo = await this.prisma.seo.findUnique({ where: { id: dto.seoId } });
-      if (!seo) {
-        throw new BadRequestException('SEO entity not found for provided seoId');
-      }
-      finalSeoId = dto.seoId;
-    }
-
     const translationGroupId = dto.translationGroupId || randomUUID();
 
     try {
-      const pageInput: Prisma.PageUncheckedCreateInput = {
-        slug: dto.slug,
-        title: dto.title,
-        type: dto.type,
-        content: dto.content,
-        h1: dto.h1 ?? null,
-        shortDescription: dto.shortDescription ?? null,
-        // `FaqItemDto[]` из DTO — экземпляры класса, а не `InputJsonObject`; та же граница,
-        // что у `sections` строкой ниже.
-        faq: (dto.faq as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-        // `Record<string, unknown>` из DTO описывает произвольный объект блоков, а Prisma ждёт
-        // `InputJsonValue`: значения `unknown` в неё не проходят. Граница ровно здесь.
-        sections: (dto.sections as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-        language,
-        status: 'draft' as const,
-        seoId: finalSeoId,
-        translationGroupId,
-      };
-      return await this.prisma.page.create({
-        data: pageInput,
-        include: { seo: true },
-      });
+      // 🔴 `LEGACY-400`: `Seo` пишется той же транзакцией, что и страница, — до этой
+      // правки создание страницы шло на пуле уже ПОСЛЕ `Seo`, и отказ вставки страницы
+      // (например, дубль `(language, slug)`, `P2002` ниже) оставлял `Seo` сиротой,
+      // которую ничто больше не найдёт (тот же приём, что у `CategoryService.updateTranslation`
+      // после `T54`).
+      return await this.prisma.$transaction(async (tx) => {
+        let finalSeoId = dto.seoId;
+        if (dto.seo) {
+          // Check if SEO fields are not all null/undefined
+          const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+          if (hasSeoData) {
+            const newSeo = await tx.seo.create({ data: dto.seo });
+            finalSeoId = newSeo.id;
+          }
+        } else if (dto.seoId !== undefined && dto.seoId !== null) {
+          // Legacy: seoId provided directly - validate it exists
+          const seo = await tx.seo.findUnique({ where: { id: dto.seoId } });
+          if (!seo) {
+            throw new BadRequestException('SEO entity not found for provided seoId');
+          }
+          finalSeoId = dto.seoId;
+        }
+
+        const pageInput: Prisma.PageUncheckedCreateInput = {
+          slug: dto.slug,
+          title: dto.title,
+          type: dto.type,
+          content: dto.content,
+          h1: dto.h1 ?? null,
+          shortDescription: dto.shortDescription ?? null,
+          // `FaqItemDto[]` из DTO — экземпляры класса, а не `InputJsonObject`; та же граница,
+          // что у `sections` строкой ниже.
+          faq: (dto.faq as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+          // `Record<string, unknown>` из DTO описывает произвольный объект блоков, а Prisma ждёт
+          // `InputJsonValue`: значения `unknown` в неё не проходят. Граница ровно здесь.
+          sections: (dto.sections as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+          language,
+          status: 'draft' as const,
+          seoId: finalSeoId,
+          translationGroupId,
+        };
+        return tx.page.create({
+          data: pageInput,
+          include: { seo: true },
+        });
+      }, PAGE_STATUS_TX_OPTIONS);
     } catch (e) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Page with same slug already exists for this language');
@@ -279,106 +287,107 @@ export class PagesService {
    * что актёр доехал от контроллера до записи (`LEGACY-015`, пачка `T21`).
    */
   async update(id: string, dto: UpdatePageDto, actorUserId: string): Promise<PageWithSeo> {
-    const exists = await this.prisma.page.findUnique({ where: { id } });
-    if (!exists) throw new NotFoundException('Page not found');
-    if (dto.slug || dto.language) {
-      const newSlug = dto.slug ?? exists.slug;
-      const newLang: Language = dto.language ?? exists.language;
-      // Renaming *into* a reserved slug is worse than creating one: the old
-      // address gets a `SlugRedirect` pointing at a path the router will never
-      // hand to a page, so the redirect built to preserve the URL would strand
-      // the visitor.
-      //
-      // Only an actual move is refused. A page that already sits on a reserved
-      // slug predates this rule, and blocking it would brick the very form its
-      // owner needs to rename it — the edit form submits the whole record, so an
-      // unchanged slug arrives in `dto` like any other field. Renaming away stays
-      // open, which is the way out.
-      //
-      // A language change counts as a move even when the slug is untouched: it
-      // mints `/ru/catalog` out of `/en/catalog`, so the exemption for one broken
-      // address would quietly manufacture a second one.
-      const moved = newSlug !== exists.slug || newLang !== exists.language;
-      if (moved && isReservedSlug(newSlug)) {
-        throw new BadRequestException(RESERVED_SLUG_MESSAGE);
-      }
-      const dup = await this.prisma.page.findFirst({
-        where: { slug: newSlug, language: newLang, NOT: { id } },
-        select: { id: true },
-      });
-      if (dup)
-        throw new BadRequestException('Page with same slug already exists for this language');
-    }
-
-    // Handle SEO: if dto.seo is provided, create or update SEO entity
-    let finalSeoId = dto.seoId;
-    if (dto.seo) {
-      // Check if SEO fields are not all null/undefined
-      const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
-      if (hasSeoData) {
-        if (exists.seoId) {
-          // Update existing SEO entity
-          await this.prisma.seo.update({
-            where: { id: exists.seoId },
-            data: dto.seo,
-          });
-          finalSeoId = exists.seoId;
-        } else {
-          // Create new SEO entity
-          const newSeo = await this.prisma.seo.create({
-            data: dto.seo,
-          });
-          finalSeoId = newSeo.id;
-        }
-      } else if (exists.seoId) {
-        // All SEO fields are null - detach SEO entity
-        finalSeoId = null;
-      }
-    } else if (dto.seoId !== undefined) {
-      // Legacy: seoId provided directly
-      if (dto.seoId !== null) {
-        const seo = await this.prisma.seo.findUnique({ where: { id: dto.seoId } });
-        if (!seo) {
-          throw new BadRequestException('SEO entity not found for provided seoId');
-        }
-      }
-      finalSeoId = dto.seoId;
-    }
-
     try {
-      const updateInput: Record<string, unknown> = {};
-      if (dto.slug !== undefined) updateInput.slug = dto.slug;
-      if (dto.title !== undefined) updateInput.title = dto.title;
-      if (dto.type !== undefined) updateInput.type = dto.type;
-      if (dto.content !== undefined) updateInput.content = dto.content;
-      if (dto.h1 !== undefined) updateInput.h1 = dto.h1;
-      if (dto.shortDescription !== undefined) updateInput.shortDescription = dto.shortDescription;
-      if (dto.faq !== undefined) updateInput.faq = dto.faq ?? Prisma.JsonNull;
-      if (dto.sections !== undefined) updateInput.sections = dto.sections ?? Prisma.JsonNull;
-      if (dto.language !== undefined) updateInput.language = dto.language;
-      if (finalSeoId !== undefined) updateInput.seoId = finalSeoId;
-      // `status` в `updateInput` намеренно **не** кладётся: смена публичной видимости
-      // журналируется, и признак изменения даёт отдельная условная запись ниже.
-      // Положить его сюда значило бы вернуть безусловный апдейт, на котором отличить
-      // «опубликовали» от «нажали второй раз» уже нечем (`LEGACY-015`, пачка `T21`).
-
       // Слаг страницы — её публичный адрес. С тех пор как системные страницы ищутся
       // по неизменяемому `systemKey` (09.08.2026), слаг стал обычным редактируемым
       // полем — то есть его смена больше ничего не ломает функционально и ровно
       // поэтому обязана оставлять 308 (LEGACY-062).
-      //
-      // Язык берётся СТАРЫЙ (`locked.language` — строки под замком), а не `dto.language`: резолв идёт по
-      // паре (entityType, language, oldSlug), а старый адрес жил именно под старым
-      // языком. Запись под новым выглядит интуитивнее и не сработала бы нигде.
       return await this.prisma.$transaction(async (tx) => {
-        // 🔴 `LEGACY-320`: старый слаг и язык для редиректа — из строки под замком,
-        // а не из снимка `exists` на пуле: встречная смена слага, закоммиченная между
-        // ними, иначе оставалась без редиректа. `FOR NO KEY UPDATE` — как у книги
-        // и категории (решение арбитра 25.09.2026).
-        const [locked] = await tx.$queryRaw<Pick<Page, 'slug' | 'language'>[]>`
-          SELECT slug, language FROM "Page" WHERE id = ${id} FOR NO KEY UPDATE`;
+        // 🔴 `LEGACY-320`/`LEGACY-400`. Слаг, язык и `seoId` берутся ОДНИМ locked-запросом,
+        // а не снимком `exists` на пуле до транзакции: до этой правки проверка дубля
+        // (language, slug) и запись `Seo` шли по устаревшему снимку и вне транзакции
+        // страницы. Встречная смена слага, закоммиченная между чтением и записью,
+        // оставляла старый адрес без редиректа (`L-019`); отказ записи страницы уже после
+        // отдельного `Seo`-запроса оставлял его сиротой. Проверка дубля ниже гонку
+        // не закрывает — замок держит только свою строку, чужую вставку той же пары
+        // `findFirst` не видит; рубеж — уникальный индекс, его `P2002` разбирается в `catch`.
+        const [locked] = await tx.$queryRaw<Pick<Page, 'slug' | 'language' | 'seoId'>[]>`
+          SELECT slug, language, "seoId" FROM "Page" WHERE id = ${id} FOR NO KEY UPDATE`;
         if (!locked) throw new NotFoundException('Page not found');
 
+        if (dto.slug || dto.language) {
+          const newSlug = dto.slug ?? locked.slug;
+          const newLang: Language = dto.language ?? locked.language;
+          // Renaming *into* a reserved slug is worse than creating one: the old
+          // address gets a `SlugRedirect` pointing at a path the router will never
+          // hand to a page, so the redirect built to preserve the URL would strand
+          // the visitor.
+          //
+          // Only an actual move is refused. A page that already sits on a reserved
+          // slug predates this rule, and blocking it would brick the very form its
+          // owner needs to rename it — the edit form submits the whole record, so an
+          // unchanged slug arrives in `dto` like any other field. Renaming away stays
+          // open, which is the way out.
+          //
+          // A language change counts as a move even when the slug is untouched: it
+          // mints `/ru/catalog` out of `/en/catalog`, so the exemption for one broken
+          // address would quietly manufacture a second one.
+          const moved = newSlug !== locked.slug || newLang !== locked.language;
+          if (moved && isReservedSlug(newSlug)) {
+            throw new BadRequestException(RESERVED_SLUG_MESSAGE);
+          }
+          const dup = await tx.page.findFirst({
+            where: { slug: newSlug, language: newLang, NOT: { id } },
+            select: { id: true },
+          });
+          if (dup)
+            throw new BadRequestException('Page with same slug already exists for this language');
+        }
+
+        // Handle SEO: if dto.seo is provided, create or update SEO entity
+        let finalSeoId = dto.seoId;
+        if (dto.seo) {
+          // Check if SEO fields are not all null/undefined
+          const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+          if (hasSeoData) {
+            if (locked.seoId) {
+              // Update existing SEO entity
+              await tx.seo.update({
+                where: { id: locked.seoId },
+                data: dto.seo,
+              });
+              finalSeoId = locked.seoId;
+            } else {
+              // Create new SEO entity
+              const newSeo = await tx.seo.create({
+                data: dto.seo,
+              });
+              finalSeoId = newSeo.id;
+            }
+          } else if (locked.seoId) {
+            // All SEO fields are null - detach SEO entity
+            finalSeoId = null;
+          }
+        } else if (dto.seoId !== undefined) {
+          // Legacy: seoId provided directly
+          if (dto.seoId !== null) {
+            const seo = await tx.seo.findUnique({ where: { id: dto.seoId } });
+            if (!seo) {
+              throw new BadRequestException('SEO entity not found for provided seoId');
+            }
+          }
+          finalSeoId = dto.seoId;
+        }
+
+        const updateInput: Record<string, unknown> = {};
+        if (dto.slug !== undefined) updateInput.slug = dto.slug;
+        if (dto.title !== undefined) updateInput.title = dto.title;
+        if (dto.type !== undefined) updateInput.type = dto.type;
+        if (dto.content !== undefined) updateInput.content = dto.content;
+        if (dto.h1 !== undefined) updateInput.h1 = dto.h1;
+        if (dto.shortDescription !== undefined) updateInput.shortDescription = dto.shortDescription;
+        if (dto.faq !== undefined) updateInput.faq = dto.faq ?? Prisma.JsonNull;
+        if (dto.sections !== undefined) updateInput.sections = dto.sections ?? Prisma.JsonNull;
+        if (dto.language !== undefined) updateInput.language = dto.language;
+        if (finalSeoId !== undefined) updateInput.seoId = finalSeoId;
+        // `status` в `updateInput` намеренно **не** кладётся: смена публичной видимости
+        // журналируется, и признак изменения даёт отдельная условная запись ниже.
+        // Положить его сюда значило бы вернуть безусловный апдейт, на котором отличить
+        // «опубликовали» от «нажали второй раз» уже нечем (`LEGACY-015`, пачка `T21`).
+
+        // Язык берётся СТАРЫЙ (`locked.language` — строки под замком), а не `dto.language`: резолв идёт по
+        // паре (entityType, language, oldSlug), а старый адрес жил именно под старым
+        // языком. Запись под новым выглядит интуитивнее и не сработала бы нигде.
         if (dto.slug && dto.slug !== locked.slug) {
           await this.slugRedirects.record(
             {
@@ -430,6 +439,14 @@ export class PagesService {
       const err = e as Prisma.PrismaClientKnownRequestError & { meta?: { constraint?: string } };
       if (err?.code === 'P2003' && err?.meta?.constraint === 'Page_seoId_fkey') {
         throw new BadRequestException('Invalid seoId: referenced SEO entity does not exist');
+      }
+      // Дубль (language, slug), вставленный встречной правкой в том же окне, доходит
+      // до уникального индекса на самой странице — 400, как у категории (`LEGACY-400`),
+      // а не 500. Только по полю `slug` (`uniqueViolationFields` читает обе формы отказа:
+      // `meta.target` и `meta.driverAdapterError` под `@prisma/adapter-pg`): у `Page` есть ещё
+      // `@unique` на `seoId` и `(language, systemKey)`, и текст про слаг там был бы ложным.
+      if (err?.code === 'P2002' && uniqueViolationFields(err).includes('slug')) {
+        throw new BadRequestException('Page with same slug already exists for this language');
       }
       throw e;
     }

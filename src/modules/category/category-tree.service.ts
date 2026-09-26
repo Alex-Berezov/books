@@ -199,8 +199,8 @@ export class CategoryTreeService {
   /**
    * 🔴 `LEGACY-320`. Запирает строку перевода категории и отдаёт её свежий слаг:
    * редирект слага перевода пишется от значения под замком, а не от снимка.
-   * Писателей два — `CategoryService.updateTranslation` и импорт категории, —
-   * поэтому SQL живёт здесь, в одном месте. Сила `FOR NO KEY UPDATE` — как у строки
+   * Писателей три — `CategoryService.updateTranslation`, `CategoryService.deleteTranslation`
+   * и импорт категории, — поэтому SQL живёт здесь, в одном месте. Сила `FOR NO KEY UPDATE` — как у строки
    * `Category` (решение арбитра 25.09.2026): писателей сериализует, FK-вставок не держит.
    * Пустой результат — перевода нет или он удалён в окне.
    */
@@ -214,6 +214,24 @@ export class CategoryTreeService {
       WHERE "categoryId" = ${categoryId} AND language = ${language}::"Language"
       FOR NO KEY UPDATE`;
     return row ?? null;
+  }
+
+  /**
+   * 🔴 `LEGACY-320`, остаток пачки `T55`. Та же строка под замком, но для всех языков
+   * термина разом: `CategoryService.remove()` пишет редирект на каждый умирающий адрес
+   * термина, а слаг для него читался снимком без замка (`findMany` на пуле того же `tx`,
+   * но без `FOR NO KEY UPDATE`) — встречная `updateTranslation`, закоммиченная между
+   * чтением и `deleteMany`, оставляла свой новый слаг без редиректа ровно как в
+   * одноязычном `lockTranslation` выше.
+   */
+  async lockTranslations(
+    tx: Prisma.TransactionClient,
+    categoryId: string,
+  ): Promise<Array<LockedCategoryTranslation & { language: Language }>> {
+    return tx.$queryRaw<Array<LockedCategoryTranslation & { language: Language }>>`
+      SELECT id, slug, "seoId", language FROM "CategoryTranslation"
+      WHERE "categoryId" = ${categoryId}
+      FOR NO KEY UPDATE`;
   }
 
   /**

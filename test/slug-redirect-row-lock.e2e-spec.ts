@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Language, Prisma } from '@prisma/client';
 import { AppModule } from '../src/app.module';
@@ -237,6 +238,98 @@ describe('LEGACY-320 — редирект базового слага пишет
     ]);
   }, 120_000);
 
+  /**
+   * 🔴 `LEGACY-320`, остаток пачки `T55`. `deleteTranslation` и `remove()` уже читали
+   * снимок ТЕМ ЖЕ `tx`, что и писали (`T54` закрыл гонку у `updateTranslation`), но
+   * без `FOR NO KEY UPDATE`: замок дерева — advisory, не замок строки, и от него
+   * `updateTranslation` сознательно освобождён (комментарий над её вызовом
+   * `runInTree`-исключения). Плоское чтение не вставало в очередь за строкой,
+   * которую держит встречный `updateTranslation`, и адрес редиректа брался устаревшим.
+   */
+  it('перевод категории: удаление перевода пишет редирект со слага, встроенного встречной правкой', async () => {
+    const parent = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Del parent ${stamp}`,
+        slug: `${prefix}-delparent`,
+        key: `${prefix}-delparent`,
+        translations: {
+          create: { language: Language.en, name: 'Parent', slug: `${prefix}-delparent-tr` },
+        },
+      },
+    });
+    const category = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Del tr ${stamp}`,
+        slug: `${prefix}-deltrcat`,
+        key: `${prefix}-deltrcat`,
+        parentId: parent.id,
+        translations: {
+          create: { language: Language.en, name: 'Tr', slug: `${prefix}-deltr-a` },
+        },
+      },
+      include: { translations: true },
+    });
+    const trId = category.translations[0].id;
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "CategoryTranslation" SET slug = ${`${prefix}-deltr-b`} WHERE id = ${trId}`;
+      },
+      'CategoryTranslation',
+      () => categories.deleteTranslation(category.id, Language.en, 'e2e-actor'),
+    );
+
+    // 🔴 До правки слаг брался из чтения без замка (`-deltr-a`), и `-deltr-b` — живой
+    // на момент удаления адрес — оставался без редиректа на родителя.
+    expect(await redirectsFrom('category', `${prefix}-deltr-b`)).toEqual([
+      { newSlug: `${prefix}-delparent-tr` },
+    ]);
+  }, 120_000);
+
+  it('категория: удаление термина пишет редирект переводов со слага, встроенного встречной правкой', async () => {
+    const parent = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Remove parent ${stamp}`,
+        slug: `${prefix}-remparent`,
+        key: `${prefix}-remparent`,
+        translations: {
+          create: { language: Language.en, name: 'Parent', slug: `${prefix}-remparent-tr` },
+        },
+      },
+    });
+    const category = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Remove tr ${stamp}`,
+        slug: `${prefix}-remcat`,
+        key: `${prefix}-remcat`,
+        parentId: parent.id,
+        translations: {
+          create: { language: Language.en, name: 'Tr', slug: `${prefix}-remtr-a` },
+        },
+      },
+      include: { translations: true },
+    });
+    const trId = category.translations[0].id;
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "CategoryTranslation" SET slug = ${`${prefix}-remtr-b`} WHERE id = ${trId}`;
+      },
+      'CategoryTranslation',
+      () => categories.remove(category.id, 'e2e-actor'),
+    );
+
+    // 🔴 До правки `dying` читался `findMany` без замка (`-remtr-a`), и `-remtr-b`
+    // оставался без редиректа при удалении всего термина.
+    expect(await redirectsFrom('category', `${prefix}-remtr-b`)).toEqual([
+      { newSlug: `${prefix}-remparent-tr` },
+    ]);
+  }, 120_000);
+
   it('страница: вторая смена слага пишет редирект с промежуточного слага', async () => {
     const page = await prisma.page.create({
       data: {
@@ -259,6 +352,50 @@ describe('LEGACY-320 — редирект базового слага пишет
     expect(await redirectsFrom('page', `${prefix}-page-b`)).toEqual([
       { newSlug: `${prefix}-page-c` },
     ]);
+  }, 120_000);
+
+  /**
+   * 🔴 `LEGACY-400`, пачка `T55`. Проверка дубля в `update` не видит незакоммиченную чужую
+   * вставку той же пары `(language, slug)`: рубеж — уникальный индекс, и его `P2002` под
+   * `@prisma/adapter-pg` приходит без `meta.target`. Встречная транзакция держит переименование
+   * страницы B в слаг X, `update(A, {slug: X})` ждёт на индексе и после коммита держателя
+   * обязан ответить 400, а не 500.
+   */
+  it('страница: гонка двух переименований в один слаг — 400, а не 500', async () => {
+    const pageA = await prisma.page.create({
+      data: {
+        slug: `${prefix}-dupA`,
+        title: 'A',
+        type: 'generic',
+        content: 'c',
+        language: Language.en,
+      },
+    });
+    const pageB = await prisma.page.create({
+      data: {
+        slug: `${prefix}-dupB`,
+        title: 'B',
+        type: 'generic',
+        content: 'c',
+        language: Language.en,
+      },
+    });
+    const taken = `${prefix}-dupX`;
+
+    let outcome: unknown = null;
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "Page" SET slug = ${taken} WHERE id = ${pageB.id}`;
+      },
+      'Page',
+      () =>
+        pages.update(pageA.id, { slug: taken }, 'e2e-actor').then(
+          () => (outcome = 'updated'),
+          (error: unknown) => (outcome = error),
+        ),
+    );
+
+    expect(outcome).toBeInstanceOf(BadRequestException);
   }, 120_000);
 
   it('версия книги: вторая смена слага пишет редирект с промежуточного слага', async () => {

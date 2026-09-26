@@ -25,6 +25,7 @@ import {
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
+import { uniqueViolationFields } from '../../shared/prisma/unique-violation.util';
 
 export type CategoryTreeNode = {
   id: string;
@@ -70,9 +71,10 @@ export type CategoryTreeNode = {
  * 🔴 `LEGACY-276`, релиз 2 вернул `@@unique([slug])`
  * (`20260919170000_legacy_276_category_slug_unique`), и теперь достижимы **обе**
  * ветки: `P2002` приходит и по ключу, и по слагу. Ни одну из них снимать нельзя,
- * и различать их «по смыслу вызова» — тоже: поле берётся из `meta.target`.
+ * и различать их «по смыслу вызова» — тоже: поле берётся из самого отказа.
  *
- * Поле берётся из `meta.target` самого отказа, а не из имени переменной рядом:
+ * Поле берётся из самого отказа (`uniqueViolationFields`: `meta.target` или, под
+ * `@prisma/adapter-pg`, `meta.driverAdapterError.cause.constraint.fields`), а не из имени переменной рядом:
  * прежний текст пережил удаление собственного индекса на четыре года именно
  * потому, что сверять его было не с чем.
  *
@@ -82,12 +84,7 @@ export type CategoryTreeNode = {
  * Код ответа при этом не меняется — 400, как и был.
  */
 function uniqueViolationMessage(error: Prisma.PrismaClientKnownRequestError): string {
-  const target = error.meta?.target;
-  const fields = Array.isArray(target)
-    ? target.map(String)
-    : typeof target === 'string'
-      ? [target]
-      : [];
+  const fields = uniqueViolationFields(error);
   if (fields.includes('key')) return 'Category with same key already exists';
   if (fields.includes('slug')) return CATEGORY_SLUG_TAKEN_MESSAGE;
   if (fields.length > 0) return `Category with same ${fields.join(', ')} already exists`;
@@ -276,7 +273,7 @@ export class CategoryService {
    * между собой при первой же правке текста ошибки. С 19.09.2026 (`LEGACY-276`,
    * релиз 2, миграция `20260919170000_legacy_276_category_slug_unique`) ловит
    * и `P2002` по `@@unique([slug])` — он **достижим**, а не гипотетичен:
-   * `uniqueViolationMessage` различает поле по `meta.target`, и ветку про слаг
+   * `uniqueViolationMessage` различает поле через `uniqueViolationFields`, и ветку про слаг
    * снимать нельзя, сколько бы недостижимой она ни казалась по чтению одного
    * лишь `assertSlugFree` (тот ловит ожидаемый дубль до записи, но не гонку,
    * добравшуюся до базы).
@@ -560,10 +557,16 @@ export class CategoryService {
       }
 
       // Умирающие адреса читаются до удаления: после `deleteMany` взять их уже неоткуда.
-      const dying = await tx.categoryTranslation.findMany({
-        where: { categoryId: id },
-        select: { language: true, slug: true },
-      });
+      // 🔴 `LEGACY-320`, остаток пачки `T55`: слаг берётся из строк под замком
+      // (`FOR NO KEY UPDATE`), а не из снимка на пуле — встречная `updateTranslation`,
+      // закоммиченная между чтением и `deleteMany`, иначе оставляла свой новый слаг
+      // без редиректа. Форма `dying` в `payload` не расширяется на `id`/`seoId`,
+      // которые несёт замок, — состав события сверяется целиком (докблок ниже),
+      // и лишнее поле там так же неверно, как потерянное.
+      const dying = (await this.categoryTree.lockTranslations(tx, id)).map((t) => ({
+        language: t.language,
+        slug: t.slug,
+      }));
 
       await tx.bookCategory.deleteMany({ where: { categoryId: id } });
       await tx.categoryTranslation.deleteMany({ where: { categoryId: id } });
@@ -1033,15 +1036,21 @@ export class CategoryService {
     // под которые и подбирались — операторов внутри до шести, `record` делает три
     // запроса, а дефолтные 5000 мс дали бы `P2028` (`L-020`).
     await this.categoryTree.runInLockedTree(async (tx) => {
-      // Снимок перевода читается ТЕМ ЖЕ `tx` и уже под замком. Прежде он читался
+      // Снимок перевода читается ТЕМ ЖЕ `tx` и уже под замком дерева. Прежде он читался
       // на пуле до транзакции, и по нему же принимались решения внутри: параллельный
       // `PATCH` успевал переименовать слаг между чтением и замком, после чего редирект
       // писался для адреса, который никуда не девался, а живой новый адрес умирал
       // без записи в истории. Замок, поставленный вокруг устаревшего снимка, гонку
       // не закрывает (`L-019`).
-      const tr = await tx.categoryTranslation.findUnique({
-        where: { categoryId_language: { categoryId, language } },
-      });
+      //
+      // 🔴 `LEGACY-320`, остаток пачки `T55`: замок дерева — advisory-замок, а не
+      // замок строки, и `updateTranslation` его сознательно не берёт (комментарий
+      // над её `runInTree`-исключением). Плоское чтение здесь не встаёт в очередь
+      // за строкой, которую `updateTranslation` держит своим `FOR NO KEY UPDATE`,
+      // и слаг брался тем же устаревшим снимком, что и до фикса `L-019` — просто
+      // источник снимка сменился с пула на `tx`. `CategoryTreeService.lockTranslation`
+      // здесь — тот же приём `FOR NO KEY UPDATE`, что и в `updateTranslation`.
+      const tr = await this.categoryTree.lockTranslation(tx, categoryId, language);
       if (!tr) return;
 
       await tx.categoryTranslation.delete({

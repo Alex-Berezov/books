@@ -1,4 +1,8 @@
-import { CATEGORY_TREE_TX_OPTIONS, CategoryTreeService } from './category-tree.service';
+import {
+  CATEGORY_SLUG_TAKEN_MESSAGE,
+  CATEGORY_TREE_TX_OPTIONS,
+  CategoryTreeService,
+} from './category-tree.service';
 import { CategoryService } from './category.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
@@ -119,11 +123,34 @@ const slugLockValues = (queryRaw: jest.Mock): unknown[] =>
  * (`SELECT ... FOR NO KEY UPDATE`), а не `category.findUnique`. Ответ на этот запрос
  * берётся из `category.findUnique` того же клиента — у спеки остаётся одна фикстура
  * «что видит транзакция»; прочие `$queryRaw` (замки дерева и слага) ничего не отдают.
+ *
+ * Тот же приём после `T55` заперт для `"CategoryTranslation"` в двух формах —
+ * одна строка перевода (`deleteTranslation`) и все переводы категории разом
+ * (`remove`) — их различает наличие условия `language =` в тексте запроса.
+ * Три формы обязаны различаться по имени таблицы в SQL, а не общим «есть
+ * `FOR NO KEY UPDATE`»: один отбор на все три спутал бы ответ на вопрос о базовом
+ * слаге с ответом на вопрос о переводе, и поломка чтения одной строки маскировалась
+ * бы фикстурой другой.
  */
-const isRowLock = (parts?: { raw?: readonly string[] }): boolean =>
-  (parts?.raw ?? []).join(' ').includes('FOR NO KEY UPDATE');
+const rowLockSql = (parts?: { raw?: readonly string[] }): string => (parts?.raw ?? []).join(' ');
 
-type RowLockClient = { category: { findUnique: jest.Mock } };
+const isRowLock = (parts?: { raw?: readonly string[] }): boolean =>
+  rowLockSql(parts).includes('FOR NO KEY UPDATE') && rowLockSql(parts).includes('"Category" ');
+
+const isTranslationRowLock = (parts?: { raw?: readonly string[] }): boolean =>
+  rowLockSql(parts).includes('FOR NO KEY UPDATE') &&
+  rowLockSql(parts).includes('"CategoryTranslation"') &&
+  rowLockSql(parts).includes('language =');
+
+const isTranslationsRowLock = (parts?: { raw?: readonly string[] }): boolean =>
+  rowLockSql(parts).includes('FOR NO KEY UPDATE') &&
+  rowLockSql(parts).includes('"CategoryTranslation"') &&
+  !rowLockSql(parts).includes('language =');
+
+type RowLockClient = {
+  category: { findUnique: jest.Mock };
+  categoryTranslation?: { findUnique: jest.Mock; findMany: jest.Mock };
+};
 
 const lockedRow = async (client: RowLockClient, values: unknown[]): Promise<unknown[]> => {
   const row: unknown = await client.category.findUnique({
@@ -133,12 +160,35 @@ const lockedRow = async (client: RowLockClient, values: unknown[]): Promise<unkn
   return row ? [row] : [];
 };
 
+const lockedTranslationRow = async (
+  client: RowLockClient,
+  values: unknown[],
+): Promise<unknown[]> => {
+  const [categoryId, language] = values;
+  const row: unknown = await client.categoryTranslation?.findUnique({
+    where: { categoryId_language: { categoryId, language } },
+  });
+  return row ? [row] : [];
+};
+
+const lockedTranslationRows = async (
+  client: RowLockClient,
+  values: unknown[],
+): Promise<unknown[]> => {
+  const [categoryId] = values;
+  const rows: unknown = await client.categoryTranslation?.findMany({ where: { categoryId } });
+  return (rows as unknown[]) ?? [];
+};
+
 // ⚠️ Клиент отдаётся функцией с явным типом результата: спеки передают `() => tx`
 // изнутри инициализатора самого `tx`, и без аннотации тип выводится как `any`.
 const rowLockVia = (client: () => RowLockClient) =>
-  jest.fn((parts?: { raw?: readonly string[] }, ...values: unknown[]) =>
-    isRowLock(parts) ? lockedRow(client(), values) : Promise.resolve([]),
-  );
+  jest.fn((parts?: { raw?: readonly string[] }, ...values: unknown[]) => {
+    if (isRowLock(parts)) return lockedRow(client(), values);
+    if (isTranslationRowLock(parts)) return lockedTranslationRow(client(), values);
+    if (isTranslationsRowLock(parts)) return lockedTranslationRows(client(), values);
+    return Promise.resolve([]);
+  });
 
 describe('CategoryService', () => {
   let service: CategoryService;
@@ -425,7 +475,7 @@ describe('CategoryService', () => {
    * `20250830151000_add_taxonomy_translations`, возвращён миграцией
    * `20260919170000_legacy_276_category_slug_unique`, и `P2002` по слагу теперь
    * достижим: ветку про слаг в `uniqueViolationMessage` снимать нельзя.
-   * Различение полей идёт по `meta.target`.
+   * Различение полей идёт через `uniqueViolationFields` (обе формы отказа).
    */
   it('занятый ключ называется ключом, а не слагом (LEGACY-311)', async () => {
     const conflict = Object.assign(new Error('unique'), {
@@ -446,6 +496,34 @@ describe('CategoryService', () => {
     await expect(
       service.create({ type: 'genre', name: 'C', slug: 'c', key: 'taken' } as never),
     ).rejects.toThrow('Category with same key already exists');
+  });
+
+  // Под `@prisma/adapter-pg` поля отказа лежат в `meta.driverAdapterError`, `meta.target` нет
+  // (живой замер, пачка `T55`): прежний разбор отдавал на это общий текст вместо слагового.
+  it('занятый слаг узнаётся и в форме отказа драйвер-адаптера', async () => {
+    const conflict = Object.assign(new Error('unique'), {
+      code: 'P2002',
+      meta: {
+        modelName: 'Category',
+        driverAdapterError: {
+          cause: { kind: 'UniqueConstraintViolation', constraint: { fields: ['slug'] } },
+        },
+      },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      category: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockRejectedValue(conflict),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((cb: (client: unknown) => unknown) => cb(tx));
+
+    await expect(
+      service.create({ type: 'genre', name: 'C', slug: 'taken', key: 'c' } as never),
+    ).rejects.toThrow(CATEGORY_SLUG_TAKEN_MESSAGE);
   });
 
   /**
@@ -1058,8 +1136,10 @@ describe('CategoryService', () => {
       'tx.read',
       'tx.count',
       // `LEGACY-390`: умирающие адреса читаются ДО удаления — после `deleteMany`
-      // взять их уже неоткуда.
-      'tx.categoryTranslation.findMany',
+      // взять их уже неоткуда. `LEGACY-320`, остаток `T55`: чтение теперь идёт
+      // под замком строки (`lockTranslations`, тот же `$queryRaw`, что и `lockTree`
+      // в этом стенде), а не `categoryTranslation.findMany`.
+      'lock',
       'tx.bookCategory.deleteMany',
       'tx.categoryTranslation.deleteMany',
       'tx.category.delete',
@@ -2691,7 +2771,9 @@ describe('CategoryService', () => {
 
       await service.remove('cat1', 'admin-actor-1');
 
-      expect(order).toEqual(['lock', 'delete', 'audit']);
+      // Второй `'lock'` — `LEGACY-320`, остаток `T55`: умирающие адреса читаются
+      // через `lockTranslations` (тот же `$queryRaw`, что и замок дерева в этом стенде).
+      expect(order).toEqual(['lock', 'lock', 'delete', 'audit']);
       // Посадка на `LEGACY-036`: здесь `tx` — отдельный объект, не равный `prisma`,
       // поэтому подмена клиента в сервисе роняет тест, а не проходит молча.
       expect(adminAudit.record.mock.calls[0][0]).toBe(tx);
