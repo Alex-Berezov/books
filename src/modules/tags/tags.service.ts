@@ -30,6 +30,7 @@ import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 import { parseJsonStringArray } from '../../shared/prisma/json-string-array.util';
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
+import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
 @Injectable()
 export class TagsService {
@@ -250,13 +251,20 @@ export class TagsService {
 
       // Умирающие переводы читаются до удаления: после `deleteMany` взять их
       // слаги уже неоткуда.
-      const dying = await tx.tagTranslation.findMany({
+      const dyingRows = await tx.tagTranslation.findMany({
         where: { tagId: id },
-        select: { language: true, slug: true },
+        select: { language: true, slug: true, seoId: true },
       });
+      // Состав `payload` журнала — ровно `{ language, slug }`: `seoId` нужен только уборке ниже.
+      const dying = dyingRows.map(({ language, slug }) => ({ language, slug }));
 
       await tx.bookTag.deleteMany({ where: { tagId: id } });
       await tx.tagTranslation.deleteMany({ where: { tagId: id } });
+      // 🔴 `LEGACY-400`, `T55b` (решение арбитра 27.09.2026): `TagTranslation.seoId` — `SetNull`,
+      // `Seo` снесённых переводов убирается здесь, если больше никому не нужно.
+      for (const row of dyingRows) {
+        await deleteSeoIfUnreferenced(tx, row.seoId);
+      }
 
       const removed = await tx.tag.delete({ where: { id } });
 
@@ -555,8 +563,8 @@ export class TagsService {
             finalSeoId = newSeo.id;
           }
         } else if (tr.seoId) {
+          // Строка удаляется после отвязки ниже и только ничья (`LEGACY-400`, `T55b`).
           finalSeoId = null;
-          await tx.seo.delete({ where: { id: tr.seoId } });
         }
       }
 
@@ -572,7 +580,7 @@ export class TagsService {
       }
 
       try {
-        return await tx.tagTranslation.update({
+        const updated = await tx.tagTranslation.update({
           where: { tagId_language: { tagId, language } },
           data: {
             name: dto.name,
@@ -592,6 +600,8 @@ export class TagsService {
           },
           include: { seo: true },
         });
+        if (finalSeoId === null) await deleteSeoIfUnreferenced(tx, tr.seoId);
+        return updated;
       } catch (e: unknown) {
         // `dup` above only sees translations of OTHER tags committed before this
         // transaction started; the lock this transaction holds is on its own tag
@@ -616,9 +626,9 @@ export class TagsService {
       await tx.tagTranslation.delete({
         where: { tagId_language: { tagId, language } },
       });
-      if (tr.seoId) {
-        await tx.seo.delete({ where: { id: tr.seoId } });
-      }
+      // `Seo` может делить строку с сущностью другого типа — удаляется, только если ничья
+      // (`LEGACY-400`, `T55b`).
+      await deleteSeoIfUnreferenced(tx, tr.seoId);
 
       // `targetId` — идентификатор **тега**, а не строки перевода: язык стоит
       // в `payload`, и вся история термина собирается одной выборкой по `targetId`

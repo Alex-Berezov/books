@@ -199,8 +199,9 @@ export class CategoryTreeService {
   /**
    * 🔴 `LEGACY-320`. Запирает строку перевода категории и отдаёт её свежий слаг:
    * редирект слага перевода пишется от значения под замком, а не от снимка.
-   * Писателей три — `CategoryService.updateTranslation`, `CategoryService.deleteTranslation`
-   * и импорт категории, — поэтому SQL живёт здесь, в одном месте. Сила `FOR NO KEY UPDATE` — как у строки
+   * Зовут его `CategoryService.updateTranslation`, `CategoryService.deleteTranslation`
+   * (свой перевод и перевод родителя — цель редиректа, `T55b`) и импорт категории,
+   * поэтому SQL живёт здесь, в одном месте. Сила `FOR NO KEY UPDATE` — как у строки
    * `Category` (решение арбитра 25.09.2026): писателей сериализует, FK-вставок не держит.
    * Пустой результат — перевода нет или он удалён в окне.
    */

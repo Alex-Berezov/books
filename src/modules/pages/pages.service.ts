@@ -15,7 +15,11 @@ import { isReservedSlug, RESERVED_SLUG_MESSAGE } from '../../shared/constants/re
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { paginated } from '../../shared/dto/paginated-response.dto';
-import { uniqueViolationFields } from '../../shared/prisma/unique-violation.util';
+import {
+  foreignKeyViolationTargets,
+  uniqueViolationFields,
+} from '../../shared/prisma/prisma-error.util';
+import { deleteSeoIfUnreferenced, seoOwnersCount } from '../../shared/seo/seo-orphan.util';
 
 /**
  * Точная форма, которую реально возвращает Prisma с `include: { seo: true }` — используется как
@@ -37,13 +41,6 @@ function escapeLikeWildcards(term: string): string {
 }
 
 /**
- * `remove()` (`LEGACY-395`) идёт в явной транзакции — тот же дедлайн, что
- * у `TAG_TX_OPTIONS`/`CATEGORY_TREE_TX_OPTIONS`/`BOOK_REMOVE_TX_OPTIONS`,
- * для единообразия с остальными тремя `remove()` этой же записи (`L-020`).
- */
-const PAGE_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
-
-/**
  * Границы транзакции смены видимости (`LEGACY-015`, пачка `T21`). Те же цифры, что
  * у удаления страницы выше, и по той же причине (`L-020`).
  *
@@ -56,9 +53,33 @@ const PAGE_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
  *
  * Те же границы у `update()` и `create()` (`LEGACY-400`, пачка `T55`): обе открывают
  * интерактивную транзакцию, и дефолтные 2 с ожидания соединения давали бы `P2024`
- * под нагрузкой пула.
+ * под нагрузкой пула. Ими же идёт `remove()` (`LEGACY-395`, прежняя `PAGE_REMOVE_TX_OPTIONS` с теми же
+ * цифрами слита сюда в `T55b`). Поэтому имя — про запись страницы, а не про видимость.
  */
-const PAGE_STATUS_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+const PAGE_WRITE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/**
+ * Один текст на обе стороны отказа — свою проверку дубля и `P2002` от базы, — как
+ * `CATEGORY_SLUG_TAKEN_MESSAGE` у категорий (`LEGACY-311`): оператор видит одно сообщение
+ * на одно событие, кто бы его ни поймал.
+ */
+const PAGE_SLUG_TAKEN_MESSAGE = 'Page with same slug already exists for this language';
+
+/** Тот же приём для `seoId`: своя проверка владельцев и `P2002` по `Page.seoId` — один текст. */
+const PAGE_SEO_TAKEN_MESSAGE = 'SEO entity is already attached to another entity';
+
+/** И для «строки `Seo` нет»: своя проверка и `P2003` по `Page_seoId_fkey` (строку удалили в окне). */
+const PAGE_SEO_MISSING_MESSAGE = 'Invalid seoId: referenced SEO entity does not exist';
+
+/**
+ * 🔴 `LEGACY-320`, тема владельца 3 (решение владельца 27.09.2026). Язык существующей страницы
+ * не меняется: перевод — отдельная страница той же `translationGroupId`. Редирект слага живёт
+ * в одном языке (`SlugRedirect` без языка назначения), и смена языка оставляла старый адрес
+ * 404 либо писала 308 на несуществующий адрес. Админка поле языка у существующей страницы
+ * и так отключает — запрет на API закрывает прямой вызов.
+ */
+const PAGE_LANGUAGE_IMMUTABLE_MESSAGE =
+  'Page language cannot be changed after creation; create a translation instead';
 
 @Injectable()
 export class PagesService {
@@ -233,6 +254,12 @@ export class PagesService {
       // которую ничто больше не найдёт (тот же приём, что у `CategoryService.updateTranslation`
       // после `T54`).
       return await this.prisma.$transaction(async (tx) => {
+        // Legacy-`seoId` проверяется всегда, когда прислан, — и вместе с `seo` тоже: иначе
+        // `{ seo: {}, seoId }` проносил бы чужое `Seo` мимо проверки (`LEGACY-400`, `T55b`).
+        // Непустой `seo` дальше побеждает; пустой оставляет прежнее поведение — привязку `seoId`.
+        if (dto.seoId !== undefined && dto.seoId !== null) {
+          await this.assertSeoAttachable(tx, dto.seoId);
+        }
         let finalSeoId = dto.seoId;
         if (dto.seo) {
           // Check if SEO fields are not all null/undefined
@@ -241,13 +268,6 @@ export class PagesService {
             const newSeo = await tx.seo.create({ data: dto.seo });
             finalSeoId = newSeo.id;
           }
-        } else if (dto.seoId !== undefined && dto.seoId !== null) {
-          // Legacy: seoId provided directly - validate it exists
-          const seo = await tx.seo.findUnique({ where: { id: dto.seoId } });
-          if (!seo) {
-            throw new BadRequestException('SEO entity not found for provided seoId');
-          }
-          finalSeoId = dto.seoId;
         }
 
         const pageInput: Prisma.PageUncheckedCreateInput = {
@@ -272,12 +292,9 @@ export class PagesService {
           data: pageInput,
           include: { seo: true },
         });
-      }, PAGE_STATUS_TX_OPTIONS);
+      }, PAGE_WRITE_TX_OPTIONS);
     } catch (e) {
-      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-        throw new BadRequestException('Page with same slug already exists for this language');
-      }
-      throw e;
+      throw pageWriteError(e);
     }
   }
 
@@ -305,9 +322,13 @@ export class PagesService {
           SELECT slug, language, "seoId" FROM "Page" WHERE id = ${id} FOR NO KEY UPDATE`;
         if (!locked) throw new NotFoundException('Page not found');
 
-        if (dto.slug || dto.language) {
-          const newSlug = dto.slug ?? locked.slug;
-          const newLang: Language = dto.language ?? locked.language;
+        // Тот же язык, присланный формой целиком, — не смена (`PAGE_LANGUAGE_IMMUTABLE_MESSAGE`).
+        // `null` проходит `@IsOptional` и значит «не прислано», а не «сменить на пустой».
+        if (dto.language != null && dto.language !== locked.language) {
+          throw new BadRequestException(PAGE_LANGUAGE_IMMUTABLE_MESSAGE);
+        }
+
+        if (dto.slug) {
           // Renaming *into* a reserved slug is worse than creating one: the old
           // address gets a `SlugRedirect` pointing at a path the router will never
           // hand to a page, so the redirect built to preserve the URL would strand
@@ -318,23 +339,22 @@ export class PagesService {
           // owner needs to rename it — the edit form submits the whole record, so an
           // unchanged slug arrives in `dto` like any other field. Renaming away stays
           // open, which is the way out.
-          //
-          // A language change counts as a move even when the slug is untouched: it
-          // mints `/ru/catalog` out of `/en/catalog`, so the exemption for one broken
-          // address would quietly manufacture a second one.
-          const moved = newSlug !== locked.slug || newLang !== locked.language;
-          if (moved && isReservedSlug(newSlug)) {
+          if (dto.slug !== locked.slug && isReservedSlug(dto.slug)) {
             throw new BadRequestException(RESERVED_SLUG_MESSAGE);
           }
           const dup = await tx.page.findFirst({
-            where: { slug: newSlug, language: newLang, NOT: { id } },
+            where: { slug: dto.slug, language: locked.language, NOT: { id } },
             select: { id: true },
           });
-          if (dup)
-            throw new BadRequestException('Page with same slug already exists for this language');
+          if (dup) throw new BadRequestException(PAGE_SLUG_TAKEN_MESSAGE);
         }
 
         // Handle SEO: if dto.seo is provided, create or update SEO entity
+        // Legacy-`seoId` проверяется всегда, когда прислан, — и вместе с `seo` тоже: иначе
+        // `{ seo: {}, seoId }` проносил бы чужое `Seo` мимо проверки (`LEGACY-400`, `T55b`).
+        if (dto.seoId !== undefined && dto.seoId !== null && dto.seoId !== locked.seoId) {
+          await this.assertSeoAttachable(tx, dto.seoId);
+        }
         let finalSeoId = dto.seoId;
         if (dto.seo) {
           // Check if SEO fields are not all null/undefined
@@ -358,15 +378,6 @@ export class PagesService {
             // All SEO fields are null - detach SEO entity
             finalSeoId = null;
           }
-        } else if (dto.seoId !== undefined) {
-          // Legacy: seoId provided directly
-          if (dto.seoId !== null) {
-            const seo = await tx.seo.findUnique({ where: { id: dto.seoId } });
-            if (!seo) {
-              throw new BadRequestException('SEO entity not found for provided seoId');
-            }
-          }
-          finalSeoId = dto.seoId;
         }
 
         const updateInput: Record<string, unknown> = {};
@@ -378,16 +389,13 @@ export class PagesService {
         if (dto.shortDescription !== undefined) updateInput.shortDescription = dto.shortDescription;
         if (dto.faq !== undefined) updateInput.faq = dto.faq ?? Prisma.JsonNull;
         if (dto.sections !== undefined) updateInput.sections = dto.sections ?? Prisma.JsonNull;
-        if (dto.language !== undefined) updateInput.language = dto.language;
         if (finalSeoId !== undefined) updateInput.seoId = finalSeoId;
         // `status` в `updateInput` намеренно **не** кладётся: смена публичной видимости
         // журналируется, и признак изменения даёт отдельная условная запись ниже.
         // Положить его сюда значило бы вернуть безусловный апдейт, на котором отличить
         // «опубликовали» от «нажали второй раз» уже нечем (`LEGACY-015`, пачка `T21`).
 
-        // Язык берётся СТАРЫЙ (`locked.language` — строки под замком), а не `dto.language`: резолв идёт по
-        // паре (entityType, language, oldSlug), а старый адрес жил именно под старым
-        // языком. Запись под новым выглядит интуитивнее и не сработала бы нигде.
+        // Язык страницы неизменяем (выше), поэтому старый и новый адрес живут в одном языке.
         if (dto.slug && dto.slug !== locked.slug) {
           await this.slugRedirects.record(
             {
@@ -429,26 +437,21 @@ export class PagesService {
           }
         }
 
-        return tx.page.update({
+        const updated = await tx.page.update({
           where: { id },
           data: updateInput,
           include: { seo: true },
         });
-      }, PAGE_STATUS_TX_OPTIONS);
+
+        // 🔴 `LEGACY-400`: прежнее `Seo`, от которого страница отвязалась (все поля пусты
+        // или legacy-`seoId` сменён), удаляется тем же `tx`, если больше никому не нужно.
+        if (locked.seoId && updated.seoId !== locked.seoId) {
+          await deleteSeoIfUnreferenced(tx, locked.seoId);
+        }
+        return updated;
+      }, PAGE_WRITE_TX_OPTIONS);
     } catch (e) {
-      const err = e as Prisma.PrismaClientKnownRequestError & { meta?: { constraint?: string } };
-      if (err?.code === 'P2003' && err?.meta?.constraint === 'Page_seoId_fkey') {
-        throw new BadRequestException('Invalid seoId: referenced SEO entity does not exist');
-      }
-      // Дубль (language, slug), вставленный встречной правкой в том же окне, доходит
-      // до уникального индекса на самой странице — 400, как у категории (`LEGACY-400`),
-      // а не 500. Только по полю `slug` (`uniqueViolationFields` читает обе формы отказа:
-      // `meta.target` и `meta.driverAdapterError` под `@prisma/adapter-pg`): у `Page` есть ещё
-      // `@unique` на `seoId` и `(language, systemKey)`, и текст про слаг там был бы ложным.
-      if (err?.code === 'P2002' && uniqueViolationFields(err).includes('slug')) {
-        throw new BadRequestException('Page with same slug already exists for this language');
-      }
-      throw e;
+      throw pageWriteError(e);
     }
   }
 
@@ -502,7 +505,7 @@ export class PagesService {
       }
 
       return page;
-    }, PAGE_STATUS_TX_OPTIONS);
+    }, PAGE_WRITE_TX_OPTIONS);
   }
 
   /**
@@ -516,10 +519,17 @@ export class PagesService {
    */
   async remove(id: string, actorUserId: string): Promise<{ success: boolean }> {
     return this.prisma.$transaction(async (tx) => {
-      const exists = await tx.page.findUnique({ where: { id } });
+      // 🔴 `LEGACY-320`: слаг и язык — из строки под замком. Плоское чтение не вставало
+      // в очередь за встречным `update`, и уборка редиректов шла по слагу до переименования,
+      // а `payload` журнала называл не тот адрес. `FOR UPDATE`, а не `NO KEY`: строка удаляется.
+      const [exists] = await tx.$queryRaw<Pick<Page, 'slug' | 'language' | 'seoId'>[]>`
+        SELECT slug, language, "seoId" FROM "Page" WHERE id = ${id} FOR UPDATE`;
       if (!exists) throw new NotFoundException('Page not found');
 
       await tx.page.delete({ where: { id } });
+
+      // 🔴 `LEGACY-400`: `Page.seoId` без каскада — `Seo` удалённой страницы оставалось сиротой.
+      await deleteSeoIfUnreferenced(tx, exists.seoId);
 
       await this.slugRedirects.cleanupDeadRedirects('page', [exists.language], exists.slug, tx);
 
@@ -540,7 +550,7 @@ export class PagesService {
       });
 
       return { success: true };
-    }, PAGE_REMOVE_TX_OPTIONS);
+    }, PAGE_WRITE_TX_OPTIONS);
   }
 
   /**
@@ -604,4 +614,45 @@ export class PagesService {
       orderBy: { language: 'asc' },
     });
   }
+
+  /**
+   * Legacy-`seoId`: строка обязана существовать и быть **ничьей**. `@unique` у `Page.seoId`
+   * не мешает забрать `Seo` перевода категории или версии книги — две сущности делили бы
+   * одну строку, и правка SEO одной молча меняла бы другую (`LEGACY-400`).
+   */
+  private async assertSeoAttachable(tx: Prisma.TransactionClient, seoId: number): Promise<void> {
+    const owners = await seoOwnersCount(tx, seoId);
+    if (owners === null) throw new BadRequestException(PAGE_SEO_MISSING_MESSAGE);
+    if (owners > 0) throw new BadRequestException(PAGE_SEO_TAKEN_MESSAGE);
+  }
+}
+
+/**
+ * Отказы записи страницы, которые означают неверный запрос, — в 400; прочие уходят как есть.
+ * Поля берутся из обеих форм отказа (`meta.*` и `meta.driverAdapterError` под `@prisma/adapter-pg`).
+ * Под адаптером приходят **имена колонок** базы, у этих трёх они совпадают с полями схемы.
+ */
+function pageWriteError(e: unknown): unknown {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError)) return e;
+  if (e.code === 'P2003') {
+    const targets = foreignKeyViolationTargets(e);
+    if (targets.includes('Page_seoId_fkey') || targets.includes('seoId')) {
+      return new BadRequestException(PAGE_SEO_MISSING_MESSAGE);
+    }
+  }
+  if (e.code === 'P2002') {
+    const fields = uniqueViolationFields(e);
+    if (fields.includes('slug')) return new BadRequestException(PAGE_SLUG_TAKEN_MESSAGE);
+    if (fields.includes('seoId')) {
+      return new BadRequestException(PAGE_SEO_TAKEN_MESSAGE);
+    }
+    // Поля не разобрались вовсе (другая форма отказа) — прежний ответ `create`, 400 про слаг:
+    // иного уникального индекса, достижимого из формы, у страницы нет (`systemKey` форма не пишет).
+    // Только отказ самой `Page`: `P2002` журнала или истории слагов в той же транзакции — не дубль слага.
+    const model = (e.meta as { modelName?: unknown } | undefined)?.modelName;
+    if (fields.length === 0 && (model === undefined || model === 'Page')) {
+      return new BadRequestException(PAGE_SLUG_TAKEN_MESSAGE);
+    }
+  }
+  return e;
 }

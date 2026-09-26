@@ -784,17 +784,25 @@ describe('TagsService — писатели тега идут под замком
     expect(created.log).toContain('tx.seo.create');
     expect(rootCalls(created.log)).toEqual([]);
 
+    // `T55b`: снятое `Seo` удаляется после отвязки и только ничье (счёт владельцев — `seo.findUnique`).
     const dropped = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+      'seo.findUnique': () => ({ page: null, tagTranslation: null }),
     });
     await dropped.tagsService.updateTranslation('t1', Language.en, { seo: { metaTitle: null } });
-    expect(dropped.log).toContain('tx.seo.delete');
+    expect(dropped.log.slice(-4)).toEqual([
+      'tx.tagTranslation.update',
+      'tx.forUpdate',
+      'tx.seo.findUnique',
+      'tx.seo.deleteMany',
+    ]);
     expect(rootCalls(dropped.log)).toEqual([]);
   });
 
   it('deleteTranslation: чтение и удаление — под замком через tx', async () => {
     const { tagsService, log, $transaction } = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', seoId: 5 }),
+      'seo.findUnique': () => ({ page: null, tagTranslation: null }),
     });
 
     await expect(
@@ -808,7 +816,10 @@ describe('TagsService — писатели тега идут под замком
       'tx.forUpdate',
       'tx.tagTranslation.findUnique',
       'tx.tagTranslation.delete',
-      'tx.seo.delete',
+      // `T55b`: строка `Seo` запирается, владельцы считаются, удаляется только ничья.
+      'tx.forUpdate',
+      'tx.seo.findUnique',
+      'tx.seo.deleteMany',
     ]);
   });
 

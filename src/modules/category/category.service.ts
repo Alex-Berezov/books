@@ -25,7 +25,8 @@ import {
 import { CreateCategoryTranslationDto } from './dto/create-category-translation.dto';
 import { UpdateCategoryTranslationDto } from './dto/update-category-translation.dto';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
-import { uniqueViolationFields } from '../../shared/prisma/unique-violation.util';
+import { uniqueViolationFields } from '../../shared/prisma/prisma-error.util';
+import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
 export type CategoryTreeNode = {
   id: string;
@@ -539,16 +540,13 @@ export class CategoryService {
    */
   async remove(id: string, actorUserId: string | null) {
     return this.categoryTree.runInLockedTree(async (tx) => {
-      // Родитель читается тем же запросом, что и проверка существования: политике
-      // редиректов нужен его перевод на каждом языке, а отдельный `findUnique`
-      // удлинил бы транзакцию, которая держит блокировку всего дерева.
-      const existing = await tx.category.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          parent: { select: { translations: { select: { language: true, slug: true } } } },
-        },
-      });
+      // 🔴 `LEGACY-320`, пачка `T55b`. Строка категории запирается `FOR UPDATE` первым
+      // делом: вставка перевода (`createTranslation` идёт мимо замка дерева) берёт на неё
+      // `FOR KEY SHARE` по внешнему ключу и встаёт в очередь. Без этого перевод,
+      // закоммиченный между чтением умирающих адресов и `deleteMany`, удалялся без
+      // редиректа и без строки в `payload` журнала.
+      const [existing] = await tx.$queryRaw<{ id: string; parentId: string | null }[]>`
+        SELECT id, "parentId" FROM "Category" WHERE id = ${id} FOR UPDATE`;
       if (!existing) throw new NotFoundException('Category not found');
 
       const childrenCount = await tx.category.count({ where: { parentId: id } });
@@ -563,13 +561,29 @@ export class CategoryService {
       // без редиректа. Форма `dying` в `payload` не расширяется на `id`/`seoId`,
       // которые несёт замок, — состав события сверяется целиком (докблок ниже),
       // и лишнее поле там так же неверно, как потерянное.
-      const dying = (await this.categoryTree.lockTranslations(tx, id)).map((t) => ({
-        language: t.language,
-        slug: t.slug,
-      }));
+      const lockedTranslations = await this.categoryTree.lockTranslations(tx, id);
+      const dying = lockedTranslations.map((t) => ({ language: t.language, slug: t.slug }));
+
+      // 🔴 `LEGACY-320`, пачка `T55b`. Цель редиректа — слаги переводов родителя — тоже
+      // под замком строки: встречная `updateTranslation` родителя иначе оставляла 308
+      // на его старый слаг и второй переход (`LEGACY-392`, «одним переходом»).
+      // Только языки умирающих переводов: остальные переводы родителя этой операции не нужны,
+      // и их `updateTranslation` ждать удаления не должна.
+      const parentTranslations: { language: Language; slug: string }[] = [];
+      if (existing.parentId) {
+        for (const { language } of dying) {
+          const parentTr = await this.categoryTree.lockTranslation(tx, existing.parentId, language);
+          if (parentTr) parentTranslations.push({ language, slug: parentTr.slug });
+        }
+      }
 
       await tx.bookCategory.deleteMany({ where: { categoryId: id } });
       await tx.categoryTranslation.deleteMany({ where: { categoryId: id } });
+      // 🔴 `LEGACY-400`: `CategoryTranslation.seoId` — `onDelete: SetNull`, каскада на `Seo`
+      // нет; `Seo` снесённых переводов удаляется здесь, если больше никому не нужно.
+      for (const tr of lockedTranslations) {
+        await deleteSeoIfUnreferenced(tx, tr.seoId);
+      }
 
       const removed = await tx.category.delete({ where: { id } });
 
@@ -589,7 +603,7 @@ export class CategoryService {
       });
 
       const parentSlugByLanguage = new Map(
-        (existing.parent?.translations ?? []).map((t) => [t.language, t.slug] as const),
+        parentTranslations.map((t) => [t.language, t.slug] as const),
       );
 
       for (const tr of dying) {
@@ -927,8 +941,9 @@ export class CategoryService {
               finalSeoId = newSeo.id;
             }
           } else if (tr.seoId) {
+            // Строка `Seo` удаляется ниже, после отвязки: счёт владельцев видел бы и этот
+            // перевод (`LEGACY-400`, `T55b` — `Seo` может делить строку с сущностью другого типа).
             finalSeoId = null;
-            await tx.seo.delete({ where: { id: tr.seoId } });
           }
         }
 
@@ -940,7 +955,7 @@ export class CategoryService {
           );
         }
 
-        return tx.categoryTranslation.update({
+        const updated = await tx.categoryTranslation.update({
           where: { categoryId_language: { categoryId, language } },
           data: {
             name: dto.name,
@@ -965,6 +980,8 @@ export class CategoryService {
           },
           include: { seo: true },
         });
+        if (finalSeoId === null) await deleteSeoIfUnreferenced(tx, tr.seoId);
+        return updated;
       }, CATEGORY_TREE_TX_OPTIONS);
     } catch (e: unknown) {
       // Проверка дубля видит только закоммиченные переводы других категорий: две
@@ -1056,9 +1073,9 @@ export class CategoryService {
       await tx.categoryTranslation.delete({
         where: { categoryId_language: { categoryId, language } },
       });
-      if (tr.seoId) {
-        await tx.seo.delete({ where: { id: tr.seoId } });
-      }
+      // `Seo` может делить строку с сущностью другого типа (`@unique` только внутри таблицы) —
+      // удаляется, лишь если больше никому не нужна (`LEGACY-400`).
+      await deleteSeoIfUnreferenced(tx, tr.seoId);
 
       // `targetId` — идентификатор **категории**, а не строки перевода, хотя своё
       // `id` у неё есть: язык стоит в `payload`, и вся история термина собирается
@@ -1075,18 +1092,21 @@ export class CategoryService {
 
       // Преемник — перевод прямого родителя на том же языке. Читается тем же `tx`
       // и после удаления: иначе есть момент, когда слаг уже мёртв, а редиректа ещё
-      // нет (докстринг `SlugRedirectService.record`).
+      // нет (докстринг `SlugRedirectService.record`). 🔴 `LEGACY-320`, пачка `T55b`: слаг
+      // родителя — из его строки перевода под замком, иначе встречная `updateTranslation`
+      // родителя оставляла 308 на старый слаг и второй переход (`LEGACY-392`).
       const withParent = await tx.category.findUnique({
         where: { id: categoryId },
-        select: {
-          parent: { select: { translations: { where: { language }, select: { slug: true } } } },
-        },
+        select: { parentId: true },
       });
+      const parentTr = withParent?.parentId
+        ? await this.categoryTree.lockTranslation(tx, withParent.parentId, language)
+        : null;
 
       await this.retireCategoryAddress(tx, {
         language,
         dyingSlug: tr.slug,
-        parentSlug: withParent?.parent?.translations[0]?.slug,
+        parentSlug: parentTr?.slug,
         // Категория остаётся жить, поэтому слаг, равный её базовому `Category.slug`,
         // продолжает резолвиться публично — исключать себя из отбора здесь нельзя.
         excludeCategoryId: undefined,

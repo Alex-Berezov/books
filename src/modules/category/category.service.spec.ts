@@ -137,6 +137,14 @@ const rowLockSql = (parts?: { raw?: readonly string[] }): string => (parts?.raw 
 const isRowLock = (parts?: { raw?: readonly string[] }): boolean =>
   rowLockSql(parts).includes('FOR NO KEY UPDATE') && rowLockSql(parts).includes('"Category" ');
 
+// 🔴 `T55b`: удаление запирает строку `Category` именно `FOR UPDATE` — только эта сила конфликтует
+// с `FOR KEY SHARE` встречной вставки перевода. Отбор отдельный и по силе: ослабление до
+// `NO KEY` оставит удаление без строки (404), и стенды `remove` покраснеют.
+const isRowDeleteLock = (parts?: { raw?: readonly string[] }): boolean =>
+  /FOR UPDATE/.test(rowLockSql(parts)) &&
+  !rowLockSql(parts).includes('NO KEY') &&
+  rowLockSql(parts).includes('"Category" ');
+
 const isTranslationRowLock = (parts?: { raw?: readonly string[] }): boolean =>
   rowLockSql(parts).includes('FOR NO KEY UPDATE') &&
   rowLockSql(parts).includes('"CategoryTranslation"') &&
@@ -184,7 +192,7 @@ const lockedTranslationRows = async (
 // изнутри инициализатора самого `tx`, и без аннотации тип выводится как `any`.
 const rowLockVia = (client: () => RowLockClient) =>
   jest.fn((parts?: { raw?: readonly string[] }, ...values: unknown[]) => {
-    if (isRowLock(parts)) return lockedRow(client(), values);
+    if (isRowLock(parts) || isRowDeleteLock(parts)) return lockedRow(client(), values);
     if (isTranslationRowLock(parts)) return lockedTranslationRow(client(), values);
     if (isTranslationsRowLock(parts)) return lockedTranslationRows(client(), values);
     return Promise.resolve([]);
@@ -1075,15 +1083,17 @@ describe('CategoryService', () => {
   it('удаление пишет только клиентом транзакции и берёт блокировку первой (LEGACY-306)', async () => {
     const order: string[] = [];
     const tx = {
-      $queryRaw: jest.fn(() => {
+      // Замок строки категории (`FOR UPDATE`, `T55b`) отдаёт строку и метится отдельно:
+      // он же теперь и чтение существования.
+      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
+        if (isRowDeleteLock(parts)) {
+          order.push('tx.lock-row');
+          return Promise.resolve([{ id: 'A', parentId: null }]);
+        }
         order.push('lock');
         return Promise.resolve([]);
       }),
       category: {
-        findUnique: jest.fn(() => {
-          order.push('tx.read');
-          return Promise.resolve({ id: 'A' });
-        }),
         findFirst: jest.fn(() => {
           order.push('tx.category.findFirst');
           return Promise.resolve(null);
@@ -1133,7 +1143,7 @@ describe('CategoryService', () => {
 
     expect(order).toEqual([
       'lock',
-      'tx.read',
+      'tx.lock-row',
       'tx.count',
       // `LEGACY-390`: умирающие адреса читаются ДО удаления — после `deleteMany`
       // взять их уже неоткуда. `LEGACY-320`, остаток `T55`: чтение теперь идёт
@@ -1164,9 +1174,10 @@ describe('CategoryService', () => {
    */
   it('отказ на удалении переводов не доводит дело до удаления термина (LEGACY-306)', async () => {
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
+      $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) =>
+        Promise.resolve(isRowDeleteLock(parts) ? [{ id: 'A', parentId: null }] : []),
+      ),
       category: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'A' }),
         count: jest.fn().mockResolvedValue(0),
         delete: jest.fn(),
       },
@@ -1227,9 +1238,11 @@ describe('CategoryService', () => {
     takenBy: { dyingSlug?: { id: string }; baseSlug?: { id: string } } = {},
   ) => {
     const { dyingSlug: dyingSlugTakenBy = null, baseSlug: baseSlugTakenBy = null } = takenBy;
+    // Строка категории читается замком `FOR UPDATE` (`rowLockVia` отвечает этой фикстурой),
+    // переводы родителя — `lockTranslations(parentId)`, то есть `findMany` по `parent1`.
     prisma.category.findUnique.mockResolvedValue({
       id: 'cat1',
-      parent: parentTranslations === null ? null : { translations: parentTranslations },
+      parentId: parentTranslations === null ? null : 'parent1',
     });
     prisma.category.count.mockResolvedValue(0);
     // `findMany` зовётся дважды и за разным: сперва за умирающими адресами самой
@@ -1239,6 +1252,22 @@ describe('CategoryService', () => {
     //
     // Третья форма отвечает отказом, а не данными: молчаливый фоллбэк на ответ
     // о живости скормил бы будущему запросу чужие строки и оставил проверку зелёной.
+    // Перевод родителя запирается по языку умирающего перевода (`lockTranslation` →
+    // `findUnique` в стенде `rowLockVia`), а не всеми языками разом (`T55b`).
+    prisma.categoryTranslation.findUnique.mockImplementation(
+      (args?: {
+        where?: { categoryId_language?: { categoryId?: string; language?: Language } };
+      }) => {
+        const key = args?.where?.categoryId_language;
+        const hit =
+          key?.categoryId === 'parent1'
+            ? (parentTranslations ?? []).find((t) => t.language === key.language)
+            : undefined;
+        return Promise.resolve(
+          hit ? { id: `ptr-${hit.language}`, slug: hit.slug, seoId: null } : null,
+        );
+      },
+    );
     prisma.categoryTranslation.findMany.mockImplementation(
       (args?: { where?: { categoryId?: string; slug?: string } }) => {
         if (args?.where?.categoryId) return Promise.resolve(dying);
@@ -2427,6 +2456,9 @@ describe('CategoryService', () => {
           create: jest.fn(note('seo.create', { id: 9 })),
           update: jest.fn(note('seo.update')),
           delete: jest.fn(note('seo.delete')),
+          deleteMany: jest.fn(note('seo.deleteMany', { count: 1 })),
+          // Счёт владельцев (`seo-orphan.util`): после отвязки строку не держит никто.
+          findUnique: jest.fn(note('seo.owners', { page: null, categoryTranslation: null })),
         },
       };
       prisma.$transaction = jest.fn((cb: (client: typeof tx) => unknown) => cb(tx));
@@ -2475,8 +2507,12 @@ describe('CategoryService', () => {
         seo: { metaTitle: null },
       } as never);
 
-      expect(tx.seo.delete).toHaveBeenCalledTimes(1);
-      expect(tx.seo.delete).toHaveBeenCalledWith({ where: { id: 5 } });
+      // `T55b`: строка удаляется после отвязки перевода и только ничья.
+      expect(tx.seo.deleteMany).toHaveBeenCalledTimes(1);
+      expect(tx.seo.deleteMany).toHaveBeenCalledWith({ where: { id: 5 } });
+      expect(tx.categoryTranslation.update.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.seo.deleteMany.mock.invocationCallOrder[0],
+      );
       expect(prisma.seo.delete).not.toHaveBeenCalled();
     });
 
@@ -2540,6 +2576,26 @@ describe('CategoryService', () => {
   });
 
   /**
+   * `T55b`: слаг родителя читается его строкой перевода под замком (`lockTranslation`
+   * → `categoryTranslation.findUnique` в стенде `rowLockVia`), а не связью `parent.translations`.
+   * Один мок на оба перевода ответил бы слагом ребёнка на вопрос о родителе.
+   */
+  const arrangeParentTranslation = (parentSlug: string | null) => {
+    const child = { categoryId: 'cat1', language: Language.ru, slug: 'roman', seoId: null };
+    prisma.category.findUnique.mockResolvedValue({ parentId: 'parent1' });
+    prisma.categoryTranslation.findUnique.mockImplementation(
+      (args?: { where?: { categoryId_language?: { categoryId?: string } } }) =>
+        Promise.resolve(
+          args?.where?.categoryId_language?.categoryId === 'parent1'
+            ? parentSlug === null
+              ? null
+              : { id: 'ptr', slug: parentSlug, seoId: null }
+            : child,
+        ),
+    );
+  };
+
+  /**
    * `LEGACY-085`, утверждающие тесты. До 15.09.2026 здесь стоял характеризующий:
    * удаление перевода не писало в историю слагов ничего, и адрес умирал в 404.
    * Владелец выбрал редирект на родителя там, где родитель есть (вариант D),
@@ -2561,9 +2617,7 @@ describe('CategoryService', () => {
     // Слаг не занят ничьим базовым `Category.slug` — публичный резолв на него ответит 404,
     // значит 308 действительно дойдёт до посетителя.
     prisma.category.findFirst.mockResolvedValue(null);
-    prisma.category.findUnique.mockResolvedValue({
-      parent: { translations: [{ slug: 'hudozhestvennaya-literatura' }] },
-    });
+    arrangeParentTranslation('hudozhestvennaya-literatura');
 
     await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
@@ -2590,7 +2644,7 @@ describe('CategoryService', () => {
     prisma.categoryTranslation.delete.mockResolvedValue({});
     prisma.category.findFirst.mockResolvedValue(null);
     // Родитель есть, но переводов на `ru` у него нет — `where: { language }` вернул пусто.
-    prisma.category.findUnique.mockResolvedValue({ parent: { translations: [] } });
+    arrangeParentTranslation(null);
 
     await service.deleteTranslation('cat1', Language.ru, 'admin-actor-1');
 
@@ -2659,9 +2713,7 @@ describe('CategoryService', () => {
     });
     prisma.categoryTranslation.delete.mockResolvedValue({});
     prisma.category.findFirst.mockResolvedValue(null);
-    prisma.category.findUnique.mockResolvedValue({
-      parent: { translations: [{ slug: 'hudozhestvennaya-literatura' }] },
-    });
+    arrangeParentTranslation('hudozhestvennaya-literatura');
     slugRedirects.record.mockImplementation(() => {
       order.push('record');
       return Promise.resolve(undefined);
@@ -2741,12 +2793,11 @@ describe('CategoryService', () => {
     it('запись идёт под тем же замком дерева, что и удаление', async () => {
       const order: string[] = [];
       const tx = {
-        $queryRaw: jest.fn(() => {
+        $queryRaw: jest.fn((parts?: { raw?: readonly string[] }) => {
           order.push('lock');
-          return Promise.resolve([]);
+          return Promise.resolve(isRowDeleteLock(parts) ? [{ id: 'cat1', parentId: null }] : []);
         }),
         category: {
-          findUnique: jest.fn().mockResolvedValue({ id: 'cat1', parent: null }),
           count: jest.fn().mockResolvedValue(0),
           delete: jest.fn(() => {
             order.push('delete');
@@ -2771,9 +2822,9 @@ describe('CategoryService', () => {
 
       await service.remove('cat1', 'admin-actor-1');
 
-      // Второй `'lock'` — `LEGACY-320`, остаток `T55`: умирающие адреса читаются
-      // через `lockTranslations` (тот же `$queryRaw`, что и замок дерева в этом стенде).
-      expect(order).toEqual(['lock', 'lock', 'delete', 'audit']);
+      // Замки по порядку: дерево, строка категории (`FOR UPDATE`, `T55b`), умирающие
+      // переводы (`lockTranslations`, `T55`) — все три одним `$queryRaw` этого стенда.
+      expect(order).toEqual(['lock', 'lock', 'lock', 'delete', 'audit']);
       // Посадка на `LEGACY-036`: здесь `tx` — отдельный объект, не равный `prisma`,
       // поэтому подмена клиента в сервисе роняет тест, а не проходит молча.
       expect(adminAudit.record.mock.calls[0][0]).toBe(tx);

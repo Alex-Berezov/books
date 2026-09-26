@@ -398,6 +398,130 @@ describe('LEGACY-320 — редирект базового слага пишет
     expect(outcome).toBeInstanceOf(BadRequestException);
   }, 120_000);
 
+  /**
+   * 🔴 `LEGACY-320`, пачка `T55b`. Удаление страницы читало слаг обычным `findUnique`:
+   * встречное переименование, закоммиченное в окне, уводило уборку редиректов и `payload`
+   * журнала на слаг до переименования. Строка теперь под `FOR UPDATE`.
+   */
+  it('страница: удаление ждёт встречного переименования и называет живой слаг', async () => {
+    const page = await prisma.page.create({
+      data: {
+        slug: `${prefix}-rm-a`,
+        title: 'R',
+        type: 'generic',
+        content: 'c',
+        language: Language.en,
+      },
+    });
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "Page" SET slug = ${`${prefix}-rm-b`} WHERE id = ${page.id}`;
+      },
+      'Page',
+      () => pages.remove(page.id, 'e2e-actor'),
+    );
+
+    const event = await prisma.adminAuditEvent.findFirst({
+      where: { targetId: page.id, action: 'PAGE_DELETED' },
+      select: { payload: true },
+    });
+    expect(event?.payload).toEqual({ language: Language.en, slug: `${prefix}-rm-b` });
+  }, 120_000);
+
+  /**
+   * 🔴 `LEGACY-320`, пачка `T55b`. `lockTranslations` держит только существующие строки:
+   * перевод, вставленный встречным `createTranslation` (он идёт мимо замка дерева) до
+   * `deleteMany`, удалялся без редиректа. Строка категории теперь под `FOR UPDATE` первой,
+   * вставка с её `FOR KEY SHARE` встаёт в очередь, и новый адрес получает 308 на родителя.
+   */
+  it('категория: перевод, вставленный встречно, при удалении термина получает редирект', async () => {
+    const parent = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Ph parent ${stamp}`,
+        slug: `${prefix}-phparent`,
+        key: `${prefix}-phparent`,
+        translations: {
+          create: { language: Language.es, name: 'P', slug: `${prefix}-phparent-es` },
+        },
+      },
+    });
+    const category = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Ph child ${stamp}`,
+        slug: `${prefix}-phcat`,
+        key: `${prefix}-phcat`,
+        parentId: parent.id,
+      },
+    });
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.categoryTranslation.create({
+          data: {
+            categoryId: category.id,
+            language: Language.es,
+            name: 'Late',
+            slug: `${prefix}-phlate-es`,
+          },
+        });
+      },
+      'Category',
+      () => categories.remove(category.id, 'e2e-actor'),
+    );
+
+    const redirects = await prisma.slugRedirect.findMany({
+      where: { entityType: 'category', language: Language.es, oldSlug: `${prefix}-phlate-es` },
+      select: { newSlug: true },
+    });
+    expect(redirects).toEqual([{ newSlug: `${prefix}-phparent-es` }]);
+  }, 120_000);
+
+  /**
+   * 🔴 `LEGACY-320`, пачка `T55b`. Цель редиректа — слаг перевода родителя — читалась
+   * без замка: встречное переименование родителя давало 308 на его старый слаг и второй
+   * переход (`LEGACY-392`). Теперь строка родителя под замком, и 308 ведёт на живой слаг.
+   */
+  it('перевод категории: удаление ведёт на слаг родителя после встречного переименования', async () => {
+    const parent = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Pr parent ${stamp}`,
+        slug: `${prefix}-prparent`,
+        key: `${prefix}-prparent`,
+        translations: { create: { language: Language.en, name: 'P', slug: `${prefix}-pr-a` } },
+      },
+      include: { translations: true },
+    });
+    const child = await prisma.category.create({
+      data: {
+        type: 'genre',
+        name: `Pr child ${stamp}`,
+        slug: `${prefix}-prchild`,
+        key: `${prefix}-prchild`,
+        parentId: parent.id,
+        translations: {
+          create: { language: Language.en, name: 'C', slug: `${prefix}-prchild-en` },
+        },
+      },
+    });
+    const parentTrId = parent.translations[0].id;
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "CategoryTranslation" SET slug = ${`${prefix}-pr-b`} WHERE id = ${parentTrId}`;
+      },
+      'CategoryTranslation',
+      () => categories.deleteTranslation(child.id, Language.en, 'e2e-actor'),
+    );
+
+    expect(await redirectsFrom('category', `${prefix}-prchild-en`)).toEqual([
+      { newSlug: `${prefix}-pr-b` },
+    ]);
+  }, 120_000);
+
   it('версия книги: вторая смена слага пишет редирект с промежуточного слага', async () => {
     const book = await createBookFixture(prisma, `${prefix}-vbook`);
     const version = await prisma.bookVersion.create({

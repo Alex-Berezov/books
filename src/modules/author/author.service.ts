@@ -39,6 +39,7 @@ import {
   isKnownLetter,
   sortLetters,
 } from './author-index.util';
+import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
 /**
  * `%` и `_` в запросе пользователя — это символы, а не подстановки: поиск «100%»
@@ -838,9 +839,10 @@ export class AuthorService {
           // Delete existing translations (which sets their relations to null)
           await tx.authorTranslation.deleteMany({ where: { authorId: id } });
 
-          // Clean up old Seo records
-          if (seoIdsToDelete.length > 0) {
-            await tx.seo.deleteMany({ where: { id: { in: seoIdsToDelete } } });
+          // Clean up old Seo records — только ничьи: строка может делиться с сущностью
+          // другого типа (`LEGACY-400`, `T55b`).
+          for (const seoId of seoIdsToDelete) {
+            await deleteSeoIfUnreferenced(tx, seoId);
           }
 
           // Re-create translations
@@ -909,18 +911,30 @@ export class AuthorService {
    */
   async delete(id: string, actorUserId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const author = await tx.author.findUnique({ where: { id } });
+      // 🔴 `T55b`: строка автора запирается до чтения переводов — встречная правка (`update` держит
+      // её `FOR NO KEY UPDATE` и пересоздаёт переводы с новым `Seo`) иначе оставляла бы уборку
+      // ниже со снимком старых `seoId`, а новые строки `Seo` — сиротами после каскада.
+      const [author] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "Author" WHERE id = ${id} FOR UPDATE`;
       if (!author) {
         throw new NotFoundException(`Author with ID '${id}' not found`);
       }
 
-      const dying = await tx.authorTranslation.findMany({
+      const dyingRows = await tx.authorTranslation.findMany({
         where: { authorId: id },
-        select: { language: true, slug: true },
+        select: { language: true, slug: true, seoId: true },
         orderBy: { language: 'asc' },
       });
+      // Состав `payload` журнала — ровно `{ language, slug }`: `seoId` нужен только уборке ниже.
+      const dying = dyingRows.map(({ language, slug }) => ({ language, slug }));
 
       const removed = await tx.author.delete({ where: { id } });
+
+      // 🔴 `LEGACY-400`, `T55b` (решение арбитра 27.09.2026): переводы уходят каскадом, а их `Seo`
+      // (`AuthorTranslation.seoId` — `SetNull`) оставались сиротами; убираются, если больше ничьи.
+      for (const row of dyingRows) {
+        await deleteSeoIfUnreferenced(tx, row.seoId);
+      }
 
       await this.adminAudit.record(tx, {
         action: AdminAuditAction.AUTHOR_DELETED,

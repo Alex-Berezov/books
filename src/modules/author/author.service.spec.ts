@@ -82,13 +82,17 @@ const createPrismaStub = (): PrismaStub => {
     $transaction: jest.fn(),
     // Замок строки автора в `update` (`LEGACY-320`) по умолчанию находит строку:
     // существование автора стенды задают через `author.findUnique` до транзакции.
-    $queryRaw: jest.fn<Promise<unknown>, [unknown]>((strings: unknown) =>
-      Promise.resolve(
-        Array.isArray(strings) && strings.join('?').includes('FOR NO KEY UPDATE')
-          ? [{ id: 'locked' }]
-          : [],
-      ),
-    ),
+    // Замок строки в `delete` (`FOR UPDATE`, `T55b`) — это и чтение существования: отвечает
+    // той же фикстурой `author.findUnique`, что задают стенды удаления.
+    $queryRaw: jest.fn<Promise<unknown>, [unknown]>(async (strings: unknown) => {
+      const sql = Array.isArray(strings) ? strings.join('?') : '';
+      if (sql.includes('FOR NO KEY UPDATE')) return [{ id: 'locked' }];
+      if (sql.includes('"Author"') && sql.includes('FOR UPDATE')) {
+        const row: unknown = await stub.author.findUnique({ where: { id: 'auth1' } });
+        return row ? [row] : [];
+      }
+      return [];
+    }),
   };
 
   stub.$transaction.mockImplementation(async (callback: unknown) => {
@@ -553,8 +557,8 @@ describe('AuthorService', () => {
      */
     it('пишет событие тем же tx, что и удаление, а не корневым клиентом', async () => {
       const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([{ id: 'auth1' }]),
         author: {
-          findUnique: jest.fn().mockResolvedValue({ id: 'auth1' }),
           delete: jest.fn().mockResolvedValue({ id: 'auth1' }),
         },
         authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
@@ -568,6 +572,27 @@ describe('AuthorService', () => {
 
       expect(tx.adminAuditEvent.create).toHaveBeenCalledTimes(1);
       expect(prisma.adminAuditEvent.create).not.toHaveBeenCalled();
+    });
+
+    // 🔴 `T55b`: строка автора запирается `FOR UPDATE` до чтения переводов — иначе встречная
+    // правка пересоздаёт переводы с новым `Seo`, а уборка работает по старым `seoId`.
+    it('запирает строку автора FOR UPDATE до чтения переводов', async () => {
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+      prisma.author.delete.mockResolvedValue({ id: 'auth1' });
+
+      await service.delete('auth1', 'admin-1');
+
+      const lockCall = prisma.$queryRaw.mock.calls.findIndex((call) =>
+        (call[0] as string[]).join('?').includes('FOR UPDATE'),
+      );
+      expect(lockCall).toBeGreaterThanOrEqual(0);
+      expect((prisma.$queryRaw.mock.calls[lockCall][0] as string[]).join('?')).toContain(
+        '"Author"',
+      );
+      expect(prisma.$queryRaw.mock.invocationCallOrder[lockCall]).toBeLessThan(
+        prisma.authorTranslation.findMany.mock.invocationCallOrder[0],
+      );
     });
 
     it('открывает транзакцию с явными границами', async () => {
