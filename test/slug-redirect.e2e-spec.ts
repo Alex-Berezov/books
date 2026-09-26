@@ -364,10 +364,14 @@ describe('Slug redirects (LEGACY-062) e2e', () => {
     expect(await prisma.slugRedirect.count({ where: { oldSlug: newSlug } })).toBe(0);
   });
 
-  it('records a page redirect under the OLD language when slug and language change together', async () => {
-    // Резолв идёт по паре (язык, старый слаг), а старый адрес жил под старым языком.
-    // Запись под новым выглядит интуитивнее — и не сработала бы нигде: по старому
-    // адресу приходят из индекса, где он проиндексирован в прежнем языке.
+  /**
+   * 🔴 `T55b`, `LEGACY-320`, решение владельца 27.09.2026 (тема 3). Прежде здесь стоял
+   * характеризующий тест: смена `{slug, language}` писала `(en, old) → new`, то есть 308
+   * на `/en/new`, которого не существует. Язык существующей страницы теперь неизменяем —
+   * перевод заводится отдельной страницей группы, — и запрос отвергается целиком: ни
+   * редиректа, ни смены слага.
+   */
+  it('refuses to change a page language together with its slug and writes nothing', async () => {
     const oldSlug = `sr-${stamp}-page-lang-old`;
     const newSlug = `sr-${stamp}-page-lang-new`;
 
@@ -379,14 +383,49 @@ describe('Slug redirects (LEGACY-062) e2e', () => {
     const pageId = (created.body as { id: string }).id;
     createdPageIds.push(pageId);
 
-    await request(http())
+    // Отказ сверяется по тексту: 400 от ValidationPipe или от проверки слага прошёл бы и так.
+    const refused = await request(http())
       .patch(`/admin/en/pages/${pageId}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .send({ slug: newSlug, language: 'ru' })
+      .expect(400);
+    expect((refused.body as { message: unknown }).message).toBe(
+      'Page language cannot be changed after creation; create a translation instead',
+    );
+
+    expect(
+      await prisma.slugRedirect.count({
+        where: { entityType: 'page', oldSlug: { in: [oldSlug, newSlug] } },
+      }),
+    ).toBe(0);
+    const page = await prisma.page.findUnique({
+      where: { id: pageId },
+      select: { slug: true, language: true },
+    });
+    expect(page).toEqual({ slug: oldSlug, language: 'en' });
+  });
+
+  // Вторая половина правила: форма шлёт запись целиком, тот же язык вместе со сменой слага
+  // проходит, и редирект пишется в этом языке.
+  it('accepts the same page language sent with a slug change and records the redirect', async () => {
+    const oldSlug = `sr-${stamp}-page-samelang-old`;
+    const newSlug = `sr-${stamp}-page-samelang-new`;
+
+    const created = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ slug: oldSlug, title: 'Same language', type: 'generic', content: 'Body' })
+      .expect(201);
+    const pageId = (created.body as { id: string }).id;
+    createdPageIds.push(pageId);
+
+    await request(http())
+      .patch(`/admin/en/pages/${pageId}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ slug: newSlug, language: 'en' })
       .expect(200);
 
     expect(await redirects.resolve('page', 'en', oldSlug)).toBe(newSlug);
-    expect(await redirects.resolve('page', 'ru', oldSlug)).toBeNull();
   });
 
   /**
