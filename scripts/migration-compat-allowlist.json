@@ -66,8 +66,12 @@
       "constructs": ["CREATE UNIQUE INDEX"]
     },
     "20250830120000_page_unique_language_slug": {
-      "reason": "Уникальный индекс на живую пару (language, slug) в Page. Применена 30.08.2025.",
-      "constructs": ["CREATE UNIQUE INDEX"]
+      "reason": "Уникальный индекс на живую пару (language, slug) в Page, плюс снятие старого одноязычного Page_slug_key через EXECUTE в DO-блоке (LEGACY-397: check-migration-compat не видел его до этой правки). Применена 30.08.2025.",
+      "constructs": ["CREATE UNIQUE INDEX", "DROP INDEX"]
+    },
+    "20250830151000_add_taxonomy_translations": {
+      "reason": "Снятие одноязычных Category_slug_key и Tag_slug_key через EXECUTE в DO-блоке перед вводом CategoryTranslation/TagTranslation: уникальность слага переезжает в переводы — (language, slug) и (categoryId|tagId, language). Применена 30.08.2025; check-migration-compat не видел EXECUTE до правки LEGACY-397.",
+      "constructs": ["DROP INDEX"]
     },
     "20251226094253_add_translation_group_id_to_pages": {
       "reason": "Снятие индекса MediaAsset_createdById_idx. Внешние ключи здесь же дропаются и пересоздаются под теми же именами, поэтому разрушающими не считаются. Применена 26.12.2025.",

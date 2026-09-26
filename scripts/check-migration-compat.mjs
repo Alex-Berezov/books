@@ -31,6 +31,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, exist
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { INDEX_HEADS, UNREADABLE_MARK, startsWithHead, unwrapExecute } from './lib/migration-sql.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = join(SCRIPT_DIR, '..');
@@ -111,6 +112,22 @@ function stripBlockNoise(statement) {
 }
 
 /**
+ * LEGACY-397: `EXECUTE` в теле `DO`-блока, та же развёртка, что в `drift-check`
+ * (`scripts/lib/migration-sql.mjs`). `EXECUTE '<индексная DDL>';` становится самим оператором —
+ * иначе `EXECUTE 'DROP INDEX ...'` уходил в выкат без записи в allowlist. Нечитаемый `EXECUTE`
+ * (`format(...)`, конкатенация, `USING`) с `INDEX`/`UNIQUE`/`CONSTRAINT` — отказ. Остальные
+ * `EXECUTE` (читаемый неиндексный литерал, `EXECUTE FUNCTION` триггера, `GRANT EXECUTE ON`)
+ * остаются как написаны: стирание унесло бы `;` и склеило соседние операторы. Решение арбитра
+ * 26.09.2026 (вариант B); чего сторож не видит — в записи `LEGACY-397`.
+ */
+const READABLE_EXECUTE = /^EXECUTE\s+'(?:[^']|'')*'\s*;?$/i;
+const unwrapDoBodyExecute = (body) =>
+  unwrapExecute(body, {
+    keepOther: true,
+    isUnreadable: (x) => /\b(?:INDEX|UNIQUE|CONSTRAINT)\b/i.test(x) && !READABLE_EXECUTE.test(x),
+  });
+
+/**
  * Операторы, пробелы схлопнуты. Тело `$tag$ ... $tag$` вынимается и разбирается отдельно:
  * DDL внутри идемпотентного `DO`-блока — это тот же DDL, и делить его по `;` вместе с
  * внешним текстом нельзя, иначе `;` внутри блока рвёт внешний оператор.
@@ -126,7 +143,8 @@ function statements(sql) {
       const tag = open[0];
       const end = clean.indexOf(tag, i + tag.length);
       const stop = end === -1 ? clean.length : end;
-      bodies.push(clean.slice(i + tag.length, stop));
+      const body = clean.slice(i + tag.length, stop);
+      bodies.push(/\bDO\s*$/i.test(outer) ? unwrapDoBodyExecute(body) : body);
       i = end === -1 ? clean.length : end + tag.length;
       outer += ' ';
       continue;
@@ -237,6 +255,7 @@ const DETECTORS = [
       /\bNOT\s+NULL\b/i.test(s) &&
       !/\bDEFAULT\b/i.test(s),
   },
+  // Narrower than INDEX_HEADS.create (lib/migration-sql.mjs): a plain CREATE INDEX breaks nothing.
   { id: 'CREATE UNIQUE INDEX', test: (s) => /^CREATE\s+UNIQUE\s+INDEX\b/i.test(s) },
   {
     id: 'ADD CONSTRAINT',
@@ -248,11 +267,14 @@ const DETECTORS = [
 
   // --- guarantees the old image relies on go away ---
   { id: 'DROP CONSTRAINT', test: (s) => /^ALTER\s+TABLE\b/i.test(s) && /\bDROP\s+CONSTRAINT\b/i.test(s) },
-  { id: 'DROP INDEX', test: (s) => /^DROP\s+INDEX\b/i.test(s) },
+  { id: 'DROP INDEX', test: (s) => startsWithHead(INDEX_HEADS.drop, s) },
 
   // --- data disappears, and rolling the image back does not bring it back ---
   { id: 'TRUNCATE', test: (s) => /^TRUNCATE\b/i.test(s) },
   { id: 'DELETE FROM', test: (s) => /^DELETE\s+FROM\b/i.test(s) },
+
+  // --- LEGACY-397: index/constraint DDL behind an EXECUTE in a DO block that cannot be read ---
+  { id: 'UNREADABLE EXECUTE', test: (s) => s.startsWith(UNREADABLE_MARK) },
 ];
 
 const constraintNames = (re, sql) =>
@@ -464,6 +486,84 @@ const CASES = [
     name: 'точка с запятой внутри $$-блока не рвёт внешний оператор',
     sql: 'DO $$ BEGIN PERFORM 1; END $$;\nDROP TABLE "Y";',
     expect: ['DROP TABLE'],
+  },
+  {
+    // LEGACY-397: снятие индекса через EXECUTE в DO-блоке — приём, которым это уже сделано
+    // на проде (20250830120000, 20250830151000) и который до этой правки проходил незамеченным.
+    name: 'DROP INDEX за EXECUTE в DO-блоке считается',
+    sql: "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'x') THEN EXECUTE 'DROP INDEX \"x\"'; END IF; END $$;",
+    expect: ['DROP INDEX'],
+  },
+  {
+    name: 'CREATE UNIQUE INDEX за EXECUTE в DO-блоке считается',
+    sql: 'DO $$ BEGIN EXECUTE \'CREATE UNIQUE INDEX "x" ON "Book"("slug")\'; END $$;',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'нечитаемый EXECUTE (format) объявляется отказом',
+    sql: "DO $$ BEGIN EXECUTE format('DROP INDEX %I', 'x'); END $$;",
+    expect: ['UNREADABLE EXECUTE'],
+  },
+  {
+    name: 'нечитаемый EXECUTE с USING и индексной DDL объявляется отказом',
+    sql: 'DO $$ BEGIN EXECUTE \'DROP INDEX "x"\' USING 1; END $$;',
+    expect: ['UNREADABLE EXECUTE'],
+  },
+  {
+    name: 'читаемый литерал с CONSTRAINT отказа не получает',
+    sql: 'DO $$ BEGIN EXECUTE \'ALTER TABLE "Book" VALIDATE CONSTRAINT "b_fkey"\'; END $$;',
+    expect: [],
+  },
+  {
+    // Регрессия круга 3: стёртый EXECUTE уносил `;` и склеивал следующий оператор. На main — те же находки.
+    name: 'EXECUTE FUNCTION триггера не прячет следующий DROP INDEX',
+    sql: 'DO $$ BEGIN CREATE TRIGGER t AFTER INSERT ON "Book" FOR EACH ROW EXECUTE FUNCTION f(); DROP INDEX "x"; END $$;',
+    expect: ['DROP INDEX'],
+  },
+  {
+    name: 'GRANT EXECUTE ON не прячет следующий DROP TABLE',
+    sql: 'DO $$ BEGIN GRANT EXECUTE ON FUNCTION f() TO r; DROP TABLE "Y"; END $$;',
+    expect: ['DROP TABLE'],
+  },
+  {
+    name: 'FOR ... IN EXECUTE без индексной DDL отказа не получает',
+    sql: "DO $$ DECLARE r record; BEGIN FOR r IN EXECUTE 'SELECT 1' LOOP RAISE NOTICE 'ok'; END LOOP; END $$;",
+    expect: [],
+  },
+  {
+    name: 'читаемый DROP CONSTRAINT за EXECUTE с пересозданием того же имени проходит',
+    sql: 'DO $$ BEGIN EXECUTE \'ALTER TABLE "Book" DROP CONSTRAINT IF EXISTS "b_fkey"\'; END $$;\nALTER TABLE "Book" ADD CONSTRAINT "b_fkey" FOREIGN KEY ("y") REFERENCES "Y"("id") ON DELETE CASCADE;',
+    expect: [],
+  },
+  {
+    name: 'EXECUTE ... INTO без DDL не считается',
+    sql: "DO $$ DECLARE n int; BEGIN EXECUTE 'SELECT 1' INTO n; END $$;",
+    expect: [],
+  },
+  {
+    name: 'EXECUTE в теле CREATE FUNCTION при миграции не исполняется',
+    sql: "CREATE OR REPLACE FUNCTION f() RETURNS trigger AS $$ BEGIN EXECUTE format('INSERT INTO %I VALUES (1)', TG_TABLE_NAME); RETURN NEW; END $$ LANGUAGE plpgsql;",
+    expect: [],
+  },
+  {
+    name: 'EXECUTE FUNCTION триггера в DO-блоке — не отказ',
+    sql: 'DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger) THEN CREATE TRIGGER t AFTER INSERT ON "Book" FOR EACH ROW EXECUTE FUNCTION f(); END IF; END $$;',
+    expect: [],
+  },
+  {
+    name: 'слово EXECUTE в строке RAISE — не оператор',
+    sql: "DO $$ BEGIN RAISE NOTICE 'will EXECUTE later; really'; END $$;",
+    expect: [],
+  },
+  {
+    name: 'слово UNREADABLE во внешнем SQL — не метка',
+    sql: 'COMMENT ON TABLE "Book" IS \'UNREADABLE stuff\';',
+    expect: [],
+  },
+  {
+    name: 'EXECUTE без индексной/констрейнтной DDL не считается',
+    sql: "DO $$ BEGIN EXECUTE 'ANALYZE \"Book\"'; END $$;",
+    expect: [],
   },
 ];
 

@@ -28,6 +28,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { INDEX_HEADS, INDEX_DDL_HEAD, UNREADABLE_MARK, startsWithHead, unwrapExecute } from './lib/migration-sql.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = join(SCRIPT_DIR, '..');
@@ -212,19 +213,12 @@ function stripSqlComments(sql) {
   return out;
 }
 
-// LEGACY-367: the index statements the pass knows. applyMigrations dispatches on each head, and
-// inlineDoBlocks recognises the same heads inside a DO block, so a form added here reaches both.
-// CONDITIONAL is read back by applyMigrations; UNREADABLE only makes the statement match nothing
-// there, so it lands in UNPARSED.
-const INDEX_HEADS = {
-  create: String.raw`CREATE\s+(?:UNIQUE\s+)?INDEX\b`,
-  drop: String.raw`DROP\s+INDEX\b`,
-  alter: String.raw`ALTER\s+INDEX\b`,
-};
-const INDEX_DDL_HEAD = `(?:${Object.values(INDEX_HEADS).join('|')})`;
-const startsWithHead = (head, s) => new RegExp(`^${head}`, 'i').test(s);
+// LEGACY-367: applyMigrations dispatches on each index head, and inlineDoBlocks recognises the same
+// heads inside a DO block. The heads, UNREADABLE_MARK and the EXECUTE unwrap live in
+// scripts/lib/migration-sql.mjs (LEGACY-397), shared with check-migration-compat.mjs — add a form
+// there, not here. CONDITIONAL is read back by applyMigrations; UNREADABLE only makes the statement
+// match nothing there, so it lands in UNPARSED.
 const CONDITIONAL_MARK = 'CONDITIONAL ';
-const UNREADABLE_MARK = 'UNREADABLE ';
 
 // Rights migrations wrap idempotent DDL in `DO $$ BEGIN IF NOT EXISTS (...) THEN ... END IF; END $$;`.
 // Inline those bodies as plain SQL so the DDL inside them is seen.
@@ -251,18 +245,14 @@ function inlineDoBlocks(sql) {
       )
       .replace(/\u0000(\d+)\u0000/g, (_m, i) => literals[Number(i)]);
     // LEGACY-367: a conditional `EXECUTE 'DROP INDEX ...'` (guarded by `IF EXISTS (SELECT ...
-    // FROM pg_indexes)`) is how this codebase retires an index inside a DO block. The generic
-    // EXECUTE strip below would erase it — the index pass never learns the index is gone and
-    // reports it as still live. Unwrap the literal DDL string before the generic strip runs.
-    b = b.replace(
-      new RegExp(String.raw`\bEXECUTE\s+'(${INDEX_DDL_HEAD}(?:[^']|'')*)'\s*;`, 'gi'),
-      (_m, inner) => `\n${CONDITIONAL_MARK}${inner.replace(/''/g, "'")};\n`,
-    );
-    // Index or constraint DDL still behind EXECUTE (built by concatenation, say) cannot be read. It is
-    // turned into a statement nothing recognises, so it lands in UNPARSED instead of vanishing.
-    b = b.replace(/\bEXECUTE\b[^;]*;/gi, (x) =>
-      /\b(?:INDEX|UNIQUE|CONSTRAINT)\b/i.test(x) ? `\n${UNREADABLE_MARK}${x.replace(/;$/, '').replace(/\s+/g, ' ')};\n` : ' ',
-    );
+    // FROM pg_indexes)`) is how this codebase retires an index inside a DO block. unwrapExecute
+    // turns that literal into a CONDITIONAL statement, so the index pass learns the index is gone.
+    // Index or constraint DDL still behind EXECUTE (built by concatenation, say) cannot be read: it
+    // becomes an UNREADABLE statement and lands in UNPARSED; any other EXECUTE is erased.
+    b = unwrapExecute(b, {
+      mark: CONDITIONAL_MARK,
+      isUnreadable: (x) => /\b(?:INDEX|UNIQUE|CONSTRAINT)\b/i.test(x),
+    });
     // `[^;]*?` keeps guard conditions from crossing a statement boundary
     b = b.replace(/\bELSIF\b[^;]*?\bTHEN\b/gi, ' ');
     b = b.replace(/\bIF\b[^;]*?\bTHEN\b/gi, ' ');
