@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   MinLength,
   ValidateIf,
   ValidateNested,
@@ -15,14 +16,20 @@ import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
+import {
+  FAQ_ANSWER_MAX_LENGTH,
+  FAQ_QUESTION_MAX_LENGTH,
+} from '../../../shared/constants/validation';
 
 export class TagFaqDto {
-  @ApiProperty({ description: 'Question text' })
+  @ApiProperty({ description: 'Question text', maxLength: FAQ_QUESTION_MAX_LENGTH })
   @IsString()
+  @MaxLength(FAQ_QUESTION_MAX_LENGTH)
   question!: string;
 
-  @ApiProperty({ description: 'Answer text' })
+  @ApiProperty({ description: 'Answer text', maxLength: FAQ_ANSWER_MAX_LENGTH })
   @IsString()
+  @MaxLength(FAQ_ANSWER_MAX_LENGTH)
   answer!: string;
 }
 

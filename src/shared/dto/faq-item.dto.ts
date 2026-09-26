@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString } from 'class-validator';
+import { IsString, MaxLength } from 'class-validator';
+import { FAQ_ANSWER_MAX_LENGTH, FAQ_QUESTION_MAX_LENGTH } from '../constants/validation';
 
 /**
  * Пара «вопрос - ответ» Json-колонки `faq`.
@@ -23,11 +24,13 @@ import { IsString } from 'class-validator';
  * не через `validateSync`.
  */
 export class FaqItemDto {
-  @ApiProperty({ type: String, example: 'What is this?' })
+  @ApiProperty({ type: String, example: 'What is this?', maxLength: FAQ_QUESTION_MAX_LENGTH })
   @IsString()
+  @MaxLength(FAQ_QUESTION_MAX_LENGTH)
   question!: string;
 
-  @ApiProperty({ type: String, example: 'This is...' })
+  @ApiProperty({ type: String, example: 'This is...', maxLength: FAQ_ANSWER_MAX_LENGTH })
   @IsString()
+  @MaxLength(FAQ_ANSWER_MAX_LENGTH)
   answer!: string;
 }

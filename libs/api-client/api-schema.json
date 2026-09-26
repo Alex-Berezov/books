@@ -1090,10 +1090,12 @@
         "properties": {
           "answer": {
             "description": "Answer text",
+            "maxLength": 10000,
             "type": "string"
           },
           "question": {
             "description": "Question text",
+            "maxLength": 1000,
             "type": "string"
           }
         },
@@ -8812,10 +8814,12 @@
         "properties": {
           "answer": {
             "example": "This is...",
+            "maxLength": 10000,
             "type": "string"
           },
           "question": {
             "example": "What is this?",
+            "maxLength": 1000,
             "type": "string"
           }
         },
@@ -20472,10 +20476,12 @@
         "properties": {
           "answer": {
             "description": "Answer text",
+            "maxLength": 10000,
             "type": "string"
           },
           "question": {
             "description": "Question text",
+            "maxLength": 1000,
             "type": "string"
           }
         },
