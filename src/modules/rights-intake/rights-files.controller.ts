@@ -227,7 +227,8 @@ async function toUpload(file: UploadedFileType) {
   };
 }
 
-function send(res: Response, download: RightsFileDownload): void {
+/** Экспортирован ради посадки `LEGACY-108` — второй рубеж кэша на прямой выгрузке. */
+export function send(res: Response, download: RightsFileDownload): void {
   res.setHeader('Content-Type', download.contentType);
   res.setHeader('Content-Length', String(download.buffer.length));
   // Юридический документ не встраивается в страницу и не кешируется прокси: он приватный.
@@ -236,5 +237,10 @@ function send(res: Response, download: RightsFileDownload): void {
     `attachment; filename="${download.fileName.replace(/"/g, '')}"`,
   );
   res.setHeader('Cache-Control', PRIVATE_NO_STORE);
+  // `LEGACY-108`. `PrivateVaryInterceptor` сюда не доходит: `@Res()` без
+  // `passthrough` заканчивает ответ раньше фазы «после» интерцептора
+  // (`headersSent === true` к моменту его `map()`), поэтому второй рубеж
+  // ставится здесь же, вручную, до `res.end()`.
+  res.vary('Authorization');
   res.end(download.buffer);
 }

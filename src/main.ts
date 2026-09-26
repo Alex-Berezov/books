@@ -7,11 +7,10 @@ import { SwaggerModule } from '@nestjs/swagger';
 import { buildOpenApiDocument } from './config/openapi.config';
 import { configureSecurity } from './common/security/app-security.config';
 import * as Sentry from '@sentry/node';
-import { HttpAdapterHost } from '@nestjs/core';
-import { SentryExceptionFilter } from './shared/sentry/sentry.filter';
 import { SENTRY_MAX_VALUE_LENGTH, sentryBeforeSend } from './shared/sentry/before-send';
-import { RedirectExceptionFilter } from './common/filters/redirect-exception.filter';
+import { registerGlobalFilters } from './common/filters/register-global-filters';
 import { robotsHeaderMiddleware } from './common/middleware/robots-header.middleware';
+import { docsCacheHeadersMiddleware } from './common/middleware/docs-cache-headers.middleware';
 import { assertJwtSecrets } from './common/config/jwt-secrets';
 import { assertPublicSiteUrl, resolvePublicSiteUrl } from './modules/seo/utils/publicSiteUrl';
 
@@ -43,7 +42,6 @@ async function bootstrap() {
   app.use(robotsHeaderMiddleware);
 
   // Sentry init (optional, controlled by env SENTRY_DSN). Disabled in dev unless explicitly enabled.
-  const redirectFilter = new RedirectExceptionFilter();
   const dsn = process.env.SENTRY_DSN;
   const sentryEnabled = Boolean(dsn) && (process.env.SENTRY_ENABLED ?? '1') !== '0';
   if (sentryEnabled) {
@@ -64,11 +62,9 @@ async function bootstrap() {
       // truncates mid-email before beforeSend runs. See before-send.ts.
       maxValueLength: SENTRY_MAX_VALUE_LENGTH,
     });
-    const httpAdapterHost = app.get(HttpAdapterHost);
-    app.useGlobalFilters(redirectFilter, new SentryExceptionFilter(httpAdapterHost, true));
-  } else {
-    app.useGlobalFilters(redirectFilter);
   }
+  // Порядок фильтров и безусловная регистрация — см. register-global-filters.ts.
+  registerGlobalFilters(app, sentryEnabled);
 
   // Set up global ValidationPipe:
   app.useGlobalPipes(
@@ -81,6 +77,11 @@ async function bootstrap() {
 
   // Set up Swagger documentation - ALWAYS ENABLED
   console.log('Setting up Swagger documentation...');
+  // LEGACY-108: до setGlobalPrefix('api'), поэтому DefaultCacheControlMiddleware
+  // (матчится только на /api) сюда не достаёт — заголовок ставим отдельно,
+  // и регистрировать нужно до SwaggerModule.setup, иначе его маршруты уже
+  // отдадут ответ раньше, чем наш middleware успеет выполниться.
+  app.use(docsCacheHeadersMiddleware);
   const document = buildOpenApiDocument(app);
   SwaggerModule.setup('docs', app, document, {
     jsonDocumentUrl: 'docs-json',

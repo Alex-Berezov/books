@@ -1,6 +1,7 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { map, type Observable } from 'rxjs';
 import type { Response } from 'express';
+import { varyAuthorizationIfPrivate } from './cache-control';
 
 /**
  * `LEGACY-101`, `LEGACY-108`. Второй рубеж приватного ответа: `Vary: Authorization`.
@@ -15,13 +16,11 @@ import type { Response } from 'express';
  * второй — «если хранишь, различай». Второй нужен именно потому, что первый
  * однажды снимут.
  *
- * ⚠️ **Рубеж стоит не на всех приватных ответах, а только на успешных.**
- * `map` не выполняется, когда цепочку обрывает исключение, поэтому 401, 403,
- * 429, 451 и 404 уходят с `private, no-store`, но без `Vary`. Сегодня это
- * безопасно — `no-store` держит один; в день, когда его ослабят до
- * `private, max-age=…`, отказы останутся единственными без второго рубежа.
- * Обещать здесь больше, чем делает код, нельзя: расхождение докблока
- * с поведением дороже самого пробела.
+ * ⚠️ **Здесь рубеж стоит только на успешных ответах.** `map` не выполняется,
+ * когда цепочку обрывает исключение, поэтому отказы (401, 403, 429, 451, 404)
+ * получают `Vary` в глобальном фильтре исключений (`shared/sentry/sentry.filter.ts`),
+ * а `@Res()`-выгрузки — прямо в `send()` `rights-files.controller.ts`. Правило
+ * одно — `varyAuthorizationIfPrivate` из `cache-control.ts`.
  *
  * Форма правки — решения арбитра 12.09.2026, варианты F и B (`decisions-log.md`).
  */
@@ -44,31 +43,13 @@ export class PrivateVaryInterceptor implements NestInterceptor {
         // К моменту `map` контроллерный интерцептор уже отработал, и
         // заголовок отражает итоговое решение о маршруте.
         // 🔴 Три обработчика заканчивают ответ сами — `@Res()` без
-        // `passthrough` и синхронный `res.send()`/`res.end()`: это выгрузки
-        // в `rights-files.controller.ts`. Nest выполняет интерцепторы и при
-        // уже отданном ответе — пустым становится только `fnHandleResponse`, —
-        // поэтому сюда мы попадаем с `headersSent === true`, а `vary()` внутри
-        // зовёт `setHeader` и бросает `ERR_HTTP_HEADERS_SENT`. Клиент при этом
-        // уже получил тело, так что дефект невидим по коду ответа: он виден
-        // только потоком событий в Sentry с каждой выгрузки.
-        if (response.headersSent) return value;
-
-        if (isPrivate(response.getHeader('Cache-Control'))) response.vary('Authorization');
+        // `passthrough`: выгрузки в `rights-files.controller.ts`. Nest
+        // выполняет интерцепторы и при уже отданном ответе, поэтому сюда
+        // попадаем с `headersSent === true`; хелпер тогда ничего не трогает,
+        // иначе `vary()` бросил бы `ERR_HTTP_HEADERS_SENT`.
+        varyAuthorizationIfPrivate(response);
         return value;
       }),
     );
   }
 }
-
-/**
- * ⚠️ Разбор по директиве, а не сравнение с `PRIVATE_NO_STORE` целиком.
- * Сегодня все приватные заголовки в репозитории — ровно эта строка
- * (`rights-files.controller.ts:237` ставит её же), то есть точное сравнение
- * работало бы. Но оно сломается молча в тот день, когда кто-нибудь напишет
- * `private, max-age=0, must-revalidate`: ответ останется приватным, а второй
- * рубеж перестанет на него вставать, и ни один тест этого не покажет.
- */
-const isPrivate = (value: string | number | string[] | undefined): boolean =>
-  (Array.isArray(value) ? value.join(',') : String(value ?? ''))
-    .split(',')
-    .some((directive) => directive.trim().toLowerCase() === 'private');

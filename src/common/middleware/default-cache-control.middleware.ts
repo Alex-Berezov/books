@@ -25,8 +25,9 @@ import { PRIVATE_NO_STORE } from '../interceptors/cache-control';
  * — ещё позже (`public-cache.interceptor.ts`, безусловный `setHeader`), поэтому
  * поведение 23 публичных обработчиков не меняется.
  *
- * Второй рубеж — `Vary: Authorization` — живёт не здесь, а в фазе «после»
- * `PrivateVaryInterceptor`: решение о публичности маршрута к моменту
+ * Второй рубеж — `Vary: Authorization` — живёт не здесь, а в
+ * `varyAuthorizationIfPrivate` (`cache-control.ts`), который зовут фаза «после»
+ * `PrivateVaryInterceptor` и фильтр исключений: решение о публичности маршрута к моменту
  * middleware ещё не принято, и приписка на этом шаге досталась бы и публичным
  * ответам, откатив `LEGACY-101`.
  *

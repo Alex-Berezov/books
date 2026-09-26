@@ -12,6 +12,7 @@ jest.mock('@sentry/node', () => ({
 
 import * as Sentry from '@sentry/node';
 import { SentryExceptionFilter } from './sentry.filter';
+import { createResponseStub, type ResponseStub } from '../../common/testing/response-stub';
 
 type Scope = {
   setTag: jest.Mock;
@@ -62,9 +63,9 @@ describe('SentryExceptionFilter (unit)', () => {
     };
   }
 
-  function makeHost(req: unknown): ArgumentsHost {
+  function makeHost(req: unknown, response: ResponseStub = createResponseStub()): ArgumentsHost {
     return {
-      switchToHttp: () => ({ getRequest: () => req }),
+      switchToHttp: () => ({ getRequest: () => req, getResponse: () => response }),
     } as unknown as ArgumentsHost;
   }
 
@@ -341,6 +342,56 @@ describe('SentryExceptionFilter (unit)', () => {
       const tags = Object.fromEntries(scope.setTag.mock.calls as [string, string][]);
       expect(tags.status_code).toBe('502');
       expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('LEGACY-108: второй рубеж приватного ответа на отказе', () => {
+    it('приватный ответ (401/403/…) получает Vary: Authorization', () => {
+      const response = createResponseStub({ 'Cache-Control': 'private, no-store' });
+
+      filter.catch(
+        new HttpException('nope', HttpStatus.UNAUTHORIZED),
+        makeHost(makeRequest(), response),
+      );
+
+      expect(response.headers['Vary']).toBe('Authorization');
+    });
+
+    // Сегодня на отказе публичного заголовка не бывает: `catchError`
+    // PublicCacheInterceptor его снимает. Проверка стережёт само правило.
+    it('публичный заголовок Authorization в Vary не получает', () => {
+      const response = createResponseStub({
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=3600',
+      });
+
+      filter.catch(
+        new HttpException('not found', HttpStatus.NOT_FOUND),
+        makeHost(makeRequest(), response),
+      );
+
+      expect(response.vary).not.toHaveBeenCalled();
+    });
+
+    it('ответ, уже отданный @Res()-выгрузкой, не трогает — ERR_HTTP_HEADERS_SENT не бросается', () => {
+      const response = createResponseStub({ 'Cache-Control': 'private, no-store' }, true);
+
+      expect(() =>
+        filter.catch(new Error('boom'), makeHost(makeRequest(), response)),
+      ).not.toThrow();
+      expect(response.vary).not.toHaveBeenCalled();
+    });
+
+    it('чужая приватная форма (`private, max-age=0, must-revalidate`) тоже получает Vary', () => {
+      const response = createResponseStub({
+        'Cache-Control': 'private, max-age=0, must-revalidate',
+      });
+
+      filter.catch(
+        new HttpException('nope', HttpStatus.FORBIDDEN),
+        makeHost(makeRequest(), response),
+      );
+
+      expect(response.headers['Vary']).toBe('Authorization');
     });
   });
 });

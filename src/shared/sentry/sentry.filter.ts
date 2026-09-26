@@ -1,9 +1,10 @@
 import { ArgumentsHost, Catch, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
 import { redactKeys, redactUrl, type RedactAllowList } from './redact.util';
 import { ALLOW_LIST_PATH_PATTERN, RIGHTS_ALLOW_LIST } from './rights-allow-list';
+import { varyAuthorizationIfPrivate } from '../../common/interceptors/cache-control';
 
 /**
  * Global exception filter that reports 5xx errors to Sentry.
@@ -13,6 +14,15 @@ import { ALLOW_LIST_PATH_PATTERN, RIGHTS_ALLOW_LIST } from './rights-allow-list'
  * контекста события обязано проходить через `redactKeys` — это правило
  * `LEGACY-115`; вызовы со своим набором полей (`setUser`, `setTag`,
  * `addBreadcrumb`) редактор не покрывает и решаются глазами.
+ *
+ * `LEGACY-108` (остаток). Единственный глобальный `@Catch()`: все исключения,
+ * кроме `RedirectException` (его забирает `RedirectExceptionFilter` — только при
+ * порядке регистрации из `common/filters/register-global-filters.ts`), идут сюда.
+ * Поэтому здесь же, а не в `PrivateVaryInterceptor`, ставится второй рубеж
+ * приватного ответа (`Vary: Authorization`) на отказах: `map()` интерцептора
+ * не выполняется, когда цепочку обрывает исключение. Логика не зависит от
+ * `enabled` (Sentry-флага): фильтр регистрируется всегда, даже без `SENTRY_DSN`;
+ * безусловность и порядок закреплены `register-global-filters.spec.ts`.
  */
 @Catch()
 export class SentryExceptionFilter extends BaseExceptionFilter {
@@ -25,6 +35,8 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
   }
 
   override catch(exception: unknown, host: ArgumentsHost) {
+    this.applyPrivateVary(host);
+
     try {
       if (this.enabled) {
         const ctx = host.switchToHttp();
@@ -84,6 +96,17 @@ export class SentryExceptionFilter extends BaseExceptionFilter {
 
     // Continue standard Nest exception handling
     return super.catch(exception, host);
+  }
+
+  /**
+   * `LEGACY-108`. К моменту исключения `Cache-Control` приватный на любом
+   * маршруте: умолчание ставит `DefaultCacheControlMiddleware` до гвардов,
+   * а публичный маршрут снимает свой заголовок в `catchError`
+   * `PublicCacheInterceptor`. Правило то же, что у `PrivateVaryInterceptor`,
+   * и лежит в одном месте — `varyAuthorizationIfPrivate`.
+   */
+  private applyPrivateVary(host: ArgumentsHost): void {
+    varyAuthorizationIfPrivate(host.switchToHttp().getResponse<Response>());
   }
 
   private getStatus(exception: unknown): number {
