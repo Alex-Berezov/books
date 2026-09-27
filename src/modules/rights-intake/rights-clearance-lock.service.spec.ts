@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ConflictException } from '@nestjs/common';
 import {
+  CLEARANCE_GROUP_ATTEMPTS,
+  CLEARANCE_GROUP_MOVED_CODE,
   CLEARANCE_TX_OPTIONS,
   LockedClearanceScope,
   RightsClearanceLockService,
@@ -8,10 +11,23 @@ import {
 
 type Version = { rightsProfileId: string | null; approvedRightsReviewId: string | null } | null;
 
-const createPrisma = (version: Version) => {
+const isRowRead = (sql: TemplateStringsArray): boolean =>
+  sql.join('?').includes('FOR NO KEY UPDATE');
+
+/**
+ * `underLock` — ключи строки под замком по попыткам; по умолчанию те же, что до замка.
+ * Расхождение моделирует перепривязку клиренса, закоммиченную между чтением ключей и замком.
+ */
+const createPrisma = (version: Version, underLock: Version[] = []) => {
+  let rowReads = 0;
   const tx = {
     bookVersion: { findUnique: jest.fn().mockResolvedValue(version) },
-    $queryRaw: jest.fn().mockResolvedValue([{ locked: true }]),
+    $queryRaw: jest.fn((sql: TemplateStringsArray) => {
+      if (!isRowRead(sql)) return Promise.resolve([{ locked: true }]);
+      const row = rowReads < underLock.length ? underLock[rowReads] : version;
+      rowReads += 1;
+      return Promise.resolve(row ? [row] : []);
+    }),
   };
   const prisma = {
     // Второй аргумент — опции транзакции; тест читает его из `mock.calls`.
@@ -24,11 +40,13 @@ const createPrisma = (version: Version) => {
 
 /** Пространство имён и ключ каждого взятого замка, в порядке взятия. */
 const lockedKeys = (tx: ReturnType<typeof createPrisma>['tx']): Array<[unknown, unknown]> =>
-  tx.$queryRaw.mock.calls.map((call: unknown[]) => {
-    const sql = call[0] as TemplateStringsArray;
-    expect(sql.join('?')).toContain('pg_advisory_xact_lock(');
-    return [call[1], call[2]];
-  });
+  tx.$queryRaw.mock.calls
+    .filter((call: unknown[]) => !isRowRead(call[0] as TemplateStringsArray))
+    .map((call: unknown[]) => {
+      const sql = call[0] as TemplateStringsArray;
+      expect(sql.join('?')).toContain('pg_advisory_xact_lock(');
+      return [call[1], call[2]];
+    });
 
 /**
  * `LEGACY-368`: обёртка сама открывает транзакцию с дедлайном под ожидание замка, берёт замок
@@ -69,7 +87,7 @@ describe('RightsClearanceLockService', () => {
     expect(tx.bookVersion.findUnique).toHaveBeenCalledTimes(1);
     expect(tx.bookVersion.findUnique).toHaveBeenCalledWith({
       where: { id: 'v1' },
-      select: { rightsProfileId: true, approvedRightsReviewId: true },
+      select: { id: true, rightsProfileId: true, approvedRightsReviewId: true },
     });
     const [readOrder] = tx.bookVersion.findUnique.mock.invocationCallOrder;
     const [firstLock, secondLock] = tx.$queryRaw.mock.invocationCallOrder;
@@ -97,14 +115,72 @@ describe('RightsClearanceLockService', () => {
     expect(lockedKeys(tx).map(([, id]) => id)).toEqual(['p1']);
   });
 
-  it('takes no lock but still runs the work when there is no group or no version', async () => {
+  it('takes no group lock but still runs the work when there is no group or no version', async () => {
     const bare = await run({ rightsProfileId: null, approvedRightsReviewId: null });
     const missing = await run(null);
 
-    expect(bare.tx.$queryRaw).not.toHaveBeenCalled();
+    expect(lockedKeys(bare.tx)).toEqual([]);
     expect(missing.tx.$queryRaw).not.toHaveBeenCalled();
     expect(bare.work).toHaveBeenCalledTimes(1);
     expect(missing.work).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * T56 (решение арбитра 27.09.2026): ключи, прочитанные до замка, сверяются под замком строки —
+   * после замков групп и до тела. Без `FOR NO KEY UPDATE` перепривязка вклинится между сверкой
+   * и телом.
+   */
+  it('rereads the keys under a row lock after the group locks and before the work', async () => {
+    const { tx, work } = await run({ rightsProfileId: 'p1', approvedRightsReviewId: 'r1' });
+
+    const calls = tx.$queryRaw.mock.calls as unknown[][];
+    const rowIndex = calls.findIndex((call) => isRowRead(call[0] as TemplateStringsArray));
+    expect(rowIndex).toBe(calls.length - 1);
+    const sql = (calls[rowIndex][0] as TemplateStringsArray).join('?');
+    expect(sql).toContain('FROM "BookVersion"');
+    expect(sql).toContain('"rightsProfileId"');
+    expect(sql).toContain('"approvedRightsReviewId"');
+    expect(calls[rowIndex].slice(1)).toEqual(['v1']);
+    const rowOrder = tx.$queryRaw.mock.invocationCallOrder[rowIndex];
+    expect(rowOrder).toBeLessThan(work.mock.invocationCallOrder[0]);
+  });
+
+  it('retries the whole transaction when the version moved to another group before the lock', async () => {
+    const before = { rightsProfileId: 'p1', approvedRightsReviewId: 'r1' };
+    const { tx, prisma } = createPrisma(before, [{ ...before, approvedRightsReviewId: 'r2' }]);
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+    const work = jest.fn(() => Promise.resolve('done'));
+
+    await expect(service.runInLockedClearance('v1', work)).resolves.toBe('done');
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(tx.bookVersion.findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers 409 with its own code after the last attempt and never runs the work', async () => {
+    const before = { rightsProfileId: 'p1', approvedRightsReviewId: 'r1' };
+    const moved = { rightsProfileId: 'p2', approvedRightsReviewId: 'r1' };
+    const { prisma } = createPrisma(before, Array<Version>(CLEARANCE_GROUP_ATTEMPTS).fill(moved));
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+    const work = jest.fn(() => Promise.resolve('done'));
+
+    const failure = service.runInLockedClearance('v1', work);
+    await expect(failure).rejects.toBeInstanceOf(ConflictException);
+    await expect(failure).rejects.toMatchObject({
+      response: { statusCode: 409, code: CLEARANCE_GROUP_MOVED_CODE },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(CLEARANCE_GROUP_ATTEMPTS);
+    expect(work).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a failure of the work itself', async () => {
+    const { prisma } = createPrisma({ rightsProfileId: 'p1', approvedRightsReviewId: 'r1' });
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+    const work = jest.fn(() => Promise.reject(new Error('work failed')));
+
+    await expect(service.runInLockedClearance('v1', work)).rejects.toThrow('work failed');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -118,9 +194,17 @@ describe('RightsClearanceLockService', () => {
  */
 describe('RightsClearanceLockService.runInLockedClearanceScope', () => {
   const HASH: Record<string, number> = { p1: 30, p2: 10, r1: 20, r2: 5 };
-  type Group = { rightsProfileId: string | null; approvedRightsReviewId: string | null };
+  type Group = {
+    id?: string;
+    rightsProfileId: string | null;
+    approvedRightsReviewId: string | null;
+  };
 
-  const createPrisma = (versions: Group[]) => {
+  type Row = Group & { id: string };
+
+  /** `underLock` — строки под замком по попыткам; по умолчанию — те же ключи, что до замка. */
+  const createPrisma = (versions: Group[], underLock: Row[][] = []) => {
+    let rowReads = 0;
     const tx = {
       bookVersion: { findMany: jest.fn().mockResolvedValue(versions) },
       $queryRaw: jest.fn((sql: TemplateStringsArray, ...values: unknown[]) => {
@@ -128,6 +212,11 @@ describe('RightsClearanceLockService.runInLockedClearanceScope', () => {
           const ids = values[0] as string[];
           const keys = [...new Set(ids.map((id) => HASH[id]))].sort((x, y) => x - y);
           return Promise.resolve(keys.map((key) => ({ key })));
+        }
+        if (isRowRead(sql)) {
+          const rows = rowReads < underLock.length ? underLock[rowReads] : versions;
+          rowReads += 1;
+          return Promise.resolve(rows);
         }
         return Promise.resolve([]);
       }),
@@ -177,16 +266,16 @@ describe('RightsClearanceLockService.runInLockedClearanceScope', () => {
     const { calls, tx } = await run(
       ['v2', 'v1', 'v3'],
       [
-        { rightsProfileId: 'p1', approvedRightsReviewId: 'r1' },
-        { rightsProfileId: 'p2', approvedRightsReviewId: 'r2' },
-        { rightsProfileId: 'p1', approvedRightsReviewId: null },
+        { id: 'v2', rightsProfileId: 'p1', approvedRightsReviewId: 'r1' },
+        { id: 'v1', rightsProfileId: 'p2', approvedRightsReviewId: 'r2' },
+        { id: 'v3', rightsProfileId: 'p1', approvedRightsReviewId: null },
       ],
     );
 
     expect(tx.bookVersion.findMany).toHaveBeenCalledTimes(1);
     expect(tx.bookVersion.findMany).toHaveBeenCalledWith({
       where: { id: { in: ['v2', 'v1', 'v3'] } },
-      select: { rightsProfileId: true, approvedRightsReviewId: true },
+      select: { id: true, rightsProfileId: true, approvedRightsReviewId: true },
     });
 
     const locks = calls.filter((c) => c.sql.includes('pg_advisory_xact_lock('));
@@ -201,6 +290,8 @@ describe('RightsClearanceLockService.runInLockedClearanceScope', () => {
     const [rowLock] = rowLocks;
     expect(rowLock.sql).toContain('FROM "BookVersion"');
     expect(rowLock.sql).toContain('ORDER BY id');
+    expect(rowLock.sql).toContain('"rightsProfileId"');
+    expect(rowLock.sql).toContain('"approvedRightsReviewId"');
     expect(rowLock.values).toEqual([
       ['v2', 'v1', 'v3'],
       ['p1', 'p2'],
@@ -253,6 +344,48 @@ describe('RightsClearanceLockService.runInLockedClearanceScope', () => {
       calls.filter((c) => c.sql.includes('pg_advisory_xact_lock(')).map((c) => c.values);
     expect(advisory(scopePath.calls)).toEqual(advisory(statements(single.tx)));
     expect(advisory(scopePath.calls).map(([, id]) => id)).toEqual(['p1', 'r1']);
+  });
+
+  it('retries when a version of the set moved to another group before the lock', async () => {
+    const before = { id: 'v1', rightsProfileId: 'p1', approvedRightsReviewId: 'r1' };
+    const { tx, prisma } = createPrisma([before], [[{ ...before, rightsProfileId: 'p2' }]]);
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+    const work = jest.fn(() => Promise.resolve('done'));
+
+    await expect(
+      service.runInLockedClearanceScope(() => Promise.resolve(['v1']), work),
+    ).resolves.toBe('done');
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(tx.bookVersion.findMany).toHaveBeenCalledTimes(2);
+    expect(work).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores rows of other versions of the groups when comparing keys', async () => {
+    const own = { id: 'v1', rightsProfileId: 'p1', approvedRightsReviewId: 'r1' };
+    const neighbour = { id: 'v9', rightsProfileId: 'p1', approvedRightsReviewId: 'r7' };
+    const { prisma } = createPrisma([own], [[own, neighbour]]);
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+
+    await service.runInLockedClearanceScope(
+      () => Promise.resolve(['v1']),
+      () => Promise.resolve(),
+    );
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers 409 after the last attempt of the set path and never runs the work', async () => {
+    const before = { id: 'v1', rightsProfileId: 'p1', approvedRightsReviewId: 'r1' };
+    const moved = { ...before, approvedRightsReviewId: null };
+    const { prisma } = createPrisma([before], Array<Row[]>(CLEARANCE_GROUP_ATTEMPTS).fill([moved]));
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+    const work = jest.fn(() => Promise.resolve());
+
+    await expect(
+      service.runInLockedClearanceScope(() => Promise.resolve(['v1']), work),
+    ).rejects.toMatchObject({ response: { code: CLEARANCE_GROUP_MOVED_CODE } });
+    expect(work).not.toHaveBeenCalled();
   });
 
   it('still locks the rows of versions without any group', async () => {

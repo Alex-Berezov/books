@@ -138,21 +138,71 @@ export const decoratorArgsAll = (text: string, decorator: string): string[] => {
     const start = text.indexOf(opening, from);
     if (start === -1) return found;
 
-    let depth = 0;
-    let end = text.length;
-    for (let i = start + `@${decorator}`.length; i < text.length; i += 1) {
-      if (text[i] === '(') depth += 1;
-      if (text[i] === ')') {
-        depth -= 1;
-        if (depth === 0) {
-          end = i + 1;
-          break;
-        }
-      }
-    }
+    const close = closingParen(text, start + `@${decorator}`.length);
+    const end = close === -1 ? text.length : close + 1;
     found.push(text.slice(start, end));
     from = end;
   }
+};
+
+/**
+ * Строка, шаблон или комментарий, начинающиеся на `i`: индекс их последнего символа, иначе `-1`.
+ * Один пропуск литералов на все разборщики модуля — скобка или запятая внутри текста сообщения
+ * не должна сдвигать границы вызова ни в одном из них (`LEGACY-290`).
+ */
+const literalEnd = (text: string, i: number): number => {
+  const ch = text[i];
+  if (ch === '/' && text[i + 1] === '/') {
+    const eol = text.indexOf('\n', i);
+    return eol === -1 ? text.length - 1 : eol;
+  }
+  if (ch === '/' && text[i + 1] === '*') {
+    const close = text.indexOf('*/', i + 2);
+    return close === -1 ? text.length - 1 : close + 1;
+  }
+  if (ch !== "'" && ch !== '"' && ch !== '`') return -1;
+  let j = i + 1;
+  while (j < text.length && text[j] !== ch) j += text[j] === '\\' ? 2 : 1;
+  return j;
+};
+
+/** Индекс закрывающей скобки для открывающей на `open`, литералы пропускаются. Нет пары — `-1`. */
+export const closingParen = (text: string, open: number): number => {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const skip = literalEnd(text, i);
+    if (skip !== -1) {
+      i = skip;
+      continue;
+    }
+    if (text[i] === '(') depth++;
+    if (text[i] === ')' && --depth === 0) return i;
+  }
+  return -1;
+};
+
+/** Аргументы верхнего уровня вызова между `open` и `close`, литералы пропускаются. */
+export const topLevelArgs = (text: string, open: number, close: number): string[] => {
+  const args: string[] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open + 1; i < close; i++) {
+    const skip = literalEnd(text, i);
+    if (skip !== -1) {
+      i = skip;
+      continue;
+    }
+    const ch = text[i];
+    if ('([{'.includes(ch)) depth++;
+    if (')]}'.includes(ch)) depth--;
+    if (ch === ',' && depth === 0) {
+      args.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  const last = text.slice(start, close).trim();
+  if (last) args.push(last);
+  return args;
 };
 
 /** Содержимое ближайшего `@UseGuards(...)`. Частный случай `decoratorArgs`. */

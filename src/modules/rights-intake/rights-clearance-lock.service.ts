@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -17,7 +17,7 @@ export const CLEARANCE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as cons
  * `CATEGORY_SLUG_LOCK_NAMESPACE` (`831_427_003`), `BOOK_SUMMARY_LOCK_NAMESPACE` (`831_427_004`)
  * и `CATEGORY_TREE_LOCK_KEY` не пересекаются.
  */
-const RIGHTS_PROFILE_LOCK_NAMESPACE = 831_427_101;
+export const RIGHTS_PROFILE_LOCK_NAMESPACE = 831_427_101;
 const RIGHTS_REVIEW_LOCK_NAMESPACE = 831_427_102;
 
 declare const LOCKED_CLEARANCE_SCOPE: unique symbol;
@@ -30,6 +30,38 @@ declare const LOCKED_CLEARANCE_SCOPE: unique symbol;
 export type LockedClearanceScope = {
   readonly versionIds: readonly string[];
   readonly [LOCKED_CLEARANCE_SCOPE]: true;
+};
+
+/**
+ * Попыток на одну транзакцию под замком (`LEGACY-368`, решение арбитра 27.09.2026): версия,
+ * переведённая в другую группу между чтением ключей и замком, откатывает попытку до вызова тела.
+ * Три подряд — это поток перепривязок, а не гонка, и отвечать надо 409, а не крутить очередь.
+ */
+export const CLEARANCE_GROUP_ATTEMPTS = 3;
+
+export const CLEARANCE_GROUP_MOVED_CODE = 'RIGHTS_CLEARANCE_GROUP_MOVED';
+
+/** Ключи группы под замком строки разошлись с прочитанными до замка — попытка откатывается. */
+class ClearanceGroupMovedError extends Error {}
+
+type GroupKeys = { rightsProfileId: string | null; approvedRightsReviewId: string | null };
+
+type VersionKeys = GroupKeys & { id: string };
+
+const isSameGroup = (a: GroupKeys, b: GroupKeys): boolean =>
+  a.rightsProfileId === b.rightsProfileId && a.approvedRightsReviewId === b.approvedRightsReviewId;
+
+/**
+ * Одна сверка на оба пути: ключи каждой версии, прочитанные до замка, против её строки под
+ * замком. Версии, которой под замком нет (удалена встречной транзакцией), сверять не с чем —
+ * тело увидит её отсутствие само, как и до T56.
+ */
+const assertGroupsUnchanged = (before: VersionKeys[], underLock: VersionKeys[]): void => {
+  const lockedById = new Map(underLock.map((row) => [row.id, row]));
+  for (const version of before) {
+    const now = lockedById.get(version.id);
+    if (now && !isSameGroup(now, version)) throw new ClearanceGroupMovedError();
+  }
 };
 
 const distinct = (values: Array<string | null>): string[] => [
@@ -52,14 +84,20 @@ const distinct = (values: Array<string | null>): string[] => [
  * - ключей два и порядок один: сначала профиль, потом проверка прав;
  * - поле со значением `null` пропускается: такой группы нет, соседей по ней фан-аут не ищет.
  *
- * ⚠️ Через `runInLockedClearance` идут 11 писателей одной версии: `ChapterService` (3),
- * `AudioChapterService` (4), `BookVersionService` (`update` и три ручки участников).
+ * ⚠️ Через `runInLockedClearance` идут 11 писателей одной версии со своим `tx`: `ChapterService` (3),
+ * `AudioChapterService` (4), `BookVersionService` (`update` и три ручки участников), — и пометка
+ * без `tx` внутри `RightsContentHashService.markVersionAndClearanceStale`.
  * Пересчёт по персоне и профилю (`PersonsService.update`, `ContributorsService`) идёт через
  * `runInLockedClearanceScope` (`LEGACY-368`, T33). Порядок замков групп у обоих путей один —
- * `lockGroups`. Ручная проверка хеша (`checkVersionStaleness` без `tx`) в транзакции `markSelf`
- * остаётся без замка. Ключи групп читаются до замка: версия, переведённая на другую группу
- * в этом окне, пишется под старыми ключами. Нового писателя с `tx` в пометку
- * компилятор мимо обёртки пропустит — «дедлок закрыт целиком» писать нельзя (`L-019`).
+ * `lockGroups`. Пометка без `tx` (ручная проверка хеша, файл источника) берёт этот же замок
+ * внутри `markVersionAndClearanceStale` (T56). Ключи групп читаются до замка и сверяются после
+ * него под замком строки версии: версия, переведённая в другую группу в этом окне, откатывает
+ * попытку (`ClearanceGroupMovedError`), и транзакция начинается заново. Набор версий персоны
+ * (`resolveVersionIds`) так не сверяется — окно принято (тело `LEGACY-368`). Нового писателя
+ * с `tx` в пометку компилятор мимо обёртки пропустит. Сторож `clearance-lock-writers.spec.ts`
+ * ловит только вызов трёх методов пометки с `tx` текстом вне колбэка замка: чей это `tx`, он
+ * не сверяет, а новый метод самого сервиса хеша, пробрасывающий `tx`, не видит вовсе.
+ * «Дедлок закрыт целиком» писать нельзя (`L-019`).
  */
 @Injectable()
 export class RightsClearanceLockService {
@@ -69,19 +107,24 @@ export class RightsClearanceLockService {
     versionId: string,
     fn: (tx: Prisma.TransactionClient) => Promise<T>,
   ): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      await this.lockVersionClearance(tx, versionId);
-      return fn(tx);
-    }, CLEARANCE_TX_OPTIONS);
+    return this.inLockedTransaction(
+      (tx) => this.lockVersionClearance(tx, versionId),
+      (tx) => fn(tx),
+    );
   }
 
+  /**
+   * Ключи, прочитанные до замка, сверяются с ключами под замком строки: `FOR NO KEY UPDATE`
+   * после замка групп не даёт перепривязке (`rights-book-creation`) вклиниться между сверкой
+   * и телом, а уже закоммиченную перепривязку показывает расхождением.
+   */
   private async lockVersionClearance(
     tx: Prisma.TransactionClient,
     versionId: string,
   ): Promise<void> {
     const version = await tx.bookVersion.findUnique({
       where: { id: versionId },
-      select: { rightsProfileId: true, approvedRightsReviewId: true },
+      select: { id: true, rightsProfileId: true, approvedRightsReviewId: true },
     });
     if (!version) return;
 
@@ -90,6 +133,14 @@ export class RightsClearanceLockService {
       distinct([version.rightsProfileId]),
       distinct([version.approvedRightsReviewId]),
     );
+
+    const locked = await tx.$queryRaw<
+      VersionKeys[]
+    >`SELECT id, "rightsProfileId", "approvedRightsReviewId"
+      FROM "BookVersion"
+      WHERE id = ${versionId}
+      FOR NO KEY UPDATE`;
+    assertGroupsUnchanged([version], locked);
   }
 
   /**
@@ -102,10 +153,10 @@ export class RightsClearanceLockService {
     resolveVersionIds: (tx: Prisma.TransactionClient) => Promise<readonly string[]>,
     fn: (tx: Prisma.TransactionClient, scope: LockedClearanceScope) => Promise<T>,
   ): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      const scope = await this.lockClearanceScope(tx, await resolveVersionIds(tx));
-      return fn(tx, scope);
-    }, CLEARANCE_TX_OPTIONS);
+    return this.inLockedTransaction(
+      async (tx) => this.lockClearanceScope(tx, await resolveVersionIds(tx)),
+      fn,
+    );
   }
 
   /**
@@ -116,6 +167,9 @@ export class RightsClearanceLockService {
    * по возрастанию `id` — тем же порядком, что и у фан-аута (в плане `LockRows` стоит над `Sort`).
    *
    * Замки групп — `lockGroups`, тот же, что у `lockVersionClearance`.
+   *
+   * Ключи версий набора берутся из того же запроса строк и сверяются с прочитанными до замка
+   * (решение арбитра 27.09.2026) — расхождение откатывает попытку, как у `lockVersionClearance`.
    *
    * Пересчёт идёт ровно по возвращённому набору (`checkStalenessForLockedScope`): перечитанный
    * заново набор мог бы включить версию, связанную чужой транзакцией уже после замка.
@@ -129,19 +183,23 @@ export class RightsClearanceLockService {
 
     const versions = await tx.bookVersion.findMany({
       where: { id: { in: ids } },
-      select: { rightsProfileId: true, approvedRightsReviewId: true },
+      select: { id: true, rightsProfileId: true, approvedRightsReviewId: true },
     });
     const profileIds = distinct(versions.map((v) => v.rightsProfileId));
     const reviewIds = distinct(versions.map((v) => v.approvedRightsReviewId));
 
     await this.lockGroups(tx, profileIds, reviewIds);
 
-    await tx.$queryRaw`SELECT id FROM "BookVersion"
+    const locked = await tx.$queryRaw<
+      VersionKeys[]
+    >`SELECT id, "rightsProfileId", "approvedRightsReviewId"
+      FROM "BookVersion"
       WHERE id = ANY(${ids}::text[])
         OR "rightsProfileId" = ANY(${profileIds}::text[])
         OR "approvedRightsReviewId" = ANY(${reviewIds}::text[])
       ORDER BY id
       FOR NO KEY UPDATE`;
+    assertGroupsUnchanged(versions, locked);
 
     return { versionIds: ids } as unknown as LockedClearanceScope;
   }
@@ -186,5 +244,36 @@ export class RightsClearanceLockService {
   private async lock(tx: Prisma.TransactionClient, namespace: number, id: string): Promise<void> {
     await tx.$queryRaw`SELECT true AS locked
       FROM pg_advisory_xact_lock(${namespace}::int4, hashtext(${id}::text))`;
+  }
+
+  /**
+   * Одна транзакция под замком на оба входа. Повтор только до вызова тела: расхождение ключей
+   * бросает `lock`, и тогда транзакция откатывается целиком и начинается заново; после входа
+   * в тело ошибка уходит наверх как есть. Исчерпали попытки — 409.
+   */
+  private async inLockedTransaction<S, T>(
+    lock: (tx: Prisma.TransactionClient) => Promise<S>,
+    fn: (tx: Prisma.TransactionClient, locked: S) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      let hasBodyStarted = false;
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const locked = await lock(tx);
+          hasBodyStarted = true;
+          return fn(tx, locked);
+        }, CLEARANCE_TX_OPTIONS);
+      } catch (error) {
+        if (hasBodyStarted || !(error instanceof ClearanceGroupMovedError)) throw error;
+        if (attempt >= CLEARANCE_GROUP_ATTEMPTS) {
+          throw new ConflictException({
+            statusCode: 409,
+            error: 'Conflict',
+            code: CLEARANCE_GROUP_MOVED_CODE,
+            message: 'Rights clearance group of the version changed concurrently',
+          });
+        }
+      }
+    }
   }
 }

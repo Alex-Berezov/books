@@ -12,7 +12,10 @@ import {
   RightsContentHashComputationDto,
   RightsContentHashCheckDto,
 } from './dto/rights-content-hash.dto';
-import type { LockedClearanceScope } from './rights-clearance-lock.service';
+import {
+  RightsClearanceLockService,
+  type LockedClearanceScope,
+} from './rights-clearance-lock.service';
 
 type Trigger =
   | 'INITIAL_VERSION_SNAPSHOT'
@@ -127,9 +130,8 @@ export const SOURCE_FILE_FIRST_UPLOAD_REASON_CODE = 'SOURCE_FILE_FIRST_UPLOAD';
  * ⚠️ Возврат фан-аута под `inTransaction` оживит дедлок 40P01 на путях без своего `tx`:
  * замок группы (`RightsClearanceLockService`, `LEGACY-368`) берут 11 писателей через
  * `runInLockedClearance` и пересчёт по персоне и профилю через `runInLockedClearanceScope`.
- * Путь без `tx` цикла не лишён: `markSelf` ручной проверки хеша
- * (`POST admin/versions/:id/rights-content-hash/check`) пишет свою версию, затем проверку
- * прав и профиль, и встречается с фан-аутом запертой правки главы (тело `LEGACY-368`).
+ * Путь без `tx` идёт через тот же замок (T56, решение арбитра 27.09.2026): `markSelf` ручной
+ * проверки хеша и файла источника берёт его первым оператором своей транзакции.
  */
 const CONTENT_HASH_TRANSACTION_TIMEOUT_MS = 30_000;
 const CONTENT_HASH_TRANSACTION_MAX_WAIT_MS = 10_000;
@@ -157,7 +159,10 @@ export const RIGHTS_RELEVANT_PERSON_FIELDS = [
 
 @Injectable()
 export class RightsContentHashService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly clearanceLock: RightsClearanceLockService,
+  ) {}
 
   /**
    * LEGACY-036: слепок контента и событие о нём обязаны лечь вместе (ADR-009). Вызывающий,
@@ -967,21 +972,6 @@ export class RightsContentHashService {
     userId?: string | null,
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    const client = tx ?? this.prisma;
-    const version = await client.bookVersion.findUnique({
-      where: { id: versionId },
-      select: {
-        id: true,
-        rightsProfileId: true,
-        approvedRightsReviewId: true,
-        rightsStaleDetectedAt: true,
-      },
-    });
-
-    if (!version) {
-      throw new NotFoundException('BookVersion not found');
-    }
-
     const now = new Date();
     const reasonCode = trigger;
     const reasonRu = TRIGGER_MESSAGES[trigger];
@@ -998,8 +988,18 @@ export class RightsContentHashService {
     // правкой главы. Дедлок `tx`-против-`tx` (`LEGACY-368`) снимают двое вместе: замок группы,
     // который `RightsClearanceLockService.runInLockedClearance` берёт первым оператором
     // транзакции вызывающего, и фан-аут ниже — одним списком обеих групп по `id`.
-    // Писатель со своим `tx` мимо обёртки цикл возвращает.
-    const markSelf = async (client: Prisma.TransactionClient): Promise<void> => {
+    // Писатель со своим `tx` мимо обёртки цикл возвращает. Путь без `tx` берёт замок здесь
+    // (T56): ключи группы для записи читаются уже под ним, а не до него.
+    const markSelf = async (client: Prisma.TransactionClient) => {
+      const version = await client.bookVersion.findUnique({
+        where: { id: versionId },
+        select: { id: true, rightsProfileId: true, approvedRightsReviewId: true },
+      });
+
+      if (!version) {
+        throw new NotFoundException('BookVersion not found');
+      }
+
       await client.bookVersion.update({
         where: { id: versionId },
         data: {
@@ -1047,9 +1047,13 @@ export class RightsContentHashService {
           createdByUserId: userId ?? null,
         },
       });
+
+      return version;
     };
 
-    await this.inTransaction(tx, markSelf);
+    const version = tx
+      ? await markSelf(tx)
+      : await this.clearanceLock.runInLockedClearance(versionId, markSelf);
 
     // Клиренс общий, поэтому его протухание переносится на соседние версии. Своей транзакции
     // этот обход не открывает: у вызывающего со своим `tx` он остаётся внутри неё, как и был,

@@ -1,5 +1,9 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RightsContentHashService } from './rights-content-hash.service';
+import {
+  createClearanceLockFake,
+  type TransactionStand,
+} from '../../common/testing/clearance-lock-fake';
 import { RightsFilesService } from './rights-files.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
@@ -248,7 +252,12 @@ describe('RightsFilesService', () => {
       hashPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
         cb(hashPrisma),
       );
-      contentHash = new RightsContentHashService(hashPrisma as unknown as PrismaService);
+      contentHash = new RightsContentHashService(
+        hashPrisma as unknown as PrismaService,
+        createClearanceLockFake(hashPrisma, {
+          transaction: hashPrisma as unknown as TransactionStand,
+        }).service,
+      );
       jest.spyOn(contentHash, 'computeVersionHash').mockResolvedValue({
         versionId: 'version-1',
         rightsProfileId: 'profile-1',

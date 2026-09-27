@@ -6,6 +6,10 @@ import { RightsClearanceLockService } from '../../modules/rights-intake/rights-c
  * переданный клиент стенда и помнит, открыта ли сейчас «транзакция под замком». Спека пишет
  * в свой мок записи `fake.isLocked()` в момент вызова — так проверяется, что запись идёт
  * внутри обёртки, а не рядом с ней.
+ *
+ * `options.transaction` — стенд со своим `$transaction`: колбэк идёт через него, как у настоящего
+ * замка, открывающего транзакцию (спеки атомарности пометки без `tx`, T56). Без него колбэк
+ * получает `tx` напрямую.
  */
 export interface ClearanceLockFake {
   service: RightsClearanceLockService;
@@ -13,7 +17,14 @@ export interface ClearanceLockFake {
   isLocked(): boolean;
 }
 
-export const createClearanceLockFake = (tx: unknown): ClearanceLockFake => {
+export type TransactionStand = {
+  $transaction: (fn: (client: Prisma.TransactionClient) => Promise<unknown>) => Promise<unknown>;
+};
+
+export const createClearanceLockFake = (
+  tx: unknown,
+  options: { transaction?: TransactionStand } = {},
+): ClearanceLockFake => {
   const lockedVersions: string[] = [];
   let depth = 0;
   const fake = {
@@ -24,6 +35,7 @@ export const createClearanceLockFake = (tx: unknown): ClearanceLockFake => {
       lockedVersions.push(versionId);
       depth += 1;
       try {
+        if (options.transaction) return (await options.transaction.$transaction(fn)) as T;
         return await fn(tx as Prisma.TransactionClient);
       } finally {
         depth -= 1;

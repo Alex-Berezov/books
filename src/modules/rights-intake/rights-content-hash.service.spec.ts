@@ -1,6 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { RightsContentHashService } from './rights-content-hash.service';
+import { RightsClearanceLockService } from './rights-clearance-lock.service';
+import {
+  createClearanceLockFake,
+  type TransactionStand,
+} from '../../common/testing/clearance-lock-fake';
+
 import { PrismaService } from '../../prisma/prisma.service';
 import type { Prisma } from '@prisma/client';
 import type { LockedClearanceScope } from './rights-clearance-lock.service';
@@ -10,6 +16,12 @@ import {
   stableStringify,
   storedBaselineHolds,
 } from './rights-content-hash.util';
+
+// Замок без сырого SQL: те же границы транзакции, что у настоящего, без advisory и сверки ключей.
+const passThroughLock = (client: unknown): RightsClearanceLockService =>
+  createClearanceLockFake(client, {
+    transaction: client as TransactionStand,
+  }).service;
 
 const mockPrisma = {
   bookVersion: {
@@ -60,7 +72,11 @@ describe('RightsContentHashService', () => {
     mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [RightsContentHashService, { provide: PrismaService, useValue: mockPrisma }],
+      providers: [
+        RightsContentHashService,
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: RightsClearanceLockService, useValue: passThroughLock(mockPrisma) },
+      ],
     }).compile();
 
     service = module.get<RightsContentHashService>(RightsContentHashService);
@@ -1974,7 +1990,7 @@ describe('RightsContentHashService — атомарность аудита (LEGA
   };
 
   const buildService = (client: unknown): RightsContentHashService => {
-    const service = new RightsContentHashService(client as PrismaService);
+    const service = new RightsContentHashService(client as PrismaService, passThroughLock(client));
     jest.spyOn(service, 'computeVersionHash').mockResolvedValue(computation);
     return service;
   };
@@ -2211,7 +2227,10 @@ describe('RightsContentHashService — фан-аут одним списком (
 
   const mark = async (tx: unknown) => {
     const root = { $transaction: jest.fn() };
-    const service = new RightsContentHashService(root as unknown as PrismaService);
+    const service = new RightsContentHashService(
+      root as unknown as PrismaService,
+      passThroughLock(root),
+    );
     await service.markVersionAndClearanceStale(
       'A',
       'CHAPTER_UPDATED',
@@ -2222,6 +2241,67 @@ describe('RightsContentHashService — фан-аут одним списком (
     );
     expect(root.$transaction).not.toHaveBeenCalled();
   };
+
+  /**
+   * T56 (решение арбитра 27.09.2026): путь без `tx` (ручная проверка хеша, файл источника) берёт
+   * замок клиренса сам, и ключи групп для `markSelf` читает уже под ним. Путь с `tx` замок уже
+   * держит у вызывающего и второй раз его не берёт.
+   */
+  it('без своего tx пишет свою версию под замком клиренса, а не в голой транзакции', async () => {
+    const { tx } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, []);
+    const root = { $transaction: jest.fn(), bookVersion: tx.bookVersion };
+    const lock = {
+      runInLockedClearance: jest.fn((_id: string, fn: (client: unknown) => Promise<unknown>) =>
+        fn(tx),
+      ),
+    };
+    const service = new RightsContentHashService(
+      root as unknown as PrismaService,
+      lock as unknown as RightsClearanceLockService,
+    );
+
+    await service.markVersionAndClearanceStale('A', 'MANUAL_HASH_CHECK', 'new', 'old', null);
+
+    expect(lock.runInLockedClearance).toHaveBeenCalledTimes(1);
+    expect(lock.runInLockedClearance.mock.calls[0][0]).toBe('A');
+    expect(root.$transaction).not.toHaveBeenCalled();
+    const [lockOrder] = lock.runInLockedClearance.mock.invocationCallOrder;
+    const [readOrder] = tx.bookVersion.findUnique.mock.invocationCallOrder;
+    const [selfWriteOrder] = tx.bookVersion.update.mock.invocationCallOrder;
+    expect(lockOrder).toBeLessThan(readOrder);
+    expect(readOrder).toBeLessThan(selfWriteOrder);
+    expect(tx.rightsReview.update).toHaveBeenCalledTimes(1);
+    expect(tx.rightsReview.update.mock.calls[0][0]).toMatchObject({ where: { id: 'R1' } });
+    expect(tx.rightsProfile.update).toHaveBeenCalledTimes(1);
+    expect(tx.rightsProfile.update.mock.calls[0][0]).toMatchObject({ where: { id: 'P1' } });
+    expect(tx.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('со своим tx замок второй раз не берёт', async () => {
+    const { tx } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, []);
+    const lock = { runInLockedClearance: jest.fn() };
+    const service = new RightsContentHashService(
+      { $transaction: jest.fn() } as unknown as PrismaService,
+      lock as unknown as RightsClearanceLockService,
+    );
+
+    await service.markVersionAndClearanceStale(
+      'A',
+      'CHAPTER_UPDATED',
+      'new',
+      'old',
+      null,
+      tx as unknown as Parameters<RightsContentHashService['markVersionAndClearanceStale']>[5],
+    );
+
+    expect(lock.runInLockedClearance).not.toHaveBeenCalled();
+    expect(tx.bookVersion.update).toHaveBeenCalledTimes(1);
+    expect(tx.bookVersion.update.mock.calls[0][0]).toMatchObject({
+      where: { id: 'A' },
+      data: { rightsRecheckRequired: true, rightsStaleReasonCode: 'CHAPTER_UPDATED' },
+    });
+    expect(tx.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+  });
 
   it('ищет соседей обеих групп одним запросом, отсортированным по id', async () => {
     const { tx } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, []);
