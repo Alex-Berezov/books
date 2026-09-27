@@ -47,6 +47,8 @@ import { addDays } from '../rights-recheck/rights-recheck.util';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AuthorService } from '../author/author.service';
+import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import { uniqueViolationFields } from '../../shared/prisma/prisma-error.util';
 
 interface BookWithRights {
   id: string;
@@ -76,6 +78,16 @@ type BookVersionWithSeo = Prisma.BookVersionGetPayload<{ include: { seo: true } 
  * (5000/2000 мс) не гарантирован на версии с большой историей.
  */
 const BOOK_VERSION_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/**
+ * 🔴 `LEGACY-320`, тема владельца 3 (решение владельца 27.09.2026, пачка `T55c`): язык существующей
+ * версии не меняется — другой язык это другая версия книги. Редирект слага живёт в одном языке
+ * (`SlugRedirect` без языка назначения), и смена языка оставляла старый адрес 404 либо писала 308
+ * на несуществующий адрес. Админка поле языка у существующей версии и так отключает — запрет
+ * на API закрывает прямой вызов. Тот же приём, что у страницы (`PagesService`, `T55b`).
+ */
+const BOOK_VERSION_LANGUAGE_IMMUTABLE_MESSAGE =
+  'Book version language cannot be changed after creation; create a new version instead';
 
 /**
  * Границы транзакций публикации и снятия с публикации (`L-020`). Константа **одна
@@ -972,8 +984,10 @@ export class BookVersionService {
       }
     }
 
+    // `language` содержательным полем не считается: сменить его нельзя (`T55c`), а тот же язык
+    // ничего не пишет — пересчёт свежести прав по нему был бы пустой работой.
     const hasNonSeoFields = Object.keys(dto).some(
-      (k) => k !== 'seoMetaTitle' && k !== 'seoMetaDescription',
+      (k) => k !== 'seoMetaTitle' && k !== 'seoMetaDescription' && k !== 'language',
     );
 
     try {
@@ -1001,6 +1015,13 @@ export class BookVersionService {
           },
         });
         if (!current) throw new NotFoundException('BookVersion not found');
+
+        // `null` проходит `@IsOptional` и значит «не прислано»; тот же язык — не смена. В запись
+        // `language` не идёт вовсе (отсекается ниже вместе с полями SEO): `null` на обязательной
+        // колонке дал бы 500, а тот же язык записывать незачем.
+        if (dto.language != null && dto.language !== current.language) {
+          throw new BadRequestException(BOOK_VERSION_LANGUAGE_IMMUTABLE_MESSAGE);
+        }
 
         // Стереть описание или обложку можно только у черновика: то, что уже видел читатель,
         // не должно опустеть. Гейт стоит на входе в публикацию и правку не смотрит вовсе.
@@ -1034,7 +1055,7 @@ export class BookVersionService {
         }
         // Убираем SEO поля из DTO, так как они не существуют в BookVersion schema
         // eslint-disable-next-line @typescript-eslint/no-unused-vars -- имена нужны только чтобы отсечь поля от остатка
-        const { seoMetaTitle, seoMetaDescription, ...withoutSeo } = dto;
+        const { seoMetaTitle, seoMetaDescription, language, ...withoutSeo } = dto;
         const { characters, quotes, faq, themes, alternativeTitles, symbols, ...updateRest } =
           withoutSeo;
         // `null` здесь не блажь: админка шлёт его при каждом сохранении пустого списка
@@ -1110,6 +1131,11 @@ export class BookVersionService {
       return updated;
     } catch (e: unknown) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
+        // Язык версии неизменяем (`T55c`), так что дубль `(bookId, language)` здесь не возникает:
+        // остаётся `@@unique([language, slug])` — занятый слаг, и называть его надо слагом.
+        if (uniqueViolationFields(e as Prisma.PrismaClientKnownRequestError).includes('slug')) {
+          throw new BadRequestException('Slug is already used by another version in this language');
+        }
         throw new BadRequestException('Version for this language already exists for this book');
       }
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2025') {
@@ -1174,13 +1200,21 @@ export class BookVersionService {
    */
   async remove(id: string, actorUserId: string | null) {
     return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.bookVersion.findUnique({ where: { id } });
+      // 🔴 `LEGACY-320`, пачка `T55c`: строка запирается `FOR UPDATE` до чтения — встречная
+      // смена слага (`update` держит её `FOR NO KEY UPDATE`) дожидается, и уборка редиректов
+      // ниже идёт по живому слагу, а не по снимку до переименования.
+      const [existing] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "BookVersion" WHERE id = ${id} FOR UPDATE`;
       if (!existing) throw new NotFoundException('BookVersion not found');
 
       const removed = await tx.bookVersion.delete({
         where: { id },
         include: { seo: true },
       });
+
+      // 🔴 `LEGACY-400`, пачка `T55c`: `BookVersion.seoId` без каскада — `Seo` удалённой версии
+      // оставалось сиротой; убирается, если больше никому не принадлежит.
+      await deleteSeoIfUnreferenced(tx, removed.seoId);
 
       // `LEGACY-015`, пачка `T19`: парное к `VERSION_PUBLISHED` и `VERSION_UNPUBLISHED`
       // выше по файлу. Без него последнее, что журнал знает о стёртой версии, — что она

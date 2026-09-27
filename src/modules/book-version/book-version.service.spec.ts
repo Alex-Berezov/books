@@ -1305,7 +1305,8 @@ describe('BookVersionService', () => {
   });
 
   it('writes nothing to the log when the version does not exist', async () => {
-    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(null);
+    // Существование читается замком строки (`FOR UPDATE`, `T55c`), а не `findUnique`.
+    prisma.$queryRaw.mockResolvedValueOnce([]);
 
     await expect(service.remove('missing', 'admin-1')).rejects.toThrow(NotFoundException);
     expect(adminAudit.record).not.toHaveBeenCalled();
@@ -2973,6 +2974,108 @@ describe('BookVersionService', () => {
       // не тронут вовсе, а не «отправлен параллельно и просто не дождались».
       expect(prisma.bookVersionContributor.updateMany).toHaveBeenCalledTimes(2);
       expect(prisma.bookVersionContributor.findMany).not.toHaveBeenCalled();
+    });
+  });
+  /**
+   * 🔴 `T55c` (`LEGACY-320`, тема владельца 3, решение владельца 27.09.2026): язык существующей
+   * версии не меняется; `language` в запись не идёт вовсе. `LEGACY-400`: `Seo` удалённой версии
+   * убирается, если больше ничьё; удаление запирает строку прямым `SELECT ... FOR UPDATE` (решение арбитра 27.09.2026).
+   */
+  describe('T55c: язык версии неизменяем, удаление под замком строки', () => {
+    const arrangeCurrent = () =>
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        id: 'v1',
+        seoId: null,
+        status: 'draft',
+        description: 'D',
+        coverImageUrl: 'https://cdn.example.com/cover.jpg',
+        language: Language.en,
+        author: 'A',
+        slug: 'karamazovy',
+      } as unknown as BookVersion);
+
+    it('смена языка — 400, ничего не пишется', async () => {
+      arrangeCurrent();
+
+      await expect(service.update('v1', { language: Language.ru })).rejects.toThrow(
+        'Book version language cannot be changed after creation; create a new version instead',
+      );
+      expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+    });
+
+    it('language: null и тот же язык в запись не попадают', async () => {
+      arrangeCurrent();
+      (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+
+      await service.update('v1', {
+        language: null,
+        title: 'T2',
+      } as unknown as UpdateBookVersionDto);
+      await service.update('v1', { language: Language.en, title: 'T3' });
+
+      expect(prisma.bookVersion.update).toHaveBeenCalledTimes(2);
+      for (const [args] of (prisma.bookVersion.update as jest.Mock).mock.calls as [
+        { data: object },
+      ][]) {
+        expect(args.data).not.toHaveProperty('language');
+      }
+    });
+
+    it('дубль слага при правке называется слагом, а не языком', async () => {
+      arrangeCurrent();
+      (prisma.bookVersion.update as jest.Mock).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: {
+            modelName: 'BookVersion',
+            driverAdapterError: { cause: { constraint: { fields: ['language', 'slug'] } } },
+          },
+        }),
+      );
+
+      await expect(service.update('v1', { slug: 'taken' })).rejects.toThrow(
+        'Slug is already used by another version in this language',
+      );
+    });
+
+    it('тот же язык без других полей не гоняет пересчёт свежести прав', async () => {
+      arrangeCurrent();
+      (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockClear();
+
+      await service.update('v1', { language: Language.en });
+
+      expect(
+        (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mock.calls,
+      ).toHaveLength(0);
+    });
+
+    it('удаление запирает строку FOR UPDATE и убирает ничьё Seo версии', async () => {
+      const now = new Date();
+      (prisma.bookVersion.delete as jest.Mock).mockResolvedValue({
+        id: 'v6',
+        bookId: 'b1',
+        language: Language.en,
+        slug: null,
+        seoId: 7,
+        createdAt: now,
+        updatedAt: now,
+        seo: null,
+      });
+      const seo = prisma.seo as unknown as Record<string, jest.Mock>;
+      seo.findUnique = jest.fn().mockResolvedValue({ bookVersion: null, page: null });
+      seo.deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+
+      await service.remove('v6', 'admin-1');
+
+      const sqls = (prisma.$queryRaw.mock.calls as [readonly string[]][]).map(([parts]) =>
+        parts.join('?'),
+      );
+      expect(sqls[0]).toContain('"BookVersion"');
+      expect(sqls[0]).toContain('FOR UPDATE');
+      expect(seo.deleteMany).toHaveBeenCalledTimes(1);
+      expect(seo.deleteMany).toHaveBeenCalledWith({ where: { id: 7 } });
     });
   });
 });

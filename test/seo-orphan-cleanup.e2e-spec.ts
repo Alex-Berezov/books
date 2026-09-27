@@ -7,6 +7,8 @@ import { PagesService } from '../src/modules/pages/pages.service';
 import { CategoryService } from '../src/modules/category/category.service';
 import { TagsService } from '../src/modules/tags/tags.service';
 import { AuthorService } from '../src/modules/author/author.service';
+import { BookVersionService } from '../src/modules/book-version/book-version.service';
+import { createBookFixture } from './helpers/book-fixture';
 
 /**
  * 🔴 `LEGACY-400`, пачка `T55b`. `Seo` не каскадируется ни от страницы, ни от перевода
@@ -26,6 +28,7 @@ describe('T55b — Seo без сирот, язык страницы неизме
   let categories: CategoryService;
   let tags: TagsService;
   let authors: AuthorService;
+  let versions: BookVersionService;
   const authorIds: string[] = [];
 
   const prefix = `seoorph-${Date.now()}`;
@@ -38,6 +41,7 @@ describe('T55b — Seo без сирот, язык страницы неизме
     categories = moduleRef.get(CategoryService);
     tags = moduleRef.get(TagsService);
     authors = moduleRef.get(AuthorService);
+    versions = moduleRef.get(BookVersionService);
     await moduleRef.init();
   });
 
@@ -48,6 +52,7 @@ describe('T55b — Seo без сирот, язык страницы неизме
       await prisma?.category.deleteMany({ where: { key: { startsWith: prefix } } });
       await prisma?.tag.deleteMany({ where: { key: { startsWith: prefix } } });
       await prisma?.author.deleteMany({ where: { id: { in: authorIds } } });
+      await prisma?.book.deleteMany({ where: { slug: { startsWith: prefix } } });
       await prisma?.seo.deleteMany({ where: { id: { in: seoIds } } });
     } finally {
       await moduleRef?.close();
@@ -237,6 +242,47 @@ describe('T55b — Seo без сирот, язык страницы неизме
     authorIds.push(author.id);
 
     await authors.delete(author.id, 'e2e-actor');
+
+    expect(await seoExists(seoId)).toBe(false);
+  }, 60_000);
+
+  const newVersion = async (tag: string, seoId?: number) => {
+    const book = await createBookFixture(prisma, `${prefix}-${tag}`);
+    return prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: Language.en,
+        slug: `${prefix}-${tag}-v`,
+        title: 'V',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+        ...(seoId ? { seoId } : {}),
+      },
+    });
+  };
+
+  // `T55c` (решение владельца 27.09.2026): то же правило для версии книги.
+  it('версия книги: смена языка — 400, адрес не трогается', async () => {
+    const version = await newVersion('vlang');
+
+    await expect(versions.update(version.id, { language: Language.ru } as never)).rejects.toThrow(
+      'Book version language cannot be changed after creation; create a new version instead',
+    );
+    const after = await prisma.bookVersion.findUnique({
+      where: { id: version.id },
+      select: { language: true, slug: true },
+    });
+    expect(after).toEqual({ language: Language.en, slug: version.slug });
+  }, 60_000);
+
+  it('версия книги: удаление убирает её Seo', async () => {
+    const seoId = await newSeo();
+    const version = await newVersion('vseo', seoId);
+
+    await versions.remove(version.id, 'e2e-actor');
 
     expect(await seoExists(seoId)).toBe(false);
   }, 60_000);

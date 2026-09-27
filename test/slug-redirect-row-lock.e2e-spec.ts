@@ -522,6 +522,46 @@ describe('LEGACY-320 — редирект базового слага пишет
     ]);
   }, 120_000);
 
+  /**
+   * 🔴 `LEGACY-320`, пачка `T55c`. Удаление версии запирает строку `FOR UPDATE` до чтения:
+   * встречное переименование дожидается, и уборка записей, ведущих на умерший слаг, идёт
+   * по живому слагу. Держатель переименовывает `a → b`; запись `x → b` обязана сняться.
+   */
+  it('версия книги: удаление ждёт встречного переименования и убирает записи на живой слаг', async () => {
+    const book = await createBookFixture(prisma, `${prefix}-rmvbook`);
+    const version = await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: Language.en,
+        slug: `${prefix}-rmv-a`,
+        title: 'Row lock',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+      },
+    });
+    await prisma.slugRedirect.create({
+      data: {
+        entityType: 'book',
+        language: Language.en,
+        oldSlug: `${prefix}-rmv-x`,
+        newSlug: `${prefix}-rmv-b`,
+      },
+    });
+
+    await raceAgainstHeld(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "BookVersion" SET slug = ${`${prefix}-rmv-b`} WHERE id = ${version.id}`;
+      },
+      'BookVersion',
+      () => versions.remove(version.id, 'e2e-actor'),
+    );
+
+    expect(await redirectsFrom('book', `${prefix}-rmv-x`)).toEqual([]);
+  }, 120_000);
+
   it('версия книги: вторая смена слага пишет редирект с промежуточного слага', async () => {
     const book = await createBookFixture(prisma, `${prefix}-vbook`);
     const version = await prisma.bookVersion.create({
