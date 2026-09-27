@@ -51,9 +51,16 @@ const EXPECTED: Array<Site & { count: number; verdict: 'invalidated' | 'exempt';
   {
     file: 'modules/auth/auth.service.ts',
     op: 'upsert',
-    count: 4,
+    count: 1,
     verdict: 'exempt',
-    why: 'register и вход через провайдера пишут роли пользователю, созданному строкой выше: записи в кэше для такого userId ещё нет',
+    why: 'вход через провайдера (createSocialUser) пишет базовую роль пользователю, созданному строкой выше: записи в кэше для такого userId ещё нет',
+  },
+  {
+    file: 'modules/auth/auth.service.ts',
+    op: 'createMany',
+    count: 1,
+    verdict: 'exempt',
+    why: 'register (grantRegistrationRoles, LEGACY-015 T43) пишет роли пользователю, созданному строкой выше: записи в кэше для такого userId ещё нет; count вставки — признак изменения для журнала',
   },
 ];
 

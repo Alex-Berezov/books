@@ -23,6 +23,10 @@ import { createBookFixture } from './helpers/book-fixture';
  * Обе половины обязаны быть красными при возврате эскалации: маршрут с
  * `@Roles(Role.Admin)` ловит только чтение из гварда, ветка `isModerator` —
  * только чтение из сервиса ролей.
+ *
+ * Последний кейс — `LEGACY-015`, пачка `T43` (решение арбитра 27.09.2026): бутстрап
+ * по списку на живой базе пишет ровно одно событие `ROLE_ASSIGNED` с актёром `null`.
+ * Откат при отказе журнала он не доказывает — это держат мутации юнит-спеки.
  */
 describe('ENV role escalation e2e (LEGACY-170)', () => {
   let app: INestApplication;
@@ -34,6 +38,7 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
 
   const envEmail = `env_admin_${Date.now()}@example.com`;
   const ownerEmail = `comment_owner_${Date.now()}@example.com`;
+  const bootstrapEmail = `env_bootstrap_${Date.now()}@example.com`;
   const pass = 'password123';
 
   /** Присваивание `undefined` кладёт в `process.env` строку `"undefined"`. */
@@ -104,9 +109,13 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
     await prisma.book.deleteMany({ where: { id: bookId } });
     // Связи ролей сносятся до самих аккаунтов: `UserRole` ссылается на `User`
     // без каскада, и обратный порядок роняет уборку на внешнем ключе.
-    const emails = [envEmail, ownerEmail];
+    const emails = [envEmail, ownerEmail, bootstrapEmail];
     const users = await prisma.user.findMany({ where: { email: { in: emails } } });
-    await prisma.userRole.deleteMany({ where: { userId: { in: users.map((u) => u.id) } } });
+    const userIds = users.map((u) => u.id);
+    await prisma.adminAuditEvent.deleteMany({
+      where: { targetType: 'USER', targetId: { in: userIds } },
+    });
+    await prisma.userRole.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.user.deleteMany({ where: { email: { in: emails } } });
     await app.close();
   });
@@ -140,5 +149,33 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
       .set('Authorization', `Bearer ${envToken}`)
       .expect(200);
     expect((res.body as { roles: string[] }).roles).toEqual(['user']);
+  });
+
+  it('бутстрап по ADMIN_EMAILS пишет одно событие ROLE_ASSIGNED с актёром null (LEGACY-015, T43)', async () => {
+    setEnv('ADMIN_EMAILS', bootstrapEmail);
+    try {
+      await request(httpServerOf(app))
+        .post('/auth/register')
+        .send({ email: bootstrapEmail, password: pass })
+        .expect(201);
+    } finally {
+      setEnv('ADMIN_EMAILS', envEmail);
+    }
+
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { email: bootstrapEmail },
+      select: { id: true, roles: { select: { role: { select: { name: true } } } } },
+    });
+    expect(user.roles.map((r) => r.role.name).sort()).toEqual(['admin', 'user']);
+
+    const events = await prisma.adminAuditEvent.findMany({
+      where: { targetType: 'USER', targetId: user.id },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      action: 'ROLE_ASSIGNED',
+      actorUserId: null,
+      payload: { role: 'admin', source: 'env_bootstrap' },
+    });
   });
 });

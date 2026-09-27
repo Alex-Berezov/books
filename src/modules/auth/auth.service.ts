@@ -11,8 +11,16 @@ import {
 import { LoginDto, RegisterDto, RefreshDto, SocialLoginDto } from './dto/auth.dto';
 import { SocialIdentityService } from './providers/social-identity.service';
 import type { SocialIdentity } from './providers/social-identity.service';
-import { Prisma, User, Language as PrismaLanguage, RoleName } from '@prisma/client';
+import {
+  AdminAuditAction,
+  AdminAuditTargetType,
+  Prisma,
+  User,
+  Language as PrismaLanguage,
+  RoleName,
+} from '@prisma/client';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
+import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 
 /**
  * Пользователь в ответах входа и регистрации.
@@ -61,6 +69,17 @@ type AuthSession = {
   refreshToken: string;
 };
 
+/** Метка пути в `payload` события: выдача роли по env-списку при регистрации (`LEGACY-015`). */
+export const ENV_BOOTSTRAP_AUDIT_SOURCE = 'env_bootstrap';
+
+/**
+ * Создание пользователя, до трёх вставок ролей и двух записей журнала — до семи коротких
+ * операторов, чуть больше пары, на которую рассчитан дефолт Prisma (5 с / 2 с). Бюджет
+ * **ниже**, чем у ролевых транзакций `users.service.ts` (30 с / 10 с): маршрут публичный,
+ * и всплеск регистраций с застрявшим замком держал бы соединение пула до `timeout`.
+ */
+const REGISTRATION_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -68,6 +87,7 @@ export class AuthService {
     private jwt: JwtService,
     private config: ConfigService,
     private social: SocialIdentityService,
+    private adminAudit: AdminAuditService,
   ) {}
 
   private secret(name: string): string {
@@ -105,55 +125,21 @@ export class AuthService {
 
     const passwordHash = await argon2.hash(dto.password);
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash,
-        name: dto.name,
-        languagePreference: dto.languagePreference ?? PrismaLanguage.en,
-      },
-      select: ACCOUNT_USER_SELECT,
-    });
-
-    // Assign default 'user' role and optionally elevated roles from env lists
-    const userRole = await this.prisma.role.findUnique({ where: { name: RoleName.user } });
-    if (userRole) {
-      await this.prisma.userRole.upsert({
-        where: { userId_roleId: { userId: user.id, roleId: userRole.id } },
-        create: { userId: user.id, roleId: userRole.id },
-        update: {},
+    // Пользователь, его роли и запись журнала — одной транзакцией: отказ любой части
+    // не оставляет аккаунта без ролей, на который повторная регистрация ответила бы 409.
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email: dto.email,
+          passwordHash,
+          name: dto.name,
+          languagePreference: dto.languagePreference ?? PrismaLanguage.en,
+        },
+        select: ACCOUNT_USER_SELECT,
       });
-    }
-
-    const adminsList = (this.config.get<string>('ADMIN_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    if (adminsList.includes(user.email.toLowerCase())) {
-      const adminRole = await this.prisma.role.findUnique({ where: { name: RoleName.admin } });
-      if (adminRole)
-        await this.prisma.userRole.upsert({
-          where: { userId_roleId: { userId: user.id, roleId: adminRole.id } },
-          create: { userId: user.id, roleId: adminRole.id },
-          update: {},
-        });
-    }
-
-    const managersList = (this.config.get<string>('CONTENT_MANAGER_EMAILS') || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    if (managersList.includes(user.email.toLowerCase())) {
-      const managerRole = await this.prisma.role.findUnique({
-        where: { name: RoleName.content_manager },
-      });
-      if (managerRole)
-        await this.prisma.userRole.upsert({
-          where: { userId_roleId: { userId: user.id, roleId: managerRole.id } },
-          create: { userId: user.id, roleId: managerRole.id },
-          update: {},
-        });
-    }
+      await this.grantRegistrationRoles(tx, created.id, created.email);
+      return created;
+    }, REGISTRATION_TX_OPTIONS);
 
     const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles);
@@ -280,6 +266,68 @@ export class AuthService {
     });
 
     return { user: { ...this.publicUser(user), roles }, ...tokens };
+  }
+
+  /** Адреса из env-списка через запятую, в нижнем регистре; пустое значение — пустой список. */
+  private static parseEmailList(csv: string | undefined): string[] {
+    return (csv || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  /**
+   * Роли при регистрации: базовая `user` всем, повышенные — по спискам `ADMIN_EMAILS`
+   * и `CONTENT_MANAGER_EMAILS` (бутстрап первого администратора, `LEGACY-170`).
+   *
+   * ⚠️ Выдача повышенной роли пишет `ROLE_ASSIGNED` той же транзакцией (`LEGACY-015`,
+   * решение арбитра 27.09.2026, пачка `T43`): смена ролей журналируется всеми путями,
+   * публичность маршрута тут ничего не решает. Актёр `null`, а не сам пользователь —
+   * иначе журнал утверждал бы, что он выдал админку себе; путь отличает `source`.
+   * Базовая роль события не получает: это не привилегия. Зовётся внутри транзакции
+   * `register()`, создающей самого пользователя, — `tx` приходит оттуда.
+   *
+   * ⚠️ Признак «роль появилась» — `count` вставки с `skipDuplicates` (решение арбитра).
+   * Пока пользователь создаётся этой же транзакцией, `count` всегда 1: чужая транзакция
+   * не вставит роль строке, которой ещё нет. Проверка стоит как сторож инварианта
+   * «событие = изменение состояния» на случай, если путь позовут для существующего
+   * пользователя, а не как защита от гонки.
+   */
+  private async grantRegistrationRoles(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    email: string,
+  ): Promise<void> {
+    const address = email.toLowerCase();
+    const elevated: RoleName[] = [];
+    // Ключи названы литералами: `check:env` сверяет чтения окружения с `.env.example` по имени.
+    const admins = AuthService.parseEmailList(this.config.get<string>('ADMIN_EMAILS'));
+    const managers = AuthService.parseEmailList(this.config.get<string>('CONTENT_MANAGER_EMAILS'));
+    if (admins.includes(address)) elevated.push(RoleName.admin);
+    if (managers.includes(address)) elevated.push(RoleName.content_manager);
+    const wanted = [RoleName.user, ...elevated];
+
+    const roles = await tx.role.findMany({
+      where: { name: { in: wanted } },
+      select: { id: true, name: true },
+    });
+    // Порядок — по `wanted`, а не по выдаче базы: события пишутся в предсказуемом порядке.
+    for (const name of wanted) {
+      const role = roles.find((r) => r.name === name);
+      if (!role) continue;
+      const { count } = await tx.userRole.createMany({
+        data: [{ userId, roleId: role.id }],
+        skipDuplicates: true,
+      });
+      if (count === 0 || role.name === RoleName.user) continue;
+      await this.adminAudit.record(tx, {
+        action: AdminAuditAction.ROLE_ASSIGNED,
+        targetType: AdminAuditTargetType.USER,
+        targetId: userId,
+        actorUserId: null,
+        payload: { role: role.name, source: ENV_BOOTSTRAP_AUDIT_SOURCE },
+      });
+    }
   }
 
   private async createSocialUser(

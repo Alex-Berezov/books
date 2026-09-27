@@ -8,12 +8,14 @@ import { AuthController } from './auth.controller';
 import { SocialIdentityService } from './providers/social-identity.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
+import { AdminAuditModule } from '../../shared/admin-audit/admin-audit.module';
 
 @Module({
   imports: [
     ConfigModule,
     PassportModule,
     RateLimitModule,
+    AdminAuditModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
