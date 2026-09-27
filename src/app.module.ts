@@ -38,6 +38,7 @@ import { DefaultCacheControlMiddleware } from './common/middleware/default-cache
 import { HealthModule } from './modules/health/health.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.module';
+import { AdminAuditEventsModule } from './modules/admin-audit-events/admin-audit-events.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { MediaJobsModule } from './modules/media-jobs/media-jobs.module';
 import { PrismaModule } from './shared/prisma/prisma.module';
@@ -97,6 +98,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     BackgroundJobsModule,
     QueueModule,
     MediaJobsModule,
+    AdminAuditEventsModule,
     AuthorModule,
     ImportModule,
     RightsIntakeModule,

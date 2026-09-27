@@ -99,6 +99,96 @@
         ],
         "type": "object"
       },
+      "AdminAuditAction": {
+        "enum": [
+          "ROLE_ASSIGNED",
+          "ROLE_REVOKED",
+          "VERSION_UNPUBLISHED",
+          "VERSION_PUBLISHED",
+          "USER_DELETED",
+          "BOOK_DELETED",
+          "VERSION_DELETED",
+          "CHAPTER_DELETED",
+          "AUDIO_CHAPTER_DELETED",
+          "CATEGORY_DELETED",
+          "CATEGORY_TRANSLATION_DELETED",
+          "TAG_DELETED",
+          "TAG_TRANSLATION_DELETED",
+          "AUTHOR_DELETED",
+          "PERSON_DELETED",
+          "PAGE_DELETED",
+          "PAGE_PUBLISHED",
+          "PAGE_UNPUBLISHED"
+        ],
+        "type": "string"
+      },
+      "AdminAuditEventResponseDto": {
+        "properties": {
+          "action": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminAuditAction"
+              }
+            ]
+          },
+          "actorUserId": {
+            "description": "null when the action had no human actor (env bootstrap on registration)",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "description": "Event-specific object; never carries emails or names of users. AUTHOR_DELETED lists public {language, slug} addresses of the deleted author.",
+            "nullable": true,
+            "type": "object"
+          },
+          "targetId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "targetType": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminAuditTargetType"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "actorUserId",
+          "action",
+          "targetType",
+          "targetId",
+          "payload",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "AdminAuditTargetType": {
+        "enum": [
+          "USER",
+          "BOOK_VERSION",
+          "BOOK",
+          "CHAPTER",
+          "AUDIO_CHAPTER",
+          "CATEGORY",
+          "TAG",
+          "AUTHOR",
+          "PERSON",
+          "PAGE"
+        ],
+        "type": "string"
+      },
       "AdminAuthorItemDto": {
         "properties": {
           "birthDate": {
@@ -23993,6 +24083,128 @@
         "summary": "Admin: get audio chapter by id (any status)",
         "tags": [
           "audio-chapters"
+        ]
+      }
+    },
+    "/admin/audit-events": {
+      "get": {
+        "description": "Rows of the admin action journal, newest first. targetId requires targetType. Actor is returned as id only: the journal carries no emails or names.",
+        "operationId": "AdminAuditEventsController_list",
+        "parameters": [
+          {
+            "description": "Page number",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "example": 1,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Records per page. Values above 100 are rejected with 400.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "example": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Required when targetId is set",
+            "in": "query",
+            "name": "targetType",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AdminAuditTargetType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "targetId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actorUserId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AdminAuditAction"
+            }
+          },
+          {
+            "description": "ISO date-time with a time zone, inclusive lower bound of createdAt",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "ISO date-time with a time zone, inclusive upper bound of createdAt; earlier than from gives 400",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AdminAuditEventResponseDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Admin audit log (admin only)",
+        "tags": [
+          "admin"
         ]
       }
     },

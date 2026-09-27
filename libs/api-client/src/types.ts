@@ -37,6 +37,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/audit-events': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Admin audit log (admin only)
+     * @description Rows of the admin action journal, newest first. targetId requires targetType. Actor is returned as id only: the journal carries no emails or names.
+     */
+    get: operations['AdminAuditEventsController_list'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/authors': {
     parameters: {
       query?: never;
@@ -4325,6 +4345,57 @@ export interface components {
     AddLawyerReviewNoteDto: {
       messageRu: string;
     };
+    /** @enum {string} */
+    AdminAuditAction:
+      | 'ROLE_ASSIGNED'
+      | 'ROLE_REVOKED'
+      | 'VERSION_UNPUBLISHED'
+      | 'VERSION_PUBLISHED'
+      | 'USER_DELETED'
+      | 'BOOK_DELETED'
+      | 'VERSION_DELETED'
+      | 'CHAPTER_DELETED'
+      | 'AUDIO_CHAPTER_DELETED'
+      | 'CATEGORY_DELETED'
+      | 'CATEGORY_TRANSLATION_DELETED'
+      | 'TAG_DELETED'
+      | 'TAG_TRANSLATION_DELETED'
+      | 'AUTHOR_DELETED'
+      | 'PERSON_DELETED'
+      | 'PAGE_DELETED'
+      | 'PAGE_PUBLISHED'
+      | 'PAGE_UNPUBLISHED';
+    AdminAuditEventResponseDto: {
+      action: components['schemas']['AdminAuditAction'];
+      /**
+       * Format: uuid
+       * @description null when the action had no human actor (env bootstrap on registration)
+       */
+      actorUserId: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      /** @description Event-specific object; never carries emails or names of users. AUTHOR_DELETED lists public {language, slug} addresses of the deleted author. */
+      payload: {
+        [key: string]: unknown;
+      } | null;
+      /** Format: uuid */
+      targetId: string;
+      targetType: components['schemas']['AdminAuditTargetType'];
+    };
+    /** @enum {string} */
+    AdminAuditTargetType:
+      | 'USER'
+      | 'BOOK_VERSION'
+      | 'BOOK'
+      | 'CHAPTER'
+      | 'AUDIO_CHAPTER'
+      | 'CATEGORY'
+      | 'TAG'
+      | 'AUTHOR'
+      | 'PERSON'
+      | 'PAGE';
     AdminAuthorItemDto: {
       /** @example 1854-10-16 */
       birthDate: string | null;
@@ -12617,6 +12688,42 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['AudioChapterResponseDto'];
+        };
+      };
+    };
+  };
+  AdminAuditEventsController_list: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Records per page. Values above 100 are rejected with 400. */
+        limit?: number;
+        /** @description Required when targetId is set */
+        targetType?: components['schemas']['AdminAuditTargetType'];
+        targetId?: string;
+        actorUserId?: string;
+        action?: components['schemas']['AdminAuditAction'];
+        /** @description ISO date-time with a time zone, inclusive lower bound of createdAt */
+        from?: string;
+        /** @description ISO date-time with a time zone, inclusive upper bound of createdAt; earlier than from gives 400 */
+        to?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['AdminAuditEventResponseDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
         };
       };
     };
