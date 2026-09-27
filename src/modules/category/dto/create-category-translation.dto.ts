@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
@@ -68,7 +69,7 @@ export class CreateCategoryTranslationDto {
 
   @ApiPropertyOptional({ description: 'Open Graph image URL' })
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   ogImageUrl?: string;
 
   @ApiPropertyOptional({ description: 'Open Graph image alt text' })

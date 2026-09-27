@@ -485,8 +485,9 @@ export class ImportService {
    *
    * ⚠️ Проверено ровно то, что объявлено декораторами, и не больше. С 25.09.2026
    * (`LEGACY-401`, `LEGACY-402`) `faq` проверяется и как массив, и по форме
-   * каждого элемента (`@ValidateNested`). Остаток `LEGACY-401` — форма URL
-   * (`canonicalUrl`/`ogImageUrl` по-прежнему только `@IsString()`). Перевод
+   * каждого элемента (`@ValidateNested`). С 27.09.2026 (`T57`) `canonicalUrl`/
+   * `ogImageUrl` — `@IsAbsoluteHttpUrl()`, элементы `related*Slugs` — форма слага,
+   * те же правила, что у админских DTO тега и категории. Перевод
    * категории с полями тега (`canonicalUrl`, `robots`, `indexable`,
    * `related*Slugs`) отвергается `forbidNonWhitelisted`, а не молча
    * теряет эти поля: у `ImportCategoryTranslationDto` их нет.

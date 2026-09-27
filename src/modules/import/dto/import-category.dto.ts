@@ -16,6 +16,7 @@ import {
 import { Type } from 'class-transformer';
 import { CategoryType } from '@prisma/client';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 
@@ -68,7 +69,7 @@ export class ImportCategoryTranslationDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   ogImageUrl?: string | null;
 
   @ApiPropertyOptional()

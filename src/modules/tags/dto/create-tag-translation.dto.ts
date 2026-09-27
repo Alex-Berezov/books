@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { SeoInputDto } from '../../pages/dto/seo-input.dto';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 import {
@@ -86,7 +87,7 @@ export class CreateTagTranslationDto {
 
   @ApiPropertyOptional({ description: 'Open Graph image URL' })
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   ogImageUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Open Graph image alt text' })
@@ -96,7 +97,7 @@ export class CreateTagTranslationDto {
 
   @ApiPropertyOptional({ description: 'Canonical URL' })
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   canonicalUrl?: string;
 
   @ApiPropertyOptional({ description: 'Robots directive', example: 'index, follow' })
@@ -132,6 +133,7 @@ export class CreateTagTranslationDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedTagSlugs?: string[];
 
   @ApiPropertyOptional({
@@ -142,6 +144,7 @@ export class CreateTagTranslationDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedGenreSlugs?: string[];
 
   @ApiPropertyOptional({
@@ -152,6 +155,7 @@ export class CreateTagTranslationDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedCategorySlugs?: string[];
 
   @ApiPropertyOptional({
@@ -162,6 +166,7 @@ export class CreateTagTranslationDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedCollectionSlugs?: string[];
 
   @ApiPropertyOptional({ description: 'SEO metadata', type: SeoInputDto })

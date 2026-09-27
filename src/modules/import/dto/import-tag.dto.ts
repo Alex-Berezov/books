@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 
@@ -66,7 +67,7 @@ export class ImportTagTranslationDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   ogImageUrl?: string | null;
 
   @ApiPropertyOptional()
@@ -76,7 +77,7 @@ export class ImportTagTranslationDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   canonicalUrl?: string;
 
   @ApiPropertyOptional({ default: 'index, follow' })
@@ -107,24 +108,28 @@ export class ImportTagTranslationDto {
   @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedTagSlugs?: string[];
 
   @ApiPropertyOptional({ type: [String] })
   @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedGenreSlugs?: string[];
 
   @ApiPropertyOptional({ type: [String] })
   @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedCategorySlugs?: string[];
 
   @ApiPropertyOptional({ type: [String] })
   @ValidateIf((_o, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
+  @Matches(new RegExp(SLUG_PATTERN), { each: true, message: SLUG_REGEX_README })
   relatedCollectionSlugs?: string[];
 }
 

@@ -31,11 +31,19 @@ describe('ImportTagTranslationDto: мягкость декораторов (LEGA
     expect(errors({ faq: [{ question: 'Q', answer: 'A', extra: true }] })).toContain('faq');
   });
 
-  // Форма слага у элементов `related*Slugs` намеренно не проверяется: админский PATCH той же
-  // колонки её не проверяет, вводить на всех путях сразу — остаток `LEGACY-401` (`T57`).
   it('отбивает нестроковый элемент related*Slugs', () => {
     expect(errors({ relatedTagSlugs: [1] })).toContain('relatedTagSlugs');
     expect(errors({ relatedCollectionSlugs: [{}] })).toContain('relatedCollectionSlugs');
+  });
+
+  it.each([
+    'relatedTagSlugs',
+    'relatedGenreSlugs',
+    'relatedCategorySlugs',
+    'relatedCollectionSlugs',
+  ])('отбивает элемент %s не по форме слага (T57)', (field) => {
+    expect(errors({ [field]: ['Not A Slug!!'] })).toContain(field);
+    expect(errors({ [field]: ['beauty', ''] })).toContain(field);
   });
 
   it('отбивает `indexable: null`, а не пропускает его в Prisma', () => {
