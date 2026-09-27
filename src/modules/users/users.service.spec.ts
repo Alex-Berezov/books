@@ -69,6 +69,8 @@ interface PrismaStub {
   viewStat: { updateMany: jest.Mock };
   mediaAsset: { updateMany: jest.Mock };
   adminAuditEvent: { createMany: jest.Mock };
+  // Замок строки `User` (`lockUserRow`): тегированный шаблон, первый аргумент — части SQL.
+  $queryRaw: jest.Mock;
   // Второй параметр — `{ timeout, maxWait }` (`USER_WRITE_TX_OPTIONS`). Он объявлен здесь,
   // а не опущен, потому что это поведение: на дефолтах Prisma смена набора ролей на занятом
   // пуле отдаёт `P2028`, и посадка на эти значения читает именно `mock.calls[0][1]`.
@@ -136,6 +138,7 @@ describe('UsersService (unit)', () => {
       viewStat: { updateMany: jest.fn() },
       mediaAsset: { updateMany: jest.fn() },
       adminAuditEvent: { createMany: jest.fn() },
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'u1' }]),
       $transaction: jest.fn(async (arg: TransactionArg) => {
         if (typeof arg === 'function') {
           return arg(prismaMock);
@@ -631,6 +634,125 @@ describe('UsersService (unit)', () => {
     });
     expect(prismaMock.userRole.createMany).not.toHaveBeenCalled();
     expect(prismaMock.adminAuditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 `LEGACY-015` пункт 5 (`T44`). Снимок ролей точен, только если прочитан после замка
+   * строки `User`, и замок обязан быть у **всех** писателей ролей: без него у `assignRole`
+   * встречная выдача между снимком и `deleteMany` в `update` оставляет в журнале роль, которой нет.
+   */
+  describe('замок строки User у писателей ролей', () => {
+    type Writer = {
+      name: string;
+      strength: 'FOR NO KEY UPDATE' | 'FOR UPDATE';
+      call: () => Promise<unknown>;
+      // Операторы, которые обязаны идти после замка.
+      after: () => jest.Mock[];
+      // Записи, которых не должно быть, если строки под замком нет.
+      writes: () => jest.Mock[];
+    };
+
+    // Колбэк транзакции получает отдельный клиент со своим `$queryRaw`: замок, взятый корневым
+    // клиентом, ушёл бы автокоммитом на другое соединение пула и снялся бы сразу (урок `T20`).
+    let txQueryRaw: jest.Mock;
+
+    beforeEach(() => {
+      txQueryRaw = jest.fn().mockResolvedValue([{ id: 'u1' }]);
+      prismaMock.$transaction.mockImplementation(async (arg: TransactionArg) => {
+        if (typeof arg !== 'function') return Promise.all(arg);
+        return arg({ ...prismaMock, $queryRaw: txQueryRaw });
+      });
+      prismaMock.user.findUnique.mockResolvedValue(baseUser);
+      prismaMock.user.update.mockResolvedValue(baseUser);
+      prismaMock.user.delete.mockResolvedValue(baseUser);
+      prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+      prismaMock.role.findMany.mockResolvedValue([{ id: 'r1', name: 'admin' }]);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
+      prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.userRole.createMany.mockResolvedValue({ count: 1 });
+      prismaMock.userRole.delete.mockResolvedValue({});
+      prismaMock.comment.findMany.mockResolvedValue([]);
+      prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+    });
+
+    const writers: Writer[] = [
+      {
+        name: 'update',
+        strength: 'FOR NO KEY UPDATE',
+        call: () => service.update('u1', { roles: ['admin'] }, 'admin-1'),
+        after: () => [prismaMock.user.update, prismaMock.userRole.findMany],
+        writes: () => [
+          prismaMock.user.update,
+          prismaMock.userRole.deleteMany,
+          prismaMock.userRole.createMany,
+          adminAudit.record,
+        ],
+      },
+      {
+        name: 'assignRole',
+        strength: 'FOR NO KEY UPDATE',
+        call: () => service.assignRole('u1', 'admin', 'admin-1'),
+        after: () => [prismaMock.userRole.createMany],
+        writes: () => [prismaMock.userRole.createMany, adminAudit.record],
+      },
+      {
+        name: 'revokeRole',
+        strength: 'FOR NO KEY UPDATE',
+        call: () => service.revokeRole('u1', 'admin', 'admin-1'),
+        after: () => [prismaMock.userRole.delete],
+        writes: () => [prismaMock.userRole.delete, adminAudit.record],
+      },
+      {
+        name: 'deleteById',
+        strength: 'FOR UPDATE',
+        call: () => service.deleteById('u1', 'admin-1'),
+        after: () => [prismaMock.comment.findMany, prismaMock.userRole.findMany],
+        writes: () => [
+          prismaMock.like.deleteMany,
+          prismaMock.userRole.deleteMany,
+          prismaMock.user.delete,
+          adminAudit.record,
+        ],
+      },
+    ];
+
+    it.each(writers)('$name: $strength на строку цели, клиентом транзакции, первым', async (w) => {
+      await w.call();
+
+      expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+      expect(txQueryRaw).toHaveBeenCalledTimes(1);
+      const lock = txQueryRaw.mock.calls[0][0] as Prisma.Sql;
+      expect(lock.sql).toBe(`SELECT id FROM "User" WHERE id = ? ${w.strength}`);
+      expect(lock.values).toEqual(['u1']);
+      const lockAt = txQueryRaw.mock.invocationCallOrder[0];
+      for (const op of w.after()) {
+        expect(op).toHaveBeenCalled();
+        expect(lockAt).toBeLessThan(op.mock.invocationCallOrder[0]);
+      }
+      // «Первым» — против всех вызовов стаба после открытия транзакции, а не только выбранных.
+      const allMocks = (o: object): jest.Mock[] =>
+        Object.values(o).flatMap((v: unknown) =>
+          jest.isMockFunction(v) ? [v] : v && typeof v === 'object' ? allMocks(v) : [],
+        );
+      const txAt = prismaMock.$transaction.mock.invocationCallOrder[0];
+      const insideTx = [...allMocks(prismaMock), adminAudit.record]
+        .filter((m) => m !== prismaMock.$transaction)
+        .flatMap((m) => m.mock.invocationCallOrder)
+        .filter((at) => at > txAt);
+      expect(insideTx.length).toBeGreaterThan(0);
+      expect(Math.min(...insideTx)).toBeGreaterThan(lockAt);
+    });
+
+    it.each(writers)('$name: строки под замком нет — 404 без записей и журнала', async (w) => {
+      txQueryRaw.mockResolvedValueOnce([]);
+
+      await expect(w.call()).rejects.toThrow(new NotFoundException('User not found'));
+      for (const op of w.writes()) expect(op).not.toHaveBeenCalled();
+    });
   });
 
   /**

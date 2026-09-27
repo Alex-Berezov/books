@@ -37,6 +37,9 @@ function isTestEmail(email: string): boolean {
 
 async function deleteUserCascade(userId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    // `T44`: строка `User` запирается первой, как в `UsersService.deleteById` — писатели ролей
+    // берут её раньше строк `UserRole`, и обратный порядок здесь давал взаимную блокировку (40P01).
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
     const comments = await tx.comment.findMany({ where: { userId }, select: { id: true } });
     const commentIds = comments.map((c) => c.id);
 

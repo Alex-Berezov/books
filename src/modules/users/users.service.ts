@@ -68,6 +68,31 @@ const isRecordNotFound = (error: unknown): boolean =>
 const USER_EXISTS_SELECT = { id: true } satisfies Prisma.UserSelect;
 
 /**
+ * 🔴 `LEGACY-015` пункт 5 (решение арбитра 27.09.2026, `T44`). Все писатели ролей
+ * существующего пользователя запирают его строку первым оператором транзакции: снимок
+ * набора ролей, прочитанный после замка, точен, и разница, которую пишет журнал,
+ * совпадает с тем, что поменялось. Без замка встречный `assignRole` между чтением
+ * и `deleteMany` в `update` оставлял в журнале `ROLE_ASSIGNED` на снесённую роль.
+ * Сила — `FOR NO KEY UPDATE` (вставки со ссылкой на пользователя не держит), у удаления
+ * строки — `FOR UPDATE`. Нет строки — 404.
+ */
+async function lockUserRow(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  strength: 'NO_KEY_UPDATE' | 'UPDATE',
+): Promise<void> {
+  // Два полных литерала, а не `Prisma.raw` с силой: строку `drift-check` прочитать не может
+  // и валит конвейер (`LEGACY-123`); ключевое слово параметром не передаётся, как у `lockBookRow`.
+  // Расхождение копий ловит спека: она сверяет текст обоих вариантов.
+  const lock =
+    strength === 'UPDATE'
+      ? Prisma.sql`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+      : Prisma.sql`SELECT id FROM "User" WHERE id = ${userId} FOR NO KEY UPDATE`;
+  const rows = await tx.$queryRaw<{ id: string }[]>(lock);
+  if (rows.length === 0) throw new NotFoundException('User not found');
+}
+
+/**
  * Карточка книги на странице активности пользователя — своя, главы или
  * аудиоглавы (`getActivities`). Одна константа вместо трёх одинаковых
  * вложенных селектов подряд (`LEGACY-218`): разъедутся при правке иначе.
@@ -183,6 +208,7 @@ export class UsersService {
 
     const deleted = await this.prisma.$transaction(
       async (tx) => {
+        await lockUserRow(tx, userId, 'UPDATE');
         // 1) Collect user's comment IDs
         const userComments = await tx.comment.findMany({
           where: { userId },
@@ -317,12 +343,13 @@ export class UsersService {
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException('Role not found');
     await this.prisma.$transaction(async (tx) => {
+      await lockUserRow(tx, userId, 'NO_KEY_UPDATE');
       // ⚠️ Вставка и признак «роль действительно появилась» берутся **одним** оператором.
       // Отдельное чтение перед `upsert` выглядело бы проверкой, но ничего не проверяет:
       // на `READ COMMITTED` (умолчание Postgres) оба параллельных запроса увидели бы `null`
       // и записали бы по событию на одну фактическую выдачу. `skipDuplicates` разворачивается
-      // в `ON CONFLICT DO NOTHING`, второй запрос ждёт коммита первого на индексе первичного ключа
-      // `UserRole(userId, roleId)` и получает `count === 0` — то есть ответ «не я её выдал».
+      // в `ON CONFLICT DO NOTHING`: второй запрос (после `T44` — уже на замке строки `User` выше)
+      // ждёт коммита первого и получает `count === 0` — то есть ответ «не я её выдал».
       const { count } = await tx.userRole.createMany({
         data: [{ userId, roleId: role.id }],
         skipDuplicates: true,
@@ -362,6 +389,7 @@ export class UsersService {
     if (!role) throw new NotFoundException('Role not found');
     try {
       await this.prisma.$transaction(async (tx) => {
+        await lockUserRow(tx, userId, 'NO_KEY_UPDATE');
         await tx.userRole.delete({ where: { userId_roleId: { userId, roleId: role.id } } });
         await this.recordRoleAuditEvents(
           tx,
@@ -588,13 +616,12 @@ export class UsersService {
    * ⚠️ События считаются по **разнице** наборов, а не по факту вызова: замена набора на
    * такой же следа не оставляет, ровно как повторная выдача в `assignRole`.
    *
-   * ⚠️ Разница считается от набора, прочитанного в этой же транзакции, но на `READ COMMITTED`
-   * это всё-таки снимок: две одновременные правки одного пользователя обе прочитают прежний
-   * набор и обе запишут свою разницу. В базе окажется верное состояние, в журнале — лишняя
-   * пара строк. Здесь, в отличие от `assignRole`, признак изменения из самой записи не
-   * достать: `deleteMany` + `createMany` не отвечают, что именно поменялось относительно
-   * чужого коммита. Чинится уровнем изоляции или блокировкой строки `User` с разбором
-   * повторов транзакции — отдельной строкой очереди, не этой пачкой.
+   * ⚠️ Разница считается от набора, прочитанного **после замка строки `User`** (`lockUserRow`):
+   * `deleteMany` + `createMany` не отвечают, что поменялось относительно чужого коммита, поэтому
+   * точность снимка держит замок, который берут все писатели ролей (`LEGACY-015` пункт 5).
+   * Роли **существующего** пользователя вне замка пишет только upsert базовой `user` при входе
+   * через провайдера (`auth.service.ts`); выдача при регистрации идёт той же транзакцией, что
+   * создаёт строку, и встречных писателей не имеет. Вне приложения — сид и скрипт очистки e2e.
    */
   async update(
     id: string,
@@ -624,6 +651,7 @@ export class UsersService {
     }
 
     const updatedUser = await this.prisma.$transaction(async (tx) => {
+      await lockUserRow(tx, id, 'NO_KEY_UPDATE');
       const u = await tx.user.update({ where: { id }, data, select: ACCOUNT_USER_SELECT });
 
       if (rolesDto) {
