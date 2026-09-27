@@ -11,7 +11,7 @@ import {
 import {
   RECHECK_EMBEDDED_TASKS_LIMIT,
   RECHECK_ERROR_CODES,
-  RECHECK_EVENT_DRIVEN_DUE_DAYS_DEFAULT,
+  RECHECK_MANUAL_DUE_DAYS_DEFAULT,
   RECHECK_GATE_CODES,
   RECHECK_LIST_DEFAULT_LIMIT,
   RECHECK_LIST_MAX_LIMIT,
@@ -106,7 +106,7 @@ interface RecordEventInput {
 
 /** Resolved Phase 18 runtime configuration. */
 export interface RecheckRuntimeConfig extends RecheckDateConfig {
-  eventDueDays: number;
+  manualDueDays: number;
   batchSize: number;
 }
 
@@ -157,9 +157,10 @@ export class RightsRecheckService {
         this.config.get('RIGHTS_RECHECK_OVERDUE_GRACE_DAYS'),
         RECHECK_OVERDUE_GRACE_DAYS_DEFAULT,
       ),
-      eventDueDays: parsePositiveInt(
+      // Имя переменной окружения прежнее ради настроенных окружений; переименование сбросит срок на умолчание.
+      manualDueDays: parsePositiveInt(
         this.config.get('RIGHTS_RECHECK_EVENT_DUE_DAYS'),
-        RECHECK_EVENT_DRIVEN_DUE_DAYS_DEFAULT,
+        RECHECK_MANUAL_DUE_DAYS_DEFAULT,
       ),
       batchSize: parsePositiveInt(
         this.config.get('RIGHTS_RECHECK_SCAN_BATCH_SIZE'),
@@ -409,7 +410,7 @@ export class RightsRecheckService {
       severity: dto.severity ?? RightsRecheckSeverity.WARNING,
       titleRu: dto.titleRu,
       descriptionRu: dto.descriptionRu,
-      dueAt: dto.dueAt ? new Date(dto.dueAt) : addDays(new Date(), config.eventDueDays),
+      dueAt: dto.dueAt ? new Date(dto.dueAt) : addDays(new Date(), config.manualDueDays),
       rightsProfileId: targets.rightsProfileId,
       rightsIntakeId: targets.rightsIntakeId,
       baselineReviewId: targets.baselineReviewId,

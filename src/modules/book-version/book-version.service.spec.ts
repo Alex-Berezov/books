@@ -288,14 +288,14 @@ describe('BookVersionService', () => {
       // из путей сервиса (решение владельца 27.09.2026).
       ensureTask: jest.fn().mockResolvedValue({ task: { id: 'task-1' }, created: true }),
       createManual: jest.fn(),
-      // Настоящая форма конфига, а не пустышка: вернувшийся хук LANGUAGE_ADDED считал срок
-      // через `getRuntimeConfig().eventDueDays` — без него он упал бы в своём try/catch раньше
+      // Настоящая форма конфига, а не пустышка: вернувшийся хук LANGUAGE_ADDED брал срок
+      // из `getRuntimeConfig()` — без полной формы он упал бы в своём try/catch раньше
       // `ensureTask`, и тесты ниже остались бы зелёными на старом поведении.
       getRuntimeConfig: jest.fn().mockReturnValue({
         defaultIntervalDays: 365,
         leadDays: [30, 7],
         graceDays: 30,
-        eventDueDays: 7,
+        manualDueDays: 7,
         batchSize: 500,
       }),
       getVersionRecheck: jest.fn().mockResolvedValue({
