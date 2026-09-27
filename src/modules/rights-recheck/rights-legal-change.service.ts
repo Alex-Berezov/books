@@ -16,12 +16,9 @@ import { recheckError } from './rights-recheck.errors';
 import { RightsRecheckService } from './rights-recheck.service';
 import {
   RightsLegalChangeStatus,
-  RightsRecheckReason,
   RightsRecheckSeverity,
-  RightsRecheckTriggerSource,
   toCountryCodeArray,
 } from './rights-recheck-interface';
-import { addDays } from './rights-recheck.util';
 import type { CreateLegalChangeDto } from './dto/create-legal-change.dto';
 import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
 import type { LegalChangeDetailDto, LegalChangeDto } from './dto/legal-change-response.dto';
@@ -43,7 +40,11 @@ const NOTIFICATION_SEVERITY_BY_EVENT: Record<RightsRecheckSeverity, RightsNotifi
 
 /**
  * A legal change is declared by a human — Phase 18 has no external parsers or feeds.
- * Applying it opens a recheck task for every rights profile that decided on an affected country.
+ *
+ * Решение владельца 27.09.2026: применение изменения законодательства задач перепроверки
+ * больше не открывает — автоматических перепроверок нет, только ручные. Само событие остаётся
+ * записью: статус APPLIED, кто и когда применил, сколько профилей прав затронуто. Счётчик
+ * `createdTasksCount` остаётся в контракте и у новых применений всегда равен нулю.
  */
 @Injectable()
 export class RightsLegalChangeService {
@@ -181,8 +182,9 @@ export class RightsLegalChangeService {
   }
 
   /**
-   * Opens recheck tasks for every affected rights profile. Runs in batches and sends exactly
-   * one summary notification — one per profile would flood the bell.
+   * Фиксирует применение изменения законодательства и считает затронутые профили прав.
+   * Задач перепроверки не открывает (решение владельца 27.09.2026): редактор, получив одно
+   * сводное уведомление, заводит перепроверку руками там, где она нужна.
    */
   async apply(id: string, userId: string): Promise<LegalChangeDetailDto> {
     const database = this.getDatabase();
@@ -198,11 +200,6 @@ export class RightsLegalChangeService {
     const config = this.recheckService.getRuntimeConfig();
     const codes = toCountryCodeArray(event.jurisdictionCodes);
 
-    const dueAt =
-      event.effectiveFrom && event.effectiveFrom.getTime() > now.getTime()
-        ? new Date(event.effectiveFrom)
-        : addDays(now, config.legalChangeDueDays);
-
     const profileIds = await this.resolveAffectedProfileIds(
       database,
       event.appliesToAllCountries,
@@ -210,31 +207,8 @@ export class RightsLegalChangeService {
       config.batchSize,
     );
 
-    let createdTasksCount = 0;
-    for (const profileId of profileIds) {
-      const profile = await database.rightsProfile.findUnique({ where: { id: profileId } });
-      if (!profile) continue;
-
-      const baseline = await this.recheckService.findApprovedReview(database, profileId);
-
-      const { created } = await this.recheckService.ensureTask({
-        reason: RightsRecheckReason.LEGAL_CHANGE,
-        source: RightsRecheckTriggerSource.LEGAL_CHANGE,
-        severity: event.severity,
-        rightsProfileId: profileId,
-        rightsIntakeId: profile.rightsIntakeId,
-        legalChangeEventId: event.id,
-        baselineReviewId: baseline?.id ?? null,
-        dueAt,
-        affectedCountryCodes: event.appliesToAllCountries ? [] : codes,
-        titleRu: `Изменение законодательства: ${event.titleRu}`,
-        descriptionRu: event.descriptionRu,
-        // One summary broadcast instead of N per-profile notifications.
-        suppressNotification: true,
-      });
-
-      if (created) createdTasksCount += 1;
-    }
+    // Поле осталось в контракте ответа и в таблице; задач применение больше не создаёт.
+    const createdTasksCount = 0;
 
     await database.rightsLegalChangeEvent.update({
       where: { id },
@@ -252,7 +226,7 @@ export class RightsLegalChangeService {
       severity:
         NOTIFICATION_SEVERITY_BY_EVENT[event.severity] ?? RightsNotificationSeverity.WARNING,
       titleRu: 'Применено изменение законодательства',
-      messageRu: `«${event.titleRu}»: открыто задач перепроверки — ${createdTasksCount}, затронуто профилей прав — ${profileIds.length}.`,
+      messageRu: `«${event.titleRu}»: затронуто профилей прав — ${profileIds.length}. Задачи перепроверки автоматически не открываются — при необходимости заведите их вручную.`,
       targetUserId: null,
       payload: {
         legalChangeEventId: event.id,
@@ -264,7 +238,7 @@ export class RightsLegalChangeService {
     return this.getById(id);
   }
 
-  /** Archiving does not close the tasks it opened — they are independent work items by then. */
+  /** Archiving does not touch recheck tasks: those linked to the event are independent work items. */
   async archive(id: string, userId: string): Promise<LegalChangeDto> {
     await this.loadEvent(id);
     void userId;

@@ -86,6 +86,10 @@ const IN_EXAMPLE_BUT_NOT_READ = {
     'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
   SLACK_CHANNEL:
     'Superseded by the Telegram receiver (LEGACY-096): alerts go to a private channel, and Alertmanager never expands env vars. Kept in the example as a future SMTP fallback only.',
+  RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE:
+    'Dead since the owner decision of 27.09.2026: a recheck task never blocks publication any more. .env.example is closed to the agent, so the line waits for the owner; delete it and this entry together (the guard reports the entry as stale once the line is gone).',
+  RIGHTS_RECHECK_LEGAL_CHANGE_DUE_DAYS:
+    'Dead since the owner decision of 27.09.2026: a legal change no longer opens recheck tasks, so there is no due date to compute. .env.example is closed to the agent, so the line waits for the owner; delete it and this entry together.',
 };
 
 /**

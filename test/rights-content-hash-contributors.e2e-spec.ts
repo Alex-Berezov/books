@@ -12,8 +12,14 @@ import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with
  *
  * Сценарий отказа из отчёта ревью: книга проходит клиренс с переводчиком, умершим в 1940
  * (перевод в public domain), редактор меняет данные участника на переводчика, умершего
- * в 1990 (перевод под охраной) — и до WP-8 хеш не менялся, stale не выставлялся, гейт
- * разрешал публикацию под клиренсом для другого правового основания.
+ * в 1990 (перевод под охраной) — и до WP-8 хеш не менялся, и смена была невидима.
+ *
+ * Решение владельца от 27.09.2026 (правовая семантика): правка после утверждения прав публикацию
+ * не блокирует. Смена участника пишет событие аудита со `staleMarked: false`
+ * (`reasonCode = CONTENT_CHANGE_LOGGED`), а клиренс не аннулируется ни в черновике, ни
+ * в опубликованной версии. Baseline правкой не переснимается — это слепок, на котором утверждён
+ * клиренс (ревью books-data, ADR-009); гейт показывает расхождение предупреждением
+ * `RIGHTS_CONTENT_HASH_CHANGED`.
  *
  * Требует живой БД — локально `yarn test:e2e`, в CI job «Tests & Quality Checks».
  */
@@ -43,8 +49,8 @@ describe('Rights content hash — contributors (e2e)', () => {
     });
 
   /**
-   * Возврат версии в «проверенное» состояние: WP-8 проверяет реакцию на каждое изменение
-   * по отдельности, а один раз выставленный stale держится до новой проверки прав.
+   * Возврат версии в «проверенное» состояние: реакция на каждое изменение проверяется
+   * по отдельности, от чистого слепка и утверждённого клиренса.
    */
   const rebaseline = async () => {
     const fresh = await request(http())
@@ -137,11 +143,10 @@ describe('Rights content hash — contributors (e2e)', () => {
   });
 
   /**
-   * WP-D.1: версия ещё черновик — она в окне наполнения. Состав участников уточняют до
-   * публикации, ради этого клиренс и снимали, поэтому baseline переснимается, а клиренс
-   * остаётся утверждённым. Компенсация за ослабление — событие аудита пишется всегда.
+   * Черновик: состав участников уточняют до публикации — клиренс остаётся утверждённым,
+   * утверждённый слепок не затирается, событие аудита пишется всегда.
    */
-  it('re-takes the baseline when a translator is added to a draft version', async () => {
+  it('only logs a translator added to a draft version and keeps the approved baseline', async () => {
     const before = await versionRow();
     expect(before?.rightsRecheckRequired).toBe(false);
 
@@ -155,8 +160,8 @@ describe('Rights content hash — contributors (e2e)', () => {
     const after = await versionRow();
     expect(after?.rightsRecheckRequired).toBe(false);
     expect(after?.rightsStaleReasonCode).toBeNull();
-    // Baseline переснят: слепок черновика догоняет его содержимое.
-    expect(after?.rightsContentHash).not.toBe(before?.rightsContentHash);
+    // Baseline не переснят: он и есть слепок «под чем утверждали».
+    expect(after?.rightsContentHash).toBe(before?.rightsContentHash);
 
     const review = await prisma.rightsReview.findUnique({
       where: { id: bookWithRights.review.id },
@@ -171,21 +176,36 @@ describe('Rights content hash — contributors (e2e)', () => {
 
     // Событие аудита: значение enum'а — существующее, точная причина в reasonCode (WP-8.1).
     const events = await prisma.rightsContentHashEvent.findMany({
-      where: { bookVersionId: versionId, reasonCode: 'DRAFT_FILL_WINDOW' },
+      where: { bookVersionId: versionId, reasonCode: 'CONTENT_CHANGE_LOGGED' },
       select: { trigger: true, staleMarked: true, previousHash: true, currentHash: true },
     });
     expect(events).toHaveLength(1);
     expect(events[0].trigger).toBe('RIGHTS_SNAPSHOT_CHANGED');
     expect(events[0].staleMarked).toBe(false);
     expect(events[0].previousHash).toBe(before?.rightsContentHash);
-    expect(events[0].currentHash).toBe(after?.rightsContentHash);
+    expect(events[0].currentHash).not.toBe(events[0].previousHash);
   });
 
+  /** Клиренс версии и её профиля/проверки прав после правки остаётся утверждённым. */
+  const expectClearanceApproved = async () => {
+    const review = await prisma.rightsReview.findUnique({
+      where: { id: bookWithRights.review.id },
+      select: { status: true },
+    });
+    expect(review?.status).toBe('HUMAN_APPROVED');
+    const profile = await prisma.rightsProfile.findUnique({
+      where: { id: bookWithRights.profile.id },
+      select: { status: true },
+    });
+    expect(profile?.status).toBe('APPROVED');
+  };
+
   /**
-   * Обратная сторона WP-D.4: окно закрывается публикацией. Та же правка состава участников
-   * в опубликованной версии по-прежнему аннулирует клиренс целиком.
+   * До решения владельца от 27.09.2026 окно наполнения закрывалось публикацией, и та же правка
+   * состава участников в опубликованной версии аннулировала клиренс целиком. Теперь — только
+   * журнал: baseline прежний, stale не выставлен, клиренс утверждён.
    */
-  it('marks the clearance stale when a translator changes in a published version', async () => {
+  it('only logs a translator change in a published version, without marking anything stale', async () => {
     await rebaseline();
     await prisma.bookVersion.update({
       where: { id: versionId },
@@ -201,30 +221,33 @@ describe('Rights content hash — contributors (e2e)', () => {
       .expect(200);
 
     const after = await versionRow();
-    expect(after?.rightsRecheckRequired).toBe(true);
-    expect(after?.rightsStaleReasonCode).toBe('VERSION_CONTRIBUTOR_CHANGED');
-    // Baseline не переписывается: он и есть снимок «под чем проверяли».
+    expect(after?.rightsRecheckRequired).toBe(false);
+    expect(after?.rightsStaleReasonCode).toBeNull();
+    expect(after?.rightsStaleDetectedAt).toBeNull();
+    // Baseline не переснят: он и есть слепок «под чем утверждали».
     expect(after?.rightsContentHash).toBe(before?.rightsContentHash);
-
-    // Клиренс уходит в STALE целиком — не только версия.
-    const review = await prisma.rightsReview.findUnique({
-      where: { id: bookWithRights.review.id },
-      select: { status: true },
-    });
-    expect(review?.status).toBe('STALE');
+    await expectClearanceApproved();
 
     const events = await prisma.rightsContentHashEvent.findMany({
-      where: { bookVersionId: versionId, reasonCode: 'VERSION_CONTRIBUTOR_CHANGED' },
+      where: {
+        bookVersionId: versionId,
+        reasonCode: 'CONTENT_CHANGE_LOGGED',
+        previousHash: before?.rightsContentHash,
+      },
       select: { trigger: true, staleMarked: true, previousHash: true, currentHash: true },
     });
     expect(events).toHaveLength(1);
     expect(events[0].trigger).toBe('RIGHTS_SNAPSHOT_CHANGED');
-    expect(events[0].staleMarked).toBe(true);
-    expect(events[0].previousHash).toBe(before?.rightsContentHash);
+    expect(events[0].staleMarked).toBe(false);
     expect(events[0].currentHash).not.toBe(events[0].previousHash);
+    await expect(
+      prisma.rightsContentHashEvent.count({
+        where: { bookVersionId: versionId, staleMarked: true },
+      }),
+    ).resolves.toBe(0);
   });
 
-  it('marks the clearance stale when the death year of the translator changes', async () => {
+  it('only logs a change of the death year of the translator', async () => {
     await rebaseline();
     const before = await versionRow();
     expect(before?.rightsRecheckRequired).toBe(false);
@@ -236,32 +259,42 @@ describe('Rights content hash — contributors (e2e)', () => {
       .expect(200);
 
     const after = await versionRow();
-    expect(after?.rightsRecheckRequired).toBe(true);
-    expect(after?.rightsStaleReasonCode).toBe('CONTRIBUTOR_PERSON_CHANGED');
+    expect(after?.rightsRecheckRequired).toBe(false);
+    expect(after?.rightsStaleReasonCode).toBeNull();
+    expect(after?.rightsContentHash).toBe(before?.rightsContentHash);
+    await expectClearanceApproved();
 
     const events = await prisma.rightsContentHashEvent.findMany({
-      where: { bookVersionId: versionId, reasonCode: 'CONTRIBUTOR_PERSON_CHANGED' },
+      where: {
+        bookVersionId: versionId,
+        reasonCode: 'CONTENT_CHANGE_LOGGED',
+        previousHash: before?.rightsContentHash,
+      },
       select: { staleMarked: true, previousHash: true, currentHash: true },
     });
     expect(events).toHaveLength(1);
-    expect(events[0].staleMarked).toBe(true);
-    expect(events[0].previousHash).toBe(before?.rightsContentHash);
+    expect(events[0].staleMarked).toBe(false);
     expect(events[0].currentHash).not.toBe(events[0].previousHash);
   });
 
-  it('blocks publication of the version whose translator changed', async () => {
+  it('shows the translator change as a warning, not a blocker', async () => {
     const gate = await request(http())
       .get(`/admin/versions/${versionId}/publication-gate`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 
     const codes = (gate.body.blockingReasons as Array<{ code: string }>).map((r) => r.code);
-    expect(codes).toEqual(expect.arrayContaining(['RIGHTS_RECHECK_REQUIRED']));
+    for (const staleCode of [
+      'RIGHTS_RECHECK_REQUIRED',
+      'RIGHTS_CONTENT_HASH_CHANGED',
+      'RIGHTS_REVIEW_STALE',
+      'RIGHTS_PROFILE_STALE',
+    ]) {
+      expect(codes).not.toContain(staleCode);
+    }
 
-    await request(http())
-      .patch(`/versions/${versionId}/publish`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(400);
+    const warnings = (gate.body.warnings as Array<{ code: string }>).map((w) => w.code);
+    expect(warnings).toContain('RIGHTS_CONTENT_HASH_CHANGED');
   });
 
   /**

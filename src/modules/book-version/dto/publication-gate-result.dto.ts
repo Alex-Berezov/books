@@ -32,6 +32,14 @@ export class PublicationGateReasonDto {
   }
 }
 
+/** Действующее решение «Разрешить публикацию» по книге версии (решение владельца 27.09.2026). */
+export class PublicationGateSupervisorOverrideDto {
+  @ApiProperty() id!: string;
+  @ApiProperty({ format: 'date-time' }) grantedAt!: string;
+  @ApiProperty({ type: String, nullable: true }) grantedByUserId!: string | null;
+  @ApiProperty() reasonRu!: string;
+}
+
 export class PublicationGateResultDto {
   @ApiProperty({ type: String })
   versionId: string;
@@ -165,6 +173,9 @@ export class PublicationGateResultDto {
   @ApiProperty({ type: [String] })
   lawyerReviewIds!: string[];
 
+  @ApiProperty({ type: PublicationGateSupervisorOverrideDto, nullable: true })
+  supervisorOverride!: PublicationGateSupervisorOverrideDto | null;
+
   constructor(data: {
     versionId: string;
     bookId: string;
@@ -206,6 +217,7 @@ export class PublicationGateResultDto {
     riskLevel?: string | null;
     lawyerOpinionValidUntil?: string | null;
     lawyerReviewIds?: string[];
+    supervisorOverride?: PublicationGateSupervisorOverrideDto | null;
   }) {
     this.versionId = data.versionId;
     this.bookId = data.bookId;
@@ -248,6 +260,7 @@ export class PublicationGateResultDto {
     this.riskLevel = data.riskLevel ?? null;
     this.lawyerOpinionValidUntil = data.lawyerOpinionValidUntil ?? null;
     this.lawyerReviewIds = data.lawyerReviewIds ?? [];
+    this.supervisorOverride = data.supervisorOverride ?? null;
   }
 }
 

@@ -111,6 +111,41 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/books/{bookId}/rights-override': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Действующее решение «Разрешить публикацию» и история решений по книге */
+    get: operations['RightsPublicationOverrideController_getState'];
+    put?: never;
+    /** Разрешить публикацию: снять все правовые ограничения с книги (последняя инстанция, только admin) */
+    post: operations['RightsPublicationOverrideController_grant'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/books/{bookId}/rights-override/revoke': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Отменить действующее решение «Разрешить публикацию» (только admin) */
+    post: operations['RightsPublicationOverrideController_revoke'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/books/{id}/rights-claims': {
     parameters: {
       query?: never;
@@ -7610,6 +7645,10 @@ export interface components {
        */
       windowStartedAt: string;
     };
+    GrantRightsPublicationOverrideDto: {
+      /** @description Почему администратор снимает правовые ограничения с книги. Обязательно: решение последней инстанции пишется в журнал вместе с автором. */
+      reasonRu: string;
+    };
     ImportCategoryDto: {
       /** @default true */
       indexable: boolean;
@@ -9035,9 +9074,17 @@ export interface components {
       rightsRecheckRequired: boolean;
       rightsStatus: string | null;
       riskLevel: string | null;
+      supervisorOverride: components['schemas']['PublicationGateSupervisorOverrideDto'] | null;
       versionId: string;
       warnings: components['schemas']['PublicationGateReasonDto'][];
       worstClaimSeverity: string | null;
+    };
+    PublicationGateSupervisorOverrideDto: {
+      /** Format: date-time */
+      grantedAt: string;
+      grantedByUserId: string | null;
+      id: string;
+      reasonRu: string;
     };
     RateBookDto: {
       /**
@@ -9541,6 +9588,10 @@ export interface components {
     RevokeRightsLicenseDto: {
       /** @example Правообладатель расторг договор. */
       reasonRu: string;
+    };
+    RevokeRightsPublicationOverrideDto: {
+      /** @description Почему решение отменено. */
+      reasonRu?: string;
     };
     RightsActionDto: {
       actionType: string;
@@ -10531,6 +10582,28 @@ export interface components {
       summaryRu: string;
       supersededAt: string | null;
       updatedAt: string;
+    };
+    RightsPublicationOverrideDto: {
+      /** @description null — книга удалена после решения; сама запись журнала остаётся */
+      bookId: string | null;
+      /** @description Слаг книги на момент решения */
+      bookSlug: string;
+      /** Format: date-time */
+      grantedAt: string;
+      grantedByEmail: string | null;
+      grantedByUserId: string | null;
+      id: string;
+      reasonRu: string;
+      revokeReasonRu: string | null;
+      /** Format: date-time */
+      revokedAt: string | null;
+      revokedByEmail: string | null;
+      revokedByUserId: string | null;
+    };
+    RightsPublicationOverrideStateDto: {
+      active: components['schemas']['RightsPublicationOverrideDto'] | null;
+      /** @description Все решения по книге, новые сверху; действующее тоже здесь. */
+      history: components['schemas']['RightsPublicationOverrideDto'][];
     };
     RightsReportSchemaDocumentDto: {
       $defs?: {
@@ -12718,6 +12791,84 @@ export interface operations {
         content: {
           'application/json': components['schemas']['BackgroundJobsStatusResponseDto'];
         };
+      };
+    };
+  };
+  RightsPublicationOverrideController_getState: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsPublicationOverrideStateDto'];
+        };
+      };
+    };
+  };
+  RightsPublicationOverrideController_grant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['GrantRightsPublicationOverrideDto'];
+      };
+    };
+    responses: {
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsPublicationOverrideDto'];
+        };
+      };
+    };
+  };
+  RightsPublicationOverrideController_revoke: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RevokeRightsPublicationOverrideDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsPublicationOverrideDto'];
+        };
+      };
+      /** @description RIGHTS_OVERRIDE_NOT_ACTIVE — действующего решения нет */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

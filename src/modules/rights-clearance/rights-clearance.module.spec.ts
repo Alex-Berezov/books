@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsClearanceResolverService } from './rights-clearance-resolver.service';
 import { RightsClearanceModule } from './rights-clearance.module';
+import { RightsPublicationOverrideService } from './rights-publication-override.service';
 import { PrismaModule } from '../../shared/prisma/prisma.module';
 
 /**
@@ -19,6 +20,7 @@ describe('RightsClearanceModule', () => {
       .compile();
 
     expect(moduleRef.get(RightsClearanceResolverService)).toBeDefined();
+    expect(moduleRef.get(RightsPublicationOverrideService)).toBeDefined();
 
     await moduleRef.close();
   });

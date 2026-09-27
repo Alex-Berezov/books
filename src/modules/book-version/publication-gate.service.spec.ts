@@ -9,6 +9,7 @@ import { ClaimGateEvaluationDto } from '../rights-claims/dto/rights-claim-respon
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
 import type { EffectiveClearance } from '../rights-clearance/rights-clearance-resolver.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
+import { RightsPublicationOverrideService } from '../rights-clearance/rights-publication-override.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 import { RecheckGateEvaluationDto } from '../rights-recheck/dto/version-recheck-response.dto';
 import { LawyerGateEvaluationDto } from '../rights-lawyer/dto/version-lawyer-review-response.dto';
@@ -127,6 +128,7 @@ describe('PublicationGateService', () => {
   let mockRightsRecheckService: { evaluateVersionRecheck: jest.Mock };
   let mockRightsLawyerReviewService: { evaluateVersionLawyerReview: jest.Mock };
   let mockClearanceResolver: { resolveForVersion: jest.Mock };
+  let mockPublicationOverrides: { findActiveForBook: jest.Mock };
 
   /** Makes the resolver answer with a clearance built on top of the currently mocked version. */
   const arrangeClearance = (overrides: Partial<EffectiveClearance> = {}) => {
@@ -198,6 +200,9 @@ describe('PublicationGateService', () => {
       editionRights: {
         findMany: jest.fn().mockResolvedValue([{ languageCode: 'en', status: 'ALLOWED' }]),
       },
+      rightsClaim: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     } as unknown as jest.Mocked<PrismaService>;
 
     mockRightsContentHashService = {
@@ -232,6 +237,8 @@ describe('PublicationGateService', () => {
     mockClearanceResolver = { resolveForVersion: jest.fn() };
     arrangeClearance();
 
+    mockPublicationOverrides = { findActiveForBook: jest.fn().mockResolvedValue(null) };
+
     service = new PublicationGateService(
       prisma,
       mockRightsContentHashService,
@@ -241,6 +248,7 @@ describe('PublicationGateService', () => {
       mockRightsRecheckService as unknown as RightsRecheckService,
       mockRightsLawyerReviewService as unknown as RightsLawyerReviewService,
       mockClearanceResolver as unknown as RightsClearanceResolverService,
+      mockPublicationOverrides as unknown as RightsPublicationOverrideService,
     );
   });
 
@@ -1087,7 +1095,8 @@ describe('PublicationGateService', () => {
       expect(result.rightsRecheckRequired).toBe(true);
     });
 
-    it('blocks when the live content hash no longer matches the approved baseline', async () => {
+    // Решение владельца 27.09.2026: правка после одобрения видна, но публикацию не блокирует.
+    it('only warns when the live content hash no longer matches the approved baseline', async () => {
       arrange();
       mockRightsContentHashService.computeVersionHash.mockResolvedValue({
         hash: 'changed-hash-999',
@@ -1095,9 +1104,12 @@ describe('PublicationGateService', () => {
       } as never);
 
       const result = await service.checkVersionCanPublish('v1');
-      const reason = result.blockingReasons.find((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED');
+      const reason = result.warnings.find((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED');
 
-      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED')).toBe(
+        false,
+      );
+      expect(result.canPublish).toBe(true);
       expect(reason?.details).toEqual({
         baselineHash: 'baseline-hash-123',
         currentHash: 'changed-hash-999',
@@ -1145,7 +1157,7 @@ describe('PublicationGateService', () => {
       expect(result.contentHashMatches).toBe(true);
     });
 
-    it('still blocks a V4 baseline whose content changed (LEGACY-033)', async () => {
+    it('still reports a V4 baseline whose content changed, as a warning (LEGACY-033)', async () => {
       arrange(v4Baseline);
       mockRightsContentHashService.computeVersionHash.mockResolvedValue({
         hash: 'changed-hash-999',
@@ -1154,10 +1166,9 @@ describe('PublicationGateService', () => {
 
       const result = await service.checkVersionCanPublish('v1');
 
-      expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED')).toBe(
-        true,
-      );
-      expect(result.canPublish).toBe(false);
+      expect(result.warnings.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED')).toBe(true);
+      expect(result.contentHashMatches).toBe(false);
+      expect(result.canPublish).toBe(true);
     });
   });
 
@@ -1834,9 +1845,9 @@ describe('PublicationGateService', () => {
       expect(result.canPublish).toBe(false);
     });
 
-    // Строгая сторона: заключение не снимает то, о чём не высказывается. Изменившийся текст —
-    // не правовой вопрос: юрист смотрел другое содержимое (ADR-010).
-    it('never clears a content hash mismatch', async () => {
+    // Изменившийся текст — не предмет заключения: мисматч хеша остаётся предупреждением гейта
+    // (решение владельца 27.09.2026), а не снятым юристом блокером.
+    it('does not attribute a content hash mismatch to the lawyer override', async () => {
       arrangeBlockedProfile({ lawyerApproved: true });
       mockRightsContentHashService.computeVersionHash.mockResolvedValue({
         hash: 'changed-hash-999',
@@ -1844,11 +1855,12 @@ describe('PublicationGateService', () => {
       } as never);
 
       const result = await service.checkVersionCanPublish('v1');
+      const hashWarning = result.warnings.find((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED');
 
       expect(result.blockingReasons.some((r) => r.code === 'RIGHTS_CONTENT_HASH_CHANGED')).toBe(
-        true,
+        false,
       );
-      expect(result.canPublish).toBe(false);
+      expect(hashWarning?.details?.overriddenByLawyer).toBeUndefined();
     });
   });
 
@@ -2073,6 +2085,257 @@ describe('PublicationGateService', () => {
       await expect(service.assertVersionCanPublish('v1')).rejects.toBeInstanceOf(
         BadRequestException,
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Решение владельца 27.09.2026: «Разрешить публикацию» — последняя инстанция по правам.
+  // ---------------------------------------------------------------------------
+  describe('supervisor override («Разрешить публикацию»)', () => {
+    const GRANTED_AT = new Date('2026-09-27T10:00:00.000Z');
+
+    const claimBlocker = (claimId: string) => ({
+      code: 'ACTIVE_RIGHTS_CLAIM',
+      severity: 'BLOCKER' as const,
+      messageRu: `Публикация заблокирована активной претензией ${claimId}.`,
+      claimId,
+      claimNumber: claimId,
+    });
+
+    /** Версия, заваленная правовыми блокерами всех видов, которые снимает решение. */
+    const arrangeEverythingBlocked = () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        rightsRecheckRequired: true,
+        rightsContentHash: null,
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue({ status: 'STALE' });
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue({
+        ...baseProfile,
+        status: 'SUPERSEDED',
+        isCurrent: false,
+        publicationGate: 'BLOCK',
+      });
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([{ id: 'action-1' }]);
+      mockRightsLawyerReviewService.evaluateVersionLawyerReview.mockResolvedValue(
+        noLawyerReview({
+          blockers: [
+            {
+              code: 'LAWYER_REVIEW_REJECTED',
+              messageRu: 'Юрист отказал.',
+              lawyerReviewId: 'lr-1',
+              details: null,
+            },
+          ],
+        }),
+      );
+    };
+
+    const grantOverride = () =>
+      mockPublicationOverrides.findActiveForBook.mockResolvedValue({
+        id: 'override-1',
+        grantedAt: GRANTED_AT,
+        grantedByUserId: 'admin-1',
+        reasonRu: 'Общественное достояние, ИИ перестраховался.',
+      });
+
+    it('keeps every legal blocker while there is no decision', async () => {
+      arrangeEverythingBlocked();
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.supervisorOverride).toBeNull();
+      expect(result.warnings.some((r) => r.code === 'SUPERVISOR_OVERRIDE_APPLIED')).toBe(false);
+    });
+
+    it('lifts every legal blocker, including the lawyer refusal and the recheck flag', async () => {
+      arrangeEverythingBlocked();
+      grantOverride();
+
+      const result = await service.checkVersionCanPublish('v1');
+      const applied = result.warnings.find((r) => r.code === 'SUPERVISOR_OVERRIDE_APPLIED');
+
+      expect(result.blockingReasons).toEqual([]);
+      expect(result.canPublish).toBe(true);
+      expect(result.canPrepare).toBe(true);
+      expect(applied?.details?.overriddenCodes).toEqual(
+        expect.arrayContaining([
+          'RIGHTS_REVIEW_STALE',
+          'RIGHTS_PROFILE_SUPERSEDED',
+          'RIGHTS_PROFILE_NOT_CURRENT',
+          'PUBLICATION_GATE_BLOCK',
+          'UNRESOLVED_BLOCKING_RIGHTS_ACTION',
+          'MISSING_RIGHTS_CONTENT_HASH',
+          'RIGHTS_RECHECK_REQUIRED',
+          'LAWYER_REVIEW_REJECTED',
+        ]),
+      );
+      expect(
+        result.warnings.find((r) => r.code === 'PUBLICATION_GATE_BLOCK')?.details
+          ?.overriddenBySupervisor,
+      ).toBe(true);
+      expect(result.supervisorOverride).toEqual({
+        id: 'override-1',
+        grantedAt: GRANTED_AT.toISOString(),
+        grantedByUserId: 'admin-1',
+        reasonRu: 'Общественное достояние, ИИ перестраховался.',
+      });
+      expect(mockPublicationOverrides.findActiveForBook).toHaveBeenCalledTimes(1);
+      expect(mockPublicationOverrides.findActiveForBook).toHaveBeenCalledWith('b1');
+    });
+
+    it('never lifts an empty card: description and cover are not a legal question', async () => {
+      arrangeEverythingBlocked();
+      grantOverride();
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        description: null,
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.map((r) => r.code)).toEqual(['VERSION_CONTENT_INCOMPLETE']);
+      expect(result.canPublish).toBe(false);
+    });
+
+    it('lifts a claim filed before the decision, but not one filed after it', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      grantOverride();
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          blockingClaimsCount: 2,
+          claimIds: ['claim-old', 'claim-new'],
+          blockers: [claimBlocker('claim-old'), claimBlocker('claim-new')],
+        }),
+      );
+      (prisma.rightsClaim.findMany as jest.Mock).mockResolvedValue([
+        { id: 'claim-old', createdAt: new Date('2026-09-01T00:00:00.000Z') },
+        { id: 'claim-new', createdAt: new Date('2026-09-28T00:00:00.000Z') },
+      ]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons).toHaveLength(1);
+      expect(result.blockingReasons[0].details?.claimId).toBe('claim-new');
+      expect(
+        result.warnings.some(
+          (r) => r.details?.claimId === 'claim-old' && r.details?.overriddenBySupervisor === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('keeps the aggregated claim blocker when any of its claims came after the decision', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      grantOverride();
+      // `ACTIVE_RIGHTS_CLAIM` один на все претензии: `claimId` — первая (старая), новая только
+      // в `details.claimIds`.
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          blockers: [
+            {
+              ...claimBlocker('claim-old'),
+              details: { claimIds: ['claim-old', 'claim-new'], count: 2 },
+            },
+          ],
+        }),
+      );
+      (prisma.rightsClaim.findMany as jest.Mock).mockResolvedValue([
+        { id: 'claim-old', createdAt: new Date('2026-09-01T00:00:00.000Z') },
+        { id: 'claim-new', createdAt: new Date('2026-09-28T00:00:00.000Z') },
+      ]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.map((r) => r.code)).toEqual(['ACTIVE_RIGHTS_CLAIM']);
+    });
+
+    it('keeps a worldwide claim access block filed after the decision', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      grantOverride();
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          blockers: [
+            {
+              code: 'RIGHTS_CLAIM_ACCESS_BLOCK_ACTIVE',
+              severity: 'BLOCKER',
+              messageRu: 'Версия полностью недоступна.',
+              details: { blockId: 'block-1', scope: 'ENTIRE_BOOK', claimIds: ['claim-new'] },
+            },
+          ],
+        }),
+      );
+      (prisma.rightsClaim.findMany as jest.Mock).mockResolvedValue([
+        { id: 'claim-new', createdAt: new Date('2026-09-28T00:00:00.000Z') },
+      ]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons.map((r) => r.code)).toEqual([
+        'RIGHTS_CLAIM_ACCESS_BLOCK_ACTIVE',
+      ]);
+    });
+
+    it('lifts a worldwide claim access block whose claim predates the decision', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      grantOverride();
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({
+          blockers: [
+            {
+              code: 'RIGHTS_CLAIM_ACCESS_BLOCK_ACTIVE',
+              severity: 'BLOCKER',
+              messageRu: 'Версия полностью недоступна.',
+              details: { blockId: 'block-1', scope: 'ENTIRE_BOOK', claimIds: ['claim-old'] },
+            },
+          ],
+        }),
+      );
+      (prisma.rightsClaim.findMany as jest.Mock).mockResolvedValue([
+        { id: 'claim-old', createdAt: new Date('2026-09-01T00:00:00.000Z') },
+      ]);
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(true);
+    });
+
+    it('keeps a claim blocker whose claim cannot be dated', async () => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(baseVersion);
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      grantOverride();
+      mockRightsClaimsService.evaluateVersionClaims.mockResolvedValue(
+        noClaims({ blockers: [claimBlocker('claim-ghost')] }),
+      );
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.blockingReasons[0].details?.claimId).toBe('claim-ghost');
+    });
+
+    it('lets assertVersionCanPublish pass once the decision is in force', async () => {
+      arrangeEverythingBlocked();
+      grantOverride();
+
+      await expect(service.assertVersionCanPublish('v1')).resolves.toBeUndefined();
     });
   });
 });

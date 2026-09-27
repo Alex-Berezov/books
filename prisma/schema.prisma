@@ -45,6 +45,9 @@ model Book {
   // Phase 19: lawyer workflow
   lawyerReviews RightsLawyerReview[] @relation("BookLawyerReviews")
 
+  // Решение владельца 27.09.2026: «Разрешить публикацию» — последняя инстанция по правам.
+  publicationOverrides RightsPublicationOverride[]
+
   @@index([rightsIntakeId])
   @@index([currentRightsProfileId])
   @@index([approvedRightsReviewId])
@@ -297,6 +300,8 @@ model User {
   rightsLegalChangesCreated   RightsLegalChangeEvent[] @relation("RightsLegalChangeCreatedBy")
   rightsLegalChangesApplied   RightsLegalChangeEvent[] @relation("RightsLegalChangeAppliedBy")
   rightsRecheckScanRuns       RightsRecheckScanRun[]   @relation("RightsRecheckScanTriggeredBy")
+  rightsOverridesGranted      RightsPublicationOverride[] @relation("RightsOverrideGrantedBy")
+  rightsOverridesRevoked      RightsPublicationOverride[] @relation("RightsOverrideRevokedBy")
   rightsLawyerProfile         RightsLawyer?                @relation("RightsLawyerUser")
   rightsLawyersCreated        RightsLawyer[]               @relation("RightsLawyerCreatedBy")
   rightsLawyersDeactivated    RightsLawyer[]               @relation("RightsLawyerDeactivatedBy")
@@ -989,7 +994,8 @@ model RightsProfile {
   nextReviewAt DateTime?
 
   // Phase 18: политика автоматической перепроверки
-  recheckPolicy       RightsRecheckPolicy @default(INHERIT_REPORT)
+  /// Решение владельца 27.09.2026: плановых перепроверок по умолчанию нет, только ручные.
+  recheckPolicy       RightsRecheckPolicy @default(MANUAL_ONLY)
   recheckIntervalDays Int?
   recheckPausedUntil  DateTime?
   recheckPauseReasonRu String? @db.Text
@@ -3350,6 +3356,35 @@ model RightsLegalChangeEvent {
   @@index([createdAt])
   @@index([appliedByUserId])
   @@index([createdByUserId])
+}
+
+/// Решение владельца 27.09.2026: «Разрешить публикацию» — последняя инстанция по правам книги.
+/// Действующая запись (`revokedAt` пуст) снимает с каждой версии книги все правовые блокеры гейта,
+/// кроме претензий правообладателя, заведённых после `grantedAt`. Запись не удаляется: отмена
+/// ставит `revokedAt`, повторное нажатие заводит новую строку — таблица и есть журнал решений.
+model RightsPublicationOverride {
+  id String @id @default(uuid())
+
+  /// SetNull, а не Cascade: решение последней инстанции переживает удаление книги (ADR-009).
+  bookId String?
+  book   Book?   @relation(fields: [bookId], references: [id], onDelete: SetNull)
+  /// Слаг книги на момент решения: после удаления книги (`bookId` → NULL) запись остаётся узнаваемой.
+  bookSlug String
+
+  reasonRu String @db.Text
+
+  grantedAt       DateTime @default(now())
+  grantedByUserId String?
+  grantedByUser   User?    @relation("RightsOverrideGrantedBy", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+
+  revokedAt       DateTime?
+  revokedByUserId String?
+  revokedByUser   User?     @relation("RightsOverrideRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  revokeReasonRu  String?   @db.Text
+
+  @@index([bookId, revokedAt])
+  @@index([grantedByUserId])
+  @@index([revokedByUserId])
 }
 
 model RightsRecheckTask {

@@ -39,11 +39,6 @@ import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 import type { VersionLawyerReviewDto } from '../rights-lawyer/dto/version-lawyer-review-response.dto';
-import {
-  RightsRecheckReason,
-  RightsRecheckTriggerSource,
-} from '../rights-recheck/rights-recheck-interface';
-import { addDays } from '../rights-recheck/rights-recheck.util';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AuthorService } from '../author/author.service';
@@ -409,32 +404,9 @@ export class BookVersionService {
       throw e;
     }
 
-    // Phase 18: a new language version of a book with approved clearance needs a recheck.
-    // Called outside the transaction and wrapped in try/catch: failing to open a task must
-    // never fail version creation. The initial versions of a book are created directly by
-    // RightsBookCreationService (not through this method), so creating a book from an
-    // approved clearance never triggers a false LANGUAGE_ADDED task here.
-    if (version.rightsProfileId) {
-      try {
-        await this.rightsRecheckService.ensureTask({
-          reason: RightsRecheckReason.LANGUAGE_ADDED,
-          source: RightsRecheckTriggerSource.VERSION_CREATED,
-          rightsProfileId: version.rightsProfileId,
-          rightsIntakeId: book.rightsIntakeId,
-          bookId,
-          bookVersionId: version.id,
-          baselineReviewId: version.approvedRightsReviewId ?? null,
-          dueAt: addDays(new Date(), this.rightsRecheckService.getRuntimeConfig().eventDueDays),
-          titleRu: `Добавлен язык ${effectiveLanguage} — требуется перепроверка прав`,
-          descriptionRu: `К книге добавлена новая языковая версия (${effectiveLanguage}). Права на перевод и связанные компоненты не покрыты действующей проверкой.`,
-        });
-      } catch (e: unknown) {
-        this.logger.warn(
-          `Failed to open LANGUAGE_ADDED recheck task: ${e instanceof Error ? e.message : 'unknown'}`,
-        );
-      }
-    }
-
+    // Решение владельца 27.09.2026: автоматических перепроверок прав больше нет, остаются только
+    // ручные (`RightsRecheckService.createManual`). Новая языковая версия задачу LANGUAGE_ADDED
+    // не открывает — перепроверку при необходимости заводит редактор руками.
     return version;
   }
 
@@ -665,8 +637,9 @@ export class BookVersionService {
       },
     ).length;
 
-    const isStale =
-      !!version.rightsStaleDetectedAt || !contentHash.matchesBaseline || contentHash.isStale;
+    // Решение владельца 27.09.2026: расхождение хеша — запись в журнал, а не устаревание
+    // клиренса. Stale — только то, что помечено на самой версии.
+    const isStale = !!version.rightsStaleDetectedAt || contentHash.isStale;
     const recheckRequired = version.rightsRecheckRequired || contentHash.recheckRequired;
 
     // WP-C.4: план публикации берётся из интейка версии — региональная сводка отдаёт долю
@@ -1310,7 +1283,7 @@ export class BookVersionService {
 
     // WP-D.4: жёсткий выход из окна наполнения черновика. Публикация фиксирует слепок контента
     // окончательно и в той же транзакции пишет событие закрытия окна (ADR-009), после которого
-    // правка главы снова уводит клиренс в `STALE`.
+    // правка главы только пишется в журнал (решение владельца 27.09.2026), клиренс не аннулирует.
     const published = await this.prisma
       .$transaction(async (tx) => {
         // Прежнее состояние читается под замком строки и внутри транзакции — тем же

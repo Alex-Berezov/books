@@ -6,8 +6,12 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
- * Phase 18 automatic recheck e2e. Requires a live database, so it is NOT part of the local
+ * Phase 18 recheck e2e. Requires a live database, so it is NOT part of the local
  * unit run — execute on the VPS/CI with `yarn test:e2e:serial`.
+ *
+ * Решение владельца 27.09.2026: автоматических перепроверок нет. Скан, новая языковая версия
+ * и изменение законодательства задач не открывают; задачу заводит только редактор руками,
+ * и ни одна задача — даже просроченная — публикацию не блокирует.
  *
  * The scheduler is disabled for this suite (`RIGHTS_RECHECK_SCHEDULER_ENABLED=0`): the scan
  * is triggered explicitly through the admin endpoint so the assertions stay deterministic.
@@ -93,7 +97,6 @@ describe('Rights recheck e2e', () => {
     process.env.ADMIN_EMAILS = 'admin@example.com';
     // Deterministic runs: only the explicit admin scan triggers the workflow.
     process.env.RIGHTS_RECHECK_SCHEDULER_ENABLED = '0';
-    process.env.RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE = '1';
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
@@ -186,7 +189,7 @@ describe('Rights recheck e2e', () => {
       .expect(201);
   });
 
-  it('creates a book from the approved clearance without opening a false LANGUAGE_ADDED task', async () => {
+  it('creates a book from the approved clearance without opening a LANGUAGE_ADDED task', async () => {
     // `versions[]` is mandatory: the endpoint creates the book and its versions in one call
     // and returns both, so no separate version lookup is needed.
     const book = await request(http())
@@ -216,18 +219,20 @@ describe('Rights recheck e2e', () => {
       .set(...auth())
       .expect(200);
 
-    // Initial versions are created by RightsBookCreationService directly, not through
-    // BookVersionService.create — so the LANGUAGE_ADDED hook must not fire here.
+    // LANGUAGE_ADDED не открывается больше ни одним путём (решение владельца 27.09.2026);
+    // исходные версии к тому же создаёт RightsBookCreationService, а не BookVersionService.create.
     expect(tasks.body.items.some((t: { reason: string }) => t.reason === 'LANGUAGE_ADDED')).toBe(
       false,
     );
   });
 
-  it('opens a SCHEDULED_DUE task for an overdue planned date and notifies the editor', async () => {
+  it('scan opens no SCHEDULED_DUE task for an overdue planned date (owner decision 27.09.2026)', async () => {
+    // Ровно тот вход, на котором прежний шаг A открывал SCHEDULED_DUE: политика, которая
+    // наследует дату отчёта, и плановая дата давно в прошлом.
     await request(http())
       .patch(`/admin/rights/profiles/${profileId}/recheck-schedule`)
       .set(...auth())
-      .send({ nextReviewAt: '2020-01-01T00:00:00.000Z' })
+      .send({ recheckPolicy: 'INHERIT_REPORT', nextReviewAt: '2020-01-01T00:00:00.000Z' })
       .expect(200);
 
     const scan = await request(http())
@@ -236,30 +241,35 @@ describe('Rights recheck e2e', () => {
       .expect(201);
 
     expect(scan.body.status).toBe('SUCCEEDED');
+    expect(scan.body.tasksCreated).toBe(0);
 
-    const overdue = await request(http())
-      .get('/admin/rights/recheck/tasks?overdueOnly=true')
+    const tasks = await request(http())
+      .get(`/admin/rights/recheck/tasks?rightsProfileId=${profileId}&limit=100`)
       .set(...auth())
       .expect(200);
 
-    const overdueItems = overdue.body.items as {
-      id: string;
-      reason: string;
-      rightsProfileId: string;
-      isOverdue: boolean;
-      effectiveSeverity: string;
-    }[];
-    const scheduled = overdueItems.find(
-      (t) => t.reason === 'SCHEDULED_DUE' && t.rightsProfileId === profileId,
-    );
-    if (!scheduled) {
-      throw new Error(
-        `No SCHEDULED_DUE task for profile ${profileId}; got: ${JSON.stringify(overdueItems)}`,
-      );
-    }
-    expect(scheduled.isOverdue).toBe(true);
-    expect(scheduled.effectiveSeverity).toBe('BLOCKING');
-    taskId = scheduled.id;
+    expect(tasks.body.items).toEqual([]);
+  });
+
+  it('lets the editor open an overdue recheck task by hand', async () => {
+    const created = await request(http())
+      .post('/admin/rights/recheck/tasks')
+      .set(...auth())
+      .send({
+        rightsProfileId: profileId,
+        bookVersionId: versionId,
+        titleRu: 'Ручная перепроверка прав',
+        descriptionRu: 'Редактор завёл перепроверку сам.',
+        dueAt: '2020-01-01T00:00:00.000Z',
+        severity: 'BLOCKING',
+      })
+      .expect(201);
+
+    expect(created.body.reason).toBe('MANUAL_REQUEST');
+    expect(created.body.source).toBe('MANUAL');
+    expect(created.body.isOverdue).toBe(true);
+    expect(created.body.effectiveSeverity).toBe('BLOCKING');
+    taskId = created.body.id as string;
 
     const notifications = await request(http())
       .get('/admin/rights/notifications?limit=100')
@@ -268,7 +278,6 @@ describe('Rights recheck e2e', () => {
 
     const types = (notifications.body.items as { type: string }[]).map((n) => n.type);
     expect(types).toContain('RECHECK_TASK_OPENED');
-    expect(types.some((type) => type === 'RECHECK_DUE' || type === 'RECHECK_OVERDUE')).toBe(true);
   });
 
   it('combines an explicit status with overdueOnly via AND instead of overwriting it (LEGACY-406)', async () => {
@@ -329,15 +338,17 @@ describe('Rights recheck e2e', () => {
     }
   });
 
-  it('blocks publication through the gate while the recheck is overdue', async () => {
+  it('does not block publication while the recheck is overdue, only warns', async () => {
     const gate = await request(http())
       .get(`/admin/versions/${versionId}/publication-gate`)
       .set(...auth())
       .expect(200);
 
-    expect(gate.body.canPublish).toBe(false);
     expect(
-      gate.body.blockingReasons.some((r: { code: string }) => r.code === 'RIGHTS_RECHECK_OVERDUE'),
+      gate.body.blockingReasons.some((r: { code: string }) => r.code.startsWith('RIGHTS_RECHECK_')),
+    ).toBe(false);
+    expect(
+      gate.body.warnings.some((r: { code: string }) => r.code === 'RIGHTS_RECHECK_OVERDUE'),
     ).toBe(true);
     expect(gate.body.overdueRecheckTasksCount).toBeGreaterThan(0);
 
@@ -356,7 +367,7 @@ describe('Rights recheck e2e', () => {
     expect(state.body.schedule.rightsProfileId).toBe(profileId);
   });
 
-  it('closes the task and clears the gate blocker', async () => {
+  it('closes the task and clears the gate warning', async () => {
     await request(http())
       .post(`/admin/rights/recheck/tasks/${taskId}/start`)
       .set(...auth())
@@ -373,13 +384,6 @@ describe('Rights recheck e2e', () => {
       expect.arrayContaining(['TASK_CREATED', 'STARTED', 'COMPLETED']),
     );
 
-    // The planned date must move too, otherwise the next scan reopens the same task.
-    await request(http())
-      .patch(`/admin/rights/profiles/${profileId}/recheck-schedule`)
-      .set(...auth())
-      .send({ nextReviewAt: '2030-01-01T00:00:00.000Z' })
-      .expect(200);
-
     const gate = await request(http())
       .get(`/admin/versions/${versionId}/publication-gate`)
       .set(...auth())
@@ -388,9 +392,12 @@ describe('Rights recheck e2e', () => {
     expect(
       gate.body.blockingReasons.some((r: { code: string }) => r.code === 'RIGHTS_RECHECK_OVERDUE'),
     ).toBe(false);
+    expect(
+      gate.body.warnings.some((r: { code: string }) => r.code === 'RIGHTS_RECHECK_OVERDUE'),
+    ).toBe(false);
   });
 
-  it('applies a legal change and opens LEGAL_CHANGE tasks in bulk', async () => {
+  it('applies a legal change as a record and opens no LEGAL_CHANGE task', async () => {
     const created = await request(http())
       .post('/admin/rights/legal-changes')
       .set(...auth())
@@ -412,10 +419,18 @@ describe('Rights recheck e2e', () => {
       .expect(201);
 
     expect(applied.body.status).toBe('APPLIED');
-    expect(applied.body.createdTasksCount).toBeGreaterThan(0);
-    expect(applied.body.tasks.some((t: { reason: string }) => t.reason === 'LEGAL_CHANGE')).toBe(
-      true,
-    );
+    expect(applied.body.appliedAt).not.toBeNull();
+    // Профиль этой книги решал по DE — он затронут, но задачи перепроверки не открыты.
+    expect(applied.body.affectedProfilesCount).toBeGreaterThan(0);
+    expect(applied.body.createdTasksCount).toBe(0);
+    expect(applied.body.tasksCount).toBe(0);
+    expect(applied.body.tasks).toEqual([]);
+
+    const legalTasks = await request(http())
+      .get(`/admin/rights/recheck/tasks?reason=LEGAL_CHANGE&rightsProfileId=${profileId}`)
+      .set(...auth())
+      .expect(200);
+    expect(legalTasks.body.items).toEqual([]);
 
     // A second apply is refused — the event is no longer a DRAFT.
     await request(http())

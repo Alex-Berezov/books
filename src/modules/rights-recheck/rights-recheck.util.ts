@@ -2,11 +2,9 @@ import {
   RECHECK_DEFAULT_INTERVAL_DAYS,
   RECHECK_OVERDUE_GRACE_DAYS_DEFAULT,
   RECHECK_REMINDER_LEAD_DAYS_DEFAULT,
-  STALE_REASON_TO_RECHECK_REASON,
 } from './rights-recheck.constants';
 import {
   RightsRecheckPolicy,
-  RightsRecheckReason,
   RightsRecheckReminderStage,
   RightsRecheckSeverity,
 } from './rights-recheck-interface';
@@ -44,8 +42,11 @@ export type ScheduledDueProfile = Pick<
 export type ScheduledDueReview = Pick<RecheckReviewRecord, 'approvedAt' | 'nextReviewAt'>;
 
 /**
- * Planned recheck date of a profile. `null` means "no scheduled task": either the policy
+ * Planned recheck date of a profile. `null` means "no planned date": either the policy
  * forbids one (MANUAL_ONLY / active PAUSED) or no date is known at all.
+ *
+ * С решения владельца 27.09.2026 дата только справочная: по ней ничего не создаётся и ничего
+ * не блокируется — её показывает расписание профиля и предупреждение `RIGHTS_RECHECK_DUE_SOON`.
  */
 export const computeScheduledDueAt = (
   profile: ScheduledDueProfile,
@@ -169,12 +170,6 @@ export const computeTaskSeverity = (
 
   return severityRank(task.severity) >= severityRank(dateDriven) ? task.severity : dateDriven;
 };
-
-/** Phase 8 stale reason code → recheck reason. Unknown codes and null map to CONTENT_CHANGED. */
-export const staleReasonToRecheckReason = (
-  staleReasonCode: string | null | undefined,
-): RightsRecheckReason =>
-  STALE_REASON_TO_RECHECK_REASON[staleReasonCode ?? ''] ?? RightsRecheckReason.CONTENT_CHANGED;
 
 /** Whole days remaining until `dueAt`; negative once the task is overdue. */
 export const daysUntil = (dueAt: Date, now: Date): number =>

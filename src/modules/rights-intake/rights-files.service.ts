@@ -177,9 +177,10 @@ export class RightsFilesService {
     //
     // WP-D.2: сужение области. Первое появление суммы (её не было вовсе) — это приложенный
     // артефакт происхождения, а не подмена издания: клиренс снимался с этого же текста, файл
-    // лишь фиксирует, с какого. Такой случай переснимает baseline с записью события в аудит.
-    // Замена уже известной суммы (её мог проставить отчёт агента) остаётся
-    // `SOURCE_EDITION_CHANGED` → `STALE`.
+    // лишь фиксирует, с какого. Такой случай пишет событие в аудит; baseline не переснимается.
+    // Замена уже известной суммы (её мог проставить отчёт агента) идёт как
+    // `SOURCE_EDITION_CHANGED`: с 27.09.2026 (решение владельца) это тоже только запись
+    // в журнал, baseline и клиренс не меняются.
     if (previousSha256) {
       await this.contentHash.checkStalenessForRightsProfile(
         profileId,
@@ -187,11 +188,11 @@ export class RightsFilesService {
         userId,
       );
     } else {
-      await this.contentHash.rebaselineForRightsProfile(
+      await this.contentHash.logContentChangeForRightsProfile(
         profileId,
         'SOURCE_EDITION_CHANGED',
         SOURCE_FILE_FIRST_UPLOAD_REASON_CODE,
-        'Первая загрузка файла источника: baseline переснят, клиренс не аннулирован',
+        'Первая загрузка файла источника: изменение записано в журнал, клиренс не аннулирован',
         userId,
       );
     }

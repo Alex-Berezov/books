@@ -13,7 +13,6 @@ import {
   RECHECK_ERROR_CODES,
   RECHECK_EVENT_DRIVEN_DUE_DAYS_DEFAULT,
   RECHECK_GATE_CODES,
-  RECHECK_LEGAL_CHANGE_DUE_DAYS_DEFAULT,
   RECHECK_LIST_DEFAULT_LIMIT,
   RECHECK_LIST_MAX_LIMIT,
   RECHECK_MAX_SNOOZE_DAYS,
@@ -89,8 +88,6 @@ export interface EnsureRecheckTaskInput {
   triggerCode?: string | null;
   affectedCountryCodes?: string[] | null;
   createdByUserId?: string | null;
-  /** Mass operations (legal change apply) send one summary notification instead of N. */
-  suppressNotification?: boolean;
 }
 
 export interface EnsureRecheckTaskResult {
@@ -109,10 +106,8 @@ interface RecordEventInput {
 
 /** Resolved Phase 18 runtime configuration. */
 export interface RecheckRuntimeConfig extends RecheckDateConfig {
-  legalChangeDueDays: number;
   eventDueDays: number;
   batchSize: number;
-  blockPublishOnOverdue: boolean;
 }
 
 const CLOSED_STATUSES: readonly RightsRecheckStatus[] = [
@@ -130,8 +125,9 @@ const RECHECK_OPEN_WHERE: Prisma.RightsRecheckTaskWhereInput = {
 };
 
 /**
- * The recheck task is the single unit of work of Phase 18: schedule, content change,
- * language addition, legal change and manual requests all converge on it.
+ * The recheck task is the single unit of work of Phase 18. С решения владельца 27.09.2026 задачу
+ * открывает только редактор руками (`createManual`): расписание, изменение контента, новая
+ * языковая версия и изменение законодательства задач больше не создают.
  * Tasks and their events are never physically deleted — closing is a status change.
  */
 @Injectable()
@@ -161,10 +157,6 @@ export class RightsRecheckService {
         this.config.get('RIGHTS_RECHECK_OVERDUE_GRACE_DAYS'),
         RECHECK_OVERDUE_GRACE_DAYS_DEFAULT,
       ),
-      legalChangeDueDays: parsePositiveInt(
-        this.config.get('RIGHTS_RECHECK_LEGAL_CHANGE_DUE_DAYS'),
-        RECHECK_LEGAL_CHANGE_DUE_DAYS_DEFAULT,
-      ),
       eventDueDays: parsePositiveInt(
         this.config.get('RIGHTS_RECHECK_EVENT_DUE_DAYS'),
         RECHECK_EVENT_DRIVEN_DUE_DAYS_DEFAULT,
@@ -173,8 +165,6 @@ export class RightsRecheckService {
         this.config.get('RIGHTS_RECHECK_SCAN_BATCH_SIZE'),
         RECHECK_SCAN_BATCH_SIZE_DEFAULT,
       ),
-      blockPublishOnOverdue:
-        (this.config.get('RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE') ?? '1') !== '0',
     };
   }
 
@@ -257,23 +247,21 @@ export class RightsRecheckService {
         userId: input.createdByUserId ?? null,
       });
 
-      if (!input.suppressNotification) {
-        const intakeTitle = await this.resolveIntakeTitle(client, input.rightsIntakeId ?? null);
-        await this.notifications.create(
-          {
-            type: RightsNotificationType.RECHECK_TASK_OPENED,
-            severity: RightsNotificationSeverity.INFO,
-            titleRu: 'Открыта задача перепроверки прав',
-            messageRu: `По интейку «${intakeTitle}» открыта задача перепроверки: ${RECHECK_REASON_LABELS_RU[input.reason]}. Срок — ${this.formatDate(input.dueAt)}.`,
-            targetUserId: null,
-            rightsIntakeId: input.rightsIntakeId ?? null,
-            rightsProfileId: input.rightsProfileId ?? null,
-            bookVersionId: input.bookVersionId ?? null,
-            payload: { recheckTaskId: task.id, reason: input.reason },
-          },
-          client as unknown as AgentDatabaseClient,
-        );
-      }
+      const intakeTitle = await this.resolveIntakeTitle(client, input.rightsIntakeId ?? null);
+      await this.notifications.create(
+        {
+          type: RightsNotificationType.RECHECK_TASK_OPENED,
+          severity: RightsNotificationSeverity.INFO,
+          titleRu: 'Открыта задача перепроверки прав',
+          messageRu: `По интейку «${intakeTitle}» открыта задача перепроверки: ${RECHECK_REASON_LABELS_RU[input.reason]}. Срок — ${this.formatDate(input.dueAt)}.`,
+          targetUserId: null,
+          rightsIntakeId: input.rightsIntakeId ?? null,
+          rightsProfileId: input.rightsProfileId ?? null,
+          bookVersionId: input.bookVersionId ?? null,
+          payload: { recheckTaskId: task.id, reason: input.reason },
+        },
+        client as unknown as AgentDatabaseClient,
+      );
 
       return task;
     };
@@ -661,7 +649,8 @@ export class RightsRecheckService {
 
     return {
       rightsProfileId: profile.id,
-      recheckPolicy: profile.recheckPolicy ?? RightsRecheckPolicy.INHERIT_REPORT,
+      // Умолчание схемы с 27.09.2026 — MANUAL_ONLY (решение владельца: только ручные перепроверки).
+      recheckPolicy: profile.recheckPolicy ?? RightsRecheckPolicy.MANUAL_ONLY,
       recheckIntervalDays: profile.recheckIntervalDays ?? null,
       nextReviewAt: this.toIso(profile.nextReviewAt),
       recheckPausedUntil: this.toIso(profile.recheckPausedUntil),
@@ -679,6 +668,12 @@ export class RightsRecheckService {
   /**
    * Phase 18 contribution to the publication gate. Existing gate codes are untouched —
    * this only adds `RIGHTS_RECHECK_*` reasons.
+   *
+   * Решение владельца 27.09.2026: перепроверка прав публикацию не блокирует никогда. Все причины,
+   * включая просрочку (`RIGHTS_RECHECK_OVERDUE`) и изменение законодательства
+   * (`RIGHTS_RECHECK_LEGAL_CHANGE_PENDING`), уходят в `warnings`; `blockers` остаётся в ответе
+   * ради формы контракта с `PublicationGateService` и всегда пуст. Переключателя
+   * `RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE` больше нет — блокировать нечего.
    */
   async evaluateVersionRecheck(versionId: string): Promise<RecheckGateEvaluationDto> {
     const database = this.getDatabase();
@@ -695,6 +690,7 @@ export class RightsRecheckService {
     const config = this.getRuntimeConfig();
     const tasks = await this.findVersionTasks(database, versionId, version.rightsProfileId ?? null);
 
+    // Всегда пуст: см. комментарий к методу.
     const blockers: RecheckGateReasonDto[] = [];
     const warnings: RecheckGateReasonDto[] = [];
 
@@ -711,7 +707,7 @@ export class RightsRecheckService {
       if (effectiveSeverity === RightsRecheckSeverity.BLOCKING) blockingTasksCount += 1;
       if (!nextDueAt || task.dueAt.getTime() < nextDueAt.getTime()) nextDueAt = task.dueAt;
 
-      // A snoozed task never blocks: the editor has explicitly deferred it.
+      // A snoozed task is reported as deferred, whatever its severity.
       if (isSnoozed) {
         warnings.push(
           this.gateReason(
@@ -728,7 +724,7 @@ export class RightsRecheckService {
         task.reason === RightsRecheckReason.LEGAL_CHANGE &&
         effectiveSeverity === RightsRecheckSeverity.BLOCKING
       ) {
-        blockers.push(
+        warnings.push(
           this.gateReason(
             RECHECK_GATE_CODES.RIGHTS_RECHECK_LEGAL_CHANGE_PENDING,
             `Изменение законодательства требует перепроверки прав: ${task.titleRu}`,
@@ -740,17 +736,14 @@ export class RightsRecheckService {
       }
 
       if (effectiveSeverity === RightsRecheckSeverity.BLOCKING) {
-        const reason = this.gateReason(
-          RECHECK_GATE_CODES.RIGHTS_RECHECK_OVERDUE,
-          `Перепроверка прав просрочена: ${task.titleRu} (срок ${this.formatDate(task.dueAt)}).`,
-          task.id,
-          { reason: task.reason, dueAt: task.dueAt.toISOString() },
+        warnings.push(
+          this.gateReason(
+            RECHECK_GATE_CODES.RIGHTS_RECHECK_OVERDUE,
+            `Перепроверка прав просрочена: ${task.titleRu} (срок ${this.formatDate(task.dueAt)}).`,
+            task.id,
+            { reason: task.reason, dueAt: task.dueAt.toISOString() },
+          ),
         );
-        if (config.blockPublishOnOverdue) {
-          blockers.push(reason);
-        } else {
-          warnings.push(reason);
-        }
         continue;
       }
 

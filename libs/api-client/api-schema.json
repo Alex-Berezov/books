@@ -9125,6 +9125,20 @@
         ],
         "type": "object"
       },
+      "GrantRightsPublicationOverrideDto": {
+        "properties": {
+          "reasonRu": {
+            "description": "Почему администратор снимает правовые ограничения с книги. Обязательно: решение последней инстанции пишется в журнал вместе с автором.",
+            "maxLength": 2000,
+            "minLength": 10,
+            "type": "string"
+          }
+        },
+        "required": [
+          "reasonRu"
+        ],
+        "type": "object"
+      },
       "ImportCategoryDto": {
         "properties": {
           "indexable": {
@@ -13792,6 +13806,14 @@
             "nullable": true,
             "type": "string"
           },
+          "supervisorOverride": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicationGateSupervisorOverrideDto"
+              }
+            ],
+            "nullable": true
+          },
           "versionId": {
             "type": "string"
           },
@@ -13846,7 +13868,33 @@
           "pendingLawyerConditionsCount",
           "riskLevel",
           "lawyerOpinionValidUntil",
-          "lawyerReviewIds"
+          "lawyerReviewIds",
+          "supervisorOverride"
+        ],
+        "type": "object"
+      },
+      "PublicationGateSupervisorOverrideDto": {
+        "properties": {
+          "grantedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grantedByUserId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reasonRu": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "grantedAt",
+          "grantedByUserId",
+          "reasonRu"
         ],
         "type": "object"
       },
@@ -15480,6 +15528,16 @@
         "required": [
           "reasonRu"
         ],
+        "type": "object"
+      },
+      "RevokeRightsPublicationOverrideDto": {
+        "properties": {
+          "reasonRu": {
+            "description": "Почему решение отменено.",
+            "maxLength": 2000,
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "RightsActionDto": {
@@ -18614,6 +18672,92 @@
           "archivedAt",
           "createdAt",
           "updatedAt"
+        ],
+        "type": "object"
+      },
+      "RightsPublicationOverrideDto": {
+        "properties": {
+          "bookId": {
+            "description": "null — книга удалена после решения; сама запись журнала остаётся",
+            "nullable": true,
+            "type": "string"
+          },
+          "bookSlug": {
+            "description": "Слаг книги на момент решения",
+            "type": "string"
+          },
+          "grantedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grantedByEmail": {
+            "nullable": true,
+            "type": "string"
+          },
+          "grantedByUserId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reasonRu": {
+            "type": "string"
+          },
+          "revokeReasonRu": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revokedAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "revokedByEmail": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revokedByUserId": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bookId",
+          "bookSlug",
+          "reasonRu",
+          "grantedAt",
+          "grantedByUserId",
+          "grantedByEmail",
+          "revokedAt",
+          "revokedByUserId",
+          "revokedByEmail",
+          "revokeReasonRu"
+        ],
+        "type": "object"
+      },
+      "RightsPublicationOverrideStateDto": {
+        "properties": {
+          "active": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RightsPublicationOverrideDto"
+              }
+            ],
+            "nullable": true
+          },
+          "history": {
+            "description": "Все решения по книге, новые сверху; действующее тоже здесь.",
+            "items": {
+              "$ref": "#/components/schemas/RightsPublicationOverrideDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "active",
+          "history"
         ],
         "type": "object"
       },
@@ -24164,6 +24308,135 @@
         "summary": "Which background mechanisms are actually running",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/admin/books/{bookId}/rights-override": {
+      "get": {
+        "operationId": "RightsPublicationOverrideController_getState",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsPublicationOverrideStateDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Действующее решение «Разрешить публикацию» и история решений по книге",
+        "tags": [
+          "rights-override"
+        ]
+      },
+      "post": {
+        "operationId": "RightsPublicationOverrideController_grant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantRightsPublicationOverrideDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsPublicationOverrideDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Разрешить публикацию: снять все правовые ограничения с книги (последняя инстанция, только admin)",
+        "tags": [
+          "rights-override"
+        ]
+      }
+    },
+    "/admin/books/{bookId}/rights-override/revoke": {
+      "post": {
+        "operationId": "RightsPublicationOverrideController_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRightsPublicationOverrideDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsPublicationOverrideDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "description": "RIGHTS_OVERRIDE_NOT_ACTIVE — действующего решения нет"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Отменить действующее решение «Разрешить публикацию» (только admin)",
+        "tags": [
+          "rights-override"
         ]
       }
     },

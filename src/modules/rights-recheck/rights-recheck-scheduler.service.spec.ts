@@ -235,106 +235,58 @@ describe('RightsRecheckSchedulerService', () => {
     );
   });
 
-  describe('step A — planned due dates', () => {
-    it('opens SCHEDULED_DUE when the planned date is inside the lead window', async () => {
-      stub.rightsProfile.findMany.mockResolvedValueOnce([
-        profile({ nextReviewAt: addDays(NOW, 10) }),
-      ]);
-
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
-
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ reason: RightsRecheckReason.SCHEDULED_DUE }),
-        }),
-      );
-    });
-
-    it('does not open a task when the planned date is far away', async () => {
-      stub.rightsProfile.findMany.mockResolvedValueOnce([
-        profile({ nextReviewAt: addDays(NOW, 200) }),
-      ]);
-
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
-
-      expect(stub.rightsRecheckTask.create).not.toHaveBeenCalled();
-    });
-
-    it('skips a paused profile', async () => {
-      stub.rightsProfile.findMany.mockResolvedValueOnce([
-        profile({
-          nextReviewAt: addDays(NOW, 1),
-          recheckPolicy: RightsRecheckPolicy.PAUSED,
-          recheckPausedUntil: addDays(NOW, 90),
-        }),
-      ]);
-
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
-
-      expect(stub.rightsRecheckTask.create).not.toHaveBeenCalled();
-    });
-
-    it('excludes MANUAL_ONLY profiles at the query level', async () => {
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
-
-      expect(stub.rightsProfile.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ recheckPolicy: { not: 'MANUAL_ONLY' } }),
-        }),
-      );
-    });
-  });
-
-  describe('step B — stale versions', () => {
-    it('opens a task with the reason derived from the stale reason code', async () => {
-      stub.bookVersion.findMany.mockResolvedValueOnce([
-        version({ rightsStaleReasonCode: 'AUDIO_CHAPTER_CREATED' }),
-      ]);
-
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
-
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            reason: RightsRecheckReason.AUDIO_ADDED,
-            bookVersionId: 'v1',
-            triggerCode: 'AUDIO_CHAPTER_CREATED',
-          }),
-        }),
-      );
-    });
-  });
-
   /**
-   * WP-D.3: черновик живёт в окне наполнения — его метки staleness обслуживает само окно,
-   * а задача перепроверки на неопубликованный текст только добавляет просрочку
-   * (`RIGHTS_RECHECK_OVERDUE` через 37 дней). Опубликованные версии сканируются как прежде.
+   * Решение владельца 27.09.2026: автоматических перепроверок нет. Раньше здесь жили шаги A-C,
+   * открывавшие SCHEDULED_DUE по плановому сроку, CONTENT_CHANGED / AUDIO_ADDED /
+   * RIGHTS_DATA_CHANGED по меткам устаревания версии и REVIEW_STALE по проверке в статусе STALE.
+   * Каждый тест ниже подаёт скану ровно тот вход, на котором старый шаг открывал задачу, и требует,
+   * чтобы задачи не было: вернётся любой из шагов — тест покраснеет.
    */
-  describe('step B — draft fill window (WP-D.3)', () => {
-    it('excludes drafts at the query level', async () => {
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
-
-      expect(stub.bookVersion.findMany).toHaveBeenCalledWith(
+  describe('no automatic task creation (owner decision 27.09.2026)', () => {
+    const expectNoTaskOpened = (): void => {
+      expect(stub.rightsRecheckTask.create).not.toHaveBeenCalled();
+      expect(stub.rightsRecheckEvent.create).not.toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: { not: 'draft' } }),
+          data: expect.objectContaining({ eventType: RightsRecheckEventType.TASK_CREATED }),
         }),
       );
-    });
-
-    it('still opens a task for a published stale version', async () => {
-      stub.bookVersion.findMany.mockResolvedValueOnce([version({ status: 'published' })]);
-
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
-
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ bookVersionId: 'v1' }) }),
+      expect(notifications.create).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RECHECK_TASK_OPENED' }),
       );
-    });
-  });
+    };
 
-  describe('step C — stale reviews', () => {
-    it('opens REVIEW_STALE for a review in STALE status', async () => {
-      stub.rightsReview.findMany.mockResolvedValueOnce([
+    it('opens no task for a profile whose planned review date has already passed', async () => {
+      stub.rightsProfile.findMany.mockResolvedValue([
+        profile({ nextReviewAt: addDays(NOW, -1) }),
+        profile({
+          id: 'profile-2',
+          recheckPolicy: RightsRecheckPolicy.FIXED_INTERVAL,
+          recheckIntervalDays: 30,
+          createdAt: addDays(NOW, -400),
+        }),
+      ]);
+
+      const result = await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+
+      expectNoTaskOpened();
+      expect(result.tasksCreated).toBe(0);
+      expect(result.profilesScanned).toBe(0);
+    });
+
+    it('opens no task for a published version flagged rightsRecheckRequired', async () => {
+      stub.bookVersion.findMany.mockResolvedValue([
+        version({ status: 'published', rightsStaleReasonCode: 'AUDIO_CHAPTER_CREATED' }),
+      ]);
+
+      const result = await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+
+      expectNoTaskOpened();
+      expect(result.tasksCreated).toBe(0);
+      expect(result.versionsScanned).toBe(0);
+    });
+
+    it('opens no task for a review in STALE status', async () => {
+      stub.rightsReview.findMany.mockResolvedValue([
         {
           id: 'review-9',
           rightsProfileId: 'profile-1',
@@ -347,11 +299,23 @@ describe('RightsRecheckSchedulerService', () => {
         },
       ]);
 
+      const result = await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+
+      expectNoTaskOpened();
+      expect(result.tasksCreated).toBe(0);
+    });
+
+    it('writes zero for the counters of the removed steps', async () => {
       await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
 
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledWith(
+      expect(stub.rightsRecheckScanRun.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ reason: RightsRecheckReason.REVIEW_STALE }),
+          data: expect.objectContaining({
+            status: RightsRecheckScanStatus.SUCCEEDED,
+            profilesScanned: 0,
+            versionsScanned: 0,
+            tasksCreated: 0,
+          }),
         }),
       );
     });
@@ -467,23 +431,37 @@ describe('RightsRecheckSchedulerService', () => {
       );
     });
 
-    it('closes a content task with CONTENT_REVERTED once the version is clean again', async () => {
+    /**
+     * Решение владельца 27.09.2026: метки устаревания версий никто больше не ставит, поэтому
+     * «версия снова чистая» верно всегда. Прежняя ветка CONTENT_REVERTED на этом условии
+     * закрывала на первом же скане и ручную задачу с контентной причиной. Ручную задачу
+     * закрывает человек или более свежая утверждённая проверка — но не чистота версии.
+     */
+    it.each([
+      RightsRecheckReason.CONTENT_CHANGED,
+      RightsRecheckReason.AUDIO_ADDED,
+      RightsRecheckReason.RIGHTS_DATA_CHANGED,
+    ])('keeps a manual %s task open on a clean version', async (reason) => {
       stub.rightsRecheckTask.findMany.mockResolvedValue([
-        task({ reason: RightsRecheckReason.CONTENT_CHANGED, bookVersionId: 'v1' }),
+        task({
+          reason,
+          source: RightsRecheckTriggerSource.MANUAL,
+          bookVersionId: 'v1',
+          dueAt: addDays(NOW, 60),
+        }),
       ]);
       stub.bookVersion.findUnique.mockResolvedValue(
         version({ rightsRecheckRequired: false, rightsStaleDetectedAt: null }),
       );
 
-      await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
+      const result = await scheduler.runScan(RightsRecheckTriggerSource.MANUAL, null);
 
-      expect(stub.rightsRecheckTask.update).toHaveBeenCalledWith(
+      expect(stub.rightsRecheckTask.update).not.toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            resolution: RightsRecheckResolution.CONTENT_REVERTED,
-          }),
+          data: expect.objectContaining({ status: RightsRecheckStatus.COMPLETED }),
         }),
       );
+      expect(result.tasksAutoClosed).toBe(0);
     });
   });
 
@@ -512,11 +490,12 @@ describe('RightsRecheckSchedulerService', () => {
     it('rejects a concurrent manual scan with RECHECK_SCAN_ALREADY_RUNNING', async () => {
       // Keep the first run in-flight while the second one starts. Queued rather than a single
       // reassigned callback: `claimRun`'s own claim transaction (lock, findFirst, create) adds
-      // several microtask ticks ahead of the first `rightsProfile.findMany` call, so a `release`
-      // captured too early — before that call has actually happened — would target nothing.
+      // several microtask ticks ahead of the first `rightsRecheckTask.findMany` call (auto-close
+      // loading open tasks), so a `release` captured too early — before that call has actually
+      // happened — would target nothing.
       let released = false;
       const pending: Array<() => void> = [];
-      stub.rightsProfile.findMany.mockImplementation(
+      stub.rightsRecheckTask.findMany.mockImplementation(
         () =>
           new Promise((resolve) => {
             if (released) resolve([]);
@@ -623,7 +602,7 @@ describe('RightsRecheckSchedulerService', () => {
       const release: () => void = () => undefined;
       let released = false;
       const pending: Array<() => void> = [];
-      stub.rightsProfile.findMany.mockImplementation(
+      stub.rightsRecheckTask.findMany.mockImplementation(
         () =>
           new Promise((resolve) => {
             if (released) resolve([]);
@@ -651,7 +630,7 @@ describe('RightsRecheckSchedulerService', () => {
     });
 
     it('records FAILED and swallows the error for an automatic run', async () => {
-      stub.rightsProfile.findMany.mockRejectedValue(new Error('database down'));
+      stub.rightsRecheckTask.findMany.mockRejectedValue(new Error('database down'));
 
       const result = await scheduler.runScan(RightsRecheckTriggerSource.SCHEDULER, null);
 
@@ -668,7 +647,7 @@ describe('RightsRecheckSchedulerService', () => {
     });
 
     it('rethrows for a manual run', async () => {
-      stub.rightsProfile.findMany.mockRejectedValue(new Error('database down'));
+      stub.rightsRecheckTask.findMany.mockRejectedValue(new Error('database down'));
 
       await expect(scheduler.runScan(RightsRecheckTriggerSource.MANUAL, 'admin-1')).rejects.toThrow(
         'database down',

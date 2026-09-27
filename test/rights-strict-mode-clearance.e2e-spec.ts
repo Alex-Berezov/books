@@ -13,8 +13,8 @@ import { PrismaService } from '../src/prisma/prisma.service';
  * 🔴 Этот набор намеренно **не выставляет ни одной переменной `RIGHTS_*`** и прогоняется
  * на умолчаниях кода: заключение юриста требуется с риска `HIGH`
  * (`rights-risk-assessment.service.ts`, дефолт `RightsRiskLevel.HIGH`), блокировка утверждения
- * включена, просроченная перепроверка блокирует публикацию (`rights-recheck.service.ts`,
- * дефолт `'1'`). Соседние наборы свои значения `RIGHTS_*` ставят, а при `--runInBand` все они
+ * включена. Перепроверка прав публикацию не блокирует вовсе и переключателя не имеет (решение
+ * владельца 27.09.2026, `rights-recheck.service.ts`, `evaluateVersionRecheck`). Соседние наборы свои значения `RIGHTS_*` ставят, а при `--runInBand` все они
  * живут в одном процессе — поэтому `beforeAll` эти переменные снимает, иначе набор проверял бы
  * чужую настройку вместо умолчания. Единственное исключение — `RIGHTS_RECHECK_SCHEDULER_ENABLED`:
  * она выключает фоновый скан, в утверждениях набора не участвует и выставляется явно (решение
@@ -219,10 +219,9 @@ describe('Rights clearance in strict mode e2e', () => {
     delete process.env.RIGHTS_LAWYER_MIN_RISK_LEVEL;
     delete process.env.RIGHTS_LAWYER_WORKFLOW_ENABLED;
     delete process.env.RIGHTS_LAWYER_BLOCK_APPROVAL_ON_HIGH_RISK;
-    delete process.env.RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE;
     // Фоновый скан — единственная `RIGHTS_*`, которую набор выставляет, и это решение арбитра
-    // от 14.09.2026 (`decisions-log.md`): в утверждениях он не участвует — задачу перепроверки
-    // набор заводит сам вызовом `POST /admin/rights/recheck/scan`. На умолчании «включён» первый
+    // от 14.09.2026 (`decisions-log.md`): в утверждениях он не участвует — скан набор
+    // запускает сам вызовом `POST /admin/rights/recheck/scan`. На умолчании «включён» первый
     // автоскан идёт через 60 с (`rights-recheck.constants.ts`) и отбирает у набора его же ручной
     // запуск отказом 409 `RECHECK_SCAN_ALREADY_RUNNING`, то есть кейс краснел бы от длительности
     // прогона, а не от регрессии. Явное значение заодно снимает зависимость от порядка файлов.
@@ -268,11 +267,12 @@ describe('Rights clearance in strict mode e2e', () => {
     await app.close();
   });
 
-  it('держит умолчания правового контура: четыре предохранителя не заданы, скан выключен', () => {
+  // Четвёртого предохранителя, `RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE`, больше нет: решение
+  // владельца 27.09.2026 — перепроверка публикацию не блокирует, переключать нечего.
+  it('держит умолчания правового контура: три предохранителя не заданы, скан выключен', () => {
     expect(process.env.RIGHTS_LAWYER_MIN_RISK_LEVEL).toBeUndefined();
     expect(process.env.RIGHTS_LAWYER_WORKFLOW_ENABLED).toBeUndefined();
     expect(process.env.RIGHTS_LAWYER_BLOCK_APPROVAL_ON_HIGH_RISK).toBeUndefined();
-    expect(process.env.RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE).toBeUndefined();
     expect(process.env.RIGHTS_RECHECK_SCHEDULER_ENABLED).toBe('0');
   });
 
@@ -330,16 +330,17 @@ describe('Rights clearance in strict mode e2e', () => {
     });
 
     /**
-     * Второе умолчание строгого режима: `blockPublishOnOverdue` (`rights-recheck.service.ts`,
-     * дефолт `'1'`). Соседний набор `rights-recheck.e2e-spec.ts` его проверяет, но пинит
-     * переменную на `'1'` в `beforeAll`, поэтому ослабление самого дефолта переживает —
-     * здесь переменной нет, и та же ветка стережёт умолчание.
+     * Решение владельца 27.09.2026: автоматических перепроверок нет, и ни одна задача
+     * перепроверки публикацию не блокирует. Прежде здесь стерегли обратное — что просроченная
+     * плановая дата через скан закрывает гейт по умолчанию. Теперь тот же вход (плановая дата
+     * в прошлом, политика наследует дату отчёта) обязан не открыть задачу, а заведённая руками
+     * просроченная задача — остаться предупреждением.
      */
-    it('просроченная перепроверка закрывает публикационный гейт', async () => {
+    it('просроченная плановая дата не открывает задачу и не закрывает гейт', async () => {
       await request(http())
         .patch(`/admin/rights/profiles/${profileId}/recheck-schedule`)
         .set(...auth())
-        .send({ nextReviewAt: '2020-01-01T00:00:00.000Z' })
+        .send({ recheckPolicy: 'INHERIT_REPORT', nextReviewAt: '2020-01-01T00:00:00.000Z' })
         .expect(200);
 
       const scan = await request(http())
@@ -348,22 +349,47 @@ describe('Rights clearance in strict mode e2e', () => {
         .expect(201);
 
       expect(scan.body.status).toBe('SUCCEEDED');
+      expect(scan.body.tasksCreated).toBe(0);
 
       const gate = await request(http())
         .get(`/admin/versions/${versionId}/publication-gate`)
         .set(...auth())
         .expect(200);
 
-      expect(gate.body.canPublish).toBe(false);
+      expect(gate.body.blockingReasons).toEqual([]);
+      expect(gate.body.canPublish).toBe(true);
+      expect(gate.body.openRecheckTasksCount).toBe(0);
+      expect(gate.body.blockingRecheckTasksCount).toBe(0);
+    });
+
+    it('просроченная ручная перепроверка остаётся предупреждением, гейт открыт', async () => {
+      await request(http())
+        .post('/admin/rights/recheck/tasks')
+        .set(...auth())
+        .send({
+          rightsProfileId: profileId,
+          bookVersionId: versionId,
+          titleRu: 'Ручная перепроверка strict-mode e2e',
+          descriptionRu: 'Просроченная задача, заведённая редактором.',
+          dueAt: '2020-01-01T00:00:00.000Z',
+          severity: 'BLOCKING',
+        })
+        .expect(201);
+
+      const gate = await request(http())
+        .get(`/admin/versions/${versionId}/publication-gate`)
+        .set(...auth())
+        .expect(200);
+
+      expect(gate.body.blockingReasons).toEqual([]);
+      expect(gate.body.canPublish).toBe(true);
       expect(
-        (gate.body.blockingReasons as Array<{ code: string }>).some(
+        (gate.body.warnings as Array<{ code: string }>).some(
           (reason) => reason.code === 'RIGHTS_RECHECK_OVERDUE',
         ),
       ).toBe(true);
       expect(gate.body.overdueRecheckTasksCount).toBeGreaterThan(0);
 
-      // Гейт закрывается на будущее, а уже опубликованная версия с витрины не снимается:
-      // это работа претензий и задач перепроверки, а не самого гейта.
       const version = await prisma.bookVersion.findUnique({ where: { id: versionId } });
       expect(version?.status).toBe('published');
     });

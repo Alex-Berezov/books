@@ -209,6 +209,7 @@ describe('BookVersionService', () => {
   let authorService: { resolveAuthorIdByName: jest.Mock };
   let rightsRecheckService: {
     ensureTask: jest.Mock;
+    createManual: jest.Mock;
     getRuntimeConfig: jest.Mock;
     getVersionRecheck: jest.Mock;
   };
@@ -283,15 +284,19 @@ describe('BookVersionService', () => {
       finalizeBaselineOnPublish,
     } as unknown as jest.Mocked<RightsContentHashService>;
     rightsRecheckService = {
+      // Шпионы, а не заглушки: создание версии не должно открывать задачу перепроверки ни одним
+      // из путей сервиса (решение владельца 27.09.2026).
       ensureTask: jest.fn().mockResolvedValue({ task: { id: 'task-1' }, created: true }),
+      createManual: jest.fn(),
+      // Настоящая форма конфига, а не пустышка: вернувшийся хук LANGUAGE_ADDED считал срок
+      // через `getRuntimeConfig().eventDueDays` — без него он упал бы в своём try/catch раньше
+      // `ensureTask`, и тесты ниже остались бы зелёными на старом поведении.
       getRuntimeConfig: jest.fn().mockReturnValue({
         defaultIntervalDays: 365,
         leadDays: [30, 7],
         graceDays: 30,
-        legalChangeDueDays: 14,
         eventDueDays: 7,
         batchSize: 500,
-        blockPublishOnOverdue: true,
       }),
       getVersionRecheck: jest.fn().mockResolvedValue({
         versionId: 'v1',
@@ -566,8 +571,10 @@ describe('BookVersionService', () => {
     expect(data.authorId).toBe('chosen-by-hand');
   });
 
-  // Phase 18: adding a language version to a cleared book opens a recheck task.
-  describe('Phase 18 LANGUAGE_ADDED hook', () => {
+  // Phase 18 открывал задачу LANGUAGE_ADDED на каждую новую языковую версию книги с клиренсом.
+  // Решение владельца 27.09.2026: автоматических перепроверок нет, остаются только ручные —
+  // эти тесты стерегут, чтобы хук не вернулся.
+  describe('no automatic LANGUAGE_ADDED recheck (owner decision 27.09.2026)', () => {
     const arrangeCreate = (rightsProfileId: string | null) => {
       (prisma.book.findUnique as jest.Mock).mockResolvedValue({
         id: 'b1',
@@ -609,36 +616,33 @@ describe('BookVersionService', () => {
       } as CreateBookVersionDto;
     };
 
-    it('opens a LANGUAGE_ADDED recheck task for a version with a rights profile', async () => {
+    it('does not open a recheck task for a new language version with a rights profile', async () => {
       const dto = arrangeCreate('profile-1');
 
-      await service.create('b1', dto);
+      const res = await service.create('b1', dto);
 
-      expect(rightsRecheckService.ensureTask).toHaveBeenCalledWith(
-        expect.objectContaining({
-          reason: 'LANGUAGE_ADDED',
-          source: 'VERSION_CREATED',
-          rightsProfileId: 'profile-1',
-          bookVersionId: 'v-new',
-        }),
-      );
+      expect(res.id).toBe('v-new');
+      expect(rightsRecheckService.ensureTask).not.toHaveBeenCalled();
+      expect(rightsRecheckService.createManual).not.toHaveBeenCalled();
     });
 
-    it('does not fail version creation when opening the recheck task throws', async () => {
+    it('creates the version without touching the recheck service even when it would fail', async () => {
       const dto = arrangeCreate('profile-1');
       rightsRecheckService.ensureTask.mockRejectedValue(new Error('recheck unavailable'));
 
       const res = await service.create('b1', dto);
 
       expect(res.id).toBe('v-new');
+      expect(rightsRecheckService.ensureTask).not.toHaveBeenCalled();
     });
 
-    it('skips the hook for a version without a rights profile', async () => {
+    it('does not open a recheck task for a version without a rights profile', async () => {
       const dto = arrangeCreate(null);
 
       await service.create('b1', dto);
 
       expect(rightsRecheckService.ensureTask).not.toHaveBeenCalled();
+      expect(rightsRecheckService.createManual).not.toHaveBeenCalled();
     });
   });
 
@@ -2640,6 +2644,17 @@ describe('BookVersionService', () => {
       expect(rightsProfileService.getById).toHaveBeenCalledWith('profile-1');
       expect(res.reviewHistory).toHaveLength(1);
       expect(res.approvalHistory).toHaveLength(1);
+      expect(res.summary.isStale).toBe(false);
+
+      // Решение владельца 27.09.2026: расхождение хеша без пометки на версии — не устаревание.
+      (mockRightsContentHashService.checkVersionStaleness as jest.Mock).mockResolvedValue({
+        matchesBaseline: false,
+        isStale: false,
+        recheckRequired: false,
+      });
+      const afterEdit = await service.getRightsDashboard('v1');
+      expect(afterEdit.summary.isStale).toBe(false);
+      expect(afterEdit.summary.recheckRequired).toBe(false);
     });
     // Phase 15: license metrics in the dashboard summary
     it('returns license metrics and coverage in the dashboard summary', async () => {

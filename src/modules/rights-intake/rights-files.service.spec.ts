@@ -1,9 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RightsContentHashService } from './rights-content-hash.service';
-import {
-  createClearanceLockFake,
-  type TransactionStand,
-} from '../../common/testing/clearance-lock-fake';
 import { RightsFilesService } from './rights-files.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { RightsFileStorageService } from '../../shared/rights-file-storage/rights-file-storage.service';
@@ -37,7 +33,7 @@ const createFilesStub = () => ({
 
 const createHashStub = () => ({
   checkStalenessForRightsProfile: jest.fn().mockResolvedValue([]),
-  rebaselineForRightsProfile: jest.fn().mockResolvedValue(undefined),
+  logContentChangeForRightsProfile: jest.fn().mockResolvedValue(undefined),
 });
 
 const upload = {
@@ -153,12 +149,13 @@ describe('RightsFilesService', () => {
 
     /**
      * WP-D.2: суммы не было вовсе — файл прикладывают к уже снятому клиренсу, а не подменяют
-     * издание. Baseline переснимается, клиренс не аннулируется.
+     * издание. Изменение журналируется с причиной `SOURCE_FILE_FIRST_UPLOAD`, клиренс
+     * не аннулируется.
      */
-    it('первое появление суммы переснимает baseline, а не роняет клиренс в STALE', async () => {
+    it('первое появление суммы журналируется с причиной первой загрузки, а не роняет клиренс в STALE', async () => {
       await service.uploadSourceFile('profile-1', upload, 'user-1');
 
-      expect(hash.rebaselineForRightsProfile).toHaveBeenCalledWith(
+      expect(hash.logContentChangeForRightsProfile).toHaveBeenCalledWith(
         'profile-1',
         'SOURCE_EDITION_CHANGED',
         'SOURCE_FILE_FIRST_UPLOAD',
@@ -170,9 +167,10 @@ describe('RightsFilesService', () => {
 
     /**
      * Обратная сторона: сумму мог проставить отчёт агента. Тогда загруженный файл заменяет
-     * известное издание — это по-прежнему `SOURCE_EDITION_CHANGED` со всеми последствиями.
+     * известное издание — это `SOURCE_EDITION_CHANGED`: хеш версий профиля пересчитывается,
+     * а расхождение после решения владельца от 27.09.2026 только журналируется.
      */
-    it('замена уже известной суммы по-прежнему пересчитывает свежесть клиренса', async () => {
+    it('замена уже известной суммы пересчитывает хеш версий профиля', async () => {
       prisma.sourceEdition.findUnique.mockResolvedValue({
         id: 'se-1',
         sourceFileStorageKey: null,
@@ -186,7 +184,7 @@ describe('RightsFilesService', () => {
         'SOURCE_EDITION_CHANGED',
         'user-1',
       );
-      expect(hash.rebaselineForRightsProfile).not.toHaveBeenCalled();
+      expect(hash.logContentChangeForRightsProfile).not.toHaveBeenCalled();
     });
 
     it('пишет сумму в исходное издание', async () => {
@@ -220,8 +218,9 @@ describe('RightsFilesService', () => {
 
   /**
    * WP-D.2 по реальному конвейеру: загрузка идёт через настоящий `RightsContentHashService`,
-   * а не через заглушку. Только так видно, что послабление применяется к каждой версии
-   * профиля по отдельности — по состоянию её окна наполнения, а не оптом.
+   * а не через заглушку. После решения владельца от 27.09.2026 файл источника публикацию
+   * не блокирует ни у черновика, ни у опубликованной версии: пишется только событие, клиренс
+   * цел, а утверждённый слепок не затирается (ревью books-data, ADR-009).
    */
   describe('файл источника через реальный конвейер (WP-D.2)', () => {
     const createHashPrismaStub = () => ({
@@ -252,12 +251,7 @@ describe('RightsFilesService', () => {
       hashPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
         cb(hashPrisma),
       );
-      contentHash = new RightsContentHashService(
-        hashPrisma as unknown as PrismaService,
-        createClearanceLockFake(hashPrisma, {
-          transaction: hashPrisma as unknown as TransactionStand,
-        }).service,
-      );
+      contentHash = new RightsContentHashService(hashPrisma as unknown as PrismaService);
       jest.spyOn(contentHash, 'computeVersionHash').mockResolvedValue({
         versionId: 'version-1',
         rightsProfileId: 'profile-1',
@@ -292,11 +286,27 @@ describe('RightsFilesService', () => {
       ...overrides,
     });
 
+    const expectOnlyLogged = (): void => {
+      expect(hashPrisma.rightsReview.update).not.toHaveBeenCalled();
+      expect(hashPrisma.rightsProfile.update).not.toHaveBeenCalled();
+      expect(hashPrisma.bookVersion.update).not.toHaveBeenCalled();
+      const events = hashPrisma.rightsContentHashEvent.create.mock.calls.map(
+        (call) => (call[0] as { data: Record<string, unknown> }).data,
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        bookVersionId: 'version-1',
+        previousHash: 'baseline-hash',
+        currentHash: 'hash-with-source-file',
+        staleMarked: false,
+      });
+    };
+
     /**
-     * Обратная сторона послабления: у опубликованной версии окно закрыто публикацией,
-     * слепок зафиксирован — первая загрузка файла источника обязана уводить клиренс в `STALE`.
+     * До решения владельца от 27.09.2026 у опубликованной версии (окно наполнения закрыто)
+     * первая загрузка файла источника уводила клиренс в `STALE`. Теперь — только журнал.
      */
-    it('первая загрузка на опубликованной версии по-прежнему даёт STALE', async () => {
+    it('первая загрузка на опубликованной версии только журналируется, а не даёт STALE', async () => {
       const published = versionRecord({
         status: 'published',
         publishedAt: new Date('2026-07-01T00:00:00.000Z'),
@@ -306,38 +316,38 @@ describe('RightsFilesService', () => {
 
       await service.uploadSourceFile('profile-1', upload, 'user-1');
 
-      expect(hashPrisma.rightsReview.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-      );
-      expect(hashPrisma.rightsProfile.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-      );
-      expect(eventReasonCodes()).toContain('SOURCE_EDITION_CHANGED');
-      expect(eventReasonCodes()).not.toContain('SOURCE_FILE_FIRST_UPLOAD');
+      expectOnlyLogged();
+      expect(eventReasonCodes()).toEqual(['SOURCE_FILE_FIRST_UPLOAD']);
     });
 
-    /** Смягчение живо: у черновика с открытым окном baseline переснимается, клиренс цел. */
-    it('первая загрузка в черновике с открытым окном переснимает baseline', async () => {
+    it('первая загрузка в черновике только журналируется', async () => {
       const draft = versionRecord({ status: 'draft', publishedAt: null });
       hashPrisma.bookVersion.findMany.mockResolvedValueOnce([draft]).mockResolvedValue([]);
       hashPrisma.bookVersion.findUnique.mockResolvedValue(draft);
-      hashPrisma.rightsContentHashEvent.findFirst.mockImplementation(
-        (args: { where: { reasonCode: string } }) =>
-          Promise.resolve(
-            args.where.reasonCode === 'DRAFT_FILL_WINDOW_OPENED' ? { id: 'opened-event' } : null,
-          ),
-      );
 
       await service.uploadSourceFile('profile-1', upload, 'user-1');
 
-      expect(hashPrisma.rightsReview.update).not.toHaveBeenCalled();
-      expect(hashPrisma.rightsProfile.update).not.toHaveBeenCalled();
-      expect(eventReasonCodes()).toContain('SOURCE_FILE_FIRST_UPLOAD');
-      expect(hashPrisma.bookVersion.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ rightsContentHash: 'hash-with-source-file' }),
-        }),
-      );
+      expectOnlyLogged();
+      expect(eventReasonCodes()).toEqual(['SOURCE_FILE_FIRST_UPLOAD']);
+    });
+
+    it('замена известной суммы на опубликованной версии только журналируется', async () => {
+      prisma.sourceEdition.findUnique.mockResolvedValue({
+        id: 'se-1',
+        sourceFileStorageKey: null,
+        sourceFileSha256: 'a'.repeat(64),
+      });
+      const published = versionRecord({
+        status: 'published',
+        publishedAt: new Date('2026-07-01T00:00:00.000Z'),
+      });
+      hashPrisma.bookVersion.findMany.mockResolvedValueOnce([{ id: 'version-1' }]);
+      hashPrisma.bookVersion.findUnique.mockResolvedValue(published);
+
+      await service.uploadSourceFile('profile-1', upload, 'user-1');
+
+      expectOnlyLogged();
+      expect(eventReasonCodes()).toEqual(['CONTENT_CHANGE_LOGGED']);
     });
   });
 

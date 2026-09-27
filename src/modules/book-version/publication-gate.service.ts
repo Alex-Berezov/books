@@ -9,8 +9,10 @@ import {
   DEFAULT_PUBLICATION_GATE_STAGE,
   isLawyerOverridableGateCode,
   isPreparationBlockingGateCode,
+  isSupervisorOverrideExemptGateCode,
   LAWYER_OVERRIDE_APPLIED_CODE,
   PublicationGateStage,
+  SUPERVISOR_OVERRIDE_APPLIED_CODE,
 } from './publication-gate.constants';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
 import { baselineMatchesCurrent } from '../rights-intake/rights-content-hash.util';
@@ -20,6 +22,10 @@ import { GeoBlockRuleDto, GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsClaimsService } from '../rights-claims/rights-claims.service';
 import { RightsClearanceResolverService } from '../rights-clearance/rights-clearance-resolver.service';
+import {
+  ActiveRightsPublicationOverride,
+  RightsPublicationOverrideService,
+} from '../rights-clearance/rights-publication-override.service';
 import { RightsRecheckService } from '../rights-recheck/rights-recheck.service';
 import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review.service';
 
@@ -40,6 +46,7 @@ export class PublicationGateService {
     private readonly rightsRecheckService: RightsRecheckService,
     private readonly rightsLawyerReviewService: RightsLawyerReviewService,
     private readonly clearanceResolver: RightsClearanceResolverService,
+    private readonly publicationOverrides: RightsPublicationOverrideService,
   ) {}
 
   async checkVersionCanPublish(versionId: string): Promise<PublicationGateResultDto> {
@@ -559,12 +566,14 @@ export class PublicationGateService {
 
       if (version.rightsContentHash && !matchesBaseline) {
         contentHashMatches = false;
-        blockingReasons.push(
+        // Решение владельца 27.09.2026: правка книги после одобрения публикацию не блокирует,
+        // изменение только видно редактору. Код прежний (ADR-008), понижена лишь строгость.
+        warnings.push(
           new PublicationGateReasonDto({
             code: 'RIGHTS_CONTENT_HASH_CHANGED',
-            severity: 'BLOCKER',
+            severity: 'WARNING',
             messageRu:
-              'Содержимое или rights snapshot версии изменились после утверждения проверки. Требуется повторная проверка.',
+              'Содержимое или rights snapshot версии изменились после утверждения проверки. Публикацию это не блокирует.',
             details: {
               baselineHash: version.rightsContentHash,
               currentHash: computation.hash,
@@ -590,20 +599,25 @@ export class PublicationGateService {
 
     // 6.18 Rights claims (Phase 16)
     const claimEvaluation = await this.rightsClaimsService.evaluateVersionClaims(versionId);
+    // Причины от претензий нужны поимённо: решение «Разрешить публикацию» снимает только те,
+    // чья претензия заведена до него (решение владельца 27.09.2026).
+    const claimReasons = new Map<PublicationGateReasonDto, string[]>();
 
     for (const blocker of claimEvaluation.blockers) {
-      blockingReasons.push(
-        new PublicationGateReasonDto({
-          code: blocker.code,
-          severity: 'BLOCKER',
-          messageRu: blocker.messageRu,
-          details: {
-            ...(blocker.details ?? {}),
-            claimId: blocker.claimId,
-            claimNumber: blocker.claimNumber,
-          },
-        }),
-      );
+      const reason = new PublicationGateReasonDto({
+        code: blocker.code,
+        severity: 'BLOCKER',
+        messageRu: blocker.messageRu,
+        details: {
+          ...(blocker.details ?? {}),
+          claimId: blocker.claimId,
+          claimNumber: blocker.claimNumber,
+        },
+      });
+      blockingReasons.push(reason);
+      // Сводные причины (`ACTIVE_RIGHTS_CLAIM`, всемирная блокировка) несут все свои претензии
+      // в `details.claimIds`, а `claimId` — только первую: считать надо по всему списку.
+      claimReasons.set(reason, collectClaimIds(blocker.claimId, blocker.details));
     }
 
     for (const warning of claimEvaluation.warnings) {
@@ -758,6 +772,16 @@ export class PublicationGateService {
       );
     }
 
+    const supervisorOverride = await this.publicationOverrides.findActiveForBook(book.id);
+    if (supervisorOverride) {
+      await this.applySupervisorOverride(
+        supervisorOverride,
+        blockingReasons,
+        warnings,
+        claimReasons,
+      );
+    }
+
     // WP-H: тот же список блокеров отвечает на второй вопрос — «можно ли готовить материал».
     // Публикационный вердикт считается по полному списку и не ослаблен; подготовку запрещает
     // только белый список кодов, при которых с произведением нельзя работать вообще.
@@ -806,7 +830,82 @@ export class PublicationGateService {
       riskLevel: lawyerEvaluation.riskLevel,
       lawyerOpinionValidUntil: lawyerEvaluation.lawyerOpinionValidUntil,
       lawyerReviewIds: lawyerEvaluation.reviewIds,
+      supervisorOverride: supervisorOverride
+        ? {
+            id: supervisorOverride.id,
+            grantedAt: supervisorOverride.grantedAt.toISOString(),
+            grantedByUserId: supervisorOverride.grantedByUserId,
+            reasonRu: supervisorOverride.reasonRu,
+          }
+        : null,
     });
+  }
+
+  /**
+   * Решение владельца 27.09.2026: действующее «Разрешить публикацию» снимает все блокеры, кроме
+   * `SUPERVISOR_OVERRIDE_EXEMPT_GATE_CODES` и претензий, заведённых позже решения. Снятые причины,
+   * как и у юриста, переезжают в предупреждения: видно, что именно перекрыто и на каком основании.
+   */
+  private async applySupervisorOverride(
+    override: ActiveRightsPublicationOverride,
+    blockingReasons: PublicationGateReasonDto[],
+    warnings: PublicationGateReasonDto[],
+    claimReasons: Map<PublicationGateReasonDto, string[]>,
+  ): Promise<void> {
+    const claimIds = [
+      ...new Set(blockingReasons.flatMap((reason) => claimReasons.get(reason) ?? [])),
+    ];
+    const claims =
+      claimIds.length > 0
+        ? await this.prisma.rightsClaim.findMany({
+            where: { id: { in: claimIds } },
+            select: { id: true, createdAt: true },
+          })
+        : [];
+    const claimCreatedAt = new Map(claims.map((claim) => [claim.id, claim.createdAt]));
+
+    const staysBlocking = (reason: PublicationGateReasonDto): boolean => {
+      if (isSupervisorOverrideExemptGateCode(reason.code)) return true;
+      const reasonClaimIds = claimReasons.get(reason);
+      if (!reasonClaimIds) return false;
+      // Причина от претензии снимается, только если **все** её претензии датированы и старше
+      // решения. Претензию без даты или без id доказать нечем — fail-closed, блокер остаётся.
+      if (reasonClaimIds.length === 0) return true;
+      return reasonClaimIds.some((claimId) => {
+        const createdAt = claimCreatedAt.get(claimId);
+        return !createdAt || createdAt.getTime() > override.grantedAt.getTime();
+      });
+    };
+
+    const overriddenReasons = blockingReasons.filter((reason) => !staysBlocking(reason));
+    if (overriddenReasons.length === 0) return;
+
+    for (const reason of overriddenReasons) {
+      blockingReasons.splice(blockingReasons.indexOf(reason), 1);
+      warnings.push(
+        new PublicationGateReasonDto({
+          code: reason.code,
+          severity: 'WARNING',
+          messageRu: `${reason.messageRu} Снято решением администратора «Разрешить публикацию».`,
+          details: { ...(reason.details ?? {}), overriddenBySupervisor: true },
+        }),
+      );
+    }
+
+    warnings.push(
+      new PublicationGateReasonDto({
+        code: SUPERVISOR_OVERRIDE_APPLIED_CODE,
+        severity: 'WARNING',
+        messageRu:
+          'Правовые ограничения сняты решением администратора «Разрешить публикацию» — публикация под его ответственность.',
+        details: {
+          overriddenCodes: overriddenReasons.map((reason) => reason.code),
+          overrideId: override.id,
+          grantedAt: override.grantedAt.toISOString(),
+          grantedByUserId: override.grantedByUserId,
+        },
+      }),
+    );
   }
 
   /**
@@ -906,4 +1005,15 @@ export class PublicationGateService {
       });
     }
   }
+}
+
+/** Все претензии причины гейта: `claimId` и строковые элементы `details.claimIds`, без повторов. */
+function collectClaimIds(
+  claimId: string | null | undefined,
+  details: Record<string, unknown> | null | undefined,
+): string[] {
+  const listed = Array.isArray(details?.claimIds)
+    ? details.claimIds.filter((id): id is string => typeof id === 'string' && id !== '')
+    : [];
+  return [...new Set([...(claimId ? [claimId] : []), ...listed])];
 }

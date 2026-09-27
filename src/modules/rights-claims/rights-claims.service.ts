@@ -1339,11 +1339,12 @@ export class RightsClaimsService {
 
     const worldwideBlocks = activeBlocks.filter((block) => block.countryCode === null);
     const countryBlocks = activeBlocks.filter((block) => block.countryCode !== null);
-    const fullEditionBlock = worldwideBlocks.find(
+    const fullEditionBlocks = worldwideBlocks.filter(
       (block) =>
         block.scope === ClaimBlockScope.ENTIRE_BOOK ||
         block.scope === ClaimBlockScope.LANGUAGE_EDITION,
     );
+    const fullEditionBlock = fullEditionBlocks[0];
 
     if (fullEditionBlock) {
       blockers.push({
@@ -1351,7 +1352,13 @@ export class RightsClaimsService {
         severity: 'BLOCKER',
         messageRu:
           'Версия полностью недоступна: действует всемирная блокировка по претензии правообладателя.',
-        details: { blockId: fullEditionBlock.id, scope: fullEditionBlock.scope },
+        // `claimIds` — все претензии, чьи блокировки закрывают версию целиком: гейт сверяет
+        // их даты с решением «Разрешить публикацию» (решение владельца 27.09.2026).
+        details: {
+          blockId: fullEditionBlock.id,
+          scope: fullEditionBlock.scope,
+          claimIds: [...new Set(fullEditionBlocks.map((block) => block.rightsClaimId))],
+        },
       });
     }
 

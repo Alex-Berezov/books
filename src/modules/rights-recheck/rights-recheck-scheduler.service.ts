@@ -9,7 +9,6 @@ import {
   RightsNotificationType,
 } from '../rights-agent/rights-agent-interface';
 import {
-  RECHECK_CONTENT_DRIVEN_REASONS,
   RECHECK_ERROR_CODES,
   RECHECK_LIST_DEFAULT_LIMIT,
   RECHECK_LIST_MAX_LIMIT,
@@ -17,28 +16,23 @@ import {
   RECHECK_SCAN_INITIAL_DELAY_MS_DEFAULT,
   RECHECK_SCAN_INTERVAL_MS_DEFAULT,
   RECHECK_SCAN_STALE_RUNNING_MS,
-  RECHECK_SCHEDULABLE_PROFILE_STATUSES,
 } from './rights-recheck.constants';
 import { recheckError } from './rights-recheck.errors';
 import { RightsRecheckService, type RecheckRuntimeConfig } from './rights-recheck.service';
 import {
   RightsRecheckEventType,
-  RightsRecheckReason,
   RightsRecheckReminderStage,
   RightsRecheckResolution,
   RightsRecheckScanStatus,
   RightsRecheckTriggerSource,
 } from './rights-recheck-interface';
 import {
-  addDays,
   computeReminderStage,
-  computeScheduledDueAt,
   computeTaskSeverity,
   daysUntil,
   parsePositiveInt,
   reminderStageRank,
   severityRank,
-  staleReasonToRecheckReason,
 } from './rights-recheck.util';
 import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
 import type { ListScanRunsDto } from './dto/list-scan-runs.dto';
@@ -49,14 +43,24 @@ import type {
   RightsRecheckTaskRecord,
 } from './rights-recheck-interface';
 
+/**
+ * Счётчики, которые скан ещё умеет менять. `profilesScanned`, `versionsScanned` и `tasksCreated`
+ * остались колонками `RightsRecheckScanRun` и полями ответа (их читает админка), но скан задач
+ * больше не создаёт и профили с версиями не обходит — эти три поля всегда пишутся нулём
+ * (`SCAN_NO_LONGER_COUNTED`), чтобы история прогонов не показывала выдуманных чисел.
+ */
 interface ScanCounters {
-  profilesScanned: number;
-  versionsScanned: number;
-  tasksCreated: number;
   tasksEscalated: number;
   tasksAutoClosed: number;
   remindersSent: number;
 }
+
+/** Решение владельца 27.09.2026: скан не создаёт задач, поэтому эти поля прогона всегда нулевые. */
+const SCAN_NO_LONGER_COUNTED = {
+  profilesScanned: 0,
+  versionsScanned: 0,
+  tasksCreated: 0,
+} as const;
 
 /** Notification type and severity per reminder stage (§3.3 of the Phase 18 spec). */
 const REMINDER_NOTIFICATION: Partial<
@@ -116,17 +120,21 @@ const RECHECK_SCAN_LOCK_KEY = 8_314_270_002n;
 const RECHECK_CLAIM_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 /**
- * In-process scan that turns dates and Phase 8 staleness flags into recheck tasks.
+ * In-process scan over the recheck tasks that already exist: auto-close, reminders and
+ * severity escalation.
+ *
+ * **Решение владельца 27.09.2026.** Автоматических перепроверок больше нет: скан не открывает
+ * задач ни по плановому сроку (`SCHEDULED_DUE`), ни по меткам устаревания версий
+ * (`CONTENT_CHANGED` / `AUDIO_ADDED` / `RIGHTS_DATA_CHANGED`), ни по проверкам в статусе STALE
+ * (`REVIEW_STALE`). Задачи заводит только редактор руками (`RightsRecheckService.createManual`),
+ * а скан лишь ведёт их дальше. Ни одна задача перепроверки публикацию не блокирует
+ * (`RightsRecheckService.evaluateVersionRecheck`).
  *
  * Why `setInterval` and not `@nestjs/schedule` or BullMQ:
  * - `@nestjs/schedule` is not a dependency of this project and Phase 18 adds none;
  * - BullMQ exists, but Redis is optional in this deployment (`QueueModule` yields
  *   undefined providers without `REDIS_URL`/`REDIS_HOST`) — the rights scheduler must not
  *   silently switch itself off when Redis is absent.
- *
- * The scan is a pull model on purpose: `RightsContentHashService` lives in `RightsIntakeModule`,
- * which must not import `RightsRecheckModule` (that would be a module cycle). Staleness is
- * therefore discovered by scanning, not pushed at detection time.
  *
  * **`LEGACY-021`, closed.** Under horizontal scaling every instance runs this same timer, and
  * `isRunning` alone only ever protected concurrent runs *inside one process* — two containers
@@ -150,7 +158,8 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
     private readonly backgroundJobs: BackgroundJobsRegistry,
   ) {}
 
-  private static readonly PURPOSE = 'Re-checks rights clearances and opens overdue recheck tasks';
+  private static readonly PURPOSE =
+    'Auto-closes, reminds about and escalates manual rights recheck tasks; opens none itself';
 
   private getDatabase(): RecheckDatabaseClient {
     return this.prisma as unknown as RecheckDatabaseClient;
@@ -246,9 +255,6 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
       const startedAt = run.startedAt;
 
       const counters: ScanCounters = {
-        profilesScanned: 0,
-        versionsScanned: 0,
-        tasksCreated: 0,
         tasksEscalated: 0,
         tasksAutoClosed: 0,
         remindersSent: 0,
@@ -258,9 +264,6 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
         const config = this.recheckService.getRuntimeConfig();
         const now = new Date();
 
-        await this.scanScheduledDueDates(database, config, now, counters);
-        await this.scanStaleVersions(database, config, now, counters);
-        await this.scanStaleReviews(database, config, now, counters);
         await this.autoCloseSupersededTasks(database, now, counters);
         await this.sendReminders(database, config, now, counters);
         await this.escalateSeverities(database, config, now, counters);
@@ -270,6 +273,7 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
           status: RightsRecheckScanStatus.SUCCEEDED,
           finishedAt,
           durationMs: finishedAt.getTime() - startedAt.getTime(),
+          ...SCAN_NO_LONGER_COUNTED,
           ...counters,
         });
         return this.toScanRunDto(finished);
@@ -281,6 +285,7 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
           finishedAt,
           durationMs: finishedAt.getTime() - startedAt.getTime(),
           errorMessage: message,
+          ...SCAN_NO_LONGER_COUNTED,
           ...counters,
         });
         this.logger.error(`Rights recheck scan ${run.id} failed: ${message}`);
@@ -417,179 +422,6 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
   }
 
   // ---------------------------------------------------------------------------
-  // Step A — planned due dates
-  // ---------------------------------------------------------------------------
-
-  private async scanScheduledDueDates(
-    database: RecheckDatabaseClient,
-    config: RecheckRuntimeConfig,
-    now: Date,
-    counters: ScanCounters,
-  ): Promise<void> {
-    const firstLead = config.leadDays[0] ?? 30;
-    let skip = 0;
-
-    for (;;) {
-      const profiles = await database.rightsProfile.findMany({
-        where: {
-          isCurrent: true,
-          status: { in: [...RECHECK_SCHEDULABLE_PROFILE_STATUSES] },
-          recheckPolicy: { not: 'MANUAL_ONLY' },
-        },
-        orderBy: { createdAt: 'asc' },
-        skip,
-        take: config.batchSize,
-      });
-
-      for (const profile of profiles) {
-        counters.profilesScanned += 1;
-
-        const approvedReview = await this.recheckService.findApprovedReview(database, profile.id);
-        const dueAt = computeScheduledDueAt(profile, approvedReview, config, now);
-
-        if (dueAt && now.getTime() >= addDays(dueAt, -firstLead).getTime()) {
-          const { created } = await this.recheckService.ensureTask({
-            reason: RightsRecheckReason.SCHEDULED_DUE,
-            source: RightsRecheckTriggerSource.SCHEDULER,
-            rightsProfileId: profile.id,
-            rightsIntakeId: profile.rightsIntakeId,
-            baselineReviewId: approvedReview?.id ?? null,
-            dueAt,
-            titleRu: 'Плановая перепроверка прав',
-            descriptionRu: `Плановый срок перепроверки прав — ${dueAt.toISOString().slice(0, 10)}. Проверьте, не изменились ли основания clearance.`,
-          });
-          if (created) counters.tasksCreated += 1;
-        }
-
-        await database.rightsProfile.update({
-          where: { id: profile.id },
-          data: { lastRecheckScanAt: now },
-        });
-      }
-
-      if (profiles.length < config.batchSize) break;
-      skip += config.batchSize;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step B — versions marked stale by Phase 8
-  // ---------------------------------------------------------------------------
-
-  private async scanStaleVersions(
-    database: RecheckDatabaseClient,
-    config: RecheckRuntimeConfig,
-    now: Date,
-    counters: ScanCounters,
-  ): Promise<void> {
-    let skip = 0;
-
-    for (;;) {
-      const versions = await database.bookVersion.findMany({
-        where: {
-          rightsProfileId: { not: null },
-          // WP-D.3: черновик находится в окне наполнения (см. `RightsContentHashService`) —
-          // его метки staleness обслуживает само окно, задача перепроверки на неопубликованный
-          // текст только добавляет просрочку. Опубликованные версии сканируются как прежде.
-          status: { not: 'draft' },
-          OR: [{ rightsRecheckRequired: true }, { rightsStaleDetectedAt: { not: null } }],
-        },
-        orderBy: { id: 'asc' },
-        skip,
-        take: config.batchSize,
-        select: {
-          id: true,
-          bookId: true,
-          language: true,
-          status: true,
-          rightsProfileId: true,
-          approvedRightsReviewId: true,
-          rightsRecheckRequired: true,
-          rightsStaleDetectedAt: true,
-          rightsStaleReasonCode: true,
-          rightsStaleReasonRu: true,
-        },
-      });
-
-      for (const version of versions) {
-        counters.versionsScanned += 1;
-        if (!version.rightsProfileId) continue;
-
-        const profile = await database.rightsProfile.findUnique({
-          where: { id: version.rightsProfileId },
-        });
-
-        const reason = staleReasonToRecheckReason(version.rightsStaleReasonCode);
-        const { created } = await this.recheckService.ensureTask({
-          reason,
-          source: RightsRecheckTriggerSource.CONTENT_HASH,
-          rightsProfileId: version.rightsProfileId,
-          rightsIntakeId: profile?.rightsIntakeId ?? null,
-          bookId: version.bookId,
-          bookVersionId: version.id,
-          baselineReviewId: version.approvedRightsReviewId,
-          triggerCode: version.rightsStaleReasonCode,
-          dueAt: addDays(now, config.eventDueDays),
-          titleRu: `Изменился контент версии (${version.language}) — требуется перепроверка прав`,
-          descriptionRu:
-            version.rightsStaleReasonRu ??
-            'Контент версии изменился после утверждения проверки прав. Требуется перепроверка.',
-        });
-        if (created) counters.tasksCreated += 1;
-      }
-
-      if (versions.length < config.batchSize) break;
-      skip += config.batchSize;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step C — reviews marked STALE
-  // ---------------------------------------------------------------------------
-
-  private async scanStaleReviews(
-    database: RecheckDatabaseClient,
-    config: RecheckRuntimeConfig,
-    now: Date,
-    counters: ScanCounters,
-  ): Promise<void> {
-    const reviews = await database.rightsReview.findMany({
-      where: { status: 'STALE', rightsProfile: { isCurrent: true } },
-      orderBy: { id: 'asc' },
-      take: config.batchSize,
-      select: {
-        id: true,
-        rightsProfileId: true,
-        status: true,
-        approvedAt: true,
-        nextReviewAt: true,
-        previousReviewId: true,
-        chainRootReviewId: true,
-        revisionNumber: true,
-      },
-    });
-
-    for (const review of reviews) {
-      const profile = await database.rightsProfile.findUnique({
-        where: { id: review.rightsProfileId },
-      });
-
-      const { created } = await this.recheckService.ensureTask({
-        reason: RightsRecheckReason.REVIEW_STALE,
-        source: RightsRecheckTriggerSource.CONTENT_HASH,
-        rightsProfileId: review.rightsProfileId,
-        rightsIntakeId: profile?.rightsIntakeId ?? null,
-        baselineReviewId: review.id,
-        dueAt: addDays(now, config.eventDueDays),
-        titleRu: 'Проверка прав помечена как устаревшая',
-        descriptionRu:
-          'Утверждённая проверка прав переведена в статус STALE. Нужна новая проверка, чтобы вернуть clearance в силу.',
-      });
-      if (created) counters.tasksCreated += 1;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
   // Step D — reminders
   // ---------------------------------------------------------------------------
 
@@ -640,7 +472,7 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
         type: notification.type,
         severity: notification.severity,
         titleRu: notification.titleRu,
-        messageRu: this.buildReminderMessage(newStage, intakeTitle, task, now, config),
+        messageRu: this.buildReminderMessage(newStage, intakeTitle, task, now),
         targetUserId: null,
         rightsIntakeId: task.rightsIntakeId,
         rightsProfileId: task.rightsProfileId,
@@ -657,7 +489,6 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
     intakeTitle: string,
     task: RightsRecheckTaskRecord,
     now: Date,
-    config: RecheckRuntimeConfig,
   ): string {
     const dueAt = new Date(task.dueAt);
     const dueLabel = dueAt.toISOString().slice(0, 10);
@@ -667,7 +498,8 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
       stage === RightsRecheckReminderStage.ESCALATED
     ) {
       const overdueDays = Math.abs(daysUntil(dueAt, now));
-      return `По интейку «${intakeTitle}» перепроверка просрочена на ${overdueDays} дн. Публикация новых версий будет заблокирована после ${config.graceDays} дн. просрочки.`;
+      // Просрочка публикацию не блокирует (решение владельца 27.09.2026) — текст не обещает блокировки.
+      return `По интейку «${intakeTitle}» перепроверка просрочена на ${overdueDays} дн.`;
     }
 
     if (stage === RightsRecheckReminderStage.DUE) {
@@ -725,37 +557,13 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
           });
         });
         counters.tasksAutoClosed += 1;
-        continue;
       }
 
-      // A content-driven task closes once Phase 8 no longer flags the version.
-      if (RECHECK_CONTENT_DRIVEN_REASONS.includes(task.reason as never) && task.bookVersionId) {
-        const version = await database.bookVersion.findUnique({
-          where: { id: task.bookVersionId },
-          select: {
-            id: true,
-            bookId: true,
-            language: true,
-            status: true,
-            rightsProfileId: true,
-            approvedRightsReviewId: true,
-            rightsRecheckRequired: true,
-            rightsStaleDetectedAt: true,
-            rightsStaleReasonCode: true,
-            rightsStaleReasonRu: true,
-          },
-        });
-
-        if (version && !version.rightsRecheckRequired && version.rightsStaleDetectedAt === null) {
-          await database.$transaction(async (client) => {
-            await this.recheckService.closeTask(client, task, {
-              resolution: RightsRecheckResolution.CONTENT_REVERTED,
-              userId: null,
-            });
-          });
-          counters.tasksAutoClosed += 1;
-        }
-      }
+      // Ветки CONTENT_REVERTED больше нет (решение владельца 27.09.2026): она закрывала задачу,
+      // когда версия теряла метку устаревания. Метки больше никто не ставит, поэтому условие
+      // выполнялось всегда и закрывало на ближайшем скане и заведённую руками задачу с причиной
+      // CONTENT_CHANGED / AUDIO_ADDED / RIGHTS_DATA_CHANGED. Автоматических задач с такими
+      // причинами не бывает, а ручную закрывает только человек или более свежая проверка выше.
     }
 
     void now;
@@ -768,7 +576,6 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
    * clearance — and closed the audit trail that would have shown it.
    *
    * A task not tied to a version has nothing to verify against and keeps the previous behaviour.
-   * Same shape as the `CONTENT_REVERTED` branch: the effect is checked on the version itself.
    */
   private async isSupersedeReflectedOnVersion(
     database: RecheckDatabaseClient,

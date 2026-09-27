@@ -6,7 +6,6 @@ import { RightsRecheckService } from './rights-recheck.service';
 import {
   RightsLegalChangeStatus,
   RightsLegalChangeType,
-  RightsRecheckReason,
   RightsRecheckSeverity,
   type RightsLegalChangeEventRecord,
 } from './rights-recheck-interface';
@@ -204,8 +203,19 @@ describe('RightsLegalChangeService', () => {
     });
   });
 
+  /**
+   * Решение владельца 27.09.2026: применение изменения законодательства задач перепроверки
+   * не открывает. Событие по-прежнему переходит в APPLIED и считает затронутые профили;
+   * `createdTasksCount` остаётся в контракте и равен нулю.
+   */
   describe('apply', () => {
-    it('opens tasks only for profiles with a decision in the affected jurisdictions', async () => {
+    const expectNoTaskOpened = (): void => {
+      expect(stub.rightsRecheckTask.create).not.toHaveBeenCalled();
+      expect(stub.rightsRecheckTask.update).not.toHaveBeenCalled();
+      expect(stub.rightsRecheckEvent.create).not.toHaveBeenCalled();
+    };
+
+    it('counts only profiles with a decision in the affected jurisdictions and opens no task', async () => {
       stub.rightsProfile.findMany.mockResolvedValue([profile('p1'), profile('p2')]);
       stub.territoryDecision.findMany.mockResolvedValue([
         { rightsProfileId: 'p1', countryCode: 'DE', finalStatus: 'ALLOWED' },
@@ -213,19 +223,21 @@ describe('RightsLegalChangeService', () => {
 
       await service.apply('lc-1', 'admin-1');
 
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledTimes(1);
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledWith(
+      expectNoTaskOpened();
+      expect(stub.rightsLegalChangeEvent.update).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: 'lc-1' },
           data: expect.objectContaining({
-            reason: RightsRecheckReason.LEGAL_CHANGE,
-            rightsProfileId: 'p1',
-            legalChangeEventId: 'lc-1',
+            status: RightsLegalChangeStatus.APPLIED,
+            appliedByUserId: 'admin-1',
+            affectedProfilesCount: 1,
+            createdTasksCount: 0,
           }),
         }),
       );
     });
 
-    it('captures every current profile when appliesToAllCountries is set', async () => {
+    it('counts every current profile when appliesToAllCountries is set and opens no task', async () => {
       stub.rightsLegalChangeEvent.findUnique.mockResolvedValue(
         event({ appliesToAllCountries: true, jurisdictionCodes: [] }),
       );
@@ -233,11 +245,31 @@ describe('RightsLegalChangeService', () => {
 
       await service.apply('lc-1', 'admin-1');
 
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledTimes(2);
+      expectNoTaskOpened();
       expect(stub.territoryDecision.findMany).not.toHaveBeenCalled();
+      expect(stub.rightsLegalChangeEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ affectedProfilesCount: 2, createdTasksCount: 0 }),
+        }),
+      );
     });
 
-    it('sends exactly one summary notification, not one per profile', async () => {
+    it('opens no task for a BLOCKING event with a future effectiveFrom either', async () => {
+      const effectiveFrom = new Date(NOW.getTime() + 90 * 86_400_000);
+      stub.rightsLegalChangeEvent.findUnique.mockResolvedValue(
+        event({ effectiveFrom, severity: RightsRecheckSeverity.BLOCKING }),
+      );
+      stub.rightsProfile.findMany.mockResolvedValue([profile('p1')]);
+      stub.territoryDecision.findMany.mockResolvedValue([
+        { rightsProfileId: 'p1', countryCode: 'DE', finalStatus: 'ALLOWED' },
+      ]);
+
+      await service.apply('lc-1', 'admin-1');
+
+      expectNoTaskOpened();
+    });
+
+    it('sends exactly one summary notification, reporting zero opened tasks', async () => {
       stub.rightsProfile.findMany.mockResolvedValue([profile('p1'), profile('p2'), profile('p3')]);
       stub.territoryDecision.findMany.mockResolvedValue([
         { rightsProfileId: 'p1', countryCode: 'DE', finalStatus: 'ALLOWED' },
@@ -249,7 +281,10 @@ describe('RightsLegalChangeService', () => {
 
       expect(notifications.create).toHaveBeenCalledTimes(1);
       expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'LEGAL_CHANGE_APPLIED' }),
+        expect.objectContaining({
+          type: 'LEGAL_CHANGE_APPLIED',
+          payload: expect.objectContaining({ createdTasksCount: 0, affectedProfilesCount: 3 }),
+        }),
       );
     });
 
@@ -262,24 +297,9 @@ describe('RightsLegalChangeService', () => {
         response: { code: 'LEGAL_CHANGE_ALREADY_APPLIED', statusCode: 409 },
       });
     });
-
-    it('uses effectiveFrom as the deadline when it lies in the future', async () => {
-      const effectiveFrom = new Date(NOW.getTime() + 90 * 86_400_000);
-      stub.rightsLegalChangeEvent.findUnique.mockResolvedValue(event({ effectiveFrom }));
-      stub.rightsProfile.findMany.mockResolvedValue([profile('p1')]);
-      stub.territoryDecision.findMany.mockResolvedValue([
-        { rightsProfileId: 'p1', countryCode: 'DE', finalStatus: 'ALLOWED' },
-      ]);
-
-      await service.apply('lc-1', 'admin-1');
-
-      expect(stub.rightsRecheckTask.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ dueAt: effectiveFrom }) }),
-      );
-    });
   });
 
-  it('archive does not close the tasks the event opened', async () => {
+  it('archive does not touch recheck tasks linked to the event', async () => {
     await service.archive('lc-1', 'admin-1');
 
     expect(stub.rightsLegalChangeEvent.update).toHaveBeenCalledWith(

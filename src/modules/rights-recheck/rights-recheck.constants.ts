@@ -10,7 +10,6 @@ export const RECHECK_DEFAULT_INTERVAL_DAYS = 365;
 export const RECHECK_MIN_INTERVAL_DAYS = 7;
 export const RECHECK_MAX_INTERVAL_DAYS = 3650;
 export const RECHECK_OVERDUE_GRACE_DAYS_DEFAULT = 30;
-export const RECHECK_LEGAL_CHANGE_DUE_DAYS_DEFAULT = 14;
 export const RECHECK_EVENT_DRIVEN_DUE_DAYS_DEFAULT = 7;
 export const RECHECK_SCAN_BATCH_SIZE_DEFAULT = 500;
 export const RECHECK_MAX_SNOOZE_DAYS = 180;
@@ -43,10 +42,7 @@ export const RECHECK_OPEN_STATUSES = [
   RightsRecheckStatus.IN_PROGRESS,
 ] as const;
 
-/** Profile statuses for which a scheduled recheck makes sense. */
-export const RECHECK_SCHEDULABLE_PROFILE_STATUSES = ['APPROVED'] as const;
-
-/** Profile statuses a legal change may open tasks for. */
+/** Profile statuses a legal change counts as affected. */
 export const LEGAL_CHANGE_TARGET_PROFILE_STATUSES = ['APPROVED', 'HUMAN_REVIEW_REQUIRED'] as const;
 
 /**
@@ -59,30 +55,6 @@ export const RECHECK_VERSION_SCOPED_REASONS = [
   RightsRecheckReason.LANGUAGE_ADDED,
   RightsRecheckReason.COMPONENT_ADDED,
 ] as const;
-
-/** Reasons whose tasks are closed automatically once the version is no longer stale. */
-export const RECHECK_CONTENT_DRIVEN_REASONS = [
-  RightsRecheckReason.CONTENT_CHANGED,
-  RightsRecheckReason.AUDIO_ADDED,
-  RightsRecheckReason.RIGHTS_DATA_CHANGED,
-] as const;
-
-/** Mapping of `BookVersion.rightsStaleReasonCode` (Phase 8) onto a recheck reason. */
-export const STALE_REASON_TO_RECHECK_REASON: Record<string, RightsRecheckReason> = {
-  CHAPTER_CREATED: RightsRecheckReason.CONTENT_CHANGED,
-  CHAPTER_UPDATED: RightsRecheckReason.CONTENT_CHANGED,
-  CHAPTER_DELETED: RightsRecheckReason.CONTENT_CHANGED,
-  BOOK_VERSION_UPDATED: RightsRecheckReason.CONTENT_CHANGED,
-  MANUAL_HASH_CHECK: RightsRecheckReason.CONTENT_CHANGED,
-  SHARED_CLEARANCE_STALE: RightsRecheckReason.CONTENT_CHANGED,
-  AUDIO_CHAPTER_CREATED: RightsRecheckReason.AUDIO_ADDED,
-  AUDIO_CHAPTER_UPDATED: RightsRecheckReason.AUDIO_ADDED,
-  AUDIO_CHAPTER_DELETED: RightsRecheckReason.AUDIO_ADDED,
-  AUDIO_CHAPTER_REORDERED: RightsRecheckReason.AUDIO_ADDED,
-  RIGHTS_SNAPSHOT_CHANGED: RightsRecheckReason.RIGHTS_DATA_CHANGED,
-  SOURCE_EDITION_CHANGED: RightsRecheckReason.RIGHTS_DATA_CHANGED,
-  REVIEW_IMPORT_CHANGED: RightsRecheckReason.RIGHTS_DATA_CHANGED,
-};
 
 /** Human-readable reason labels, shared by notification texts and the admin UI. */
 export const RECHECK_REASON_LABELS_RU: Record<RightsRecheckReason, string> = {

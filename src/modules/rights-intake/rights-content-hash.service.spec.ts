@@ -1,12 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { RightsContentHashService } from './rights-content-hash.service';
-import { RightsClearanceLockService } from './rights-clearance-lock.service';
-import {
-  createClearanceLockFake,
-  type TransactionStand,
-} from '../../common/testing/clearance-lock-fake';
-
 import { PrismaService } from '../../prisma/prisma.service';
 import type { Prisma } from '@prisma/client';
 import type { LockedClearanceScope } from './rights-clearance-lock.service';
@@ -16,12 +10,6 @@ import {
   stableStringify,
   storedBaselineHolds,
 } from './rights-content-hash.util';
-
-// Замок без сырого SQL: те же границы транзакции, что у настоящего, без advisory и сверки ключей.
-const passThroughLock = (client: unknown): RightsClearanceLockService =>
-  createClearanceLockFake(client, {
-    transaction: client as TransactionStand,
-  }).service;
 
 const mockPrisma = {
   bookVersion: {
@@ -72,11 +60,7 @@ describe('RightsContentHashService', () => {
     mockPrisma.rightsProfileContributor.findMany.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        RightsContentHashService,
-        { provide: PrismaService, useValue: mockPrisma },
-        { provide: RightsClearanceLockService, useValue: passThroughLock(mockPrisma) },
-      ],
+      providers: [RightsContentHashService, { provide: PrismaService, useValue: mockPrisma }],
     }).compile();
 
     service = module.get<RightsContentHashService>(RightsContentHashService);
@@ -616,8 +600,8 @@ describe('RightsContentHashService', () => {
     });
 
     /**
-     * WP-D.1: окно наполнения открывается явной отметкой в аудите. Без неё окно считается
-     * закрытым, поэтому версии, заведённые до выката пакета, остаются на строгом правиле.
+     * WP-D.1: отметка открытия окна наполнения в аудите. После решения владельца от 27.09.2026
+     * её никто не читает, но писатель оставлен — историческая запись аудита.
      */
     it('opens the draft fill window for a version created as a draft', async () => {
       mockPrisma.bookVersion.findUnique.mockResolvedValue({ ...baseVersion, publishedAt: null });
@@ -679,7 +663,12 @@ describe('RightsContentHashService', () => {
       expect(result.recheckRequired).toBe(false);
     });
 
-    it('should return mismatch after content change', async () => {
+    /**
+     * Решение владельца от 27.09.2026: расхождение со слепком больше не делает версию stale.
+     * Проверка на чтение сообщает о расхождении (`matchesBaseline: false`), но перепроверки
+     * не требует и ничего не пишет.
+     */
+    it('reports a mismatch after content change without requiring a recheck', async () => {
       mockPrisma.bookVersion.findUnique.mockResolvedValue({
         id: 'version-1',
         rightsContentHash: 'original-hash',
@@ -702,10 +691,18 @@ describe('RightsContentHashService', () => {
       const result = await service.checkVersionStaleness('version-1', 'BOOK_VERSION_UPDATED');
 
       expect(result.matchesBaseline).toBe(false);
-      expect(result.isStale).toBe(true);
+      expect(result.isStale).toBe(false);
+      expect(result.recheckRequired).toBe(false);
+      expect(result.reasonCode).toBeNull();
+      expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsContentHashEvent.create).not.toHaveBeenCalled();
     });
 
-    it('should set recheckRequired when mismatch with persist=true', async () => {
+    /**
+     * Ревью books-data (ADR-009): baseline — слепок, на котором утверждён клиренс; правка его
+     * не затирает. Расхождение только журналируется, `matchesBaseline` остаётся честным.
+     */
+    it('keeps the approved baseline and logs the change when persist=true', async () => {
       mockPrisma.bookVersion.findUnique.mockResolvedValue({
         id: 'version-1',
         rightsContentHash: 'original-hash',
@@ -724,17 +721,6 @@ describe('RightsContentHashService', () => {
         calculatedAt: new Date().toISOString(),
         input: {},
       });
-
-      mockPrisma.bookVersion.findUnique.mockResolvedValue({
-        id: 'version-1',
-        rightsProfileId: 'profile-1',
-        approvedRightsReviewId: 'review-1',
-        rightsStaleDetectedAt: null,
-      });
-      mockPrisma.bookVersion.findMany.mockResolvedValue([]);
-      mockPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
-        cb(mockPrisma),
-      );
       mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
 
       const result = await service.checkVersionStaleness(
@@ -745,7 +731,20 @@ describe('RightsContentHashService', () => {
       );
 
       expect(result.matchesBaseline).toBe(false);
+      expect(result.isStale).toBe(false);
+      expect(result.recheckRequired).toBe(false);
+      expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
       expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            previousHash: 'original-hash',
+            currentHash: 'different-hash',
+            staleMarked: false,
+            reasonCode: 'CONTENT_CHANGE_LOGGED',
+          }),
+        }),
+      );
     });
 
     /**
@@ -807,17 +806,28 @@ describe('RightsContentHashService', () => {
         }),
       );
 
-      const expectStaleWithoutRetake = (markStale: jest.SpyInstance, baselineHash: string) => {
-        expect(markStale).toHaveBeenCalledTimes(1);
-        expect(markStale).toHaveBeenCalledWith(
-          'version-1',
-          'CHAPTER_CREATED',
-          expect.any(String),
-          baselineHash,
-          null,
-          undefined,
-        );
+      /**
+       * База V4, которую сохранённый вход не подтверждает, идёт обычным путём расхождения. После
+       * решения владельца от 27.09.2026 и ревью books-data (ADR-009) обычный путь — журнал:
+       * событие с причиной `CONTENT_CHANGE_LOGGED` (а не молчаливой `HASH_ALGORITHM_CHANGED`),
+       * baseline V4 не переснимается, статусы клиренса и метки stale не трогаются.
+       */
+      const expectLoggedWithoutRetake = (baselineHash: string, currentHash: string) => {
+        expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
         expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              trigger: 'CHAPTER_CREATED',
+              previousHash: baselineHash,
+              currentHash,
+              staleMarked: false,
+              reasonCode: 'CONTENT_CHANGE_LOGGED',
+            }),
+          }),
+        );
       };
 
       // LEGACY-033: выкат V5 застаёт на проде baseline, снятые под V4.
@@ -856,16 +866,14 @@ describe('RightsContentHashService', () => {
         );
       });
 
-      // LEGACY-033: правка, записанная до проверки, не должна уйти в новую базу молча.
-      it('marks a V4 baseline stale when the content changed (LEGACY-033)', async () => {
+      // LEGACY-033: правка, записанная до проверки, не должна уйти в новую базу молча — она
+      // уходит в журнал как изменение контента (решение владельца от 27.09.2026).
+      it('logs a V4 baseline content change instead of marking it stale (LEGACY-033)', async () => {
         setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V4', {
           hash: v4Hash,
           input: storedV4Input,
           currentHash: 'hash-after-edit',
         });
-        const markStale = jest
-          .spyOn(service, 'markVersionAndClearanceStale')
-          .mockResolvedValue(undefined as never);
 
         const result = await service.checkVersionStaleness(
           'version-1',
@@ -874,49 +882,48 @@ describe('RightsContentHashService', () => {
           true,
         );
 
-        expect(result.isStale).toBe(true);
+        expect(result.isStale).toBe(false);
+        expect(result.recheckRequired).toBe(false);
         expect(result.matchesBaseline).toBe(false);
-        expectStaleWithoutRetake(markStale, v4Hash);
+        expectLoggedWithoutRetake(v4Hash, 'hash-after-edit');
       });
 
-      it('marks a V4 baseline stale when its stored input does not give its hash (LEGACY-033)', async () => {
+      it('logs a V4 baseline whose stored input does not give its hash (LEGACY-033)', async () => {
         setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V4', {
           hash: 'tampered-baseline',
           input: storedV4Input,
           currentHash: heldHash,
         });
-        const markStale = jest
-          .spyOn(service, 'markVersionAndClearanceStale')
-          .mockResolvedValue(undefined as never);
 
         await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', null, true);
 
-        expectStaleWithoutRetake(markStale, 'tampered-baseline');
+        expectLoggedWithoutRetake('tampered-baseline', heldHash);
       });
 
-      it('marks a V4 baseline stale when it has no stored input (LEGACY-033)', async () => {
+      it('logs a V4 baseline that has no stored input (LEGACY-033)', async () => {
         setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V4', {
           hash: v4Hash,
           currentHash: heldHash,
         });
-        const markStale = jest
-          .spyOn(service, 'markVersionAndClearanceStale')
-          .mockResolvedValue(undefined as never);
 
         await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', null, true);
 
-        expectStaleWithoutRetake(markStale, v4Hash);
+        expectLoggedWithoutRetake(v4Hash, heldHash);
       });
 
       it('keeps the old silent re-take for baselines older than V4 (LEGACY-033)', async () => {
         const computeSpy = setupPreviousAlgorithmBaseline(false, 'RIGHTS_CONTENT_HASH_V3');
-        const markStale = jest.spyOn(service, 'markVersionAndClearanceStale');
 
         await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', null, true);
 
         expect(computeSpy).toHaveBeenCalledTimes(1);
-        expect(markStale).not.toHaveBeenCalled();
         expect(mockPrisma.bookVersion.update).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ reasonCode: 'HASH_ALGORITHM_CHANGED' }),
+          }),
+        );
       });
 
       it('does not mark the version stale', async () => {
@@ -992,16 +999,21 @@ describe('RightsContentHashService', () => {
     });
 
     /**
-     * WP-D.1: окно наполнения черновика. Клиренс снимается ради заливки текста — и первая же
-     * глава этот клиренс аннулировала. В черновике расхождение хеша переснимает baseline;
-     * во всех остальных случаях правило работает как прежде.
+     * Решение владельца от 27.09.2026 (правовая семантика): правка книги после утверждения прав
+     * публикацию не блокирует — ни в черновике, ни после публикации, ни при каком триггере.
+     * Расхождение хеша пишет событие со `staleMarked: false`. Baseline не переснимается: это
+     * слепок, на котором утверждён клиренс (ревью books-data, ADR-009); переснимает его только
+     * публикация. Гейт видит расхождение предупреждением `RIGHTS_CONTENT_HASH_CHANGED`. Статусы
+     * `RightsReview` / `RightsProfile`, `rightsRecheckRequired`, метки stale и соседние версии
+     * не трогаются. Окно наполнения черновика (WP-D.1) этим поглощено: его отметки в аудите
+     * больше ни на что не влияют, поэтому тесты ниже ставят их нарочно в «закрытое» положение.
+     *
+     * Каждый тест здесь краснеет, если вернуть вызов прежней пометки stale.
      */
-    describe('draft fill window (WP-D.1)', () => {
-      /**
-       * Окно открывается отметкой в аудите при заведении версии черновиком
-       * (`initializeVersionBaseline`) и закрывается отметкой публикации. Здесь задаётся,
-       * какие из этих отметок есть у версии.
-       */
+    describe('content change after approval is only logged (owner decision 27.09.2026)', () => {
+      type CheckTrigger = Parameters<RightsContentHashService['checkVersionStaleness']>[1];
+
+      /** Отметки окна наполнения в аудите версии — чтобы доказать, что их больше не читают. */
       const auditMarkers = (codes: string[]): void => {
         mockPrisma.rightsContentHashEvent.findFirst.mockImplementation(
           (args: { where: { reasonCode: string } }) =>
@@ -1012,6 +1024,8 @@ describe('RightsContentHashService', () => {
             ),
         );
       };
+
+      const publishedAt = new Date('2026-07-01T00:00:00.000Z');
 
       const setupMismatch = (overrides: Record<string, unknown> = {}): void => {
         mockPrisma.bookVersion.findUnique.mockResolvedValue({
@@ -1037,15 +1051,37 @@ describe('RightsContentHashService', () => {
           calculatedAt: new Date().toISOString(),
           input: {},
         });
-        mockPrisma.bookVersion.findMany.mockResolvedValue([]);
+        // Соседние версии того же клиренса: прежняя пометка разнесла бы на них
+        // `SHARED_CLEARANCE_STALE`.
+        mockPrisma.bookVersion.findMany.mockResolvedValue([
+          { id: 'version-2', approvedRightsReviewId: 'review-1' },
+          { id: 'version-3', approvedRightsReviewId: null },
+        ]);
         mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
-        mockPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
-          cb(mockPrisma),
-        );
         auditMarkers(['DRAFT_FILL_WINDOW_OPENED']);
       };
 
-      it('re-takes the baseline instead of invalidating the clearance', async () => {
+      /** Только событие: ни слепка, ни пометки версии, ни статусов клиренса, ни соседей. */
+      const expectLoggedWithoutStale = (): void => {
+        expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
+        expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+        expect(mockPrisma.bookVersion.updateMany).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              bookVersionId: 'version-1',
+              previousHash: 'baseline-hash',
+              currentHash: 'hash-with-chapter',
+              staleMarked: false,
+              reasonCode: 'CONTENT_CHANGE_LOGGED',
+            }),
+          }),
+        );
+      };
+
+      it('keeps the baseline of a draft and does not invalidate the clearance', async () => {
         setupMismatch();
 
         const result = await service.checkVersionStaleness(
@@ -1055,19 +1091,13 @@ describe('RightsContentHashService', () => {
           true,
         );
 
-        expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
-        expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
+        expect(result.matchesBaseline).toBe(false);
         expect(result.isStale).toBe(false);
         expect(result.recheckRequired).toBe(false);
-
-        const updateData = mockPrisma.bookVersion.update.mock.calls[0][0] as {
-          data: Record<string, unknown>;
-        };
-        expect(updateData.data.rightsContentHash).toBe('hash-with-chapter');
-        expect(updateData.data).not.toHaveProperty('rightsRecheckRequired');
+        expectLoggedWithoutStale();
       });
 
-      it('always writes the audit event — the compensation for the relaxation', async () => {
+      it('writes the audit event with the trigger, the user and the owner-decision reason', async () => {
         setupMismatch();
 
         await service.checkVersionStaleness('version-1', 'CHAPTER_CREATED', 'user-1', true);
@@ -1075,40 +1105,20 @@ describe('RightsContentHashService', () => {
         expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({
-              bookVersionId: 'version-1',
               trigger: 'CHAPTER_CREATED',
-              previousHash: 'baseline-hash',
-              currentHash: 'hash-with-chapter',
               staleMarked: false,
-              reasonCode: 'DRAFT_FILL_WINDOW',
+              reasonCode: 'CONTENT_CHANGE_LOGGED',
+              reasonRu: expect.stringMatching(
+                /^Создана новая глава\. .*клиренс не аннулирован.*27\.09\.2026/,
+              ),
               createdByUserId: 'user-1',
             }),
           }),
         );
       });
 
-      it('still marks a published version stale', async () => {
-        setupMismatch({ status: 'published' });
-
-        const result = await service.checkVersionStaleness(
-          'version-1',
-          'CHAPTER_CREATED',
-          null,
-          true,
-        );
-
-        expect(result.isStale).toBe(true);
-        expect(result.recheckRequired).toBe(true);
-        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-        );
-        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-        );
-      });
-
-      it('still marks a draft stale once the window was closed by a publication', async () => {
-        setupMismatch();
+      it('published version (window closed): a chapter edit keeps the baseline and marks nothing stale', async () => {
+        setupMismatch({ status: 'published', publishedAt });
         auditMarkers(['DRAFT_FILL_WINDOW_OPENED', 'DRAFT_FILL_WINDOW_CLOSED']);
 
         const result = await service.checkVersionStaleness(
@@ -1118,21 +1128,20 @@ describe('RightsContentHashService', () => {
           true,
         );
 
-        expect(result.isStale).toBe(true);
-        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        expect(result.matchesBaseline).toBe(false);
+        expect(result.isStale).toBe(false);
+        expect(result.recheckRequired).toBe(false);
+        expect(result.reasonCode).toBeNull();
+        expectLoggedWithoutStale();
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ trigger: 'CHAPTER_UPDATED' }),
+          }),
         );
       });
 
-      /**
-       * Дыра в первой редакции WP-D.1: закрытие окна опознавалось исключительно по событию
-       * `DRAFT_FILL_WINDOW_CLOSED`, которое пишет только новый код публикации. У версии,
-       * опубликованной до выката, такого события в базе нет, а `unpublish` обнуляет
-       * `publishedAt` — значит правка главы после снятия с публикации молча переснимала
-       * baseline вместо `STALE`, хотя клиренс снимался с другого текста.
-       */
-      it('still marks a draft stale when it was published before the window mechanism existed', async () => {
-        setupMismatch();
+      it('a version published before the window mechanism existed is only logged too', async () => {
+        setupMismatch({ publishedAt });
         auditMarkers([]);
 
         const result = await service.checkVersionStaleness(
@@ -1142,47 +1151,44 @@ describe('RightsContentHashService', () => {
           true,
         );
 
-        expect(result.isStale).toBe(true);
-        expect(result.recheckRequired).toBe(true);
-        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-        );
-        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-        );
+        expect(result.isStale).toBe(false);
+        expectLoggedWithoutStale();
       });
 
-      /** Дата публикации на черновике — тоже след публикации: сомнение трактуется в пользу `STALE`. */
-      it('still marks a draft stale when it carries a publication date', async () => {
-        setupMismatch({ publishedAt: new Date('2026-07-01T00:00:00.000Z') });
+      it.each<CheckTrigger>([
+        'BOOK_VERSION_UPDATED',
+        'CHAPTER_DELETED',
+        'AUDIO_CHAPTER_CREATED',
+        'AUDIO_CHAPTER_UPDATED',
+        'AUDIO_CHAPTER_DELETED',
+        'AUDIO_CHAPTER_REORDERED',
+        'RIGHTS_SNAPSHOT_CHANGED',
+        'SOURCE_EDITION_CHANGED',
+        'REVIEW_IMPORT_CHANGED',
+        'VERSION_CONTRIBUTOR_CHANGED',
+        'PROFILE_CONTRIBUTOR_CHANGED',
+        'CONTRIBUTOR_PERSON_CHANGED',
+        'MANUAL_HASH_CHECK',
+      ])('published version: %s is only logged', async (trigger) => {
+        setupMismatch({ status: 'published', publishedAt });
+        auditMarkers(['DRAFT_FILL_WINDOW_OPENED', 'DRAFT_FILL_WINDOW_CLOSED']);
 
-        const result = await service.checkVersionStaleness(
-          'version-1',
-          'CHAPTER_UPDATED',
-          null,
-          true,
-        );
+        const result = await service.checkVersionStaleness('version-1', trigger, null, true);
 
-        expect(result.isStale).toBe(true);
-        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-        );
+        expect(result.isStale).toBe(false);
+        expect(result.recheckRequired).toBe(false);
+        expectLoggedWithoutStale();
       });
 
-      it('still marks a draft stale for a trigger outside the window', async () => {
-        setupMismatch();
+      it('does not fan out to sibling versions of the same clearance', async () => {
+        setupMismatch({ status: 'published', publishedAt });
 
-        const result = await service.checkVersionStaleness(
-          'version-1',
-          'AUDIO_CHAPTER_CREATED',
-          null,
-          true,
-        );
+        await service.checkVersionStaleness('version-1', 'CHAPTER_UPDATED', null, true);
 
-        expect(result.isStale).toBe(true);
-        expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-        );
+        expect(mockPrisma.bookVersion.findMany).not.toHaveBeenCalled();
+        expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+        expect(mockPrisma.bookVersion.updateMany).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
       });
 
       it('does not clear a stale mark that was already there', async () => {
@@ -1202,9 +1208,14 @@ describe('RightsContentHashService', () => {
         expect(result.isStale).toBe(true);
         expect(result.recheckRequired).toBe(true);
         expect(result.reasonCode).toBe('SOURCE_EDITION_CHANGED');
+        expectLoggedWithoutStale();
       });
 
-      it('still marks a draft stale when there is no baseline to re-take', async () => {
+      /**
+       * Версию без слепка блокирует `MISSING_RIGHTS_CONTENT_HASH`. Правка слепок не заводит
+       * (иначе снимала бы блокер), но и stale не ставит — только событие в журнал.
+       */
+      it('neither takes a baseline where there was none nor marks the version stale', async () => {
         setupMismatch({ rightsContentHash: null });
 
         const result = await service.checkVersionStaleness(
@@ -1214,9 +1225,23 @@ describe('RightsContentHashService', () => {
           true,
         );
 
-        expect(result.isStale).toBe(true);
-        expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
+        expect(result.matchesBaseline).toBe(false);
+        expect(result.isStale).toBe(false);
+        expect(result.recheckRequired).toBe(false);
+        expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
+        expect(mockPrisma.bookVersion.findMany).not.toHaveBeenCalled();
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              previousHash: null,
+              currentHash: 'hash-with-chapter',
+              staleMarked: false,
+              reasonCode: 'CONTENT_CHANGE_LOGGED',
+            }),
+          }),
         );
       });
     });
@@ -1561,8 +1586,8 @@ describe('RightsContentHashService', () => {
   });
 
   /**
-   * WP-D.4: жёсткий выход из окна. Публикация фиксирует слепок окончательно и оставляет
-   * в аудите признак закрытия — снятие с публикации окно обратно не открывает.
+   * WP-D.4: публикация фиксирует слепок и оставляет в аудите отметку закрытия окна. После решения
+   * владельца от 27.09.2026 отметку никто не читает — она осталась исторической записью аудита.
    */
   describe('finalizeBaselineOnPublish (WP-D.4)', () => {
     beforeEach(() => {
@@ -1615,25 +1640,13 @@ describe('RightsContentHashService', () => {
   });
 
   /**
-   * WP-D.2: первое появление файла источника меняет вход хеша, но не произведение —
-   * baseline переснимается, статусы клиренса не трогаются.
+   * WP-D.2: первое появление файла источника меняет вход хеша, но не произведение — по каждой
+   * версии профиля пишется событие с причиной вызывающего, статусы клиренса не трогаются.
+   * После решения владельца от 27.09.2026 и ревью books-data (ADR-009) baseline не
+   * переснимается ни у черновика, ни у опубликованной версии.
    */
-  describe('rebaselineForRightsProfile (WP-D.2)', () => {
-    const openWindow = (): void => {
-      mockPrisma.rightsContentHashEvent.findFirst.mockImplementation(
-        (args: { where: { reasonCode: string } }) =>
-          Promise.resolve(
-            args.where.reasonCode === 'DRAFT_FILL_WINDOW_OPENED' ? { id: 'opened-event' } : null,
-          ),
-      );
-    };
-
-    it('re-takes the baseline of every version of the profile without marking it stale', async () => {
-      openWindow();
-      mockPrisma.bookVersion.findMany.mockResolvedValue([
-        { id: 'version-1', rightsContentHash: 'hash-before', status: 'draft', publishedAt: null },
-        { id: 'version-2', rightsContentHash: null, status: 'draft', publishedAt: null },
-      ]);
+  describe('logContentChangeForRightsProfile (WP-D.2)', () => {
+    const mockComputation = (): void => {
       jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
         versionId: 'version-1',
         rightsProfileId: 'profile-1',
@@ -1644,8 +1657,10 @@ describe('RightsContentHashService', () => {
         input: {},
       });
       mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
+    };
 
-      await service.rebaselineForRightsProfile(
+    const rebaseline = () =>
+      service.logContentChangeForRightsProfile(
         'profile-1',
         'SOURCE_EDITION_CHANGED',
         'SOURCE_FILE_FIRST_UPLOAD',
@@ -1653,7 +1668,17 @@ describe('RightsContentHashService', () => {
         'user-1',
       );
 
-      expect(mockPrisma.bookVersion.update).toHaveBeenCalledTimes(2);
+    it('logs every version of the profile without re-taking its baseline or marking it stale', async () => {
+      mockPrisma.bookVersion.findMany.mockResolvedValue([
+        { id: 'version-1', rightsContentHash: 'hash-before' },
+        { id: 'version-2', rightsContentHash: 'hash-before-2' },
+      ]);
+      mockComputation();
+
+      await rebaseline();
+
+      expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(2);
       expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
       expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
       expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
@@ -1671,12 +1696,12 @@ describe('RightsContentHashService', () => {
     });
 
     /**
-     * Дыра в первой редакции WP-D.2: пересъёмка шла по всем версиям профиля без проверки
-     * статуса. У опубликованной версии окно закрыто публикацией, её слепок зафиксирован —
-     * появление файла источника обязано уводить клиренс в `STALE`, как и прежде.
+     * До решения владельца от 27.09.2026 опубликованная версия (окно наполнения закрыто)
+     * уходила здесь в `STALE`. Теперь — только событие с причиной вызывающего; утверждённый
+     * слепок остаётся (ревью books-data, ADR-009).
      */
-    it('marks a published version stale instead of re-taking its baseline', async () => {
-      openWindow();
+    it('logs a published version too, with the caller reason, instead of marking it stale', async () => {
+      mockPrisma.rightsContentHashEvent.findFirst.mockResolvedValue({ id: 'closed-event' });
       mockPrisma.bookVersion.findMany.mockResolvedValue([
         {
           id: 'version-1',
@@ -1685,59 +1710,44 @@ describe('RightsContentHashService', () => {
           publishedAt: new Date('2026-07-01T00:00:00.000Z'),
         },
       ]);
-      mockPrisma.bookVersion.findUnique.mockResolvedValue({
-        id: 'version-1',
-        status: 'published',
-        publishedAt: new Date('2026-07-01T00:00:00.000Z'),
-        rightsContentHash: 'hash-before',
-        rightsContentHashAlgorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
-        rightsRecheckRequired: false,
-        rightsStaleReasonCode: null,
-        rightsStaleReasonRu: null,
-        rightsStaleDetectedAt: null,
-        rightsProfileId: 'profile-1',
-        approvedRightsReviewId: 'review-1',
-      });
-      jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
-        versionId: 'version-1',
-        rightsProfileId: 'profile-1',
-        approvedRightsReviewId: 'review-1',
-        hash: 'hash-after',
-        algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
-        calculatedAt: new Date().toISOString(),
-        input: {},
-      });
-      mockPrisma.rightsContentHashEvent.create.mockResolvedValue({ id: 'event-1' });
-      mockPrisma.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
-        cb(mockPrisma),
-      );
+      mockComputation();
 
-      await service.rebaselineForRightsProfile(
-        'profile-1',
-        'SOURCE_EDITION_CHANGED',
-        'SOURCE_FILE_FIRST_UPLOAD',
-        'Первая загрузка файла источника',
-        'user-1',
-      );
+      await rebaseline();
 
-      expect(mockPrisma.rightsReview.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-      );
-      expect(mockPrisma.rightsProfile.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'STALE' }) }),
-      );
+      expect(mockPrisma.rightsReview.update).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsProfile.update).not.toHaveBeenCalled();
+      expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
       expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             bookVersionId: 'version-1',
-            staleMarked: true,
-            reasonCode: 'SOURCE_EDITION_CHANGED',
+            previousHash: 'hash-before',
+            currentHash: 'hash-after',
+            staleMarked: false,
+            reasonCode: 'SOURCE_FILE_FIRST_UPLOAD',
           }),
         }),
       );
-      expect(mockPrisma.rightsContentHashEvent.create).not.toHaveBeenCalledWith(
+    });
+
+    it('logs a version that had no baseline without taking one', async () => {
+      mockPrisma.bookVersion.findMany.mockResolvedValue([
+        { id: 'version-2', rightsContentHash: null },
+      ]);
+      mockComputation();
+
+      await rebaseline();
+
+      expect(mockPrisma.bookVersion.update).not.toHaveBeenCalled();
+      expect(mockPrisma.rightsContentHashEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ reasonCode: 'SOURCE_FILE_FIRST_UPLOAD' }),
+          data: expect.objectContaining({
+            bookVersionId: 'version-2',
+            previousHash: null,
+            staleMarked: false,
+            reasonCode: 'SOURCE_FILE_FIRST_UPLOAD',
+          }),
         }),
       );
     });
@@ -1854,13 +1864,13 @@ describe('RightsContentHashService', () => {
 
 /**
  * LEGACY-036. Слепок контента и событие о нём — пара: по событию восстанавливается, откуда взялся
- * baseline и почему клиренс ушёл в `STALE`. До этой правки пара писалась двумя независимыми
+ * baseline и что в версии изменилось. До этой правки пара писалась двумя независимыми
  * `await` на корневом клиенте всякий раз, когда вызывающий не передал свою транзакцию. Правка глав
  * и метаданных версии сюда **не** относится: `chapter.service.ts`, `audio-chapter.service.ts`
  * и `book-version.service.ts` свой `tx` передают. Без транзакции идут три пути, все три —
  * из `rights-files.service.ts` и админской ручки: ручная проверка хеша
  * (`book-version.controller.ts`), первая загрузка файла источника
- * (`rebaselineForRightsProfile`) и замена уже известной суммы файла
+ * (`logContentChangeForRightsProfile`) и замена уже известной суммы файла
  * (`checkStalenessForRightsProfile` → `checkVersionStaleness` по всем версиям профиля).
  *
  * Двойник ниже имитирует транзакцию: запись через tx-клиент попадает в «БД» только после
@@ -1904,7 +1914,6 @@ describe('RightsContentHashService — атомарность аудита (LEGA
       version?: Record<string, unknown>;
       onEventCreate?: () => void;
       onRelatedUpdate?: () => void;
-      windowOpenedEvent?: boolean;
     } = {},
   ) => {
     const committed: Write[] = [];
@@ -1924,10 +1933,11 @@ describe('RightsContentHashService — атомарность аудита (LEGA
         bookVersion: {
           findUnique: jest.fn().mockResolvedValue(version),
           findFirst: jest.fn().mockResolvedValue(null),
-          // Соседняя версия того же клиренса: её помечает фан-аут, вынесенный за транзакцию.
+          // Соседняя версия того же клиренса: прежний фан-аут пометил бы её `SHARED_CLEARANCE_STALE`.
           findMany: jest.fn().mockResolvedValue([{ ...version, id: 'version-2' }]),
-          update: jest.fn((args: { data: Record<string, unknown> }) => {
-            if (args.data.rightsStaleReasonCode === 'SHARED_CLEARANCE_STALE') {
+          update: jest.fn((args: { where: { id: string }; data: Record<string, unknown> }) => {
+            // Запись чужой строки версии — соседней по клиренсу. Правка её писать не должна.
+            if (args.where.id !== version['id']) {
               options.onRelatedUpdate?.();
             }
             push({ model: 'bookVersion.update', data: args.data });
@@ -1950,16 +1960,7 @@ describe('RightsContentHashService — атомарность аудита (LEGA
           }),
         },
         rightsContentHashEvent: {
-          // Отметка открытого окна наполнения: её читает `isDraftFillWindowOpen` двумя запросами —
-          // сперва ищет событие закрытия окна, потом событие открытия. Двойник обязан различать их
-          // по `reasonCode`, иначе окно всегда оказывается закрытым.
-          findFirst: jest.fn((args: { where: { reasonCode?: string } }) =>
-            Promise.resolve(
-              options.windowOpenedEvent && args.where.reasonCode === 'DRAFT_FILL_WINDOW_OPENED'
-                ? { id: 'event-0' }
-                : null,
-            ),
-          ),
+          findFirst: jest.fn().mockResolvedValue(null),
           create: jest.fn((args: { data: Record<string, unknown> }) => {
             options.onEventCreate?.();
             push({ model: 'rightsContentHashEvent.create', data: args.data });
@@ -1990,7 +1991,7 @@ describe('RightsContentHashService — атомарность аудита (LEGA
   };
 
   const buildService = (client: unknown): RightsContentHashService => {
-    const service = new RightsContentHashService(client as PrismaService, passThroughLock(client));
+    const service = new RightsContentHashService(client as PrismaService);
     jest.spyOn(service, 'computeVersionHash').mockResolvedValue(computation);
     return service;
   };
@@ -2012,7 +2013,7 @@ describe('RightsContentHashService — атомарность аудита (LEGA
     expect(double.committed).toHaveLength(0);
   });
 
-  it('checkVersionStaleness: отказ журнала откатывает пометку версии и клиренса', async () => {
+  it('checkVersionStaleness: отказ журнала у опубликованной версии ничего не оставляет', async () => {
     const double = createDouble({
       version: { ...draftVersion, status: 'published', publishedAt: new Date('2026-07-01') },
       onEventCreate: failingJournal(),
@@ -2031,12 +2032,12 @@ describe('RightsContentHashService — атомарность аудита (LEGA
   });
 
   /**
-   * Решение арбитра от 04.09.2026: в транзакции лежит аудит-пара, пометка родственных версий
-   * (`SHARED_CLEARANCE_STALE`) идёт после её коммита. Тест смотрит на **происхождение клиента**
-   * каждой записи, а не на её наличие: без этого возврат дефекта (запись аудита корневым
-   * клиентом) остаётся зелёным — записи те же, меняется только клиент.
+   * Решение владельца от 27.09.2026 и ревью books-data (ADR-009): правка опубликованной версии
+   * только журналируется. Событие пишется транзакцией; слепок версии, статусы клиренса и соседние
+   * версии не пишутся вовсе. Тест смотрит на **происхождение клиента** записи, а не на её наличие:
+   * без этого возврат дефекта LEGACY-036 (запись аудита корневым клиентом) остаётся зелёным.
    */
-  it('checkVersionStaleness: аудит-пара пишется транзакцией, соседние версии — после неё', async () => {
+  it('checkVersionStaleness: событие пишется транзакцией, слепок, клиренс и соседи не трогаются', async () => {
     const double = createDouble({
       version: { ...draftVersion, status: 'published', publishedAt: new Date('2026-07-01') },
     });
@@ -2052,26 +2053,23 @@ describe('RightsContentHashService — атомарность аудита (LEGA
       double.committed.filter((write) => write.model === model).map((write) => write.via);
 
     expect(via('rightsContentHashEvent.create')).toEqual(['tx']);
-    expect(via('rightsReview.update')).toEqual(['tx']);
-    expect(via('rightsProfile.update')).toEqual(['tx']);
+    expect(via('bookVersion.update')).toEqual([]);
+    expect(via('rightsReview.update')).toEqual([]);
+    expect(via('rightsProfile.update')).toEqual([]);
+    expect(double.outsideTransaction).toEqual([]);
 
-    // Своя версия — внутри транзакции; всё, что помечено `SHARED_CLEARANCE_STALE`, — вне её.
-    const versionWrites = double.committed.filter((write) => write.model === 'bookVersion.update');
-    const ownVersion = versionWrites.filter(
-      (write) => write.data.rightsStaleReasonCode !== 'SHARED_CLEARANCE_STALE',
-    );
-    const relatedVersions = versionWrites.filter(
-      (write) => write.data.rightsStaleReasonCode === 'SHARED_CLEARANCE_STALE',
-    );
-
-    expect(ownVersion.map((write) => write.via)).toEqual(['tx']);
-    expect(relatedVersions.length).toBeGreaterThan(0);
-    expect(relatedVersions.every((write) => write.via === 'root')).toBe(true);
+    const [event] = double.committed;
+    expect(event.data).toMatchObject({
+      previousHash: 'old-hash',
+      currentHash: 'new-hash',
+      staleMarked: false,
+      reasonCode: 'CONTENT_CHANGE_LOGGED',
+    });
   });
 
   /**
    * Ветка `if (tx) return work(tx)` в `inTransaction` — единственное, что удерживает эти методы
-   * внутри чужой транзакции. Без неё `markSelf` пошёл бы вторым соединением и встал на строке
+   * внутри чужой транзакции. Без неё запись пошла бы вторым соединением и встала на строке
    * `BookVersion`, которую держит вызывающий, до самого `timeout` — 500 через 30 секунд,
    * а десять таких запросов выбирают пул целиком.
    */
@@ -2093,18 +2091,16 @@ describe('RightsContentHashService — атомарность аудита (LEGA
     );
 
     expect(openedTransactions).not.toHaveBeenCalled();
-    expect(callerWrites.map((write) => write.model)).toEqual(
-      expect.arrayContaining([
-        'bookVersion.update',
-        'rightsReview.update',
-        'rightsContentHashEvent.create',
-      ]),
-    );
+    expect(callerWrites.map((write) => write.model)).toEqual(['rightsContentHashEvent.create']);
     // Ни одна запись не ушла мимо клиента вызывающего.
     expect(double.committed).toHaveLength(0);
   });
 
-  it('отказ на пометке соседней версии не откатывает уже записанное событие аудита', async () => {
+  /**
+   * Прежде отказ записи соседней версии (`SHARED_CLEARANCE_STALE`) ронял вызов уже после коммита
+   * аудита. Соседей больше не пишут: отказ их записи правку не роняет, потому что записи нет.
+   */
+  it('соседняя версия не пишется: её отказ правку не роняет', async () => {
     const double = createDouble({
       version: { ...draftVersion, status: 'published', publishedAt: new Date('2026-07-01') },
       onRelatedUpdate: () => {
@@ -2119,7 +2115,7 @@ describe('RightsContentHashService — атомарность аудита (LEGA
         'user-42',
         true,
       ),
-    ).rejects.toThrow('related version update failed');
+    ).resolves.toMatchObject({ matchesBaseline: false, isStale: false });
 
     const events = double.committed.filter(
       (write) => write.model === 'rightsContentHashEvent.create',
@@ -2146,8 +2142,8 @@ describe('RightsContentHashService — атомарность аудита (LEGA
     expect(double.committed).toHaveLength(0);
   });
 
-  it('checkVersionStaleness: отказ журнала откатывает пересъёмку в окне наполнения черновика', async () => {
-    const double = createDouble({ windowOpenedEvent: true, onEventCreate: failingJournal() });
+  it('checkVersionStaleness: отказ журнала у черновика ничего не оставляет', async () => {
+    const double = createDouble({ onEventCreate: failingJournal() });
 
     await expect(
       buildService(double.client).checkVersionStaleness(
@@ -2171,11 +2167,11 @@ describe('RightsContentHashService — атомарность аудита (LEGA
     expect(double.committed).toHaveLength(0);
   });
 
-  it('rebaselineForRightsProfile: отказ журнала откатывает пересъёмку версии профиля', async () => {
-    const double = createDouble({ windowOpenedEvent: true, onEventCreate: failingJournal() });
+  it('logContentChangeForRightsProfile: отказ журнала по версии профиля ничего не оставляет', async () => {
+    const double = createDouble({ onEventCreate: failingJournal() });
 
     await expect(
-      buildService(double.client).rebaselineForRightsProfile(
+      buildService(double.client).logContentChangeForRightsProfile(
         'profile-1',
         'SOURCE_EDITION_CHANGED',
         'SOURCE_FILE_FIRST_UPLOAD',
@@ -2189,174 +2185,100 @@ describe('RightsContentHashService — атомарность аудита (LEGA
 });
 
 /**
- * `LEGACY-368`, решение арбитра от 16.09.2026: соседи по проверке прав и по профилю помечаются
- * **одним** списком по `id`. Два отдельных обхода брали общие чужие версии в разном порядке
- * у транзакций с непересекающимися ключами замка — A(P1,R1) и B(P2,R2) через X(P1,R2),
- * Y(P2,R1) — и ловили 40P01.
+ * `LEGACY-368` / T56: прежде здесь проверялся фан-аут `SHARED_CLEARANCE_STALE` одним списком
+ * по `id` и замок клиренса на пути без `tx`. После решения владельца от 27.09.2026 и ревью
+ * books-data (ADR-009) фан-аута нет, а слепок правкой не переснимается: правка одной версии пишет
+ * только событие — и со своим `tx`, и без него. Строки версий (своей и соседних по профилю или
+ * проверке прав) не ищутся и не пишутся.
  */
-describe('RightsContentHashService — фан-аут одним списком (LEGACY-368)', () => {
-  const REVIEW_TEXT =
-    'Изменение контента в другой версии той же проверки прав. Требуется повторная проверка.';
-  const PROFILE_TEXT =
-    'Изменение контента в другой версии того же профиля прав. Требуется повторная проверка.';
-
-  const createTx = (
-    version: { rightsProfileId: string | null; approvedRightsReviewId: string | null },
-    related: Array<{ id: string; approvedRightsReviewId: string | null }>,
-  ) => {
-    const staleWrites: Array<{ id: string; reason: unknown }> = [];
-    const tx = {
-      bookVersion: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ id: 'A', rightsStaleDetectedAt: null, ...version }),
-        findMany: jest.fn().mockResolvedValue(related),
-        update: jest.fn((args: { where: { id: string }; data: Record<string, unknown> }) => {
-          if (args.data.rightsStaleReasonCode === 'SHARED_CLEARANCE_STALE') {
-            staleWrites.push({ id: args.where.id, reason: args.data.rightsStaleReasonRu });
-          }
-          return Promise.resolve({});
-        }),
-      },
-      rightsReview: { update: jest.fn().mockResolvedValue({}) },
-      rightsProfile: { update: jest.fn().mockResolvedValue({}) },
-      rightsContentHashEvent: { create: jest.fn().mockResolvedValue({}) },
-    };
-    return { tx, staleWrites };
-  };
-
-  const mark = async (tx: unknown) => {
-    const root = { $transaction: jest.fn() };
-    const service = new RightsContentHashService(
-      root as unknown as PrismaService,
-      passThroughLock(root),
-    );
-    await service.markVersionAndClearanceStale(
-      'A',
-      'CHAPTER_UPDATED',
-      'new-hash',
-      'old-hash',
-      null,
-      tx as Parameters<RightsContentHashService['markVersionAndClearanceStale']>[5],
-    );
-    expect(root.$transaction).not.toHaveBeenCalled();
-  };
-
-  /**
-   * T56 (решение арбитра 27.09.2026): путь без `tx` (ручная проверка хеша, файл источника) берёт
-   * замок клиренса сам, и ключи групп для `markSelf` читает уже под ним. Путь с `tx` замок уже
-   * держит у вызывающего и второй раз его не берёт.
-   */
-  it('без своего tx пишет свою версию под замком клиренса, а не в голой транзакции', async () => {
-    const { tx } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, []);
-    const root = { $transaction: jest.fn(), bookVersion: tx.bookVersion };
-    const lock = {
-      runInLockedClearance: jest.fn((_id: string, fn: (client: unknown) => Promise<unknown>) =>
-        fn(tx),
-      ),
-    };
-    const service = new RightsContentHashService(
-      root as unknown as PrismaService,
-      lock as unknown as RightsClearanceLockService,
-    );
-
-    await service.markVersionAndClearanceStale('A', 'MANUAL_HASH_CHECK', 'new', 'old', null);
-
-    expect(lock.runInLockedClearance).toHaveBeenCalledTimes(1);
-    expect(lock.runInLockedClearance.mock.calls[0][0]).toBe('A');
-    expect(root.$transaction).not.toHaveBeenCalled();
-    const [lockOrder] = lock.runInLockedClearance.mock.invocationCallOrder;
-    const [readOrder] = tx.bookVersion.findUnique.mock.invocationCallOrder;
-    const [selfWriteOrder] = tx.bookVersion.update.mock.invocationCallOrder;
-    expect(lockOrder).toBeLessThan(readOrder);
-    expect(readOrder).toBeLessThan(selfWriteOrder);
-    expect(tx.rightsReview.update).toHaveBeenCalledTimes(1);
-    expect(tx.rightsReview.update.mock.calls[0][0]).toMatchObject({ where: { id: 'R1' } });
-    expect(tx.rightsProfile.update).toHaveBeenCalledTimes(1);
-    expect(tx.rightsProfile.update.mock.calls[0][0]).toMatchObject({ where: { id: 'P1' } });
-    expect(tx.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
-  });
-
-  it('со своим tx замок второй раз не берёт', async () => {
-    const { tx } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, []);
-    const lock = { runInLockedClearance: jest.fn() };
-    const service = new RightsContentHashService(
-      { $transaction: jest.fn() } as unknown as PrismaService,
-      lock as unknown as RightsClearanceLockService,
-    );
-
-    await service.markVersionAndClearanceStale(
-      'A',
-      'CHAPTER_UPDATED',
-      'new',
-      'old',
-      null,
-      tx as unknown as Parameters<RightsContentHashService['markVersionAndClearanceStale']>[5],
-    );
-
-    expect(lock.runInLockedClearance).not.toHaveBeenCalled();
-    expect(tx.bookVersion.update).toHaveBeenCalledTimes(1);
-    expect(tx.bookVersion.update.mock.calls[0][0]).toMatchObject({
-      where: { id: 'A' },
-      data: { rightsRecheckRequired: true, rightsStaleReasonCode: 'CHAPTER_UPDATED' },
-    });
-    expect(tx.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
-  });
-
-  it('ищет соседей обеих групп одним запросом, отсортированным по id', async () => {
-    const { tx } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, []);
-
-    await mark(tx);
-
-    expect(tx.bookVersion.findMany).toHaveBeenCalledTimes(1);
-    expect(tx.bookVersion.findMany).toHaveBeenCalledWith({
-      where: {
-        OR: [{ approvedRightsReviewId: 'R1' }, { rightsProfileId: 'P1' }],
-        id: { not: 'A' },
+describe('RightsContentHashService — без пометки соседних версий (решение владельца 27.09.2026)', () => {
+  const createTx = () => ({
+    bookVersion: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'A',
+        status: 'published',
+        publishedAt: new Date('2026-07-01T00:00:00.000Z'),
+        rightsProfileId: 'P1',
+        approvedRightsReviewId: 'R1',
+        rightsContentHash: 'old-hash',
+        rightsContentHashAlgorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+        rightsRecheckRequired: false,
         rightsStaleDetectedAt: null,
-      },
-      select: { id: true, approvedRightsReviewId: true },
-      orderBy: { id: 'asc' },
+        rightsStaleReasonCode: null,
+        rightsStaleReasonRu: null,
+      }),
+      // Соседи обеих групп: прежняя пометка разнесла бы на них `SHARED_CLEARANCE_STALE`.
+      findMany: jest.fn().mockResolvedValue([
+        { id: 'X', approvedRightsReviewId: 'R2' },
+        { id: 'Y', approvedRightsReviewId: 'R1' },
+      ]),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    rightsReview: { update: jest.fn().mockResolvedValue({}) },
+    rightsProfile: { update: jest.fn().mockResolvedValue({}) },
+    rightsContentHashEvent: {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+  });
+
+  const buildService = (root: unknown): RightsContentHashService => {
+    const service = new RightsContentHashService(root as PrismaService);
+    jest.spyOn(service, 'computeVersionHash').mockResolvedValue({
+      versionId: 'A',
+      rightsProfileId: 'P1',
+      approvedRightsReviewId: 'R1',
+      hash: 'new-hash',
+      algorithmVersion: RIGHTS_CONTENT_HASH_ALGORITHM_VERSION,
+      calculatedAt: '2026-09-27T00:00:00.000Z',
+      input: {},
     });
-  });
+    return service;
+  };
 
-  it('пишет соседей в порядке выдачи, текст — по группе, через которую версия попала', async () => {
-    const { tx, staleWrites } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: 'R1' }, [
-      { id: 'X', approvedRightsReviewId: 'R2' },
-      { id: 'Y', approvedRightsReviewId: 'R1' },
-      { id: 'Z', approvedRightsReviewId: 'R1' },
-    ]);
+  const expectOnlyEvent = (tx: ReturnType<typeof createTx>): void => {
+    expect(tx.bookVersion.findMany).not.toHaveBeenCalled();
+    expect(tx.bookVersion.update).not.toHaveBeenCalled();
+    expect(tx.rightsReview.update).not.toHaveBeenCalled();
+    expect(tx.rightsProfile.update).not.toHaveBeenCalled();
+    expect(tx.rightsContentHashEvent.create).toHaveBeenCalledTimes(1);
+    expect(tx.rightsContentHashEvent.create.mock.calls[0][0]).toMatchObject({
+      data: {
+        bookVersionId: 'A',
+        previousHash: 'old-hash',
+        currentHash: 'new-hash',
+        staleMarked: false,
+        reasonCode: 'CONTENT_CHANGE_LOGGED',
+      },
+    });
+  };
 
-    await mark(tx);
+  it('со своим tx пишет только событие и второй транзакции не открывает', async () => {
+    const tx = createTx();
+    const root = { $transaction: jest.fn() };
 
-    // X — только по профилю; Y — только по проверке прав или по обеим: текст проверки прав.
-    expect(staleWrites).toEqual([
-      { id: 'X', reason: PROFILE_TEXT },
-      { id: 'Y', reason: REVIEW_TEXT },
-      { id: 'Z', reason: REVIEW_TEXT },
-    ]);
-  });
-
-  it('без проверки прав ищет только по профилю и пишет текст профиля', async () => {
-    const { tx, staleWrites } = createTx({ rightsProfileId: 'P1', approvedRightsReviewId: null }, [
-      { id: 'X', approvedRightsReviewId: null },
-    ]);
-
-    await mark(tx);
-
-    expect(tx.bookVersion.findMany.mock.calls[0][0].where.OR).toEqual([{ rightsProfileId: 'P1' }]);
-    expect(staleWrites).toEqual([{ id: 'X', reason: PROFILE_TEXT }]);
-  });
-
-  it('без групп соседей не ищет', async () => {
-    const { tx, staleWrites } = createTx(
-      { rightsProfileId: null, approvedRightsReviewId: null },
-      [],
+    await buildService(root).checkVersionStaleness(
+      'A',
+      'CHAPTER_UPDATED',
+      null,
+      true,
+      tx as unknown as Prisma.TransactionClient,
     );
 
-    await mark(tx);
+    expect(root.$transaction).not.toHaveBeenCalled();
+    expectOnlyEvent(tx);
+  });
 
-    expect(tx.bookVersion.findMany).not.toHaveBeenCalled();
-    expect(staleWrites).toEqual([]);
+  it('без своего tx пишет только событие своей транзакцией и соседей не ищет', async () => {
+    const tx = createTx();
+    const root = {
+      ...tx,
+      $transaction: jest.fn((callback: (client: unknown) => Promise<unknown>) => callback(tx)),
+    };
+
+    await buildService(root).checkVersionStaleness('A', 'MANUAL_HASH_CHECK', null, true);
+
+    expect(root.$transaction).toHaveBeenCalledTimes(1);
+    expectOnlyEvent(tx);
   });
 });

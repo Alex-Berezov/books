@@ -114,6 +114,26 @@ export const isLawyerOverridableGateCode = (code: string): boolean =>
 export const LAWYER_OVERRIDE_APPLIED_CODE = 'LAWYER_OVERRIDE_APPLIED';
 
 /**
+ * Решение владельца 27.09.2026 (тема №4): «Разрешить публикацию» — последняя инстанция по правам.
+ *
+ * Действующее решение администратора снимает **все** блокеры гейта, в отличие от белого списка
+ * юриста выше: владелец так и сформулировал — «снимает все возможные ограничения». Поэтому здесь
+ * перечислено обратное — то, что решение не снимает никогда:
+ * - `VERSION_CONTENT_INCOMPLETE` — не правовой вопрос: пустая карточка наружу не уходит;
+ * - претензия правообладателя, заведённая **после** решения, — её гейт отбирает сам по дате
+ *   претензии, а не по коду: тот же код от претензии, пришедшей раньше, решение снимает.
+ */
+export const SUPERVISOR_OVERRIDE_EXEMPT_GATE_CODES: readonly string[] = [
+  'VERSION_CONTENT_INCOMPLETE',
+];
+
+export const isSupervisorOverrideExemptGateCode = (code: string): boolean =>
+  SUPERVISOR_OVERRIDE_EXEMPT_GATE_CODES.includes(code);
+
+/** Код-маркер: блокеры сняты решением администратора «Разрешить публикацию». */
+export const SUPERVISOR_OVERRIDE_APPLIED_CODE = 'SUPERVISOR_OVERRIDE_APPLIED';
+
+/**
  * Наполненность версии: одно определение на все места, где спрашивают, есть ли у карточки
  * содержимое. Блок 6.22 гейта решает по нему, выпускать ли версию наружу, а
  * `BookVersionService.update` — не опустошает ли правка уже опубликованную карточку. Двух копий

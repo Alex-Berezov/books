@@ -12,7 +12,6 @@ import {
   daysUntil,
   parseLeadDays,
   parsePositiveInt,
-  staleReasonToRecheckReason,
   type RecheckDateConfig,
   type ScheduledDueProfile,
 } from './rights-recheck.util';
@@ -195,26 +194,6 @@ describe('computeTaskSeverity', () => {
       dueAt,
     };
     expect(computeTaskSeverity(task, addDays(dueAt, -10), 30)).toBe(RightsRecheckSeverity.WARNING);
-  });
-});
-
-describe('staleReasonToRecheckReason', () => {
-  it('maps audio codes to AUDIO_ADDED', () => {
-    expect(staleReasonToRecheckReason('AUDIO_CHAPTER_CREATED')).toBe(
-      RightsRecheckReason.AUDIO_ADDED,
-    );
-  });
-
-  it('maps source edition changes to RIGHTS_DATA_CHANGED', () => {
-    expect(staleReasonToRecheckReason('SOURCE_EDITION_CHANGED')).toBe(
-      RightsRecheckReason.RIGHTS_DATA_CHANGED,
-    );
-  });
-
-  it('maps unknown codes and null to CONTENT_CHANGED', () => {
-    expect(staleReasonToRecheckReason('SOMETHING_ELSE')).toBe(RightsRecheckReason.CONTENT_CHANGED);
-    expect(staleReasonToRecheckReason(null)).toBe(RightsRecheckReason.CONTENT_CHANGED);
-    expect(staleReasonToRecheckReason(undefined)).toBe(RightsRecheckReason.CONTENT_CHANGED);
   });
 });
 

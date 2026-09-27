@@ -968,6 +968,30 @@ describe('RightsClaimsService', () => {
     ).toBe(true);
   });
 
+  // Решение владельца 27.09.2026: гейт датирует всемирную блокировку по её претензиям, поэтому
+  // сводный блокер обязан нести все претензии, а не первую.
+  it('lists every claim behind the worldwide access block, without repeats', async () => {
+    prisma.rightsClaim.findMany.mockResolvedValue([
+      createClaim({ id: 'claim-1', blocksPublication: false }),
+      createClaim({ id: 'claim-2', claimNumber: 'CLM-2026-000002', blocksPublication: false }),
+    ]);
+    prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
+      createBlock({ id: 'block-1', rightsClaimId: 'claim-1' }),
+      createBlock({ id: 'block-2', rightsClaimId: 'claim-2', scope: ClaimBlockScope.ENTIRE_BOOK }),
+      createBlock({ id: 'block-3', rightsClaimId: 'claim-2' }),
+      // Блок по стране версию целиком не закрывает — его претензия в список не входит.
+      createBlock({ id: 'block-4', rightsClaimId: 'claim-3', countryCode: 'DE' }),
+    ]);
+
+    const evaluation = await service.evaluateVersionClaims('version-1');
+    const accessBlock = evaluation.blockers.find(
+      (issue) => issue.code === 'RIGHTS_CLAIM_ACCESS_BLOCK_ACTIVE',
+    );
+
+    expect(accessBlock?.details).toMatchObject({ blockId: 'block-1' });
+    expect(accessBlock?.details?.claimIds).toEqual(['claim-1', 'claim-2']);
+  });
+
   // --- attachments --------------------------------------------------------
 
   it('soft-deletes attachments instead of removing the row', async () => {

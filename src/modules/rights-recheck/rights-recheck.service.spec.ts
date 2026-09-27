@@ -383,20 +383,25 @@ describe('RightsRecheckService', () => {
       );
     });
 
-    it('suppresses the notification when asked to', async () => {
+    // Опции `suppressNotification` больше нет: её звал только массовый `apply` изменения
+    // законодательства, который задач теперь не открывает. Каждая новая задача — ручная, и о ней
+    // всегда приходит уведомление.
+    it('always notifies about a newly opened task', async () => {
       await service.ensureTask({
-        reason: RightsRecheckReason.LEGAL_CHANGE,
-        source: RightsRecheckTriggerSource.LEGAL_CHANGE,
+        reason: RightsRecheckReason.MANUAL_REQUEST,
+        source: RightsRecheckTriggerSource.MANUAL,
         rightsProfileId: 'profile-1',
-        legalChangeEventId: 'lc-1',
         dueAt: addDays(NOW, 14),
-        titleRu: 'Изменение законодательства',
+        titleRu: 'Ручная перепроверка',
         descriptionRu: 'Описание',
-        suppressNotification: true,
       });
 
       expect(stub.rightsRecheckTask.create).toHaveBeenCalledTimes(1);
-      expect(notifications.create).not.toHaveBeenCalled();
+      expect(notifications.create).toHaveBeenCalledTimes(1);
+      expect(notifications.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RECHECK_TASK_OPENED' }),
+        expect.anything(),
+      );
     });
   });
 
@@ -560,6 +565,28 @@ describe('RightsRecheckService', () => {
       expect(stub.rightsProfile.update).toHaveBeenCalled();
       expect(result.computedDueAt).toBe(nextReviewAt.toISOString());
     });
+
+    // Умолчание схемы с 27.09.2026 — MANUAL_ONLY; ответ не должен выдавать пустую политику за
+    // наследование даты отчёта.
+    it('reports MANUAL_ONLY for a profile without a stored policy', async () => {
+      stub.rightsProfile.findUnique.mockResolvedValue({
+        id: 'profile-1',
+        rightsIntakeId: 'intake-1',
+        status: 'APPROVED',
+        isCurrent: true,
+        nextReviewAt: null,
+        recheckPolicy: null,
+        recheckIntervalDays: null,
+        recheckPausedUntil: null,
+        recheckPauseReasonRu: null,
+        lastRecheckScanAt: null,
+        createdAt: NOW,
+      });
+
+      const result = await service.getScheduleForProfile('profile-1');
+
+      expect(result.recheckPolicy).toBe(RightsRecheckPolicy.MANUAL_ONLY);
+    });
   });
 
   describe('createManual', () => {
@@ -590,24 +617,30 @@ describe('RightsRecheckService', () => {
     });
   });
 
+  /**
+   * Решение владельца 27.09.2026: перепроверка прав публикацию не блокирует никогда — ни
+   * просрочкой, ни изменением законодательства. Коды остаются, но только в `warnings`.
+   */
   describe('evaluateVersionRecheck', () => {
-    it('produces a RIGHTS_RECHECK_OVERDUE blocker for a BLOCKING task', async () => {
+    it('reports a BLOCKING overdue task as a RIGHTS_RECHECK_OVERDUE warning, not a blocker', async () => {
       stub.rightsRecheckTask.findMany.mockResolvedValue([
         task({ dueAt: addDays(NOW, -60), severity: RightsRecheckSeverity.BLOCKING }),
       ]);
 
       const result = await service.evaluateVersionRecheck('v1');
 
-      expect(result.blockers.map((b) => b.code)).toContain('RIGHTS_RECHECK_OVERDUE');
+      expect(result.blockers).toHaveLength(0);
+      expect(result.warnings.map((w) => w.code)).toContain('RIGHTS_RECHECK_OVERDUE');
+      // Счётчики остаются справочными: задача по-прежнему просрочена и BLOCKING по критичности.
       expect(result.blockingTasksCount).toBe(1);
       expect(result.overdueTasksCount).toBe(1);
     });
 
-    it('downgrades the blocker to a warning when blocking is disabled', async () => {
+    it('does not block even with the removed RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE=1', async () => {
       service = new RightsRecheckService(
         stub as unknown as PrismaService,
         notifications as unknown as RightsNotificationsService,
-        configWith({ RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE: '0' }),
+        configWith({ RIGHTS_RECHECK_BLOCK_PUBLISH_ON_OVERDUE: '1' }),
       );
       stub.rightsRecheckTask.findMany.mockResolvedValue([
         task({ dueAt: addDays(NOW, -60), severity: RightsRecheckSeverity.BLOCKING }),
@@ -617,6 +650,7 @@ describe('RightsRecheckService', () => {
 
       expect(result.blockers).toHaveLength(0);
       expect(result.warnings.map((w) => w.code)).toContain('RIGHTS_RECHECK_OVERDUE');
+      expect(service.getRuntimeConfig()).not.toHaveProperty('blockPublishOnOverdue');
     });
 
     it('never blocks on a snoozed task', async () => {
@@ -634,7 +668,7 @@ describe('RightsRecheckService', () => {
       expect(result.warnings.map((w) => w.code)).toContain('RIGHTS_RECHECK_TASK_SNOOZED');
     });
 
-    it('blocks on a BLOCKING legal-change task with its own code', async () => {
+    it('reports a BLOCKING legal-change task as a warning with its own code, not a blocker', async () => {
       stub.rightsRecheckTask.findMany.mockResolvedValue([
         task({
           reason: RightsRecheckReason.LEGAL_CHANGE,
@@ -646,7 +680,33 @@ describe('RightsRecheckService', () => {
 
       const result = await service.evaluateVersionRecheck('v1');
 
-      expect(result.blockers.map((b) => b.code)).toContain('RIGHTS_RECHECK_LEGAL_CHANGE_PENDING');
+      expect(result.blockers).toHaveLength(0);
+      expect(result.warnings.map((w) => w.code)).toContain('RIGHTS_RECHECK_LEGAL_CHANGE_PENDING');
+    });
+
+    it('stays unblocked with an overdue legal-change and an overdue manual task together', async () => {
+      stub.rightsRecheckTask.findMany.mockResolvedValue([
+        task({
+          id: 'task-legal',
+          reason: RightsRecheckReason.LEGAL_CHANGE,
+          severity: RightsRecheckSeverity.BLOCKING,
+          legalChangeEventId: 'lc-1',
+          dueAt: addDays(NOW, -90),
+        }),
+        task({
+          id: 'task-manual',
+          reason: RightsRecheckReason.MANUAL_REQUEST,
+          severity: RightsRecheckSeverity.WARNING,
+          dueAt: addDays(NOW, -90),
+        }),
+      ]);
+
+      const result = await service.evaluateVersionRecheck('v1');
+
+      expect(result.blockers).toHaveLength(0);
+      expect(result.warnings.map((w) => w.code)).toEqual(
+        expect.arrayContaining(['RIGHTS_RECHECK_LEGAL_CHANGE_PENDING', 'RIGHTS_RECHECK_OVERDUE']),
+      );
     });
 
     it('fails with RECHECK_VERSION_NOT_FOUND for an unknown version', async () => {
