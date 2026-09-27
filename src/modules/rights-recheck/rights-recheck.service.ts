@@ -9,12 +9,13 @@ import {
   type AgentDatabaseClient,
 } from '../rights-agent/rights-agent-interface';
 import {
+  RECHECK_DEFAULT_INTERVAL_DAYS,
   RECHECK_EMBEDDED_TASKS_LIMIT,
   RECHECK_ERROR_CODES,
-  RECHECK_MANUAL_DUE_DAYS_DEFAULT,
   RECHECK_GATE_CODES,
   RECHECK_LIST_DEFAULT_LIMIT,
   RECHECK_LIST_MAX_LIMIT,
+  RECHECK_MANUAL_DUE_DAYS_DEFAULT,
   RECHECK_MAX_SNOOZE_DAYS,
   RECHECK_OPEN_STATUSES,
   RECHECK_OVERDUE_GRACE_DAYS_DEFAULT,
@@ -23,7 +24,6 @@ import {
   RECHECK_RESOLUTION_LABELS_RU,
   RECHECK_SCAN_BATCH_SIZE_DEFAULT,
   RECHECK_VERSION_SCOPED_REASONS,
-  RECHECK_DEFAULT_INTERVAL_DAYS,
 } from './rights-recheck.constants';
 import { recheckError } from './rights-recheck.errors';
 import {
@@ -157,7 +157,8 @@ export class RightsRecheckService {
         this.config.get('RIGHTS_RECHECK_OVERDUE_GRACE_DAYS'),
         RECHECK_OVERDUE_GRACE_DAYS_DEFAULT,
       ),
-      // Имя переменной окружения прежнее ради настроенных окружений; переименование сбросит срок на умолчание.
+      // Ключ окружения назван по-старому ради настроенных окружений:
+      // его переименование молча сбросит срок на умолчание.
       manualDueDays: parsePositiveInt(
         this.config.get('RIGHTS_RECHECK_EVENT_DUE_DAYS'),
         RECHECK_MANUAL_DUE_DAYS_DEFAULT,

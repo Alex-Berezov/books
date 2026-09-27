@@ -615,6 +615,26 @@ describe('RightsRecheckService', () => {
         }),
       );
     });
+
+    it('takes the default due date from RIGHTS_RECHECK_EVENT_DUE_DAYS', async () => {
+      service = new RightsRecheckService(
+        stub as unknown as PrismaService,
+        notifications as unknown as RightsNotificationsService,
+        configWith({ RIGHTS_RECHECK_EVENT_DUE_DAYS: '21' }),
+      );
+      stub.rightsRecheckTask.findUnique.mockResolvedValue(task());
+      const before = Date.now();
+
+      await service.createManual(
+        { rightsProfileId: 'profile-1', titleRu: 'Проверить', descriptionRu: 'Причина' },
+        'u1',
+      );
+
+      expect(stub.rightsRecheckTask.create).toHaveBeenCalledTimes(1);
+      const { dueAt } = stub.rightsRecheckTask.create.mock.calls[0][0].data as { dueAt: Date };
+      const expected = addDays(new Date(before), 21).getTime();
+      expect(Math.abs(dueAt.getTime() - expected)).toBeLessThan(60_000);
+    });
   });
 
   /**
