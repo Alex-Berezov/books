@@ -5,7 +5,9 @@ import type { Response } from 'express';
  * приватного ответа (`Vary: Authorization`).
  *
  * ⚠️ Константы, а не литералы по месту. Приватную строку ставят пять мест:
- * `DefaultCacheControlMiddleware` (умолчание), `PublicCacheInterceptor`
+ * `defaultCacheControl` (умолчание; зовут `DefaultCacheControlMiddleware` и
+ * ранний `app.use('/api', …)` в `configureSecurity` — для preflight `OPTIONS`
+ * и 413 `express.json`, `LEGACY-108` остаток `T64`), `PublicCacheInterceptor`
  * (персональная ветка и ветка ошибки), ручная выгрузка в
  * `rights-files.controller.ts`, `docsCacheHeadersMiddleware` (`/docs*`).
  * Второй рубеж ставит `varyAuthorizationIfPrivate` — его зовут

@@ -2,9 +2,11 @@ import { INestApplication } from '@nestjs/common';
 import helmet from 'helmet';
 import express from 'express';
 import { getCorsConfig, getCorsConfigInfo } from '../../config/cors.config';
+import { defaultCacheControl } from '../middleware/default-cache-control.middleware';
 
 /**
  * Apply security middleware and body limits consistently across the app.
+ * - First: default `Cache-Control: private, no-store` on `/api` — must stay above CORS and body parsers
  * - Helmet with safe defaults (CSP disabled in non-prod to not break Swagger)
  * - CORS configured via getCorsConfig() from cors.config.ts
  * - Body parsers: JSON and URL-encoded with 1mb limits by default
@@ -12,6 +14,22 @@ import { getCorsConfig, getCorsConfigInfo } from '../../config/cors.config';
  * - Static files for local uploads mapped to /static
  */
 export function configureSecurity(app: INestApplication): void {
+  // `LEGACY-108` остаток (`T64`). `cors` заканчивает preflight сам (`res.end()`
+  // без `next()`), а `express.json()` отвечает 413 на превышенном лимите — оба
+  // раньше `DefaultCacheControlMiddleware`: тот регистрируется модулем при
+  // `app.init()`, который в `main.ts` вызывается неявно, в самом конце
+  // `bootstrap()`, то есть позже всех `app.use()` из этой функции. Без
+  // директивы общий кэш вправе хранить такой ответ эвристически (RFC 9111
+  // §4.2.2). Та же функция, что у middleware (`defaultCacheControl`), —
+  // явный `@Header`/`PublicCacheInterceptor` дальше по цепочке всё равно его
+  // перезапишет, до маршрутов, отвечающих Express-уровнем (preflight, 413),
+  // дело не доходит вовсе.
+  // 🔴 Только `/api` — та же зона, что у `DefaultCacheControlMiddleware`.
+  // Статика `ServeStaticModule` (`serveRoot: '/'`) ставит свой `public,
+  // max-age=0` лишь при пустом `Cache-Control` (`send`), и умолчание на весь
+  // трафик лишило бы загрузки ETag-ревалидации и кэша CDN.
+  app.use('/api', defaultCacheControl);
+
   // Helmet: keep CSP off in dev to avoid breaking Swagger UI; allow cross-origin resource policy for static
   const isProd = process.env.NODE_ENV === 'production';
   app.use(

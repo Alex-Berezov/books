@@ -32,11 +32,18 @@ import { PRIVATE_NO_STORE } from '../interceptors/cache-control';
  * ответам, откатив `LEGACY-101`.
  *
  * Форма правки — решение арбитра 12.09.2026, вариант B (`decisions-log.md`).
+ *
+ * Тело — `defaultCacheControl`: его же ставит ранний `app.use('/api', …)`
+ * в `configureSecurity` для preflight и 413 (`T64`), одна копия на оба места.
  */
+export function defaultCacheControl(_req: Request, res: Response, next: NextFunction): void {
+  res.setHeader('Cache-Control', PRIVATE_NO_STORE);
+  next();
+}
+
 @Injectable()
 export class DefaultCacheControlMiddleware implements NestMiddleware {
-  use(_req: Request, res: Response, next: NextFunction): void {
-    res.setHeader('Cache-Control', PRIVATE_NO_STORE);
-    next();
+  use(req: Request, res: Response, next: NextFunction): void {
+    defaultCacheControl(req, res, next);
   }
 }
