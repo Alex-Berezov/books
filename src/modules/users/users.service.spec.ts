@@ -1,4 +1,5 @@
 import { NotFoundException, BadRequestException } from '@nestjs/common';
+import * as argon2 from 'argon2';
 import { UsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -16,7 +17,12 @@ import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service'
 import { rolesCache } from '../../common/roles/roles-cache';
 import { Role } from '../../common/decorators/roles.decorator';
 import { STAFF_ROLE_NAMES } from './users.constants';
-import { UpdateUserDto } from './dto/update-user.dto';
+
+// Настоящий хеш, обёрнутый в jest.fn: посадка LEGACY-425 смотрит, считался ли он вообще.
+jest.mock('argon2', () => {
+  const actual = jest.requireActual<typeof import('argon2')>('argon2');
+  return { ...actual, hash: jest.fn(actual.hash) };
+});
 
 /** Условие «сотрудник» в фильтре `staff`: только роли из `UserRole`. */
 const STAFF_ROLE_CONDITION = {
@@ -40,6 +46,7 @@ type TransactionArg<T = unknown> = Promise<T>[] | ((tx: PrismaStub) => Promise<T
 interface PrismaStub {
   user: {
     findUnique: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
     findFirst: jest.Mock;
     update: jest.Mock;
     findMany: jest.Mock;
@@ -107,6 +114,7 @@ describe('UsersService (unit)', () => {
     prismaMock = {
       user: {
         findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
         findFirst: jest.fn(),
         update: jest.fn(),
         findMany: jest.fn(),
@@ -753,6 +761,74 @@ describe('UsersService (unit)', () => {
       await expect(w.call()).rejects.toThrow(new NotFoundException('User not found'));
       for (const op of w.writes()) expect(op).not.toHaveBeenCalled();
     });
+
+    /**
+     * `LEGACY-425`: снимок половин имени до замка не видит встречную правку другой половины.
+     * Посадка ловит именно это — читает `firstName`/`lastName` клиентом транзакции **после**
+     * замка, а не корневым клиентом до неё.
+     */
+    it('update: name собирается из половин, прочитанных клиентом транзакции после замка', async () => {
+      const txFindUniqueOrThrow = jest.fn().mockResolvedValue({ firstName: 'X', lastName: 'B' });
+      const txUpdate = jest.fn().mockResolvedValue(baseUser);
+      prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
+        if (typeof arg !== 'function') return Promise.all(arg);
+        return arg({
+          ...prismaMock,
+          $queryRaw: txQueryRaw,
+          user: { ...prismaMock.user, findUniqueOrThrow: txFindUniqueOrThrow, update: txUpdate },
+        });
+      });
+
+      await service.update('u1', { lastName: 'B' }, 'admin-1');
+
+      // Никакого чтения половин имени вне транзакции — старый снимок до замка не берётся вовсе.
+      expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+      const lockAt = txQueryRaw.mock.invocationCallOrder[0];
+      const readAt = txFindUniqueOrThrow.mock.invocationCallOrder[0];
+      expect(readAt).toBeGreaterThan(lockAt);
+      expect(txFindUniqueOrThrow).toHaveBeenCalledTimes(1);
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+      expect(txUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ name: 'X B' }) }),
+      );
+    });
+
+    it.each([
+      [{ firstName: null }, 'B'],
+      [{ lastName: null }, 'X'],
+      [{ firstName: null, lastName: null }, null],
+    ])('update %j: null очищает половину, name без неё — %p', async (dto, name) => {
+      prismaMock.user.findUniqueOrThrow.mockResolvedValue({ firstName: 'X', lastName: 'B' });
+
+      await service.update(
+        'u1',
+        dto as unknown as Parameters<UsersService['update']>[1],
+        'admin-1',
+      );
+
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+      expect(prismaMock.user.update.mock.calls[0][0].data).toEqual({ ...dto, name });
+    });
+
+    it('update без половин имени их не читает и name не трогает', async () => {
+      await service.update('u1', { roles: ['admin'] }, 'admin-1');
+
+      expect(prismaMock.user.findUniqueOrThrow).not.toHaveBeenCalled();
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+      expect(prismaMock.user.update.mock.calls[0][0].data).not.toHaveProperty('name');
+    });
+
+    it('update с паролем на несуществующего пользователя: 404 без хеша и транзакции', async () => {
+      const hash = argon2.hash as jest.Mock;
+      hash.mockClear();
+      prismaMock.user.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.update('nope', { password: 'secret-password' }, 'admin-1'),
+      ).rejects.toThrow(new NotFoundException('User not found'));
+      expect(hash).not.toHaveBeenCalled();
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
   });
 
   /**
@@ -767,7 +843,7 @@ describe('UsersService (unit)', () => {
     // на каком-то пути появится вторая транзакция.
     const optionsOfFirstTransaction = () => prismaMock.$transaction.mock.calls[0][1];
 
-    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', firstName: null, lastName: null });
+    prismaMock.user.findUniqueOrThrow.mockResolvedValue({ firstName: null, lastName: null });
     prismaMock.user.update.mockResolvedValue(baseUser);
     prismaMock.userRole.findMany.mockResolvedValue([]);
 
@@ -1001,6 +1077,10 @@ describe('UsersService (unit)', () => {
 
     beforeEach(() => {
       prismaMock.user.findUnique.mockResolvedValue(baseUser);
+      prismaMock.user.findUniqueOrThrow.mockResolvedValue({
+        firstName: baseUser.firstName,
+        lastName: baseUser.lastName,
+      });
       prismaMock.role.findUnique.mockResolvedValue({
         id: 'r1',
         name: 'admin' as RoleName,
@@ -1705,24 +1785,22 @@ describe('UsersService (unit)', () => {
       expect(selectsOf(prismaMock.user.findUnique)[0]).toEqual({ id: true });
     });
 
-    it('update: чтение и запись сужены, passwordHash не читается', async () => {
-      prismaMock.user.findUnique.mockResolvedValueOnce({
-        id: 'u1',
+    it('update: чтение половин имени и запись сужены, passwordHash не читается', async () => {
+      prismaMock.user.findUniqueOrThrow.mockResolvedValueOnce({
         firstName: 'John',
         lastName: null,
       });
       prismaMock.user.update.mockResolvedValueOnce(baseUser);
       prismaMock.userRole.findMany.mockResolvedValue([]);
 
-      // Поле не из `UpdateUserDto`, и приведение здесь нарочное: живой запрос с таким телом
-      // до сервиса не дойдёт — глобальный `ValidationPipe` стоит с `forbidNonWhitelisted`
-      // и отобьёт его 400-м. Тест смотрит не на тело, а на `select` обоих обращений к базе:
-      // чтение берёт три поля без `passwordHash`, запись — белый список аккаунта.
-      await service.update('u1', { nickname: 'new_nick' } as unknown as UpdateUserDto, 'actor-1');
+      // `lastName` меняется — половины перечитываются клиентом транзакции (`LEGACY-425`).
+      // Тест смотрит не на тело, а на `select` обоих обращений к базе: чтение берёт две
+      // половины имени без `passwordHash`, запись — белый список аккаунта.
+      await service.update('u1', { lastName: 'Doe' }, 'actor-1');
 
-      const [readSelect] = selectsOf(prismaMock.user.findUnique);
+      const [readSelect] = selectsOf(prismaMock.user.findUniqueOrThrow);
       expect(readSelect).not.toHaveProperty('passwordHash');
-      expect(Object.keys(readSelect).sort()).toEqual(['firstName', 'id', 'lastName']);
+      expect(Object.keys(readSelect).sort()).toEqual(['firstName', 'lastName']);
 
       const [writeSelect] = selectsOf(prismaMock.user.update);
       expect(writeSelect).toEqual(ACCOUNT_USER_SELECT);

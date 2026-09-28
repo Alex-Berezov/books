@@ -628,30 +628,38 @@ export class UsersService {
     dto: UpdateUserDto,
     actorUserId: string | null,
   ): Promise<PublicUser & { roles: RoleName[] }> {
-    // Читаются ровно те поля, из которых ниже собирается `name`.
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-      select: { id: true, firstName: true, lastName: true },
-    });
-    if (!user) throw new NotFoundException('User not found');
-
     const { password, roles: rolesDto, ...rest } = dto;
     const data: Prisma.UserUpdateInput = {
       ...rest,
     };
 
-    if (dto.firstName !== undefined || dto.lastName !== undefined) {
-      const newFirstName = dto.firstName ?? user.firstName;
-      const newLastName = dto.lastName ?? user.lastName;
-      data.name = [newFirstName, newLastName].filter(Boolean).join(' ') || null;
-    }
-
     if (password) {
+      // 404 раньше дорогого хеша; окончательно строку проверяет замок в транзакции.
+      const exists = await this.prisma.user.findUnique({
+        where: { id },
+        select: USER_EXISTS_SELECT,
+      });
+      if (!exists) throw new NotFoundException('User not found');
       data.passwordHash = await argon2.hash(password);
     }
 
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await lockUserRow(tx, id, 'NO_KEY_UPDATE');
+
+      // `name` собирается из половин имени, перечитанных клиентом транзакции **после**
+      // замка строки (`LEGACY-425`): снимок до замка не видит встречную правку другой
+      // половины, и `name` расходится с итоговыми `firstName`/`lastName`.
+      if (dto.firstName !== undefined || dto.lastName !== undefined) {
+        const locked = await tx.user.findUniqueOrThrow({
+          where: { id },
+          select: { firstName: true, lastName: true },
+        });
+        // `null` — очистка половины, а не «не передано»: он же пишется в столбец через `...rest`.
+        const newFirstName = dto.firstName !== undefined ? dto.firstName : locked.firstName;
+        const newLastName = dto.lastName !== undefined ? dto.lastName : locked.lastName;
+        data.name = [newFirstName, newLastName].filter(Boolean).join(' ') || null;
+      }
+
       const u = await tx.user.update({ where: { id }, data, select: ACCOUNT_USER_SELECT });
 
       if (rolesDto) {
