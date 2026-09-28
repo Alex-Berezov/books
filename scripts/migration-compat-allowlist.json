@@ -65,6 +65,10 @@
       "reason": "Уникальный индекс на живые колонки. Применена 25.08.2025.",
       "constructs": ["CREATE UNIQUE INDEX"]
     },
+    "20250825124124_add_tags_model_and_links": {
+      "reason": "Уникальные индексы (userId, commentId) и (userId, bookVersionId) на живую таблицу Like рядом с созданием Tag/BookTag. Применена 25.08.2025 (в v1.0.0); check-migration-compat не видел их до правки LEGACY-423 — квалифицированное \"public\".\"Like\" резалось до схемы.",
+      "constructs": ["CREATE UNIQUE INDEX"]
+    },
     "20250830120000_page_unique_language_slug": {
       "reason": "Уникальный индекс на живую пару (language, slug) в Page, плюс снятие старого одноязычного Page_slug_key через EXECUTE в DO-блоке (LEGACY-397: check-migration-compat не видел его до этой правки). Применена 30.08.2025.",
       "constructs": ["CREATE UNIQUE INDEX", "DROP INDEX"]

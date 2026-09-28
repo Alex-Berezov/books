@@ -162,7 +162,29 @@ function statements(sql) {
 
 const ident = '(?:"[^"]+"|\\w+)';
 
+/**
+ * Имя таблицы, возможно со схемой: `"public"."Book"`, `public.Book`, голое `Book`. Две группы —
+ * схема (может не быть) и таблица. До `LEGACY-423` бралась одна первая часть, и `"public"."X"`
+ * превращалось в `public`: схема путалась с таблицей.
+ */
+const qualifiedIdent = `(?:(${ident})\\.)?(${ident})`;
+
 const unquote = (name) => name.replace(/"/g, '');
+
+/**
+ * Ключ таблицы для исключений «новая таблица» и «новая колонка»: `схема.таблица`. Одно голое имя
+ * склеило бы `"audit"."Like"` с `"public"."Like"`. Схема голого имени — `bareSchema`: `public`,
+ * а при `search_path`, заданном в миграции, неизвестная `?` — такой ключ не совпадает ни с одним
+ * квалифицированным, и исключение не срабатывает (лишняя находка вместо пропущенной).
+ */
+const tableKey = (m, at, bareSchema) => `${m[at] ? unquote(m[at]) : bareSchema}.${unquote(m[at + 1])}`;
+
+const SETS_SEARCH_PATH = /\bSET\s+(?:(?:LOCAL|SESSION)\s+)?search_path\b|\bset_config\s*\(\s*'search_path'/i;
+
+/** `ON <таблица>` у индекса: одна регулярка на `targetTable` и `constrainedColumns`. */
+const ON_TABLE = new RegExp(`\\bON\\s+(?:ONLY\\s+)?${qualifiedIdent}`, 'i');
+const ALTER_TABLE = new RegExp(`^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:IF\\s+EXISTS\\s+)?${qualifiedIdent}`, 'i');
+const CREATE_TABLE = new RegExp(`^CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${qualifiedIdent}`, 'i');
 
 /** Идентификаторы в кавычках внутри куска SQL. */
 const quotedIn = (text) => [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
@@ -190,7 +212,7 @@ function groupAfter(s, at) {
 function constrainedColumns(s) {
   const uniqueIndex = /^CREATE\s+UNIQUE\s+INDEX\b/i.test(s);
   if (uniqueIndex) {
-    const on = /\bON\s+(?:ONLY\s+)?(?:"[^"]+"|\w+)/i.exec(s);
+    const on = ON_TABLE.exec(s);
     return on ? quotedIn(groupAfter(s, on.index + on[0].length)) : [];
   }
   for (const kw of [/\bFOREIGN\s+KEY\b/i, /\bUNIQUE\b/i, /\bCHECK\b/i, /\bPRIMARY\s+KEY\b/i]) {
@@ -201,14 +223,15 @@ function constrainedColumns(s) {
 }
 
 /**
- * Таблица, к которой относится оператор: `ALTER TABLE "X"`, `CREATE ... INDEX ... ON "X"`.
- * Пустая строка, если оператор не про таблицу.
+ * Ключ таблицы оператора (`tableKey`: `схема.таблица`, голое имя — `bareSchema.таблица`) для
+ * `ALTER TABLE "X"` и `CREATE ... INDEX ... ON "X"`. Сравнивать только с другими ключами, не
+ * с голым именем. Пустая строка, если оператор не про таблицу.
  */
-function targetTable(s) {
-  const alter = new RegExp(`^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:IF\\s+EXISTS\\s+)?(${ident})`, 'i').exec(s);
-  if (alter) return unquote(alter[1]);
-  const index = new RegExp(`\\bON\\s+(?:ONLY\\s+)?(${ident})`, 'i').exec(s);
-  if (index && /^CREATE\b/i.test(s)) return unquote(index[1]);
+function targetTable(s, bareSchema) {
+  const alter = ALTER_TABLE.exec(s);
+  if (alter) return tableKey(alter, 1, bareSchema);
+  const index = ON_TABLE.exec(s);
+  if (index && /^CREATE\b/i.test(s)) return tableKey(index, 1, bareSchema);
   return '';
 }
 
@@ -291,6 +314,7 @@ const constraintNames = (re, sql) =>
  */
 export function destructiveIn(sql) {
   const parsed = statements(sql);
+  const bareSchema = SETS_SEARCH_PATH.test(stripSqlComments(sql)) ? '?' : 'public';
 
   const dropped = constraintNames(new RegExp(`\\bDROP\\s+CONSTRAINT\\s+(?:IF\\s+EXISTS\\s+)?(${ident})`, 'gi'), sql);
   const added = constraintNames(new RegExp(`\\bADD\\s+CONSTRAINT\\s+(${ident})`, 'gi'), sql);
@@ -304,9 +328,9 @@ export function destructiveIn(sql) {
   const createdTables = new Set(
     parsed
       .filter((s) => /^CREATE\s+TABLE\b/i.test(s))
-      .map((s) => new RegExp(`^CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(${ident})`, 'i').exec(s))
+      .map((s) => CREATE_TABLE.exec(s))
       .filter(Boolean)
-      .map((m) => unquote(m[1])),
+      .map((m) => tableKey(m, 1, bareSchema)),
   );
   const ON_NEW_TABLE_IS_FINE = new Set(['ADD CONSTRAINT', 'CREATE UNIQUE INDEX', 'ADD COLUMN NOT NULL', 'SET NOT NULL']);
 
@@ -317,7 +341,7 @@ export function destructiveIn(sql) {
   const addedColumns = new Map();
   for (const s of parsed) {
     if (!/^ALTER\s+TABLE\b/i.test(s)) continue;
-    const table = targetTable(s);
+    const table = targetTable(s, bareSchema);
     for (const m of s.matchAll(new RegExp(`\\bADD\\s+(?:COLUMN\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?"([^"]+)"`, 'gi'))) {
       if (!addedColumns.has(table)) addedColumns.set(table, new Set());
       addedColumns.get(table).add(m[1]);
@@ -326,7 +350,7 @@ export function destructiveIn(sql) {
   const onlyNewColumns = (s) => {
     const cols = constrainedColumns(s);
     if (cols.length === 0) return false;
-    const fresh = addedColumns.get(targetTable(s)) ?? new Set();
+    const fresh = addedColumns.get(targetTable(s, bareSchema)) ?? new Set();
     return cols.every((c) => fresh.has(c));
   };
 
@@ -335,7 +359,7 @@ export function destructiveIn(sql) {
     for (const d of DETECTORS) {
       if (!d.test(s)) continue;
       if (pairedOnly && (d.id === 'DROP CONSTRAINT' || d.id === 'ADD CONSTRAINT')) continue;
-      if (ON_NEW_TABLE_IS_FINE.has(d.id) && createdTables.has(targetTable(s))) continue;
+      if (ON_NEW_TABLE_IS_FINE.has(d.id) && createdTables.has(targetTable(s, bareSchema))) continue;
       if ((d.id === 'ADD CONSTRAINT' || d.id === 'CREATE UNIQUE INDEX') && onlyNewColumns(s)) continue;
       found.add(d.id);
     }
@@ -563,6 +587,85 @@ const CASES = [
   {
     name: 'EXECUTE без индексной/констрейнтной DDL не считается',
     sql: "DO $$ BEGIN EXECUTE 'ANALYZE \"Book\"'; END $$;",
+    expect: [],
+  },
+  {
+    // LEGACY-423: targetTable() резал квалифицированное имя `"public"."X"` до схемы `public`,
+    // и любая созданная в миграции таблица с квалифицированным именем метила ту же псевдо-таблицу
+    // "public" как новую — после чего ограничение на ЛЮБУЮ живую квалифицированную таблицу
+    // проходило под исключением «ограничение на новой таблице» незамеченным.
+    name: 'ограничение на живую таблицу с квалифицированным именем не прячется за созданием другой',
+    sql: 'CREATE TABLE "public"."NewTable" ("id" INTEGER);\nALTER TABLE "public"."Book" ADD CONSTRAINT "c" CHECK ("x" > 0);',
+    expect: ['ADD CONSTRAINT'],
+  },
+  {
+    name: 'уникальный индекс на живую квалифицированную таблицу не прячется за созданием другой',
+    sql: 'CREATE TABLE "public"."Bar" ("id" INTEGER);\nCREATE UNIQUE INDEX "i" ON "public"."Foo"("x");',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'новая колонка одной квалифицированной таблицы не прикрывает индекс на другой',
+    sql: 'ALTER TABLE "public"."Foo" ADD COLUMN "c" INTEGER;\nCREATE UNIQUE INDEX "i" ON "public"."Baz"("c");',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'уникальный индекс на новую колонку той же квалифицированной таблицы остаётся исключением',
+    sql: 'ALTER TABLE "public"."Foo" ADD COLUMN "c" INTEGER;\nCREATE UNIQUE INDEX "i" ON "public"."Foo"("c");',
+    expect: [],
+  },
+  {
+    name: 'одноимённая таблица в другой схеме не прикрывает ограничение на живую',
+    sql: 'CREATE TABLE "audit"."Like" ("id" INTEGER);\nALTER TABLE "public"."Like" ADD CONSTRAINT "c" CHECK ("id" > 0);',
+    expect: ['ADD CONSTRAINT'],
+  },
+  {
+    name: 'новая колонка одноимённой таблицы в другой схеме не прикрывает индекс',
+    sql: 'ALTER TABLE "audit"."Like" ADD COLUMN "c" INTEGER;\nCREATE UNIQUE INDEX "i" ON "public"."Like"("c");',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'таблица без схемы и та же таблица с "public". — одна таблица',
+    sql: 'CREATE TABLE "Foo" ("id" INTEGER);\nCREATE UNIQUE INDEX "i" ON "public"."Foo"("id");',
+    expect: [],
+  },
+  {
+    name: 'SET search_path: голое имя не считается таблицей public',
+    sql: 'SET search_path TO audit;\nCREATE TABLE "Like" ("id" INTEGER);\nCREATE UNIQUE INDEX "i" ON "public"."Like"("id");',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: "set_config('search_path'): голое имя не считается таблицей public",
+    sql: "SELECT set_config('search_path', 'audit', true);\nCREATE TABLE \"Like\" (\"id\" INTEGER);\nCREATE UNIQUE INDEX \"i\" ON \"public\".\"Like\"(\"id\");",
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'SET search_path: голое имя с тем же голым именем — одна таблица',
+    sql: 'SET search_path TO audit;\nCREATE TABLE "Like" ("id" INTEGER);\nCREATE UNIQUE INDEX "i" ON "Like"("id");',
+    expect: [],
+  },
+  {
+    name: 'схема без кавычек: индекс на живую таблицу рядом с созданием другой',
+    sql: 'CREATE TABLE public.Bar ("id" INTEGER);\nCREATE UNIQUE INDEX "i" ON public.Foo("x");',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'схема без кавычек: ограничение на саму созданную таблицу — исключение',
+    sql: 'CREATE TABLE public.NewT ("id" INTEGER);\nALTER TABLE public.NewT ADD CONSTRAINT "c" CHECK ("id" > 0);',
+    expect: [],
+  },
+  {
+    name: 'CREATE TABLE IF NOT EXISTS с квалифицированным именем не прикрывает другую таблицу',
+    sql: 'CREATE TABLE IF NOT EXISTS "public"."X" ("id" INTEGER);\nALTER TABLE "public"."Y" ADD CONSTRAINT "c" CHECK ("id" > 0);',
+    expect: ['ADD CONSTRAINT'],
+  },
+  {
+    name: 'CREATE TABLE IF NOT EXISTS + ALTER TABLE ONLY / IF EXISTS на ней — исключение',
+    sql: 'CREATE TABLE IF NOT EXISTS "public"."X" ("id" INTEGER);\nALTER TABLE ONLY "public"."X" ADD CONSTRAINT "c" CHECK ("id" > 0);\nALTER TABLE IF EXISTS "public"."X" ADD CONSTRAINT "d" CHECK ("id" > 1);',
+    expect: [],
+  },
+  {
+    name: 'ограничение на саму созданную квалифицированную таблицу остаётся исключением',
+    sql: 'CREATE TABLE "public"."NewTable" ("id" INTEGER);\nALTER TABLE "public"."NewTable" ADD CONSTRAINT "c" CHECK ("id" > 0);',
     expect: [],
   },
 ];
