@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsISO8601, IsOptional, IsString, IsUrl } from 'class-validator';
+import { IsISO8601, IsOptional, IsString } from 'class-validator';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 export class UpdateSeoDto {
   // === Primary meta tags ===
@@ -15,7 +16,7 @@ export class UpdateSeoDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   canonicalUrl?: string;
 
   @ApiPropertyOptional()
@@ -41,12 +42,12 @@ export class UpdateSeoDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   ogUrl?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   ogImageUrl?: string;
 
   @ApiPropertyOptional()
@@ -93,12 +94,12 @@ export class UpdateSeoDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   eventUrl?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   eventImageUrl?: string;
 
   @ApiPropertyOptional()

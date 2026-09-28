@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 export class SeoInputDto {
   @ApiPropertyOptional({ description: 'Meta title' })
@@ -14,7 +15,7 @@ export class SeoInputDto {
 
   @ApiPropertyOptional({ description: 'Canonical URL' })
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   canonicalUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Robots meta tag' })
@@ -39,12 +40,12 @@ export class SeoInputDto {
 
   @ApiPropertyOptional({ description: 'Open Graph URL' })
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   ogUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Open Graph image URL' })
   @IsOptional()
-  @IsString()
+  @IsAbsoluteHttpUrl()
   ogImageUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Open Graph image alt text' })
