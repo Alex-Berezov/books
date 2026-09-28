@@ -48,7 +48,9 @@ export class AdminAuditEventsService {
       this.prisma.adminAuditEvent.count({ where }),
     ]);
 
-    // Все писатели кладут в `payload` объект или ничего (`AdminAuditService.record`).
+    // Prisma отдаёт `JsonValue` при любом типе записи; объектную форму гарантирует
+    // `Prisma.InputJsonObject` у `AdminAuditService.record` — единственного писателя журнала в `src`
+    // (сторож `admin-audit-writers.spec.ts`); сид, скрипты и миграции строк журнала не пишут.
     const rows = items.map((row) => ({
       ...row,
       payload: row.payload as Record<string, unknown> | null,

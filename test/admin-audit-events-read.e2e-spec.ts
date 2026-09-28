@@ -6,9 +6,9 @@ import { AppModule } from '../src/app.module';
 
 /**
  * `LEGACY-015` пункт 3, пачка `T45`: ручка чтения журнала `GET /admin/audit-events`
- * на живой базе. Права (401 без токена, 403 у `content_manager`), связка фильтра
- * `targetType`+`targetId` и отсутствие почты актёра в ответе — HTTP-слой, юнит
- * сервиса его не видит.
+ * на живой базе. Права (401 без токена, 403 у `content_manager` и у `user`), связка фильтра
+ * `targetType`+`targetId`, отсечение по одному `action` (пачка `T65`) и отсутствие почты
+ * актёра в ответе — HTTP-слой, юнит сервиса его не видит.
  */
 describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
   let app: INestApplication;
@@ -16,6 +16,7 @@ describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
   let adminId: string;
   let cmToken: string;
   let cmId: string;
+  let userToken: string;
   const adminEmailsBefore = process.env.ADMIN_EMAILS;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
@@ -54,6 +55,14 @@ describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
       .send({ email: cmEmail, password })
       .expect(200);
     cmToken = cmLogin.body.accessToken as string;
+
+    const userEmail = `plain_user_t65_${Date.now()}@example.com`;
+    await request(http()).post('/auth/register').send({ email: userEmail, password }).expect(201);
+    const userLogin = await request(http())
+      .post('/auth/login')
+      .send({ email: userEmail, password })
+      .expect(200);
+    userToken = userLogin.body.accessToken as string;
   });
 
   afterAll(async () => {
@@ -73,6 +82,13 @@ describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
     await request(http())
       .get('/admin/audit-events')
       .set('Authorization', `Bearer ${cmToken}`)
+      .expect(403);
+  });
+
+  it('403 у роли user', async () => {
+    await request(http())
+      .get('/admin/audit-events')
+      .set('Authorization', `Bearer ${userToken}`)
       .expect(403);
   });
 
@@ -105,6 +121,48 @@ describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
       payload: { role: 'content_manager' },
     });
     expect(JSON.stringify(res.body)).not.toContain('@example.com');
+  });
+
+  it('фильтр по action отсекает другое действие на том же объекте', async () => {
+    const targetReg = await request(http())
+      .post('/auth/register')
+      .send({ email: `action_filter_t65_${Date.now()}@example.com`, password: 'password123' })
+      .expect(201);
+    const targetId = targetReg.body.user.id as string;
+    await request(http())
+      .post(`/users/${targetId}/roles/lawyer`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+    await request(http())
+      .delete(`/users/${targetId}/roles/lawyer`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const byAction = async (action?: string) =>
+      request(http())
+        .get('/admin/audit-events')
+        .query({ targetType: 'USER', targetId, ...(action ? { action } : {}) })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+    const all = await byAction();
+    expect(all.body.pagination.total).toBe(2);
+
+    const assigned = await byAction('ROLE_ASSIGNED');
+    expect(assigned.body.items).toHaveLength(1);
+    expect(assigned.body.pagination.total).toBe(1);
+    expect(assigned.body.items[0]).toMatchObject({
+      action: 'ROLE_ASSIGNED',
+      payload: { role: 'lawyer' },
+    });
+
+    const revoked = await byAction('ROLE_REVOKED');
+    expect(revoked.body.items).toHaveLength(1);
+    expect(revoked.body.pagination.total).toBe(1);
+    expect(revoked.body.items[0]).toMatchObject({
+      action: 'ROLE_REVOKED',
+      payload: { role: 'lawyer' },
+    });
   });
 
   it('400 на from позже to и на дату без времени', async () => {

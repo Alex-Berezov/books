@@ -10,6 +10,10 @@ import { PAGINATION_MAX_LIMIT, PaginationDto } from './pagination.dto';
  * сужен, поэтому выкат несимметричен: `books-front` уезжает первым (панель претензий версии
  * просит страницу по потолку и показывает неполноту). Обратный порядок отдаёт старой панели
  * 20 претензий из N без сигнала.
+ *
+ * Ещё один потребитель — журнал административных действий `GET /admin/audit-events`
+ * (`LEGACY-015` пункт 3): он постраничный с рождения и фронта не имеет, предупреждение выше
+ * к нему не относится.
  */
 export class ChildListQueryDto extends PaginationDto {
   @ApiPropertyOptional({ description: 'Page number', minimum: 1, default: 1 })

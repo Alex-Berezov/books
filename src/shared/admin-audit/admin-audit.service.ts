@@ -5,6 +5,13 @@ import { AdminAuditAction, AdminAuditTargetType, Prisma } from '@prisma/client';
  * Общий писатель журнала административных действий (`LEGACY-015`, дополнение к правилу:
  * новый модуль-писатель не копирует `adminAuditEvent.*` по месту, а ходит сюда).
  *
+ * ⚠️ `payload` типизирован `Prisma.InputJsonObject`, а не более широким `InputJsonValue`
+ * (`LEGACY-015` доводка, пачка `T65`): читатель (`AdminAuditEventsService.list`) приводит
+ * колонку к `Record<string, unknown> | null`, и это приведение держится только на том, что
+ * массив или примитив сюда не попадают. Литерал-массив или строку отклоняет компилятор
+ * (посадка — `admin-audit.service.spec.ts`), но явное `as Prisma.InputJsonObject` у вызывающего
+ * его обходит: такое приведение на входе в журнал — нарушение этого соглашения.
+ *
  * ⚠️ `tx` — первый **обязательный** параметр, а не необязательный с запасным вариантом:
  * забыть его нельзя, вызов без клиента не компилируется. Но подменить его корневым
  * `PrismaService` компилятор позволит — `Prisma.TransactionClient` это
@@ -30,7 +37,7 @@ export class AdminAuditService {
       targetType: AdminAuditTargetType;
       targetId: string;
       actorUserId: string | null;
-      payload?: Prisma.InputJsonValue;
+      payload?: Prisma.InputJsonObject;
     },
   ): Promise<void> {
     await tx.adminAuditEvent.create({

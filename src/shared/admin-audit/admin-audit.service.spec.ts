@@ -75,4 +75,16 @@ describe('AdminAuditService', () => {
       }),
     ).rejects.toBe(dbDown);
   });
+
+  it('payload — только объект: массив и строку не пропускает компилятор (LEGACY-015, T65)', () => {
+    type RecordPayload = NonNullable<Parameters<AdminAuditService['record']>[1]['payload']>;
+
+    // @ts-expect-error -- читатель журнала приводит payload к объекту; массив обязан не компилироваться
+    const asArray: RecordPayload = ['user'];
+    // @ts-expect-error -- то же для примитива; при возврате к InputJsonValue директива сама покраснеет
+    const asString: RecordPayload = 'user';
+    const asObject: RecordPayload = { role: 'user' };
+
+    expect([asArray, asString, asObject]).toHaveLength(3);
+  });
 });
