@@ -273,6 +273,8 @@ describe('PersonsService.remove — проверка связей падает �
       person: { delete: jest.fn().mockResolvedValue(person) },
       $queryRaw: jest.fn().mockResolvedValue([]),
       adminAuditEvent: { create: jest.fn() },
+      // `LEGACY-400`, пачка `T61`: `seoId` переводов читаются до удаления тем же `tx`.
+      personTranslation: { findMany: jest.fn().mockResolvedValue([]) },
       ...delegates,
     };
 
@@ -287,6 +289,7 @@ describe('PersonsService.remove — проверка связей падает �
       rightsProfileContributor: { count: outOfTransaction('rightsProfileContributor.count') },
       author: { count: outOfTransaction('author.count') },
       rightsClaim: { count: outOfTransaction('rightsClaim.count') },
+      personTranslation: { findMany: outOfTransaction('personTranslation.findMany') },
       // `LEGACY-015`, пачка `T21`: запись журнала мимо `tx` переживает откат своей
       // операции (`LEGACY-036`) — и здесь красит тест по имени, а не молчит.
       adminAuditEvent: { create: outOfTransaction('adminAuditEvent.create') },
@@ -476,6 +479,43 @@ describe('PersonsService.remove — проверка связей падает �
     const personTx = tx.person as { delete: jest.Mock };
     expect(personTx.delete).toHaveBeenCalledTimes(1);
     expect(personTx.delete).toHaveBeenCalledWith({ where: { id: 'person-1' } });
+  });
+
+  // `LEGACY-400`, пачка `T61`: `Seo` переводов читается до удаления и убирается после — тем же `tx`.
+  it('убирает Seo переводов после удаления персоны, тем же tx', async () => {
+    const seoFindUnique = jest.fn().mockResolvedValue({
+      bookVersion: null,
+      page: null,
+      categoryTranslation: null,
+      tagTranslation: null,
+      authorTranslation: null,
+      personTranslation: null,
+    });
+    const seoDeleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    const { tx, service, client } = build({
+      ...allLinksCount(),
+      personTranslation: { findMany: jest.fn().mockResolvedValue([{ seoId: 11 }, { seoId: 12 }]) },
+      seo: { findUnique: seoFindUnique, deleteMany: seoDeleteMany },
+    });
+    client.seo = {
+      deleteMany: jest.fn(() => {
+        throw new Error('seo.deleteMany вызван на клиенте пула, а не на tx');
+      }),
+    };
+
+    await service.remove('person-1', 'admin-1');
+
+    const personTx = tx.person as { delete: jest.Mock };
+    const findMany = (tx.personTranslation as { findMany: jest.Mock }).findMany;
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany.mock.invocationCallOrder[0]).toBeLessThan(
+      personTx.delete.mock.invocationCallOrder[0],
+    );
+    expect(seoDeleteMany).toHaveBeenCalledTimes(2);
+    expect(seoDeleteMany.mock.calls).toEqual([[{ where: { id: 11 } }], [{ where: { id: 12 } }]]);
+    expect(personTx.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      seoDeleteMany.mock.invocationCallOrder[0],
+    );
   });
 
   /**

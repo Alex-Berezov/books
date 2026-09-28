@@ -1162,6 +1162,8 @@ describe('BookService.remove (LEGACY-395)', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    // `LEGACY-400`, пачка `T61`: `seoId` версий читаются до каскада; у этих книг `Seo` нет.
+    prisma.bookVersion.findMany.mockResolvedValue([]);
     adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     slugRedirects = createSlugRedirectStub() as unknown as typeof slugRedirects;
     service = new BookService(
@@ -1180,6 +1182,40 @@ describe('BookService.remove (LEGACY-395)', () => {
         { record: jest.fn() } as unknown as AdminAuditService,
       ),
       adminAudit as unknown as AdminAuditService,
+    );
+  });
+
+  // `LEGACY-400`, пачка `T61`: `seoId` версий читаются до каскада, их `Seo` убирается после — только ничьё.
+  it('reads version seoIds before the cascade and removes their Seo after it', async () => {
+    prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([]);
+    prisma.bookVersion.findFirst.mockResolvedValue({ id: 'other' });
+    prisma.bookVersion.findMany.mockResolvedValue([{ seoId: 21 }, { seoId: 22 }]);
+    prisma.seo.findUnique.mockResolvedValue({
+      bookVersion: null,
+      page: null,
+      categoryTranslation: null,
+      tagTranslation: null,
+      authorTranslation: null,
+      personTranslation: null,
+    });
+    const seoDeleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    (prisma.seo as unknown as { deleteMany: jest.Mock }).deleteMany = seoDeleteMany;
+
+    await service.remove('b1', 'admin-1');
+
+    expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.bookVersion.findMany).toHaveBeenCalledWith({
+      where: { bookId: 'b1', seoId: { not: null } },
+      select: { seoId: true },
+    });
+    expect(prisma.bookVersion.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.book.delete.mock.invocationCallOrder[0],
+    );
+    expect(seoDeleteMany).toHaveBeenCalledTimes(2);
+    expect(seoDeleteMany.mock.calls).toEqual([[{ where: { id: 21 } }], [{ where: { id: 22 } }]]);
+    expect(prisma.book.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      seoDeleteMany.mock.invocationCallOrder[0],
     );
   });
 

@@ -23,6 +23,17 @@ export function uniqueViolationFields(error: Prisma.PrismaClientKnownRequestErro
 }
 
 /**
+ * Модель, чья запись упала (`meta.modelName`); `undefined` — форма ошибки её не несёт. Нужна, чтобы `P2002`
+ * чужой таблицы в той же транзакции (журнал, история слагов) не называть дублем своей сущности.
+ */
+export function violationModelName(
+  error: Prisma.PrismaClientKnownRequestError,
+): string | undefined {
+  const model = (error.meta as { modelName?: unknown } | undefined)?.modelName;
+  return typeof model === 'string' ? model : undefined;
+}
+
+/**
  * Адаптер берёт поля из текста ошибки Postgres (`Key ("seoId")=(5)`), а там имя в смешанном
  * регистре стоит в кавычках: без их снятия `"seoId"` не равно `seoId`, и разбор молча промахивается.
  */

@@ -12043,13 +12043,16 @@ export interface components {
       faq?: components['schemas']['FaqItemDto'][] | null;
       /** @description SEO H1 heading (overrides title for display purposes) */
       h1?: Record<string, never> | null;
-      /** @enum {string} */
+      /**
+       * @description Immutable after creation: only the current language (or null) is accepted; any other value is rejected with 400. Create a translation instead.
+       * @enum {string}
+       */
       language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       /** @description Homepage sections configuration (JSON object with block data) */
       sections?: Record<string, never>;
       /** @description SEO data (automatically creates/updates the SEO entity) */
       seo?: components['schemas']['SeoInputDto'];
-      /** @description SEO entity ID */
+      /** @description Legacy: attach an existing SEO entity by ID. Applies when `seo` is omitted; when `seo` is sent, the page writes its own SEO entity (or detaches it if all `seo` fields are empty) and `seoId` should not be sent. A new SEO entity already attached to another entity is rejected with 400. The SEO entity the page is detached from (explicit null, replaced here, or all `seo` fields empty) is deleted when no other entity uses it. */
       seoId?: Record<string, never> | null;
       /** @description Short description for overview cards/previews */
       shortDescription?: Record<string, never> | null;

@@ -1,5 +1,9 @@
 import { Prisma } from '@prisma/client';
-import { foreignKeyViolationTargets, uniqueViolationFields } from './prisma-error.util';
+import {
+  foreignKeyViolationTargets,
+  uniqueViolationFields,
+  violationModelName,
+} from './prisma-error.util';
 
 const p2002 = (meta: Record<string, unknown>) =>
   new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'test', meta });
@@ -72,5 +76,19 @@ describe('foreignKeyViolationTargets', () => {
     expect(foreignKeyViolationTargets(p2003({ constraint: 'Page_seoId_fkey' }))).toEqual([
       'Page_seoId_fkey',
     ]);
+  });
+});
+
+describe('violationModelName', () => {
+  const err = (meta?: Record<string, unknown>) =>
+    new Prisma.PrismaClientKnownRequestError('x', { code: 'P2002', clientVersion: 't', meta });
+
+  it('имя модели из meta.modelName', () => {
+    expect(violationModelName(err({ modelName: 'BookVersion' }))).toBe('BookVersion');
+  });
+
+  it('нет meta или не строка — undefined', () => {
+    expect(violationModelName(err())).toBeUndefined();
+    expect(violationModelName(err({ modelName: 1 }))).toBeUndefined();
   });
 });

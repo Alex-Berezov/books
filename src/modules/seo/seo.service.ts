@@ -2,7 +2,8 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoryTreeService } from '../category/category-tree.service';
 import { AuthorService, authorSlugKey } from '../author/author.service';
-import { CategoryType, Language, Seo } from '@prisma/client';
+import { BOOK_VERSION_REMOVE_TX_OPTIONS } from '../book-version/book-version.service';
+import { CategoryType, Language } from '@prisma/client';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoQueryDto, ResolveSeoTypeValue } from './dto/resolve-seo.dto';
 import { getDefaultLanguage, resolveRequestedLanguage } from '../../shared/language/language.util';
@@ -81,23 +82,23 @@ interface ResolvePublicOptions {
   slug?: string;
 }
 
+/**
+ * Бюджет записи SEO версии (`L-020`). Первый оператор ждёт замок строки версии, а самый длинный его держатель —
+ * удаление версии: дефолт Prisma (5 с / 2 с) отдал бы `P2028` и 500 на обычном ожидании. Связь держит имя,
+ * а не копия литерала (`LEGACY-310`): поднимут бюджет удаления — поднимется и этот.
+ */
+const SEO_VERSION_WRITE_TX_OPTIONS = BOOK_VERSION_REMOVE_TX_OPTIONS;
+
 @Injectable()
 export class SeoService {
-  private cache = new Map<string, { value: Seo | null; expires: number }>();
   private readonly logger = new Logger(SeoService.name);
-
-  private ttlMs: number;
 
   constructor(
     private prisma: PrismaService,
     private readonly categoryTree: CategoryTreeService,
     // LEGACY-006: публичный адрес автора берётся из справочника, а не собирается из имени.
     private readonly authors: AuthorService,
-  ) {
-    const raw = process.env.SEO_CACHE_TTL_MS;
-    const parsed = raw ? Number(raw) : NaN;
-    this.ttlMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 60 * 1000; // 5 minutes by default
-  }
+  ) {}
 
   /**
    * Pick the taxonomy translation to serve for `effLang`.
@@ -156,50 +157,41 @@ export class SeoService {
     return translated as unknown as T;
   }
 
-  private getCache(key: string): Seo | null | undefined {
-    const hit = this.cache.get(key);
-    if (hit && hit.expires > Date.now()) return hit.value;
-    if (hit) this.cache.delete(key);
-    return undefined;
-  }
-
-  private setCache(key: string, value: Seo | null) {
-    this.cache.set(key, { value, expires: Date.now() + this.ttlMs });
-  }
-
+  /**
+   * Без кэша намеренно (`LEGACY-400`, пачка `T61`, решение арбитра 28.09.2026): кэш в памяти процесса
+   * не видел удаления версии, каскада книги и правки `Seo` через `BookVersionService.update` — до TTL
+   * отдавал удалённое или старое. Цена — одно чтение по первичному ключу со связью.
+   */
   async getByVersion(bookVersionId: string) {
-    const cacheKey = `seo:${bookVersionId}`;
-    const cached = this.getCache(cacheKey);
-    if (cached !== undefined) return cached;
-
-    const version = await this.prisma.bookVersion.findUnique({ where: { id: bookVersionId } });
+    // Одним запросом и только связь: строка версии несёт правовые Json-колонки, ради `seoId` их не тянуть.
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: bookVersionId },
+      select: { seo: true },
+    });
     if (!version) throw new NotFoundException('BookVersion not found');
-    if (!version.seoId) return null;
-    const data = await this.prisma.seo.findUnique({ where: { id: version.seoId } });
-    this.setCache(cacheKey, data);
-    return data;
+    return version.seo;
   }
 
+  /**
+   * `LEGACY-400`, пачка `T61`: `Seo` и привязка пишутся одной транзакцией под замком строки версии.
+   * На пуле встречное удаление версии между `seo.create` и `bookVersion.update` или вторая такая же
+   * правка (обе видят `seoId = null`, обе создают `Seo`) оставляли сироту. Замок — `FOR UPDATE` сразу:
+   * `seoId` уникален, его запись всё равно подняла бы `FOR NO KEY UPDATE` до `FOR UPDATE` посреди
+   * транзакции — окно для 40P01 со встречной вставкой глав (решение арбитра 28.09.2026).
+   */
   async upsertForVersion(bookVersionId: string, dto: UpdateSeoDto) {
-    const version = await this.prisma.bookVersion.findUnique({ where: { id: bookVersionId } });
-    if (!version) throw new NotFoundException('BookVersion not found');
+    return this.prisma.$transaction(async (tx) => {
+      const [version] = await tx.$queryRaw<{ seoId: number | null }[]>`
+        SELECT "seoId" FROM "BookVersion" WHERE id = ${bookVersionId} FOR UPDATE`;
+      if (!version) throw new NotFoundException('BookVersion not found');
 
-    if (!version.seoId) {
-      const created = await this.prisma.seo.create({ data: { ...this.dtoToData(dto) } });
-      await this.prisma.bookVersion.update({
-        where: { id: bookVersionId },
-        data: { seoId: created.id },
-      });
-      this.setCache(`seo:${bookVersionId}`, created);
+      if (version.seoId) {
+        return tx.seo.update({ where: { id: version.seoId }, data: this.dtoToData(dto) });
+      }
+      const created = await tx.seo.create({ data: { ...this.dtoToData(dto) } });
+      await tx.bookVersion.update({ where: { id: bookVersionId }, data: { seoId: created.id } });
       return created;
-    }
-
-    const updated = await this.prisma.seo.update({
-      where: { id: version.seoId },
-      data: this.dtoToData(dto),
-    });
-    this.setCache(`seo:${bookVersionId}`, updated);
-    return updated;
+    }, SEO_VERSION_WRITE_TX_OPTIONS);
   }
 
   private dtoToData(dto: UpdateSeoDto) {

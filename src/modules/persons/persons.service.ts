@@ -12,6 +12,7 @@ import type { Prisma } from '@prisma/client';
 import { AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { paginated } from '../../shared/dto/paginated-response.dto';
+import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
 @Injectable()
 export class PersonsService {
@@ -295,7 +296,19 @@ export class PersonsService {
           );
         }
 
+        // `LEGACY-400`, пачка `T61`: переводы уходят каскадом, а их `Seo` (`SetNull`) оставались
+        // сиротами. `seoId` читаются до удаления под замком строки персоны, `Seo` убирается после —
+        // тем же `tx` и только ничьё (`deleteSeoIfUnreferenced`).
+        const translationSeoIds = await tx.personTranslation.findMany({
+          where: { personId: id, seoId: { not: null } },
+          select: { seoId: true },
+        });
+
         await this.personModelOf(tx).delete({ where: { id } });
+
+        for (const { seoId } of translationSeoIds) {
+          await deleteSeoIfUnreferenced(tx, seoId);
+        }
 
         // `LEGACY-015`, пачка `T21`. Тем же `tx` и под тем же замком строки: запись,
         // пережившая откат своей операции, — это `LEGACY-036`. Место выбрано после

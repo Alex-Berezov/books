@@ -3054,6 +3054,93 @@ describe('BookVersionService', () => {
       );
     });
 
+    // `LEGACY-400`, пачка `T61`: `create` и запасная ветка `update` называли занятый слаг «языком».
+    const p2002 = (meta: Record<string, unknown>) =>
+      new Prisma.PrismaClientKnownRequestError('dup', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta,
+      });
+    const createDto: CreateBookVersionDto = {
+      language: Language.en,
+      slug: 'taken',
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+    };
+
+    it('create: дубль слага называется слагом, а не языком', async () => {
+      arrangeSimpleCreate();
+      (prisma.bookVersion.create as jest.Mock).mockRejectedValue(
+        p2002({
+          modelName: 'BookVersion',
+          driverAdapterError: { cause: { constraint: { fields: ['language', 'slug'] } } },
+        }),
+      );
+
+      await expect(service.create('b1', createDto)).rejects.toThrow(
+        'Slug is already used by another version in this language',
+      );
+    });
+
+    it('create: дубль языка книги — «язык занят»', async () => {
+      arrangeSimpleCreate();
+      (prisma.bookVersion.create as jest.Mock).mockRejectedValue(
+        p2002({ modelName: 'BookVersion', target: ['bookId', 'language'] }),
+      );
+
+      await expect(service.create('b1', createDto)).rejects.toThrow(
+        'Version for this language already exists for this book',
+      );
+    });
+
+    it('create: поля не разобрались — общий текст, причину не угадываем (со слагом и без)', async () => {
+      arrangeSimpleCreate();
+      (prisma.bookVersion.create as jest.Mock).mockRejectedValueOnce(
+        p2002({ modelName: 'BookVersion' }),
+      );
+      await expect(service.create('b1', createDto)).rejects.toThrow(
+        'Version conflicts with an existing version (language or slug)',
+      );
+
+      arrangeSimpleCreate();
+      (prisma.bookVersion.create as jest.Mock).mockRejectedValueOnce(
+        p2002({ modelName: 'BookVersion' }),
+      );
+      const withoutSlug: CreateBookVersionDto = { ...createDto, slug: undefined };
+      await expect(service.create('b1', withoutSlug)).rejects.toThrow(
+        'Version conflicts with an existing version (language or slug)',
+      );
+    });
+
+    it('create: свой индекс, но поля не из двух известных (имя ограничения строкой) — 400, а не 500', async () => {
+      arrangeSimpleCreate();
+      (prisma.bookVersion.create as jest.Mock).mockRejectedValueOnce(
+        p2002({ modelName: 'BookVersion', target: 'BookVersion_language_slug_key' }),
+      );
+      await expect(service.create('b1', createDto)).rejects.toThrow(
+        'Version conflicts with an existing version (language or slug)',
+      );
+    });
+
+    it('update: поля не разобрались — общий текст, чужая таблица — как есть', async () => {
+      arrangeCurrent();
+      (prisma.bookVersion.update as jest.Mock).mockRejectedValueOnce(
+        p2002({ modelName: 'BookVersion' }),
+      );
+      await expect(service.update('v1', { slug: 'taken' })).rejects.toThrow(
+        'Version conflicts with an existing version (language or slug)',
+      );
+
+      arrangeCurrent();
+      const foreign = p2002({ modelName: 'Page', target: ['language', 'slug'] });
+      (prisma.bookVersion.update as jest.Mock).mockRejectedValueOnce(foreign);
+      await expect(service.update('v1', { slug: 'taken' })).rejects.toBe(foreign);
+    });
+
     it('тот же язык без других полей не гоняет пересчёт свежести прав', async () => {
       arrangeCurrent();
       (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });

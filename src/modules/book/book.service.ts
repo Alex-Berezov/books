@@ -36,6 +36,7 @@ import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
+import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
 /**
  * `related*Slugs` лежат в JSON-колонке, то есть их содержимое схемой не
@@ -1629,9 +1630,20 @@ export class BookService {
       // 20.09.2026, `LEGACY-180`).
       const doomedVersions = await lockLicenseSnapshotsByBook(tx, id);
 
+      // `LEGACY-400`, пачка `T61`: `BookVersion.seoId` без каскада — `Seo` версий, унесённых
+      // каскадом, оставались сиротами. Строки версий уже заперты выше, `seoId` читается до удаления.
+      const doomedSeoIds = await tx.bookVersion.findMany({
+        where: { bookId: id, seoId: { not: null } },
+        select: { seoId: true },
+      });
+
       // `onDelete: Cascade` снимает версии книги вместе с ней — до запроса
       // живости слага ниже, поэтому свои же версии в нём уже не участвуют.
       const removed = await tx.book.delete({ where: { id } });
+
+      for (const { seoId } of doomedSeoIds) {
+        await deleteSeoIfUnreferenced(tx, seoId);
+      }
 
       // Событие на саму книгу и на каждую версию, которую унёс каскад. Без второй
       // половины журнал начинает врать ровно тем способом, который закрывали в `V1`:

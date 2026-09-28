@@ -457,7 +457,6 @@ make e2e-serial   # yarn test:e2e:serial
 - UPLOADS_PRESIGN_TTL_SEC — TTL для presign (по умолчанию 600)
 - UPLOADS_ALLOWED_IMAGE_CT — список разрешённых content-type изображений через запятую (по умолчанию `image/jpeg,image/png,image/webp`)
 - UPLOADS_ALLOWED_AUDIO_CT — список разрешённых content-type аудио (по умолчанию `audio/mpeg,audio/mp4,audio/aac,audio/ogg`)
-- SEO_CACHE_TTL_MS — кэш SEO-бандла (опц., по умолчанию выключено)
 - VIEWS_CACHE_TTL_MS — кэш агрегатов просмотров (по умолчанию 30000)
 - RATE_LIMIT_ENABLED — включение лимитов (0/1)
 - RATE_LIMIT_COMMENTS_PER_MINUTE — лимит операций для комментариев за окно (дефолт 10)

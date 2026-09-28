@@ -1571,3 +1571,95 @@ describe('SeoService (unit)', () => {
     });
   });
 });
+
+// `LEGACY-400`, пачка `T61`: запись `Seo` версии — одной транзакцией под замком строки, чтение — без кэша.
+describe('SeoService: SEO версии (T61)', () => {
+  const outOfTransaction = (name: string) =>
+    jest.fn(() => {
+      throw new Error(`${name} вызван на клиенте пула, а не на tx`);
+    });
+
+  const build = (locked: { seoId: number | null }[]) => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue(locked),
+      seo: {
+        create: jest.fn().mockResolvedValue({ id: 7, metaTitle: 'new' }),
+        update: jest.fn().mockResolvedValue({ id: 5, metaTitle: 'upd' }),
+      },
+      bookVersion: { update: jest.fn().mockResolvedValue({}) },
+    };
+    const client = {
+      $queryRaw: outOfTransaction('$queryRaw'),
+      seo: { create: outOfTransaction('seo.create'), update: outOfTransaction('seo.update') },
+      bookVersion: {
+        update: outOfTransaction('bookVersion.update'),
+        findUnique: jest.fn(),
+      },
+      $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
+    };
+    const service = new SeoService(
+      client as unknown as PrismaService,
+      {} as unknown as CategoryTreeService,
+      {} as unknown as AuthorService,
+    );
+    return { service, tx, client };
+  };
+
+  it('без Seo: замок строки версии первым, создание и привязка через tx', async () => {
+    const { service, tx, client } = build([{ seoId: null }]);
+
+    await expect(service.upsertForVersion('v1', { metaTitle: 'new' })).resolves.toEqual({
+      id: 7,
+      metaTitle: 'new',
+    });
+
+    const [sql] = tx.$queryRaw.mock.calls[0] as [TemplateStringsArray];
+    expect(sql.join('?')).toMatch(/FROM "BookVersion" WHERE id = \? FOR UPDATE$/);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.seo.create.mock.invocationCallOrder[0],
+    );
+    expect(tx.bookVersion.update).toHaveBeenCalledTimes(1);
+    expect(tx.bookVersion.update).toHaveBeenCalledWith({ where: { id: 'v1' }, data: { seoId: 7 } });
+    expect(client.$transaction).toHaveBeenCalledTimes(1);
+    expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 30_000,
+      maxWait: 10_000,
+    });
+  });
+
+  it('есть Seo: правится привязанное, второе не заводится', async () => {
+    const { service, tx } = build([{ seoId: 5 }]);
+
+    await service.upsertForVersion('v1', { metaTitle: 'upd' });
+
+    expect(tx.seo.update).toHaveBeenCalledTimes(1);
+    expect(tx.seo.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 5 } }));
+    expect(tx.seo.create).not.toHaveBeenCalled();
+    expect(tx.bookVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('версию удалили, пока запись ждала замок, — 404, ничего не пишется', async () => {
+    const { service, tx } = build([]);
+
+    await expect(service.upsertForVersion('v1', { metaTitle: 'x' })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(tx.seo.create).not.toHaveBeenCalled();
+    expect(tx.seo.update).not.toHaveBeenCalled();
+  });
+
+  it('чтение — один запрос со связью, без полной строки версии; нет версии — 404', async () => {
+    const { service, client } = build([]);
+    client.bookVersion.findUnique.mockResolvedValueOnce({ seo: { id: 5 } });
+
+    await expect(service.getByVersion('v1')).resolves.toEqual({ id: 5 });
+    expect(client.bookVersion.findUnique).toHaveBeenCalledTimes(1);
+    expect(client.bookVersion.findUnique).toHaveBeenCalledWith({
+      where: { id: 'v1' },
+      select: { seo: true },
+    });
+
+    client.bookVersion.findUnique.mockResolvedValueOnce(null);
+    await expect(service.getByVersion('v1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

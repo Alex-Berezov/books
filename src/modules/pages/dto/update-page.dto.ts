@@ -70,12 +70,20 @@ export class UpdatePageDto {
   @Type(() => FaqItemDto)
   faq?: FaqItemDto[] | null;
 
-  @ApiPropertyOptional({ enum: ['en', 'es', 'fr', 'pt', 'ru'] })
+  @ApiPropertyOptional({
+    enum: ['en', 'es', 'fr', 'pt', 'ru'],
+    description:
+      'Immutable after creation: only the current language (or null) is accepted; any other value is rejected with 400. Create a translation instead.',
+  })
   @IsOptional()
   @IsIn(['en', 'es', 'fr', 'pt', 'ru'])
   language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
 
-  @ApiPropertyOptional({ description: 'SEO entity ID', nullable: true })
+  @ApiPropertyOptional({
+    description:
+      'Legacy: attach an existing SEO entity by ID. Applies when `seo` is omitted; when `seo` is sent, the page writes its own SEO entity (or detaches it if all `seo` fields are empty) and `seoId` should not be sent. A new SEO entity already attached to another entity is rejected with 400. The SEO entity the page is detached from (explicit null, replaced here, or all `seo` fields empty) is deleted when no other entity uses it.',
+    nullable: true,
+  })
   @IsOptional()
   @Type(() => Number)
   seoId?: number | null;

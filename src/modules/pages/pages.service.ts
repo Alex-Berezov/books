@@ -18,6 +18,7 @@ import { paginated } from '../../shared/dto/paginated-response.dto';
 import {
   foreignKeyViolationTargets,
   uniqueViolationFields,
+  violationModelName,
 } from '../../shared/prisma/prisma-error.util';
 import { deleteSeoIfUnreferenced, seoOwnersCount } from '../../shared/seo/seo-orphan.util';
 
@@ -649,7 +650,7 @@ function pageWriteError(e: unknown): unknown {
     // Поля не разобрались вовсе (другая форма отказа) — прежний ответ `create`, 400 про слаг:
     // иного уникального индекса, достижимого из формы, у страницы нет (`systemKey` форма не пишет).
     // Только отказ самой `Page`: `P2002` журнала или истории слагов в той же транзакции — не дубль слага.
-    const model = (e.meta as { modelName?: unknown } | undefined)?.modelName;
+    const model = violationModelName(e);
     if (fields.length === 0 && (model === undefined || model === 'Page')) {
       return new BadRequestException(PAGE_SLUG_TAKEN_MESSAGE);
     }

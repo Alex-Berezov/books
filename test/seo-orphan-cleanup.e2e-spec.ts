@@ -8,6 +8,9 @@ import { CategoryService } from '../src/modules/category/category.service';
 import { TagsService } from '../src/modules/tags/tags.service';
 import { AuthorService } from '../src/modules/author/author.service';
 import { BookVersionService } from '../src/modules/book-version/book-version.service';
+import { BookService } from '../src/modules/book/book.service';
+import { PersonsService } from '../src/modules/persons/persons.service';
+import { SeoService } from '../src/modules/seo/seo.service';
 import { createBookFixture } from './helpers/book-fixture';
 
 /**
@@ -29,7 +32,11 @@ describe('T55b — Seo без сирот, язык страницы неизме
   let tags: TagsService;
   let authors: AuthorService;
   let versions: BookVersionService;
+  let books: BookService;
+  let persons: PersonsService;
+  let seo: SeoService;
   const authorIds: string[] = [];
+  const personIds: string[] = [];
 
   const prefix = `seoorph-${Date.now()}`;
   const seoIds: number[] = [];
@@ -42,6 +49,9 @@ describe('T55b — Seo без сирот, язык страницы неизме
     tags = moduleRef.get(TagsService);
     authors = moduleRef.get(AuthorService);
     versions = moduleRef.get(BookVersionService);
+    books = moduleRef.get(BookService);
+    persons = moduleRef.get(PersonsService);
+    seo = moduleRef.get(SeoService);
     await moduleRef.init();
   });
 
@@ -52,6 +62,8 @@ describe('T55b — Seo без сирот, язык страницы неизме
       await prisma?.category.deleteMany({ where: { key: { startsWith: prefix } } });
       await prisma?.tag.deleteMany({ where: { key: { startsWith: prefix } } });
       await prisma?.author.deleteMany({ where: { id: { in: authorIds } } });
+      await prisma?.person.deleteMany({ where: { id: { in: personIds } } });
+      await prisma?.seo.deleteMany({ where: { metaTitle: { startsWith: prefix } } });
       await prisma?.book.deleteMany({ where: { slug: { startsWith: prefix } } });
       await prisma?.seo.deleteMany({ where: { id: { in: seoIds } } });
     } finally {
@@ -298,5 +310,122 @@ describe('T55b — Seo без сирот, язык страницы неизме
       select: { language: true, slug: true },
     });
     expect(after).toEqual({ language: Language.en, slug: `${prefix}-lang` });
+  }, 60_000);
+
+  // `T61`: остаток `LEGACY-400` — удаление персоны и целой книги, запись и чтение `Seo` версии.
+  it('персона: удаление убирает Seo её переводов', async () => {
+    const seoId = await newSeo();
+    const person = await prisma.person.create({
+      data: {
+        canonicalName: `${prefix} person`,
+        translations: {
+          create: { language: Language.en, slug: `${prefix}-person`, displayName: 'P', seoId },
+        },
+      },
+    });
+    personIds.push(person.id);
+
+    await persons.remove(person.id, 'e2e-actor');
+
+    expect(await seoExists(seoId)).toBe(false);
+  }, 60_000);
+
+  it('книга: удаление целиком убирает Seo версий, унесённых каскадом', async () => {
+    const seoId = await newSeo();
+    const version = await newVersion('bookdel', seoId);
+
+    await books.remove(version.bookId, 'e2e-actor');
+
+    expect(await seoExists(seoId)).toBe(false);
+  }, 60_000);
+
+  /**
+   * Встречная запись держит строку версии: привязала своё `Seo` и ещё не закоммитилась. Без замка
+   * `upsertForVersion` читал `seoId = null`, заводил второе `Seo` и после коммита держателя
+   * перезаписывал привязку — первое оставалось сиротой. С замком он ждёт и правит уже привязанное.
+   */
+  it('SEO версии: запись ждёт встречную привязку и не плодит второе Seo', async () => {
+    const version = await newVersion('vupsert');
+    const heldSeoId = await newSeo();
+
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked: () => void = () => undefined;
+    const holding = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    let holderPid = 0;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "BookVersion" SET "seoId" = ${heldSeoId} WHERE id = ${version.id}`;
+        [{ pid: holderPid }] = await tx.$queryRaw<
+          { pid: number }[]
+        >`SELECT pg_backend_pid() AS pid`;
+        locked();
+        await gate;
+      },
+      { timeout: 60_000 },
+    );
+    // Отказ держателя до `locked()` всплывает сразу, а не таймаутом.
+    await Promise.race([holding, holder]);
+    const second = seo.upsertForVersion(version.id, { metaTitle: `${prefix} upsert` }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    let waitError: Error | null = null;
+    try {
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        // Ждёт именно тот, кого держит держатель: чужой ожидающий запрос параллельного e2e не в счёт.
+        const [{ waiting }] = await prisma.$queryRaw<{ waiting: number }[]>`
+          SELECT count(*)::int AS waiting FROM pg_stat_activity
+          WHERE datname = current_database() AND ${holderPid} = ANY (pg_blocking_pids(pid))`;
+        if (waiting > 0) break;
+        if (Date.now() > deadline) throw new Error('запись SEO так и не встала на замок строки');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } catch (error) {
+      waitError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      release();
+    }
+    // Обе транзакции доводятся до конца и при отказе ожидания: `afterAll` не должен чистить под живой записью.
+    await holder;
+    const outcome = await second;
+    if (waitError) throw waitError;
+    expect(outcome).toBeNull();
+
+    const after = await prisma.bookVersion.findUnique({
+      where: { id: version.id },
+      select: { seo: { select: { id: true, metaTitle: true } } },
+    });
+    expect(after?.seo).toEqual({ id: heldSeoId, metaTitle: `${prefix} upsert` });
+    expect(await prisma.seo.count({ where: { metaTitle: `${prefix} upsert` } })).toBe(1);
+  }, 60_000);
+
+  it('SEO версии: чтение после удаления версии — 404, а не удалённое Seo', async () => {
+    const seoId = await newSeo();
+    const version = await newVersion('vread', seoId);
+    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({ id: seoId });
+
+    await versions.remove(version.id, 'e2e-actor');
+
+    await expect(seo.getByVersion(version.id)).rejects.toThrow('BookVersion not found');
+  }, 60_000);
+
+  it('SEO версии: чтение после правки через форму версии отдаёт новое', async () => {
+    const version = await newVersion('vedit');
+    await seo.upsertForVersion(version.id, { metaTitle: `${prefix} before` });
+    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({
+      metaTitle: `${prefix} before`,
+    });
+
+    await versions.update(version.id, { seoMetaTitle: `${prefix} after` });
+
+    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({
+      metaTitle: `${prefix} after`,
+    });
   }, 60_000);
 });

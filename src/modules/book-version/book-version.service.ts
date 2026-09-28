@@ -43,7 +43,7 @@ import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexa
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AuthorService } from '../author/author.service';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
-import { uniqueViolationFields } from '../../shared/prisma/prisma-error.util';
+import { uniqueViolationFields, violationModelName } from '../../shared/prisma/prisma-error.util';
 
 interface BookWithRights {
   id: string;
@@ -72,7 +72,7 @@ type BookVersionWithSeo = Prisma.BookVersionGetPayload<{ include: { seo: true } 
  * и `CATEGORY_TREE_TX_OPTIONS`, и по той же причине (`L-020`): дефолт Prisma
  * (5000/2000 мс) не гарантирован на версии с большой историей.
  */
-const BOOK_VERSION_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+export const BOOK_VERSION_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 /**
  * 🔴 `LEGACY-320`, тема владельца 3 (решение владельца 27.09.2026, пачка `T55c`): язык существующей
@@ -83,6 +83,37 @@ const BOOK_VERSION_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as c
  */
 const BOOK_VERSION_LANGUAGE_IMMUTABLE_MESSAGE =
   'Book version language cannot be changed after creation; create a new version instead';
+
+/** Один текст на своё и базовое «язык занят» (`@@unique([bookId, language])`). */
+const BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE =
+  'Version for this language already exists for this book';
+
+/** Один текст на «слаг занят» (`@@unique([language, slug])`) в `create` и в `update`. */
+const BOOK_VERSION_SLUG_TAKEN_MESSAGE = 'Slug is already used by another version in this language';
+
+/** `P2002` версии, индекс которого не разобрался: причину не угадываем (решение арбитра 28.09.2026). */
+const BOOK_VERSION_CONFLICT_MESSAGE =
+  'Version conflicts with an existing version (language or slug)';
+
+/**
+ * `P2002` записи версии — в 400 по индексу, на котором упал (`LEGACY-400`, пачка `T61`). До пачки `create`
+ * и запасная ветка `update` отвечали «язык занят» и на занятый слаг. В обоих индексах есть `language`,
+ * поэтому различает их второе поле: `slug` или `bookId`. Поля не разобрались или не из этих индексов —
+ * общий текст: предпроверка языка в `create` идёт вне транзакции, так что гонка по языку и занятый слаг
+ * неотличимы. `P2002` чужой таблицы в той же транзакции (журнал, история слагов) дублем версии
+ * не называется — уходит как есть, как у страниц (`pageWriteError`).
+ */
+function bookVersionUniqueViolation(e: unknown): unknown {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== 'P2002') return e;
+  const model = violationModelName(e);
+  if (model !== undefined && model !== 'BookVersion') return e;
+  const fields = uniqueViolationFields(e);
+  if (fields.includes('slug')) return new BadRequestException(BOOK_VERSION_SLUG_TAKEN_MESSAGE);
+  if (fields.includes('bookId'))
+    return new BadRequestException(BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE);
+  // Поля пусты или не из двух индексов (имя ограничения строкой, `seoId`) — свой отказ версии, но причину не угадываем.
+  return new BadRequestException(BOOK_VERSION_CONFLICT_MESSAGE);
+}
 
 /**
  * Границы транзакций публикации и снятия с публикации (`L-020`). Константа **одна
@@ -246,7 +277,7 @@ export class BookVersionService {
       select: { id: true },
     });
     if (existing) {
-      throw new BadRequestException('Version for this language already exists for this book');
+      throw new BadRequestException(BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE);
     }
 
     // Аннотация обязательна: `let` без типа и без инициализатора — «развивающийся
@@ -398,10 +429,7 @@ export class BookVersionService {
         return newVersion;
       });
     } catch (e: unknown) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new BadRequestException('Version for this language already exists for this book');
-      }
-      throw e;
+      throw bookVersionUniqueViolation(e);
     }
 
     // Решение владельца 27.09.2026: автоматических перепроверок прав больше нет, остаются только
@@ -1103,14 +1131,8 @@ export class BookVersionService {
 
       return updated;
     } catch (e: unknown) {
-      if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-        // Язык версии неизменяем (`T55c`), так что дубль `(bookId, language)` здесь не возникает:
-        // остаётся `@@unique([language, slug])` — занятый слаг, и называть его надо слагом.
-        if (uniqueViolationFields(e as Prisma.PrismaClientKnownRequestError).includes('slug')) {
-          throw new BadRequestException('Slug is already used by another version in this language');
-        }
-        throw new BadRequestException('Version for this language already exists for this book');
-      }
+      const unique = bookVersionUniqueViolation(e);
+      if (unique !== e) throw unique;
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2025') {
         throw new BadRequestException(
           'The version was published while you were editing it, so its description and cover ' +
