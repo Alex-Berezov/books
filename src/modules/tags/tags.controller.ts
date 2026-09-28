@@ -23,7 +23,7 @@ import {
   ApiNoContentResponse,
   ApiExtraModels,
 } from '@nestjs/swagger';
-import { TagsService } from './tags.service';
+import { TagsService, TagTranslationWithSeo } from './tags.service';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { AttachTagDto } from './dto/attach-tag.dto';
@@ -33,7 +33,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
 import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
-import { Language, Prisma } from '@prisma/client';
+import { Language } from '@prisma/client';
 import {
   PaginationInfoDto,
   paginated,
@@ -188,9 +188,7 @@ export class TagsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  async listTranslations(
-    @Param('id') id: string,
-  ): Promise<PaginatedResult<Prisma.TagTranslationGetPayload<{ include: { seo: true } }>>> {
+  async listTranslations(@Param('id') id: string): Promise<PaginatedResult<TagTranslationWithSeo>> {
     return paginatedAll(await this.service.listTranslations(id));
   }
 

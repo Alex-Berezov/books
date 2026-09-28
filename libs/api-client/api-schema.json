@@ -20867,7 +20867,6 @@
             "type": "string"
           },
           "relatedCategorySlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.",
             "example": [
               "classic-literature",
               "victorian-literature"
@@ -20879,7 +20878,6 @@
             "type": "array"
           },
           "relatedCollectionSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.",
             "example": [
               "short-reads",
               "feel-good-books"
@@ -20891,7 +20889,6 @@
             "type": "array"
           },
           "relatedGenreSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.",
             "example": [
               "classic-literature",
               "philosophical-fiction"
@@ -20903,7 +20900,6 @@
             "type": "array"
           },
           "relatedTagSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.",
             "example": [
               "aestheticism",
               "beauty"
@@ -21037,7 +21033,6 @@
             "type": "string"
           },
           "relatedCategorySlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.",
             "example": [
               "classic-literature",
               "victorian-literature"
@@ -21049,7 +21044,6 @@
             "type": "array"
           },
           "relatedCollectionSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.",
             "example": [
               "short-reads",
               "feel-good-books"
@@ -21061,7 +21055,6 @@
             "type": "array"
           },
           "relatedGenreSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.",
             "example": [
               "classic-literature",
               "philosophical-fiction"
@@ -21073,7 +21066,6 @@
             "type": "array"
           },
           "relatedTagSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.",
             "example": [
               "aestheticism",
               "beauty"
@@ -21355,7 +21347,6 @@
             "type": "string"
           },
           "relatedCategorySlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.",
             "example": [
               "classic-literature",
               "victorian-literature"
@@ -21367,7 +21358,6 @@
             "type": "array"
           },
           "relatedCollectionSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.",
             "example": [
               "short-reads",
               "feel-good-books"
@@ -21379,7 +21369,6 @@
             "type": "array"
           },
           "relatedGenreSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.",
             "example": [
               "classic-literature",
               "philosophical-fiction"
@@ -21391,7 +21380,6 @@
             "type": "array"
           },
           "relatedTagSlugs": {
-            "description": "Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.",
             "example": [
               "aestheticism",
               "beauty"

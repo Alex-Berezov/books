@@ -75,45 +75,29 @@ export class TagTranslationDto {
   })
   faq?: FaqItemDto[] | null;
 
-  @ApiPropertyOptional({
-    type: 'array',
-    items: { type: 'string' },
-    nullable: true,
-    description:
-      'Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.',
-    example: ['aestheticism', 'beauty'],
-  })
-  relatedTagSlugs?: unknown;
+  @ApiPropertyOptional({ type: [String], nullable: true, example: ['aestheticism', 'beauty'] })
+  relatedTagSlugs?: string[] | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: { type: 'string' },
+    type: [String],
     nullable: true,
-    description:
-      'Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.',
     example: ['classic-literature', 'philosophical-fiction'],
   })
-  relatedGenreSlugs?: unknown;
+  relatedGenreSlugs?: string[] | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: { type: 'string' },
+    type: [String],
     nullable: true,
-    description:
-      'Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.',
     example: ['classic-literature', 'victorian-literature'],
   })
-  relatedCategorySlugs?: unknown;
+  relatedCategorySlugs?: string[] | null;
 
   @ApiPropertyOptional({
-    type: 'array',
-    items: { type: 'string' },
+    type: [String],
     nullable: true,
-    description:
-      'Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.',
     example: ['short-reads', 'feel-good-books'],
   })
-  relatedCollectionSlugs?: unknown;
+  relatedCollectionSlugs?: string[] | null;
 
   @ApiProperty({ type: Number, default: 0 })
   bookCount!: number;

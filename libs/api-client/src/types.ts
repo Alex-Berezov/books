@@ -11267,7 +11267,6 @@ export interface components {
       ogImageUrl?: string | null;
       ogTitle?: string | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.
        * @example [
        *       "classic-literature",
        *       "victorian-literature"
@@ -11275,7 +11274,6 @@ export interface components {
        */
       relatedCategorySlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.
        * @example [
        *       "short-reads",
        *       "feel-good-books"
@@ -11283,7 +11281,6 @@ export interface components {
        */
       relatedCollectionSlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.
        * @example [
        *       "classic-literature",
        *       "philosophical-fiction"
@@ -11291,7 +11288,6 @@ export interface components {
        */
       relatedGenreSlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.
        * @example [
        *       "aestheticism",
        *       "beauty"
@@ -11340,7 +11336,6 @@ export interface components {
       ogImageUrl?: string | null;
       ogTitle?: string | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.
        * @example [
        *       "classic-literature",
        *       "victorian-literature"
@@ -11348,7 +11343,6 @@ export interface components {
        */
       relatedCategorySlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.
        * @example [
        *       "short-reads",
        *       "feel-good-books"
@@ -11356,7 +11350,6 @@ export interface components {
        */
       relatedCollectionSlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.
        * @example [
        *       "classic-literature",
        *       "philosophical-fiction"
@@ -11364,7 +11357,6 @@ export interface components {
        */
       relatedGenreSlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.
        * @example [
        *       "aestheticism",
        *       "beauty"
@@ -11475,7 +11467,6 @@ export interface components {
       ogImageUrl?: string | null;
       ogTitle?: string | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCategorySlugs`.
        * @example [
        *       "classic-literature",
        *       "victorian-literature"
@@ -11483,7 +11474,6 @@ export interface components {
        */
       relatedCategorySlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedCollectionSlugs`.
        * @example [
        *       "short-reads",
        *       "feel-good-books"
@@ -11491,7 +11481,6 @@ export interface components {
        */
       relatedCollectionSlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedGenreSlugs`.
        * @example [
        *       "classic-literature",
        *       "philosophical-fiction"
@@ -11499,7 +11488,6 @@ export interface components {
        */
       relatedGenreSlugs?: string[] | null;
       /**
-       * @description Json column. Shape held by `@IsString({ each: true })` on `CreateTagTranslationDto.relatedTagSlugs`.
        * @example [
        *       "aestheticism",
        *       "beauty"

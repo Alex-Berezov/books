@@ -250,6 +250,29 @@ describe('TagsService', () => {
     });
   });
 
+  // LEGACY-417, остаток. `listTranslations` (админский `GET /tags/:id/translations`) —
+  // тот же разбор, что и публичный `list()` выше.
+  it('listTranslations: parses related*Slugs Json into string[], filtering out non-string elements', async () => {
+    prisma.tagTranslation.findMany.mockResolvedValue([
+      {
+        id: 'tr1',
+        relatedTagSlugs: ['aestheticism', 'beauty'],
+        relatedGenreSlugs: { not: 'an array' },
+        relatedCategorySlugs: [1, 'philosophy', 2],
+        relatedCollectionSlugs: [1, 'short-reads', 2],
+      },
+    ]);
+
+    const res = await service.listTranslations('t1');
+
+    expect(res[0]).toMatchObject({
+      relatedTagSlugs: ['aestheticism', 'beauty'],
+      relatedGenreSlugs: null,
+      relatedCategorySlugs: ['philosophy'],
+      relatedCollectionSlugs: ['short-reads'],
+    });
+  });
+
   /**
    * `LEGACY-199`, второй рубеж. `PublicTagBooksQueryDto` стережёт только вход через
    * контроллер, а метод публичный: второй его зов - из кода, из админского пути,
@@ -745,9 +768,38 @@ describe('TagsService — писатели тега идут под замком
     expect(log).toEqual(['tx.forUpdate', 'tx.tag.findUnique']);
   });
 
+  // LEGACY-417, остаток. `tagTranslation.create` отдаёт `Json?`-колонки как есть;
+  // ответ ручки обязан довести их разбором до `string[] | null`, как публичный список.
+  it('createTranslation: relatedTagSlugs и соседние поля — Json разобран в ответе', async () => {
+    const { tagsService } = setup({
+      'tag.findUnique': () => ({ id: 't1' }),
+      'tagTranslation.create': () => ({
+        id: 'tr1',
+        relatedTagSlugs: ['aestheticism', 'beauty'],
+        relatedGenreSlugs: { not: 'an array' },
+        relatedCategorySlugs: [1, 'philosophy', 2],
+        relatedCollectionSlugs: [1, 'short-reads', 2],
+      }),
+    });
+
+    const res = await tagsService.createTranslation('t1', {
+      language: Language.en,
+      name: 'N',
+      slug: 'n',
+    });
+
+    expect(res).toMatchObject({
+      relatedTagSlugs: ['aestheticism', 'beauty'],
+      relatedGenreSlugs: null,
+      relatedCategorySlugs: ['philosophy'],
+      relatedCollectionSlugs: ['short-reads'],
+    });
+  });
+
   it('updateTranslation: чтения, Seo, редирект и запись — под замком через tx', async () => {
     const { tagsService, log, $transaction, tx, redirects } = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+      'tagTranslation.update': () => ({ id: 'tr1' }),
     });
 
     await tagsService.updateTranslation('t1', Language.en, {
@@ -779,6 +831,7 @@ describe('TagsService — писатели тега идут под замком
     const created = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: null }),
       'seo.create': () => ({ id: 9 }),
+      'tagTranslation.update': () => ({ id: 'tr1' }),
     });
     await created.tagsService.updateTranslation('t1', Language.en, { seo: { metaTitle: 'T' } });
     expect(created.log).toContain('tx.seo.create');
@@ -788,6 +841,7 @@ describe('TagsService — писатели тега идут под замком
     const dropped = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
       'seo.findUnique': () => ({ page: null, tagTranslation: null }),
+      'tagTranslation.update': () => ({ id: 'tr1' }),
     });
     await dropped.tagsService.updateTranslation('t1', Language.en, { seo: { metaTitle: null } });
     expect(dropped.log.slice(-4)).toEqual([
@@ -797,6 +851,29 @@ describe('TagsService — писатели тега идут под замком
       'tx.seo.deleteMany',
     ]);
     expect(rootCalls(dropped.log)).toEqual([]);
+  });
+
+  // LEGACY-417, остаток. Тот же разбор, что у `createTranslation`.
+  it('updateTranslation: relatedTagSlugs и соседние поля — Json разобран в ответе', async () => {
+    const { tagsService } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: null }),
+      'tagTranslation.update': () => ({
+        id: 'tr1',
+        relatedTagSlugs: ['aestheticism', 'beauty'],
+        relatedGenreSlugs: { not: 'an array' },
+        relatedCategorySlugs: [1, 'philosophy', 2],
+        relatedCollectionSlugs: [1, 'short-reads', 2],
+      }),
+    });
+
+    const res = await tagsService.updateTranslation('t1', Language.en, { name: 'N' });
+
+    expect(res).toMatchObject({
+      relatedTagSlugs: ['aestheticism', 'beauty'],
+      relatedGenreSlugs: null,
+      relatedCategorySlugs: ['philosophy'],
+      relatedCollectionSlugs: ['short-reads'],
+    });
   });
 
   it('deleteTranslation: чтение и удаление — под замком через tx', async () => {

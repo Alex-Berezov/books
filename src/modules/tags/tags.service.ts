@@ -32,6 +32,31 @@ import { parseJsonStringArray } from '../../shared/prisma/json-string-array.util
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
+/**
+ * Форма ответа трёх ручек перевода тега (`listTranslations`/`createTranslation`/
+ * `updateTranslation`) — `Prisma.TagTranslationGetPayload` с четырьмя Json-колонками
+ * сужен до `string[] | null`, как публичная сторона (`TagsService.list()`, `LEGACY-417`).
+ */
+export type TagTranslationWithSeo = Omit<
+  Prisma.TagTranslationGetPayload<{ include: { seo: true } }>,
+  'relatedTagSlugs' | 'relatedGenreSlugs' | 'relatedCategorySlugs' | 'relatedCollectionSlugs'
+> & {
+  relatedTagSlugs: string[] | null;
+  relatedGenreSlugs: string[] | null;
+  relatedCategorySlugs: string[] | null;
+  relatedCollectionSlugs: string[] | null;
+};
+
+const withParsedRelatedSlugs = (
+  row: Prisma.TagTranslationGetPayload<{ include: { seo: true } }>,
+): TagTranslationWithSeo => ({
+  ...row,
+  relatedTagSlugs: parseJsonStringArray(row.relatedTagSlugs),
+  relatedGenreSlugs: parseJsonStringArray(row.relatedGenreSlugs),
+  relatedCategorySlugs: parseJsonStringArray(row.relatedCategorySlugs),
+  relatedCollectionSlugs: parseJsonStringArray(row.relatedCollectionSlugs),
+});
+
 @Injectable()
 export class TagsService {
   constructor(
@@ -468,14 +493,13 @@ export class TagsService {
   }
 
   // ===== Translations (Admin) =====
-  listTranslations(
-    tagId: string,
-  ): Promise<Prisma.TagTranslationGetPayload<{ include: { seo: true } }>[]> {
-    return this.prisma.tagTranslation.findMany({
+  async listTranslations(tagId: string): Promise<TagTranslationWithSeo[]> {
+    const rows = await this.prisma.tagTranslation.findMany({
       where: { tagId },
       orderBy: { language: 'asc' },
       include: { seo: true },
     });
+    return rows.map(withParsedRelatedSlugs);
   }
 
   /**
@@ -485,7 +509,10 @@ export class TagsService {
    * и перевода — одна транзакция: прежняя компенсация в `catch` сама могла
    * упасть и оставляла `Seo` сиротой.
    */
-  async createTranslation(tagId: string, dto: CreateTagTranslationDto) {
+  async createTranslation(
+    tagId: string,
+    dto: CreateTagTranslationDto,
+  ): Promise<TagTranslationWithSeo> {
     return this.tagLock.runInLockedTag({ id: tagId }, async (tx) => {
       const exists = await tx.tag.findUnique({ where: { id: tagId } });
       if (!exists) throw new NotFoundException('Tag not found');
@@ -502,7 +529,7 @@ export class TagsService {
       // После отказа оператора транзакция Postgres прервана: к `tx` больше
       // не обращаемся, откат снимает и `Seo`.
       try {
-        return await tx.tagTranslation.create({
+        const created = await tx.tagTranslation.create({
           data: {
             tagId,
             language: dto.language,
@@ -527,6 +554,7 @@ export class TagsService {
           },
           include: { seo: true },
         });
+        return withParsedRelatedSlugs(created);
       } catch (e: unknown) {
         if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
           throw new BadRequestException('Translation with same (language, slug) already exists');
@@ -536,7 +564,11 @@ export class TagsService {
     });
   }
 
-  async updateTranslation(tagId: string, language: Language, dto: UpdateTagTranslationDto) {
+  async updateTranslation(
+    tagId: string,
+    language: Language,
+    dto: UpdateTagTranslationDto,
+  ): Promise<TagTranslationWithSeo> {
     return this.tagLock.runInLockedTag({ id: tagId }, async (tx) => {
       const tr = await tx.tagTranslation.findUnique({
         where: { tagId_language: { tagId, language } },
@@ -601,7 +633,7 @@ export class TagsService {
           include: { seo: true },
         });
         if (finalSeoId === null) await deleteSeoIfUnreferenced(tx, tr.seoId);
-        return updated;
+        return withParsedRelatedSlugs(updated);
       } catch (e: unknown) {
         // `dup` above only sees translations of OTHER tags committed before this
         // transaction started; the lock this transaction holds is on its own tag
