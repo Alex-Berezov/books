@@ -146,4 +146,96 @@ describe('Comments e2e', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(204);
   });
+
+  // `LEGACY-366`: третьего уровня нет — ответ на ответ встаёт под корень ветки.
+  describe('глубина ветки (LEGACY-366)', () => {
+    const post = (body: Record<string, string>) =>
+      request(http()).post('/comments').set('Authorization', `Bearer ${userToken}`).send(body);
+
+    it('ответ на ответ крепится к корню ветки', async () => {
+      const root = await post({ bookVersionId: versionId, text: 'Root' }).expect(201);
+      const reply = await post({
+        bookVersionId: versionId,
+        parentId: root.body.id as string,
+        text: 'Reply',
+      }).expect(201);
+      const nested = await post({
+        bookVersionId: versionId,
+        parentId: reply.body.id as string,
+        text: 'Reply to reply',
+      }).expect(201);
+
+      expect(nested.body.parentId).toBe(root.body.id);
+    });
+
+    it('ответ в старой цепочке глубже двух встаёт под самый корень', async () => {
+      const root = await post({ bookVersionId: versionId, text: 'Old root' }).expect(201);
+      const userId = root.body.userId as string;
+      // Цепочка R→C→Q, записанная до правки: API её больше не создаёт.
+      const c = await prisma.comment.create({
+        data: { userId, bookVersionId: versionId, parentId: root.body.id as string, text: 'C' },
+      });
+      const q = await prisma.comment.create({
+        data: { userId, bookVersionId: versionId, parentId: c.id, text: 'Q' },
+      });
+
+      const answer = await post({ bookVersionId: versionId, parentId: q.id, text: 'A' }).expect(
+        201,
+      );
+
+      expect(answer.body.parentId).toBe(root.body.id);
+    });
+
+    const hide = (id: string) =>
+      request(http())
+        .patch(`/comments/${id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ isHidden: true })
+        .expect(200);
+
+    it('скрытый корень: чужой ответ — 404, автор корня отвечает под корень', async () => {
+      const root = await post({ bookVersionId: versionId, text: 'Hidden root' }).expect(201);
+      const rootId = root.body.id as string;
+      const c = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ bookVersionId: versionId, parentId: rootId, text: 'Visible C' })
+        .expect(201);
+      await hide(rootId);
+
+      const other = await request(http())
+        .post('/auth/register')
+        .send({ email: `h_${Date.now()}@ex.com`, password: 'password123' })
+        .expect(201);
+      await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${other.body.accessToken as string}`)
+        .send({ bookVersionId: versionId, parentId: c.body.id as string, text: 'Q' })
+        .expect(404);
+
+      const own = await post({
+        bookVersionId: versionId,
+        parentId: c.body.id as string,
+        text: 'Own Q',
+      }).expect(201);
+      expect(own.body.parentId).toBe(rootId);
+    });
+
+    it('скрытый ответ при видимом корне — ответ встаёт под корень', async () => {
+      const root = await post({ bookVersionId: versionId, text: 'Visible root' }).expect(201);
+      const c = await post({
+        bookVersionId: versionId,
+        parentId: root.body.id as string,
+        text: 'C',
+      }).expect(201);
+      await hide(c.body.id as string);
+
+      const answer = await request(http())
+        .post('/comments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ bookVersionId: versionId, parentId: c.body.id as string, text: 'Mod' })
+        .expect(201);
+      expect(answer.body.parentId).toBe(root.body.id);
+    });
+  });
 });

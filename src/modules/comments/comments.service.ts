@@ -38,6 +38,15 @@ const commentChildren = (canModerate: boolean) => ({
   include: { user: { select: PUBLIC_COMMENT_USER_SELECT } },
 });
 
+const THREAD_NODE_SELECT = {
+  id: true,
+  parentId: true,
+  isDeleted: true,
+  isHidden: true,
+  userId: true,
+} as const;
+const THREAD_MAX_HOPS = 32;
+
 @Injectable()
 export class CommentsService {
   constructor(
@@ -94,12 +103,9 @@ export class CommentsService {
   }
 
   async create(userId: string, dto: CreateCommentDto) {
-    if (dto.parentId) {
-      const parent = await this.prisma.comment.findUnique({ where: { id: dto.parentId } });
-      if (!parent || parent.isDeleted) {
-        throw new NotFoundException('Parent comment not found');
-      }
-    }
+    const parentId = dto.parentId
+      ? await this.resolveThreadRootId(dto.parentId, userId)
+      : undefined;
 
     let bookId: string | undefined;
     if (dto.bookVersionId) {
@@ -150,7 +156,7 @@ export class CommentsService {
           bookVersionId: dto.bookVersionId,
           chapterId: dto.chapterId,
           audioChapterId: dto.audioChapterId,
-          parentId: dto.parentId,
+          parentId,
           text: dto.text,
           ratingId,
         },
@@ -349,5 +355,29 @@ export class CommentsService {
         await tx.bookRating.delete({ where: { id: existing.ratingId } });
       }
     });
+  }
+
+  /**
+   * Ответ на ответ крепится к корню ветки: третий уровень под скрытыми предками
+   * не виден автору нигде (`LEGACY-366`, решения арбитра 28.09.2026). Подъём идёт
+   * до самого корня — цепочки глубже двух, записанные до правки, в базе остались.
+   * `parentId` меняется только обнулением при удалении пользователя
+   * (`users.service.ts`, `remove`), цикла это не даёт; потолок — страховка.
+   * В скрытую ветку отвечает только автор её корня: его ответ виден ему внутри
+   * корня, а чужой не был бы виден автору нигде.
+   */
+  private async resolveThreadRootId(parentId: string, userId: string): Promise<string> {
+    const notFound = () => new NotFoundException('Parent comment not found');
+    const readNode = (id: string) =>
+      this.prisma.comment.findUnique({ where: { id }, select: THREAD_NODE_SELECT });
+    let root = await readNode(parentId);
+    if (!root || root.isDeleted) throw notFound();
+    for (let hops = 0; root.parentId; hops++) {
+      if (hops >= THREAD_MAX_HOPS) throw notFound();
+      root = await readNode(root.parentId);
+      if (!root || root.isDeleted) throw notFound();
+    }
+    if (root.isHidden && root.userId !== userId) throw notFound();
+    return root.id;
   }
 }

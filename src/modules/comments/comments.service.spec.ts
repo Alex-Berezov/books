@@ -136,6 +136,122 @@ describe('CommentsService', () => {
       expect(res).toEqual({ ...created, ratingScore: null });
       expect(prisma.comment.create).toHaveBeenCalled();
     });
+
+    describe('глубина ветки (LEGACY-366)', () => {
+      const createdParentId = () => {
+        expect(prisma.comment.create).toHaveBeenCalledTimes(1);
+        return (prisma.comment.create.mock.calls[0][0] as { data: { parentId?: string } }).data
+          .parentId;
+      };
+      const row = (
+        id: string,
+        parentId: string | null,
+        { isDeleted = false, isHidden = false, userId = 'author' } = {},
+      ) => ({ id, parentId, isDeleted, isHidden, userId });
+
+      beforeEach(() => {
+        prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1', bookId: 'b1' });
+        prisma.comment.create.mockResolvedValue({ id: 'new', rating: null });
+      });
+
+      it('ответ на ответ крепится к корню ветки', async () => {
+        prisma.comment.findUnique
+          .mockResolvedValueOnce(row('reply', 'root'))
+          .mockResolvedValueOnce(row('root', null));
+        await service.create('u1', {
+          parentId: 'reply',
+          bookVersionId: 'v1',
+          text: 't',
+        } as CreateCommentDto);
+        expect(createdParentId()).toBe('root');
+      });
+
+      it('ответ на корень остаётся под корнем', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
+        await service.create('u1', {
+          parentId: 'root',
+          bookVersionId: 'v1',
+          text: 't',
+        } as CreateCommentDto);
+        expect(createdParentId()).toBe('root');
+      });
+
+      it('ответ в старой цепочке глубже двух встаёт под самый корень', async () => {
+        prisma.comment.findUnique
+          .mockResolvedValueOnce(row('q', 'c'))
+          .mockResolvedValueOnce(row('c', 'root'))
+          .mockResolvedValueOnce(row('root', null));
+        await service.create('u1', {
+          parentId: 'q',
+          bookVersionId: 'v1',
+          text: 't',
+        } as CreateCommentDto);
+        expect(createdParentId()).toBe('root');
+      });
+
+      it('удалённый предок старой цепочки — 404, комментарий не создаётся', async () => {
+        prisma.comment.findUnique
+          .mockResolvedValueOnce(row('q', 'c'))
+          .mockResolvedValueOnce(row('c', 'root', { isDeleted: true }))
+          // Корень живой: без проверки удалённого предка ответ был бы создан.
+          .mockResolvedValueOnce(row('root', null));
+        await expect(
+          service.create('u1', {
+            parentId: 'q',
+            bookVersionId: 'v1',
+            text: 't',
+          } as CreateCommentDto),
+        ).rejects.toBeInstanceOf(NotFoundException);
+        expect(prisma.comment.create).not.toHaveBeenCalled();
+      });
+
+      const reply = (parentId: string, userId = 'u1') =>
+        service.create(userId, { parentId, bookVersionId: 'v1', text: 't' } as CreateCommentDto);
+
+      it('скрытый корень: ответ на видимый ответ под ним — 404', async () => {
+        prisma.comment.findUnique
+          .mockResolvedValueOnce(row('c', 'root'))
+          .mockResolvedValueOnce(row('root', null, { isHidden: true }));
+        await expect(reply('c')).rejects.toBeInstanceOf(NotFoundException);
+        expect(prisma.comment.create).not.toHaveBeenCalled();
+      });
+
+      it('скрытый корень: прямой ответ на него — 404', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce(row('root', null, { isHidden: true }));
+        await expect(reply('root')).rejects.toBeInstanceOf(NotFoundException);
+        expect(prisma.comment.create).not.toHaveBeenCalled();
+      });
+
+      it('автор скрытого корня отвечает в своей ветке — под корень', async () => {
+        prisma.comment.findUnique
+          .mockResolvedValueOnce(row('c', 'root'))
+          .mockResolvedValueOnce(row('root', null, { isHidden: true, userId: 'u1' }));
+        await reply('c', 'u1');
+        expect(createdParentId()).toBe('root');
+      });
+
+      it('скрытый ответ при видимом корне — ответ встаёт под корень', async () => {
+        prisma.comment.findUnique
+          .mockResolvedValueOnce(row('c', 'root', { isHidden: true }))
+          .mockResolvedValueOnce(row('root', null));
+        await reply('c');
+        expect(createdParentId()).toBe('root');
+      });
+
+      it('цепочка длиннее потолка подъёма — 404', async () => {
+        prisma.comment.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+          Promise.resolve(row(where.id, `${where.id}+`)),
+        );
+        await expect(reply('n')).rejects.toBeInstanceOf(NotFoundException);
+        expect(prisma.comment.findUnique).toHaveBeenCalledTimes(33);
+        expect(prisma.comment.create).not.toHaveBeenCalled();
+      });
+
+      it('корневой комментарий создаётся без родителя', async () => {
+        await service.create('u1', { bookVersionId: 'v1', text: 't' } as CreateCommentDto);
+        expect(createdParentId()).toBeUndefined();
+      });
+    });
   });
 
   describe('get()', () => {
