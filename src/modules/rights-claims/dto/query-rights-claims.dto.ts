@@ -2,7 +2,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
-  IsDateString,
   IsEnum,
   IsInt,
   IsOptional,
@@ -12,6 +11,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { IsIsoDateTimeWithZone } from '../../../shared/validators/iso-date-time-with-zone.decorator';
 import {
   RightsClaimChannel,
   RightsClaimResolution,
@@ -122,14 +122,21 @@ export class QueryRightsClaimsDto {
   @Min(0)
   deadlineWithinDays?: number;
 
-  @ApiPropertyOptional({ description: 'ISO date — lower bound of receivedAt' })
+  // Граница окна - дата-время с зоной, как у журнала (`LEGACY-426`, решение арбитра 29.09.2026):
+  // голая дата читалась бы полуночью UTC, и `receivedTo=<сегодня>` отрезал бы весь день.
+  @ApiPropertyOptional({
+    description: 'ISO date-time with a time zone, inclusive lower bound of receivedAt',
+  })
   @IsOptional()
-  @IsDateString()
+  @IsIsoDateTimeWithZone()
   receivedFrom?: string;
 
-  @ApiPropertyOptional({ description: 'ISO date — upper bound of receivedAt' })
+  @ApiPropertyOptional({
+    description:
+      'ISO date-time with a time zone, inclusive upper bound of receivedAt; earlier than receivedFrom gives 400',
+  })
   @IsOptional()
-  @IsDateString()
+  @IsIsoDateTimeWithZone()
   receivedTo?: string;
 
   @ApiPropertyOptional()

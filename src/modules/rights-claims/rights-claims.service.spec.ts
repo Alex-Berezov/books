@@ -297,6 +297,47 @@ describe('RightsClaimsService', () => {
     );
   });
 
+  // --- окно `receivedFrom`/`receivedTo` (`LEGACY-426`, решение арбитра 29.09.2026) -------
+
+  it('findAll rejects a reversed receivedFrom/receivedTo window with 400 instead of an empty 200 (LEGACY-426)', async () => {
+    prisma.rightsClaim.count.mockResolvedValue(0);
+    prisma.rightsClaim.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.findAll({
+        page: 1,
+        limit: 20,
+        receivedFrom: '2026-09-28T00:00:00Z',
+        receivedTo: '2026-09-27T00:00:00Z',
+      }),
+    ).rejects.toThrow(new BadRequestException('receivedFrom must not be later than receivedTo'));
+    expect(prisma.rightsClaim.findMany).not.toHaveBeenCalled();
+  });
+
+  it('findAll passes an ordered receivedFrom/receivedTo window to the database as gte/lte (LEGACY-426)', async () => {
+    prisma.rightsClaim.count.mockResolvedValue(0);
+    prisma.rightsClaim.findMany.mockResolvedValue([]);
+
+    await service.findAll({
+      page: 1,
+      limit: 20,
+      receivedFrom: '2026-09-27T00:00:00Z',
+      receivedTo: '2026-09-27T23:59:59.999Z',
+    });
+
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaim.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          receivedAt: {
+            gte: new Date('2026-09-27T00:00:00Z'),
+            lte: new Date('2026-09-27T23:59:59.999Z'),
+          },
+        }),
+      }),
+    );
+  });
+
   it('listForVersion reads one page in the database and reports the real total (LEGACY-377)', async () => {
     prisma.rightsClaim.count.mockResolvedValue(45);
     prisma.rightsClaim.findMany.mockResolvedValue([createClaim(), createClaim({ id: 'claim-2' })]);

@@ -13833,9 +13833,9 @@ export interface operations {
         hasActiveBlock?: boolean;
         /** @description Only claims whose deadline falls within N days */
         deadlineWithinDays?: number;
-        /** @description ISO date — lower bound of receivedAt */
+        /** @description ISO date-time with a time zone, inclusive lower bound of receivedAt */
         receivedFrom?: string;
-        /** @description ISO date — upper bound of receivedAt */
+        /** @description ISO date-time with a time zone, inclusive upper bound of receivedAt; earlier than receivedFrom gives 400 */
         receivedTo?: string;
         requiresLawyerReview?: boolean;
         page?: number;

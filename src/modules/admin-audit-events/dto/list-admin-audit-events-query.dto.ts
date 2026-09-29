@@ -1,25 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsDefined,
-  IsEnum,
-  IsISO8601,
-  IsOptional,
-  IsUUID,
-  Matches,
-  ValidateIf,
-} from 'class-validator';
+import { IsDefined, IsEnum, IsOptional, IsUUID, ValidateIf } from 'class-validator';
 import { AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { ChildListQueryDto } from '../../../shared/dto/child-list-query.dto';
-
-/**
- * Граница окна — дата-время с зоной. Дата без времени (`2026-09-27`) читалась бы полуночью UTC,
- * и `to=<сегодня>` молча отрезал бы весь день; время без зоны — поясом сервера. Несуществующую
- * дату (`02-30`, год `0000`) отсекает строгий `IsISO8601`: `new Date()` перенёс бы её в март.
- */
-const ISO_DATE_TIME_WITH_ZONE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
-const DATE_TIME_MESSAGE =
-  '$property must be an ISO date-time with a time zone (e.g. 2026-09-27T00:00:00Z)';
+import { IsIsoDateTimeWithZone } from '../../../shared/validators/iso-date-time-with-zone.decorator';
 
 /**
  * Параметры `GET /admin/audit-events` (`LEGACY-015` пункт 3, решение арбитра 27.09.2026).
@@ -61,8 +44,7 @@ export class ListAdminAuditEventsQueryDto extends ChildListQueryDto {
     description: 'ISO date-time with a time zone, inclusive lower bound of createdAt',
   })
   @IsOptional()
-  @IsISO8601({ strict: true, strictSeparator: true })
-  @Matches(ISO_DATE_TIME_WITH_ZONE, { message: DATE_TIME_MESSAGE })
+  @IsIsoDateTimeWithZone()
   from?: string;
 
   @ApiPropertyOptional({
@@ -70,7 +52,6 @@ export class ListAdminAuditEventsQueryDto extends ChildListQueryDto {
       'ISO date-time with a time zone, inclusive upper bound of createdAt; earlier than from gives 400',
   })
   @IsOptional()
-  @IsISO8601({ strict: true, strictSeparator: true })
-  @Matches(ISO_DATE_TIME_WITH_ZONE, { message: DATE_TIME_MESSAGE })
+  @IsIsoDateTimeWithZone()
   to?: string;
 }

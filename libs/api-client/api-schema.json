@@ -26447,7 +26447,7 @@
             }
           },
           {
-            "description": "ISO date — lower bound of receivedAt",
+            "description": "ISO date-time with a time zone, inclusive lower bound of receivedAt",
             "in": "query",
             "name": "receivedFrom",
             "required": false,
@@ -26456,7 +26456,7 @@
             }
           },
           {
-            "description": "ISO date — upper bound of receivedAt",
+            "description": "ISO date-time with a time zone, inclusive upper bound of receivedAt; earlier than receivedFrom gives 400",
             "in": "query",
             "name": "receivedTo",
             "required": false,

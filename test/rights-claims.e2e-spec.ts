@@ -184,6 +184,43 @@ describe('Rights claims e2e', () => {
       });
   });
 
+  // LEGACY-426. Окно `receivedFrom`/`receivedTo` — дата-время с зоной, как у журнала
+  // `GET /admin/audit-events` (решение арбитра 29.09.2026): голая дата читалась полуночью
+  // UTC и `receivedTo=<сегодня>` молча отрезал весь день; перевёрнутое окно давало пустой 200.
+  it('rejects a bare date in receivedTo with 400 and names the field (LEGACY-426)', async () => {
+    await request(http())
+      .get('/admin/rights/claims')
+      .query({ receivedTo: '2026-09-27' })
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400)
+      .expect(({ body }) => {
+        expect((body.message as string[]).join(' ')).toContain('receivedTo');
+      });
+  });
+
+  it('rejects receivedFrom later than receivedTo with 400 instead of an empty 200 (LEGACY-426)', async () => {
+    await request(http())
+      .get('/admin/rights/claims')
+      .query({ receivedFrom: '2026-09-28T00:00:00Z', receivedTo: '2026-09-27T00:00:00Z' })
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe('receivedFrom must not be later than receivedTo');
+      });
+  });
+
+  // Положительный контроль: окно с датой-временем и зоной проходит валидацию и доходит до выборки.
+  it('accepts a zoned date-time window in the list filter (LEGACY-426)', async () => {
+    await request(http())
+      .get('/admin/rights/claims')
+      .query({ receivedFrom: '2000-01-01T00:00:00Z', receivedTo: '2000-01-01T23:59:59.999Z' })
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([]);
+      });
+  });
+
   // LEGACY-202. Половина модуля была закрыта, а половина нет: `LEGACY-119`
   // проверила тело и query-фильтры, а параметры пути остались строкой. Битый
   // `:id` доходил до `requireClaim` и возвращался как 404 «не найдено» — то есть

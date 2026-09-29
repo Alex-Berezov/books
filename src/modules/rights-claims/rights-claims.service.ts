@@ -1636,6 +1636,10 @@ export class RightsClaimsService {
       const range: Prisma.DateTimeFilter = {};
       if (query.receivedFrom) range.gte = new Date(query.receivedFrom);
       if (query.receivedTo) range.lte = new Date(query.receivedTo);
+      // Как у журнала (`admin-audit-events.service.ts`): перевёрнутое окно - 400, а не пустой 200.
+      if (range.gte && range.lte && range.gte > range.lte) {
+        throw new BadRequestException('receivedFrom must not be later than receivedTo');
+      }
       where.receivedAt = range;
     }
 
