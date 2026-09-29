@@ -552,14 +552,44 @@ describe('AuthService (unit)', () => {
       prisma.user.findUnique.mockResolvedValue(null);
       prisma.user.create.mockResolvedValue(created);
       prisma.role.findUnique.mockResolvedValue({ id: 'r-user', name: RoleName.user });
-      prisma.userRole.upsert.mockResolvedValue({});
       prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
       prisma.user.update.mockResolvedValue({ ...created, lastLogin: now });
 
       const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
 
       expect(res.user.roles).toEqual([RoleName.user]);
-      expect(prisma.userRole.upsert).toHaveBeenCalledTimes(1);
+      // `LEGACY-015`/`T67`: базовая роль идёт вложенной записью в сам `user.create`, а не
+      // отдельным `upsert` следом — окна «пользователь есть, роли нет» не существует.
+      expect(prisma.userRole.upsert).not.toHaveBeenCalled();
+      expect(prisma.user.create).toHaveBeenCalledTimes(1);
+      expect(prisma.user.create.mock.calls[0][0].data.roles).toEqual({
+        create: { roleId: 'r-user' },
+      });
+      // Роль читается до вставки: иначе вложить её в `create` нечем.
+      expect(prisma.role.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.user.create.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('первый вход через провайдера без роли `user` в базе: пользователь создаётся без ролей', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-new',
+        email: 'newcomer@example.com',
+        emailVerified: true,
+      });
+      const created = { ...user, id: 'u-new', email: 'newcomer@example.com' };
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue(created);
+      prisma.role.findUnique.mockResolvedValue(null);
+      prisma.userRole.findMany.mockResolvedValue([]);
+      prisma.user.update.mockResolvedValue({ ...created, lastLogin: now });
+
+      await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(prisma.user.create).toHaveBeenCalledTimes(1);
+      expect(prisma.user.create.mock.calls[0][0].data.roles).toBeUndefined();
+      expect(prisma.userRole.upsert).not.toHaveBeenCalled();
     });
   });
 
@@ -707,7 +737,6 @@ describe('AuthService (unit)', () => {
       prisma.user.findUnique.mockResolvedValueOnce(null); // такой почты ещё нет
       prisma.user.create.mockResolvedValueOnce({ ...user, id: 'u-new', email: 'new@example.com' });
       prisma.role.findUnique.mockResolvedValue({ id: 'r-user', name: 'user' });
-      prisma.userRole.upsert.mockResolvedValue({});
       prisma.userRole.findMany.mockResolvedValue([]);
       prisma.user.update.mockResolvedValueOnce({ id: 'u-new' });
 

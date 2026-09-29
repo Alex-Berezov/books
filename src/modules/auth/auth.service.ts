@@ -335,29 +335,27 @@ export class AuthService {
     identity: SocialIdentity,
     languagePreference?: PrismaLanguage,
   ): Promise<AccountUser> {
-    const user = await this.prisma.user.create({
+    // Baseline role only. Elevated roles are never granted from an e-mail
+    // list here — ADMIN_EMAILS bootstraps the first administrator through
+    // register(), and nothing else.
+    const userRole = await this.prisma.role.findUnique({ where: { name: RoleName.user } });
+
+    // Роль пишется вложенной записью в тот же `create`, а не отдельным `upsert` следом
+    // (`LEGACY-015`, `T67`): вложенную запись Prisma выполняет одной транзакцией, поэтому
+    // пользователь без базовой роли снаружи не виден ни миллисекунды — ни админскому
+    // `PATCH /users/:id`, ни повторному входу, — и не остаётся таким при обрыве второго
+    // запроса. Замок строки `User` (`lockUserRow`) здесь не нужен: строка появляется
+    // в базе уже с ролью, окна, которое он закрывал бы, не возникает.
+    return this.prisma.user.create({
       data: {
         email,
         name: identity.name,
         avatarUrl: identity.avatarUrl,
         languagePreference: languagePreference ?? PrismaLanguage.en,
+        roles: userRole ? { create: { roleId: userRole.id } } : undefined,
       },
       select: ACCOUNT_USER_SELECT,
     });
-
-    // Baseline role only. Elevated roles are never granted from an e-mail
-    // list here — ADMIN_EMAILS bootstraps the first administrator through
-    // register(), and nothing else.
-    const userRole = await this.prisma.role.findUnique({ where: { name: RoleName.user } });
-    if (userRole) {
-      await this.prisma.userRole.upsert({
-        where: { userId_roleId: { userId: user.id, roleId: userRole.id } },
-        create: { userId: user.id, roleId: userRole.id },
-        update: {},
-      });
-    }
-
-    return user;
   }
 
   /** Idempotent; the three core roles must exist before anything is linked to them. */
