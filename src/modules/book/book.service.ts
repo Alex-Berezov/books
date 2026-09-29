@@ -37,6 +37,7 @@ import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
 
 /**
  * `related*Slugs` лежат в JSON-колонке, то есть их содержимое схемой не
@@ -1604,6 +1605,13 @@ export class BookService {
    * же, а не новой записью.
    *
    * Преемника (как родитель у категории) у книги нет — только уборка.
+   *
+   * `LEGACY-320`, пачка `T71`: уборка идёт не только по `Book.slug`, но и по слагу
+   * каждой версии, которую унёс каскад, — тем же общим предикатом `isBookSlugLive`
+   * (`src/shared/slug/book-slug-liveness.ts`), что у прямого `DELETE /versions/:id`:
+   * опубликованная версия с этим слагом в любом языке, иначе `Book.slug` другой книги
+   * (слаг версии против `Book.slug` не уникален). Слаги читаются до `book.delete`,
+   * живость — после него.
    * Транзакция получает тот же явный дедлайн, что у соседей по этой задаче
    * (`TAG_TX_OPTIONS`, `CATEGORY_TREE_TX_OPTIONS`, `L-020`): каскад тянет
    * версии со всеми главами и статистикой чтения, и голая `$transaction`
@@ -1630,18 +1638,21 @@ export class BookService {
       // 20.09.2026, `LEGACY-180`).
       const doomedVersions = await lockLicenseSnapshotsByBook(tx, id);
 
-      // `LEGACY-400`, пачка `T61`: `BookVersion.seoId` без каскада — `Seo` версий, унесённых
-      // каскадом, оставались сиротами. Строки версий уже заперты выше, `seoId` читается до удаления.
-      const doomedSeoIds = await tx.bookVersion.findMany({
-        where: { bookId: id, seoId: { not: null } },
-        select: { seoId: true },
+      // Строки версий уже заперты выше; до удаления с них читается то, чего после каскада
+      // взять негде. `seoId` — `LEGACY-400`, пачка `T61`: `BookVersion.seoId` без каскада,
+      // `Seo` версий оставались сиротами. `slug` — `LEGACY-320`, пачка `T71`: у версии свой
+      // слаг, и редирект на него без уборки висел бы 308-м на 404 — то же правило, что
+      // у прямого `DELETE /versions/:id` (`book-version.service.ts`, `LEGACY-395`).
+      const doomedVersionRefs = await tx.bookVersion.findMany({
+        where: { bookId: id },
+        select: { seoId: true, slug: true },
       });
 
       // `onDelete: Cascade` снимает версии книги вместе с ней — до запроса
       // живости слага ниже, поэтому свои же версии в нём уже не участвуют.
       const removed = await tx.book.delete({ where: { id } });
 
-      for (const { seoId } of doomedSeoIds) {
+      for (const { seoId } of doomedVersionRefs) {
         await deleteSeoIfUnreferenced(tx, seoId);
       }
 
@@ -1678,37 +1689,22 @@ export class BookService {
         });
       }
 
-      const stillLive = await this.isBookSlugLive(tx, removed.slug);
-      if (!stillLive) {
-        await this.slugRedirects.cleanupDeadRedirects(
-          'book',
-          getSupportedLanguages(),
-          removed.slug,
-          tx,
-        );
+      // Живость решается после каскада и на каждый слаг отдельно тем же предикатом, что
+      // у прямого удаления версии (`isBookSlugLive`, `src/shared/slug/`): слаг версии мог
+      // совпасть с `Book.slug` или со слагом соседней версии, и `Set` спрашивает базу один раз.
+      const doomedSlugs = new Set<string>([removed.slug]);
+      for (const { slug } of doomedVersionRefs) {
+        if (slug !== null) doomedSlugs.add(slug);
+      }
+      for (const slug of doomedSlugs) {
+        const stillLive = await isBookSlugLive(tx, slug);
+        if (!stillLive) {
+          await this.slugRedirects.cleanupDeadRedirects('book', getSupportedLanguages(), slug, tx);
+        }
       }
 
       return removed;
     }, BOOK_REMOVE_TX_OPTIONS);
-  }
-
-  /**
-   * Жив ли ещё бывший базовый слаг удалённой книги — тем же запросом, каким
-   * решает `getOverview` (см. докблок `remove()` выше): любая опубликованная
-   * версия с этим слагом, чья угодно.
-   */
-  private async isBookSlugLive(tx: Prisma.TransactionClient, slug: string): Promise<boolean> {
-    // 🔴 `language: { in: ... }` — находка второго круга ревью: у `BookVersion`
-    // нет индекса с ведущим `slug`, только `@@unique([language, slug])`. Без
-    // языка запрос читает таблицу целиком внутри транзакции, держащей
-    // блокировки на каскадно удалённых версиях (тот же приём, что у
-    // `CategoryService.deadLanguagesForSlug`). Значений не сужает —
-    // `getSupportedLanguages()` возвращает весь enum.
-    const liveVersion = await tx.bookVersion.findFirst({
-      where: { slug, status: 'published', language: { in: getSupportedLanguages() } },
-      select: { id: true },
-    });
-    return !!liveVersion;
   }
 
   /**

@@ -251,6 +251,68 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
 
       expect(await readSlugRedirect(prisma, 'book', Language.ru, victimFixtureSlug)).toBe(deadSlug);
     });
+
+    /**
+     * `LEGACY-320`, пачка `T71` (решение арбитра 29.09.2026: исполнение правила
+     * `LEGACY-395`, не новое правило редиректа). У версии свой слаг, и каскад
+     * `book.delete` уносит её вместе с книгой; запись, ведущая на этот слаг
+     * (осталась от смены слага версии), обязана сняться так же, как при прямом
+     * `DELETE /versions/:id`. До правки `remove()` книги спрашивал живость только
+     * `Book.slug`, и 308 висел на 404. Щупается на настоящем каскаде: слаг версии
+     * читается до `book.delete`, живость — после.
+     */
+    it('слаг каскадно снесённой версии мёртв — запись на него снята', async () => {
+      const bookId = await newBook(uniqueMark('l320-cascade1'));
+      const oldSlug = uniqueMark('l320-cascade1-old');
+      const newSlug = uniqueMark('l320-cascade1-new');
+      const versionId = await createVersion(bookId, Language.ru, oldSlug);
+      await publishVersion(bookId, versionId);
+
+      await request(http())
+        .patch(`/versions/${versionId}`)
+        .set('Authorization', `Bearer ${admin}`)
+        .send({ slug: newSlug })
+        .expect(200);
+      expect(await readSlugRedirect(prisma, 'book', Language.ru, oldSlug)).toBe(newSlug);
+
+      await request(http())
+        .delete(`/books/${bookId}`)
+        .set('Authorization', `Bearer ${admin}`)
+        .expect(200);
+
+      expect(await readSlugRedirect(prisma, 'book', Language.ru, oldSlug)).toBeNull();
+    });
+
+    /**
+     * Та же ветка живости, что у прямого удаления версии: слаг каскадно снесённой
+     * версии держит опубликованная версия чужой книги в другом языке — адрес жив,
+     * запись остаётся.
+     */
+    it('слаг каскадно снесённой версии жив чужой опубликованной версией — запись не снимается', async () => {
+      const victimBookId = await newBook(uniqueMark('l320-cascade2-victim'));
+      const oldSlug = uniqueMark('l320-cascade2-old');
+      const sharedSlug = uniqueMark('l320-cascade2-shared');
+      const victimVersionId = await createVersion(victimBookId, Language.ru, oldSlug);
+      await publishVersion(victimBookId, victimVersionId);
+
+      await request(http())
+        .patch(`/versions/${victimVersionId}`)
+        .set('Authorization', `Bearer ${admin}`)
+        .send({ slug: sharedSlug })
+        .expect(200);
+      expect(await readSlugRedirect(prisma, 'book', Language.ru, oldSlug)).toBe(sharedSlug);
+
+      const otherBookId = await newBook(uniqueMark('l320-cascade2-other'));
+      const otherVersionId = await createVersion(otherBookId, Language.en, sharedSlug);
+      await publishVersion(otherBookId, otherVersionId);
+
+      await request(http())
+        .delete(`/books/${victimBookId}`)
+        .set('Authorization', `Bearer ${admin}`)
+        .expect(200);
+
+      expect(await readSlugRedirect(prisma, 'book', Language.ru, oldSlug)).toBe(sharedSlug);
+    });
   });
 
   describe('book versions', () => {

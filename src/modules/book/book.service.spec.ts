@@ -13,6 +13,7 @@ import { ModeratorRolesService } from '../../common/roles/moderator-roles.servic
 interface PrismaStub {
   book: {
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
     findMany: jest.Mock;
     count: jest.Mock;
     delete: jest.Mock;
@@ -40,6 +41,7 @@ const createPrismaStub = (): PrismaStub => {
   const stub: PrismaStub = {
     book: {
       findUnique: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn(),
       count: jest.fn(),
       delete: jest.fn(),
@@ -1162,7 +1164,7 @@ describe('BookService.remove (LEGACY-395)', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
-    // `LEGACY-400`, пачка `T61`: `seoId` версий читаются до каскада; у этих книг `Seo` нет.
+    // `LEGACY-400`/`LEGACY-320`: `seoId` и `slug` версий читаются до каскада; у этих книг версий нет.
     prisma.bookVersion.findMany.mockResolvedValue([]);
     adminAudit = { record: jest.fn().mockResolvedValue(undefined) };
     slugRedirects = createSlugRedirectStub() as unknown as typeof slugRedirects;
@@ -1186,11 +1188,16 @@ describe('BookService.remove (LEGACY-395)', () => {
   });
 
   // `LEGACY-400`, пачка `T61`: `seoId` версий читаются до каскада, их `Seo` убирается после — только ничьё.
+  // `LEGACY-320`, пачка `T71`: тем же запросом читается `slug`; `null` в `seoId` — версия без `Seo`.
   it('reads version seoIds before the cascade and removes their Seo after it', async () => {
     prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
     prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([]);
     prisma.bookVersion.findFirst.mockResolvedValue({ id: 'other' });
-    prisma.bookVersion.findMany.mockResolvedValue([{ seoId: 21 }, { seoId: 22 }]);
+    prisma.bookVersion.findMany.mockResolvedValue([
+      { seoId: 21, slug: null },
+      { seoId: 22, slug: null },
+      { seoId: null, slug: null },
+    ]);
     prisma.seo.findUnique.mockResolvedValue({
       bookVersion: null,
       page: null,
@@ -1206,8 +1213,8 @@ describe('BookService.remove (LEGACY-395)', () => {
 
     expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.bookVersion.findMany).toHaveBeenCalledWith({
-      where: { bookId: 'b1', seoId: { not: null } },
-      select: { seoId: true },
+      where: { bookId: 'b1' },
+      select: { seoId: true, slug: true },
     });
     expect(prisma.bookVersion.findMany.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.book.delete.mock.invocationCallOrder[0],
@@ -1239,6 +1246,11 @@ describe('BookService.remove (LEGACY-395)', () => {
       },
       select: { id: true },
     });
+    expect(prisma.book.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.book.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'karamazovy' },
+      select: { id: true },
+    });
     expect(slugRedirects.cleanupDeadRedirects).toHaveBeenCalledTimes(1);
     const [entityType, deadLanguages, deadSlug] = slugRedirects.cleanupDeadRedirects.mock.calls[0];
     expect(entityType).toBe('book');
@@ -1258,6 +1270,72 @@ describe('BookService.remove (LEGACY-395)', () => {
     await service.remove('b1', 'admin-1');
 
     expect(slugRedirects.cleanupDeadRedirects).not.toHaveBeenCalled();
+    // Живая версия найдена — фоллбэк на `Book.slug` не спрашивается.
+    expect(prisma.book.findFirst).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-320`, пачка `T71` (решение арбитра 29.09.2026, исполнение правила `LEGACY-395`).
+   * У версии свой слаг, и каскад уносит её вместе с книгой — редирект на этот слаг обязан
+   * сняться так же, как при прямом `DELETE /versions/:id`. Слаг, совпавший с базовым
+   * или со слагом соседней версии, спрашивается один раз.
+   */
+  it('cleans up redirects to the slugs of versions the cascade takes, once per distinct dead slug', async () => {
+    prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([]);
+    prisma.bookVersion.findMany.mockResolvedValue([
+      { seoId: null, slug: 'karamazovy-ru' },
+      { seoId: null, slug: 'karamazovy-ru' },
+      { seoId: null, slug: 'karamazovy' },
+      { seoId: null, slug: null },
+    ]);
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+
+    await service.remove('b1', 'admin-1');
+
+    // Слаги читаются до каскада — после него строк версий уже нет.
+    expect(prisma.bookVersion.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.book.delete.mock.invocationCallOrder[0],
+    );
+    const askedSlugs = prisma.bookVersion.findFirst.mock.calls.map(
+      ([args]: [{ where: { slug: string } }]) => args.where.slug,
+    );
+    expect(askedSlugs).toEqual(['karamazovy', 'karamazovy-ru']);
+    // Живость решается после каскада, а не по снимку.
+    expect(prisma.bookVersion.findFirst.mock.invocationCallOrder[0]).toBeGreaterThan(
+      prisma.book.delete.mock.invocationCallOrder[0],
+    );
+    expect(slugRedirects.cleanupDeadRedirects.mock.calls).toEqual([
+      ['book', Object.values(Language), 'karamazovy', expect.anything()],
+      ['book', Object.values(Language), 'karamazovy-ru', expect.anything()],
+    ]);
+  });
+
+  /**
+   * Предикат живости общий с прямым удалением версии (`isBookSlugLive`, `src/shared/slug/`):
+   * слаг версии не уникален против `Book.slug`, и живая чужая книга с таким базовым
+   * слагом держит адрес — запись не снимается.
+   */
+  it('keeps the redirect to a cascaded version slug that another live book holds as its base slug', async () => {
+    prisma.book.delete.mockResolvedValue({ id: 'b1', slug: 'karamazovy' });
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'b1' }]).mockResolvedValueOnce([]);
+    prisma.bookVersion.findMany.mockResolvedValue([{ seoId: null, slug: 'idiot' }]);
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+    prisma.book.findFirst.mockImplementation(
+      ({ where }: { where: { slug: string } }): Promise<{ id: string } | null> =>
+        Promise.resolve(where.slug === 'idiot' ? { id: 'b2' } : null),
+    );
+
+    await service.remove('b1', 'admin-1');
+
+    expect(prisma.book.findFirst).toHaveBeenCalledTimes(2);
+    expect(prisma.book.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'idiot' },
+      select: { id: true },
+    });
+    expect(slugRedirects.cleanupDeadRedirects.mock.calls).toEqual([
+      ['book', Object.values(Language), 'karamazovy', expect.anything()],
+    ]);
   });
 
   it('throws NotFoundException and cleans up nothing when the book does not exist', async () => {
