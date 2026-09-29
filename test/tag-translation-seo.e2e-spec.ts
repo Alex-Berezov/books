@@ -156,6 +156,63 @@ describe('Tag Translation Content & SEO (e2e)', () => {
     expect(res.body.seo.metaDescription).toBe('Browse our bestsellers');
   });
 
+  // `LEGACY-422`: плоские поля контента доходят до колонок перевода; `indexable`
+  // из тела принимается и отбрасывается — включить его запись может только владелец
+  // (тема №3, решение арбитра 29.09.2026).
+  const CONTENT_FIELDS = {
+    h1: 'Bestseller H1',
+    shortDescription: 'Short blurb',
+    metaTitle: 'Flat meta title',
+    metaDescription: 'Flat meta description',
+    ogTitle: 'Flat OG title',
+    ogDescription: 'Flat OG description',
+    ogImageUrl: 'https://example.com/og.jpg',
+    ogImageAlt: 'OG alt',
+    faq: [{ question: 'Q?', answer: 'A.' }],
+  };
+
+  it('should persist flat content fields on create and ignore indexable', async () => {
+    const slug = `bestseller-es-${Date.now()}`;
+    const res = await request(http())
+      .post(`/tags/${tagId}/translations`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ language: 'es', name: 'Superventas', slug, ...CONTENT_FIELDS, indexable: false })
+      .expect(201);
+
+    expect(res.body).toMatchObject(CONTENT_FIELDS);
+    const row = await prisma.tagTranslation.findUniqueOrThrow({
+      where: { tagId_language: { tagId, language: 'es' } },
+    });
+    expect(row).toMatchObject(CONTENT_FIELDS);
+    expect(row.indexable).toBe(true);
+  });
+
+  it('should persist flat content fields on update, clear faq with null, ignore indexable', async () => {
+    const res = await request(http())
+      .patch(`/tags/${tagId}/translations/es`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ ...CONTENT_FIELDS, h1: 'Updated H1', indexable: false })
+      .expect(200);
+    expect(res.body.h1).toBe('Updated H1');
+
+    const cleared = await request(http())
+      .patch(`/tags/${tagId}/translations/es`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ faq: null, shortDescription: null })
+      .expect(200);
+    expect(cleared.body.faq).toBeNull();
+    expect(cleared.body.shortDescription).toBeNull();
+    expect(cleared.body.h1).toBe('Updated H1');
+
+    const row = await prisma.tagTranslation.findUniqueOrThrow({
+      where: { tagId_language: { tagId, language: 'es' } },
+    });
+    expect(row.faq).toBeNull();
+    expect(row.shortDescription).toBeNull();
+    expect(row.h1).toBe('Updated H1');
+    expect(row.indexable).toBe(true);
+  });
+
   it('should clear seo when all fields are null', async () => {
     // First create seo on fr translation
     await request(http())

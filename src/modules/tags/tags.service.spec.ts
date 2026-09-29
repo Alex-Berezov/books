@@ -796,6 +796,86 @@ describe('TagsService — писатели тега идут под замком
     });
   });
 
+  // `LEGACY-422`: девять полей контента доходят до `data`, а `indexable`, `robots`
+  // и `canonicalUrl` — нет (решение арбитра 29.09.2026, тема владельца №3).
+  const CONTENT_FIELDS = {
+    h1: 'H1',
+    shortDescription: 'short',
+    metaTitle: 'MT',
+    metaDescription: 'MD',
+    ogTitle: 'OT',
+    ogDescription: 'OD',
+    ogImageUrl: 'https://example.com/og.jpg',
+    ogImageAlt: 'alt',
+    faq: [{ question: 'Q', answer: 'A' }],
+  };
+  const NOT_WRITTEN = {
+    indexable: false,
+    robots: 'noindex',
+    canonicalUrl: 'https://example.com/c',
+  };
+
+  it('createTranslation: девять полей контента пишутся, indexable/robots/canonicalUrl — нет', async () => {
+    let written: Record<string, unknown> | undefined;
+    const { tagsService } = setup({
+      'tag.findUnique': () => ({ id: 't1' }),
+      'tagTranslation.create': (args: unknown) => {
+        written = (args as { data: Record<string, unknown> }).data;
+        return { id: 'tr1' };
+      },
+    });
+
+    await tagsService.createTranslation('t1', {
+      language: Language.en,
+      name: 'N',
+      slug: 'n',
+      ...CONTENT_FIELDS,
+      ...NOT_WRITTEN,
+    });
+
+    expect(written).toMatchObject(CONTENT_FIELDS);
+    for (const key of Object.keys(NOT_WRITTEN)) expect(written).not.toHaveProperty(key);
+  });
+
+  it('updateTranslation: девять полей контента пишутся, faq: null очищает через DbNull', async () => {
+    let written: Record<string, unknown> | undefined;
+    const { tagsService } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'n', seoId: null }),
+      'tagTranslation.update': (args: unknown) => {
+        written = (args as { data: Record<string, unknown> }).data;
+        return { id: 'tr1' };
+      },
+    });
+
+    await tagsService.updateTranslation('t1', Language.en, { ...CONTENT_FIELDS, ...NOT_WRITTEN });
+    expect(written).toMatchObject(CONTENT_FIELDS);
+    for (const key of Object.keys(NOT_WRITTEN)) expect(written).not.toHaveProperty(key);
+
+    // `null` в `faq` валидатор пропускает (`@IsOptional`), тип DTO его не объявляет.
+    await tagsService.updateTranslation('t1', Language.en, {
+      faq: null,
+    } as unknown as Parameters<typeof tagsService.updateTranslation>[2]);
+    expect(written?.faq).toBe(Prisma.DbNull);
+
+    // Строковые nullable-колонки очищаются голым `null`, без сентинела.
+    await tagsService.updateTranslation('t1', Language.en, {
+      shortDescription: null,
+      metaDescription: null,
+      ogDescription: null,
+      ogImageUrl: null,
+    });
+    expect(written).toMatchObject({
+      shortDescription: null,
+      metaDescription: null,
+      ogDescription: null,
+      ogImageUrl: null,
+    });
+
+    await tagsService.updateTranslation('t1', Language.en, { name: 'M' });
+    expect(written).not.toHaveProperty('faq');
+    expect(written).not.toHaveProperty('h1');
+  });
+
   it('updateTranslation: чтения, Seo, редирект и запись — под замком через tx', async () => {
     const { tagsService, log, $transaction, tx, redirects } = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),

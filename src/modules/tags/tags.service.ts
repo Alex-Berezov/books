@@ -29,6 +29,7 @@ import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 import { parseJsonStringArray } from '../../shared/prisma/json-string-array.util';
+import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
@@ -540,6 +541,21 @@ export class TagsService {
             // until the recompute says otherwise.
             bookCount: 0,
             autoIndexable: false,
+            // `LEGACY-422`: девять полей контента пишутся в колонки перевода, как у категории
+            // (`CategoryService.createTranslation`). `indexable`, `robots`, `canonicalUrl`
+            // намеренно не пишутся: `indexable` включает рубильник sitemap/robots
+            // (`seo.service.ts`, тема владельца №3), две другие колонки никто не читает.
+            ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
+            ...(dto.shortDescription !== undefined
+              ? { shortDescription: dto.shortDescription }
+              : {}),
+            ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
+            ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
+            ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
+            ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
+            ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
+            ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
+            ...(dto.faq !== undefined ? { faq: toJsonInput(dto.faq) } : {}),
             ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
             ...(dto.relatedGenreSlugs !== undefined
               ? { relatedGenreSlugs: dto.relatedGenreSlugs }
@@ -618,6 +634,17 @@ export class TagsService {
             name: dto.name,
             slug: dto.slug,
             ...(dto.description !== undefined ? { description: dto.description } : {}),
+            ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
+            ...(dto.shortDescription !== undefined
+              ? { shortDescription: dto.shortDescription }
+              : {}),
+            ...(dto.metaTitle !== undefined ? { metaTitle: dto.metaTitle } : {}),
+            ...(dto.metaDescription !== undefined ? { metaDescription: dto.metaDescription } : {}),
+            ...(dto.ogTitle !== undefined ? { ogTitle: dto.ogTitle } : {}),
+            ...(dto.ogDescription !== undefined ? { ogDescription: dto.ogDescription } : {}),
+            ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
+            ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
+            ...jsonField('faq', dto.faq),
             ...(dto.relatedTagSlugs !== undefined ? { relatedTagSlugs: dto.relatedTagSlugs } : {}),
             ...(dto.relatedGenreSlugs !== undefined
               ? { relatedGenreSlugs: dto.relatedGenreSlugs }
