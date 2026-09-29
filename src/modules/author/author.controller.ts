@@ -133,6 +133,22 @@ export class AuthorController {
     return this.service.update(id, dto);
   }
 
+  @Delete('admin/authors/:id/person-link')
+  @ApiOperation({
+    summary: 'Unlink author from person (LEGACY-396)',
+    description:
+      'Обнуляет мост `Author.personId`. Повторный вызов на снятом мосту ничего не пишет. ' +
+      'Нужен, чтобы удаление персоны (`DELETE /admin/contributors/:id`) перестало отказывать ' +
+      'по связи с легаси-автором.',
+  })
+  @ApiOkResponse({ type: AuthorResponseDto })
+  @ApiResponse({ status: 404, description: 'Author not found' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  unlinkPerson(@Param('id') id: string) {
+    return this.service.unlinkPerson(id);
+  }
+
   @Delete('admin/authors/:id')
   @ApiNoContentResponse({ description: 'Deleted; no body' })
   @HttpCode(HttpStatus.NO_CONTENT)

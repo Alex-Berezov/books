@@ -382,4 +382,94 @@ describe('Admin authors routing (e2e)', () => {
       expect(JSON.stringify(response.body)).not.toContain('Route not found');
     });
   });
+  /**
+   * `LEGACY-396` (решение арбитра 29.09.2026). Мост `Author.personId` присваивает
+   * `POST /admin/contributors` с `authorId`, и до этой ручки снять его было нечем: удаление
+   * персоны (`DELETE /admin/contributors/:id`) отказывало 400 навсегда.
+   */
+  describe('DELETE /admin/authors/:id/person-link', () => {
+    const createAuthor = async (slug: string): Promise<string> => {
+      const created = await request(http())
+        .post('/admin/authors')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ translations: [{ language: 'en', name: 'Bridged Author', slug }] })
+        .expect(201);
+      return (created.body as { id: string }).id;
+    };
+
+    // Уборка возвращает статус, а не утверждает сама: отказ внутри `finally` заслонил бы
+    // настоящую причину красного прогона. Статусы сверяются после — только когда тело прошло.
+    const cleanup = async (path: string): Promise<number> => {
+      const res = await request(http()).delete(path).set('Authorization', `Bearer ${adminToken}`);
+      return res.status;
+    };
+
+    it('снимает мост, после чего персона удаляется, а до того — отказ называет ручку', async () => {
+      const stamp = Date.now();
+      const authorId = await createAuthor(`bridged-author-${stamp}`);
+      let personId: string | undefined;
+      let bodyPassed = false;
+      const cleanupStatuses: number[] = [];
+      try {
+        const contributor = await request(http())
+          .post('/admin/contributors')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ displayName: `Bridged Person ${stamp}`, authorId })
+          .expect(201);
+        personId = (contributor.body as { id: string }).id;
+
+        // `GET /admin/authors/:id` `personId` наружу не отдаёт (`AdminAuthorItemDto`):
+        // то, что мост стоит, доказывает сам отказ удаления персоны ниже.
+        const refused = await request(http())
+          .delete(`/admin/contributors/${personId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(400);
+        expect((refused.body as { message: string }).message).toContain(
+          `1 legacy author records (ids: ${authorId}; unlink via DELETE /admin/authors/:id/person-link)`,
+        );
+
+        const unlinked = await request(http())
+          .delete(`/admin/authors/${authorId}/person-link`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        expect(unlinked.body).toMatchObject({ id: authorId, personId: null });
+
+        // Повторный вызов на снятом мосту — тот же ответ, не отказ.
+        await request(http())
+          .delete(`/admin/authors/${authorId}/person-link`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+
+        await request(http())
+          .delete(`/admin/contributors/${personId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        bodyPassed = true;
+      } finally {
+        // Уборка в обратном порядке: автор первым (его мост — единственное, что держит
+        // персону), персона — если сценарий оборвался до её удаления; 404 здесь и означает,
+        // что удаление в теле теста уже прошло.
+        cleanupStatuses.push(await cleanup(`/admin/authors/${authorId}`));
+        if (personId) cleanupStatuses.push(await cleanup(`/admin/contributors/${personId}`));
+      }
+      // Тело прошло — уборка обязана пройти тоже, иначе регресс удаления автора спрятался бы
+      // за зелёным прогоном.
+      if (bodyPassed) {
+        for (const status of cleanupStatuses) expect([200, 204, 404]).toContain(status);
+      }
+    });
+
+    it('404 на несуществующем авторе', async () => {
+      await request(http())
+        .delete('/admin/authors/00000000-0000-0000-0000-000000000000/person-link')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(404);
+    });
+
+    it('без токена отвечает 401, аутентифицированному без роли — 403', async () => {
+      const path = '/admin/authors/00000000-0000-0000-0000-000000000000/person-link';
+      await request(http()).delete(path).expect(401);
+      await request(http()).delete(path).set('Authorization', `Bearer ${readerToken}`).expect(403);
+    });
+  });
 });

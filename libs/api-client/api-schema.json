@@ -24484,6 +24484,46 @@
         ]
       }
     },
+    "/admin/authors/{id}/person-link": {
+      "delete": {
+        "description": "Обнуляет мост `Author.personId`. Повторный вызов на снятом мосту ничего не пишет. Нужен, чтобы удаление персоны (`DELETE /admin/contributors/:id`) перестало отказывать по связи с легаси-автором.",
+        "operationId": "AuthorController_unlinkPerson",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Author not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Unlink author from person (LEGACY-396)",
+        "tags": [
+          "authors"
+        ]
+      }
+    },
     "/admin/background-jobs": {
       "get": {
         "description": "Three states per mechanism: ACTIVE, DEGRADED (runs, but not the way it was designed to) and DISABLED, with a mandatory reason for the last two. Exists because three mechanisms in one week turned out never to have run, and none of them gave a sign: no error, no metric, no log line — the absence of work was indistinguishable from normal work. DISABLED here is not automatically a fault: a mechanism switched off by an environment flag is a decision, and only the reason tells the two apart.",

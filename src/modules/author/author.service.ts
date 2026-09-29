@@ -948,6 +948,41 @@ export class AuthorService {
     }, AUTHOR_DELETE_TX_OPTIONS);
   }
 
+  /**
+   * Снятие моста `Author.personId` (`LEGACY-396`, решение арбитра 29.09.2026). Мост
+   * присваивает только `ContributorsService.bridgeLegacyAuthor`, а снять его было нечем:
+   * поля нет в `UpdateAuthorDto`, и удаление персоны с таким автором отказывало навсегда
+   * (`PersonsService.remove`). Отдельная ручка, а не поле в DTO записи, — чтобы общий `PUT`
+   * не мог тихо переписать мост на другую персону мимо `bridgeLegacyAuthor`.
+   *
+   * Строка автора запирается первым оператором транзакции (`FOR NO KEY UPDATE`, как
+   * в `update`): встречная перестановка моста или удаление автора ждут замка, поэтому
+   * ответ всегда согласован с записью — `personId: null` либо 404, а не «200 с чужим
+   * мостом». Пишется ровно `personId: null`; на уже снятом мосту записи нет. Ответ тот же,
+   * что у `update`: автор с переводами и их `Seo`. Журнал не пишется: правка автора
+   * (`update`) его тоже не пишет (граница решения арбитра).
+   */
+  async unlinkPerson(id: string) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const locked = await tx.$queryRaw<{ id: string; personId: string | null }[]>`
+          SELECT id, "personId" FROM "Author" WHERE id = ${id} FOR NO KEY UPDATE`;
+        if (locked.length === 0) {
+          throw new NotFoundException(`Author with ID '${id}' not found`);
+        }
+
+        const include = { translations: { include: { seo: true } } };
+        if (locked[0].personId !== null) {
+          return tx.author.update({ where: { id }, data: { personId: null }, include });
+        }
+
+        return tx.author.findUniqueOrThrow({ where: { id }, include });
+      }, AUTHOR_UPDATE_TX_OPTIONS);
+    } catch (error) {
+      throw this.internalFailure('Failed to unlink author from person', error);
+    }
+  }
+
   async checkSlugExists(slug: string, language: Language, excludeId?: string) {
     const authorTrans = await this.prisma.authorTranslation.findFirst({
       where: this.buildTakenSlugWhere(slug, language, excludeId),

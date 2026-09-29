@@ -15,6 +15,7 @@ import { AdminAuditAction, AdminAuditTargetType, Language, Prisma } from '@prism
 interface PrismaStub {
   author: {
     findUnique: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
     findFirst: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
@@ -52,6 +53,7 @@ const createPrismaStub = (): PrismaStub => {
   const stub = {
     author: {
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -604,6 +606,102 @@ describe('AuthorService', () => {
 
       const [, options] = prisma.$transaction.mock.calls[0] as [unknown, unknown];
       expect(options).toEqual({ timeout: 30_000, maxWait: 10_000 });
+    });
+  });
+
+  /**
+   * `LEGACY-396` (решение арбитра 29.09.2026). Мост `Author.personId` снимается отдельной
+   * ручкой, а не полем `UpdateAuthorDto`: пишется ровно `personId: null`, подменить мост на
+   * другую персону ручка не может по построению.
+   */
+  describe('unlinkPerson (LEGACY-396)', () => {
+    const withTranslations = { include: { translations: { include: { seo: true } } } };
+    const unlinked = { id: 'auth1', personId: null, translations: [] };
+    const lockedRow = (personId: string | null) =>
+      prisma.$queryRaw.mockResolvedValueOnce([{ id: 'auth1', personId }]);
+
+    it('запирает строку первым оператором транзакции, обнуляет personId и отдаёт автора', async () => {
+      const order: string[] = [];
+      let lockSql = '';
+      prisma.$queryRaw.mockImplementationOnce((strings: unknown) => {
+        order.push('lock');
+        lockSql = Array.isArray(strings) ? strings.join('?') : '';
+        return Promise.resolve([{ id: 'auth1', personId: 'person-1' }]);
+      });
+      prisma.author.update.mockImplementationOnce(() => {
+        order.push('author.update');
+        return Promise.resolve(unlinked);
+      });
+
+      const result = await service.unlinkPerson('auth1');
+
+      // Текст замка сверяется здесь, а не внутри мока: отказ `expect` внутри `$queryRaw`
+      // уходил бы в `internalFailure` и выглядел бы как 500 без причины.
+      expect(lockSql).toContain('FOR NO KEY UPDATE');
+      expect(lockSql).toContain('"personId"');
+      expect(lockSql).toContain('"Author"');
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['lock', 'author.update']);
+      expect(prisma.author.update).toHaveBeenCalledTimes(1);
+      expect(prisma.author.update).toHaveBeenCalledWith({
+        where: { id: 'auth1' },
+        data: { personId: null },
+        ...withTranslations,
+      });
+      // Ответ — из самой записи, второго чтения под замком нет.
+      expect(prisma.author.findUniqueOrThrow).not.toHaveBeenCalled();
+      expect(result).toEqual(unlinked);
+    });
+
+    it('на уже снятом мосту ничего не пишет и отдаёт автора как есть', async () => {
+      lockedRow(null);
+      prisma.author.findUniqueOrThrow.mockResolvedValue(unlinked);
+
+      const result = await service.unlinkPerson('auth1');
+
+      expect(prisma.author.update).not.toHaveBeenCalled();
+      expect(prisma.author.findUniqueOrThrow).toHaveBeenCalledTimes(1);
+      expect(prisma.author.findUniqueOrThrow).toHaveBeenCalledWith({
+        where: { id: 'auth1' },
+        ...withTranslations,
+      });
+      expect(result).toEqual(unlinked);
+    });
+
+    it('отвечает 404, когда автора нет, и не пишет', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([]);
+
+      await expect(service.unlinkPerson('missing')).rejects.toThrow(NotFoundException);
+      expect(prisma.author.update).not.toHaveBeenCalled();
+      expect(prisma.author.findUniqueOrThrow).not.toHaveBeenCalled();
+    });
+
+    it('пишет только personId: другие поля автора ручке недоступны', async () => {
+      lockedRow('person-1');
+      prisma.author.update.mockResolvedValue(unlinked);
+
+      await service.unlinkPerson('auth1');
+
+      const [call] = prisma.author.update.mock.calls as Array<[{ data: Record<string, unknown> }]>;
+      expect(Object.keys(call[0].data)).toEqual(['personId']);
+    });
+
+    it('отказ базы после замка уходит через internalFailure, а не голым 500', async () => {
+      lockedRow('person-1');
+      prisma.author.update.mockRejectedValue(new Error('pool timeout'));
+
+      await expect(service.unlinkPerson('auth1')).rejects.toMatchObject({
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+      });
+    });
+
+    it('не пишет события журнала: правка автора его тоже не пишет', async () => {
+      lockedRow('person-1');
+      prisma.author.update.mockResolvedValue(unlinked);
+
+      await service.unlinkPerson('auth1');
+
+      expect(prisma.adminAuditEvent.create).not.toHaveBeenCalled();
     });
   });
 

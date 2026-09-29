@@ -14,6 +14,9 @@ import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service'
 import { paginated } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
+/** Сколько id легаси-авторов называет отказ удаления персоны (`LEGACY-396`). */
+export const LEGACY_AUTHOR_IDS_IN_REFUSAL = 5;
+
 @Injectable()
 export class PersonsService {
   constructor(
@@ -256,11 +259,21 @@ export class PersonsService {
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
 
-        const [versionContributorLinks, rightsProfileLinks, authorLinks, rightsClaimLinks] =
+        // Легаси-авторы читаются одним `findMany` с потолком N+1, а не `count` (`LEGACY-396`):
+        // у ручки снятия моста в пути стоит `:id` автора, а `GET /admin/authors*` `personId`
+        // наружу не отдают — без идентификаторов в отказе редактору нечего подставить. Один
+        // запрос вместо пары `count` + `findMany` — чтобы число и список не разошлись
+        // между двумя операторами; лишняя строка сверх потолка даёт честное «больше N».
+        const [versionContributorLinks, rightsProfileLinks, authorRows, rightsClaimLinks] =
           await Promise.all([
             tx.bookVersionContributor.count({ where: { personId: id } }),
             tx.rightsProfileContributor.count({ where: { personId: id } }),
-            tx.author.count({ where: { personId: id } }),
+            tx.author.findMany({
+              where: { personId: id },
+              select: { id: true },
+              orderBy: { id: 'asc' },
+              take: LEGACY_AUTHOR_IDS_IN_REFUSAL + 1,
+            }),
             tx.rightsClaim.count({ where: { claimantPersonId: id } }),
           ]);
 
@@ -268,14 +281,15 @@ export class PersonsService {
         // (`LEGACY-385`, «Recommended future action»): иначе разбор идёт по одной связи
         // за обращение.
         //
-        // ⚠️ Текст отказа **не обещает ручки снятия**, и это решение арбитра от 16.09.2026
-        // (`books-app-docs/ai-context/decisions-log.md`). Прежнее «Unlink them first» было
-        // ложью для двух связей из четырёх: `Author.personId` в API не обнуляет никто
-        // (`contributors.service.ts:62` только присваивает, поля нет в `UpdateAuthorDto`),
-        // а `RightsClaim.claimantPersonId` снимается `PATCH`-ем только у незакрытой
-        // претензии — закрытая неизменна (`rights-claims.service.ts:352-360`). Обнулять их
-        // отсюда нельзя: это правило чужого модуля и правовая семантика, а не механика
-        // удаления. Отсутствие путей снятия вынесено записью `LEGACY-396`.
+        // ⚠️ Текст отказа **обещает только те ручки снятия, которые есть** (решение арбитра
+        // 16.09.2026, `books-app-docs/ai-context/decisions-log.md`). Прежнее «Unlink them
+        // first» было ложью для двух связей из четырёх. С 29.09.2026 (`LEGACY-396`, решение
+        // арбитра) мост легаси-автора снимает `DELETE /admin/authors/:id/person-link`, и отказ
+        // называет её. `RightsClaim.claimantPersonId` по-прежнему снимается `PATCH`-ем только
+        // у незакрытой претензии — закрытая неизменна (`rights-claims.service.ts:338-342`),
+        // и это правовая семантика, а не механика удаления: путь снятия у закрытой
+        // претензии ждёт владельца (`LEGACY-396`). Обнулять связи отсюда нельзя — это
+        // правила чужих модулей.
         const blockers: string[] = [];
         if (versionContributorLinks > 0) {
           blockers.push(`${versionContributorLinks} book version contributor records`);
@@ -283,8 +297,15 @@ export class PersonsService {
         if (rightsProfileLinks > 0) {
           blockers.push(`${rightsProfileLinks} rights profile contributor records`);
         }
-        if (authorLinks > 0) {
-          blockers.push(`${authorLinks} legacy author records`);
+        if (authorRows.length > 0) {
+          const shown = authorRows.slice(0, LEGACY_AUTHOR_IDS_IN_REFUSAL);
+          const overflow = authorRows.length > LEGACY_AUTHOR_IDS_IN_REFUSAL;
+          const count = overflow ? `more than ${LEGACY_AUTHOR_IDS_IN_REFUSAL}` : `${shown.length}`;
+          const ids = shown.map((a) => a.id).join(', ') + (overflow ? ', …' : '');
+          blockers.push(
+            `${count} legacy author records (ids: ${ids}; ` +
+              'unlink via DELETE /admin/authors/:id/person-link)',
+          );
         }
         if (rightsClaimLinks > 0) {
           blockers.push(`${rightsClaimLinks} rights claim records as claimant`);

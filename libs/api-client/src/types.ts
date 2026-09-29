@@ -111,6 +111,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/authors/{id}/person-link': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Unlink author from person (LEGACY-396)
+     * @description Обнуляет мост `Author.personId`. Повторный вызов на снятом мосту ничего не пишет. Нужен, чтобы удаление персоны (`DELETE /admin/contributors/:id`) перестало отказывать по связи с легаси-автором.
+     */
+    delete: operations['AuthorController_unlinkPerson'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/background-jobs': {
     parameters: {
       query?: never;
@@ -12865,6 +12885,34 @@ export interface operations {
     responses: {
       /** @description Deleted; no body */
       204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AuthorController_unlinkPerson: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthorResponseDto'];
+        };
+      };
+      /** @description Author not found */
+      404: {
         headers: {
           [name: string]: unknown;
         };

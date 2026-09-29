@@ -174,8 +174,9 @@ export class AuthorDto {
 }
 
 /**
- * Форма ответа `POST /admin/authors` и `PUT /admin/authors/:id`
- * (`AuthorController.create`/`.update`, `author.controller.ts:65-94`) —
+ * Форма ответа `POST /admin/authors`, `PUT /admin/authors/:id` и
+ * `DELETE /admin/authors/:id/person-link` (`AuthorController.create`/`.update`/
+ * `.unlinkPerson`; последняя существует ради `personId: null` в теле, `LEGACY-396`) —
  * `Author` вместе с переводами, как их возвращает
  * `include: { translations: { include: { seo: true } } }`.
  */
