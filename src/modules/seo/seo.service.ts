@@ -1137,9 +1137,16 @@ export class SeoService {
     // Hreflangs — fetch all translations of this tag for complete hreflang set
     const allTagTranslations = await this.prisma.tagTranslation.findMany({
       where: { tagId: chosen.tagId },
+      // Порядок нужен `x-default`: при закрытом `en` он берётся первым из карты
+      // слагов (`generateHreflangLinks`), и без `orderBy` зависел бы от порядка строк.
+      orderBy: { language: 'asc' },
     });
     const slugsMap: Record<string, string> = {};
     for (const tr of allTagTranslations) {
+      // Перевод, закрытый собственным флагом, — `noindex` (`effectiveIndexable` выше),
+      // и в alternates соседей ему не место (`LEGACY-422`, `T73`). `autoIndexable` здесь
+      // не учитывается — прежний дефект, строка остатка `LEGACY-422`.
+      if (tr.indexable === false) continue;
       slugsMap[tr.language.toLowerCase()] = tr.slug;
     }
 

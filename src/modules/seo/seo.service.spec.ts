@@ -976,6 +976,55 @@ describe('SeoService (unit)', () => {
     });
   });
 
+  // `LEGACY-422`, `T73`: снятая в админке галочка перевода закрывает его страницу
+  // и убирает язык из alternates соседей — robots и hreflang решают одинаково.
+  describe('resolvePublic(tag) — translation closed by its own indexable', () => {
+    const tagId = 'tag-uuid-2';
+    const tagObj = { id: tagId, name: 'Love', indexable: true };
+    const tr = (language: Language, slug: string, indexable: boolean) => ({
+      id: `tt-${language}`,
+      tagId,
+      language,
+      slug,
+      name: slug,
+      indexable,
+      autoIndexable: true,
+    });
+    const all = [tr(Language.en, 'love', true), tr(Language.es, 'amor', false)];
+
+    it('drops the closed language from hreflangs of an open sibling', async () => {
+      prisma.tagTranslation.findMany
+        .mockResolvedValueOnce([{ ...all[0], tag: tagObj }])
+        .mockResolvedValueOnce(all);
+
+      const result = await service.resolvePublic('tag', 'love', { pathLang: Language.en });
+      const langs = (result.hreflangs as Array<{ hreflang: string }>).map((h) => h.hreflang);
+      expect(langs).toContain('en');
+      expect(langs).not.toContain('es');
+      // `x-default` при закрытом `en` берётся первым из карты слагов — порядок задаёт база.
+      expect(prisma.tagTranslation.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({ orderBy: { language: 'asc' } }),
+      );
+    });
+
+    const robotsOf = (result: Record<string, unknown>) =>
+      (result.meta as { robots: string }).robots;
+
+    it('serves the closed translation as noindex, the open one as index', async () => {
+      prisma.tagTranslation.findMany
+        .mockResolvedValueOnce([{ ...all[1], tag: tagObj }])
+        .mockResolvedValueOnce(all);
+      const closed = await service.resolvePublic('tag', 'amor', { pathLang: Language.es });
+      expect(robotsOf(closed)).toContain('noindex');
+
+      prisma.tagTranslation.findMany
+        .mockResolvedValueOnce([{ ...all[0], tag: tagObj }])
+        .mockResolvedValueOnce(all);
+      const open = await service.resolvePublic('tag', 'love', { pathLang: Language.en });
+      expect(robotsOf(open)).not.toContain('noindex');
+    });
+  });
+
   describe('resolvePublic fallback — no English translation', () => {
     it('x-default points to first available language', async () => {
       const categoryId = 'cat-no-en';

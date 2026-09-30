@@ -1316,7 +1316,9 @@ export class BookService {
           key: tag.key,
           slug: matchedTranslation?.slug ?? tag.slug,
           name: matchedTranslation?.name ?? tag.name,
-          indexable: tag.indexable,
+          // Флаг тега и перевода на этот язык (`LEGACY-422`, `T73`) — та же свёртка, что
+          // в `TagsService.list`: по нему фронт решает robots, когда SEO-бандл не ответил.
+          indexable: tag.indexable && matchedTranslation?.indexable !== false,
           isVisible: tag.isVisible,
           sortOrder: tag.sortOrder,
           booksCount: total,

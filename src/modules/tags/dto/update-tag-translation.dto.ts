@@ -34,9 +34,9 @@ export class UpdateTagTranslationDto {
   // ниже — описательные (`description`, `h1`, `metaTitle`, `faq` и прочие) — стоят над
   // nullable-колонками, и `null` в них валидатор пропускает.
   // ⚠️ Очисткой это становится не везде: `TagsService.updateTranslation` с 29.09.2026
-  // (`LEGACY-422`, `T69`) пишет девять полей контента, а `indexable`, `robots`
-  // и `canonicalUrl` по-прежнему не переносит в `data` — присланное значение теряется
-  // молча (`indexable` — за владельцем, тема №3). Найдено ревью 13.09.2026.
+  // (`LEGACY-422`, `T69`) пишет девять полей контента, с 30.09.2026 (`T73`) и `indexable`,
+  // а `robots` и `canonicalUrl` по-прежнему не переносит в `data` — присланное значение
+  // теряется молча (решение арбитра 30.09.2026). Найдено ревью 13.09.2026.
   // Решение арбитра 13.09.2026.
   @ValidateIf((_o, value) => value !== undefined)
   @IsString()
@@ -105,10 +105,10 @@ export class UpdateTagTranslationDto {
   @IsString()
   robots?: string;
 
-  // `TagTranslation.indexable` — тоже `NOT NULL` (`prisma/schema.prisma:782`), поэтому
-  // условие такое же, как у `name` и `slug` выше. Сегодня поле мёртвое —
-  // `TagsService.updateTranslation` его в `data` не переносит, — но `@IsOptional()` здесь
-  // был бы миной для того, кто начнёт его писать. Найдено ревью `books-tests` 13.09.2026.
+  // `TagTranslation.indexable` — тоже `NOT NULL` (`prisma/schema.prisma:798`), поэтому
+  // условие такое же, как у `name` и `slug` выше: с 30.09.2026 (`LEGACY-422`, `T73`)
+  // `TagsService.updateTranslation` пишет поле в `data`, и `@IsOptional()` пропустил бы
+  // `null` до пятисотого. Найдено ревью `books-tests` 13.09.2026.
   @ApiPropertyOptional({ description: 'Whether this tag should be indexed', default: true })
   @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()

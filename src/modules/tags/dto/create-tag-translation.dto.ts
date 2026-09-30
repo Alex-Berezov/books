@@ -105,10 +105,10 @@ export class CreateTagTranslationDto {
   @IsString()
   robots?: string;
 
-  // `TagTranslation.indexable` — `NOT NULL` (`prisma/schema.prisma:782`), поэтому `null`
-  // отбивается валидатором, а не Prisma (`LEGACY-363`, `STYLE_GUIDE.md` §7). Сегодня поле
-  // мёртвое — `createTranslation` его в `data` не переносит, — но `@IsOptional()` здесь
-  // был бы миной для того, кто начнёт его писать.
+  // `TagTranslation.indexable` — `NOT NULL` (`prisma/schema.prisma:798`), поэтому `null`
+  // отбивается валидатором, а не Prisma (`LEGACY-363`, `STYLE_GUIDE.md` §7): с 30.09.2026
+  // (`LEGACY-422`, `T73`) `createTranslation` пишет поле в `data`, и `@IsOptional()`
+  // пропустил бы `null` до пятисотого.
   @ApiPropertyOptional({ description: 'Whether this tag should be indexed', default: true })
   @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()

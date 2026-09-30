@@ -110,7 +110,8 @@ export class TagResponse {
    * безусловно — `indexable: item.indexable ?? true`, `isVisible: ... ?? true`,
    * `sortOrder: ... ?? 0`, `booksCount: countMap.get(item.id) || 0`
    * (`tags.service.ts:111-115`). Другого источника у `data[]` нет: и `GET /tags`,
-   * и `GET /{lang}/tags` идут через тот же `list`.
+   * и `GET /{lang}/tags` идут через тот же `list`. С `?lang` `indexable` — флаг тега
+   * **и** его перевода на этот язык (`LEGACY-422`, `T73`), без `lang` — флаг тега.
    *
    * 🔴 `booksCount` как необязательное поле останавливало машинную сверку
    * рукописных типов фронта со схемой на `GET /{lang}/tags` (`LEGACY-374`):

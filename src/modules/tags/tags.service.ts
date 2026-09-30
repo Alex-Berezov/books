@@ -101,6 +101,9 @@ export class TagsService {
               relatedCollectionSlugs: true,
               bookCount: true,
               autoIndexable: true,
+              // `LEGACY-422`, `T73`: редакционный флаг перевода пишется из админки, и карта
+              // сайта с hreflang решают по нему так же, как robots (`seo.service.ts`).
+              indexable: true,
             },
           },
         },
@@ -152,7 +155,11 @@ export class TagsService {
         name: item.name,
         slug: item.slug,
         key: item.key,
-        indexable: item.indexable ?? true,
+        // С `?lang` — индексируемость **в этом языке**: редакционный флаг перевода
+        // (`LEGACY-422`, `T73`) закрывает язык так же, как флаг тега, и главная, хаб
+        // `/tags` и карта сайта получают его через тот же `isTaxonomyLinkable`, что
+        // и `autoIndexable` выше. Без `lang` (админка) — флаг самого тега, как прежде.
+        indexable: (item.indexable ?? true) && langTranslation?.indexable !== false,
         isVisible: item.isVisible ?? true,
         sortOrder: item.sortOrder ?? 0,
         translations: item.translations.map((t) => ({
@@ -542,9 +549,10 @@ export class TagsService {
             bookCount: 0,
             autoIndexable: false,
             // `LEGACY-422`: девять полей контента пишутся в колонки перевода, как у категории
-            // (`CategoryService.createTranslation`). `indexable`, `robots`, `canonicalUrl`
-            // намеренно не пишутся: `indexable` включает рубильник sitemap/robots
-            // (`seo.service.ts`, тема владельца №3), две другие колонки никто не читает.
+            // (`CategoryService.createTranslation`), и `indexable` — если передан (`T73`,
+            // решение арбитра 30.09.2026; рождение в индекс держит `autoIndexable: false`
+            // выше). `robots` и `canonicalUrl` не пишутся: эти колонки никто не читает.
+            ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
             ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
             ...(dto.shortDescription !== undefined
               ? { shortDescription: dto.shortDescription }
@@ -634,6 +642,8 @@ export class TagsService {
             name: dto.name,
             slug: dto.slug,
             ...(dto.description !== undefined ? { description: dto.description } : {}),
+            // `LEGACY-422`, `T73`: как и в `createTranslation`; `robots`/`canonicalUrl` — нет.
+            ...(dto.indexable !== undefined ? { indexable: dto.indexable } : {}),
             ...(dto.h1 !== undefined ? { h1: dto.h1 } : {}),
             ...(dto.shortDescription !== undefined
               ? { shortDescription: dto.shortDescription }
