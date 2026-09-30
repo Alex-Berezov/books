@@ -30,6 +30,7 @@ interface PrismaStub {
   };
   tagTranslation: {
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
     findMany: jest.Mock;
     create: jest.Mock;
     delete: jest.Mock;
@@ -58,6 +59,7 @@ const createPrismaStub = (): PrismaStub => ({
   },
   tagTranslation: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     findMany: jest.fn().mockResolvedValue([]),
     create: jest.fn(),
     delete: jest.fn(),
@@ -168,6 +170,17 @@ describe('TagsService', () => {
       expect(tag?.langBookCount).toBe(2);
     });
 
+    // `T74`: `x-default` карты сайта берёт первый из `translations` при закрытом `en`
+    // (`usable[0]` во фронтовом `hreflang-alternates.ts`); без порядка он зависел бы от строк.
+    it('просит переводы в порядке языка, чтобы x-default не зависел от порядка строк', async () => {
+      await service.list(1, 20, undefined, Language.es);
+
+      const args = prisma.tag.findMany.mock.calls[0][0] as {
+        include: { translations: { orderBy: unknown } };
+      };
+      expect(args.include.translations.orderBy).toEqual({ language: 'asc' });
+    });
+
     it('leaves both fields undefined when lang is not passed', async () => {
       const res = await service.list(1, 20);
 
@@ -251,8 +264,7 @@ describe('TagsService', () => {
     // LEGACY-417. `relatedTagSlugs` и три соседних поля - `Json?` в базе, и Prisma
     // отдаёт их как есть. Правильная форма (массив строк) должна дойти до ответа
     // как `string[]`; не-массив - как `null`; массив с посторонними элементами -
-    // как `string[]` без них (тот же приём, что уже стоит на этой колонке
-    // в `book.service.ts` `toSlugArray`).
+    // как `string[]` без них (`parseRelatedSlugs`).
     it('parses related*Slugs Json into string[], filtering out non-string elements', async () => {
       prisma.tag.findMany.mockResolvedValue([
         {
@@ -309,6 +321,95 @@ describe('TagsService', () => {
       relatedGenreSlugs: null,
       relatedCategorySlugs: ['philosophy'],
       relatedCollectionSlugs: ['short-reads'],
+    });
+  });
+
+  // `LEGACY-417`/`LEGACY-422`, `T74`: `GET /:lang/tags/:slug/books` разбирает `related*Slugs`
+  // и сворачивает `indexable` тега с флагом перевода — так же, как `list` и `cards`.
+  describe('versionsByTagLangSlug: выдача тега (T74)', () => {
+    const arrange = (translation: Record<string, unknown>, tagIndexable = true) => {
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        ...translation,
+        tag: { id: 't1', name: 'Tag', slug: 'tag', isVisible: true, indexable: tagIndexable },
+        seo: null,
+        description: null,
+      });
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.count.mockResolvedValue(0);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+    };
+    const jsonColumns = {
+      relatedTagSlugs: ['a', 7],
+      relatedGenreSlugs: { not: 'an array' },
+      relatedCategorySlugs: null,
+      relatedCollectionSlugs: [],
+    };
+
+    it('отдаёт related*Slugs разобранными: массив строк или null', async () => {
+      arrange({ indexable: true, ...jsonColumns });
+
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag');
+
+      expect(res.tag.translation).toMatchObject({
+        relatedTagSlugs: ['a'],
+        relatedGenreSlugs: null,
+        relatedCategorySlugs: null,
+        relatedCollectionSlugs: [],
+      });
+    });
+
+    it('верхний indexable закрыт флагом перевода, даже когда тег открыт', async () => {
+      arrange({ indexable: false, ...jsonColumns }, true);
+
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag');
+
+      expect(res.tag.indexable).toBe(false);
+    });
+
+    it('верхний indexable закрыт флагом тега, даже когда перевод открыт', async () => {
+      arrange({ indexable: true, ...jsonColumns }, false);
+
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag');
+
+      expect(res.tag.indexable).toBe(false);
+    });
+
+    // Слаг из адреса не совпал ни с одним переводом: тег найден по базовому слагу, а флаг
+    // перевода берётся у **его** перевода на язык страницы, как в `cards`.
+    it('на запасном пути флаг перевода берётся по тегу и языку', async () => {
+      prisma.tagTranslation.findUnique.mockResolvedValue(null);
+      prisma.tag.findFirst.mockResolvedValue({
+        id: 't1',
+        name: 'Tag',
+        slug: 'fantasy',
+        isVisible: true,
+        indexable: true,
+      });
+      prisma.tagTranslation.findFirst.mockResolvedValue({
+        tagId: 't1',
+        indexable: false,
+        seo: null,
+        description: null,
+        ...jsonColumns,
+      });
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.count.mockResolvedValue(0);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      const res = await service.versionsByTagLangSlug(Language.ru, 'fantasy');
+
+      expect(prisma.tagTranslation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tagId: 't1', language: Language.ru } }),
+      );
+      expect(res.tag.indexable).toBe(false);
+    });
+
+    it('открыт, когда открыты оба флага', async () => {
+      arrange({ indexable: true, ...jsonColumns }, true);
+
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag');
+
+      expect(res.tag.indexable).toBe(true);
     });
   });
 

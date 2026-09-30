@@ -23,7 +23,9 @@ interface PrismaStub {
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock; findMany: jest.Mock };
   bookCategory: { findMany: jest.Mock };
-  bookTag: { findMany: jest.Mock };
+  bookTag: { findMany: jest.Mock; groupBy: jest.Mock };
+  tag: { findFirst: jest.Mock; findUnique: jest.Mock };
+  tagTranslation: { findUnique: jest.Mock; findFirst: jest.Mock };
   bookRating: {
     aggregate: jest.Mock;
     upsert: jest.Mock;
@@ -55,7 +57,12 @@ const createPrismaStub = (): PrismaStub => {
     bookSummary: { findFirst: jest.fn() },
     seo: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
     bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
-    bookTag: { findMany: jest.fn().mockResolvedValue([]) },
+    bookTag: {
+      findMany: jest.fn().mockResolvedValue([]),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+    tag: { findFirst: jest.fn(), findUnique: jest.fn() },
+    tagTranslation: { findUnique: jest.fn(), findFirst: jest.fn() },
     bookRating: {
       aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }),
       upsert: jest.fn(),
@@ -1492,5 +1499,140 @@ describe('BookService.remove (LEGACY-395)', () => {
 
     expect(adminAudit.record).toHaveBeenCalledTimes(1);
     expect(adminAudit.record.mock.calls[0][1]).toMatchObject({ actorUserId: null });
+  });
+});
+
+/**
+ * `LEGACY-417`/`LEGACY-422`, `T74`. Четыре `related*Slugs` — `Json?`-колонки: раньше они
+ * уходили в `overview` и в `cards` сырыми, и схема ответа их не сверяла. Теперь на выходе
+ * из базы каждая — массив строк или `null`; а `indexable` тега в `cards` — свёртка
+ * флага тега и флага перевода на язык страницы.
+ */
+describe('BookService: выдача тега (LEGACY-417, T74)', () => {
+  let prisma: PrismaStub;
+  let resolve: jest.Mock;
+  let service: BookService;
+
+  const rawColumns = {
+    relatedTagSlugs: ['a', 7],
+    relatedGenreSlugs: { not: 'an array' },
+    relatedCategorySlugs: null,
+    relatedCollectionSlugs: ['c'],
+  };
+  const parsedColumns = {
+    relatedTagSlugs: ['a'],
+    relatedGenreSlugs: null,
+    relatedCategorySlugs: null,
+    relatedCollectionSlugs: ['c'],
+  };
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    resolve = jest
+      .fn()
+      .mockResolvedValue({ tags: [], genres: [], categories: [], collections: [] });
+    service = new BookService(
+      prisma as unknown as PrismaService,
+      createGeoBlockRuleServiceStub(),
+      { resolve } as unknown as RelatedTaxonomyService,
+      createSlugRedirectStub(),
+      createModeratorRolesStub(),
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
+      { record: jest.fn() } as unknown as AdminAuditService,
+    );
+  });
+
+  describe('cards с includeTag', () => {
+    const arrange = (tagIndexable: boolean, translationIndexable: boolean) => {
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        id: 'tr-1',
+        tagId: 't1',
+        language: Language.en,
+        slug: 'tag',
+        name: 'Tag',
+        indexable: translationIndexable,
+        ...rawColumns,
+      });
+      prisma.tag.findUnique.mockResolvedValue({
+        id: 't1',
+        key: 'tag',
+        slug: 'tag',
+        name: 'Tag',
+        indexable: tagIndexable,
+        isVisible: true,
+        sortOrder: 0,
+      });
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.groupBy.mockResolvedValue([]);
+    };
+
+    it('отдаёт translation с разобранными related*Slugs', async () => {
+      arrange(true, true);
+
+      const res = await service.findCardsByTag('tag', Language.en, 1, 20, true);
+
+      expect(res.tag?.translation).toMatchObject(parsedColumns);
+      expect((res.tag?.translations as unknown[])[0]).toMatchObject(parsedColumns);
+    });
+
+    it('в «похожие» уходят те же разобранные слаги, пустой бакет — пустым массивом', async () => {
+      arrange(true, true);
+
+      await service.findCardsByTag('tag', Language.en, 1, 20, true);
+
+      expect(resolve).toHaveBeenCalledTimes(1);
+      expect(resolve).toHaveBeenCalledWith(Language.en, {
+        tags: ['a'],
+        genres: [],
+        categories: [],
+        collections: ['c'],
+      });
+    });
+
+    it.each([
+      [true, true, true],
+      [false, true, false],
+      [true, false, false],
+    ])('тег %s, перевод %s -> indexable %s', async (tagFlag, translationFlag, expected) => {
+      arrange(tagFlag, translationFlag);
+
+      const res = await service.findCardsByTag('tag', Language.en, 1, 20, true);
+
+      expect(res.tag?.indexable).toBe(expected);
+    });
+  });
+
+  describe('overview', () => {
+    it('отдаёт переводы тега с разобранными related*Slugs', async () => {
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-text-en',
+          language: Language.en,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+        },
+      ]);
+      prisma.bookTag.findMany.mockResolvedValue([
+        {
+          tagId: 't1',
+          tag: {
+            id: 't1',
+            slug: 'tag',
+            translations: [{ id: 'tr-1', language: Language.en, slug: 'tag', ...rawColumns }],
+          },
+        },
+      ]);
+
+      const res = await service.getOverview('slug-1', Language.en);
+
+      expect(res.tags[0].translations[0]).toMatchObject(parsedColumns);
+    });
   });
 });
