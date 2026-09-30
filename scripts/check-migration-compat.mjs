@@ -35,9 +35,12 @@ import {
   INDEX_HEADS,
   UNREADABLE_MARK,
   ident,
+  identName,
   qualifiedIdent,
+  dollarTagAt,
+  quotedTextEnd,
   startsWithHead,
-  stripSqlComments as stripComments,
+  stripSqlComments,
   tableKey,
   unwrapExecute,
 } from './lib/migration-sql.mjs';
@@ -46,11 +49,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = join(SCRIPT_DIR, '..');
 const ALLOWLIST_NAME = 'migration-compat-allowlist.json';
 
-/**
- * SQL без комментариев (`lib/migration-sql.mjs`). Флаг `legacyCompat` — прежний разбор сторожа
- * без изменений (LEGACY-397, решение арбитра 30.09.2026); снимается в LEGACY-427.
- */
-export const stripSqlComments = (sql) => stripComments(sql, { legacyCompat: true });
+export { stripSqlComments };
 
 /**
  * Обвязка блока PL/pgSQL, снятая с начала оператора. Идемпотентные миграции в проекте
@@ -95,9 +94,15 @@ function statements(sql) {
   let outer = '';
   let i = 0;
   while (i < clean.length) {
-    const open = /^\$(\w*)\$/.exec(clean.slice(i));
-    if (open) {
-      const tag = open[0];
+    // Литерал и идентификатор в кавычках переносятся целиком: `$$` внутри `'...'` — не тело.
+    if (clean[i] === "'" || clean[i] === '"') {
+      const end = quotedTextEnd(clean, i);
+      outer += clean.slice(i, end);
+      i = end;
+      continue;
+    }
+    const tag = dollarTagAt(clean, i);
+    if (tag) {
       const end = clean.indexOf(tag, i + tag.length);
       const stop = end === -1 ? clean.length : end;
       const body = clean.slice(i + tag.length, stop);
@@ -121,7 +126,8 @@ const SETS_SEARCH_PATH = /\bSET\s+(?:(?:LOCAL|SESSION)\s+)?search_path\b|\bset_c
 
 /** `ON <таблица>` у индекса: одна регулярка на `targetTable` и `constrainedColumns`. */
 const ON_TABLE = new RegExp(`\\bON\\s+(?:ONLY\\s+)?${qualifiedIdent}`, 'i');
-const ALTER_TABLE = new RegExp(`^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:IF\\s+EXISTS\\s+)?${qualifiedIdent}`, 'i');
+/** `ALTER TABLE [IF EXISTS] [ONLY] <таблица>` — порядок PostgreSQL (LEGACY-427: был обратный). */
+const ALTER_TABLE = new RegExp(`^ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)?${qualifiedIdent}`, 'i');
 const CREATE_TABLE = new RegExp(`^CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${qualifiedIdent}`, 'i');
 
 /** Идентификаторы в кавычках внутри куска SQL. */
@@ -604,6 +610,103 @@ const CASES = [
   {
     name: 'ограничение на саму созданную квалифицированную таблицу остаётся исключением',
     sql: 'CREATE TABLE "public"."NewTable" ("id" INTEGER);\nALTER TABLE "public"."NewTable" ADD CONSTRAINT "c" CHECK ("id" > 0);',
+    expect: [],
+  },
+
+  // --- LEGACY-427: формы ручной миграции, которых Prisma не пишет ---
+  {
+    name: 'ALTER TABLE IF EXISTS ONLY: новая колонка одной таблицы не прикрывает ограничение на другой',
+    sql: 'ALTER TABLE IF EXISTS ONLY "A" ADD COLUMN "c" TEXT;\nALTER TABLE IF EXISTS ONLY "B" ADD CONSTRAINT "u" UNIQUE ("c");',
+    expect: ['ADD CONSTRAINT'],
+  },
+  {
+    name: 'ALTER TABLE IF EXISTS ONLY: ограничение на новую колонку той же таблицы — исключение',
+    sql: 'ALTER TABLE IF EXISTS ONLY "A" ADD COLUMN "c" TEXT;\nALTER TABLE IF EXISTS ONLY "A" ADD CONSTRAINT "u" UNIQUE ("c");',
+    expect: [],
+  },
+  {
+    name: 'имя без кавычек сворачивается в нижний регистр: CREATE TABLE Foo не прикрывает "Foo"',
+    sql: 'CREATE TABLE Foo ("id" INTEGER);\nCREATE UNIQUE INDEX "i" ON "Foo"("x");',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'имя без кавычек: CREATE TABLE Foo и ALTER TABLE foo — одна таблица',
+    sql: 'CREATE TABLE Foo ("id" INTEGER);\nALTER TABLE foo ADD CONSTRAINT "c" CHECK ("id" > 0);',
+    expect: [],
+  },
+  {
+    name: 'схема без кавычек в верхнем регистре: PUBLIC."Foo" и "Foo" — одна таблица',
+    sql: 'CREATE TABLE PUBLIC."Foo" ("id" INTEGER);\nALTER TABLE "Foo" ADD CONSTRAINT "c" CHECK ("id" > 0);',
+    expect: [],
+  },
+  {
+    name: 'пробелы вокруг точки: схема не становится таблицей',
+    sql: 'CREATE TABLE "public" . "New" ("id" INTEGER);\nCREATE UNIQUE INDEX "i" ON "public" . "Live"("x");',
+    expect: ['CREATE UNIQUE INDEX'],
+  },
+  {
+    name: 'пробелы вокруг точки: ограничение на саму созданную таблицу — исключение',
+    sql: 'CREATE TABLE "public" . "New" ("id" INTEGER);\nALTER TABLE "public" . "New" ADD CONSTRAINT "c" CHECK ("id" > 0);',
+    expect: [],
+  },
+  {
+    name: 'комментарий перед DDL внутри $$-блока не прячет оператор',
+    sql: 'DO $$ BEGIN\n-- колонка больше не нужна\nALTER TABLE "Book" DROP COLUMN "x";\nEND $$;',
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: 'апостроф в $$-строке не прячет комментарий и DDL за ней',
+    sql: 'COMMENT ON COLUMN "Book"."x" IS $$Author\'s name$$;\n-- drop y\nALTER TABLE "Book" DROP COLUMN "y";',
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: 'апостроф во вложенной $m$-строке DO-блока не прячет DDL за блоком',
+    sql: 'DO $$ BEGIN RAISE NOTICE $m$it\'s$m$; END $$;\n/* why */ DROP TABLE "Old";',
+    expect: ['DROP TABLE'],
+  },
+  {
+    name: '-- внутри $$-строки не съедает закрывающий тег',
+    sql: 'COMMENT ON TABLE "Book" IS $$see -- docs$$;\nALTER TABLE "Book" DROP COLUMN "y";',
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: "E'...' с \\' не склеивает операторы",
+    sql: "COMMENT ON COLUMN \"Book\".\"x\" IS E'it\\'s; ok';\nALTER TABLE \"Book\" DROP COLUMN \"y\";",
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: "обычный литерал: \\ не экранирует — '\\' закрыт",
+    sql: "COMMENT ON COLUMN \"Book\".\"x\" IS 'C:\\';\nALTER TABLE \"Book\" DROP COLUMN \"y\";",
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: '$$ внутри литерала не открывает тело и не прячет DDL',
+    sql: 'ALTER TABLE "Book" ADD COLUMN "p" TEXT DEFAULT \'$$\';\nALTER TABLE "Book" DROP COLUMN "y";\nDO $$ BEGIN RAISE NOTICE \'x\'; END $$;',
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: '$$ внутри имени в кавычках не открывает тело',
+    sql: 'ALTER TABLE "Book" ADD COLUMN "a$$" TEXT;\nALTER TABLE "Book" DROP COLUMN "y";',
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: 'имя таблицы с "" не склеивается с другой по первой кавычке',
+    sql: 'CREATE TABLE "a""b" ("id" INTEGER);\nALTER TABLE "a""c" ADD CONSTRAINT "k" CHECK ("id" > 0);',
+    expect: ['ADD CONSTRAINT'],
+  },
+  {
+    name: '$$ в литерале не сбивает границы тела DO: DROP INDEX за EXECUTE виден',
+    sql: 'ALTER TABLE "Book" ADD COLUMN "p" TEXT DEFAULT \'$$\';\nDO $$ BEGIN EXECUTE \'DROP INDEX "i"\'; END $$;',
+    expect: ['DROP INDEX'],
+  },
+  {
+    name: 'EXECUTE с несколькими операторами в литерале: DDL внутри виден',
+    sql: 'DO $$ BEGIN EXECUTE \'ALTER TABLE "a" ADD COLUMN "q" INT; ALTER TABLE "b" DROP COLUMN "y"\'; END $$;',
+    expect: ['DROP COLUMN'],
+  },
+  {
+    name: 'блочный комментарий вплотную не склеивает ALTER TABLE с именем',
+    sql: 'ALTER TABLE/* x */"New" ADD CONSTRAINT "c" CHECK ("id" > 0);\nCREATE TABLE "New" ("id" INTEGER);',
     expect: [],
   },
 ];

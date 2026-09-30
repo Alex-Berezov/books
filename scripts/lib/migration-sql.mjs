@@ -1,8 +1,9 @@
 // LEGACY-397: what both migration parsers (drift-check.mjs, check-migration-compat.mjs) must agree
 // on — the index DDL heads, the marker for DDL that cannot be read, the EXECUTE unwrap inside a DO
-// block, and the lexing under all of it: comments, statement splitting. The qualified table name
-// (qualifiedIdent, tableKey) is check-migration-compat's only: drift-check still reads names with
-// its own pattern (LEGACY-397). Before this file each script kept its own copy; the unwrap landed in drift-check (LEGACY-367) and
+// block, and the lexing under all of it: quoted text (quotedTextEnd), comments, statement splitting,
+// comma lists. The qualified table name (qualifiedIdent, identName, tableKey) is
+// check-migration-compat's only: drift-check still reads names with its own pattern (LEGACY-397).
+// Before this file each script kept its own copy; the unwrap landed in drift-check (LEGACY-367) and
 // never reached check-migration-compat, which kept passing such migrations. What each script then
 // does with a statement (model it, flag it) stays in that script, and so does its DO-block
 // expansion: drift-check flattens a block into marked text, check-migration-compat into statements
@@ -45,96 +46,90 @@ export function unwrapExecute(body, { mark = '', keepOther = false, isUnreadable
 }
 
 /**
+ * Index just past the literal or quoted identifier that opens at `i`, read the way PostgreSQL lexes
+ * it (LEGACY-427): `'...'` with `''`, `E'...'` with backslash escapes as well, `"..."` with `""`.
+ * Before, each lexer flipped an in-literal flag on every quote, and `E'it\'s'` left it open to the
+ * end of the file: the rest of the migration read as one literal, its DDL unseen.
+ */
+function quotedEnd(sql, i) {
+  const q = sql[i];
+  const escapes = q === "'" && /(?:^|[^\w$])[Ee]$/.test(sql.slice(Math.max(0, i - 2), i));
+  let j = i + 1;
+  while (j < sql.length) {
+    if (escapes && sql[j] === '\\') j += 2;
+    else if (sql[j] === q && sql[j + 1] === q) j += 2;
+    else if (sql[j] === q) return j + 1;
+    else j += 1;
+  }
+  return sql.length;
+}
+
+/**
+ * The `$tag$` that opens a dollar-quoted body at `i`, or null. The tag follows the identifier rule —
+ * `$1$` is a positional parameter, not a tag — and `a$b$c` is one identifier, not a body.
+ */
+export const dollarTagAt = (sql, i) =>
+  sql[i] === '$' && !/[\w$]/.test(sql[i - 1] ?? '')
+    ? (/^\$(?:[A-Za-z_][\w]*)?\$/.exec(sql.slice(i, i + 64)) || [null])[0]
+    : null;
+
+/**
+ * Index just past the literal, quoted identifier or dollar-quoted body that opens at `i`, or -1 when
+ * none opens there. The one place every scanner here skips over quoted text.
+ */
+export function quotedTextEnd(sql, i) {
+  if (sql[i] === "'" || sql[i] === '"') return quotedEnd(sql, i);
+  const tag = dollarTagAt(sql, i);
+  if (!tag) return -1;
+  const end = sql.indexOf(tag, i + tag.length);
+  return end === -1 ? sql.length : end + tag.length;
+}
+
+/**
  * SQL without comments, character by character: `--` or `/*` inside a string literal or a quoted
  * identifier is not a comment, and a regex would eat half the statement with it. A block comment
- * is removed without a trace, as drift-check did before the merge. Comments inside a dollar-quoted body are stripped too: that body is the PL/pgSQL of a `DO` block,
- * and DDL inside it is DDL all the same.
+ * becomes a space, as PostgreSQL reads it — `ALTER TABLE/* x *\/"Book"` must stay two tokens.
  *
- * `legacyCompat` returns what check-migration-compat did before the merge, unchanged: dollar-quoted
- * bodies kept as written with their comments, a backslash as an escape in every literal, `"` not
- * tracked (LEGACY-397, arbiter decision 30.09.2026). LEGACY-427 drops the flag.
+ * A dollar-quoted body `$tag$ ... $tag$` ends at its own tag whatever it contains, and is stripped
+ * on its own: it is the PL/pgSQL of a `DO` block, where DDL is DDL all the same, and a statement led
+ * by a comment there (`-- why` + `ALTER TABLE`) would not start with its head. Stripping the body
+ * separately keeps a stray `'` or `--` inside it from reaching past its closing tag; in a body that
+ * is plain text (`COMMENT ... IS $$...$$`) the text may lose a piece, which no detector reads.
  *
  * @param {string} sql
- * @param {{ legacyCompat?: boolean }} [opts]
  */
-export function stripSqlComments(sql, { legacyCompat = false } = {}) {
-  if (legacyCompat) return stripSqlCommentsCompat(sql);
+export function stripSqlComments(sql) {
   let out = '';
   let i = 0;
-  let inS = false,
-    inD = false;
   while (i < sql.length) {
     const c = sql[i],
       n = sql[i + 1];
-    if (!inS && !inD) {
-      if (c === '-' && n === '-') {
-        while (i < sql.length && sql[i] !== '\n') i++;
-        continue;
-      }
-      if (c === '/' && n === '*') {
-        i += 2;
-        while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
-        i += 2;
-        continue;
-      }
-    }
-    if (!inD && c === "'") inS = !inS;
-    else if (!inS && c === '"') inD = !inD;
-    out += c;
-    i++;
-  }
-  return out;
-}
-
-/** check-migration-compat.mjs stripSqlComments as it was before the merge, behind `legacyCompat`. */
-function stripSqlCommentsCompat(sql) {
-  let out = '';
-  let i = 0;
-  while (i < sql.length) {
-    const two = sql.slice(i, i + 2);
-    if (two === '--') {
-      const nl = sql.indexOf('\n', i);
-      i = nl === -1 ? sql.length : nl;
+    if (c === '-' && n === '-') {
+      while (i < sql.length && sql[i] !== '\n') i++;
       continue;
     }
-    if (two === '/*') {
+    if (c === '/' && n === '*') {
       const end = sql.indexOf('*/', i + 2);
       i = end === -1 ? sql.length : end + 2;
       out += ' ';
       continue;
     }
-    if (sql[i] === "'") {
-      const start = i;
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === '\\' && sql[i + 1] !== undefined) {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'" && sql[i + 1] === "'") {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'") {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      out += sql.slice(start, i);
+    if (c === "'" || c === '"') {
+      const end = quotedEnd(sql, i);
+      out += sql.slice(i, end);
+      i = end;
       continue;
     }
-    const dollar = /^\$(\w*)\$/.exec(sql.slice(i));
-    if (dollar) {
-      const tag = dollar[0];
+    const tag = dollarTagAt(sql, i);
+    if (tag) {
       const end = sql.indexOf(tag, i + tag.length);
-      const stop = end === -1 ? sql.length : end + tag.length;
-      out += sql.slice(i, stop);
-      i = stop;
+      const stop = end === -1 ? sql.length : end;
+      out += tag + stripSqlComments(sql.slice(i + tag.length, stop)) + (end === -1 ? '' : tag);
+      i = end === -1 ? sql.length : end + tag.length;
       continue;
     }
-    out += sql[i];
-    i += 1;
+    out += c;
+    i++;
   }
   return out;
 }
@@ -147,56 +142,74 @@ function stripSqlCommentsCompat(sql) {
  */
 export function splitStatements(sql) {
   const stmts = [];
-  let cur = '',
-    inS = false,
-    inD = false,
-    dollar = null;
-  for (let i = 0; i < sql.length; i++) {
-    const c = sql[i];
-    if (dollar) {
-      cur += c;
-      if (sql.startsWith(dollar, i)) {
-        cur += sql.slice(i + 1, i + dollar.length);
-        i += dollar.length - 1;
-        dollar = null;
-      }
+  let start = 0;
+  let i = 0;
+  while (i < sql.length) {
+    const quoted = quotedTextEnd(sql, i);
+    if (quoted !== -1) {
+      i = quoted;
       continue;
     }
-    const dm = /^\$\w*\$/.exec(sql.slice(i));
-    if (!inS && !inD && dm) {
-      dollar = dm[0];
-      cur += dollar;
-      i += dollar.length - 1;
-      continue;
+    if (sql[i] === ';') {
+      stmts.push(sql.slice(start, i));
+      start = i + 1;
     }
-    if (!inD && c === "'") inS = !inS;
-    else if (!inS && c === '"') inD = !inD;
-    if (c === ';' && !inS && !inD) {
-      stmts.push(cur);
-      cur = '';
-      continue;
-    }
-    cur += c;
+    i++;
   }
-  if (cur.trim()) stmts.push(cur);
+  stmts.push(sql.slice(start));
   return stmts.map((s) => s.trim()).filter(Boolean);
 }
 
+/**
+ * Items of a list, split on commas outside parentheses, literals, quoted identifiers and
+ * dollar-quoted bodies (`quotedTextEnd`).
+ */
+export function splitTopLevelCommas(s) {
+  const parts = [];
+  let start = 0,
+    depth = 0,
+    i = 0;
+  while (i < s.length) {
+    const quoted = quotedTextEnd(s, i);
+    if (quoted !== -1) {
+      i = quoted;
+      continue;
+    }
+    const c = s[i];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (c === ',' && depth === 0) {
+      parts.push(s.slice(start, i));
+      start = i + 1;
+    }
+    i++;
+  }
+  parts.push(s.slice(start));
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
 /** An identifier, quoted or bare, as a regex source. */
-export const ident = '(?:"[^"]+"|\\w+)';
+export const ident = '(?:"(?:[^"]|"")+"|\\w+)';
 
 /**
- * A table name, possibly schema-qualified: `"public"."Book"`, `public.Book`, bare `Book`. Two
- * groups — schema (may be absent) and table. Before LEGACY-423 only the first part was taken, and
- * `"public"."X"` became `public`: the schema was mistaken for the table.
+ * A table name, possibly schema-qualified: `"public"."Book"`, `public.Book`, bare `Book`,
+ * `"public" . "Book"` (PostgreSQL allows spaces around the dot — LEGACY-427). Two groups — schema
+ * (may be absent) and table. Before LEGACY-423 only the first part was taken, and `"public"."X"`
+ * became `public`: the schema was mistaken for the table.
  */
-export const qualifiedIdent = `(?:(${ident})\\.)?(${ident})`;
+export const qualifiedIdent = `(?:(${ident})\\s*\\.\\s*)?(${ident})`;
 
-export const unquote = (name) => name.replace(/"/g, '');
+/**
+ * The name PostgreSQL stores for an identifier: quoted — as written, `""` undone; bare — folded to
+ * lower case (LEGACY-427: `CREATE TABLE Foo` creates `foo`, not `"Foo"`).
+ */
+export const identName = (name) =>
+  name.startsWith('"') ? name.slice(1, -1).replace(/""/g, '"') : name.toLowerCase();
 
 /**
  * Table key `schema.table` from a `qualifiedIdent` match whose schema group is `at`. One bare name
  * would glue `"audit"."Like"` to `"public"."Like"`. A bare name gets `bareSchema`: `public`, or an
  * unknown `?` when the migration sets `search_path` — such a key matches no qualified one.
  */
-export const tableKey = (m, at, bareSchema) => `${m[at] ? unquote(m[at]) : bareSchema}.${unquote(m[at + 1])}`;
+export const tableKey = (m, at, bareSchema) =>
+  `${m[at] ? identName(m[at]) : bareSchema}.${identName(m[at + 1])}`;

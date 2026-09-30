@@ -33,6 +33,7 @@ import {
   INDEX_DDL_HEAD,
   UNREADABLE_MARK,
   splitStatements,
+  splitTopLevelCommas,
   startsWithHead,
   stripSqlComments,
   unwrapExecute,
@@ -244,30 +245,6 @@ function inlineDoBlocks(sql) {
     b = b.replace(/\bEND\s*$/i, ' ');
     return `\n${b}\n`;
   });
-}
-
-function splitTopLevelCommas(s) {
-  const parts = [];
-  let cur = '',
-    depth = 0,
-    inS = false,
-    inD = false;
-  for (const c of s) {
-    if (!inD && c === "'") inS = !inS;
-    else if (!inS && c === '"') inD = !inD;
-    if (!inS && !inD) {
-      if (c === '(') depth++;
-      else if (c === ')') depth--;
-      else if (c === ',' && depth === 0) {
-        parts.push(cur);
-        cur = '';
-        continue;
-      }
-    }
-    cur += c;
-  }
-  if (cur.trim()) parts.push(cur);
-  return parts.map((p) => p.trim()).filter(Boolean);
 }
 
 const CONSTRAINT_START = /^(CONSTRAINT|PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|EXCLUDE|LIKE)\b/i;
@@ -2112,6 +2089,46 @@ END $$;`,
   {
     name: 'index created by migration, absent from schema',
     extraMigration: 'CREATE INDEX "Book_title_idx" ON "Book"("title");',
+    expect: ['index drift'],
+  },
+  {
+    // LEGACY-427: the shared lexer (lib/migration-sql.mjs). A `'` inside a $$ string used to open
+    // a "literal" to the end of the file, and the comment after it led the next statement.
+    name: "lexer: an apostrophe in a $$ string does not hide the statement after it",
+    extraMigration: 'COMMENT ON TABLE "Book" IS $$Author\'s$$;\n-- note\nCREATE INDEX "Book_title_idx" ON "Book"("title");',
+    expect: ['index drift'],
+  },
+  {
+    name: "lexer: E'...' with \\' does not glue the next statement",
+    extraMigration: "COMMENT ON TABLE \"Book\" IS E'it\\'s; ok';\nCREATE INDEX \"Book_title_idx\" ON \"Book\"(\"title\");",
+    expect: ['index drift'],
+  },
+  {
+    name: "lexer: a comma inside E'...' does not split an ALTER TABLE action list",
+    schema: (s) =>
+      mustReplace(s, '  title     String\n', '  title     String\n  note      String?\n  extra     String?\n'),
+    extraMigration: "ALTER TABLE \"Book\" ADD COLUMN \"note\" TEXT DEFAULT E'it\\'s, ok', ADD COLUMN \"extra\" TEXT;",
+    expect: [],
+  },
+  {
+    name: "lexer: a backslash does not escape in a plain '...' literal",
+    extraMigration: "COMMENT ON TABLE \"Book\" IS 'C:\\';\nCREATE INDEX \"Book_title_idx\" ON \"Book\"(\"title\");",
+    expect: ['index drift'],
+  },
+  {
+    name: 'lexer: $1$ is a parameter, not a dollar tag that swallows the rest',
+    extraMigration: 'SELECT $1$;\nCREATE INDEX "Book_title_idx" ON "Book"("title");',
+    expect: ['index drift'],
+  },
+  {
+    name: 'lexer: a$$b is one identifier, not a dollar tag that swallows the next statement',
+    extraMigration:
+      'SELECT a$$b;\nCREATE INDEX "Book_title_idx" ON "Book"("title");\nCOMMENT ON TABLE "Book" IS $$x$$;',
+    expect: ['index drift'],
+  },
+  {
+    name: 'lexer: a -- inside a $$ string does not eat its closing tag',
+    extraMigration: 'COMMENT ON TABLE "Book" IS $$see -- docs$$;\nCREATE INDEX "Book_title_idx" ON "Book"("title");',
     expect: ['index drift'],
   },
   {
