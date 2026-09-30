@@ -126,6 +126,7 @@ const createPrismaStub = (): PrismaStub => {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn().mockResolvedValue(createClaim()),
+      findUniqueOrThrow: jest.fn().mockResolvedValue(createClaim()),
       create: jest
         .fn()
         .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
@@ -512,6 +513,131 @@ describe('RightsClaimsService', () => {
     await expect(
       service.update('claim-1', { internalNotesRu: 'Архивная заметка' }, 'user-1'),
     ).resolves.toBeDefined();
+  });
+
+  // --- unlinkClaimantPerson (`LEGACY-396`, пачка `T72`) --------------------
+
+  it('снимает заявителя у закрытой претензии и пишет UPDATED с прежним id', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ claimantPersonId: 'person-1' }]);
+    prisma.rightsClaim.update.mockResolvedValue(
+      createClaim({ status: RightsClaimStatus.CLOSED, claimantPersonId: null }),
+    );
+
+    const detail = await service.unlinkClaimantPerson('claim-1', 'admin-1');
+
+    // Пишется ровно одно поле одним вызовом: ручка не правит закрытую претензию ни в чём,
+    // кроме заявителя. Без счётчика второй `update` (скажем, статуса) прошёл бы зелёным.
+    expect(prisma.rightsClaim.update).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaim.update).toHaveBeenCalledWith({
+      where: { id: 'claim-1' },
+      data: { claimantPersonId: null },
+    });
+    expect(prisma.rightsClaimEvent.create).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaimEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        rightsClaimId: 'claim-1',
+        eventType: RightsClaimEventType.UPDATED,
+        previousStatus: RightsClaimStatus.CLOSED,
+        currentStatus: RightsClaimStatus.CLOSED,
+        createdByUserId: 'admin-1',
+        payload: {
+          changedFields: ['claimantPersonId'],
+          previousClaimantPersonId: 'person-1',
+          reason: 'claimant-unlink',
+        },
+      }),
+    });
+    expect(detail.claimantPersonId).toBeNull();
+  });
+
+  it('снимает заявителя и у открытой претензии: статус ручку не ограничивает', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ claimantPersonId: 'person-1' }]);
+    prisma.rightsClaim.update.mockResolvedValue(
+      createClaim({ status: RightsClaimStatus.UNDER_REVIEW, claimantPersonId: null }),
+    );
+
+    await service.unlinkClaimantPerson('claim-1', 'admin-1');
+
+    expect(prisma.rightsClaim.update).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaimEvent.create).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaimEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        eventType: RightsClaimEventType.UPDATED,
+        currentStatus: RightsClaimStatus.UNDER_REVIEW,
+      }),
+    });
+  });
+
+  it('запись заявителя и событие идут клиентом транзакции, а не корневым', async () => {
+    const tx = createPrismaStub();
+    tx.$queryRaw.mockResolvedValue([{ claimantPersonId: 'person-1' }]);
+    prisma.$transaction = async <T>(callback: (transaction: PrismaStub) => Promise<T>) =>
+      callback(tx);
+
+    await service.unlinkClaimantPerson('claim-1', 'admin-1');
+
+    // Запись мимо `transaction` ушла бы по другому соединению: при сбое события заявитель
+    // оказался бы снят без строки в журнале — без того аудита, ради которого ручка и заведена.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.rightsClaim.update).toHaveBeenCalledTimes(1);
+    expect(tx.rightsClaimEvent.create).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(prisma.rightsClaim.update).not.toHaveBeenCalled();
+    expect(prisma.rightsClaimEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('на снятом заявителе ничего не пишет и события не заводит', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ claimantPersonId: null }]);
+    prisma.rightsClaim.findUniqueOrThrow.mockResolvedValue(
+      createClaim({ status: RightsClaimStatus.CLOSED }),
+    );
+
+    const detail = await service.unlinkClaimantPerson('claim-1', 'admin-1');
+
+    expect(prisma.rightsClaim.findUniqueOrThrow).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaim.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: 'claim-1' } });
+    expect(detail).toMatchObject({ id: 'claim-1', claimantPersonId: null });
+    expect(prisma.rightsClaim.update).not.toHaveBeenCalled();
+    expect(prisma.rightsClaimEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('сбой записи события не глотается: ошибка уходит из транзакции наружу', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ claimantPersonId: 'person-1' }]);
+    prisma.rightsClaimEvent.create.mockRejectedValue(new Error('event insert failed'));
+
+    // Откат делает `$transaction`, а он получает отказ только если колбэк его не проглотил:
+    // заявитель без строки в журнале — ровно то, от чего эта ручка и заведена.
+    await expect(service.unlinkClaimantPerson('claim-1', 'admin-1')).rejects.toThrow(
+      'event insert failed',
+    );
+  });
+
+  it('отвечает 404 на отсутствующую претензию', async () => {
+    prisma.$queryRaw.mockResolvedValue([]);
+
+    await expect(service.unlinkClaimantPerson('claim-404', 'admin-1')).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(prisma.rightsClaim.update).not.toHaveBeenCalled();
+    expect(prisma.rightsClaimEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('запирает строку претензии FOR NO KEY UPDATE до записи', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ claimantPersonId: 'person-1' }]);
+
+    await service.unlinkClaimantPerson('claim-1', 'admin-1');
+
+    // Без замка встречный PATCH мог сменить заявителя между чтением и записью, и в событие
+    // ушёл бы не тот id, который на самом деле снят.
+    const calls = prisma.$queryRaw.mock.calls as Array<[{ raw?: readonly string[] }, ...unknown[]]>;
+    expect(calls).toHaveLength(1);
+    const template = (calls[0][0]?.raw ?? []).join(' ');
+    expect(template).toContain('FOR NO KEY UPDATE');
+    expect(template).toContain('"RightsClaim"');
+    expect(calls[0][1]).toBe('claim-1');
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.rightsClaim.update.mock.invocationCallOrder[0],
+    );
   });
 
   // --- status transitions -------------------------------------------------

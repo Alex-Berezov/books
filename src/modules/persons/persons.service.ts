@@ -14,8 +14,24 @@ import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service'
 import { paginated } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
-/** Сколько id легаси-авторов называет отказ удаления персоны (`LEGACY-396`). */
-export const LEGACY_AUTHOR_IDS_IN_REFUSAL = 5;
+/**
+ * Сколько id держателей связи — легаси-авторов и претензий — называет отказ удаления
+ * персоны (`LEGACY-396`).
+ */
+export const LINKED_IDS_IN_REFUSAL = 5;
+
+/**
+ * Число и список id для отказа по выборке с потолком `LINKED_IDS_IN_REFUSAL + 1`: лишняя
+ * строка сверх потолка даёт честное «больше N» и многоточие в списке.
+ */
+function describeLinkedIds(rows: { id: string }[]): { count: string; ids: string } {
+  const shown = rows.slice(0, LINKED_IDS_IN_REFUSAL);
+  const overflow = rows.length > LINKED_IDS_IN_REFUSAL;
+  return {
+    count: overflow ? `more than ${LINKED_IDS_IN_REFUSAL}` : `${shown.length}`,
+    ids: shown.map((row) => row.id).join(', ') + (overflow ? ', …' : ''),
+  };
+}
 
 @Injectable()
 export class PersonsService {
@@ -259,12 +275,12 @@ export class PersonsService {
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
 
-        // Легаси-авторы читаются одним `findMany` с потолком N+1, а не `count` (`LEGACY-396`):
-        // у ручки снятия моста в пути стоит `:id` автора, а `GET /admin/authors*` `personId`
-        // наружу не отдают — без идентификаторов в отказе редактору нечего подставить. Один
-        // запрос вместо пары `count` + `findMany` — чтобы число и список не разошлись
-        // между двумя операторами; лишняя строка сверх потолка даёт честное «больше N».
-        const [versionContributorLinks, rightsProfileLinks, authorRows, rightsClaimLinks] =
+        // Легаси-авторы и претензии читаются одним `findMany` с потолком N+1, а не `count`
+        // (`LEGACY-396`): у ручек снятия в пути стоит `:id` автора или претензии, а искать
+        // держателя связи по персоне редактору нечем — без идентификаторов в отказе ему
+        // нечего подставить. Один запрос вместо пары `count` + `findMany` — чтобы число
+        // и список не разошлись между двумя операторами.
+        const [versionContributorLinks, rightsProfileLinks, authorRows, rightsClaimRows] =
           await Promise.all([
             tx.bookVersionContributor.count({ where: { personId: id } }),
             tx.rightsProfileContributor.count({ where: { personId: id } }),
@@ -272,9 +288,14 @@ export class PersonsService {
               where: { personId: id },
               select: { id: true },
               orderBy: { id: 'asc' },
-              take: LEGACY_AUTHOR_IDS_IN_REFUSAL + 1,
+              take: LINKED_IDS_IN_REFUSAL + 1,
             }),
-            tx.rightsClaim.count({ where: { claimantPersonId: id } }),
+            tx.rightsClaim.findMany({
+              where: { claimantPersonId: id },
+              select: { id: true },
+              orderBy: { id: 'asc' },
+              take: LINKED_IDS_IN_REFUSAL + 1,
+            }),
           ]);
 
         // Отказ собирает все найденные связи одним сообщением, а не первую попавшуюся
@@ -285,11 +306,13 @@ export class PersonsService {
         // 16.09.2026, `books-app-docs/ai-context/decisions-log.md`). Прежнее «Unlink them
         // first» было ложью для двух связей из четырёх. С 29.09.2026 (`LEGACY-396`, решение
         // арбитра) мост легаси-автора снимает `DELETE /admin/authors/:id/person-link`, и отказ
-        // называет её. `RightsClaim.claimantPersonId` по-прежнему снимается `PATCH`-ем только
-        // у незакрытой претензии — закрытая неизменна (`rights-claims.service.ts:338-342`),
-        // и это правовая семантика, а не механика удаления: путь снятия у закрытой
-        // претензии ждёт владельца (`LEGACY-396`). Обнулять связи отсюда нельзя — это
-        // правила чужих модулей.
+        // называет её. С 30.09.2026 (`LEGACY-396`, пачка `T72`: смысл решил владелец, форму —
+        // арбитр) заявителя претензии любого статуса, включая закрытую, снимает
+        // `DELETE /admin/rights/claims/:id/claimant-person` с записью в журнал претензии —
+        // отказ называет и её. Ручка только для `Admin`, а удалять персону может и контент-менеджер —
+        // поэтому в тексте сказано, кому она доступна: иначе он упирается в 403 наугад.
+        // Обнулять связи отсюда нельзя — это правила чужих модулей,
+        // а у претензии ещё и журнал, который пишет только её модуль.
         const blockers: string[] = [];
         if (versionContributorLinks > 0) {
           blockers.push(`${versionContributorLinks} book version contributor records`);
@@ -298,17 +321,18 @@ export class PersonsService {
           blockers.push(`${rightsProfileLinks} rights profile contributor records`);
         }
         if (authorRows.length > 0) {
-          const shown = authorRows.slice(0, LEGACY_AUTHOR_IDS_IN_REFUSAL);
-          const overflow = authorRows.length > LEGACY_AUTHOR_IDS_IN_REFUSAL;
-          const count = overflow ? `more than ${LEGACY_AUTHOR_IDS_IN_REFUSAL}` : `${shown.length}`;
-          const ids = shown.map((a) => a.id).join(', ') + (overflow ? ', …' : '');
+          const { count, ids } = describeLinkedIds(authorRows);
           blockers.push(
             `${count} legacy author records (ids: ${ids}; ` +
               'unlink via DELETE /admin/authors/:id/person-link)',
           );
         }
-        if (rightsClaimLinks > 0) {
-          blockers.push(`${rightsClaimLinks} rights claim records as claimant`);
+        if (rightsClaimRows.length > 0) {
+          const { count, ids } = describeLinkedIds(rightsClaimRows);
+          blockers.push(
+            `${count} rights claim records as claimant (ids: ${ids}; ` +
+              'unlink via DELETE /admin/rights/claims/:id/claimant-person, admin only)',
+          );
         }
         if (blockers.length > 0) {
           throw new BadRequestException(

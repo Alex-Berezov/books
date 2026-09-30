@@ -98,6 +98,26 @@ export class RightsClaimsController {
     return this.service.update(id, dto, request.user.userId);
   }
 
+  @Delete('claims/:id/claimant-person')
+  @Roles(Role.Admin)
+  @ApiOperation({
+    summary: 'Unlink the claimant person from a claim, any status (admin only, LEGACY-396)',
+    description:
+      'Обнуляет `claimantPersonId`, в том числе у закрытой претензии, и пишет событие ' +
+      '`UPDATED` с прежним заявителем в `payload.previousClaimantPersonId`. Повторный вызов ' +
+      'на снятом заявителе ничего не пишет. Нужен, чтобы удаление персоны ' +
+      '(`DELETE /admin/contributors/:id`) перестало отказывать по связи с претензией.',
+  })
+  @ApiParam({ name: 'id' })
+  @ApiResponse({ status: 200, type: RightsClaimDetailDto })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  unlinkClaimantPerson(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: { user: { userId: string } },
+  ): Promise<RightsClaimDetailDto> {
+    return this.service.unlinkClaimantPerson(id, request.user.userId);
+  }
+
   @Post('claims/:id/status')
   @Roles(Role.Admin, Role.ContentManager)
   @ApiOperation({ summary: 'Change the workflow status of a claim' })

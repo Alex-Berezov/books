@@ -26883,6 +26883,46 @@
         ]
       }
     },
+    "/admin/rights/claims/{id}/claimant-person": {
+      "delete": {
+        "description": "Обнуляет `claimantPersonId`, в том числе у закрытой претензии, и пишет событие `UPDATED` с прежним заявителем в `payload.previousClaimantPersonId`. Повторный вызов на снятом заявителе ничего не пишет. Нужен, чтобы удаление персоны (`DELETE /admin/contributors/:id`) перестало отказывать по связи с претензией.",
+        "operationId": "RightsClaimsController_unlinkClaimantPerson",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsClaimDetailDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Claim not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Unlink the claimant person from a claim, any status (admin only, LEGACY-396)",
+        "tags": [
+          "Rights Claims"
+        ]
+      }
+    },
     "/admin/rights/claims/{id}/components": {
       "post": {
         "operationId": "RightsClaimsController_linkComponent",
