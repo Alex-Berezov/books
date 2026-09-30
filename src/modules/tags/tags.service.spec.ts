@@ -195,6 +195,45 @@ describe('TagsService', () => {
       ]);
     });
 
+    // `LEGACY-422`, `T73`: с `?lang` верхний `indexable` — флаг тега и перевода на этот
+    // язык; без `lang` (админка) — флаг самого тега.
+    it('projects the translation indexable flag onto the item for the requested lang', async () => {
+      const [t1] = (await prisma.tag.findMany()) as Array<{ translations: unknown[] }>;
+      prisma.tag.findMany.mockResolvedValue([
+        {
+          id: 't1',
+          name: 'Adventure',
+          slug: 'adventure',
+          key: 'adventure',
+          indexable: true,
+          isVisible: true,
+          sortOrder: 0,
+          translations: [
+            { ...(t1.translations[0] as object), indexable: true },
+            { ...(t1.translations[1] as object), indexable: false },
+          ],
+        },
+      ]);
+
+      expect((await service.list(1, 20, undefined, Language.es)).data[0].indexable).toBe(false);
+      expect((await service.list(1, 20, undefined, Language.en)).data[0].indexable).toBe(true);
+      expect((await service.list(1, 20)).data[0].indexable).toBe(true);
+    });
+
+    // `LEGACY-422`, `T73`: редакционный флаг перевода выбирается из базы — по нему карта
+    // сайта и hreflang решают так же, как robots страницы.
+    it('selects the translation indexable flag for the sitemap', async () => {
+      await service.list(1, 20, undefined, Language.es);
+
+      const args = prisma.tag.findMany.mock.calls[0][0] as {
+        include: { translations: { select: Record<string, unknown> } };
+      };
+      expect(args.include.translations.select).toMatchObject({
+        indexable: true,
+        autoIndexable: true,
+      });
+    });
+
     // LEGACY-117. Проверяется именно **отсутствие вызова** `$queryRaw`: код, который
     // зовёт raw и глотает исключение, тоже вернёт пустой список.
     it('returns an empty page without touching $queryRaw when the page is out of range', async () => {
@@ -796,8 +835,8 @@ describe('TagsService — писатели тега идут под замком
     });
   });
 
-  // `LEGACY-422`: девять полей контента доходят до `data`, а `indexable`, `robots`
-  // и `canonicalUrl` — нет (решение арбитра 29.09.2026, тема владельца №3).
+  // `LEGACY-422`: девять полей контента и `indexable` (`T73`, решение арбитра 30.09.2026)
+  // доходят до `data`, а `robots` и `canonicalUrl` — нет (решение арбитра 29.09.2026).
   const CONTENT_FIELDS = {
     h1: 'H1',
     shortDescription: 'short',
@@ -810,12 +849,11 @@ describe('TagsService — писатели тега идут под замком
     faq: [{ question: 'Q', answer: 'A' }],
   };
   const NOT_WRITTEN = {
-    indexable: false,
     robots: 'noindex',
     canonicalUrl: 'https://example.com/c',
   };
 
-  it('createTranslation: девять полей контента пишутся, indexable/robots/canonicalUrl — нет', async () => {
+  it('createTranslation: девять полей контента и indexable пишутся, robots/canonicalUrl — нет', async () => {
     let written: Record<string, unknown> | undefined;
     const { tagsService } = setup({
       'tag.findUnique': () => ({ id: 't1' }),
@@ -831,10 +869,15 @@ describe('TagsService — писатели тега идут под замком
       slug: 'n',
       ...CONTENT_FIELDS,
       ...NOT_WRITTEN,
+      indexable: false,
     });
 
-    expect(written).toMatchObject(CONTENT_FIELDS);
+    expect(written).toMatchObject({ ...CONTENT_FIELDS, indexable: false, autoIndexable: false });
     for (const key of Object.keys(NOT_WRITTEN)) expect(written).not.toHaveProperty(key);
+
+    // Не передан — колонку не трогаем: умолчание схемы, а не `undefined` в `data`.
+    await tagsService.createTranslation('t1', { language: Language.en, name: 'N', slug: 'n' });
+    expect(written).not.toHaveProperty('indexable');
   });
 
   it('updateTranslation: девять полей контента пишутся, faq: null очищает через DbNull', async () => {
@@ -847,8 +890,12 @@ describe('TagsService — писатели тега идут под замком
       },
     });
 
-    await tagsService.updateTranslation('t1', Language.en, { ...CONTENT_FIELDS, ...NOT_WRITTEN });
-    expect(written).toMatchObject(CONTENT_FIELDS);
+    await tagsService.updateTranslation('t1', Language.en, {
+      ...CONTENT_FIELDS,
+      ...NOT_WRITTEN,
+      indexable: false,
+    });
+    expect(written).toMatchObject({ ...CONTENT_FIELDS, indexable: false });
     for (const key of Object.keys(NOT_WRITTEN)) expect(written).not.toHaveProperty(key);
 
     // `null` в `faq` валидатор пропускает (`@IsOptional`), тип DTO его не объявляет.
@@ -874,6 +921,10 @@ describe('TagsService — писатели тега идут под замком
     await tagsService.updateTranslation('t1', Language.en, { name: 'M' });
     expect(written).not.toHaveProperty('faq');
     expect(written).not.toHaveProperty('h1');
+    expect(written).not.toHaveProperty('indexable');
+
+    await tagsService.updateTranslation('t1', Language.en, { indexable: true });
+    expect(written).toMatchObject({ indexable: true });
   });
 
   it('updateTranslation: чтения, Seo, редирект и запись — под замком через tx', async () => {

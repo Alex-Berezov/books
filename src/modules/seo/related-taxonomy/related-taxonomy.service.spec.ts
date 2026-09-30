@@ -15,6 +15,7 @@ describe('RelatedTaxonomyService', () => {
     name: `Tag ${slug}`,
     bookCount: 7,
     autoIndexable: true,
+    indexable: true,
     tag: { isVisible: true, indexable: true },
     ...over,
   });
@@ -69,6 +70,31 @@ describe('RelatedTaxonomyService', () => {
 
     expect(res.tags).toHaveLength(1);
     expect(res.tags[0]).toMatchObject({ autoIndexable: false, langBookCount: 1 });
+  });
+
+  // `LEGACY-422`, `T73`: перевод тега, закрытый собственным флагом из админки, отдаётся
+  // закрытым — иначе «похожие» соседа ведут на страницу с `noindex`.
+  it('closes a tag term whose translation is not indexable', async () => {
+    const findTags = jest
+      .fn()
+      .mockResolvedValue([tagRow('open'), tagRow('shut', { indexable: false })]);
+    const prisma = {
+      tagTranslation: { findMany: findTags },
+      categoryTranslation: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const res = await new RelatedTaxonomyService(prisma).resolve(Language.es, {
+      ...empty,
+      tags: ['open', 'shut'],
+    });
+
+    expect(res.tags.map((t) => [t.slug, t.indexable])).toEqual([
+      ['open', true],
+      ['shut', false],
+    ]);
+    // Без поля в `select` база его не вернёт, и `tag && undefined` закроет все теги.
+    expect(findTags).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ indexable: true }) }),
+    );
   });
 
   /**

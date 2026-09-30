@@ -37,6 +37,7 @@ type TagRow = {
   name: string;
   bookCount: number;
   autoIndexable: boolean;
+  indexable: boolean;
   tag: { isVisible: boolean; indexable: boolean };
 };
 
@@ -90,6 +91,7 @@ export class RelatedTaxonomyService {
         name: true,
         bookCount: true,
         autoIndexable: true,
+        indexable: true,
         tag: { select: { isVisible: true, indexable: true } },
       },
     });
@@ -126,7 +128,8 @@ export class RelatedTaxonomyService {
           slug: r.slug,
           name: r.name,
           isVisible: r.tag.isVisible,
-          indexable: r.tag.indexable,
+          // У перевода тега свой редакционный флаг (`LEGACY-422`, `T73`), у категории его нет.
+          indexable: r.tag.indexable && r.indexable,
           autoIndexable: r.autoIndexable,
           langBookCount: r.bookCount,
         } satisfies RelatedTerm,

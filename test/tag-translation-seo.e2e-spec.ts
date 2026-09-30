@@ -156,9 +156,8 @@ describe('Tag Translation Content & SEO (e2e)', () => {
     expect(res.body.seo.metaDescription).toBe('Browse our bestsellers');
   });
 
-  // `LEGACY-422`: плоские поля контента доходят до колонок перевода; `indexable`
-  // из тела принимается и отбрасывается — включить его запись может только владелец
-  // (тема №3, решение арбитра 29.09.2026).
+  // `LEGACY-422`: плоские поля контента и `indexable` доходят до колонок перевода
+  // (`indexable` — `T73`, решение арбитра 30.09.2026 по слову владельца).
   const CONTENT_FIELDS = {
     h1: 'Bestseller H1',
     shortDescription: 'Short blurb',
@@ -171,7 +170,7 @@ describe('Tag Translation Content & SEO (e2e)', () => {
     faq: [{ question: 'Q?', answer: 'A.' }],
   };
 
-  it('should persist flat content fields on create and ignore indexable', async () => {
+  it('should persist flat content fields and indexable on create', async () => {
     const slug = `bestseller-es-${Date.now()}`;
     const res = await request(http())
       .post(`/tags/${tagId}/translations`)
@@ -184,14 +183,46 @@ describe('Tag Translation Content & SEO (e2e)', () => {
       where: { tagId_language: { tagId, language: 'es' } },
     });
     expect(row).toMatchObject(CONTENT_FIELDS);
-    expect(row.indexable).toBe(true);
+    expect(row.indexable).toBe(false);
+
+    // Публичный список отдаёт флаг и в переводе, и в проекции на язык (`T73`): по нему
+    // карта сайта, главная и хаб `/tags` решают так же, как robots страницы.
+    type ListItem = {
+      id: string;
+      indexable: boolean;
+      translations: Array<{ language: string; indexable?: boolean }>;
+    };
+    let item: ListItem | undefined;
+    for (let page = 1; !item; page++) {
+      const list = await request(http()).get('/es/tags').query({ page, limit: 100 }).expect(200);
+      item = (list.body.items as ListItem[]).find((t) => t.id === tagId);
+      if (page >= list.body.pagination.totalPages) break;
+    }
+    if (!item) throw new Error('tag under test is missing from GET /es/tags');
+    expect(item.indexable).toBe(false);
+    expect(item.translations.find((t) => t.language === 'es')?.indexable).toBe(false);
+
+    // Страница тега отдаёт тот же свёрнутый флаг: по нему фронт решает robots,
+    // когда SEO-бандл не ответил (`app/[lang]/tag/[tagSlug]/page.tsx`).
+    const cards = await request(http())
+      .get(`/es/tags/${slug}/books/cards`)
+      .query({ includeTag: true })
+      .expect(200);
+    expect(cards.body.tag.indexable).toBe(false);
+
+    // `NOT NULL` колонка: `null` на создании отбивает валидатор, а не Prisma пятисотым.
+    await request(http())
+      .post(`/tags/${tagId}/translations`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ language: 'pt', name: 'Mais vendidos', slug: `${slug}-pt`, indexable: null })
+      .expect(400);
   });
 
-  it('should persist flat content fields on update, clear faq with null, ignore indexable', async () => {
+  it('should persist flat content fields and indexable on update, clear faq with null', async () => {
     const res = await request(http())
       .patch(`/tags/${tagId}/translations/es`)
       .set('Authorization', `Bearer ${adminAccess}`)
-      .send({ ...CONTENT_FIELDS, h1: 'Updated H1', indexable: false })
+      .send({ ...CONTENT_FIELDS, h1: 'Updated H1', indexable: true })
       .expect(200);
     expect(res.body.h1).toBe('Updated H1');
 
@@ -210,7 +241,15 @@ describe('Tag Translation Content & SEO (e2e)', () => {
     expect(row.faq).toBeNull();
     expect(row.shortDescription).toBeNull();
     expect(row.h1).toBe('Updated H1');
+    // Выставлен первым PATCH и не сброшен вторым, где поля нет.
     expect(row.indexable).toBe(true);
+
+    // `NOT NULL` колонка: `null` отбивает валидатор, а не Prisma пятисотым.
+    await request(http())
+      .patch(`/tags/${tagId}/translations/es`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ indexable: null })
+      .expect(400);
   });
 
   it('should clear seo when all fields are null', async () => {
