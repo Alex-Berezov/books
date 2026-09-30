@@ -31,69 +31,26 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, exist
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { INDEX_HEADS, UNREADABLE_MARK, startsWithHead, unwrapExecute } from './lib/migration-sql.mjs';
+import {
+  INDEX_HEADS,
+  UNREADABLE_MARK,
+  ident,
+  qualifiedIdent,
+  startsWithHead,
+  stripSqlComments as stripComments,
+  tableKey,
+  unwrapExecute,
+} from './lib/migration-sql.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = join(SCRIPT_DIR, '..');
 const ALLOWLIST_NAME = 'migration-compat-allowlist.json';
 
 /**
- * SQL without comments. Character by character rather than by regex: `--` inside a string
- * literal is not a comment, and stripping by regex would eat half the statement with it.
- * Dollar quoting (`$$ ... $$`) carries the idempotent `DO` blocks used across this project;
- * its body is kept, because DDL inside such a block is DDL all the same.
+ * SQL без комментариев (`lib/migration-sql.mjs`). Флаг `legacyCompat` — прежний разбор сторожа
+ * без изменений (LEGACY-397, решение арбитра 30.09.2026); снимается в LEGACY-427.
  */
-export function stripSqlComments(sql) {
-  let out = '';
-  let i = 0;
-  while (i < sql.length) {
-    const two = sql.slice(i, i + 2);
-    if (two === '--') {
-      const nl = sql.indexOf('\n', i);
-      i = nl === -1 ? sql.length : nl;
-      continue;
-    }
-    if (two === '/*') {
-      const end = sql.indexOf('*/', i + 2);
-      i = end === -1 ? sql.length : end + 2;
-      out += ' ';
-      continue;
-    }
-    if (sql[i] === "'") {
-      const start = i;
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === '\\' && sql[i + 1] !== undefined) {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'" && sql[i + 1] === "'") {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'") {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      out += sql.slice(start, i);
-      continue;
-    }
-    const dollar = /^\$(\w*)\$/.exec(sql.slice(i));
-    if (dollar) {
-      const tag = dollar[0];
-      const end = sql.indexOf(tag, i + tag.length);
-      const stop = end === -1 ? sql.length : end + tag.length;
-      out += sql.slice(i, stop);
-      i = stop;
-      continue;
-    }
-    out += sql[i];
-    i += 1;
-  }
-  return out;
-}
+export const stripSqlComments = (sql) => stripComments(sql, { legacyCompat: true });
 
 /**
  * Обвязка блока PL/pgSQL, снятая с начала оператора. Идемпотентные миграции в проекте
@@ -159,25 +116,6 @@ function statements(sql) {
       .filter(Boolean);
   return [...split(outer), ...bodies.flatMap(split)];
 }
-
-const ident = '(?:"[^"]+"|\\w+)';
-
-/**
- * Имя таблицы, возможно со схемой: `"public"."Book"`, `public.Book`, голое `Book`. Две группы —
- * схема (может не быть) и таблица. До `LEGACY-423` бралась одна первая часть, и `"public"."X"`
- * превращалось в `public`: схема путалась с таблицей.
- */
-const qualifiedIdent = `(?:(${ident})\\.)?(${ident})`;
-
-const unquote = (name) => name.replace(/"/g, '');
-
-/**
- * Ключ таблицы для исключений «новая таблица» и «новая колонка»: `схема.таблица`. Одно голое имя
- * склеило бы `"audit"."Like"` с `"public"."Like"`. Схема голого имени — `bareSchema`: `public`,
- * а при `search_path`, заданном в миграции, неизвестная `?` — такой ключ не совпадает ни с одним
- * квалифицированным, и исключение не срабатывает (лишняя находка вместо пропущенной).
- */
-const tableKey = (m, at, bareSchema) => `${m[at] ? unquote(m[at]) : bareSchema}.${unquote(m[at + 1])}`;
 
 const SETS_SEARCH_PATH = /\bSET\s+(?:(?:LOCAL|SESSION)\s+)?search_path\b|\bset_config\s*\(\s*'search_path'/i;
 

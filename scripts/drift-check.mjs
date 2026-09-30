@@ -28,7 +28,15 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { INDEX_HEADS, INDEX_DDL_HEAD, UNREADABLE_MARK, startsWithHead, unwrapExecute } from './lib/migration-sql.mjs';
+import {
+  INDEX_HEADS,
+  INDEX_DDL_HEAD,
+  UNREADABLE_MARK,
+  splitStatements,
+  startsWithHead,
+  stripSqlComments,
+  unwrapExecute,
+} from './lib/migration-sql.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = join(SCRIPT_DIR, '..');
@@ -187,32 +195,6 @@ function parseSchema(text) {
 
 /* ---------------- parse migrations ---------------- */
 
-function stripSqlComments(sql) {
-  let out = '';
-  let i = 0;
-  let inS = false,
-    inD = false;
-  while (i < sql.length) {
-    const c = sql[i],
-      n = sql[i + 1];
-    if (!inS && !inD && c === '-' && n === '-') {
-      while (i < sql.length && sql[i] !== '\n') i++;
-      continue;
-    }
-    if (!inS && !inD && c === '/' && n === '*') {
-      i += 2;
-      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
-      i += 2;
-      continue;
-    }
-    if (!inD && c === "'") inS = !inS;
-    else if (!inS && c === '"') inD = !inD;
-    out += c;
-    i++;
-  }
-  return out;
-}
-
 // LEGACY-367: applyMigrations dispatches on each index head, and inlineDoBlocks recognises the same
 // heads inside a DO block. The heads, UNREADABLE_MARK and the EXECUTE unwrap live in
 // scripts/lib/migration-sql.mjs (LEGACY-397), shared with check-migration-compat.mjs — add a form
@@ -262,43 +244,6 @@ function inlineDoBlocks(sql) {
     b = b.replace(/\bEND\s*$/i, ' ');
     return `\n${b}\n`;
   });
-}
-
-function splitStatements(sql) {
-  const stmts = [];
-  let cur = '',
-    inS = false,
-    inD = false,
-    dollar = null;
-  for (let i = 0; i < sql.length; i++) {
-    const c = sql[i];
-    if (dollar) {
-      cur += c;
-      if (sql.startsWith(dollar, i)) {
-        cur += sql.slice(i + 1, i + dollar.length);
-        i += dollar.length - 1;
-        dollar = null;
-      }
-      continue;
-    }
-    const dm = /^\$\w*\$/.exec(sql.slice(i));
-    if (!inS && !inD && dm) {
-      dollar = dm[0];
-      cur += dollar;
-      i += dollar.length - 1;
-      continue;
-    }
-    if (!inD && c === "'") inS = !inS;
-    else if (!inS && c === '"') inD = !inD;
-    if (c === ';' && !inS && !inD) {
-      stmts.push(cur);
-      cur = '';
-      continue;
-    }
-    cur += c;
-  }
-  if (cur.trim()) stmts.push(cur);
-  return stmts.map((s) => s.trim()).filter(Boolean);
 }
 
 function splitTopLevelCommas(s) {
