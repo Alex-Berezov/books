@@ -26,6 +26,7 @@ import { generateWebSiteSchema } from './schema/generateWebSiteSchema';
 import { buildTermBundle } from './schema/buildTermBundle';
 import { TaxonomyPageType } from './seo.types';
 import { markDegraded } from '../../common/interceptors/degraded-response';
+import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
 
 const TAXONOMY_PAGES: Record<
   TaxonomyPageType,
@@ -1124,9 +1125,7 @@ export class SeoService {
     // собственный `indexable`, которого у `CategoryTranslation` нет вовсе.
     // Это различие держит схема, а не расхождение копий.
     const effectiveIndexable =
-      chosen.tag?.indexable !== false &&
-      chosen.indexable !== false &&
-      chosen.autoIndexable !== false;
+      isTagTranslationIndexable(chosen.tag, chosen) && chosen.autoIndexable !== false;
     const robotsStatus = detectIndexability(
       'published',
       canonicalUrl,

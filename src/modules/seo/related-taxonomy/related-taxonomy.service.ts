@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CategoryType, Language } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { isTagTranslationIndexable } from '../../../shared/seo/tag-translation-indexable.util';
 
 /**
  * Термин, на который ссылается страница тега, со всем, что нужно для решения
@@ -129,7 +130,7 @@ export class RelatedTaxonomyService {
           name: r.name,
           isVisible: r.tag.isVisible,
           // У перевода тега свой редакционный флаг (`LEGACY-422`, `T73`), у категории его нет.
-          indexable: r.tag.indexable && r.indexable,
+          indexable: isTagTranslationIndexable(r.tag, r),
           autoIndexable: r.autoIndexable,
           langBookCount: r.bookCount,
         } satisfies RelatedTerm,

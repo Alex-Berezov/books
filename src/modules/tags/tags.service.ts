@@ -28,7 +28,11 @@ import { CreateTagTranslationDto } from './dto/create-tag-translation.dto';
 import { UpdateTagTranslationDto } from './dto/update-tag-translation.dto';
 import { TAG_TX_OPTIONS, TagLockService } from './tag-lock.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
-import { parseJsonStringArray } from '../../shared/prisma/json-string-array.util';
+import {
+  parseRelatedSlugs,
+  type WithParsedRelatedSlugs,
+} from '../../shared/prisma/json-string-array.util';
+import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
@@ -38,25 +42,9 @@ import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
  * `updateTranslation`) — `Prisma.TagTranslationGetPayload` с четырьмя Json-колонками
  * сужен до `string[] | null`, как публичная сторона (`TagsService.list()`, `LEGACY-417`).
  */
-export type TagTranslationWithSeo = Omit<
-  Prisma.TagTranslationGetPayload<{ include: { seo: true } }>,
-  'relatedTagSlugs' | 'relatedGenreSlugs' | 'relatedCategorySlugs' | 'relatedCollectionSlugs'
-> & {
-  relatedTagSlugs: string[] | null;
-  relatedGenreSlugs: string[] | null;
-  relatedCategorySlugs: string[] | null;
-  relatedCollectionSlugs: string[] | null;
-};
-
-const withParsedRelatedSlugs = (
-  row: Prisma.TagTranslationGetPayload<{ include: { seo: true } }>,
-): TagTranslationWithSeo => ({
-  ...row,
-  relatedTagSlugs: parseJsonStringArray(row.relatedTagSlugs),
-  relatedGenreSlugs: parseJsonStringArray(row.relatedGenreSlugs),
-  relatedCategorySlugs: parseJsonStringArray(row.relatedCategorySlugs),
-  relatedCollectionSlugs: parseJsonStringArray(row.relatedCollectionSlugs),
-});
+export type TagTranslationWithSeo = WithParsedRelatedSlugs<
+  Prisma.TagTranslationGetPayload<{ include: { seo: true } }>
+>;
 
 @Injectable()
 export class TagsService {
@@ -90,6 +78,10 @@ export class TagsService {
         take: limit,
         include: {
           translations: {
+            // Порядок нужен `x-default` карты сайта: при закрытом `en` он берётся первым из
+            // `translations` (`usable[0]` в `hreflang-alternates.ts`) и без `orderBy` зависел бы
+            // от порядка строк, расходясь с бандлом (`seo.service.ts`, `orderBy: { language }`).
+            orderBy: { language: 'asc' },
             select: {
               language: true,
               name: true,
@@ -159,16 +151,10 @@ export class TagsService {
         // (`LEGACY-422`, `T73`) закрывает язык так же, как флаг тега, и главная, хаб
         // `/tags` и карта сайта получают его через тот же `isTaxonomyLinkable`, что
         // и `autoIndexable` выше. Без `lang` (админка) — флаг самого тега, как прежде.
-        indexable: (item.indexable ?? true) && langTranslation?.indexable !== false,
+        indexable: isTagTranslationIndexable(item, langTranslation),
         isVisible: item.isVisible ?? true,
         sortOrder: item.sortOrder ?? 0,
-        translations: item.translations.map((t) => ({
-          ...t,
-          relatedTagSlugs: parseJsonStringArray(t.relatedTagSlugs),
-          relatedGenreSlugs: parseJsonStringArray(t.relatedGenreSlugs),
-          relatedCategorySlugs: parseJsonStringArray(t.relatedCategorySlugs),
-          relatedCollectionSlugs: parseJsonStringArray(t.relatedCollectionSlugs),
-        })),
+        translations: item.translations.map(parseRelatedSlugs),
         booksCount: countMap.get(item.id) || 0,
         langBookCount: langTranslation?.bookCount,
         autoIndexable: langTranslation?.autoIndexable,
@@ -394,7 +380,10 @@ export class TagsService {
     page: number = 1,
     limit: number = 20,
   ): Promise<{
-    tag: Tag & { translation: TagTranslation | null; description: string | null };
+    tag: Tag & {
+      translation: WithParsedRelatedSlugs<TagTranslation> | null;
+      description: string | null;
+    };
     seo: Record<string, unknown> | null;
     data: (PublicBookVersion & {
       rating: number | null;
@@ -403,7 +392,7 @@ export class TagsService {
     meta: PaginationInfoDto;
     availableLanguages: Language[];
   }> {
-    const trans = await this.prisma.tagTranslation.findUnique({
+    let trans = await this.prisma.tagTranslation.findUnique({
       where: { language_slug: { language: pathLang, slug } },
       include: { tag: true, seo: true },
     });
@@ -420,6 +409,14 @@ export class TagsService {
       if (!found) throw new NotFoundException('Tag not found');
       tagId = found.id;
       baseTag = found;
+      // Перевод скрытого тега, найденный по слагу выше, чужой для `found`, а перевод самого
+      // `found` на этот язык мог быть закрыт: берётся по `tagId` и языку, как в
+      // `BookService.findCardsByTag`, иначе свёртка `indexable` ниже решала бы по чужому
+      // или пустому флагу (`LEGACY-422`, `T74`).
+      trans = await this.prisma.tagTranslation.findFirst({
+        where: { tagId, language: pathLang },
+        include: { tag: true, seo: true },
+      });
     }
     // Второй рубеж после `PublicTagBooksQueryDto` (`LEGACY-199`), по образцу
     // `PUBLIC_AUTHORS_MAX_LIMIT`: DTO стережёт только вход через контроллер, а метод
@@ -482,7 +479,10 @@ export class TagsService {
     return {
       tag: {
         ...baseTag,
-        translation: (trans as TagTranslation) ?? null,
+        // Флаг тега и перевода на этот язык (`LEGACY-422`, `T74`) — та же свёртка, что в
+        // `list` и в `findCardsByTag`: три выдачи одного тега обязаны решать одинаково.
+        indexable: isTagTranslationIndexable(baseTag, trans),
+        translation: trans ? parseRelatedSlugs(trans) : null,
         description: trans?.description ?? null,
       },
       seo: trans?.seo ?? null,
@@ -507,7 +507,7 @@ export class TagsService {
       orderBy: { language: 'asc' },
       include: { seo: true },
     });
-    return rows.map(withParsedRelatedSlugs);
+    return rows.map(parseRelatedSlugs);
   }
 
   /**
@@ -578,7 +578,7 @@ export class TagsService {
           },
           include: { seo: true },
         });
-        return withParsedRelatedSlugs(created);
+        return parseRelatedSlugs(created);
       } catch (e: unknown) {
         if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
           throw new BadRequestException('Translation with same (language, slug) already exists');
@@ -670,7 +670,7 @@ export class TagsService {
           include: { seo: true },
         });
         if (finalSeoId === null) await deleteSeoIfUnreferenced(tx, tr.seoId);
-        return withParsedRelatedSlugs(updated);
+        return parseRelatedSlugs(updated);
       } catch (e: unknown) {
         // `dup` above only sees translations of OTHER tags committed before this
         // transaction started; the lock this transaction holds is on its own tag

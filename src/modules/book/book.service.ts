@@ -17,11 +17,17 @@ import { BookCardDto } from './dto/book-card.dto';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import {
+  parseRelatedSlugs,
+  type WithParsedRelatedSlugs,
+} from '../../shared/prisma/json-string-array.util';
+import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
+import {
   BookType,
   Language,
   Category,
   CategoryTranslation,
   Prisma,
+  TagTranslation,
   AdminAuditAction,
   AdminAuditTargetType,
 } from '@prisma/client';
@@ -38,14 +44,6 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
-
-/**
- * `related*Slugs` лежат в JSON-колонке, то есть их содержимое схемой не
- * гарантировано. Приводим к массиву строк здесь, а не на месте использования:
- * мусор в колонке не должен уронить страницу тега.
- */
-const toSlugArray = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 
 /**
  * `remove()` каскадом сносит все версии книги вместе с их главами и
@@ -576,6 +574,7 @@ export class BookService {
     }));
     const tags = tagsRelation.map((t) => ({
       ...t.tag,
+      translations: t.tag.translations.map(parseRelatedSlugs),
       booksCount: tagCountMap.get(t.tagId) ?? 0,
     }));
 
@@ -1244,8 +1243,10 @@ export class BookService {
       where: { language_slug: { language: lang, slug: tagSlug } },
     });
     let tagId: string | null = tagTrans?.tagId ?? null;
-    let matchedTranslation: Record<string, unknown> | null = tagTrans
-      ? { ...tagTrans, tag: undefined }
+    // `related*Slugs` разбираются на выходе из базы: `translation` уходит в ответ целиком,
+    // и сырой `Json` там не сверяла схема (`LEGACY-417`, `T74`).
+    let matchedTranslation: WithParsedRelatedSlugs<TagTranslation> | null = tagTrans
+      ? parseRelatedSlugs(tagTrans)
       : null;
 
     if (!tagId) {
@@ -1265,7 +1266,7 @@ export class BookService {
       const trans = await this.prisma.tagTranslation.findFirst({
         where: { tagId, language: lang },
       });
-      matchedTranslation = trans ? { ...trans, tag: undefined } : null;
+      matchedTranslation = trans ? parseRelatedSlugs(trans) : null;
     }
 
     // Find distinct bookIds that have a published version in this language with this tag
@@ -1305,10 +1306,10 @@ export class BookService {
         // принимает фронтовый `isTaxonomyLinkable`, и он обязан остаться в
         // одном экземпляре.
         const relatedTerms = await this.relatedTaxonomy.resolve(lang, {
-          tags: toSlugArray(matchedTranslation?.relatedTagSlugs),
-          genres: toSlugArray(matchedTranslation?.relatedGenreSlugs),
-          categories: toSlugArray(matchedTranslation?.relatedCategorySlugs),
-          collections: toSlugArray(matchedTranslation?.relatedCollectionSlugs),
+          tags: matchedTranslation?.relatedTagSlugs ?? [],
+          genres: matchedTranslation?.relatedGenreSlugs ?? [],
+          categories: matchedTranslation?.relatedCategorySlugs ?? [],
+          collections: matchedTranslation?.relatedCollectionSlugs ?? [],
         });
 
         tagResult = {
@@ -1318,7 +1319,7 @@ export class BookService {
           name: matchedTranslation?.name ?? tag.name,
           // Флаг тега и перевода на этот язык (`LEGACY-422`, `T73`) — та же свёртка, что
           // в `TagsService.list`: по нему фронт решает robots, когда SEO-бандл не ответил.
-          indexable: tag.indexable && matchedTranslation?.indexable !== false,
+          indexable: isTagTranslationIndexable(tag, matchedTranslation),
           isVisible: tag.isVisible,
           sortOrder: tag.sortOrder,
           booksCount: total,
