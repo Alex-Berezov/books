@@ -379,6 +379,52 @@ export class RightsClaimsService {
     return this.buildDetail(updated);
   }
 
+  /**
+   * Снятие заявителя-персоны (`LEGACY-396`, пачка `T72`). Без него персона, указанная
+   * заявителем закрытой претензии, не удалялась никогда: `update` на `CLOSED` пускает только
+   * `internalNotesRu`, а `PersonsService.remove` отказывает по этой связи. Снимать заявителя
+   * у закрытой претензии с записью в журнал разрешил владелец 29.09.2026 (тема №4); форма —
+   * решение арбитра 30.09.2026 по прецеденту `DELETE /admin/authors/:id/person-link`:
+   * отдельная ручка, а не исключение в `CLAIM_CLOSED_IMMUTABLE`, чтобы общий `PATCH` не стал
+   * путём правки закрытой претензии.
+   *
+   * Работает на любом статусе и пишет ровно `claimantPersonId: null`. Строка претензии
+   * запирается первым оператором транзакции: встречная смена заявителя ждёт замка, поэтому
+   * в событие уходит тот заявитель, который и был снят. На уже снятом заявителе нет ни
+   * записи, ни события. Прежний id лежит в `payload.previousClaimantPersonId` — по нему
+   * связь восстановима.
+   */
+  async unlinkClaimantPerson(id: string, userId: string): Promise<RightsClaimDetailDto> {
+    const claim = await this.prisma.$transaction(async (transaction) => {
+      const locked = await transaction.$queryRaw<{ claimantPersonId: string | null }[]>`
+        SELECT "claimantPersonId" FROM "RightsClaim" WHERE id = ${id} FOR NO KEY UPDATE`;
+      if (locked.length === 0) throw new NotFoundException('RightsClaim not found');
+
+      const previousClaimantPersonId = locked[0].claimantPersonId;
+      if (previousClaimantPersonId === null) {
+        return transaction.rightsClaim.findUniqueOrThrow({ where: { id } });
+      }
+
+      const updated = await transaction.rightsClaim.update({
+        where: { id },
+        data: { claimantPersonId: null },
+      });
+      await this.recordEvent(transaction, id, RightsClaimEventType.UPDATED, {
+        previousStatus: updated.status,
+        currentStatus: updated.status,
+        userId,
+        payload: {
+          changedFields: ['claimantPersonId'],
+          previousClaimantPersonId,
+          reason: 'claimant-unlink',
+        },
+      });
+      return updated;
+    });
+
+    return this.buildDetail(claim);
+  }
+
   async changeStatus(
     id: string,
     dto: ChangeRightsClaimStatusDto,

@@ -710,6 +710,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/rights/claims/{id}/claimant-person': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Unlink the claimant person from a claim, any status (admin only, LEGACY-396)
+     * @description Обнуляет `claimantPersonId`, в том числе у закрытой претензии, и пишет событие `UPDATED` с прежним заявителем в `payload.previousClaimantPersonId`. Повторный вызов на снятом заявителе ничего не пишет. Нужен, чтобы удаление персоны (`DELETE /admin/contributors/:id`) перестало отказывать по связи с претензией.
+     */
+    delete: operations['RightsClaimsController_unlinkClaimantPerson'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/rights/claims/{id}/components': {
     parameters: {
       query?: never;
@@ -14049,6 +14069,34 @@ export interface operations {
         content: {
           'application/json': components['schemas']['RightsClaimAccessBlockDto'];
         };
+      };
+    };
+  };
+  RightsClaimsController_unlinkClaimantPerson: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RightsClaimDetailDto'];
+        };
+      };
+      /** @description Claim not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

@@ -528,4 +528,132 @@ describe('Rights claims e2e', () => {
     // An unpublished version is not served publicly at all, so the answer is 404, not 451.
     await request(http()).get(`/chapters/${chapterId}`).set('X-Geo-Country', 'US').expect(404);
   });
+
+  /**
+   * `LEGACY-396`, пачка `T72`: персону, указанную заявителем закрытой претензии, нельзя было
+   * удалить никогда — `PATCH` на `CLOSED` пускает только `internalNotesRu`, а удаление персоны
+   * отказывает по этой связи. Снятие разрешил владелец 29.09.2026 с записью в журнал; форма —
+   * отдельная ручка только для администратора (решение арбитра 30.09.2026).
+   */
+  describe('DELETE /admin/rights/claims/:id/claimant-person', () => {
+    it('снимает заявителя у закрытой претензии, пишет событие, и персона удаляется', async () => {
+      const stamp = Date.now();
+      const person = await request(http())
+        .post('/admin/contributors')
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ displayName: `Claimant Person ${stamp}` })
+        .expect(201);
+      const personId = (person.body as { id: string }).id;
+
+      const created = await request(http())
+        .post('/admin/rights/claims')
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({
+          claimType: 'DMCA_TAKEDOWN',
+          claimantName: 'Claimant Person',
+          claimantPersonId: personId,
+          descriptionRu: 'Претензия, у которой снимут заявителя.',
+          bookId,
+          blocksPublication: false,
+          blocksPublicationOverrideReasonRu: 'Публикацию не держит: проверяется только заявитель.',
+        })
+        .expect(201);
+      const closedClaimId = created.body.id as string;
+      // Путь до `CLOSED` через переходы статуса к проверке отношения не имеет: состояние
+      // задаётся фикстурой, а поведение ниже проверяется только через HTTP.
+      await prisma.rightsClaim.update({
+        where: { id: closedClaimId },
+        data: { status: 'CLOSED', closedAt: new Date() },
+      });
+
+      // Общий PATCH закрытую претензию по-прежнему не правит — исключения в правило не внесено.
+      await request(http())
+        .patch(`/admin/rights/claims/${closedClaimId}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ claimantPersonId: null })
+        .expect(400)
+        .expect(({ body }) => expect(body.code).toBe('CLAIM_CLOSED_IMMUTABLE'));
+
+      const refused = await request(http())
+        .delete(`/admin/contributors/${personId}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(400);
+      expect((refused.body as { message: string }).message).toContain(
+        `1 rights claim records as claimant (ids: ${closedClaimId}; ` +
+          'unlink via DELETE /admin/rights/claims/:id/claimant-person, admin only)',
+      );
+
+      const unlinked = await request(http())
+        .delete(`/admin/rights/claims/${closedClaimId}/claimant-person`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+      expect(unlinked.body).toMatchObject({
+        id: closedClaimId,
+        status: 'CLOSED',
+        claimantPersonId: null,
+        claimantName: 'Claimant Person',
+      });
+
+      const events = await prisma.rightsClaimEvent.findMany({
+        where: { rightsClaimId: closedClaimId, eventType: 'UPDATED' },
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0].payload).toEqual({
+        changedFields: ['claimantPersonId'],
+        previousClaimantPersonId: personId,
+        reason: 'claimant-unlink',
+      });
+
+      // Повторный вызов — тот же ответ и ни одного нового события.
+      await request(http())
+        .delete(`/admin/rights/claims/${closedClaimId}/claimant-person`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+      expect(
+        await prisma.rightsClaimEvent.count({
+          where: { rightsClaimId: closedClaimId, eventType: 'UPDATED' },
+        }),
+      ).toBe(1);
+
+      await request(http())
+        .delete(`/admin/contributors/${personId}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+    });
+
+    it('400 на идентификаторе не в форме uuid, а не 500 из сырого SQL замка', async () => {
+      await request(http())
+        .delete('/admin/rights/claims/not-a-uuid/claimant-person')
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(400);
+    });
+
+    it('404 на несуществующей претензии', async () => {
+      await request(http())
+        .delete('/admin/rights/claims/00000000-0000-0000-0000-000000000000/claimant-person')
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(404);
+    });
+
+    it('без токена 401, контент-менеджеру 403: ручка только для администратора', async () => {
+      const email = `claims-manager-${Date.now()}@example.com`;
+      const registered = await request(http())
+        .post('/auth/register')
+        .send({ email, password: 'password123' })
+        .expect(201);
+      const managerAccess = registered.body.accessToken as string;
+      const managerId = registered.body.user.id as string;
+      await request(http())
+        .post(`/users/${managerId}/roles/content_manager`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(201);
+
+      const path = '/admin/rights/claims/00000000-0000-0000-0000-000000000000/claimant-person';
+      await request(http()).delete(path).expect(401);
+      await request(http())
+        .delete(path)
+        .set('Authorization', `Bearer ${managerAccess}`)
+        .expect(403);
+    });
+  });
 });

@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { LEGACY_AUTHOR_IDS_IN_REFUSAL, PersonsService } from './persons.service';
+import { LINKED_IDS_IN_REFUSAL, PersonsService } from './persons.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
@@ -291,7 +291,7 @@ describe('PersonsService.remove — проверка связей падает �
         count: outOfTransaction('author.count'),
         findMany: outOfTransaction('author.findMany'),
       },
-      rightsClaim: { count: outOfTransaction('rightsClaim.count') },
+      rightsClaim: { findMany: outOfTransaction('rightsClaim.findMany') },
       personTranslation: { findMany: outOfTransaction('personTranslation.findMany') },
       // `LEGACY-015`, пачка `T21`: запись журнала мимо `tx` переживает откат своей
       // операции (`LEGACY-036`) — и здесь красит тест по имени, а не молчит.
@@ -332,16 +332,22 @@ describe('PersonsService.remove — проверка связей падает �
       author: {
         count: jest.fn().mockResolvedValue(counts.author),
         // Сервис читает N+1 строк: лишняя строка сверх потолка и есть признак «больше N».
+        findMany: jest.fn().mockResolvedValue(
+          Array.from({ length: Math.min(counts.author, LINKED_IDS_IN_REFUSAL + 1) }, (_, i) => ({
+            id: `author-${i + 1}`,
+          })),
+        ),
+      },
+      rightsClaim: {
         findMany: jest
           .fn()
           .mockResolvedValue(
             Array.from(
-              { length: Math.min(counts.author, LEGACY_AUTHOR_IDS_IN_REFUSAL + 1) },
-              (_, i) => ({ id: `author-${i + 1}` }),
+              { length: Math.min(counts.rightsClaim, LINKED_IDS_IN_REFUSAL + 1) },
+              (_, i) => ({ id: `claim-${i + 1}` }),
             ),
           ),
       },
-      rightsClaim: { count: jest.fn().mockResolvedValue(counts.rightsClaim) },
     };
   }
 
@@ -389,23 +395,55 @@ describe('PersonsService.remove — проверка связей падает �
     await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
       'Cannot delete Person: still linked to 2 book version contributor records, ' +
         '1 legacy author records (ids: author-1; unlink via DELETE /admin/authors/:id/person-link), ' +
-        '4 rights claim records as claimant. ' +
+        '4 rights claim records as claimant (ids: claim-1, claim-2, claim-3, claim-4; ' +
+        'unlink via DELETE /admin/rights/claims/:id/claimant-person, admin only). ' +
         'Remove or reassign these links before deleting the person.',
     );
   });
 
-  it('отказ не обещает ручки снятия, которой нет (решение арбитра 16.09.2026)', async () => {
-    const { service } = build(allLinksCount({ rightsClaim: 1 }));
+  it.each([['bookVersionContributor'], ['rightsProfileContributor']])(
+    'отказ не обещает ручки снятия, которой нет: %s (решение арбитра 16.09.2026)',
+    async (link) => {
+      const { service } = build(allLinksCount({ [link]: 1 }));
 
-    // 🔴 `RightsClaim.claimantPersonId` у закрытой претензии не снимает ничто
-    // (`rights-claims.service.ts:338-342`, правовая семантика — за владельцем). Прежнее
-    // «Unlink them first» посылало редактора искать ручку, которой не существует.
-    // Возврат старой формулировки красит этот кейс.
-    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
-      /Remove or reassign these links before deleting the person\./,
+      // 🔴 Прежнее «Unlink them first» посылало редактора искать ручку, которой не существует.
+      // У привязки к версии книги и к профилю прав своей ручки снятия нет — отказ её
+      // и не обещает. Возврат старой формулировки красит этот кейс.
+      await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
+        /Remove or reassign these links before deleting the person\./,
+      );
+      await expect(service.remove('person-1', 'admin-1')).rejects.not.toThrow(/Unlink them first/);
+      await expect(service.remove('person-1', 'admin-1')).rejects.not.toThrow(/unlink via/);
+    },
+  );
+
+  it('ровно LINKED_IDS_IN_REFUSAL претензий — точное число, без «more than» и многоточия', async () => {
+    const { service } = build(allLinksCount({ rightsClaim: LINKED_IDS_IN_REFUSAL }));
+    const all = Array.from({ length: LINKED_IDS_IN_REFUSAL }, (_, i) => `claim-${i + 1}`).join(
+      ', ',
     );
-    await expect(service.remove('person-1', 'admin-1')).rejects.not.toThrow(/Unlink them first/);
-    await expect(service.remove('person-1', 'admin-1')).rejects.not.toThrow(/unlink via/);
+
+    // Граница потолка: `>` в `describeLinkedIds`, сменённый на `>=`, написал бы «more than 5»
+    // при ровно пяти претензиях — и этот кейс покраснел бы.
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
+      `${LINKED_IDS_IN_REFUSAL} rights claim records as claimant (ids: ${all}; unlink via`,
+    );
+  });
+
+  it('отказ по претензии называет ручку снятия заявителя и id претензий (LEGACY-396, T72)', async () => {
+    const { tx, service } = build(allLinksCount({ rightsClaim: LINKED_IDS_IN_REFUSAL + 2 }));
+    const shown = Array.from({ length: LINKED_IDS_IN_REFUSAL }, (_, i) => `claim-${i + 1}`).join(
+      ', ',
+    );
+
+    // С 30.09.2026 заявителя претензии любого статуса снимает
+    // `DELETE /admin/rights/claims/:id/claimant-person` (`RightsClaimsService.unlinkClaimantPerson`).
+    // Без ручки и id в тексте редактор снова ищет путь снятия наугад — это и была `LEGACY-396`.
+    await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
+      `more than ${LINKED_IDS_IN_REFUSAL} rights claim records as claimant (ids: ${shown}, …; ` +
+        'unlink via DELETE /admin/rights/claims/:id/claimant-person, admin only)',
+    );
+    expect((tx.person as { delete: jest.Mock }).delete).not.toHaveBeenCalled();
   });
 
   it('отказ по легаси-автору называет ручку снятия моста (LEGACY-396)', async () => {
@@ -420,16 +458,15 @@ describe('PersonsService.remove — проверка связей падает �
   });
 
   it('отказ называет id авторов, держащих мост, с потолком и многоточием (LEGACY-396)', async () => {
-    const { tx, service } = build(allLinksCount({ author: LEGACY_AUTHOR_IDS_IN_REFUSAL + 2 }));
-    const shown = Array.from(
-      { length: LEGACY_AUTHOR_IDS_IN_REFUSAL },
-      (_, i) => `author-${i + 1}`,
-    ).join(', ');
+    const { tx, service } = build(allLinksCount({ author: LINKED_IDS_IN_REFUSAL + 2 }));
+    const shown = Array.from({ length: LINKED_IDS_IN_REFUSAL }, (_, i) => `author-${i + 1}`).join(
+      ', ',
+    );
 
     // `GET /admin/authors*` `personId` не отдают — id в отказе единственный путь узнать,
     // у кого снимать мост. Выборка с потолком N+1: показаны первые N, число — «больше N».
     await expect(service.remove('person-1', 'admin-1')).rejects.toThrow(
-      `more than ${LEGACY_AUTHOR_IDS_IN_REFUSAL} legacy author records (ids: ${shown}, …; unlink via`,
+      `more than ${LINKED_IDS_IN_REFUSAL} legacy author records (ids: ${shown}, …; unlink via`,
     );
     const findMany = (tx.author as { findMany: jest.Mock }).findMany;
     expect(findMany).toHaveBeenCalledTimes(1);
@@ -437,7 +474,7 @@ describe('PersonsService.remove — проверка связей падает �
       where: { personId: 'person-1' },
       select: { id: true },
       orderBy: { id: 'asc' },
-      take: LEGACY_AUTHOR_IDS_IN_REFUSAL + 1,
+      take: LINKED_IDS_IN_REFUSAL + 1,
     });
   });
 
@@ -472,9 +509,9 @@ describe('PersonsService.remove — проверка связей падает �
     const reads = [
       delegates.bookVersionContributor.count,
       delegates.rightsProfileContributor.count,
-      // Легаси-авторы с 29.09.2026 читаются `findMany`, а не `count` (`LEGACY-396`).
+      // Легаси-авторы (29.09.2026) и претензии (30.09.2026) читаются `findMany`, а не `count` (`LEGACY-396`).
       delegates.author.findMany,
-      delegates.rightsClaim.count,
+      delegates.rightsClaim.findMany,
     ];
     for (const read of reads) {
       const readOrder = read.mock.invocationCallOrder[0];
@@ -529,11 +566,15 @@ describe('PersonsService.remove — проверка связей падает �
       where: { personId: 'person-1' },
       select: { id: true },
       orderBy: { id: 'asc' },
-      take: LEGACY_AUTHOR_IDS_IN_REFUSAL + 1,
+      take: LINKED_IDS_IN_REFUSAL + 1,
     });
     // Поле у претензии своё — `claimantPersonId`, а не `personId` (`prisma/schema.prisma:2546`).
-    expect(delegates.rightsClaim.count).toHaveBeenCalledWith({
+    expect(delegates.rightsClaim.findMany).toHaveBeenCalledTimes(1);
+    expect(delegates.rightsClaim.findMany).toHaveBeenCalledWith({
       where: { claimantPersonId: 'person-1' },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: LINKED_IDS_IN_REFUSAL + 1,
     });
   });
 

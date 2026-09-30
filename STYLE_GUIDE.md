@@ -238,7 +238,7 @@ export class BookController {
 - **REST**: множественное число для коллекций (`/books`), `/me` — исключение
 - **`@Body() dto`** — всегда называть `dto`, не `body`, не `data`, не `input`
 - **`@Param('id') id: string`** — параметры именовать по сущности
-- **DELETE** → `@HttpCode(HttpStatus.NO_CONTENT)`
+- **DELETE** → `@HttpCode(HttpStatus.NO_CONTENT)`; сознательные исключения с ответом 200 и телом (ручки снятия связи — `LEGACY-396`; тело у удаления книги и медиа — `LEGACY-373`) описаны в `CLAUDE.md`, «Специфика проекта»
 - **POST, возвращающий 200** → `@HttpCode(HttpStatus.OK)`
 - **Авторизация**: `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(...)`
 - **Swagger**: `@ApiTags`, `@ApiOperation`, `@ApiResponse` на каждый эндпоинт
