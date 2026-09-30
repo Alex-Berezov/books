@@ -27,6 +27,7 @@ import { buildTermBundle } from './schema/buildTermBundle';
 import { TaxonomyPageType } from './seo.types';
 import { markDegraded } from '../../common/interceptors/degraded-response';
 import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
+import { seoDtoToData } from './utils/seo-dto-to-data.util';
 
 const TAXONOMY_PAGES: Record<
   TaxonomyPageType,
@@ -187,69 +188,12 @@ export class SeoService {
       if (!version) throw new NotFoundException('BookVersion not found');
 
       if (version.seoId) {
-        return tx.seo.update({ where: { id: version.seoId }, data: this.dtoToData(dto) });
+        return tx.seo.update({ where: { id: version.seoId }, data: seoDtoToData(dto) });
       }
-      const created = await tx.seo.create({ data: { ...this.dtoToData(dto) } });
+      const created = await tx.seo.create({ data: { ...seoDtoToData(dto) } });
       await tx.bookVersion.update({ where: { id: bookVersionId }, data: { seoId: created.id } });
       return created;
     }, SEO_VERSION_WRITE_TX_OPTIONS);
-  }
-
-  private dtoToData(dto: UpdateSeoDto) {
-    const {
-      metaTitle,
-      metaDescription,
-      canonicalUrl,
-      robots,
-      ogTitle,
-      ogDescription,
-      ogType,
-      ogUrl,
-      ogImageUrl,
-      ogImageAlt,
-      twitterCard,
-      twitterSite,
-      twitterCreator,
-      eventName,
-      eventDescription,
-      eventStartDate,
-      eventEndDate,
-      eventUrl,
-      eventImageUrl,
-      eventLocationName,
-      eventLocationStreet,
-      eventLocationCity,
-      eventLocationRegion,
-      eventLocationPostal,
-      eventLocationCountry,
-    } = dto;
-    return {
-      metaTitle,
-      metaDescription,
-      canonicalUrl,
-      robots,
-      ogTitle,
-      ogDescription,
-      ogType,
-      ogUrl,
-      ogImageUrl,
-      ogImageAlt,
-      twitterCard,
-      twitterSite,
-      twitterCreator,
-      eventName,
-      eventDescription,
-      eventStartDate: eventStartDate ? new Date(eventStartDate) : undefined,
-      eventEndDate: eventEndDate ? new Date(eventEndDate) : undefined,
-      eventUrl,
-      eventImageUrl,
-      eventLocationName,
-      eventLocationStreet,
-      eventLocationCity,
-      eventLocationRegion,
-      eventLocationPostal,
-      eventLocationCountry,
-    };
   }
 
   // Backwards compatible fallback resolver

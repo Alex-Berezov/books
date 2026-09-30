@@ -5,7 +5,6 @@ import {
   IsIn,
   IsOptional,
   IsString,
-  IsUrl,
   IsUUID,
   MaxLength,
   MinLength,
@@ -17,6 +16,7 @@ import {
   IsArray,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 import {
   BookVersionCharacterDto,
@@ -65,11 +65,11 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @ApiPropertyOptional({ example: 'https://cdn.example.com/covers/hp1-new.jpg' })
   // Ложное условие отключает **все** валидаторы поля разом, поэтому пропускаются ровно два
   // случая: поля нет и поле пустое. Всё остальное — `null`, число, массив, объект — обязано
-  // дойти до `@IsString()` и `@IsUrl()` и получить 400, а не проскочить проверку и упасть
-  // на записи в базу пятисоткой.
+  // дойти до `@IsString()` и `@IsAbsoluteHttpUrl()` и получить 400, а не проскочить проверку
+  // и упасть на записи в базу пятисоткой.
   @ValidateIf((_o, value) => value !== undefined && value !== '')
   @IsString()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   coverImageUrl?: string;
 
   @ApiPropertyOptional({ enum: Object.values(PrismaBookType), example: 'audio' })
@@ -84,7 +84,7 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
 
   @ApiPropertyOptional({ example: 'https://partner.example.com/ref/456' })
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   referralUrl?: string;
 
   @ApiPropertyOptional({ example: 'HP1 — Summary (Updated)' })

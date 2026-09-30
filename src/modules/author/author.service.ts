@@ -40,6 +40,7 @@ import {
   sortLetters,
 } from './author-index.util';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
 
 /**
  * `%` и `_` в запросе пользователя — это символы, а не подстановки: поиск «100%»
@@ -710,17 +711,7 @@ export class AuthorService {
               similarSlugs: t.similarSlugs as unknown as Prisma.InputJsonValue,
               seo: t.seo
                 ? {
-                    create: {
-                      metaTitle: t.seo.metaTitle,
-                      metaDescription: t.seo.metaDescription,
-                      canonicalUrl: t.seo.canonicalUrl,
-                      robots: t.seo.robots,
-                      ogTitle: t.seo.ogTitle,
-                      ogDescription: t.seo.ogDescription,
-                      ogImageUrl: t.seo.ogImageUrl,
-                      ogImageAlt: t.seo.ogImageAlt,
-                      twitterCard: t.seo.twitterCard,
-                    },
+                    create: seoDtoToData(t.seo),
                   }
                 : undefined,
             })),
@@ -862,17 +853,7 @@ export class AuthorService {
                 similarSlugs: t.similarSlugs as unknown as Prisma.InputJsonValue,
                 seo: t.seo
                   ? {
-                      create: {
-                        metaTitle: t.seo.metaTitle,
-                        metaDescription: t.seo.metaDescription,
-                        canonicalUrl: t.seo.canonicalUrl,
-                        robots: t.seo.robots,
-                        ogTitle: t.seo.ogTitle,
-                        ogDescription: t.seo.ogDescription,
-                        ogImageUrl: t.seo.ogImageUrl,
-                        ogImageAlt: t.seo.ogImageAlt,
-                        twitterCard: t.seo.twitterCard,
-                      },
+                      create: seoDtoToData(t.seo),
                     }
                   : undefined,
               },

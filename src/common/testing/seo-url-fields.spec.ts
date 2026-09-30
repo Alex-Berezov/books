@@ -9,12 +9,22 @@ import { UpdateCategoryTranslationDto } from '../../modules/category/dto/update-
 import { UpdateSeoDto } from '../../modules/seo/dto/update-seo.dto';
 import { CreatePageDto } from '../../modules/pages/dto/create-page.dto';
 import { UpdatePageDto } from '../../modules/pages/dto/update-page.dto';
+import { CreateBookVersionDto } from '../../modules/book-version/dto/create-book-version.dto';
+import { UpdateBookVersionDto } from '../../modules/book-version/dto/update-book-version.dto';
 import { AuthorTranslationDto } from '../../modules/author/dto/author-translation.dto';
 
 type Path = [string, new () => object, Record<string, unknown>, string];
 
 const SEO_INPUT_URL_FIELDS = ['canonicalUrl', 'ogUrl', 'ogImageUrl'] as const;
 const UPDATE_SEO_URL_FIELDS = [...SEO_INPUT_URL_FIELDS, 'eventUrl', 'eventImageUrl'] as const;
+
+const versionBase = {
+  language: Language.en,
+  title: 'The Picture of Dorian Gray',
+  author: 'Oscar Wilde',
+  type: 'text',
+  isFree: true,
+};
 
 const tagBase = { name: 'Aestheticism', slug: 'aestheticism' };
 const categoryBase = { name: 'Victorian Literature', slug: 'victorian-literature' };
@@ -46,6 +56,11 @@ const paths: Path[] = [
   ],
   ['PATCH перевода категории', UpdateCategoryTranslationDto, {}, 'ogImageUrl'],
   ...UPDATE_SEO_URL_FIELDS.map((field): Path => ['PUT /versions/:id/seo', UpdateSeoDto, {}, field]),
+  // `T75`: обложка и реферальная ссылка версии — те же абсолютные http(s), что и SEO-адреса.
+  ['создание версии', CreateBookVersionDto, versionBase, 'coverImageUrl'],
+  ['создание версии', CreateBookVersionDto, versionBase, 'referralUrl'],
+  ['PATCH версии', UpdateBookVersionDto, {}, 'coverImageUrl'],
+  ['PATCH версии', UpdateBookVersionDto, {}, 'referralUrl'],
 ];
 
 // Вложенный `seo` (`SeoInputDto`, `UpdateSeoDto`) пишет те же колонки таблицы `Seo`.
@@ -104,6 +119,19 @@ describe('IsAbsoluteHttpUrl на всех путях записи SEO-URL (LEGAC
     for (const value of BAD_URLS) {
       expect(dtoFieldErrors(dto, { ...base, [field]: value })).toContain(field);
     }
+  });
+
+  // `T75`: у обложки версии пустая строка — «не задано», а `null` — 400 (колонка `NOT NULL`),
+  // замена валидатора на `IsAbsoluteHttpUrl` не должна сдвинуть ни то, ни другое.
+  it('coverImageUrl версии: пустая строка допустима, null отбивается', () => {
+    expect(dtoFieldErrors(CreateBookVersionDto, { ...versionBase, coverImageUrl: '' })).toEqual([]);
+    expect(dtoFieldErrors(UpdateBookVersionDto, { coverImageUrl: '' })).toEqual([]);
+    expect(dtoFieldErrors(CreateBookVersionDto, { ...versionBase, coverImageUrl: null })).toContain(
+      'coverImageUrl',
+    );
+    expect(dtoFieldErrors(UpdateBookVersionDto, { coverImageUrl: null })).toContain(
+      'coverImageUrl',
+    );
   });
 
   it('`null` у ogImageUrl импорта по-прежнему допустим', () => {

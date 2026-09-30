@@ -218,6 +218,39 @@ describe('AuthorService', () => {
   });
 
   describe('create', () => {
+    // `LEGACY-401`, `T75`: вложенный `seo` пишется общим маппером `seoDtoToData`, а не девятью
+    // полями: `ogType`, `ogUrl`, `twitter*` и `event*` раньше принимались и терялись.
+    it('пишет вложенный seo всеми колонками UpdateSeoDto', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.create.mockResolvedValue({ id: 'auth1', translations: [] });
+
+      await service.create({
+        translations: [
+          {
+            language: Language.en,
+            name: 'Oscar Wilde',
+            slug: 'oscar-wilde',
+            seo: {
+              ogType: 'profile',
+              ogUrl: 'https://bibliaris.com/en/author/oscar-wilde',
+              twitterSite: '@bibliaris',
+              eventStartDate: '2026-10-01T00:00:00.000Z',
+            },
+          },
+        ],
+      });
+
+      const args = prisma.author.create.mock.calls[0][0] as {
+        data: { translations: { create: Array<{ seo: { create: Record<string, unknown> } }> } };
+      };
+      expect(args.data.translations.create[0].seo.create).toMatchObject({
+        ogType: 'profile',
+        ogUrl: 'https://bibliaris.com/en/author/oscar-wilde',
+        twitterSite: '@bibliaris',
+        eventStartDate: new Date('2026-10-01T00:00:00.000Z'),
+      });
+    });
+
     it('creates author successfully', async () => {
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
       prisma.author.create.mockResolvedValue({ id: 'auth1', translations: [] });
@@ -345,6 +378,39 @@ describe('AuthorService', () => {
   });
 
   describe('update', () => {
+    it('пишет вложенный seo всеми колонками UpdateSeoDto (LEGACY-401, T75)', async () => {
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findFirst.mockResolvedValue(null);
+      prisma.author.update.mockResolvedValue({ id: 'auth1' });
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+
+      await service.update('auth1', {
+        translations: [
+          {
+            language: Language.en,
+            name: 'Oscar Wilde',
+            slug: 'oscar-wilde',
+            seo: {
+              ogType: 'profile',
+              ogUrl: 'https://bibliaris.com/en/author/oscar-wilde',
+              twitterSite: '@bibliaris',
+              eventStartDate: '2026-10-01T00:00:00.000Z',
+            },
+          },
+        ],
+      });
+
+      const args = prisma.authorTranslation.create.mock.calls[0][0] as {
+        data: { seo: { create: Record<string, unknown> } };
+      };
+      expect(args.data.seo.create).toMatchObject({
+        ogType: 'profile',
+        ogUrl: 'https://bibliaris.com/en/author/oscar-wilde',
+        twitterSite: '@bibliaris',
+        eventStartDate: new Date('2026-10-01T00:00:00.000Z'),
+      });
+    });
+
     it('updates author successfully', async () => {
       prisma.author.findUnique.mockResolvedValue({ id: 'auth1' }); // findUnique check in service
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
