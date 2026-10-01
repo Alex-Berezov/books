@@ -365,6 +365,16 @@ model Comment {
   @@index([parentId])
 }
 
+/// Резервная копия текста ответов администратора до снятия HTML (`LEGACY-429`, миграция
+/// `20261001120000_legacy_429_admin_reply_plain_text`). Нужна только для отката перезаписи;
+/// приложение её не читает. Удаление таблицы — решение владельца.
+model Legacy429CommentText {
+  id   String @id
+  text String
+
+  @@map("_legacy429_comment_text")
+}
+
 model Like {
   id            String       @id @default(uuid())
   userId        String

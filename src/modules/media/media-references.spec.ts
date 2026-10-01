@@ -62,6 +62,8 @@ const NOT_MEDIA_TEXT_REFERENCES: Record<string, string> = {
   'RightsReviewImport.reportPdfContentType': 'MIME-тип, пишет сервер из загрузки; в DTO поля нет',
   'SourceEdition.sourceFileContentType': 'MIME-тип, пишет сервер из загрузки; в DTO поля нет',
   'RightsEvidence.contentType': 'MIME-тип, пишет сервер из загрузки; в DTO поля нет',
+  'Legacy429CommentText.text':
+    'резервная копия для отката LEGACY-429, пишет только миграция, в DTO поля нет; адрес картинки остаётся в Comment.text',
 };
 
 /** Поля, куда редактор админки вставляет картинку из медиатеки (книга, глава, сводка, автор, категория, тег, страница, ответ на комментарий). */
