@@ -123,6 +123,8 @@ export class AudioChapterService {
       total,
       page: p,
       limit: l,
+      // Названное исключение из `totalPagesOf` (`T82`): на пустом списке 1, а не 0, — плоская
+      // форма публичного ответа не меняется ради единообразия (арбитр 01.10.2026, `decisions-log.md`).
       totalPages: Math.max(1, Math.ceil(total / l)),
     };
   }

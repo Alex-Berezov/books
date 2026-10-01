@@ -733,7 +733,7 @@ describe('BookService.getOverview', () => {
 
       const res = await service.findAll({ page: 1, limit: 10 });
 
-      expect(res.meta.total).toBe(1);
+      expect(res.meta).toEqual({ total: 1, page: 1, limit: 10, totalPages: 1 });
       expect(res.data[0].id).toBe('b1');
       expect(res.data[0].hasText).toBe(true);
       expect(res.data[0].hasAudio).toBe(true);
@@ -839,8 +839,7 @@ describe('BookService.getOverview', () => {
 
       expect(res.items).toHaveLength(1);
       expect(res.items[0].title).toBe('Test Book');
-      expect(res.pagination.total).toBe(1);
-      expect(res.pagination.page).toBe(1);
+      expect(res.pagination).toEqual({ page: 1, limit: 24, total: 1, totalPages: 1 });
     });
 
     /**
@@ -911,11 +910,13 @@ describe('BookService.getOverview', () => {
       prisma.$queryRaw.mockResolvedValueOnce([{ total: 100 }]).mockResolvedValueOnce([]);
       prisma.bookVersion.findMany.mockResolvedValue([]);
 
-      await service.findCards(Language.en, 1, 999);
+      const res = await service.findCards(Language.en, 1, 999);
 
       // Два последних значения тегированного шаблона — `LIMIT` и `OFFSET`.
       const pageCall = prisma.$queryRaw.mock.calls[1] as unknown[];
       expect(pageCall.slice(-2)).toEqual([48, 0]);
+      // `T82`: страницы считаются по **применённому** `limit`, а не по запрошенному.
+      expect(res.pagination).toEqual({ page: 1, limit: 48, total: 100, totalPages: 3 });
     });
   });
 

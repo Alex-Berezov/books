@@ -13,8 +13,8 @@ import { SRC_ROOT, listFiles, relativeToSrc } from './controller-decorators';
  *
  * Сторож ищет в `src` класс, интерфейс или литерал типа, чьи собственные поля — ровно эти
  * четыре имени. Наследник с добавленным полем (`PaginationWithNextDto`) копией не считается.
- * ⚠️ Стережёт объявления формы, а не вычисление: сервисы, считающие `totalPages` сами мимо
- * `paginated()`, отсюда не видны — они перечислены в теле `LEGACY-016`.
+ * Вычисление стережёт второй блок ниже (`T82`): `totalPages` считается только через
+ * `totalPagesOf`, кроме названного исключения аудиоглав.
  */
 const META_FIELDS = ['limit', 'page', 'total', 'totalPages'];
 const SOURCE = 'shared/dto/paginated-response.dto.ts#PaginationInfoDto';
@@ -69,6 +69,123 @@ describe('LEGACY-016: мета пагинации описана одним кл
       'probe.ts:1#BookCardsPaginationDto',
       'probe.ts:2#Meta',
       'probe.ts:3#<литерал типа>',
+    ]);
+  });
+});
+
+/**
+ * `T82` (`LEGACY-016`): число страниц считается одним правилом — `totalPagesOf`.
+ *
+ * До 01.10.2026 десять мест в сервисах считали его сами голым `Math.ceil(total / limit)`,
+ * и при `limit = 0` давали `NaN`/`Infinity` везде, где мета уходила в ответ как есть.
+ * Сторож ищет значение, которое уходит в `totalPages`: поле объекта (с любым ключом),
+ * переменную того же имени (её потом кладут сокращённой записью) или присваивание
+ * `totalPages = …` / `x.totalPages = …`. Ручной подсчёт — деление или вызов `Math.*`
+ * **вне** вызова `totalPagesOf`. Литерал (`totalPages: 0` на пустом раннем выходе)
+ * подсчётом не считается.
+ * ⚠️ Чего сторож не видит — поток данных синтаксисом не прослеживается: подсчёт в переменной
+ * с другим именем (`const pages = Math.ceil(…); … totalPages: pages`), в обёртке-помощнике
+ * с другим именем (`totalPages: pageCount(total, limit)`), в поле класса и геттере
+ * (`totalPages = …` в теле класса, `get totalPages()`). Сторож держит привычные формы,
+ * а не любой обход.
+ */
+const TOTAL_PAGES_EXCEPTIONS = [
+  // Плоская форма аудиоглав отдаёт на пустом списке 1 (арбитр 01.10.2026, `decisions-log.md`).
+  // Одно место на файл: второе такое же в нём же — уже новое исключение, а не это.
+  'modules/audio-chapter/audio-chapter.service.ts',
+];
+
+const isTotalPagesName = (name: ts.Node): boolean =>
+  (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === 'totalPages';
+
+const countsByHand = (value: ts.Node): boolean => {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'totalPagesOf'
+    ) {
+      return;
+    }
+    if (
+      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
+      (ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === 'Math')
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(value);
+  return found;
+};
+
+const totalPagesValue = (node: ts.Node): ts.Expression | undefined => {
+  if (ts.isPropertyAssignment(node) && isTotalPagesName(node.name)) return node.initializer;
+  if (ts.isVariableDeclaration(node) && isTotalPagesName(node.name)) return node.initializer;
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    (isTotalPagesName(node.left) ||
+      (ts.isPropertyAccessExpression(node.left) && isTotalPagesName(node.left.name)) ||
+      (ts.isElementAccessExpression(node.left) && isTotalPagesName(node.left.argumentExpression)))
+  ) {
+    return node.right;
+  }
+  return undefined;
+};
+
+const findHandCountedTotalPages = (file: string, text: string): string[] => {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    const value = totalPagesValue(node);
+    if (value && countsByHand(value)) {
+      const { line } = source.getLineAndCharacterOfPosition(node.getStart());
+      found.push(`${relativeToSrc(file)}:${line + 1}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+};
+
+describe('LEGACY-016: totalPages считается одним правилом', () => {
+  it('в src нет totalPages, посчитанного мимо totalPagesOf', () => {
+    const files = listFiles(SRC_ROOT, (p) => p.endsWith('.ts') && !p.endsWith('.spec.ts'));
+    const found = files.flatMap((file) =>
+      findHandCountedTotalPages(file, readFileSync(file, 'utf8')),
+    );
+    // Лишняя строка в выводе — новое место ручного подсчёта (или второе в файле исключения).
+    expect(found.map((f) => f.replace(/:\d+$/, ''))).toEqual(TOTAL_PAGES_EXCEPTIONS);
+  });
+
+  it('проба на отказ: все формы ручного подсчёта находятся, литерал и помощник — нет', () => {
+    const text = [
+      'const a = { totalPages: Math.ceil(total / limit) };',
+      'const b = { totalPages: total === 0 ? 0 : Math.ceil(total / limit) };',
+      'const totalPages = Math.ceil(total / limit);',
+      "const c = { 'totalPages': Math.ceil(total / limit) };",
+      'meta.totalPages = Math.ceil(total / limit);',
+      "meta['totalPages'] = total / limit;",
+      'totalPages = Math.ceil(total / limit);',
+      'const d = { totalPages: 0 };',
+      'const e = { totalPages: totalPagesOf(total, limit) };',
+      'const f = { totalPages: totalPagesOf(Math.max(total, 0), limit / 2) };',
+    ].join('\n');
+    expect(findHandCountedTotalPages(`${SRC_ROOT}/probe.ts`, text)).toEqual([
+      'probe.ts:1',
+      'probe.ts:2',
+      'probe.ts:3',
+      'probe.ts:4',
+      'probe.ts:5',
+      'probe.ts:6',
+      'probe.ts:7',
     ]);
   });
 });

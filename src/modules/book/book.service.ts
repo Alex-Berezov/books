@@ -41,7 +41,12 @@ import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
+import {
+  paginated,
+  PaginatedResult,
+  PaginationInfoDto,
+  totalPagesOf,
+} from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
 
@@ -188,7 +193,7 @@ export class BookService {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: totalPagesOf(total, limit),
       },
     };
   }
@@ -971,7 +976,7 @@ export class BookService {
     `;
 
     // Счёт книг, а не версий, одной строкой. `::int` обязателен: `COUNT` отдаёт
-    // `BigInt`, и без приведения `Math.ceil(total / limit)` падает в `TypeError`.
+    // `BigInt`, и без приведения подсчёт страниц падает в `TypeError`.
     const totalRows = await this.prisma.$queryRaw<Array<{ total: number }>>`
       SELECT COUNT(*)::int AS total
       FROM (
@@ -1415,16 +1420,8 @@ export class BookService {
     page: number,
     limit: number,
     total: number,
-  ): Promise<{
-    items: BookCardDto[];
-    pagination: PaginationInfoDto;
-  }> {
-    if (bookIds.length === 0) {
-      return {
-        items: [],
-        pagination: { page, limit, total, totalPages: total === 0 ? 0 : Math.ceil(total / limit) },
-      };
-    }
+  ): Promise<PaginatedResult<BookCardDto>> {
+    if (bookIds.length === 0) return paginated([], { page, limit, total });
 
     // Fetch one localized published version per book (the first by publishedAt desc)
     const versions = await this.prisma.bookVersion.findMany({
@@ -1452,10 +1449,10 @@ export class BookService {
       authorIds.map((authorId) => ({ authorId, language: lang })),
     );
 
-    return {
-      items: ordered.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap, lang)),
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    };
+    return paginated(
+      ordered.map((v) => this.toBookCardDto(v, ratingsMap, authorSlugMap, lang)),
+      { page, limit, total },
+    );
   }
 
   /**

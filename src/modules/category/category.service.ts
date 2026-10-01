@@ -5,6 +5,7 @@ import {
 } from '../../common/selects/public-book.select';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import { totalPagesOf } from '../../shared/dto/paginated-response.dto';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { isCategoryTermOpen } from '../../shared/seo/term-indexable.util';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
@@ -168,7 +169,7 @@ export class CategoryService {
           page,
           limit,
           total,
-          totalPages: Math.ceil(total / limit),
+          totalPages: totalPagesOf(total, limit),
         },
       };
     }
@@ -222,7 +223,7 @@ export class CategoryService {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: totalPagesOf(total, limit),
       },
     };
   }
@@ -847,7 +848,7 @@ export class CategoryService {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: totalPagesOf(total, limit),
       },
       availableLanguages,
     };

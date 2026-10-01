@@ -124,3 +124,38 @@ describe('AudioChapterService clearance lock', () => {
     allUnderOneLock();
   });
 });
+
+/** `T82` (`LEGACY-016`): исключение из `totalPagesOf`, причина — у `totalPages` в сервисе. */
+describe('AudioChapterService totalPages', () => {
+  const build = (total: number) => {
+    const stub = {
+      bookVersion: { findUnique: jest.fn().mockResolvedValue({ id: 'v1' }) },
+      audioChapter: {
+        findMany: jest.fn().mockReturnValue('findMany'),
+        count: jest.fn().mockReturnValue('count'),
+      },
+      $transaction: jest.fn().mockResolvedValue([[], total]),
+    };
+    const service = new AudioChapterService(
+      stub as unknown as PrismaService,
+      {} as RightsContentHashService,
+      { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
+      createClearanceLockFake(stub).service,
+      {} as AdminAuditService,
+    );
+    return { service, stub };
+  };
+
+  it('пустой список — одна страница', async () => {
+    const { service, stub } = build(0);
+    const res = await service.listAdmin('v1', 1, 50);
+    expect(stub.$transaction).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ total: 0, page: 1, limit: 50, totalPages: 1 });
+  });
+
+  it('непустой список считает страницы по limit', async () => {
+    const { service } = build(101);
+    const res = await service.listAdmin('v1', 1, 50);
+    expect(res.totalPages).toBe(3);
+  });
+});

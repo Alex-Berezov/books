@@ -36,12 +36,12 @@ const ar = await this.prisma.role.findUnique({ where: { name: 'admin' } });
 // ✅ Правильно
 const categories = await this.prisma.category.findMany();
 const version = await this.getVersion(bookId);
-const totalPages = Math.ceil(total / limit);
+const totalPages = totalPagesOf(total, limit);
 
 // ❌ Неправильно
 const cats = await this.prisma.category.findMany();
 const v = await this.getVersion(bookId);
-const tp = Math.ceil(total / limit);
+const tp = totalPagesOf(total, limit);
 ```
 
 ### Булевы переменные — через `is` / `has` / `can`

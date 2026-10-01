@@ -35,7 +35,7 @@ import {
 import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
 import { isTagTermOpen } from '../../shared/seo/term-indexable.util';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
-import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
+import { PaginationInfoDto, totalPagesOf } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 
 /**
@@ -133,7 +133,7 @@ export class TagsService {
           page,
           limit,
           total,
-          totalPages: Math.ceil(total / limit),
+          totalPages: totalPagesOf(total, limit),
         },
       };
     }
@@ -194,7 +194,7 @@ export class TagsService {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: totalPagesOf(total, limit),
       },
     };
   }
@@ -522,7 +522,7 @@ export class TagsService {
         page: effectivePage,
         limit: effectiveLimit,
         total,
-        totalPages: Math.ceil(total / effectiveLimit),
+        totalPages: totalPagesOf(total, effectiveLimit),
       },
       availableLanguages,
     };

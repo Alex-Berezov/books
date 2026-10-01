@@ -17,7 +17,11 @@ import {
   AuthorFaqDto as AuthorFaq,
 } from './dto/author-translation.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { paginated, PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
+import {
+  paginated,
+  PaginationInfoDto,
+  totalPagesOf,
+} from '../../shared/dto/paginated-response.dto';
 import {
   PUBLIC_AUTHOR_PAGE_TRANSLATION_SELECT,
   PUBLIC_AUTHOR_SELECT,
@@ -544,7 +548,7 @@ export class AuthorService {
     ]);
 
     const total = totals[0]?.total ?? 0;
-    const meta = { page, limit, total, totalPages: Math.ceil(total / limit) };
+    const meta = { page, limit, total, totalPages: totalPagesOf(total, limit) };
 
     if (rows.length === 0) return { data: [], meta };
 

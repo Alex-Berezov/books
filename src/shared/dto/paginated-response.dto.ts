@@ -59,12 +59,17 @@ export interface PaginatedResult<T> {
 }
 
 /**
- * Сборка ответа из уже выбранных строк и применённых значений пагинации.
+ * Число страниц при этом размере страницы — одно правило на все списки (`LEGACY-016`, `T82`).
  *
- * `totalPages` считается здесь, а не в каждом сервисе: девять мест считали его
- * сами, и два из них — `Math.ceil(total / limit)` при `limit = 0` — давали
- * `Infinity`. При нулевом `limit` страниц ноль.
+ * Пустой список — ноль страниц; при нулевом или отрицательном `limit` тоже ноль, а не
+ * `NaN`/`Infinity`. Зовут его `paginated()` и сервисы, которые собирают мету сами
+ * (`{data, meta}` до обёртки контроллера). Названное исключение — аудиоглавы
+ * (`audio-chapter.service.ts`, причина там же): на пустом списке они отдают 1.
  */
+export const totalPagesOf = (total: number, limit: number): number =>
+  limit > 0 ? Math.ceil(total / limit) : 0;
+
+/** Сборка ответа из уже выбранных строк и применённых значений пагинации. */
 export const paginated = <T>(
   items: T[],
   { page, limit, total }: { page: number; limit: number; total: number },
@@ -74,7 +79,7 @@ export const paginated = <T>(
     page,
     limit,
     total,
-    totalPages: limit > 0 ? Math.ceil(total / limit) : 0,
+    totalPages: totalPagesOf(total, limit),
   },
 });
 

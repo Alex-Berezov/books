@@ -2213,6 +2213,19 @@ describe('CategoryService', () => {
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
+  // `T82` (`LEGACY-016`): при `limit = 0` страниц ноль, а не `Infinity` (в JSON — `null`).
+  it('list с limit = 0 отдаёт ноль страниц', async () => {
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+    prisma.category.count.mockResolvedValue(42);
+    prisma.category.findMany.mockResolvedValue([]);
+
+    const res = await service.list(1, 0, 'genre', Language.ru);
+
+    expect(res.meta).toEqual({ page: 1, limit: 0, total: 42, totalPages: 0 });
+  });
+
   describe('getTree projects per-language indexability', () => {
     beforeEach(() => {
       prisma.category.findMany.mockResolvedValue([
