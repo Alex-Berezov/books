@@ -44,8 +44,21 @@ const THREAD_NODE_SELECT = {
   isDeleted: true,
   isHidden: true,
   userId: true,
+  bookVersionId: true,
+  chapterId: true,
+  audioChapterId: true,
 } as const;
+type ThreadNode = Prisma.CommentGetPayload<{ select: typeof THREAD_NODE_SELECT }>;
+type ThreadTarget = Pick<ThreadNode, 'bookVersionId' | 'chapterId' | 'audioChapterId'>;
 const THREAD_MAX_HOPS = 32;
+// Ответ ждёт замки цели и корня (`lockThreadRoot`): удаление версии держит её строку всё
+// время каскада, и дефолтные 5 с Prisma превращали бы ожидание в `P2028` и 500 (L-020).
+const COMMENT_CREATE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+const threadNotFound = () => new NotFoundException('Parent comment not found');
+const isSameTarget = (a: Partial<ThreadTarget>, b: ThreadTarget): boolean =>
+  (a.bookVersionId ?? null) === b.bookVersionId &&
+  (a.chapterId ?? null) === b.chapterId &&
+  (a.audioChapterId ?? null) === b.audioChapterId;
 
 @Injectable()
 export class CommentsService {
@@ -103,9 +116,17 @@ export class CommentsService {
   }
 
   async create(userId: string, dto: CreateCommentDto) {
-    const parentId = dto.parentId
-      ? await this.resolveThreadRootId(dto.parentId, userId)
-      : undefined;
+    const root = dto.parentId ? await this.resolveThreadRoot(dto.parentId, userId) : undefined;
+    // Цель и оценка ответа — производные от ветки, а не от тела (`LEGACY-428`): ответ
+    // с чужой целью попадал в `children` ветки другой версии, а `rating` в ответе
+    // переписывал оценку книги.
+    if (root && dto.rating) {
+      throw new BadRequestException('Rating cannot be attached to a reply');
+    }
+    if (root && !isSameTarget(dto, root)) {
+      throw new BadRequestException('Reply target must match the thread root target');
+    }
+    const parentId = root?.id;
 
     let bookId: string | undefined;
     if (dto.bookVersionId) {
@@ -131,6 +152,7 @@ export class CommentsService {
     }
 
     const comment = await this.prisma.$transaction(async (tx) => {
+      if (root) await this.lockThreadRoot(tx, root, userId);
       let ratingId: string | undefined;
 
       if (dto.rating && bookId) {
@@ -168,7 +190,7 @@ export class CommentsService {
           children: commentChildren(false),
         },
       });
-    });
+    }, COMMENT_CREATE_TX_OPTIONS);
 
     return {
       ...comment,
@@ -366,18 +388,59 @@ export class CommentsService {
    * В скрытую ветку отвечает только автор её корня: его ответ виден ему внутри
    * корня, а чужой не был бы виден автору нигде.
    */
-  private async resolveThreadRootId(parentId: string, userId: string): Promise<string> {
-    const notFound = () => new NotFoundException('Parent comment not found');
+  private async resolveThreadRoot(parentId: string, userId: string): Promise<ThreadNode> {
     const readNode = (id: string) =>
       this.prisma.comment.findUnique({ where: { id }, select: THREAD_NODE_SELECT });
     let root = await readNode(parentId);
-    if (!root || root.isDeleted) throw notFound();
+    if (!root || root.isDeleted) throw threadNotFound();
     for (let hops = 0; root.parentId; hops++) {
-      if (hops >= THREAD_MAX_HOPS) throw notFound();
+      if (hops >= THREAD_MAX_HOPS) throw threadNotFound();
       root = await readNode(root.parentId);
-      if (!root || root.isDeleted) throw notFound();
+      if (!root || root.isDeleted) throw threadNotFound();
     }
-    if (root.isHidden && root.userId !== userId) throw notFound();
-    return root.id;
+    if (root.isHidden && root.userId !== userId) throw threadNotFound();
+    return root;
+  }
+
+  /**
+   * Проверка корня вне транзакции видит снимок до записи: корень, скрытый, удалённый
+   * или стёртый каскадом между проверкой и `comment.create`, давал ответ под скрытым
+   * корнем или 500 на внешнем ключе (`LEGACY-428`, решение арбитра 01.10.2026).
+   * Корень запирается `FOR SHARE` и перечитывается: скрытие и удаление ждут вставку,
+   * а вставка после них видит их итог. Порядок замков повторяет тех, кто удаляет
+   * комментарии каскадом: сначала строка автора ответа (`users.service.ts`,
+   * `deleteById` запирает пользователя `FOR UPDATE`, потом трогает его комментарии),
+   * затем цель (удаление версии или главы — сначала цель, потом её комментарии),
+   * и только потом корень. Обратный порядок дал бы 40P01. Отвечающий, удалённый
+   * за время ожидания, — 404, а не 500 на внешнем ключе. `FOR KEY SHARE` не мешает
+   * правкам строк пользователя и цели — только их удалению. Промежуточные узлы
+   * цепочки не запираются: ответ крепится к корню, их судьба на него не влияет.
+   * ⚠️ Встречное удаление аккаунта автора корня этим не закрыто: `deleteById`
+   * отвязывает ответы раньше, чем удаляет корень, и ответ, вставленный между шагами,
+   * внешний ключ `ON DELETE SET NULL` молча делает корневым отзывом (`LEGACY-433`,
+   * пачка `T83`).
+   */
+  private async lockThreadRoot(
+    tx: Prisma.TransactionClient,
+    root: ThreadNode,
+    userId: string,
+  ): Promise<void> {
+    const author = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`SELECT id FROM "User" WHERE id = ${userId} FOR KEY SHARE`;
+    if (author.length === 0) throw new NotFoundException('User not found');
+    if (root.bookVersionId) {
+      await tx.$queryRaw`SELECT id FROM "BookVersion" WHERE id = ${root.bookVersionId} FOR KEY SHARE`;
+    } else if (root.chapterId) {
+      await tx.$queryRaw`SELECT id FROM "Chapter" WHERE id = ${root.chapterId} FOR KEY SHARE`;
+    } else if (root.audioChapterId) {
+      await tx.$queryRaw`SELECT id FROM "AudioChapter" WHERE id = ${root.audioChapterId} FOR KEY SHARE`;
+    }
+    const [locked] = await tx.$queryRaw<
+      Array<Pick<ThreadNode, 'isDeleted' | 'isHidden' | 'userId'>>
+    >`SELECT "isDeleted", "isHidden", "userId" FROM "Comment" WHERE id = ${root.id} FOR SHARE`;
+    if (!locked || locked.isDeleted || (locked.isHidden && locked.userId !== userId)) {
+      throw threadNotFound();
+    }
   }
 }

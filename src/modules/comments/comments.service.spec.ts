@@ -16,6 +16,7 @@ type TransactionArg<T = unknown> = Promise<T>[] | ((tx: PrismaStub) => Promise<T
 
 interface PrismaStub {
   $transaction: jest.Mock<Promise<unknown>, [TransactionArg]>;
+  $queryRaw: jest.Mock;
   comment: {
     findUnique: jest.Mock;
     findMany: jest.Mock;
@@ -42,6 +43,10 @@ const createPrismaStub = (): PrismaStub => {
       }
       return results;
     }),
+    // Замок корня ветки (`LEGACY-428`): по умолчанию корень под замком живой и видимый.
+    $queryRaw: jest.fn(() =>
+      Promise.resolve([{ isDeleted: false, isHidden: false, userId: 'author' }]),
+    ),
     comment: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -100,7 +105,13 @@ describe('CommentsService', () => {
 
     it('validates target existence for version/chapter/audio', async () => {
       // version missing
-      prisma.comment.findUnique.mockResolvedValueOnce({ id: 'p1', isDeleted: false });
+      prisma.comment.findUnique.mockResolvedValueOnce({
+        id: 'p1',
+        isDeleted: false,
+        bookVersionId: 'v1',
+        chapterId: null,
+        audioChapterId: null,
+      });
       prisma.bookVersion.findUnique.mockResolvedValueOnce(null);
       await expect(
         service.create('u1', {
@@ -147,7 +158,16 @@ describe('CommentsService', () => {
         id: string,
         parentId: string | null,
         { isDeleted = false, isHidden = false, userId = 'author' } = {},
-      ) => ({ id, parentId, isDeleted, isHidden, userId });
+      ) => ({
+        id,
+        parentId,
+        isDeleted,
+        isHidden,
+        userId,
+        bookVersionId: 'v1',
+        chapterId: null,
+        audioChapterId: null,
+      });
 
       beforeEach(() => {
         prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1', bookId: 'b1' });
@@ -247,9 +267,157 @@ describe('CommentsService', () => {
         expect(prisma.comment.create).not.toHaveBeenCalled();
       });
 
+      it('ответ с оценкой — 400, оценка книги не трогается (LEGACY-428)', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
+        await expect(
+          service.create('u1', {
+            parentId: 'root',
+            bookVersionId: 'v1',
+            text: 't',
+            rating: 1,
+          } as CreateCommentDto),
+        ).rejects.toThrow('Rating cannot be attached to a reply');
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      describe('цель ответа сверяется с целью корня (LEGACY-428)', () => {
+        const onChapter = (id: string) => ({
+          ...row(id, null),
+          bookVersionId: null,
+          chapterId: 'ch1',
+        });
+        const mismatch = 'Reply target must match the thread root target';
+
+        it.each([
+          ['другая версия', { bookVersionId: 'v2' }],
+          ['глава вместо версии корня', { chapterId: 'v1' }],
+          ['цели нет вовсе', {}],
+        ])('%s — 400, ответ не создаётся', async (_, target) => {
+          prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
+          await expect(
+            service.create('u1', { parentId: 'root', text: 't', ...target } as CreateCommentDto),
+          ).rejects.toThrow(mismatch);
+          expect(prisma.comment.create).not.toHaveBeenCalled();
+        });
+
+        it('корень на главе: ответ на ту же главу создаётся, на другую — 400', async () => {
+          prisma.chapter.findUnique.mockResolvedValue({ id: 'ch1' });
+          prisma.comment.findUnique.mockResolvedValueOnce(onChapter('root'));
+          await service.create('u1', {
+            parentId: 'root',
+            chapterId: 'ch1',
+            text: 't',
+          } as CreateCommentDto);
+          expect(createdParentId()).toBe('root');
+
+          prisma.comment.findUnique.mockResolvedValueOnce(onChapter('root'));
+          await expect(
+            service.create('u1', {
+              parentId: 'root',
+              chapterId: 'ch2',
+              text: 't',
+            } as CreateCommentDto),
+          ).rejects.toThrow(mismatch);
+        });
+      });
+
+      describe('замок корня в транзакции записи (LEGACY-428)', () => {
+        const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
+        /** Цель и пользователь под замком на месте, корень — такой, как передан. */
+        const lockedRootIs = (locked: object | undefined) =>
+          prisma.$queryRaw.mockImplementation((strings: TemplateStringsArray, id: unknown) =>
+            Promise.resolve(
+              strings.join('?').includes('"Comment"') ? (locked ? [locked] : []) : [{ id }],
+            ),
+          );
+
+        it.each([
+          [
+            'BookVersion',
+            { bookVersionId: 'v1', chapterId: null, audioChapterId: null },
+            { bookVersionId: 'v1' },
+          ],
+          [
+            'Chapter',
+            { bookVersionId: null, chapterId: 'ch1', audioChapterId: null },
+            { chapterId: 'ch1' },
+          ],
+          [
+            'AudioChapter',
+            { bookVersionId: null, chapterId: null, audioChapterId: 'a1' },
+            { audioChapterId: 'a1' },
+          ],
+        ])(
+          'порядок: автор, цель %s, потом корень FOR SHARE',
+          async (table, rootTarget, dtoTarget) => {
+            prisma.chapter.findUnique.mockResolvedValue({ id: 'ch1' });
+            prisma.audioChapter.findUnique.mockResolvedValue({ id: 'a1' });
+            prisma.comment.findUnique.mockResolvedValueOnce({
+              ...row('root', null),
+              ...rootTarget,
+            });
+            await service.create('u1', {
+              parentId: 'root',
+              text: 't',
+              ...dtoTarget,
+            } as CreateCommentDto);
+
+            const calls = prisma.$queryRaw.mock.calls;
+            expect(calls.map(sqlOf)).toEqual([
+              'SELECT id FROM "User" WHERE id = ? FOR KEY SHARE',
+              `SELECT id FROM "${table}" WHERE id = ? FOR KEY SHARE`,
+              expect.stringMatching(/FROM "Comment" WHERE id = \? FOR SHARE$/),
+            ]);
+            expect(calls.map((call: unknown[]) => call[1])).toEqual([
+              'u1',
+              Object.values(dtoTarget)[0],
+              'root',
+            ]);
+            expect(createdParentId()).toBe('root');
+          },
+        );
+
+        it.each([
+          ['скрыт', { isDeleted: false, isHidden: true, userId: 'author' }],
+          ['удалён', { isDeleted: true, isHidden: false, userId: 'author' }],
+          ['стёрт каскадом', undefined],
+        ])('корень %s между проверкой и записью — 404, ответ не создаётся', async (_, locked) => {
+          prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
+          lockedRootIs(locked);
+          await expect(reply('root')).rejects.toThrow('Parent comment not found');
+          expect(prisma.comment.create).not.toHaveBeenCalled();
+        });
+
+        it('отвечающий удалён, пока ждал замок, — 404, а не 500 на внешнем ключе', async () => {
+          prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
+          prisma.$queryRaw.mockResolvedValueOnce([]);
+          await expect(reply('root')).rejects.toThrow('User not found');
+          expect(prisma.comment.create).not.toHaveBeenCalled();
+        });
+
+        it('автор отвечает в свой корень, скрытый между проверкой и записью, — под корень', async () => {
+          prisma.comment.findUnique.mockResolvedValueOnce(row('root', null, { userId: 'u1' }));
+          lockedRootIs({ isDeleted: false, isHidden: true, userId: 'u1' });
+          await reply('root', 'u1');
+          expect(createdParentId()).toBe('root');
+        });
+
+        it('транзакция ответа ждёт замки дольше дефолта Prisma (L-020)', async () => {
+          prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
+          await reply('root');
+          expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+          expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+            timeout: 30_000,
+            maxWait: 10_000,
+          });
+        });
+      });
+
       it('корневой комментарий создаётся без родителя', async () => {
         await service.create('u1', { bookVersionId: 'v1', text: 't' } as CreateCommentDto);
         expect(createdParentId()).toBeUndefined();
+        // Замок ветки — только у ответа: корневой отзыв чужих замков не ждёт.
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
       });
     });
   });

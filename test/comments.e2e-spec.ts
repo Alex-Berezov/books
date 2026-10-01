@@ -238,4 +238,124 @@ describe('Comments e2e', () => {
       expect(answer.body.parentId).toBe(root.body.id);
     });
   });
+
+  // `LEGACY-428`: цель и оценка ответа — от ветки; корень запирается в транзакции записи.
+  describe('ответ сверяется с веткой (LEGACY-428)', () => {
+    const post = (body: Record<string, unknown>, token = userToken) =>
+      request(http()).post('/comments').set('Authorization', `Bearer ${token}`).send(body);
+
+    it('ответ с оценкой — 400, оценка книги не меняется', async () => {
+      const root = await post({ bookVersionId: versionId, text: 'Rated', rating: 5 }).expect(201);
+      await post({
+        bookVersionId: versionId,
+        parentId: root.body.id as string,
+        text: 'Reply',
+        rating: 1,
+      })
+        .expect(400)
+        .expect(({ body }) => expect(body.message).toBe('Rating cannot be attached to a reply'));
+      const again = await request(http())
+        .get(`/comments/${root.body.id as string}`)
+        .expect(200);
+      expect(again.body.ratingScore).toBe(5);
+    });
+
+    it('цель ответа отличается от цели корня — 400', async () => {
+      const root = await post({ bookVersionId: versionId, text: 'Root' }).expect(201);
+      const chapter = await prisma.chapter.create({
+        data: { bookVersionId: versionId, number: 900, title: 'c', content: '...' },
+      });
+      await post({ chapterId: chapter.id, parentId: root.body.id as string, text: 'R' })
+        .expect(400)
+        .expect(({ body }) =>
+          expect(body.message).toBe('Reply target must match the thread root target'),
+        );
+    });
+
+    it('ветка главы и аудиоглавы: ответ с той же целью — 201 под корень', async () => {
+      const chapter = await prisma.chapter.create({
+        data: { bookVersionId: versionId, number: 901, title: 'c', content: '...' },
+      });
+      const audio = await prisma.audioChapter.create({
+        data: {
+          bookVersionId: versionId,
+          number: 901,
+          title: 'a',
+          audioUrl: 'https://example.com/a.mp3',
+          duration: 60,
+        },
+      });
+      for (const target of [{ chapterId: chapter.id }, { audioChapterId: audio.id }]) {
+        const root = await post({ ...target, text: 'Root' }).expect(201);
+        const answer = await post({
+          ...target,
+          parentId: root.body.id as string,
+          text: 'Reply',
+        }).expect(201);
+        expect(answer.body.parentId).toBe(root.body.id);
+      }
+    });
+
+    /**
+     * Живая гонка: модератор скрывает корень в открытой транзакции, ответ приходит,
+     * пока она не закоммичена. Проверка вне транзакции видит корень видимым; без
+     * замка вставка проходит мимо (внешний ключ берёт `FOR KEY SHARE`, он со
+     * скрытием не конфликтует) и ответ ложится под скрытый корень. С замком
+     * ответ ждёт коммита скрытия и получает 404.
+     */
+    it('корень скрыт между проверкой и записью — ответ ждёт и получает 404', async () => {
+      const root = await post({ bookVersionId: versionId, text: 'Race root' }).expect(201);
+      const rootId = root.body.id as string;
+      const other = await request(http())
+        .post('/auth/register')
+        .send({ email: `race_${Date.now()}@ex.com`, password: 'password123' })
+        .expect(201);
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let holderPid!: number;
+      let holderReady!: () => void;
+      const ready = new Promise<void>((resolve) => (holderReady = resolve));
+      const holder = prisma.$transaction(
+        async (tx) => {
+          const [me] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+          holderPid = me.pid;
+          await tx.comment.update({ where: { id: rootId }, data: { isHidden: true } });
+          holderReady();
+          await gate;
+        },
+        { timeout: 20_000 },
+      );
+      try {
+        await ready;
+        // `.then` нужен: supertest шлёт запрос только при подписке на результат, без неё
+        // ответ уходит после опроса и гонки нет.
+        const replyReq = post(
+          { bookVersionId: versionId, parentId: rootId, text: 'Late reply' },
+          other.body.accessToken as string,
+        ).then((res) => res);
+
+        const until = Date.now() + 10_000;
+        let blocked = false;
+        while (!blocked && Date.now() < until) {
+          const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+          blocked = row.n > 0;
+          if (!blocked) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        release();
+        await holder;
+        const res = await replyReq;
+
+        expect(blocked).toBe(true);
+        expect(res.status).toBe(404);
+        const children = await prisma.comment.count({ where: { parentId: rootId } });
+        expect(children).toBe(0);
+      } finally {
+        release();
+        await holder.catch(() => undefined);
+      }
+    });
+  });
 });
