@@ -9737,22 +9737,22 @@ export interface components {
     };
     RightsClaimAccessBlockDto: {
       appliedAt: string;
-      appliedByUserId?: string | null;
-      bookId?: string | null;
-      bookVersionId?: string | null;
+      appliedByUserId: string | null;
+      bookId: string | null;
+      bookVersionId: string | null;
       /** @description null = worldwide */
-      countryCode?: string | null;
+      countryCode: string | null;
       createdAt: string;
       /**
        * @description Status computed at request time (expiry applied)
        * @enum {string}
        */
       effectiveStatus: 'ACTIVE' | 'LIFTED' | 'EXPIRED';
-      expiresAt?: string | null;
+      expiresAt: string | null;
       id: string;
-      liftReasonRu?: string | null;
-      liftedAt?: string | null;
-      liftedByUserId?: string | null;
+      liftReasonRu: string | null;
+      liftedAt: string | null;
+      liftedByUserId: string | null;
       reasonRu: string;
       rightsClaimId: string;
       /** @enum {string} */
@@ -9779,41 +9779,41 @@ export interface components {
         | 'LEGAL_OPINION'
         | 'SCREENSHOT'
         | 'OTHER';
-      contentType?: string | null;
+      contentType: string | null;
       createdAt: string;
-      fileName?: string | null;
+      fileName: string | null;
       id: string;
-      mediaAssetId?: string | null;
-      notesRu?: string | null;
+      mediaAssetId: string | null;
+      notesRu: string | null;
       rightsClaimId: string;
-      sha256?: string | null;
-      sizeBytes?: number | null;
-      storageKey?: string | null;
+      sha256: string | null;
+      sizeBytes: number | null;
+      storageKey: string | null;
       title: string;
-      uploadedByUserId?: string | null;
-      url?: string | null;
+      uploadedByUserId: string | null;
+      url: string | null;
     };
     RightsClaimComponentDto: {
-      componentType?: string | null;
+      componentType: string | null;
       createdAt: string;
       id: string;
-      notesRu?: string | null;
+      notesRu: string | null;
       rightsClaimId: string;
-      rightsComponentId?: string | null;
-      titleRu?: string | null;
+      rightsComponentId: string | null;
+      titleRu: string | null;
     };
     RightsClaimDetailDto: {
       accessBlocks: components['schemas']['RightsClaimAccessBlockDto'][];
       activeBlocksCount: number;
       affectedCountryCodes: string[];
       affectedLanguages: string[];
-      assignedToUserId?: string | null;
+      assignedToUserId: string | null;
       attachments: components['schemas']['RightsClaimAttachmentDto'][];
       blockedCountryCodes: string[];
       blocksPublication: boolean;
-      blocksPublicationOverrideReasonRu?: string | null;
-      bookId?: string | null;
-      bookVersionId?: string | null;
+      blocksPublicationOverrideReasonRu: string | null;
+      bookId: string | null;
+      bookVersionId: string | null;
       /** @enum {string} */
       channel:
         | 'EMAIL'
@@ -9837,13 +9837,13 @@ export interface components {
         | 'DEFAMATION'
         | 'COUNTER_NOTICE'
         | 'OTHER';
-      claimantAddress?: string | null;
-      claimantEmail?: string | null;
+      claimantAddress: string | null;
+      claimantEmail: string | null;
       claimantIsAuthorized: boolean;
       claimantName: string;
-      claimantOrganization?: string | null;
-      claimantPersonId?: string | null;
-      claimantPhone?: string | null;
+      claimantOrganization: string | null;
+      claimantPersonId: string | null;
+      claimantPhone: string | null;
       /** @enum {string} */
       claimantType:
         | 'RIGHTS_HOLDER'
@@ -9855,38 +9855,38 @@ export interface components {
         | 'PLATFORM'
         | 'INDIVIDUAL'
         | 'UNKNOWN';
-      claimedRightsDescriptionRu?: string | null;
-      claimedWorkAuthor?: string | null;
-      claimedWorkTitle?: string | null;
-      closedAt?: string | null;
+      claimedRightsDescriptionRu: string | null;
+      claimedWorkAuthor: string | null;
+      claimedWorkTitle: string | null;
+      closedAt: string | null;
       components: components['schemas']['RightsClaimComponentDto'][];
-      counterNoticeClaimantName?: string | null;
-      counterNoticeReceivedAt?: string | null;
-      counterNoticeTextRu?: string | null;
+      counterNoticeClaimantName: string | null;
+      counterNoticeReceivedAt: string | null;
+      counterNoticeTextRu: string | null;
       createdAt: string;
-      createdByUserId?: string | null;
+      createdByUserId: string | null;
       /** @description May be negative for overdue claims */
-      daysUntilDeadline?: number | null;
-      deadlineAt?: string | null;
+      daysUntilDeadline: number | null;
+      deadlineAt: string | null;
       descriptionRu: string;
       events: components['schemas']['RightsClaimEventDto'][];
       goodFaithStatement: boolean;
       hasWorldwideBlock: boolean;
       id: string;
       infringingUrls: string[];
-      internalNotesRu?: string | null;
+      internalNotesRu: string | null;
       /** @description The claim status belongs to OPEN_CLAIM_STATUSES */
       isOpen: boolean;
       /** @description Open claim whose deadline has already passed */
       isOverdue: boolean;
-      mediaAssetId?: string | null;
-      originalNoticeText?: string | null;
-      originalNoticeUrl?: string | null;
-      parentClaimId?: string | null;
+      mediaAssetId: string | null;
+      originalNoticeText: string | null;
+      originalNoticeUrl: string | null;
+      parentClaimId: string | null;
       receivedAt: string;
       requiresLawyerReview: boolean;
       /** @enum {string|null} */
-      resolution?:
+      resolution:
         | 'VALID_CONTENT_REMOVED'
         | 'VALID_LICENSE_OBTAINED'
         | 'VALID_GEO_RESTRICTED'
@@ -9897,12 +9897,12 @@ export interface components {
         | 'NO_ACTION_NEEDED'
         | 'OTHER'
         | null;
-      resolutionNotesRu?: string | null;
-      resolvedAt?: string | null;
-      resolvedByUserId?: string | null;
-      responseByUserId?: string | null;
+      resolutionNotesRu: string | null;
+      resolvedAt: string | null;
+      resolvedByUserId: string | null;
+      responseByUserId: string | null;
       /** @enum {string|null} */
-      responseChannel?:
+      responseChannel:
         | 'EMAIL'
         | 'WEB_FORM'
         | 'POSTAL'
@@ -9911,10 +9911,10 @@ export interface components {
         | 'PLATFORM_NOTICE'
         | 'OTHER'
         | null;
-      responseSentAt?: string | null;
-      responseTextRu?: string | null;
-      rightsIntakeId?: string | null;
-      rightsProfileId?: string | null;
+      responseSentAt: string | null;
+      responseTextRu: string | null;
+      rightsIntakeId: string | null;
+      rightsProfileId: string | null;
       /** @enum {string} */
       severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
       /** @enum {string} */
@@ -9936,9 +9936,9 @@ export interface components {
     };
     RightsClaimEventDto: {
       createdAt: string;
-      createdByUserId?: string | null;
+      createdByUserId: string | null;
       /** @enum {string|null} */
-      currentStatus?:
+      currentStatus:
         | 'RECEIVED'
         | 'UNDER_REVIEW'
         | 'ACTION_REQUIRED'
@@ -9973,9 +9973,9 @@ export interface components {
         | 'ATTACHMENT_REMOVED'
         | 'VERSION_UNPUBLISHED';
       id: string;
-      notesRu?: string | null;
+      notesRu: string | null;
       /** @enum {string|null} */
-      previousStatus?:
+      previousStatus:
         | 'RECEIVED'
         | 'UNDER_REVIEW'
         | 'ACTION_REQUIRED'
@@ -9994,11 +9994,11 @@ export interface components {
       activeBlocksCount: number;
       affectedCountryCodes: string[];
       affectedLanguages: string[];
-      assignedToUserId?: string | null;
+      assignedToUserId: string | null;
       blockedCountryCodes: string[];
       blocksPublication: boolean;
-      bookId?: string | null;
-      bookVersionId?: string | null;
+      bookId: string | null;
+      bookVersionId: string | null;
       /** @enum {string} */
       channel:
         | 'EMAIL'
@@ -10022,10 +10022,10 @@ export interface components {
         | 'DEFAMATION'
         | 'COUNTER_NOTICE'
         | 'OTHER';
-      claimantEmail?: string | null;
+      claimantEmail: string | null;
       claimantIsAuthorized: boolean;
       claimantName: string;
-      claimantOrganization?: string | null;
+      claimantOrganization: string | null;
       /** @enum {string} */
       claimantType:
         | 'RIGHTS_HOLDER'
@@ -10037,13 +10037,13 @@ export interface components {
         | 'PLATFORM'
         | 'INDIVIDUAL'
         | 'UNKNOWN';
-      claimedWorkAuthor?: string | null;
-      claimedWorkTitle?: string | null;
-      closedAt?: string | null;
+      claimedWorkAuthor: string | null;
+      claimedWorkTitle: string | null;
+      closedAt: string | null;
       createdAt: string;
       /** @description May be negative for overdue claims */
-      daysUntilDeadline?: number | null;
-      deadlineAt?: string | null;
+      daysUntilDeadline: number | null;
+      deadlineAt: string | null;
       descriptionRu: string;
       hasWorldwideBlock: boolean;
       id: string;
@@ -10054,7 +10054,7 @@ export interface components {
       receivedAt: string;
       requiresLawyerReview: boolean;
       /** @enum {string|null} */
-      resolution?:
+      resolution:
         | 'VALID_CONTENT_REMOVED'
         | 'VALID_LICENSE_OBTAINED'
         | 'VALID_GEO_RESTRICTED'
@@ -10065,9 +10065,9 @@ export interface components {
         | 'NO_ACTION_NEEDED'
         | 'OTHER'
         | null;
-      resolvedAt?: string | null;
-      rightsIntakeId?: string | null;
-      rightsProfileId?: string | null;
+      resolvedAt: string | null;
+      rightsIntakeId: string | null;
+      rightsProfileId: string | null;
       /** @enum {string} */
       severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
       /** @enum {string} */

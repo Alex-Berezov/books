@@ -520,31 +520,29 @@ export class RightsProfileService {
         ? new Date(record['rejectedAt'] as string).toISOString()
         : null,
       rejectionReasonRu: (record['rejectionReasonRu'] as string | null) ?? null,
-      approvals: approvalsRaw
-        ? approvalsRaw.map((a) => {
-            const decidedByUserRaw = a['decidedByUser'] as Record<string, unknown> | null;
-            const dto: RightsReviewApprovalDto = {
-              id: a['id'] as string,
-              rightsReviewId: a['rightsReviewId'] as string,
-              rightsProfileId: a['rightsProfileId'] as string,
-              rightsIntakeId: a['rightsIntakeId'] as string,
-              decision: a['decision'] as string,
-              decidedByUser: decidedByUserRaw
-                ? {
-                    id: decidedByUserRaw['id'] as string,
-                    name: decidedByUserRaw['name'] as string | undefined,
-                    email: decidedByUserRaw['email'] as string,
-                  }
-                : null,
-              notesRu: (a['notesRu'] as string | null) ?? null,
-              createdAt: new Date(a['createdAt'] as string).toISOString(),
-            };
-            return dto;
-          })
-        : null,
+      approvals: (approvalsRaw ?? []).map((a) => {
+        const decidedByUserRaw = a['decidedByUser'] as Record<string, unknown> | null;
+        const dto: RightsReviewApprovalDto = {
+          id: a['id'] as string,
+          rightsReviewId: a['rightsReviewId'] as string,
+          rightsProfileId: a['rightsProfileId'] as string,
+          rightsIntakeId: a['rightsIntakeId'] as string,
+          decision: a['decision'] as string,
+          decidedByUser: decidedByUserRaw
+            ? {
+                id: decidedByUserRaw['id'] as string,
+                name: decidedByUserRaw['name'] as string | undefined,
+                email: decidedByUserRaw['email'] as string,
+              }
+            : null,
+          notesRu: (a['notesRu'] as string | null) ?? null,
+          createdAt: new Date(a['createdAt'] as string).toISOString(),
+        };
+        return dto;
+      }),
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
-    } as RightsReviewDto;
+    };
   }
 
   /**

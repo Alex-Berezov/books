@@ -217,6 +217,8 @@ describe('RightsProfileService', () => {
       expect(result.sourceEdition!.provider).toBe('PROJECT_GUTENBERG');
       expect(result.reviews).toHaveLength(1);
       expect(result.reviews[0].id).toBe('review-1');
+      // Ревью без связи approvals отдаётся пустым списком, а не null: DTO объявляет RightsReviewApprovalDto[]
+      expect(result.reviews[0].approvals).toEqual([]);
       expect(result.components).toEqual([]);
       expect(result.territoryDecisions).toEqual([]);
       expect(result.evidence).toEqual([]);
@@ -236,6 +238,89 @@ describe('RightsProfileService', () => {
           },
         },
       });
+    });
+
+    it('maps review approvals with and without the deciding user and asks Prisma for them', async () => {
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      const createdAt = new Date('2026-07-02T00:00:00.000Z');
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        {
+          id: 'review-1',
+          rightsProfileId: 'profile-1',
+          rightsReviewImportId: 'import-1',
+          createdAt,
+          updatedAt: createdAt,
+          approvals: [
+            {
+              id: 'approval-1',
+              rightsReviewId: 'review-1',
+              rightsProfileId: 'profile-1',
+              rightsIntakeId: 'intake-1',
+              decision: 'APPROVED',
+              decidedByUser: { id: 'user-1', name: 'Lawyer', email: 'lawyer@example.com' },
+              notesRu: 'ok',
+              createdAt,
+            },
+            {
+              id: 'approval-2',
+              rightsReviewId: 'review-1',
+              rightsProfileId: 'profile-1',
+              rightsIntakeId: 'intake-1',
+              decision: 'REJECTED',
+              decidedByUser: null,
+              notesRu: null,
+              createdAt,
+            },
+          ],
+        },
+      ]);
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsEvidence'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const result = await service.getById('profile-1');
+
+      expect(result.reviews[0].approvals).toEqual([
+        {
+          id: 'approval-1',
+          rightsReviewId: 'review-1',
+          rightsProfileId: 'profile-1',
+          rightsIntakeId: 'intake-1',
+          decision: 'APPROVED',
+          decidedByUser: { id: 'user-1', name: 'Lawyer', email: 'lawyer@example.com' },
+          notesRu: 'ok',
+          createdAt: '2026-07-02T00:00:00.000Z',
+        },
+        {
+          id: 'approval-2',
+          rightsReviewId: 'review-1',
+          rightsProfileId: 'profile-1',
+          rightsIntakeId: 'intake-1',
+          decision: 'REJECTED',
+          decidedByUser: null,
+          notesRu: null,
+          createdAt: '2026-07-02T00:00:00.000Z',
+        },
+      ]);
+      const reviewFindMany = (prisma['rightsReview'] as Record<string, jest.Mock>).findMany;
+      expect(reviewFindMany).toHaveBeenCalledTimes(1);
+      expect(reviewFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { rightsProfileId: 'profile-1' },
+          include: expect.objectContaining({
+            approvals: {
+              include: {
+                decidedByUser: { select: { id: true, name: true, email: true } },
+              },
+              orderBy: { createdAt: 'desc' },
+            },
+          }),
+        }),
+      );
     });
 
     // LEGACY-037: журнал связей участников пишется с 02.08.2026 и до этой правки не читался
