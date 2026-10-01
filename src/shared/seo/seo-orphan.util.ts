@@ -42,6 +42,9 @@ export async function seoOwnersCount(
  * Удаляет строку `Seo`, если её больше никто не держит. Зовётся **после** того, как владелец её отпустил
  * (отвязка, удаление), тем же `tx` — иначе сирота переживает откат или удаляется из-под живого владельца.
  * Сирота не безобидна: её адресные колонки держат медиа от уборки (`LEGACY-413`).
+ *
+ * Порядок замков повторён в `prisma/scripts/cleanup-duplicate-book-versions.ts` (`deleteVersionsWithSeo`):
+ * скрипт идёт в образ без `src/` и этот файл импортировать не может. Меняешь порядок здесь — правь и там.
  */
 export async function deleteSeoIfUnreferenced(
   tx: Prisma.TransactionClient,

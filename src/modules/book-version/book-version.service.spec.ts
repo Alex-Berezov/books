@@ -3036,6 +3036,37 @@ describe('BookVersionService', () => {
       }
     });
 
+    // `LEGACY-400`, пачка `T80` (решение арбитра 01.10.2026): сила замка строки от полей SEO не
+    // зависит — свой замок один, `FOR NO KEY UPDATE`, и `FOR UPDATE` ни разу. Подъём до `FOR UPDATE`
+    // при первом создании `Seo` делает сам UPDATE в базе; его проверяет e2e на настоящем замке клиренса
+    // (`test/book-version-seo-lock-probe.e2e-spec.ts`): стенд с `createClearanceLockFake` замка клиренса
+    // не берёт и о подъёме ничего не скажет (`L-004`).
+    const rowLocks = () =>
+      (prisma.$queryRaw.mock.calls as [readonly string[]][])
+        .map(([parts]) => parts.join('?'))
+        .filter((sql) => sql.includes('FROM "BookVersion"'));
+
+    it.each([
+      ['seoMetaTitle', { seoMetaTitle: 'MT' }],
+      ['seoMetaDescription', { seoMetaDescription: 'MD' }],
+      ['пустой seoMetaTitle', { seoMetaTitle: '' }],
+      ['полей SEO нет', { title: 'T2' }],
+    ])(
+      'правка (%s) берёт один собственный замок строки — FOR NO KEY UPDATE',
+      async (_name, dto) => {
+        arrangeCurrent();
+        (prisma.seo.create as jest.Mock).mockResolvedValue({ id: 9 });
+        (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+
+        await service.update('v1', dto);
+
+        const locks = rowLocks();
+        expect(locks).toHaveLength(1);
+        expect(locks[0]).toMatch(/FOR NO KEY UPDATE$/);
+        expect(locks.filter((sql) => /FOR UPDATE$/.test(sql))).toHaveLength(0);
+      },
+    );
+
     it('дубль слага при правке называется слагом, а не языком', async () => {
       arrangeCurrent();
       (prisma.bookVersion.update as jest.Mock).mockRejectedValue(

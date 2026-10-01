@@ -41,6 +41,8 @@ describe('SEO All Fields E2E (BACKEND_SEO_FIELDS_NOT_SAVED.md)', () => {
         coverImageUrl: 'https://example.com/cover.jpg',
         type: 'text',
         isFree: true,
+        // Публичное чтение SEO отдаёт только опубликованную версию (`LEGACY-400`, пачка `T80`).
+        status: 'published',
       },
     });
     versionId = version.id;

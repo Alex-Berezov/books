@@ -168,9 +168,13 @@ export class SeoService {
     // Одним запросом и только связь: строка версии несёт правовые Json-колонки, ради `seoId` их не тянуть.
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
-      select: { seo: true },
+      select: { status: true, seo: true },
     });
-    if (!version) throw new NotFoundException('BookVersion not found');
+    // `LEGACY-400`, пачка `T80` (решение арбитра 01.10.2026): ручка публичная, и SEO черновика
+    // наружу не отдаётся. Тот же текст, что у несуществующей, — ответ не выдаёт, есть ли черновик.
+    if (!version || version.status !== 'published') {
+      throw new NotFoundException('BookVersion not found');
+    }
     return version.seo;
   }
 

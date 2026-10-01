@@ -19776,6 +19776,13 @@ export interface operations {
           'application/json': components['schemas']['SeoResponseDto'] | null;
         };
       };
+      /** @description BookVersion not found or not published */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
     };
   };
   SeoController_upsert: {

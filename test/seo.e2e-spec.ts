@@ -37,6 +37,8 @@ describe('Seo e2e', () => {
         coverImageUrl: 'https://example.com/c.jpg',
         type: 'text',
         isFree: true,
+        // Публичное чтение SEO отдаёт только опубликованную версию (`LEGACY-400`, пачка `T80`).
+        status: 'published',
       },
     });
     versionId = version.id;
@@ -79,6 +81,31 @@ describe('Seo e2e', () => {
     const isEmptyObj =
       typeof res.body === 'object' && res.body !== null && Object.keys(bodyObj).length === 0;
     expect(isNull || isEmptyObj).toBe(true);
+  });
+
+  it('GET черновика — 404 тем же текстом, что у несуществующей версии, и не из общего кэша', async () => {
+    const book = await createBookFixture(prisma, `book-seo-draft-${Date.now()}`);
+    const seo = await prisma.seo.create({ data: { metaTitle: 'Secret draft title' } });
+    const draft = await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: 'en',
+        title: 'Draft For SEO',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+        seoId: seo.id,
+      },
+    });
+
+    const res = await request(http()).get(`/versions/${draft.id}/seo`).expect(404);
+    const missing = await request(http()).get('/versions/no-such-version/seo').expect(404);
+
+    expect(res.body).toEqual(missing.body);
+    expect(JSON.stringify(res.body)).not.toContain('Secret draft title');
+    expect(String(res.headers['cache-control'] ?? '')).not.toContain('s-maxage');
   });
 
   it('PUT requires auth and proper role', async () => {

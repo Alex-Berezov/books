@@ -12,14 +12,48 @@ export function uniqueViolationFields(error: Prisma.PrismaClientKnownRequestErro
   const meta = error.meta as
     | {
         target?: unknown;
-        driverAdapterError?: { cause?: { constraint?: { fields?: unknown } } };
+        driverAdapterError?: { cause?: { constraint?: { fields?: unknown; index?: unknown } } };
       }
     | undefined;
   const target = meta?.target;
   if (Array.isArray(target)) return target.map(columnName);
   if (typeof target === 'string') return [columnName(target)];
-  const fields = meta?.driverAdapterError?.cause?.constraint?.fields;
-  return Array.isArray(fields) ? fields.map(columnName) : [];
+  const constraint = meta?.driverAdapterError?.cause?.constraint;
+  if (Array.isArray(constraint?.fields)) return constraint.fields.map(columnName);
+  return typeof constraint?.index === 'string'
+    ? indexFields(constraint.index, violationModelName(error))
+    : [];
+}
+
+/**
+ * Колонки из имени уникального индекса (`LEGACY-400`, пачка `T80`). Тип ошибки адаптера допускает
+ * `constraint: { index }` вместо `fields` — так приходит отказ, у которого Postgres не дал текста
+ * `Key (...)`. Имя Prisma строит как `<таблица>_<колонка>_<колонка>_key`, и в колонке с `@map`
+ * подчёркивание бывает своё (`Page_language_system_key_key`), поэтому имя режется не по `_`, а по
+ * настоящим колонкам модели из схемы. Модель не названа, имя не по соглашению или кусок не совпал
+ * ни с одной колонкой — пусто, как раньше: вызывающий отвечает общим отказом, а не угадывает причину.
+ */
+function indexFields(index: string, modelName: string | undefined): string[] {
+  const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
+  const name = columnName(index);
+  if (!model || !name.endsWith('_key')) return [];
+  const table = model.dbName ?? model.name;
+  const body = name.slice(0, -'_key'.length);
+  if (!body.startsWith(`${table}_`)) return [];
+  // Длинные имена первыми: `system_key` не должен разобраться как `system` и хвост.
+  const columns = model.fields
+    .filter((field) => field.kind === 'scalar' || field.kind === 'enum')
+    .map((field) => field.dbName ?? field.name)
+    .sort((a, b) => b.length - a.length);
+  const fields: string[] = [];
+  let rest = body.slice(table.length + 1);
+  while (rest.length > 0) {
+    const column = columns.find((c) => rest === c || rest.startsWith(`${c}_`));
+    if (column === undefined) return [];
+    fields.push(column);
+    rest = rest.slice(column.length + 1);
+  }
+  return fields;
 }
 
 /**

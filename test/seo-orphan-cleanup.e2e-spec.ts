@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { Language } from '@prisma/client';
+import { Language, Prisma } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { PagesService } from '../src/modules/pages/pages.service';
@@ -12,6 +12,7 @@ import { BookService } from '../src/modules/book/book.service';
 import { PersonsService } from '../src/modules/persons/persons.service';
 import { SeoService } from '../src/modules/seo/seo.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { deleteVersionsWithSeo } from '../prisma/scripts/cleanup-duplicate-book-versions';
 
 /**
  * 🔴 `LEGACY-400`, пачка `T55b`. `Seo` не каскадируется ни от страницы, ни от перевода
@@ -299,6 +300,87 @@ describe('T55b — Seo без сирот, язык страницы неизме
     expect(await seoExists(seoId)).toBe(false);
   }, 60_000);
 
+  // `LEGACY-400`, пачка `T80`: ручной скрипт удаления дублей версий убирал версии `deleteMany`
+  // и оставлял их `Seo` сиротами. Общая строка со страницей остаётся у страницы.
+  it('скрипт дублей версий: Seo удалённых версий убирается, общее со страницей остаётся', async () => {
+    const ownSeoId = await newSeo();
+    const sharedSeoId = await newSeo();
+    const own = await newVersion('dup-own', ownSeoId);
+    const shared = await newVersion('dup-shared', sharedSeoId);
+    const bare = await newVersion('dup-bare');
+    const page = await newPage('dup-shared', sharedSeoId);
+
+    await deleteVersionsWithSeo(prisma, [own.id, shared.id, bare.id]);
+
+    expect(
+      await prisma.bookVersion.count({ where: { id: { in: [own.id, shared.id, bare.id] } } }),
+    ).toBe(0);
+    expect(await seoExists(ownSeoId)).toBe(false);
+    expect(await seoExists(sharedSeoId)).toBe(true);
+    const after = await prisma.page.findUnique({ where: { id: page.id }, select: { seoId: true } });
+    expect(after?.seoId).toBe(sharedSeoId);
+  }, 60_000);
+
+  // Встречная правка версии дописывает `seoId` между чтением скрипта и `deleteMany`: без замка строк версий
+  // до чтения скрипт не увидел бы нового `Seo` и оставил бы его сиротой.
+  it('скрипт дублей версий ждёт встречную запись seoId под замком строки и убирает её Seo', async () => {
+    const version = await newVersion('dup-race');
+    const seoId = await newSeo();
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: (pid: number) => void = () => undefined;
+    const inside = new Promise<number>((resolve) => {
+      entered = resolve;
+    });
+    const writer = prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        await tx.$queryRaw`SELECT id FROM "BookVersion" WHERE id = ${version.id} FOR NO KEY UPDATE`;
+        await tx.bookVersion.update({ where: { id: version.id }, data: { seoId } });
+        const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        entered(row.pid);
+        await held;
+      },
+      { timeout: 30_000, maxWait: 10_000 },
+    );
+
+    let script: Promise<void> = Promise.resolve();
+    let blocked = false;
+    try {
+      const holderPid = await inside;
+      script = deleteVersionsWithSeo(prisma, [version.id]);
+      const until = Date.now() + 10_000;
+      while (!blocked && Date.now() < until) {
+        const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+        blocked = row.n > 0;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } finally {
+      release();
+    }
+    await Promise.all([writer, script]);
+
+    expect(blocked).toBe(true);
+    expect(await prisma.bookVersion.count({ where: { id: version.id } })).toBe(0);
+    expect(await seoExists(seoId)).toBe(false);
+  }, 60_000);
+
+  // `L-020`: транзакция скрипта несёт замок, чтение связей и удаление на каждую версию, плюс каскад глав —
+  // дефолт Prisma (5 с / 2 с) на большой группе дал бы `P2028` и откат всей группы.
+  it('скрипт дублей версий: одна транзакция на группу с явными границами', async () => {
+    const version = await newVersion('dup-opts');
+    const spy = jest.spyOn(prisma, '$transaction');
+
+    await deleteVersionsWithSeo(prisma, [version.id]);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toEqual({ timeout: 30_000, maxWait: 10_000 });
+    spy.mockRestore();
+  }, 60_000);
+
   it('страница: смена языка — 400, адрес не трогается', async () => {
     const page = await newPage('lang');
 
@@ -405,9 +487,24 @@ describe('T55b — Seo без сирот, язык страницы неизме
     expect(await prisma.seo.count({ where: { metaTitle: `${prefix} upsert` } })).toBe(1);
   }, 60_000);
 
+  // Публичное чтение отдаёт SEO только опубликованной версии (`LEGACY-400`, пачка `T80`).
+  const publish = (id: string) =>
+    prisma.bookVersion.update({ where: { id }, data: { status: 'published' } });
+
+  it('SEO версии: черновик — 404 тем же текстом, после публикации — запись', async () => {
+    const seoId = await newSeo();
+    const version = await newVersion('vdraft', seoId);
+    await expect(seo.getByVersion(version.id)).rejects.toThrow('BookVersion not found');
+
+    await publish(version.id);
+
+    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({ id: seoId });
+  }, 60_000);
+
   it('SEO версии: чтение после удаления версии — 404, а не удалённое Seo', async () => {
     const seoId = await newSeo();
     const version = await newVersion('vread', seoId);
+    await publish(version.id);
     await expect(seo.getByVersion(version.id)).resolves.toMatchObject({ id: seoId });
 
     await versions.remove(version.id, 'e2e-actor');
@@ -417,6 +514,7 @@ describe('T55b — Seo без сирот, язык страницы неизме
 
   it('SEO версии: чтение после правки через форму версии отдаёт новое', async () => {
     const version = await newVersion('vedit');
+    await publish(version.id);
     await seo.upsertForVersion(version.id, { metaTitle: `${prefix} before` });
     await expect(seo.getByVersion(version.id)).resolves.toMatchObject({
       metaTitle: `${prefix} before`,

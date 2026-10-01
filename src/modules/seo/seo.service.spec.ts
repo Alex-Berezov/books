@@ -1699,16 +1699,34 @@ describe('SeoService: SEO версии (T61)', () => {
 
   it('чтение — один запрос со связью, без полной строки версии; нет версии — 404', async () => {
     const { service, client } = build([]);
-    client.bookVersion.findUnique.mockResolvedValueOnce({ seo: { id: 5 } });
+    client.bookVersion.findUnique.mockResolvedValueOnce({ status: 'published', seo: { id: 5 } });
 
     await expect(service.getByVersion('v1')).resolves.toEqual({ id: 5 });
     expect(client.bookVersion.findUnique).toHaveBeenCalledTimes(1);
     expect(client.bookVersion.findUnique).toHaveBeenCalledWith({
       where: { id: 'v1' },
-      select: { seo: true },
+      select: { status: true, seo: true },
     });
 
     client.bookVersion.findUnique.mockResolvedValueOnce(null);
     await expect(service.getByVersion('v1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  // `LEGACY-400`, пачка `T80`: ручка публичная — SEO черновика наружу не уходит, и текст 404
+  // тот же, что у несуществующей версии, чтобы ответ не выдавал, есть ли черновик.
+  it('чтение черновика — 404 с текстом несуществующей версии', async () => {
+    const { service, client } = build([]);
+    client.bookVersion.findUnique.mockResolvedValueOnce({ status: 'draft', seo: { id: 5 } });
+
+    await expect(service.getByVersion('v1')).rejects.toThrow(
+      new NotFoundException('BookVersion not found'),
+    );
+  });
+
+  it('опубликованная версия без Seo — null, а не 404', async () => {
+    const { service, client } = build([]);
+    client.bookVersion.findUnique.mockResolvedValueOnce({ status: 'published', seo: null });
+
+    await expect(service.getByVersion('v1')).resolves.toBeNull();
   });
 });

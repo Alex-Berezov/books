@@ -38079,6 +38079,9 @@
               }
             },
             "description": "SEO meta, or null when the version has no SEO record"
+          },
+          "404": {
+            "description": "BookVersion not found or not published"
           }
         },
         "summary": "Get SEO meta for a book version",

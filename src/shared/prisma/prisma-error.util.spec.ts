@@ -43,6 +43,53 @@ describe('uniqueViolationFields', () => {
     expect(uniqueViolationFields(p2002({ target: 'key' }))).toEqual(['key']);
   });
 
+  // `LEGACY-400`, пачка `T80`: тип ошибки адаптера допускает имя индекса вместо полей.
+  const byIndex = (index: string, modelName?: string) =>
+    p2002({
+      ...(modelName ? { modelName } : {}),
+      driverAdapterError: {
+        cause: { kind: 'UniqueConstraintViolation', constraint: { index } },
+      },
+    });
+
+  it('берёт поля из имени индекса cause.constraint.index', () => {
+    expect(uniqueViolationFields(byIndex('BookVersion_language_slug_key', 'BookVersion'))).toEqual([
+      'language',
+      'slug',
+    ]);
+    expect(uniqueViolationFields(byIndex('Page_seoId_key', 'Page'))).toEqual(['seoId']);
+    expect(uniqueViolationFields(byIndex('"Category_key_key"', 'Category'))).toEqual(['key']);
+  });
+
+  // Колонка с `@map` несёт своё подчёркивание (`systemKey @map("system_key")`, индекс из миграции
+  // `20260809000000_page_system_key`): разбор по `_` дал бы ложные `system` и `key`.
+  it('колонку с подчёркиванием из @map разбирает целиком', () => {
+    expect(uniqueViolationFields(byIndex('Page_language_system_key_key', 'Page'))).toEqual([
+      'language',
+      'system_key',
+    ]);
+  });
+
+  it('без modelName имя индекса не разбирается — пусто, а не догадка', () => {
+    expect(uniqueViolationFields(byIndex('BookVersion_bookId_language_key'))).toEqual([]);
+  });
+
+  it('имя индекса не по соглашению Prisma или чужая колонка — пусто', () => {
+    expect(uniqueViolationFields(byIndex('custom_unique_idx', 'Page'))).toEqual([]);
+    expect(uniqueViolationFields(byIndex('Category_key_key', 'Page'))).toEqual([]);
+    expect(uniqueViolationFields(byIndex('Page_nope_key', 'Page'))).toEqual([]);
+    expect(uniqueViolationFields(byIndex('_key', 'Page'))).toEqual([]);
+    expect(uniqueViolationFields(byIndex('Page_seoId_key', 'NoSuchModel'))).toEqual([]);
+  });
+
+  it('fields важнее index, если адаптер отдал оба', () => {
+    const error = p2002({
+      driverAdapterError: { cause: { constraint: { fields: ['slug'], index: 'Page_seoId_key' } } },
+    });
+
+    expect(uniqueViolationFields(error)).toEqual(['slug']);
+  });
+
   it('ни одной известной формы — пусто', () => {
     expect(uniqueViolationFields(p2002({ modelName: 'Page' }))).toEqual([]);
   });

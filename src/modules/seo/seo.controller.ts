@@ -171,6 +171,8 @@ export class SeoController {
     schema: { allOf: [{ $ref: getSchemaPath(SeoResponseDto) }], nullable: true },
     description: 'SEO meta, or null when the version has no SEO record',
   })
+  // `LEGACY-400`, пачка `T80`: черновик отвечает тем же 404, что и несуществующая версия.
+  @ApiResponse({ status: 404, description: 'BookVersion not found or not published' })
   @ApiParam({ name: 'bookVersionId' })
   get(@Param('bookVersionId') bookVersionId: string) {
     return this.service.getByVersion(bookVersionId);
