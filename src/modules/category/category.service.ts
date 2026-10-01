@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
+import { isCategoryTermOpen } from '../../shared/seo/term-indexable.util';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import {
   CATEGORY_TREE_TX_OPTIONS,
@@ -103,7 +104,21 @@ export class CategoryService {
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
 
-  async list(page = 1, limit = 20, type?: PrismaCategory['type'], lang?: Language) {
+  /**
+   * `opts.publicIndexability` — публичный список (`GET /:lang/categories`, карта сайта): верхний
+   * `indexable` сворачивает `noindex` поля Robots вложенного `Seo` перевода на язык пути, а каждый
+   * перевод получает свой `indexable` (нет `noindex` в его поле Robots) — у `CategoryTranslation`
+   * собственного флага нет, поле аддитивное (`LEGACY-422`, пачка `T81`, решение арбитра 01.10.2026).
+   * Админский `GET /admin/categories` получает прежнюю форму.
+   */
+  async list(
+    page = 1,
+    limit = 20,
+    type?: PrismaCategory['type'],
+    lang?: Language,
+    opts?: { publicIndexability?: boolean },
+  ) {
+    const foldRobots = opts?.publicIndexability === true;
     const where: Prisma.CategoryWhereInput = {};
     if (type) {
       where.type = type;
@@ -118,6 +133,9 @@ export class CategoryService {
         take: limit,
         include: {
           translations: {
+            // Порядок нужен `x-default` карты сайта при закрытом `en` (`usable[0]` в
+            // `hreflang-alternates.ts`) — тот же, что у бандла (`seo.service.ts`) и списка тегов.
+            orderBy: { language: 'asc' },
             select: {
               language: true,
               name: true,
@@ -127,6 +145,9 @@ export class CategoryService {
               // meta robots. See CategoryTranslationResponse.
               bookCount: true,
               autoIndexable: true,
+              // Только ради свёртки `noindex` на публичном пути; наружу `seo` не уходит,
+              // админский путь его не выбирает вовсе.
+              seo: foldRobots ? { select: { robots: true } } : false,
             },
           },
         },
@@ -185,10 +206,13 @@ export class CategoryService {
         booksCount: countMap.get(item.id) || 0,
         langBookCount: langTranslation?.bookCount,
         autoIndexable: langTranslation?.autoIndexable,
-        indexable: item.indexable ?? true,
+        indexable: isCategoryTermOpen(item, foldRobots ? langTranslation?.seo : null),
         isVisible: item.isVisible ?? true,
         sortOrder: item.sortOrder ?? 0,
-        translations: item.translations,
+        translations: item.translations.map(({ seo, ...translation }) => ({
+          ...translation,
+          ...(foldRobots ? { indexable: isCategoryTermOpen(null, seo) } : {}),
+        })),
       };
     });
 

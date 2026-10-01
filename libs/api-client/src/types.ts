@@ -5963,6 +5963,8 @@ export interface components {
       description?: string | null;
       faq?: components['schemas']['FaqItemDto'][] | null;
       h1?: string | null;
+      /** @description Public lists only (GET /:lang/categories): false when the Robots field of the SEO record of this translation says noindex or none. Absent in admin lists: category translations have no editorial flag of their own. */
+      indexable?: boolean;
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       metaDescription?: string | null;
@@ -11430,7 +11432,10 @@ export interface components {
        */
       faq?: components['schemas']['FaqItemDto'][] | null;
       h1?: string | null;
-      /** @default true */
+      /**
+       * @description Editorial flag of the translation. In public lists (GET /:lang/tags) it is also false when the Robots field of the SEO record of the translation says noindex or none.
+       * @default true
+       */
       indexable: boolean;
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';

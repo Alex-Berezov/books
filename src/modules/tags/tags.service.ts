@@ -33,6 +33,7 @@ import {
   type WithParsedRelatedSlugs,
 } from '../../shared/prisma/json-string-array.util';
 import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
+import { isTagTermOpen } from '../../shared/seo/term-indexable.util';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { PaginationInfoDto } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
@@ -57,7 +58,21 @@ export class TagsService {
     private readonly taxonomyIndexabilityService?: TaxonomyIndexabilityService,
   ) {}
 
-  async list(page = 1, limit = 20, search?: string, lang?: Language) {
+  /**
+   * `opts.publicIndexability` — публичный список (`GET /:lang/tags`, карта сайта): `indexable` тега
+   * и `translations[].indexable` сворачивают ещё и `noindex` поля Robots вложенного `Seo` перевода
+   * (`LEGACY-422`, пачка `T81`, решение арбитра 01.10.2026). Админский `GET /admin/tags` получает
+   * сырые флаги: модалка перевода заполняет из них галочку, и свёрнутое значение записалось бы при
+   * сохранении.
+   */
+  async list(
+    page = 1,
+    limit = 20,
+    search?: string,
+    lang?: Language,
+    opts?: { publicIndexability?: boolean },
+  ) {
+    const foldRobots = opts?.publicIndexability === true;
     const skip = (page - 1) * limit;
     const where: Prisma.TagWhereInput = search
       ? {
@@ -96,6 +111,9 @@ export class TagsService {
               // `LEGACY-422`, `T73`: редакционный флаг перевода пишется из админки, и карта
               // сайта с hreflang решают по нему так же, как robots (`seo.service.ts`).
               indexable: true,
+              // Только ради свёртки `noindex` на публичном пути; наружу `seo` не уходит,
+              // админский путь его не выбирает вовсе.
+              seo: foldRobots ? { select: { robots: true } } : false,
             },
           },
         },
@@ -151,10 +169,19 @@ export class TagsService {
         // (`LEGACY-422`, `T73`) закрывает язык так же, как флаг тега, и главная, хаб
         // `/tags` и карта сайта получают его через тот же `isTaxonomyLinkable`, что
         // и `autoIndexable` выше. Без `lang` (админка) — флаг самого тега, как прежде.
-        indexable: isTagTranslationIndexable(item, langTranslation),
+        indexable: isTagTermOpen(item, langTranslation, foldRobots ? langTranslation?.seo : null),
         isVisible: item.isVisible ?? true,
         sortOrder: item.sortOrder ?? 0,
-        translations: item.translations.map(parseRelatedSlugs),
+        translations: item.translations.map(({ seo, ...translation }) =>
+          parseRelatedSlugs(
+            foldRobots
+              ? {
+                  ...translation,
+                  indexable: isTagTermOpen(null, translation, seo),
+                }
+              : translation,
+          ),
+        ),
         booksCount: countMap.get(item.id) || 0,
         langBookCount: langTranslation?.bookCount,
         autoIndexable: langTranslation?.autoIndexable,
@@ -480,7 +507,8 @@ export class TagsService {
       tag: {
         ...baseTag,
         // Флаг тега и перевода на этот язык (`LEGACY-422`, `T74`) — та же свёртка, что в
-        // `list` и в `findCardsByTag`: три выдачи одного тега обязаны решать одинаково.
+        // `findCardsByTag`. ⚠️ Публичный `list` с `T81` сворачивает ещё и `noindex` поля Robots `Seo`
+        // перевода, а эта выдача — нет: расхождение записано остатком `LEGACY-422`.
         indexable: isTagTranslationIndexable(baseTag, trans),
         translation: trans ? parseRelatedSlugs(trans) : null,
         description: trans?.description ?? null,

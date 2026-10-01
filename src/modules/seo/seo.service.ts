@@ -26,7 +26,7 @@ import { generateWebSiteSchema } from './schema/generateWebSiteSchema';
 import { buildTermBundle } from './schema/buildTermBundle';
 import { TaxonomyPageType } from './seo.types';
 import { markDegraded } from '../../common/interceptors/degraded-response';
-import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
+import { isCategoryTermIndexable, isTagTermIndexable } from '../../shared/seo/term-indexable.util';
 import { seoDtoToData } from './utils/seo-dto-to-data.util';
 
 const TAXONOMY_PAGES: Record<
@@ -275,15 +275,23 @@ export class SeoService {
       'published',
       canonicalUrl,
       seo?.robots,
-      chosen.category.indexable !== false && chosen.autoIndexable !== false,
+      // Поле Robots `Seo` в флаг не сворачивается (`null`): `detectIndexability` применяет его сам и
+      // отдаёт строку редактора как есть — `noindex, noarchive` не должно стать `noindex, follow`.
+      // В hreflang страница закрывается по итоговому robots (`buildTermBundle`).
+      isCategoryTermIndexable(chosen.category, chosen, null),
     );
 
-    // Hreflangs — fetch all translations of this term for complete hreflang set
+    // Hreflang — только переводы, чья страница индексируема по тому же правилу, что robots выше
+    // (`LEGACY-422`, пачка `T81`, решение арбитра 01.10.2026): закрытый язык в alternates соседей —
+    // противоречивый сигнал, а карта сайта его уже не отдаёт. Порядок — ради `x-default` при закрытом `en`.
     const allTranslations = await this.prisma.categoryTranslation.findMany({
       where: { categoryId: chosen.categoryId, category: { type: termType } },
+      include: { seo: { select: { robots: true } } },
+      orderBy: { language: 'asc' },
     });
     const slugsMap: Record<string, string> = {};
     for (const tr of allTranslations) {
+      if (!isCategoryTermIndexable(chosen.category, tr, tr.seo)) continue;
       slugsMap[tr.language.toLowerCase()] = tr.slug;
     }
 
@@ -1069,31 +1077,31 @@ export class SeoService {
     const metaTitle = seo?.metaTitle || baseMeta.title;
     const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
     const canonicalUrl = getCanonicalUrl(pageType, chosen.slug, effLang);
-    // ⚠️ Флагов три, а не два, как у таксономии: у `TagTranslation` есть
-    // собственный `indexable`, которого у `CategoryTranslation` нет вовсе.
-    // Это различие держит схема, а не расхождение копий.
-    const effectiveIndexable =
-      isTagTranslationIndexable(chosen.tag, chosen) && chosen.autoIndexable !== false;
+    // ⚠️ Флагов у тега больше, чем у таксономии: у `TagTranslation` есть собственный
+    // `indexable`, которого у `CategoryTranslation` нет вовсе. Это различие держит схема.
+    // Поле Robots `Seo` в флаг не сворачивается: `detectIndexability` применяет его сам и отдаёт
+    // строку редактора как есть (`noindex, noarchive` не должно стать `noindex, follow`);
+    // в hreflang страница закрывается по итоговому robots (`buildTermBundle`).
     const robotsStatus = detectIndexability(
       'published',
       canonicalUrl,
       seo?.robots,
-      effectiveIndexable,
+      isTagTermIndexable(chosen.tag, chosen, null),
     );
 
-    // Hreflangs — fetch all translations of this tag for complete hreflang set
     const allTagTranslations = await this.prisma.tagTranslation.findMany({
       where: { tagId: chosen.tagId },
+      include: { seo: { select: { robots: true } } },
       // Порядок нужен `x-default`: при закрытом `en` он берётся первым из карты
       // слагов (`generateHreflangLinks`), и без `orderBy` зависел бы от порядка строк.
       orderBy: { language: 'asc' },
     });
     const slugsMap: Record<string, string> = {};
     for (const tr of allTagTranslations) {
-      // Перевод, закрытый собственным флагом, — `noindex` (`effectiveIndexable` выше),
-      // и в alternates соседей ему не место (`LEGACY-422`, `T73`). `autoIndexable` здесь
-      // не учитывается — прежний дефект, строка остатка `LEGACY-422`.
-      if (tr.indexable === false) continue;
+      // Перевод, чья страница закрыта (тег, свой флаг, `autoIndexable` или `noindex` в поле
+      // Robots), в alternates соседей не входит — то же правило, что у robots выше
+      // (`LEGACY-422`, `T73`, `T81`).
+      if (!isTagTermIndexable(chosen.tag, tr, tr.seo)) continue;
       slugsMap[tr.language.toLowerCase()] = tr.slug;
     }
 

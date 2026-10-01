@@ -97,6 +97,50 @@ describe('RelatedTaxonomyService', () => {
     );
   });
 
+  // `LEGACY-422`, `T81` (решение арбитра 01.10.2026): `noindex` в поле Robots `Seo` перевода
+  // закрывает «похожий» термин так же, как флаги, — и тег, и категорию/жанр/коллекцию.
+  it('closes a term whose SEO Robots field says noindex', async () => {
+    const findTags = jest
+      .fn()
+      .mockResolvedValue([
+        tagRow('open', { seo: { robots: 'index, follow' } }),
+        tagRow('shut', { seo: { robots: 'noindex, follow' } }),
+      ]);
+    const findCats = jest
+      .fn()
+      .mockResolvedValue([
+        catRow('g-open', 'genre', { seo: null }),
+        catRow('g-shut', 'genre', { seo: { robots: 'NONE' } }),
+      ]);
+    const prisma = {
+      tagTranslation: { findMany: findTags },
+      categoryTranslation: { findMany: findCats },
+    } as unknown as PrismaService;
+
+    const res = await new RelatedTaxonomyService(prisma).resolve(Language.en, {
+      ...empty,
+      tags: ['open', 'shut'],
+      genres: ['g-open', 'g-shut'],
+    });
+
+    expect(res.tags.map((t) => [t.slug, t.indexable])).toEqual([
+      ['open', true],
+      ['shut', false],
+    ]);
+    expect(res.genres.map((t) => [t.slug, t.indexable])).toEqual([
+      ['g-open', true],
+      ['g-shut', false],
+    ]);
+    for (const find of [findTags, findCats]) {
+      expect(find).toHaveBeenCalledTimes(1);
+      expect(find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ seo: { select: { robots: true } } }),
+        }),
+      );
+    }
+  });
+
   /**
    * 🔴 Категории, жанры и коллекции лежат в одной таблице и в одном пространстве
    * слагов. Слаг жанра, записанный редактором в `relatedCategorySlugs`, дал бы

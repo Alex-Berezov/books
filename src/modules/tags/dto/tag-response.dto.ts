@@ -45,7 +45,12 @@ export class TagTranslationResponse {
   @ApiPropertyOptional({ type: String, nullable: true, example: 'index, follow' })
   robots?: string | null;
 
-  @ApiPropertyOptional({ type: Boolean, default: true })
+  @ApiPropertyOptional({
+    type: Boolean,
+    default: true,
+    description:
+      'Editorial flag of the translation. In public lists (GET /:lang/tags) it is also false when the Robots field of the SEO record of the translation says noindex or none.',
+  })
   indexable?: boolean;
 
   @ApiPropertyOptional({

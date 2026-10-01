@@ -1317,8 +1317,9 @@ export class BookService {
           key: tag.key,
           slug: matchedTranslation?.slug ?? tag.slug,
           name: matchedTranslation?.name ?? tag.name,
-          // Флаг тега и перевода на этот язык (`LEGACY-422`, `T73`) — та же свёртка, что
-          // в `TagsService.list`: по нему фронт решает robots, когда SEO-бандл не ответил.
+          // Флаг тега и перевода на этот язык (`LEGACY-422`, `T73`): по нему фронт решает robots,
+          // когда SEO-бандл не ответил. ⚠️ `TagsService.list` с `T81` сворачивает ещё и `noindex` поля
+          // Robots `Seo` перевода, а эта выдача — нет: расхождение записано остатком `LEGACY-422`.
           indexable: isTagTranslationIndexable(tag, matchedTranslation),
           isVisible: tag.isVisible,
           sortOrder: tag.sortOrder,

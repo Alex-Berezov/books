@@ -343,6 +343,7 @@ export class PublicController {
       query.limit ?? PUBLIC_CATEGORIES_DEFAULT_LIMIT,
       query.type,
       pathLang,
+      { publicIndexability: true },
     );
     return paginated(data, meta);
   }
@@ -380,7 +381,9 @@ export class PublicController {
     // 🔴 `page`/`limit` раньше принимались голым `@Query('page') page?: number` и шли
     // в сервис через идиому `page ? Number(page) : N`, которая не отличает `0` от
     // отсутствия значения и молча подставляет дефолт на любой мусор (`LEGACY-298`).
-    const { data, meta } = await this.tags.list(query.page, query.limit, undefined, pathLang);
+    const { data, meta } = await this.tags.list(query.page, query.limit, undefined, pathLang, {
+      publicIndexability: true,
+    });
     return paginated(data, meta);
   }
 

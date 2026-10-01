@@ -1,3 +1,5 @@
+import { robotsTokens } from '../../../shared/seo/term-indexable.util';
+
 export function detectIndexability(
   status?: string,
   path?: string,
@@ -6,10 +8,7 @@ export function detectIndexability(
 ): string {
   if (indexable === false) {
     if (robotsOverride) {
-      const parts = robotsOverride
-        .toLowerCase()
-        .split(',')
-        .map((s) => s.trim());
+      const parts = robotsTokens(robotsOverride);
       const hasNofollow = parts.some((p) => p === 'nofollow');
       const hasNone = parts.some((p) => p === 'none');
       if (hasNone) return 'none';

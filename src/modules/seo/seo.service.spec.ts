@@ -1025,6 +1025,250 @@ describe('SeoService (unit)', () => {
     });
   });
 
+  // `LEGACY-422`, пачка `T81` (решения арбитра 01.10.2026): hreflang термина строится по тому же
+  // правилу, что robots его страницы, — тег: тег ∧ перевод ∧ `autoIndexable` ∧ нет `noindex` в поле
+  // Robots; категория/жанр/коллекция: категория ∧ `autoIndexable` ∧ нет `noindex`. Закрытая страница
+  // hreflang не отдаёт вовсе, и `x-default` тоже.
+  describe('resolvePublic(term) — hreflang по правилу robots (T81)', () => {
+    const langsOf = (result: Record<string, unknown>) =>
+      (result.hreflangs as Array<{ hreflang: string }>).map((h) => h.hreflang);
+    const robotsOf = (result: Record<string, unknown>) =>
+      (result.meta as { robots: string }).robots;
+
+    describe.each(['category', 'genre', 'collection'] as const)('%s', (termType) => {
+      const categoryId = `cat-${termType}`;
+      const category = {
+        id: categoryId,
+        name: 'T',
+        slug: 't',
+        type: termType,
+        parentId: null,
+        indexable: true,
+      };
+      const ct = (
+        language: Language,
+        slug: string,
+        extra: { autoIndexable?: boolean; robots?: string | null } = {},
+      ) => ({
+        id: `ct-${termType}-${language}`,
+        categoryId,
+        language,
+        slug,
+        name: slug,
+        autoIndexable: extra.autoIndexable ?? true,
+        seo: extra.robots === undefined ? null : { robots: extra.robots },
+      });
+      const all = [
+        ct(Language.en, 'open-en'),
+        ct(Language.es, 'auto-closed-es', { autoIndexable: false }),
+        ct(Language.fr, 'robots-closed-fr', { robots: 'noindex, follow' }),
+        ct(Language.pt, 'none-pt', { robots: 'NONE' }),
+        ct(Language.ru, 'open-ru', { robots: 'index, follow' }),
+      ];
+
+      it('в hreflang открытой страницы только индексируемые соседи, порядок по языку', async () => {
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([{ ...all[0], category }])
+          .mockResolvedValueOnce(all);
+
+        const result = await service.resolvePublic(termType, 'open-en', { pathLang: Language.en });
+
+        expect(langsOf(result).sort()).toEqual(['en', 'ru', 'x-default']);
+        expect(prisma.categoryTranslation.findMany).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            orderBy: { language: 'asc' },
+            include: { seo: { select: { robots: true } } },
+          }),
+        );
+      });
+
+      it('закрытая категорией страница — noindex и пустой hreflang без x-default', async () => {
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([{ ...all[0], category: { ...category, indexable: false } }])
+          .mockResolvedValueOnce(all);
+
+        const result = await service.resolvePublic(termType, 'open-en', { pathLang: Language.en });
+
+        expect(robotsOf(result)).toContain('noindex');
+        expect(result.hreflangs).toEqual([]);
+      });
+
+      it('страница, закрытая автоматикой, — noindex и пустой hreflang', async () => {
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([{ ...all[1], category }])
+          .mockResolvedValueOnce(all);
+
+        const result = await service.resolvePublic(termType, 'auto-closed-es', {
+          pathLang: Language.es,
+        });
+
+        expect(robotsOf(result)).toContain('noindex');
+        expect(result.hreflangs).toEqual([]);
+      });
+    });
+
+    it('страница термина, закрытая полем Robots своего Seo, — пустой hreflang', async () => {
+      const categoryId = 'cat-robots';
+      const category = {
+        id: categoryId,
+        name: 'T',
+        slug: 't',
+        type: 'genre',
+        parentId: null,
+        indexable: true,
+      };
+      const own = {
+        id: 'ct-r-en',
+        categoryId,
+        language: Language.en,
+        slug: 'g',
+        name: 'g',
+        autoIndexable: true,
+        seoId: 77,
+      };
+      prisma.categoryTranslation.findMany
+        .mockResolvedValueOnce([{ ...own, category }])
+        .mockResolvedValueOnce([{ ...own, seo: { robots: 'noindex' } }]);
+      prisma.seo.findUnique.mockResolvedValueOnce({ id: 77, robots: 'noindex' });
+
+      const result = await service.resolvePublic('genre', 'g', { pathLang: Language.en });
+
+      expect(robotsOf(result)).toContain('noindex');
+      expect(result.hreflangs).toEqual([]);
+    });
+
+    // Круг 1 ревью `T81`: поле Robots `Seo` не сворачивается в флаг, который получает `detectIndexability`,
+    // иначе он сплющил бы строку редактора. И закрытая полем страница отличима от закрытой флагом
+    // только при открытых соседях — у одного перевода пустой hreflang дала бы любая из двух веток.
+    describe('поле Robots Seo (T81, круг 1)', () => {
+      const categoryId = 'cat-robots-2';
+      const category = {
+        id: categoryId,
+        name: 'T',
+        slug: 't',
+        type: 'genre',
+        parentId: null,
+        indexable: true,
+      };
+      const row = (language: Language, slug: string, robots?: string) => ({
+        id: `ct2-${language}`,
+        categoryId,
+        language,
+        slug,
+        name: slug,
+        autoIndexable: true,
+        seoId: robots ? 90 : null,
+        seo: robots ? { robots } : null,
+      });
+
+      it('строка редактора отдаётся как есть, а не сплющивается до «noindex, follow»', async () => {
+        const own = row(Language.en, 'g-en', 'noindex, noarchive');
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([{ ...own, category }])
+          .mockResolvedValueOnce([own, row(Language.ru, 'g-ru')]);
+        prisma.seo.findUnique.mockResolvedValueOnce({ id: 90, robots: 'noindex, noarchive' });
+
+        const result = await service.resolvePublic('genre', 'g-en', { pathLang: Language.en });
+
+        expect(robotsOf(result)).toBe('noindex, noarchive');
+        expect(result.hreflangs).toEqual([]);
+      });
+
+      it('закрытая полем Robots страница при открытых соседях — пустой hreflang без x-default', async () => {
+        const own = row(Language.en, 'g-en', 'none');
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([{ ...own, category }])
+          .mockResolvedValueOnce([own, row(Language.es, 'g-es'), row(Language.ru, 'g-ru')]);
+        prisma.seo.findUnique.mockResolvedValueOnce({ id: 90, robots: 'none' });
+
+        const result = await service.resolvePublic('genre', 'g-en', { pathLang: Language.en });
+
+        expect(result.hreflangs).toEqual([]);
+      });
+
+      it('соседний язык, закрытый полем Robots, не попадает в hreflang открытой страницы', async () => {
+        const open = row(Language.es, 'g-es');
+        prisma.categoryTranslation.findMany
+          .mockResolvedValueOnce([{ ...open, category }])
+          .mockResolvedValueOnce([
+            row(Language.en, 'g-en', 'noindex'),
+            open,
+            row(Language.ru, 'g-ru'),
+          ]);
+
+        const result = await service.resolvePublic('genre', 'g-es', { pathLang: Language.es });
+
+        expect(langsOf(result)).toEqual(['es', 'ru', 'x-default']);
+        // `en` закрыт, поэтому `x-default` берётся первым из карты — по порядку языка, а не по строкам.
+        const xDefault = (result.hreflangs as Array<{ hreflang: string; href: string }>).find(
+          (h) => h.hreflang === 'x-default',
+        );
+        expect(xDefault?.href).toContain('g-es');
+      });
+    });
+
+    describe('tag', () => {
+      const tagId = 'tag-t81';
+      const tag = { id: tagId, name: 'T', indexable: true };
+      const tt = (
+        language: Language,
+        slug: string,
+        extra: { indexable?: boolean; autoIndexable?: boolean; robots?: string | null } = {},
+      ) => ({
+        id: `tt81-${language}`,
+        tagId,
+        language,
+        slug,
+        name: slug,
+        indexable: extra.indexable ?? true,
+        autoIndexable: extra.autoIndexable ?? true,
+        seo: extra.robots === undefined ? null : { robots: extra.robots },
+      });
+      const all = [
+        tt(Language.en, 'open-en'),
+        tt(Language.es, 'auto-es', { autoIndexable: false }),
+        tt(Language.fr, 'own-fr', { indexable: false }),
+        tt(Language.pt, 'robots-pt', { robots: 'noindex,nofollow' }),
+        tt(Language.ru, 'open-ru'),
+      ];
+
+      it('в hreflang открытой страницы только индексируемые соседи', async () => {
+        prisma.tagTranslation.findMany
+          .mockResolvedValueOnce([{ ...all[0], tag }])
+          .mockResolvedValueOnce(all);
+
+        const result = await service.resolvePublic('tag', 'open-en', { pathLang: Language.en });
+
+        expect(langsOf(result).sort()).toEqual(['en', 'ru', 'x-default']);
+        expect(prisma.tagTranslation.findMany).toHaveBeenLastCalledWith(
+          expect.objectContaining({ include: { seo: { select: { robots: true } } } }),
+        );
+      });
+
+      it('тег, закрытый целиком, — noindex и пустой hreflang', async () => {
+        prisma.tagTranslation.findMany
+          .mockResolvedValueOnce([{ ...all[0], tag: { ...tag, indexable: false } }])
+          .mockResolvedValueOnce(all);
+
+        const result = await service.resolvePublic('tag', 'open-en', { pathLang: Language.en });
+
+        expect(robotsOf(result)).toContain('noindex');
+        expect(result.hreflangs).toEqual([]);
+      });
+
+      it('перевод, закрытый автоматикой, — noindex и пустой hreflang', async () => {
+        prisma.tagTranslation.findMany
+          .mockResolvedValueOnce([{ ...all[1], tag }])
+          .mockResolvedValueOnce(all);
+
+        const result = await service.resolvePublic('tag', 'auto-es', { pathLang: Language.es });
+
+        expect(robotsOf(result)).toContain('noindex');
+        expect(result.hreflangs).toEqual([]);
+      });
+    });
+  });
+
   describe('resolvePublic fallback — no English translation', () => {
     it('x-default points to first available language', async () => {
       const categoryId = 'cat-no-en';

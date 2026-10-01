@@ -3,6 +3,7 @@ import { buildAbsoluteUrl } from '../utils/buildAbsoluteUrl';
 import { getHomeName } from '../utils/sectionNames';
 import { getCanonicalUrl } from '../canonical/getCanonicalUrl';
 import { generateHreflangLinks } from '../hreflang/generateHreflangLinks';
+import { robotsHasNoindex } from '../../../shared/seo/term-indexable.util';
 import { generateBreadcrumbSchema } from './generateBreadcrumbSchema';
 import { generateCollectionPageSchema } from './generateCollectionPageSchema';
 import { generateWebSiteSchema } from './generateWebSiteSchema';
@@ -123,7 +124,11 @@ export function buildTermBundle({
         collectionSchema,
       ],
     },
-    hreflangs: generateHreflangLinks(pageType, slugsMap),
+    // Закрытая страница термина hreflang не отдаёт вовсе, и `x-default` тоже (`LEGACY-422`, пачка `T81`,
+    // решение арбитра 01.10.2026): в карте сайта её адреса и альтернатив нет, а кластер с закрытой
+    // страницы открытые соседи не подтверждают обратной ссылкой. Решается по итоговому robots, а не по
+    // флагам — иначе закрытие через поле Robots выпало бы.
+    hreflangs: robotsHasNoindex(robots) ? [] : generateHreflangLinks(pageType, slugsMap),
     // Крошки без главной и без самого термина — ровно то, что раньше собиралось
     // здесь как `breadcrumbItems.slice(1, -1)`. У тега список всегда пуст:
     // предков у него не бывает, и пустой массив говорит это явно, а не молчанием.

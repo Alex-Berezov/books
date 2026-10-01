@@ -52,6 +52,12 @@ export class CategoryTranslationResponse {
       'Automatic indexability derived from bookCount with hysteresis (close <=2, open >=5). Drives meta robots, the sitemap and internal linking alike.',
   })
   autoIndexable?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Public lists only (GET /:lang/categories): false when the Robots field of the SEO record of this translation says noindex or none. Absent in admin lists: category translations have no editorial flag of their own.',
+  })
+  indexable?: boolean;
 }
 
 export class CategoryResponse {

@@ -14,8 +14,8 @@ describe('PublicController (unit)', () => {
   // а не метод класса. Приведение к типу сервиса стоит ровно на границе — в конструкторе.
   const books = { getOverview: jest.fn() };
   const pages = { getPublicBySlug: jest.fn() };
-  const categories = { getByLangSlugWithBooks: jest.fn() };
-  const tags = { versionsByTagLangSlug: jest.fn() };
+  const categories = { getByLangSlugWithBooks: jest.fn(), list: jest.fn() };
+  const tags = { versionsByTagLangSlug: jest.fn(), list: jest.fn() };
   const authors: {
     getPublicBySlug: jest.Mock;
     listPublic: jest.Mock;
@@ -43,6 +43,39 @@ describe('PublicController (unit)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  // `LEGACY-422`, пачка `T81` (решение арбитра 01.10.2026): свёртку `noindex` поля Robots в `indexable`
+  // включает только публичный путь — единственное место, где передаётся `publicIndexability`. Админские
+  // `GET /admin/tags` и `GET /admin/categories` зовут тот же сервис без неё: сырой флаг нужен модалке.
+  describe('публичные списки терминов включают свёртку noindex (T81)', () => {
+    const empty = { data: [], meta: { page: 1, limit: 20, total: 0, totalPages: 0 } };
+
+    it('GET /:lang/categories передаёт publicIndexability', async () => {
+      categories.list.mockResolvedValue(empty);
+
+      await controller.categoriesList(PrismaLanguage.ru, { type: 'genre' } as never);
+
+      expect(categories.list).toHaveBeenCalledTimes(1);
+      expect(categories.list).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(Number),
+        'genre',
+        PrismaLanguage.ru,
+        { publicIndexability: true },
+      );
+    });
+
+    it('GET /:lang/tags передаёт publicIndexability', async () => {
+      tags.list.mockResolvedValue(empty);
+
+      await controller.tagsList(PrismaLanguage.es, {} as never);
+
+      expect(tags.list).toHaveBeenCalledTimes(1);
+      expect(tags.list).toHaveBeenCalledWith(undefined, undefined, undefined, PrismaLanguage.es, {
+        publicIndexability: true,
+      });
+    });
   });
 
   /**

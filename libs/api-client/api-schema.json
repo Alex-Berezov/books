@@ -5182,6 +5182,10 @@
             "nullable": true,
             "type": "string"
           },
+          "indexable": {
+            "description": "Public lists only (GET /:lang/categories): false when the Robots field of the SEO record of this translation says noindex or none. Absent in admin lists: category translations have no editorial flag of their own.",
+            "type": "boolean"
+          },
           "language": {
             "enum": [
               "en",
@@ -21232,6 +21236,7 @@
           },
           "indexable": {
             "default": true,
+            "description": "Editorial flag of the translation. In public lists (GET /:lang/tags) it is also false when the Robots field of the SEO record of the translation says noindex or none.",
             "type": "boolean"
           },
           "language": {

@@ -236,14 +236,75 @@ describe('TagsService', () => {
     // `LEGACY-422`, `T73`: редакционный флаг перевода выбирается из базы — по нему карта
     // сайта и hreflang решают так же, как robots страницы.
     it('selects the translation indexable flag for the sitemap', async () => {
+      await service.list(1, 20, undefined, Language.es, { publicIndexability: true });
       await service.list(1, 20, undefined, Language.es);
 
-      const args = prisma.tag.findMany.mock.calls[0][0] as {
-        include: { translations: { select: Record<string, unknown> } };
-      };
-      expect(args.include.translations.select).toMatchObject({
+      type Args = { include: { translations: { select: Record<string, unknown> } } };
+      const [publicArgs, adminArgs] = (prisma.tag.findMany.mock.calls as [Args][]).map(
+        ([args]) => args,
+      );
+      expect(prisma.tag.findMany).toHaveBeenCalledTimes(2);
+      expect(publicArgs.include.translations.select).toMatchObject({
         indexable: true,
         autoIndexable: true,
+        seo: { select: { robots: true } },
+      });
+      // `T81`: админский путь поле Robots не сворачивает и `seo` не выбирает вовсе.
+      expect(adminArgs.include.translations.select).toMatchObject({ indexable: true, seo: false });
+    });
+
+    // `LEGACY-422`, `T81` (решение арбитра 01.10.2026): на публичном пути `noindex` поля Robots
+    // `Seo` перевода сворачивается в `indexable` — верхний на язык пути и у каждого перевода;
+    // админский путь получает сырой флаг (модалка заполняет из него галочку). `seo` наружу не уходит.
+    describe('публичная свёртка noindex поля Robots (T81)', () => {
+      const withRobots = () => {
+        prisma.tag.findMany.mockResolvedValue([
+          {
+            id: 't1',
+            name: 'Adventure',
+            slug: 'adventure',
+            key: 'adventure',
+            indexable: true,
+            isVisible: true,
+            sortOrder: 0,
+            translations: [
+              { ...translation(Language.en, 'adventure', 7, true), indexable: true, seo: null },
+              {
+                ...translation(Language.es, 'aventura', 9, true),
+                indexable: true,
+                seo: { robots: 'noindex, follow' },
+              },
+            ],
+          },
+        ]);
+      };
+
+      it('публичный список: язык с noindex в поле закрыт сверху и в переводах', async () => {
+        withRobots();
+
+        const es = await service.list(1, 20, undefined, Language.es, { publicIndexability: true });
+        const en = await service.list(1, 20, undefined, Language.en, { publicIndexability: true });
+
+        expect(es.data[0].indexable).toBe(false);
+        expect(en.data[0].indexable).toBe(true);
+        expect(es.data[0].translations).toEqual([
+          expect.objectContaining({ language: Language.en, indexable: true }),
+          expect.objectContaining({ language: Language.es, indexable: false }),
+        ]);
+        for (const tr of es.data[0].translations) expect(tr).not.toHaveProperty('seo');
+      });
+
+      it('админский список: сырые флаги, поле Robots не сворачивается', async () => {
+        withRobots();
+
+        const es = await service.list(1, 20, undefined, Language.es);
+
+        expect(es.data[0].indexable).toBe(true);
+        expect(es.data[0].translations).toEqual([
+          expect.objectContaining({ language: Language.en, indexable: true }),
+          expect.objectContaining({ language: Language.es, indexable: true }),
+        ]);
+        for (const tr of es.data[0].translations) expect(tr).not.toHaveProperty('seo');
       });
     });
 

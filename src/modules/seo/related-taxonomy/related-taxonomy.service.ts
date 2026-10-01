@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CategoryType, Language } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { isTagTranslationIndexable } from '../../../shared/seo/tag-translation-indexable.util';
+import { isCategoryTermOpen, isTagTermOpen } from '../../../shared/seo/term-indexable.util';
 
 /**
  * Термин, на который ссылается страница тега, со всем, что нужно для решения
@@ -40,6 +40,7 @@ type TagRow = {
   autoIndexable: boolean;
   indexable: boolean;
   tag: { isVisible: boolean; indexable: boolean };
+  seo: { robots: string | null } | null;
 };
 
 type CategoryRow = {
@@ -48,6 +49,7 @@ type CategoryRow = {
   bookCount: number;
   autoIndexable: boolean;
   category: { isVisible: boolean; indexable: boolean; type: CategoryType };
+  seo: { robots: string | null } | null;
 };
 
 export interface RelatedSlugInput {
@@ -94,6 +96,7 @@ export class RelatedTaxonomyService {
         autoIndexable: true,
         indexable: true,
         tag: { select: { isVisible: true, indexable: true } },
+        seo: { select: { robots: true } },
       },
     });
   }
@@ -108,6 +111,7 @@ export class RelatedTaxonomyService {
         bookCount: true,
         autoIndexable: true,
         category: { select: { isVisible: true, indexable: true, type: true } },
+        seo: { select: { robots: true } },
       },
     });
   }
@@ -130,7 +134,8 @@ export class RelatedTaxonomyService {
           name: r.name,
           isVisible: r.tag.isVisible,
           // У перевода тега свой редакционный флаг (`LEGACY-422`, `T73`), у категории его нет.
-          indexable: isTagTranslationIndexable(r.tag, r),
+          // `noindex` в поле Robots `Seo` перевода закрывает язык так же (`T81`).
+          indexable: isTagTermOpen(r.tag, r, r.seo),
           autoIndexable: r.autoIndexable,
           langBookCount: r.bookCount,
         } satisfies RelatedTerm,
@@ -150,7 +155,7 @@ export class RelatedTaxonomyService {
             slug: r.slug,
             name: r.name,
             isVisible: r.category.isVisible,
-            indexable: r.category.indexable,
+            indexable: isCategoryTermOpen(r.category, r.seo),
             autoIndexable: r.autoIndexable,
             langBookCount: r.bookCount,
           } satisfies RelatedTerm,

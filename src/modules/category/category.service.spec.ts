@@ -2070,6 +2070,87 @@ describe('CategoryService', () => {
     expect(res.data[0].langBookCount).toBe(1);
   });
 
+  // `LEGACY-422`, `T81` (решение арбитра 01.10.2026): на публичном пути `noindex` поля Robots `Seo`
+  // перевода закрывает язык — верхний `indexable` на язык пути и аддитивный `translations[].indexable`;
+  // админский путь — прежняя форма без поля у перевода. `seo` наружу не уходит, переводы — по языку.
+  describe('list — публичная свёртка noindex поля Robots (T81)', () => {
+    const arrange = () => {
+      prisma.$transaction = jest
+        .fn()
+        .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
+      prisma.category.count.mockResolvedValue(1);
+      prisma.category.findMany.mockResolvedValue([
+        {
+          id: 'c1',
+          name: 'Poetry',
+          slug: 'poetry',
+          key: 'poetry',
+          type: 'genre',
+          indexable: true,
+          isVisible: true,
+          sortOrder: 0,
+          translations: [
+            {
+              language: Language.en,
+              name: 'Poetry',
+              slug: 'poetry',
+              bookCount: 9,
+              autoIndexable: true,
+              seo: null,
+            },
+            {
+              language: Language.ru,
+              name: 'Поэзия',
+              slug: 'poeziya',
+              bookCount: 9,
+              autoIndexable: true,
+              seo: { robots: 'none' },
+            },
+          ],
+        },
+      ]);
+      prisma.$queryRaw.mockResolvedValue([{ categoryId: 'c1', booksCount: 9 }]);
+    };
+
+    it('публичный список: язык с noindex закрыт сверху и в переводах', async () => {
+      arrange();
+
+      const ru = await service.list(1, 20, 'genre', Language.ru, { publicIndexability: true });
+      const en = await service.list(1, 20, 'genre', Language.en, { publicIndexability: true });
+
+      expect(ru.data[0].indexable).toBe(false);
+      expect(en.data[0].indexable).toBe(true);
+      expect(ru.data[0].translations).toEqual([
+        expect.objectContaining({ language: Language.en, indexable: true }),
+        expect.objectContaining({ language: Language.ru, indexable: false }),
+      ]);
+      for (const tr of ru.data[0].translations) expect(tr).not.toHaveProperty('seo');
+      const args = prisma.category.findMany.mock.calls[0][0] as {
+        include: { translations: { orderBy: unknown; select: Record<string, unknown> } };
+      };
+      expect(args.include.translations.orderBy).toEqual({ language: 'asc' });
+      expect(args.include.translations.select).toMatchObject({ seo: { select: { robots: true } } });
+    });
+
+    it('админский список: верхний флаг сырой, у переводов поля indexable нет', async () => {
+      arrange();
+
+      const ru = await service.list(1, 20, 'genre', Language.ru);
+
+      expect(ru.data[0].indexable).toBe(true);
+      for (const tr of ru.data[0].translations) {
+        expect(tr).not.toHaveProperty('indexable');
+        expect(tr).not.toHaveProperty('seo');
+      }
+      // Админский путь `seo` не выбирает вовсе: свёртке там делать нечего.
+      const args = prisma.category.findMany.mock.calls[0][0] as {
+        include: { translations: { select: Record<string, unknown> } };
+      };
+      expect(prisma.category.findMany).toHaveBeenCalledTimes(1);
+      expect(args.include.translations.select).toMatchObject({ seo: false });
+    });
+  });
+
   // LEGACY-416. Публичный список отдавал термины без `parentId`, поэтому боковая
   // колонка страницы таксономии (`TaxonomyDetailPage.tsx`) сравнивала
   // `undefined === category.id` и `undefined === null` — оба условия ложны
