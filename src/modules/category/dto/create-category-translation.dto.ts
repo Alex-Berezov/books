@@ -37,30 +37,30 @@ export class CreateCategoryTranslationDto {
   @RichHtml(RICH_HTML_MAX_LENGTH.text)
   description?: string | null;
 
-  @ApiPropertyOptional({ description: 'H1 heading for the page' })
+  @ApiPropertyOptional({ description: 'H1 heading for the page', type: String, nullable: true })
   @IsOptional()
   @IsString()
-  h1?: string;
+  h1?: string | null;
 
   @ApiPropertyOptional({ description: 'Short description for cards/lists' })
   @IsOptional()
   @IsString()
   shortDescription?: string;
 
-  @ApiPropertyOptional({ description: 'Meta title for SEO' })
+  @ApiPropertyOptional({ description: 'Meta title for SEO', type: String, nullable: true })
   @IsOptional()
   @IsString()
-  metaTitle?: string;
+  metaTitle?: string | null;
 
   @ApiPropertyOptional({ description: 'Meta description for SEO' })
   @IsOptional()
   @IsString()
   metaDescription?: string;
 
-  @ApiPropertyOptional({ description: 'Open Graph title' })
+  @ApiPropertyOptional({ description: 'Open Graph title', type: String, nullable: true })
   @IsOptional()
   @IsString()
-  ogTitle?: string;
+  ogTitle?: string | null;
 
   @ApiPropertyOptional({ description: 'Open Graph description' })
   @IsOptional()
@@ -72,17 +72,21 @@ export class CreateCategoryTranslationDto {
   @IsAbsoluteHttpUrl()
   ogImageUrl?: string;
 
-  @ApiPropertyOptional({ description: 'Open Graph image alt text' })
+  @ApiPropertyOptional({ description: 'Open Graph image alt text', type: String, nullable: true })
   @IsOptional()
   @IsString()
-  ogImageAlt?: string;
+  ogImageAlt?: string | null;
 
-  @ApiPropertyOptional({ description: 'FAQ items as JSON array', type: [FaqItemDto] })
+  @ApiPropertyOptional({
+    description: 'FAQ items as JSON array',
+    type: [FaqItemDto],
+    nullable: true,
+  })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => FaqItemDto)
-  faq?: FaqItemDto[];
+  faq?: FaqItemDto[] | null;
 
   @ApiPropertyOptional({ description: 'SEO metadata', type: SeoInputDto })
   @IsOptional()

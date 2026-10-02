@@ -1077,20 +1077,26 @@ describe('TagsService — писатели тега идут под замком
     expect(written).toMatchObject({ ...CONTENT_FIELDS, indexable: false });
     for (const key of Object.keys(NOT_WRITTEN)) expect(written).not.toHaveProperty(key);
 
-    // `null` в `faq` валидатор пропускает (`@IsOptional`), тип DTO его не объявляет.
-    await tagsService.updateTranslation('t1', Language.en, {
-      faq: null,
-    } as unknown as Parameters<typeof tagsService.updateTranslation>[2]);
+    // `LEGACY-430`, `T87`: `null` в `faq` объявлен типом DTO и очищает колонку.
+    await tagsService.updateTranslation('t1', Language.en, { faq: null });
     expect(written?.faq).toBe(Prisma.DbNull);
 
     // Строковые nullable-колонки очищаются голым `null`, без сентинела.
     await tagsService.updateTranslation('t1', Language.en, {
+      h1: null,
+      metaTitle: null,
+      ogTitle: null,
+      ogImageAlt: null,
       shortDescription: null,
       metaDescription: null,
       ogDescription: null,
       ogImageUrl: null,
     });
     expect(written).toMatchObject({
+      h1: null,
+      metaTitle: null,
+      ogTitle: null,
+      ogImageAlt: null,
       shortDescription: null,
       metaDescription: null,
       ogDescription: null,

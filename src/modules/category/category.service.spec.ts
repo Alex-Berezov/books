@@ -2655,11 +2655,35 @@ describe('CategoryService', () => {
     it('faq: null стирает колонку через Prisma.DbNull, а не молчит', async () => {
       const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: null });
 
-      await service.updateTranslation('c1', Language.en, { faq: null } as never);
+      await service.updateTranslation('c1', Language.en, { faq: null });
 
       expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
       expect(tx.categoryTranslation.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ faq: Prisma.DbNull }) }),
+      );
+    });
+
+    // `LEGACY-430`, `T87`: пустое поле в админке — это `null`, и колонка обязана очиститься.
+    it('h1, metaTitle, ogTitle, ogImageAlt: null стирает колонку', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: null });
+
+      await service.updateTranslation('c1', Language.en, {
+        h1: null,
+        metaTitle: null,
+        ogTitle: null,
+        ogImageAlt: null,
+      });
+
+      expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+      expect(tx.categoryTranslation.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            h1: null,
+            metaTitle: null,
+            ogTitle: null,
+            ogImageAlt: null,
+          }),
+        }),
       );
     });
 

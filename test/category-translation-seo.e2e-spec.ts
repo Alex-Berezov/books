@@ -218,6 +218,33 @@ describe('Category Translation Content & SEO (e2e)', () => {
     expect(orphanSeo).toBeNull();
   });
 
+  // `LEGACY-430`, `T87`: пустое поле в админке уходит `null` и очищает колонку перевода.
+  it('should clear flat content fields with null', async () => {
+    await request(http())
+      .patch(`/categories/${categoryId}/translations/en`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        h1: 'Fiction H1',
+        metaTitle: 'Fiction meta',
+        ogTitle: 'Fiction OG',
+        ogImageAlt: 'Fiction alt',
+        faq: [{ question: 'Q', answer: 'A' }],
+      })
+      .expect(200);
+
+    await request(http())
+      .patch(`/categories/${categoryId}/translations/en`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ h1: null, metaTitle: null, ogTitle: null, ogImageAlt: null, faq: null })
+      .expect(200);
+
+    const row = await prisma.categoryTranslation.findUniqueOrThrow({
+      where: { categoryId_language: { categoryId, language: 'en' } },
+    });
+    expect(row).toMatchObject({ h1: null, metaTitle: null, ogTitle: null, ogImageAlt: null });
+    expect(row.faq).toBeNull();
+  });
+
   it('should return description and seo in public endpoint', async () => {
     // Get the en translation slug
     const translations = await request(http())

@@ -244,6 +244,17 @@ describe('Tag Translation Content & SEO (e2e)', () => {
     // Выставлен первым PATCH и не сброшен вторым, где поля нет.
     expect(row.indexable).toBe(true);
 
+    // `LEGACY-430`, `T87`: четыре строковых поля очищаются `null` так же, как `faq` выше.
+    await request(http())
+      .patch(`/tags/${tagId}/translations/es`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ h1: null, metaTitle: null, ogTitle: null, ogImageAlt: null })
+      .expect(200);
+    const emptied = await prisma.tagTranslation.findUniqueOrThrow({
+      where: { tagId_language: { tagId, language: 'es' } },
+    });
+    expect(emptied).toMatchObject({ h1: null, metaTitle: null, ogTitle: null, ogImageAlt: null });
+
     // `NOT NULL` колонка: `null` отбивает валидатор, а не Prisma пятисотым.
     await request(http())
       .patch(`/tags/${tagId}/translations/es`)

@@ -6797,25 +6797,25 @@ export interface components {
       /** @description HTML description for the category page */
       description?: Record<string, never>;
       /** @description FAQ items as JSON array */
-      faq?: components['schemas']['FaqItemDto'][];
+      faq?: components['schemas']['FaqItemDto'][] | null;
       /** @description H1 heading for the page */
-      h1?: string;
+      h1?: string | null;
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       /** @description Meta description for SEO */
       metaDescription?: string;
       /** @description Meta title for SEO */
-      metaTitle?: string;
+      metaTitle?: string | null;
       /** @description Localized category name */
       name: string;
       /** @description Open Graph description */
       ogDescription?: string;
       /** @description Open Graph image alt text */
-      ogImageAlt?: string;
+      ogImageAlt?: string | null;
       /** @description Open Graph image URL */
       ogImageUrl?: string;
       /** @description Open Graph title */
-      ogTitle?: string;
+      ogTitle?: string | null;
       /** @description SEO metadata */
       seo?: components['schemas']['SeoInputDto'];
       /** @description Short description for cards/lists */
@@ -7418,9 +7418,9 @@ export interface components {
        *       }
        *     ]
        */
-      faq?: components['schemas']['TagFaqDto'][];
+      faq?: components['schemas']['TagFaqDto'][] | null;
       /** @description H1 heading for the tag page */
-      h1?: string;
+      h1?: string | null;
       /**
        * @description Whether this tag should be indexed
        * @default true
@@ -7431,17 +7431,17 @@ export interface components {
       /** @description Meta description for SEO */
       metaDescription?: Record<string, never>;
       /** @description Meta title for SEO */
-      metaTitle?: string;
+      metaTitle?: string | null;
       /** @description Localized tag name */
       name: string;
       /** @description Open Graph description */
       ogDescription?: Record<string, never>;
       /** @description Open Graph image alt text */
-      ogImageAlt?: string;
+      ogImageAlt?: string | null;
       /** @description Open Graph image URL */
       ogImageUrl?: Record<string, never>;
       /** @description Open Graph title */
-      ogTitle?: string;
+      ogTitle?: string | null;
       /**
        * @description Related category slugs
        * @example [
@@ -11911,25 +11911,25 @@ export interface components {
       /** @description HTML description for the category page */
       description?: Record<string, never>;
       /** @description FAQ items as JSON array */
-      faq?: components['schemas']['FaqItemDto'][];
+      faq?: components['schemas']['FaqItemDto'][] | null;
       /** @description H1 heading for the page */
-      h1?: string;
+      h1?: string | null;
       /** @enum {string} */
       language?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       /** @description Meta description for SEO */
       metaDescription?: string;
       /** @description Meta title for SEO */
-      metaTitle?: string;
+      metaTitle?: string | null;
       /** @description Localized category name */
       name?: string;
       /** @description Open Graph description */
       ogDescription?: string;
       /** @description Open Graph image alt text */
-      ogImageAlt?: string;
+      ogImageAlt?: string | null;
       /** @description Open Graph image URL */
       ogImageUrl?: string;
       /** @description Open Graph title */
-      ogTitle?: string;
+      ogTitle?: string | null;
       /** @description SEO metadata */
       seo?: components['schemas']['SeoInputDto'];
       /** @description Short description for cards/lists */
@@ -12487,9 +12487,9 @@ export interface components {
        *       }
        *     ]
        */
-      faq?: components['schemas']['TagFaqDto'][];
+      faq?: components['schemas']['TagFaqDto'][] | null;
       /** @description H1 heading for the tag page */
-      h1?: string;
+      h1?: string | null;
       /**
        * @description Whether this tag should be indexed
        * @default true
@@ -12500,17 +12500,17 @@ export interface components {
       /** @description Meta description for SEO */
       metaDescription?: Record<string, never>;
       /** @description Meta title for SEO */
-      metaTitle?: string;
+      metaTitle?: string | null;
       /** @description Localized tag name */
       name?: string;
       /** @description Open Graph description */
       ogDescription?: Record<string, never>;
       /** @description Open Graph image alt text */
-      ogImageAlt?: string;
+      ogImageAlt?: string | null;
       /** @description Open Graph image URL */
       ogImageUrl?: Record<string, never>;
       /** @description Open Graph title */
-      ogTitle?: string;
+      ogTitle?: string | null;
       /**
        * @description Related category slugs
        * @example [

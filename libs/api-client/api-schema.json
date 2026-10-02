@@ -7128,10 +7128,12 @@
             "items": {
               "$ref": "#/components/schemas/FaqItemDto"
             },
+            "nullable": true,
             "type": "array"
           },
           "h1": {
             "description": "H1 heading for the page",
+            "nullable": true,
             "type": "string"
           },
           "language": {
@@ -7150,6 +7152,7 @@
           },
           "metaTitle": {
             "description": "Meta title for SEO",
+            "nullable": true,
             "type": "string"
           },
           "name": {
@@ -7162,6 +7165,7 @@
           },
           "ogImageAlt": {
             "description": "Open Graph image alt text",
+            "nullable": true,
             "type": "string"
           },
           "ogImageUrl": {
@@ -7170,6 +7174,7 @@
           },
           "ogTitle": {
             "description": "Open Graph title",
+            "nullable": true,
             "type": "string"
           },
           "seo": {
@@ -8382,10 +8387,12 @@
             "items": {
               "$ref": "#/components/schemas/TagFaqDto"
             },
+            "nullable": true,
             "type": "array"
           },
           "h1": {
             "description": "H1 heading for the tag page",
+            "nullable": true,
             "type": "string"
           },
           "indexable": {
@@ -8409,6 +8416,7 @@
           },
           "metaTitle": {
             "description": "Meta title for SEO",
+            "nullable": true,
             "type": "string"
           },
           "name": {
@@ -8421,6 +8429,7 @@
           },
           "ogImageAlt": {
             "description": "Open Graph image alt text",
+            "nullable": true,
             "type": "string"
           },
           "ogImageUrl": {
@@ -8429,6 +8438,7 @@
           },
           "ogTitle": {
             "description": "Open Graph title",
+            "nullable": true,
             "type": "string"
           },
           "relatedCategorySlugs": {
@@ -22350,10 +22360,12 @@
             "items": {
               "$ref": "#/components/schemas/FaqItemDto"
             },
+            "nullable": true,
             "type": "array"
           },
           "h1": {
             "description": "H1 heading for the page",
+            "nullable": true,
             "type": "string"
           },
           "language": {
@@ -22372,6 +22384,7 @@
           },
           "metaTitle": {
             "description": "Meta title for SEO",
+            "nullable": true,
             "type": "string"
           },
           "name": {
@@ -22384,6 +22397,7 @@
           },
           "ogImageAlt": {
             "description": "Open Graph image alt text",
+            "nullable": true,
             "type": "string"
           },
           "ogImageUrl": {
@@ -22392,6 +22406,7 @@
           },
           "ogTitle": {
             "description": "Open Graph title",
+            "nullable": true,
             "type": "string"
           },
           "seo": {
@@ -23514,10 +23529,12 @@
             "items": {
               "$ref": "#/components/schemas/TagFaqDto"
             },
+            "nullable": true,
             "type": "array"
           },
           "h1": {
             "description": "H1 heading for the tag page",
+            "nullable": true,
             "type": "string"
           },
           "indexable": {
@@ -23541,6 +23558,7 @@
           },
           "metaTitle": {
             "description": "Meta title for SEO",
+            "nullable": true,
             "type": "string"
           },
           "name": {
@@ -23553,6 +23571,7 @@
           },
           "ogImageAlt": {
             "description": "Open Graph image alt text",
+            "nullable": true,
             "type": "string"
           },
           "ogImageUrl": {
@@ -23561,6 +23580,7 @@
           },
           "ogTitle": {
             "description": "Open Graph title",
+            "nullable": true,
             "type": "string"
           },
           "relatedCategorySlugs": {
