@@ -2,6 +2,7 @@ import { Logger, NotFoundException } from '@nestjs/common';
 import { SeoService } from './seo.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { CategoryTreeService, CATEGORY_TREE_MAX_DEPTH } from '../category/category-tree.service';
@@ -72,6 +73,7 @@ describe('SeoService (unit)', () => {
 
   beforeEach(() => {
     prisma = createPrismaStub();
+    const geo = { assertAccess: jest.fn() };
     service = new SeoService(
       prisma as unknown as PrismaService,
       new CategoryTreeService(prisma as unknown as PrismaService),
@@ -84,6 +86,7 @@ describe('SeoService (unit)', () => {
         // файл удаление автора не трогает вовсе — `record` здесь не зовётся ни разу.
         { record: jest.fn() } as unknown as AdminAuditService,
       ),
+      geo as unknown as GeoBlockRuleService,
     );
     process.env = { ...ORIGINAL_ENV, PUBLIC_SITE_URL: 'http://localhost:5000/static' };
   });
@@ -95,7 +98,7 @@ describe('SeoService (unit)', () => {
 
   describe('resolvePublic(version)', () => {
     it('returns canonical without language prefix and ignores seo canonical override', async () => {
-      prisma.bookVersion.findUnique.mockResolvedValueOnce({
+      prisma.bookVersion.findFirst.mockResolvedValueOnce({
         id: 'v1',
         title: 'Title',
         author: 'Author',
@@ -121,8 +124,20 @@ describe('SeoService (unit)', () => {
       expect(bundle.twitter.card).toBe('summary_large_image');
     });
 
+    // `LEGACY-400`, пачка `T86`: черновик не резолвится — фильтр статуса стоит в самом запросе.
+    it('ищет только опубликованную версию: черновик — 404 как несуществующая', async () => {
+      prisma.bookVersion.findFirst.mockResolvedValueOnce(null);
+      await expect(service.resolvePublic('version', 'draft-id')).rejects.toThrow(
+        new NotFoundException('BookVersion not found'),
+      );
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'draft-id', status: 'published' } }),
+      );
+    });
+
     it('throws 404 when version not found', async () => {
-      prisma.bookVersion.findUnique.mockResolvedValueOnce(null);
+      prisma.bookVersion.findFirst.mockResolvedValueOnce(null);
       await expect(service.resolvePublic('version', 'nope')).rejects.toBeInstanceOf(
         NotFoundException,
       );
@@ -436,7 +451,7 @@ describe('SeoService (unit)', () => {
     const TERM_KEYS = ['meta', 'openGraph', 'twitter', 'schema', 'hreflangs', 'breadcrumbPath'];
 
     const seedVersion = () => {
-      prisma.bookVersion.findUnique.mockResolvedValueOnce({
+      prisma.bookVersion.findFirst.mockResolvedValueOnce({
         id: 'v1',
         title: 'Title',
         author: 'Author',
@@ -1873,6 +1888,7 @@ describe('SeoService: SEO версии (T61)', () => {
     });
 
   const build = (locked: { seoId: number | null }[]) => {
+    const geo = { assertAccess: jest.fn() };
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue(locked),
       seo: {
@@ -1894,8 +1910,9 @@ describe('SeoService: SEO версии (T61)', () => {
       client as unknown as PrismaService,
       {} as unknown as CategoryTreeService,
       {} as unknown as AuthorService,
+      geo as unknown as GeoBlockRuleService,
     );
-    return { service, tx, client };
+    return { service, tx, client, geo };
   };
 
   it('без Seo: замок строки версии первым, создание и привязка через tx', async () => {
@@ -1945,7 +1962,7 @@ describe('SeoService: SEO версии (T61)', () => {
     const { service, client } = build([]);
     client.bookVersion.findUnique.mockResolvedValueOnce({ status: 'published', seo: { id: 5 } });
 
-    await expect(service.getByVersion('v1')).resolves.toEqual({ id: 5 });
+    await expect(service.getByVersion('v1', null)).resolves.toEqual({ id: 5 });
     expect(client.bookVersion.findUnique).toHaveBeenCalledTimes(1);
     expect(client.bookVersion.findUnique).toHaveBeenCalledWith({
       where: { id: 'v1' },
@@ -1953,7 +1970,7 @@ describe('SeoService: SEO версии (T61)', () => {
     });
 
     client.bookVersion.findUnique.mockResolvedValueOnce(null);
-    await expect(service.getByVersion('v1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.getByVersion('v1', null)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   // `LEGACY-400`, пачка `T80`: ручка публичная — SEO черновика наружу не уходит, и текст 404
@@ -1962,15 +1979,39 @@ describe('SeoService: SEO версии (T61)', () => {
     const { service, client } = build([]);
     client.bookVersion.findUnique.mockResolvedValueOnce({ status: 'draft', seo: { id: 5 } });
 
-    await expect(service.getByVersion('v1')).rejects.toThrow(
+    await expect(service.getByVersion('v1', null)).rejects.toThrow(
       new NotFoundException('BookVersion not found'),
     );
+  });
+
+  // `LEGACY-400`, пачка `T86`: гео-проверка идёт после статуса и получает страну запроса.
+  it('чтение зовёт гео-проверку с версией и страной; закрытая страна — отказ без Seo', async () => {
+    const { service, client, geo } = build([]);
+    client.bookVersion.findUnique.mockResolvedValue({ status: 'published', seo: { id: 5 } });
+
+    await service.getByVersion('v1', 'GB');
+    expect(geo.assertAccess).toHaveBeenCalledTimes(1);
+    expect(geo.assertAccess).toHaveBeenCalledWith({
+      bookVersionId: 'v1',
+      countryCode: 'GB',
+      scope: 'LANGUAGE_EDITION',
+    });
+
+    geo.assertAccess.mockRejectedValueOnce(new Error('451'));
+    await expect(service.getByVersion('v1', 'GB')).rejects.toThrow('451');
+  });
+
+  it('черновик и несуществующая версия не доходят до гео-проверки', async () => {
+    const { service, client, geo } = build([]);
+    client.bookVersion.findUnique.mockResolvedValueOnce({ status: 'draft', seo: { id: 5 } });
+    await expect(service.getByVersion('v1', 'GB')).rejects.toBeInstanceOf(NotFoundException);
+    expect(geo.assertAccess).not.toHaveBeenCalled();
   });
 
   it('опубликованная версия без Seo — null, а не 404', async () => {
     const { service, client } = build([]);
     client.bookVersion.findUnique.mockResolvedValueOnce({ status: 'published', seo: null });
 
-    await expect(service.getByVersion('v1')).resolves.toBeNull();
+    await expect(service.getByVersion('v1', null)).resolves.toBeNull();
   });
 });

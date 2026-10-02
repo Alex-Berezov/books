@@ -158,6 +158,27 @@ describe('GeoIP market blocking e2e', () => {
     await request(http()).get(`/versions/${textVersionId}`).set('X-Geo-Country', 'US').expect(200);
   });
 
+  // `LEGACY-400`, пачка `T86`: мета версии в закрытой стране читалась из любой страны —
+  // `GET /versions/:id/seo` не звал гео-проверку, а `GET /versions/:id` звал.
+  it('closes GET /versions/:id/seo in the blocked country', async () => {
+    await request(http())
+      .get(`/versions/${textVersionId}/seo`)
+      .set('X-Geo-Country', 'GB')
+      .expect(451)
+      .expect(({ body }) => {
+        expect(body.code).toBe('GEO_BLOCKED_BY_RIGHTS');
+      });
+    await request(http())
+      .get(`/versions/${textVersionId}/seo`)
+      .set('X-Geo-Country', 'US')
+      .expect(200);
+    // Боевой путь страны — `CF-IPCountry` (LEGACY-172), а не тестовый заголовок.
+    await request(http())
+      .get(`/versions/${textVersionId}/seo`)
+      .set('CF-IPCountry', 'GB')
+      .expect(451);
+  });
+
   // LEGACY-172. Every other spec here names the country with `X-Geo-Country`, which short-circuits
   // the chain at its first branch — the headers a real reader arrives with were never exercised.
   // This one goes down the production path: `CF-IPCountry` decides, and a header no proxy in front

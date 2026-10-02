@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Put,
@@ -32,6 +33,7 @@ import { TaxonomyIndexabilityService } from './indexability/taxonomy-indexabilit
 import { TaxonomyIndexabilitySchedulerService } from './indexability/taxonomy-indexability-scheduler.service';
 import { SystemPagesService } from './system-pages/system-pages.service';
 import { UpdateSeoDto } from './dto/update-seo.dto';
+import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 import { ResolveSeoType, ResolveSeoTypeValue } from './dto/resolve-seo.dto';
 import { SeoResolveResponseDto } from './dto/resolve-seo-response.dto';
 import { SeoResponseDto } from './dto/seo-response.dto';
@@ -94,6 +96,8 @@ export class SeoController {
     private readonly taxonomyIndexability: TaxonomyIndexabilityService,
     private readonly scheduler: TaxonomyIndexabilitySchedulerService,
     private readonly systemPages: SystemPagesService,
+    // `LEGACY-400`, пачка `T86`: страна запроса для гео-проверки `GET /versions/:id/seo`.
+    private readonly geoIpCountryService: GeoIpCountryService,
   ) {}
 
   @Post('admin/seo/taxonomy-indexability/recompute')
@@ -173,9 +177,13 @@ export class SeoController {
   })
   // `LEGACY-400`, пачка `T80`: черновик отвечает тем же 404, что и несуществующая версия.
   @ApiResponse({ status: 404, description: 'BookVersion not found or not published' })
+  @ApiResponse({ status: 451, description: 'Version is closed in the visitor country' })
   @ApiParam({ name: 'bookVersionId' })
-  get(@Param('bookVersionId') bookVersionId: string) {
-    return this.service.getByVersion(bookVersionId);
+  get(@Param('bookVersionId') bookVersionId: string, @Headers() headers: GeoRequestHeaders) {
+    return this.service.getByVersion(
+      bookVersionId,
+      this.geoIpCountryService.resolveCountry(headers),
+    );
   }
 
   @Put('versions/:bookVersionId/seo')

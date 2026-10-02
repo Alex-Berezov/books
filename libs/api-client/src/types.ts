@@ -19795,6 +19795,13 @@ export interface operations {
         };
         content?: never;
       };
+      /** @description Version is closed in the visitor country */
+      451: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
     };
   };
   SeoController_upsert: {

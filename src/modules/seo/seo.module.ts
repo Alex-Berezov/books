@@ -5,9 +5,16 @@ import { TaxonomyIndexabilityModule } from './indexability/taxonomy-indexability
 import { SystemPagesModule } from './system-pages/system-pages.module';
 import { CategoryTreeModule } from '../category/category-tree.module';
 import { AuthorModule } from '../author/author.module';
+import { GeoBlockModule } from '../geo-block/geo-block.module';
 
 @Module({
-  imports: [TaxonomyIndexabilityModule, SystemPagesModule, CategoryTreeModule, AuthorModule],
+  imports: [
+    TaxonomyIndexabilityModule,
+    SystemPagesModule,
+    CategoryTreeModule,
+    AuthorModule,
+    GeoBlockModule,
+  ],
   controllers: [SeoController],
   providers: [SeoService],
   exports: [SeoService],

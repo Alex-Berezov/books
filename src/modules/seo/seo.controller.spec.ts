@@ -67,7 +67,13 @@ describe('SeoController: тип страницы описан там же, гд�
 
   describe('рантайм принимает ровно тот же список', () => {
     const service = { resolvePublic: jest.fn().mockResolvedValue({}) };
-    const controller = new SeoController(service as never, {} as never, {} as never, {} as never);
+    const controller = new SeoController(
+      service as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     beforeEach(() => service.resolvePublic.mockClear());
 

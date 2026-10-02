@@ -38090,6 +38090,9 @@
           },
           "404": {
             "description": "BookVersion not found or not published"
+          },
+          "451": {
+            "description": "Version is closed in the visitor country"
           }
         },
         "summary": "Get SEO meta for a book version",

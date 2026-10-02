@@ -105,6 +105,20 @@ describe('Seo e2e', () => {
 
     expect(res.body).toEqual(missing.body);
     expect(JSON.stringify(res.body)).not.toContain('Secret draft title');
+
+    // `LEGACY-400`, пачка `T86`: резолвер отвечает на черновик тем же 404, что и на чужой id.
+    const resolved = await request(http())
+      .get('/en/seo/resolve')
+      .query({ type: 'version', id: draft.id })
+      .expect(404);
+    const resolvedMissing = await request(http())
+      .get('/en/seo/resolve')
+      .query({ type: 'version', id: 'no-such-version' })
+      .expect(404);
+    expect(resolved.body).toEqual(resolvedMissing.body);
+    expect(JSON.stringify(resolved.body)).not.toContain('Draft For SEO');
+    // 404 резолвера не уходит под `s-maxage`: опубликованный позже черновик не залипнет в общем кэше.
+    expect(String(resolved.headers['cache-control'] ?? '')).not.toContain('s-maxage');
     expect(String(res.headers['cache-control'] ?? '')).not.toContain('s-maxage');
   });
 

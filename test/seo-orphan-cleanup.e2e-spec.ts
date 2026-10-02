@@ -494,35 +494,35 @@ describe('T55b — Seo без сирот, язык страницы неизме
   it('SEO версии: черновик — 404 тем же текстом, после публикации — запись', async () => {
     const seoId = await newSeo();
     const version = await newVersion('vdraft', seoId);
-    await expect(seo.getByVersion(version.id)).rejects.toThrow('BookVersion not found');
+    await expect(seo.getByVersion(version.id, null)).rejects.toThrow('BookVersion not found');
 
     await publish(version.id);
 
-    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({ id: seoId });
+    await expect(seo.getByVersion(version.id, null)).resolves.toMatchObject({ id: seoId });
   }, 60_000);
 
   it('SEO версии: чтение после удаления версии — 404, а не удалённое Seo', async () => {
     const seoId = await newSeo();
     const version = await newVersion('vread', seoId);
     await publish(version.id);
-    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({ id: seoId });
+    await expect(seo.getByVersion(version.id, null)).resolves.toMatchObject({ id: seoId });
 
     await versions.remove(version.id, 'e2e-actor');
 
-    await expect(seo.getByVersion(version.id)).rejects.toThrow('BookVersion not found');
+    await expect(seo.getByVersion(version.id, null)).rejects.toThrow('BookVersion not found');
   }, 60_000);
 
   it('SEO версии: чтение после правки через форму версии отдаёт новое', async () => {
     const version = await newVersion('vedit');
     await publish(version.id);
     await seo.upsertForVersion(version.id, { metaTitle: `${prefix} before` });
-    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({
+    await expect(seo.getByVersion(version.id, null)).resolves.toMatchObject({
       metaTitle: `${prefix} before`,
     });
 
     await versions.update(version.id, { seoMetaTitle: `${prefix} after` });
 
-    await expect(seo.getByVersion(version.id)).resolves.toMatchObject({
+    await expect(seo.getByVersion(version.id, null)).resolves.toMatchObject({
       metaTitle: `${prefix} after`,
     });
   }, 60_000);

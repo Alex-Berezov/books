@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CategoryTreeService } from '../category/category-tree.service';
 import { AuthorService, authorSlugKey } from '../author/author.service';
 import { BOOK_VERSION_REMOVE_TX_OPTIONS } from '../book-version/book-version.service';
+import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
+import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { CategoryType, Language } from '@prisma/client';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { ResolveSeoQueryDto, ResolveSeoTypeValue } from './dto/resolve-seo.dto';
@@ -100,6 +102,8 @@ export class SeoService {
     private readonly categoryTree: CategoryTreeService,
     // LEGACY-006: публичный адрес автора берётся из справочника, а не собирается из имени.
     private readonly authors: AuthorService,
+    // `LEGACY-400`, пачка `T86`: публичное чтение `Seo` версии проходит ту же гео-проверку, что `getPublic`.
+    private readonly geoBlockRuleService: GeoBlockRuleService,
   ) {}
 
   /**
@@ -162,9 +166,12 @@ export class SeoService {
   /**
    * Без кэша намеренно (`LEGACY-400`, пачка `T61`, решение арбитра 28.09.2026): кэш в памяти процесса
    * не видел удаления версии, каскада книги и правки `Seo` через `BookVersionService.update` — до TTL
-   * отдавал удалённое или старое. Цена — одно чтение по первичному ключу со связью.
+   * отдавал удалённое или старое. Цена — одно чтение по первичному ключу со связью и, для
+   * опубликованной версии, гео-проверка (`T86`).
+   *
+   * Страна обязательна намеренно: забытый аргумент молча дал бы политику неизвестной страны.
    */
-  async getByVersion(bookVersionId: string) {
+  async getByVersion(bookVersionId: string, countryCode: string | null) {
     // Одним запросом и только связь: строка версии несёт правовые Json-колонки, ради `seoId` их не тянуть.
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
@@ -175,6 +182,14 @@ export class SeoService {
     if (!version || version.status !== 'published') {
       throw new NotFoundException('BookVersion not found');
     }
+    // `LEGACY-400`, пачка `T86`: мета опубликованной версии под гео-блоком или претензией не читается
+    // из закрытой страны — как `BookVersionService.getPublic`. 451 идёт после проверки статуса:
+    // черновик по-прежнему неотличим от несуществующей версии.
+    await this.geoBlockRuleService.assertAccess({
+      bookVersionId,
+      countryCode,
+      scope: GeoBlockScope.LANGUAGE_EDITION,
+    });
     return version.seo;
   }
 
@@ -500,8 +515,24 @@ export class SeoService {
    * приходилось вычитывать из тела.
    */
   private async resolveVersionPublic(id: string): Promise<Record<string, unknown>> {
-    const v = await this.prisma.bookVersion.findUnique({
-      where: { id },
+    // `LEGACY-400`, пачка `T86`: черновик наружу не отдаётся — 404 тем же текстом, что у несуществующей
+    // версии (как `getByVersion`). Гео-проверки здесь нет намеренно: ответ уходит под `s-maxage`
+    // (`PublicCacheInterceptor`), общий кэш ключует по URL, и 451 для одной страны осел бы у всех.
+    // Только поля, из которых собирается ответ: строка версии несёт правовые Json-колонки.
+    const v = await this.prisma.bookVersion.findFirst({
+      where: { id, status: 'published' },
+      select: {
+        id: true,
+        title: true,
+        author: true,
+        description: true,
+        language: true,
+        seoId: true,
+        status: true,
+        coverImageUrl: true,
+        slug: true,
+        type: true,
+      },
     });
     if (!v) throw new NotFoundException('BookVersion not found');
 
