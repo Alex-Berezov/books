@@ -2345,6 +2345,23 @@ describe('CategoryService', () => {
     expect(indexability.recomputeForTerms).toHaveBeenCalledWith(['c1'], []);
   });
 
+  it('привязка читает версии-сестры по возрастанию id — в порядке, в каком удаление книги их запирает (LEGACY-433)', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.category.findUnique.mockResolvedValue({ id: 'c1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+    prisma.bookCategory.findFirst.mockResolvedValue(null);
+
+    await service.attachCategoryToVersion('v1', 'c1');
+
+    // Чтение сестёр одно: второе, без `orderBy`, вернуло бы произвольный порядок (L-005).
+
+    expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+
+    expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookId: 'b1' }, orderBy: { id: 'asc' } }),
+    );
+  });
+
   /**
    * 🔴 LEGACY-005. Ответ привязки уезжал наружу сырым объектом Prisma: запрос без
    * `select` тянул бы все скаляры `BookCategory`, и форма ответа держалась на совпадении

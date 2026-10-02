@@ -1657,22 +1657,19 @@ export class BookVersionService {
       .map((id, index) => ({ id, index }))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-    await this.prisma.$transaction(
-      async (tx) => {
-        for (const { id, index } of withDisplayOrder) {
-          await tx.bookVersionContributor.updateMany({
-            where: { id, bookVersionId: versionId },
-            data: { displayOrder: index },
-          });
-        }
-      },
-      // L-020: многошаговый обход внутри `$transaction` получает свой дедлайн явно -
-      // дефолт Prisma (`timeout: 5000`, `maxWait: 2000`) рассчитан на пару операторов,
-      // а не на список произвольной длины. Значение - как у соседей с тем же приёмом
-      // (`category-tree.service.ts`, `contributors.service.ts`, `persons.service.ts`,
-      // `tags/tag-lock.service.ts`).
-      { timeout: 30_000, maxWait: 10_000 },
-    );
+    // `LEGACY-433`: под замком группы, как три соседние ручки участников. Замок берёт строку версии
+    // раньше строк участников, и каскад удаления версии или книги ждёт её, а не расходится
+    // с перестановкой по порядку строк. Пометку stale перестановка не пишет: порядок кредитов
+    // в хеш не входит (`serializeVersionContributors`). Дедлайн транзакции — `CLEARANCE_TX_OPTIONS`
+    // (L-020): список произвольной длины и ожидание замка не укладываются в дефолт Prisma.
+    await this.clearanceLock.runInLockedClearance(versionId, async (tx) => {
+      for (const { id, index } of withDisplayOrder) {
+        await tx.bookVersionContributor.updateMany({
+          where: { id, bookVersionId: versionId },
+          data: { displayOrder: index },
+        });
+      }
+    });
 
     return this.getVersionContributors(versionId);
   }

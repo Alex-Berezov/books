@@ -754,9 +754,13 @@ export class TagsService {
     if (!version) throw new NotFoundException('BookVersion not found');
     if (!tag) throw new NotFoundException('Tag not found');
 
+    // По возрастанию `id` — порядок, в котором `BookService.remove` запирает версии книги
+    // (`lockLicenseSnapshotsByBook`): проверка внешнего ключа ставит `FOR KEY SHARE` на строки версий
+    // в порядке вставки, и произвольный порядок давал со встречным удалением цикл (`LEGACY-433`).
     const siblings = await this.prisma.bookVersion.findMany({
       where: { bookId: version.bookId },
       select: { id: true },
+      orderBy: { id: 'asc' },
     });
 
     try {

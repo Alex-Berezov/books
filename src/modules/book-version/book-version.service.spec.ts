@@ -2904,14 +2904,13 @@ describe('BookVersionService', () => {
       } as unknown as BookVersionWithSeo);
     });
 
-    it('updates displayOrder for every id inside one transaction, in order', async () => {
-      const transactionSpy = jest.spyOn(prisma, '$transaction');
-
+    it('updates displayOrder for every id inside one locked transaction, in order', async () => {
       await service.reorderVersionContributors('v1', {
         contributorIds: ['bvc-1', 'bvc-2'],
       } as never);
 
-      expect(transactionSpy).toHaveBeenCalledTimes(1);
+      // `LEGACY-433`: одна транзакция под замком группы версии, а не голая `$transaction`.
+      expect(clearanceLock.lockedVersions).toEqual(['v1']);
       expect(prisma.bookVersionContributor.updateMany).toHaveBeenNthCalledWith(1, {
         where: { id: 'bvc-1', bookVersionId: 'v1' },
         data: { displayOrder: 0 },
@@ -2949,18 +2948,35 @@ describe('BookVersionService', () => {
     });
 
     /**
-     * `LEGACY-349` (ревью): `prisma.$transaction` в стенде отдаёт колбэку тот
-     * же самый объект `prisma`, поэтому предыдущие тесты не отличают запись
-     * через `tx` от записи через `this.prisma` напрямую - оба указывают на
-     * один и тот же мок. Здесь транзакция подменена на отдельный клиент,
-     * чтобы доказать: пишет именно он, а не `this.prisma`.
+     * `LEGACY-433`: запись идёт внутри обёртки замка группы — строка версии берётся раньше строк
+     * участников, и каскад удаления версии ждёт её, а не расходится с перестановкой по порядку строк.
      */
-    it('writes through the transaction client, not this.prisma directly', async () => {
+    it('writes every update while the clearance lock is held', async () => {
+      const seen: boolean[] = [];
+      prisma.bookVersionContributor.updateMany.mockImplementation(() => {
+        seen.push(clearanceLock.isLocked());
+        return Promise.resolve({ count: 1 });
+      });
+
+      await service.reorderVersionContributors('v1', {
+        contributorIds: ['bvc-1', 'bvc-2'],
+      } as never);
+
+      expect(seen).toEqual([true, true]);
+      expect(clearanceLock.isLocked()).toBe(false);
+    });
+
+    /**
+     * `LEGACY-349` (ревью): подмена замка отдаёт колбэку **отдельный** клиент — стенд иначе
+     * отдаёт сам `prisma`, и запись мимо `tx` через `this.prisma` была бы неотличима.
+     */
+    it('writes through the locked transaction client, not this.prisma directly', async () => {
       const txUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
       const txClient = { bookVersionContributor: { updateMany: txUpdateMany } };
       jest
-        .spyOn(prisma, '$transaction')
-        .mockImplementationOnce((fn: (tx: unknown) => unknown) => Promise.resolve(fn(txClient)));
+        .spyOn(clearanceLock.service, 'runInLockedClearance')
+        .mockImplementationOnce(((_id: string, fn: (tx: unknown) => Promise<unknown>) =>
+          fn(txClient)) as never);
 
       await service.reorderVersionContributors('v1', {
         contributorIds: ['bvc-1'],

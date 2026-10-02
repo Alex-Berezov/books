@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BookType, ContributorRole, Language, Prisma, PrismaClient } from '@prisma/client';
 import { AppModule } from '../src/app.module';
@@ -7,13 +8,15 @@ import { AudioChapterService } from '../src/modules/audio-chapter/audio-chapter.
 import { BookService } from '../src/modules/book/book.service';
 import { BookVersionService } from '../src/modules/book-version/book-version.service';
 import { ChapterService } from '../src/modules/chapter/chapter.service';
+import { RightsClearanceLockService } from '../src/modules/rights-intake/rights-clearance-lock.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { ContributorRole as DtoContributorRole } from '../src/modules/persons/person-interface';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { backendPid, waitBlockedBy } from './helpers/lock-probe';
 
 /**
  * 🔴 `LEGACY-431`, пачка `T78`. Живая проба: удаление версии (`BookVersionService.remove`) и удаление
- * книги (`BookService.remove`) идут мимо замка группы прав, а 11 писателей версии — через него
+ * книги (`BookService.remove`) идут мимо замка группы прав, а 12 писателей версии — через него
  * (`runInLockedClearance`). Гипотеза записи — цикл по строкам: «строка версии → строки глав»
  * против «строка главы → строка версии» (`40P01`).
  *
@@ -23,7 +26,7 @@ import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with
  * сторона встала в очередь, а не проскочила, проверяется `pg_blocking_pids` против соединения
  * держателя (кто-то в базе воркера ждёт именно его) — без этого зелёная проба ничего не значит.
  *
- * Охват — все 11 писателей под `runInLockedClearance` против прямого удаления той же версии
+ * Охват — все 12 писателей под `runInLockedClearance` против прямого удаления той же версии
  * и против удаления книги, плюс писатель **соседней** версии той же группы против удаления книги.
  * Чего проба не видит (условия переоткрытия `LEGACY-431`): писателей вне обёртки и пересчёт
  * набора версий через `runInLockedClearanceScope`.
@@ -119,6 +122,12 @@ describe('LEGACY-431 — удаление версии и книги проти�
     const contributor = await prisma.bookVersionContributor.create({
       data: { bookVersionId: target.id, personId: person.id, role: ContributorRole.TRANSLATOR },
     });
+    // Второй участник: перестановка двух строк — наименьший случай, где порядок строк что-то значит.
+    const person2 = await prisma.person.create({ data: { canonicalName: `${slug}-person2` } });
+    personIds.push(person2.id);
+    const contributor2 = await prisma.bookVersionContributor.create({
+      data: { bookVersionId: target.id, personId: person2.id, role: ContributorRole.ILLUSTRATOR },
+    });
     return {
       bookId: fx.book.id,
       targetId: target.id,
@@ -128,12 +137,19 @@ describe('LEGACY-431 — удаление версии и книги проти�
       audioChapterId: audioChapter.id,
       personId: person.id,
       contributorId: contributor.id,
+      contributor2Id: contributor2.id,
     };
   };
 
   type Fixture = Awaited<ReturnType<typeof makeBook>>;
   type Deleter = 'удаление версии' | 'удаление книги';
-  type Writer = { name: string; run: (f: Fixture) => Promise<unknown>; against: Deleter[] };
+  type Writer = {
+    name: string;
+    run: (f: Fixture) => Promise<unknown>;
+    against: Deleter[];
+    /** Где держится писатель, когда он идёт первым; по умолчанию — в `checkVersionStaleness`. */
+    hold?: (pause: Pause) => void;
+  };
 
   const deleters: Record<Deleter, (f: Fixture) => Promise<unknown>> = {
     'удаление версии': (f) => versions.remove(f.targetId, null),
@@ -213,6 +229,17 @@ describe('LEGACY-431 — удаление версии и книги проти�
       against: BOTH,
     },
     {
+      // `LEGACY-433`: перестановка идёт под замком группы, строки участников — после строки версии.
+      // Пометку stale не пишет, поэтому держится в конце тела, до коммита.
+      name: 'перестановка участников',
+      run: (f) =>
+        versions.reorderVersionContributors(f.targetId, {
+          contributorIds: [f.contributor2Id, f.contributorId],
+        }),
+      against: BOTH,
+      hold: (pause) => holdLockedBody(pause),
+    },
+    {
       name: 'правка главы соседней версии',
       run: (f) => chapters.update(f.neighbourChapterId, { title: 'edited' }),
       against: ['удаление книги'],
@@ -220,27 +247,6 @@ describe('LEGACY-431 — удаление версии и книги проти�
   ];
 
   const cases = writers.flatMap((w) => w.against.map((d) => [d, w.name, w] as const));
-
-  const backendPid = async (tx: Prisma.TransactionClient): Promise<number> => {
-    const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
-    return row.pid;
-  };
-
-  /**
-   * Ждёт, пока кто-то встанет в очередь именно за соединением `holderPid`. Опрос до дедлайна,
-   * а не один замер после паузы: на медленной машине вторая сторона доезжает до замка не сразу.
-   */
-  const waitBlockedBy = async (holderPid: number, deadlineMs = 10_000): Promise<boolean> => {
-    const until = Date.now() + deadlineMs;
-    while (Date.now() < until) {
-      const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE datname = current_database() AND ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
-      if (row.n > 0) return true;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    return false;
-  };
 
   const errorText = (result: PromiseSettledResult<unknown>): string => {
     if (result.status === 'fulfilled') return '';
@@ -292,7 +298,7 @@ describe('LEGACY-431 — удаление версии и книги проти�
         }),
       ]);
       secondOp = second();
-      blocked = await waitBlockedBy(holderPid);
+      blocked = await waitBlockedBy(prisma, holderPid);
     } catch (error) {
       // Обе транзакции дожидаются и здесь: брошенные живыми, они держат строки под чисткой `afterAll`.
       release();
@@ -318,6 +324,23 @@ describe('LEGACY-431 — удаление версии и книги проти�
       });
   };
 
+  /** Писатель держится в конце тела под замком группы: `fn` отработал, транзакция ещё не закоммичена. */
+  const holdLockedBody = (pause: Pause) => {
+    const lock = moduleRef.get(RightsClearanceLockService);
+    const real = lock.runInLockedClearance.bind(
+      lock,
+    ) as RightsClearanceLockService['runInLockedClearance'];
+    jest.spyOn(lock, 'runInLockedClearance').mockImplementationOnce(((
+      versionId: string,
+      fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+    ) =>
+      real(versionId, async (tx) => {
+        const result = await fn(tx);
+        await pause(tx);
+        return result;
+      })) as never);
+  };
+
   /** Удаление держится в первом `adminAudit.record`: `tx` у него первым аргументом. */
   const holdDeleter = (pause: Pause) => {
     const real = audit.record.bind(audit) as AdminAuditService['record'];
@@ -331,7 +354,7 @@ describe('LEGACY-431 — удаление версии и книги проти�
     it('писатель держит замок группы — удаление встаёт за ним, обе стороны проходят', async () => {
       const f = await makeBook();
       const { blocked, first, second } = await race(
-        holdWriter,
+        writer.hold ?? holdWriter,
         () => writer.run(f),
         () => deleters[deleterName](f),
       );
@@ -352,11 +375,10 @@ describe('LEGACY-431 — удаление версии и книги проти�
       expect(blocked).toBe(true);
       expect(errorText(first)).toBe('');
       // Версии к моменту, когда писатель получил строку, уже нет: отказ ожидаем, но не замковый,
-      // а «версии нет». Сейчас это 404 у правки версии и `P2025`/`P2003` (500) у остальных десяти
-      // писателей (`LEGACY-434`); починка до 404 этой проверке не мешает.
+      // а «версии нет»: 404 у всех 12 писателей (`LEGACY-434`), не `P2025`/`P2003` (500).
       expect(second.status).toBe('rejected');
       expect(isLockFailure(second)).toBe(false);
-      expect(errorText(second)).toMatch(/P2025|P2003|not found/i);
+      expect((second as PromiseRejectedResult).reason).toBeInstanceOf(NotFoundException);
     });
   });
 

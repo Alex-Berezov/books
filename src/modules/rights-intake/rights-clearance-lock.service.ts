@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -53,8 +53,9 @@ const isSameGroup = (a: GroupKeys, b: GroupKeys): boolean =>
 
 /**
  * Одна сверка на оба пути: ключи каждой версии, прочитанные до замка, против её строки под
- * замком. Версии, которой под замком нет (удалена встречной транзакцией), сверять не с чем —
- * тело увидит её отсутствие само, как и до T56.
+ * замком. Версии, которой под замком нет (удалена встречной транзакцией), сверять не с чем:
+ * путь одной версии до сверки отвечает 404 (`versionNotFound`, `LEGACY-434`), а путь набора идёт
+ * в тело с тем, что осталось, — пропажу версии из набора тело увидит само, как и до T56.
  */
 const assertGroupsUnchanged = (before: VersionKeys[], underLock: VersionKeys[]): void => {
   const lockedById = new Map(underLock.map((row) => [row.id, row]));
@@ -63,6 +64,12 @@ const assertGroupsUnchanged = (before: VersionKeys[], underLock: VersionKeys[]):
     if (now && !isSameGroup(now, version)) throw new ClearanceGroupMovedError();
   }
 };
+
+/**
+ * Писатель версии, которой нет, получает 404, а не `P2003`/`P2025` из тела (`LEGACY-434`). Текст —
+ * тот же, что отдавала правка версии своей проверкой под замком: ответ ручки не меняется.
+ */
+const versionNotFound = (): NotFoundException => new NotFoundException('BookVersion not found');
 
 const distinct = (values: Array<string | null>): string[] => [
   ...new Set(values.filter((value): value is string => value !== null)),
@@ -84,8 +91,10 @@ const distinct = (values: Array<string | null>): string[] => [
  * - ключей два и порядок один: сначала профиль, потом проверка прав;
  * - поле со значением `null` пропускается: такой группы нет, соседей по ней фан-аут не ищет.
  *
- * ⚠️ Через `runInLockedClearance` идут 11 писателей одной версии со своим `tx`: `ChapterService` (3),
- * `AudioChapterService` (4), `BookVersionService` (`update` и три ручки участников).
+ * ⚠️ Через `runInLockedClearance` идут 12 писателей одной версии со своим `tx`: `ChapterService` (3),
+ * `AudioChapterService` (4), `BookVersionService` (`update`, три ручки участников и перестановка
+ * участников — она без пометки stale, `LEGACY-433`). Счёт: `grep -rn "runInLockedClearance(" src
+ * --include=*.ts | grep -v spec | grep -v "async runInLockedClearance" | wc -l`.
  * Пересчёт по персоне и профилю (`PersonsService.update`, `ContributorsService`) идёт через
  * `runInLockedClearanceScope` (`LEGACY-368`, T33). Порядок замков групп у обоих путей один —
  * `lockGroups`. Путь без `tx` (ручная проверка хеша, файл источника) замок больше не берёт:
@@ -126,7 +135,7 @@ export class RightsClearanceLockService {
       where: { id: versionId },
       select: { id: true, rightsProfileId: true, approvedRightsReviewId: true },
     });
-    if (!version) return;
+    if (!version) throw versionNotFound();
 
     await this.lockGroups(
       tx,
@@ -140,6 +149,8 @@ export class RightsClearanceLockService {
       FROM "BookVersion"
       WHERE id = ${versionId}
       FOR NO KEY UPDATE`;
+    // Версию снесла встречная транзакция, пока мы ждали замок группы (`LEGACY-434`).
+    if (locked.length === 0) throw versionNotFound();
     assertGroupsUnchanged([version], locked);
   }
 

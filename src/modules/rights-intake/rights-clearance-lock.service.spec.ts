@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import {
   CLEARANCE_GROUP_ATTEMPTS,
   CLEARANCE_GROUP_MOVED_CODE,
@@ -115,14 +115,11 @@ describe('RightsClearanceLockService', () => {
     expect(lockedKeys(tx).map(([, id]) => id)).toEqual(['p1']);
   });
 
-  it('takes no group lock but still runs the work when there is no group or no version', async () => {
+  it('takes no group lock but still runs the work when the version has no group', async () => {
     const bare = await run({ rightsProfileId: null, approvedRightsReviewId: null });
-    const missing = await run(null);
 
     expect(lockedKeys(bare.tx)).toEqual([]);
-    expect(missing.tx.$queryRaw).not.toHaveBeenCalled();
     expect(bare.work).toHaveBeenCalledTimes(1);
-    expect(missing.work).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -172,6 +169,34 @@ describe('RightsClearanceLockService', () => {
     });
     expect(prisma.$transaction).toHaveBeenCalledTimes(CLEARANCE_GROUP_ATTEMPTS);
     expect(work).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 and never runs the work when the version is gone before the lock (LEGACY-434)', async () => {
+    const { prisma, tx } = createPrisma(null);
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+    const work = jest.fn(() => Promise.resolve('done'));
+
+    await expect(service.runInLockedClearance('v1', work)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(work).not.toHaveBeenCalled();
+    // 404 не повтор: попытка одна, как и чтение версии, и ни одного замка группы.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.bookVersion.findUnique).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when a concurrent delete removed the version while waiting for the lock (LEGACY-434)', async () => {
+    const before = { rightsProfileId: 'p1', approvedRightsReviewId: 'r1' };
+    const { prisma } = createPrisma(before, [null]);
+    const service = new RightsClearanceLockService(prisma as unknown as PrismaService);
+    const work = jest.fn(() => Promise.resolve('done'));
+
+    await expect(service.runInLockedClearance('v1', work)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(work).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry a failure of the work itself', async () => {
@@ -331,6 +356,8 @@ describe('RightsClearanceLockService.runInLockedClearanceScope', () => {
     const scopePath = await run(['v1'], [group]);
 
     const single = createPrisma([]);
+    single.tx.$queryRaw.mockImplementation(((sql: TemplateStringsArray) =>
+      Promise.resolve(isRowRead(sql) ? [{ id: 'v1', ...group }] : [{ locked: true }])) as never);
     const singleTx = {
       bookVersion: { findUnique: jest.fn().mockResolvedValue(group) },
       $queryRaw: single.tx.$queryRaw,

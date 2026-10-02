@@ -152,7 +152,9 @@ export class CommentsService {
     }
 
     const comment = await this.prisma.$transaction(async (tx) => {
+      await this.lockAuthor(tx, userId);
       if (root) await this.lockThreadRoot(tx, root, userId);
+      else await this.lockTargets(tx, dto, dto.rating ? bookId : undefined);
       let ratingId: string | undefined;
 
       if (dto.rating && bookId) {
@@ -403,11 +405,64 @@ export class CommentsService {
   }
 
   /**
+   * Автор любого комментария `FOR KEY SHARE` первым оператором: `deleteById` запирает
+   * пользователя `FOR UPDATE` раньше его комментариев, и вставка, ждавшая удаления аккаунта,
+   * отвечает 404, а не 500 на внешнем ключе `userId` (`LEGACY-434`).
+   */
+  private async lockAuthor(tx: Prisma.TransactionClient, userId: string): Promise<void> {
+    const author = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`SELECT id FROM "User" WHERE id = ${userId} FOR KEY SHARE`;
+    if (author.length === 0) throw new NotFoundException('User not found');
+  }
+
+  /**
+   * Цель комментария `FOR KEY SHARE` после автора: версия, глава или аудиоглава, удалённые
+   * между проверкой на пуле и `comment.create`, давали `P2003` и 500 (`LEGACY-434`). Порядок —
+   * книга (только у отзыва с оценкой: внешний ключ `BookRating.bookId`), версия, глава,
+   * аудиоглава, как у `BookService.remove` (строка книги, потом версии) и удаления версии
+   * (сначала цель, потом её комментарии). Версия раньше книги дала бы с удалением книги 40P01.
+   * Пустой ответ — цель стёрта, 404: у корня — своим текстом цели, у ответа — `gone`, тем же
+   * «Parent comment not found», что и стёртый каскадом корень (ветки больше нет).
+   */
+  private async lockTargets(
+    tx: Prisma.TransactionClient,
+    target: Partial<ThreadTarget>,
+    ratedBookId?: string,
+    gone?: () => NotFoundException,
+  ): Promise<void> {
+    if (ratedBookId) {
+      const rows = await tx.$queryRaw<
+        unknown[]
+      >`SELECT id FROM "Book" WHERE id = ${ratedBookId} FOR KEY SHARE`;
+      if (rows.length === 0) throw new NotFoundException('Book not found');
+    }
+    if (target.bookVersionId) {
+      const rows = await tx.$queryRaw<
+        unknown[]
+      >`SELECT id FROM "BookVersion" WHERE id = ${target.bookVersionId} FOR KEY SHARE`;
+      if (rows.length === 0) throw gone?.() ?? new NotFoundException('BookVersion not found');
+    }
+    if (target.chapterId) {
+      const rows = await tx.$queryRaw<
+        unknown[]
+      >`SELECT id FROM "Chapter" WHERE id = ${target.chapterId} FOR KEY SHARE`;
+      if (rows.length === 0) throw gone?.() ?? new NotFoundException('Chapter not found');
+    }
+    if (target.audioChapterId) {
+      const rows = await tx.$queryRaw<
+        unknown[]
+      >`SELECT id FROM "AudioChapter" WHERE id = ${target.audioChapterId} FOR KEY SHARE`;
+      if (rows.length === 0) throw gone?.() ?? new NotFoundException('AudioChapter not found');
+    }
+  }
+
+  /**
    * Проверка корня вне транзакции видит снимок до записи: корень, скрытый, удалённый
    * или стёртый каскадом между проверкой и `comment.create`, давал ответ под скрытым
    * корнем или 500 на внешнем ключе (`LEGACY-428`, решение арбитра 01.10.2026).
-   * Корень запирается `FOR SHARE` и перечитывается: скрытие и удаление ждут вставку,
-   * а вставка после них видит их итог. Порядок замков повторяет тех, кто удаляет
+   * Автор уже заперт (`lockAuthor`). Корень запирается `FOR SHARE` и перечитывается:
+   * скрытие и удаление ждут вставку, а вставка после них видит их итог. Порядок замков повторяет тех, кто удаляет
    * комментарии каскадом: сначала строка автора ответа (`users.service.ts`,
    * `deleteById` запирает пользователя `FOR UPDATE`, потом трогает его комментарии),
    * затем цель (удаление версии или главы — сначала цель, потом её комментарии),
@@ -415,27 +470,16 @@ export class CommentsService {
    * за время ожидания, — 404, а не 500 на внешнем ключе. `FOR KEY SHARE` не мешает
    * правкам строк пользователя и цели — только их удалению. Промежуточные узлы
    * цепочки не запираются: ответ крепится к корню, их судьба на него не влияет.
-   * ⚠️ Встречное удаление аккаунта автора корня этим не закрыто: `deleteById`
-   * отвязывает ответы раньше, чем удаляет корень, и ответ, вставленный между шагами,
-   * внешний ключ `ON DELETE SET NULL` молча делает корневым отзывом (`LEGACY-433`,
-   * пачка `T83`).
+   * Встречное удаление аккаунта автора корня не запирается: ответ, вставленный между отвязкой
+   * ответов и удалением корня, `ON DELETE SET NULL` делает корневым, как и все прежние ответы
+   * (`LEGACY-433` «принято», решение арбитра 02.10.2026).
    */
   private async lockThreadRoot(
     tx: Prisma.TransactionClient,
     root: ThreadNode,
     userId: string,
   ): Promise<void> {
-    const author = await tx.$queryRaw<
-      Array<{ id: string }>
-    >`SELECT id FROM "User" WHERE id = ${userId} FOR KEY SHARE`;
-    if (author.length === 0) throw new NotFoundException('User not found');
-    if (root.bookVersionId) {
-      await tx.$queryRaw`SELECT id FROM "BookVersion" WHERE id = ${root.bookVersionId} FOR KEY SHARE`;
-    } else if (root.chapterId) {
-      await tx.$queryRaw`SELECT id FROM "Chapter" WHERE id = ${root.chapterId} FOR KEY SHARE`;
-    } else if (root.audioChapterId) {
-      await tx.$queryRaw`SELECT id FROM "AudioChapter" WHERE id = ${root.audioChapterId} FOR KEY SHARE`;
-    }
+    await this.lockTargets(tx, root, undefined, threadNotFound);
     const [locked] = await tx.$queryRaw<
       Array<Pick<ThreadNode, 'isDeleted' | 'isHidden' | 'userId'>>
     >`SELECT "isDeleted", "isHidden", "userId" FROM "Comment" WHERE id = ${root.id} FOR SHARE`;

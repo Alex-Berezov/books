@@ -388,6 +388,13 @@ describe('CommentsService', () => {
           expect(prisma.comment.create).not.toHaveBeenCalled();
         });
 
+        it('цель корня стёрта, пока ответ ждал замок, — 404 ветки, а не 500 (LEGACY-434)', async () => {
+          prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
+          prisma.$queryRaw.mockResolvedValueOnce([{ id: 'u1' }]).mockResolvedValueOnce([]);
+          await expect(reply('root')).rejects.toThrow('Parent comment not found');
+          expect(prisma.comment.create).not.toHaveBeenCalled();
+        });
+
         it('отвечающий удалён, пока ждал замок, — 404, а не 500 на внешнем ключе', async () => {
           prisma.comment.findUnique.mockResolvedValueOnce(row('root', null));
           prisma.$queryRaw.mockResolvedValueOnce([]);
@@ -413,11 +420,88 @@ describe('CommentsService', () => {
         });
       });
 
-      it('корневой комментарий создаётся без родителя', async () => {
-        await service.create('u1', { bookVersionId: 'v1', text: 't' } as CreateCommentDto);
-        expect(createdParentId()).toBeUndefined();
-        // Замок ветки — только у ответа: корневой отзыв чужих замков не ждёт.
-        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      describe('замки корневого комментария (LEGACY-434)', () => {
+        const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
+        const lockedSql = () => prisma.$queryRaw.mock.calls.map(sqlOf);
+
+        it('корневой комментарий создаётся без родителя: автор, потом цель', async () => {
+          await service.create('u1', { bookVersionId: 'v1', text: 't' } as CreateCommentDto);
+          expect(createdParentId()).toBeUndefined();
+          expect(lockedSql()).toEqual([
+            'SELECT id FROM "User" WHERE id = ? FOR KEY SHARE',
+            'SELECT id FROM "BookVersion" WHERE id = ? FOR KEY SHARE',
+          ]);
+          expect(prisma.$queryRaw.mock.calls.map((call: unknown[]) => call[1])).toEqual([
+            'u1',
+            'v1',
+          ]);
+        });
+
+        it.each([
+          ['Chapter', { chapterId: 'ch1' }, 'ch1'],
+          ['AudioChapter', { audioChapterId: 'a1' }, 'a1'],
+        ])('цель %s запирается своей таблицей', async (table, target, id) => {
+          prisma.chapter.findUnique.mockResolvedValue({ id: 'ch1' });
+          prisma.audioChapter.findUnique.mockResolvedValue({ id: 'a1' });
+          await service.create('u1', { ...target, text: 't' } as CreateCommentDto);
+          expect(lockedSql()).toEqual([
+            'SELECT id FROM "User" WHERE id = ? FOR KEY SHARE',
+            `SELECT id FROM "${table}" WHERE id = ? FOR KEY SHARE`,
+          ]);
+          expect(prisma.$queryRaw.mock.calls[1][1]).toBe(id);
+        });
+
+        it.each([
+          ['BookVersion', { bookVersionId: 'v1' }],
+          ['Chapter', { chapterId: 'ch1' }],
+          ['AudioChapter', { audioChapterId: 'a1' }],
+        ])('цель %s удалена между проверкой и записью — 404, а не 500', async (table, target) => {
+          prisma.chapter.findUnique.mockResolvedValue({ id: 'ch1' });
+          prisma.audioChapter.findUnique.mockResolvedValue({ id: 'a1' });
+          prisma.$queryRaw.mockResolvedValueOnce([{ id: 'u1' }]).mockResolvedValueOnce([]);
+          await expect(
+            service.create('u1', { ...target, text: 't' } as CreateCommentDto),
+          ).rejects.toThrow(`${table} not found`);
+          expect(prisma.comment.create).not.toHaveBeenCalled();
+        });
+
+        it('автор удалён, пока ждал замок, — 404, а не 500 на внешнем ключе', async () => {
+          prisma.$queryRaw.mockResolvedValueOnce([]);
+          await expect(
+            service.create('u1', { bookVersionId: 'v1', text: 't' } as CreateCommentDto),
+          ).rejects.toThrow('User not found');
+          expect(prisma.comment.create).not.toHaveBeenCalled();
+        });
+
+        it('отзыв с оценкой запирает книгу раньше версии — порядок BookService.remove', async () => {
+          // Стаб оценки только здесь: остальные тесты блока идут без `rating`.
+          Object.assign(prisma, {
+            bookRating: { upsert: jest.fn().mockResolvedValue({ id: 'r1', score: 5 }) },
+          });
+          await service.create('u1', {
+            bookVersionId: 'v1',
+            text: 't',
+            rating: 5,
+          } as CreateCommentDto);
+          expect(lockedSql()).toEqual([
+            'SELECT id FROM "User" WHERE id = ? FOR KEY SHARE',
+            'SELECT id FROM "Book" WHERE id = ? FOR KEY SHARE',
+            'SELECT id FROM "BookVersion" WHERE id = ? FOR KEY SHARE',
+          ]);
+          expect(prisma.$queryRaw.mock.calls[1][1]).toBe('b1');
+        });
+
+        it('книга отзыва с оценкой удалена — 404, оценка не пишется', async () => {
+          prisma.$queryRaw.mockResolvedValueOnce([{ id: 'u1' }]).mockResolvedValueOnce([]);
+          await expect(
+            service.create('u1', {
+              bookVersionId: 'v1',
+              text: 't',
+              rating: 5,
+            } as CreateCommentDto),
+          ).rejects.toThrow('Book not found');
+          expect(prisma.comment.create).not.toHaveBeenCalled();
+        });
       });
     });
   });
@@ -833,6 +917,7 @@ describe('CommentsService', () => {
 
       // Mock tx functions
       const txMock = {
+        $queryRaw: jest.fn().mockResolvedValue([{ id: 'v1' }]),
         bookRating: {
           upsert: jest.fn().mockResolvedValueOnce(ratingMock),
         },

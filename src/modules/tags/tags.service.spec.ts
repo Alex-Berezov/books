@@ -612,6 +612,23 @@ describe('TagsService', () => {
     expect(indexability.recomputeForTerms).toHaveBeenCalledWith([], ['t1']);
   });
 
+  it('attach reads sibling versions in ascending id order, the order BookService.remove locks them (LEGACY-433)', async () => {
+    prisma.bookVersion.findUnique = jest.fn().mockResolvedValue({ id: 'v1', bookId: 'b1' });
+    prisma.bookVersion.findMany = jest.fn().mockResolvedValue([{ id: 'v1' }]);
+    prisma.tag.findUnique.mockResolvedValue({ id: 't1' });
+    prisma.bookTag.findFirst.mockResolvedValue(null);
+
+    await service.attach('v1', 't1');
+
+    // Чтение сестёр одно: второе, без `orderBy`, вернуло бы произвольный порядок (L-005).
+
+    expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+
+    expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookId: 'b1' }, orderBy: { id: 'asc' } }),
+    );
+  });
+
   it('creates a translation that is not indexable until it earns it', async () => {
     prisma.tag.findUnique.mockResolvedValue({ id: 't1' });
     prisma.tagTranslation.create = jest.fn().mockResolvedValue({ id: 'tr1' });
