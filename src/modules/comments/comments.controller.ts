@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiExtraModels,
   ApiOkResponse,
@@ -100,6 +101,9 @@ export class CommentsController {
   // действительно отдаёт. До 09.09.2026 здесь стоял `@ApiOkResponse`, и ответа 201 в схеме
   // не было описано вовсе ни под каким кодом.
   @ApiCreatedResponse({ type: CommentDetailDto })
+  @ApiConflictResponse({
+    description: 'Book rating is already attached to a comment; change it via POST /books/:id/rate',
+  })
   create(@Req() req: { user: RequestUser }, @Body() dto: CreateCommentDto) {
     return this.service.create(req.user.userId, dto);
   }

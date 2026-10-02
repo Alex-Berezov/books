@@ -35694,6 +35694,9 @@
             },
             "description": ""
           },
+          "409": {
+            "description": "Book rating is already attached to a comment; change it via POST /books/:id/rate"
+          },
           "429": {
             "description": "Rate limit exceeded"
           }

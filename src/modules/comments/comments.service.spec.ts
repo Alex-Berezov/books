@@ -1,4 +1,9 @@
-import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
@@ -922,6 +927,7 @@ describe('CommentsService', () => {
           upsert: jest.fn().mockResolvedValueOnce(ratingMock),
         },
         comment: {
+          findUnique: jest.fn().mockResolvedValueOnce(null),
           create: jest.fn().mockResolvedValueOnce(commentMock),
         },
       };
@@ -943,6 +949,48 @@ describe('CommentsService', () => {
         update: { score: 5 },
       });
       expect(res.ratingScore).toBe(5);
+      expect(txMock.comment.findUnique).toHaveBeenCalledTimes(1);
+      expect(txMock.comment.findUnique).toHaveBeenCalledWith({
+        where: { ratingId: 'r1' },
+        select: { id: true },
+      });
+    });
+
+    // `LEGACY-435`: второй отзыв с оценкой на ту же книгу падал `P2002` и 500.
+    it('оценка уже привязана к отзыву — 409, отзыв не создаётся', async () => {
+      prisma.bookVersion.findUnique.mockResolvedValueOnce({ id: 'v1', bookId: 'b1' });
+      const txMock = {
+        $queryRaw: jest.fn().mockResolvedValue([{ id: 'v1' }]),
+        bookRating: { upsert: jest.fn().mockResolvedValueOnce({ id: 'r1', score: 2 }) },
+        comment: {
+          findUnique: jest.fn().mockResolvedValueOnce({ id: 'first' }),
+          create: jest.fn(),
+        },
+      };
+      prisma.$transaction.mockImplementationOnce((arg) => {
+        const runInTransaction = arg as (tx: PrismaStub) => Promise<unknown>;
+        return runInTransaction(txMock as unknown as PrismaStub);
+      });
+
+      await expect(
+        service.create('u1', {
+          bookVersionId: 'v1',
+          text: 'second',
+          rating: 2,
+        } as CreateCommentDto),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(txMock.comment.create).not.toHaveBeenCalled();
+      // Владелец ищется по связи с оценкой, а не по цели отзыва.
+      expect(txMock.comment.findUnique).toHaveBeenCalledTimes(1);
+      expect(txMock.comment.findUnique).toHaveBeenCalledWith({
+        where: { ratingId: 'r1' },
+        select: { id: true },
+      });
+      // Проверка после `upsert`: до него двойную отправку ничто не строит в очередь.
+      expect(txMock.bookRating.upsert).toHaveBeenCalledTimes(1);
+      expect(txMock.bookRating.upsert.mock.invocationCallOrder[0]).toBeLessThan(
+        txMock.comment.findUnique.mock.invocationCallOrder[0],
+      );
     });
 
     it('throws BadRequestException if rating is provided without bookVersionId', async () => {

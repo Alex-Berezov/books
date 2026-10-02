@@ -18402,6 +18402,13 @@ export interface operations {
           'application/json': components['schemas']['CommentDetailDto'];
         };
       };
+      /** @description Book rating is already attached to a comment; change it via POST /books/:id/rate */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Rate limit exceeded */
       429: {
         headers: {

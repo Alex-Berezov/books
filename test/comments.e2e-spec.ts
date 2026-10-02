@@ -358,4 +358,101 @@ describe('Comments e2e', () => {
       }
     });
   });
+
+  // `LEGACY-435`: оценка одна на пару «автор — книга», `Comment.ratingId` уникален —
+  // второй отзыв с оценкой падал `P2002` и 500. Решение арбитра 02.10.2026: 409,
+  // прежняя оценка и её отзыв не меняются; менять оценку — `POST /books/:id/rate`.
+  describe('второй отзыв с оценкой (LEGACY-435)', () => {
+    const post = (body: Record<string, unknown>) =>
+      request(http()).post('/comments').set('Authorization', `Bearer ${userToken}`).send(body);
+
+    // Своя книга на кейс: оценка пары «автор — книга» не должна тянуться между тестами.
+    let seq = 0;
+    const freshVersion = async () => {
+      seq += 1;
+      const book = await createBookFixture(prisma, `book-435-${Date.now()}-${seq}`);
+      const version = await prisma.bookVersion.create({
+        data: {
+          bookId: book.id,
+          language: 'en',
+          title: 't',
+          author: 'a',
+          description: 'd',
+          coverImageUrl: 'https://example.com/c.jpg',
+          type: 'text',
+          isFree: true,
+        },
+      });
+      return { bookId: book.id, versionId: version.id };
+    };
+
+    it('второй корневой отзыв с оценкой — 409, первая оценка и её отзыв на месте', async () => {
+      const { bookId, versionId: v } = await freshVersion();
+      const first = await post({ bookVersionId: v, text: 'First', rating: 5 }).expect(201);
+      await post({ bookVersionId: v, text: 'Second', rating: 2 })
+        .expect(409)
+        .expect(({ body }) =>
+          expect(body.message).toBe('Book rating is already attached to a comment'),
+        );
+
+      const ratings = await prisma.bookRating.findMany({ where: { bookId } });
+      expect(ratings.map((r) => r.score)).toEqual([5]);
+      const again = await request(http())
+        .get(`/comments/${first.body.id as string}`)
+        .expect(200);
+      expect(again.body.ratingScore).toBe(5);
+      expect(await prisma.comment.count({ where: { bookVersionId: v } })).toBe(1);
+    });
+
+    it('отзыв без оценки после отзыва с оценкой — 201', async () => {
+      const { versionId: v } = await freshVersion();
+      await post({ bookVersionId: v, text: 'Rated', rating: 4 }).expect(201);
+      await post({ bookVersionId: v, text: 'Plain' }).expect(201);
+    });
+
+    it('оценка через /rate без отзыва, затем отзыв с оценкой — 201, оценка обновлена', async () => {
+      const { bookId, versionId: v } = await freshVersion();
+      await request(http())
+        .post(`/books/${bookId}/rate`)
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ score: 4 })
+        .expect(200);
+      const review = await post({ bookVersionId: v, text: 'Rated later', rating: 2 }).expect(201);
+      expect(review.body.ratingScore).toBe(2);
+      const ratings = await prisma.bookRating.findMany({ where: { bookId } });
+      expect(ratings.map((r) => r.score)).toEqual([2]);
+    });
+
+    it('оценку держит ответ, записанный до T79 (LEGACY-428), — тоже 409', async () => {
+      const { bookId, versionId: v } = await freshVersion();
+      const root = await post({ bookVersionId: v, text: 'Root' }).expect(201);
+      const rating = await prisma.bookRating.create({
+        data: { userId: root.body.userId as string, bookId, score: 3 },
+      });
+      await prisma.comment.create({
+        data: {
+          userId: root.body.userId as string,
+          bookVersionId: v,
+          parentId: root.body.id as string,
+          text: 'Old reply',
+          ratingId: rating.id,
+        },
+      });
+      await post({ bookVersionId: v, text: 'Rated root', rating: 1 }).expect(409);
+      const kept = await prisma.bookRating.findUniqueOrThrow({ where: { id: rating.id } });
+      expect(kept.score).toBe(3);
+    });
+
+    it('двойная отправка отзыва с оценкой — один 201 и один 409, без 500', async () => {
+      const { bookId, versionId: v } = await freshVersion();
+      const results = await Promise.all([
+        post({ bookVersionId: v, text: 'A', rating: 5 }),
+        post({ bookVersionId: v, text: 'B', rating: 1 }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+      const winner = results.find((r) => r.status === 201);
+      const ratings = await prisma.bookRating.findMany({ where: { bookId } });
+      expect(ratings.map((r) => r.score)).toEqual([winner?.body.ratingScore]);
+    });
+  });
 });

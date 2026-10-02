@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -172,6 +173,13 @@ export class CommentsService {
           },
         });
         ratingId = rating.id;
+        // Оценка одна на пару «автор — книга», а `Comment.ratingId` уникален: второй
+        // отзыв с оценкой падал `P2002` и 500 (`LEGACY-435`, решение арбитра 02.10.2026).
+        // Проверка после `upsert`, а не до: замки выше разделяемые, двойную отправку
+        // строит в очередь только замок строки оценки. Прежний `score` вернёт откат.
+        // Менять оценку — `POST /books/:id/rate`.
+        const holder = await tx.comment.findUnique({ where: { ratingId }, select: { id: true } });
+        if (holder) throw new ConflictException('Book rating is already attached to a comment');
       }
 
       return tx.comment.create({
