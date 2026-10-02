@@ -14,6 +14,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import { BookType } from '@prisma/client';
 import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class CreateBookFromClearanceVersionDto {
@@ -57,12 +58,13 @@ export class CreateBookFromClearanceVersionDto {
    * (`CreateBookVersionDto`): форма шлёт незаполненное поле именно так, и канал клиренса
    * не должен отвечать на то же тело четырёхсоткой, когда канал версий отвечает 201.
    * Ложное условие снимает **все** валидаторы поля, поэтому пропускаются ровно отсутствие поля
-   * и пустая строка — `null`, число или объект обязаны дойти до `@IsString()` и `@IsUrl()`.
+   * и пустая строка — `null`, число или объект обязаны дойти до `@IsString()`
+   * и `@IsAbsoluteHttpUrl()`.
    */
   @ApiPropertyOptional({ description: 'Cover image URL' })
   @ValidateIf((_o, value) => value !== undefined && value !== '')
   @IsString()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   coverImageUrl?: string | null;
 
   @ApiProperty({ enum: BookType, description: 'Type of the book' })
@@ -75,7 +77,7 @@ export class CreateBookFromClearanceVersionDto {
 
   @ApiPropertyOptional({ description: 'Referral URL (for referral type)' })
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   referralUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Primary category ID' })

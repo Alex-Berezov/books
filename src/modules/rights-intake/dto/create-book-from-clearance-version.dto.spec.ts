@@ -6,7 +6,7 @@ import { versionPayload } from '../../book-version/dto/version-content-fields.fi
  * Канал создания книги из клиренса принимает те же тела, что и обычное создание версии: разная
  * валидация одного поля означала бы 201 в одной форме и 400 в другой на одинаковом вводе.
  */
-describe('CreateBookFromClearanceVersionDto: описание и обложка', () => {
+describe('CreateBookFromClearanceVersionDto: описание, обложка и реферальный адрес', () => {
   it('принимает пустые описание и обложку', () => {
     expect(
       dtoFieldErrors(
@@ -38,5 +38,17 @@ describe('CreateBookFromClearanceVersionDto: описание и обложка'
         versionPayload({ coverImageUrl: 'not-a-url' }),
       ),
     ).toContain('coverImageUrl');
+  });
+
+  // Форма адреса обоих полей — общая таблица `src/common/testing/seo-url-fields.spec.ts`.
+  // Та же пара, что у `referralUrl` канала версий (`@IsOptional()`): `null` — отсутствие поля,
+  // пустая строка — не адрес.
+  it('пропускает `null` и отбивает пустую строку в `referralUrl`', () => {
+    expect(
+      dtoFieldErrors(CreateBookFromClearanceVersionDto, versionPayload({ referralUrl: null })),
+    ).toEqual([]);
+    expect(
+      dtoFieldErrors(CreateBookFromClearanceVersionDto, versionPayload({ referralUrl: '' })),
+    ).toContain('referralUrl');
   });
 });

@@ -12,6 +12,7 @@ import { UpdatePageDto } from '../../modules/pages/dto/update-page.dto';
 import { CreateBookVersionDto } from '../../modules/book-version/dto/create-book-version.dto';
 import { UpdateBookVersionDto } from '../../modules/book-version/dto/update-book-version.dto';
 import { AuthorTranslationDto } from '../../modules/author/dto/author-translation.dto';
+import { CreateBookFromClearanceVersionDto } from '../../modules/rights-intake/dto/create-book-from-clearance-version.dto';
 
 type Path = [string, new () => object, Record<string, unknown>, string];
 
@@ -61,6 +62,9 @@ const paths: Path[] = [
   ['создание версии', CreateBookVersionDto, versionBase, 'referralUrl'],
   ['PATCH версии', UpdateBookVersionDto, {}, 'coverImageUrl'],
   ['PATCH версии', UpdateBookVersionDto, {}, 'referralUrl'],
+  // `T88`: канал клиренса пишет те же колонки версии.
+  ['создание книги из клиренса', CreateBookFromClearanceVersionDto, versionBase, 'coverImageUrl'],
+  ['создание книги из клиренса', CreateBookFromClearanceVersionDto, versionBase, 'referralUrl'],
 ];
 
 // Вложенный `seo` (`SeoInputDto`, `UpdateSeoDto`) пишет те же колонки таблицы `Seo`.
