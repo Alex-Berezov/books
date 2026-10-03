@@ -6515,7 +6515,7 @@ export interface components {
       author: string;
       /** @description Author ID */
       authorId?: Record<string, never>;
-      /** @description Author page URL */
+      /** @description Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `null` — «не задано» */
       authorPageUrl?: Record<string, never>;
       /** @description Copyright status */
       copyrightStatus?: Record<string, never>;
@@ -6606,7 +6606,7 @@ export interface components {
        */
       authorId?: Record<string, never>;
       /**
-       * @description Ссылка на страницу автора
+       * @description Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `''` и `null` — «не задано»
        * @example https://example.com/author/oscar-wilde
        */
       authorPageUrl?: Record<string, never>;
@@ -11761,7 +11761,7 @@ export interface components {
        */
       authorId?: Record<string, never> | null;
       /**
-       * @description Ссылка на страницу автора
+       * @description Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `''` и `null` — «не задано»
        * @example https://example.com/author/oscar-wilde
        */
       authorPageUrl?: Record<string, never> | null;

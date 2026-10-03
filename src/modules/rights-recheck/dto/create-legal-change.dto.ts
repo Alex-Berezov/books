@@ -6,11 +6,11 @@ import {
   IsISO8601,
   IsOptional,
   IsString,
-  IsUrl,
   Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { RightsLegalChangeType, RightsRecheckSeverity } from '../rights-recheck-interface';
 
 export class CreateLegalChangeDto {
@@ -53,7 +53,7 @@ export class CreateLegalChangeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   @MaxLength(2000)
   sourceUrl?: string;
 

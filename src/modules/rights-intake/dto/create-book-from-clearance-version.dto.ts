@@ -2,7 +2,6 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
-  IsUrl,
   IsBoolean,
   IsEnum,
   IsInt,
@@ -14,7 +13,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import { BookType } from '@prisma/client';
 import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
-import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
+import {
+  IsAbsoluteHttpUrl,
+  IsAbsoluteHttpUrlOrRootPath,
+} from '../../../shared/validators/absolute-http-url.decorator';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class CreateBookFromClearanceVersionDto {
@@ -110,9 +112,14 @@ export class CreateBookFromClearanceVersionDto {
   @IsString()
   copyrightStatus?: string | null;
 
-  @ApiPropertyOptional({ description: 'Author page URL' })
+  @ApiPropertyOptional({
+    description:
+      'Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `null` — «не задано»',
+  })
+  // Канал клиренса и до `T94` отбивал `''` (голый `@IsUrl()`), поэтому «не задано» здесь —
+  // только `null` и отсутствие поля; `''` у каналов версии — наследие их прежнего `@IsString()`.
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrlOrRootPath()
   authorPageUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Author ID' })

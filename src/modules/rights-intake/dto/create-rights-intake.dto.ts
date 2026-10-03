@@ -5,7 +5,6 @@ import {
   IsArray,
   IsEnum,
   IsInt,
-  IsUrl,
   Min,
   Max,
   MinLength,
@@ -14,6 +13,7 @@ import {
   ArrayMinSize,
   Validate,
 } from 'class-validator';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 import { RightsSourceProvider, RightsSourceTextType } from '@prisma/client';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -103,7 +103,7 @@ export class CreateRightsIntakeDto {
 
   @ApiPropertyOptional({ description: 'Source URL' })
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   sourceUrl?: string | null;
 
   @ApiPropertyOptional({ description: 'Source title', maxLength: 500 })

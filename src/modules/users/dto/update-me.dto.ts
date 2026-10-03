@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Language as PrismaLanguage } from '@prisma/client';
-import { IsIn, IsOptional, IsString, IsUrl, Matches, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 /**
  * Тело `PATCH /users/me`. Вынесено из `users.controller.ts` 05.09.2026
@@ -29,7 +30,7 @@ export class UpdateMeDto {
 
   @ApiPropertyOptional({ format: 'uri' })
   @IsOptional()
-  @IsUrl()
+  @IsAbsoluteHttpUrl()
   avatarUrl?: string;
 
   @ApiPropertyOptional({ enum: PrismaLanguage })

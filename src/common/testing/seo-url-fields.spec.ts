@@ -13,6 +13,11 @@ import { CreateBookVersionDto } from '../../modules/book-version/dto/create-book
 import { UpdateBookVersionDto } from '../../modules/book-version/dto/update-book-version.dto';
 import { AuthorTranslationDto } from '../../modules/author/dto/author-translation.dto';
 import { CreateBookFromClearanceVersionDto } from '../../modules/rights-intake/dto/create-book-from-clearance-version.dto';
+import { CreateRightsIntakeDto } from '../../modules/rights-intake/dto/create-rights-intake.dto';
+import { CreateLegalChangeDto } from '../../modules/rights-recheck/dto/create-legal-change.dto';
+import { UpdateLegalChangeDto } from '../../modules/rights-recheck/dto/update-legal-change.dto';
+import { UpdateRightsIntakeDto } from '../../modules/rights-intake/dto/update-rights-intake.dto';
+import { UpdateMeDto } from '../../modules/users/dto/update-me.dto';
 
 type Path = [string, new () => object, Record<string, unknown>, string];
 
@@ -170,5 +175,138 @@ describe('IsAbsoluteHttpUrl во вложенном seo (LEGACY-401, T62)', () =
 
   it.each(nestedPaths)('%s: seo.%s допускает null', (_name, dto, base, field) => {
     expect(dtoFieldErrors(dto, { ...base, seo: { [field]: null } })).toEqual([]);
+  });
+});
+
+// `T94`: адреса вне SEO — автор версии, источник приёма, источник правового изменения, аватар.
+// Базу не собираем целиком: проверяется только то, попало ли само поле в список ошибок.
+describe('Форма URL на остальных путях записи (LEGACY-401, T94)', () => {
+  const absolute: Array<[string, new () => object, string]> = [
+    ['создание приёма', CreateRightsIntakeDto, 'sourceUrl'],
+    // `PATCH` приёма и правового изменения — `PartialType` от DTO создания.
+    ['PATCH приёма', UpdateRightsIntakeDto, 'sourceUrl'],
+    ['PATCH правового изменения', UpdateLegalChangeDto, 'sourceUrl'],
+    ['создание правового изменения', CreateLegalChangeDto, 'sourceUrl'],
+    ['PATCH /users/me', UpdateMeDto, 'avatarUrl'],
+  ];
+  const authorPage: Array<[string, new () => object]> = [
+    ['создание версии', CreateBookVersionDto],
+    ['PATCH версии', UpdateBookVersionDto],
+    ['создание книги из клиренса', CreateBookFromClearanceVersionDto],
+  ];
+  // Предел длины — `max_allowed_length` у `isURL` (2084), один на обе ветки поля;
+  // у `sourceUrl` правового изменения свой `@MaxLength(2000)`.
+  const longUrl = (length: number): string => `https://x.test/${'a'.repeat(length - 15)}`;
+  const longPath = (length: number): string => `/${'a'.repeat(length - 1)}`;
+
+  const absoluteGood = absolute.flatMap(([name, dto, field]) =>
+    ['https://example.com/x', 'http://localhost:5000/x', longUrl(2000)].map(
+      (value): [string, new () => object, string, string] => [name, dto, field, value],
+    ),
+  );
+  const absoluteBad = absolute.flatMap(([name, dto, field]) =>
+    [...BAD_URLS, longUrl(2085)].map((value): [string, new () => object, string, string] => [
+      name,
+      dto,
+      field,
+      value,
+    ]),
+  );
+
+  it.each(absoluteGood)('%s: %p.%s принимает значение #%#', (_name, dto, field, value) => {
+    expect(dtoFieldErrors(dto, { [field]: value })).not.toContain(field);
+  });
+
+  it.each(absoluteBad)('%s: %p.%s отбивает значение #%#', (_name, dto, field, value) => {
+    expect(dtoFieldErrors(dto, { [field]: value })).toContain(field);
+  });
+
+  it.each(absolute)('%s: %p.%s допускает null и отсутствие поля', (_name, dto, field) => {
+    expect(dtoFieldErrors(dto, { [field]: null })).not.toContain(field);
+    expect(dtoFieldErrors(dto, {})).not.toContain(field);
+  });
+
+  // `@IsOptional()` пропускает только `null`/`undefined`: пустая строка — не адрес.
+  it.each(absolute)('%s: %p.%s отбивает пустую строку', (_name, dto, field) => {
+    expect(dtoFieldErrors(dto, { [field]: '' })).toContain(field);
+  });
+
+  const authorPageGood = authorPage.flatMap(([name, dto]) =>
+    [
+      'https://example.com/author/wilde',
+      'http://localhost:5000/a',
+      '/ru/author/oscar-wilde',
+      '/ru/author/x?a=1#b',
+      '/ru/author/оскар',
+      '/',
+      longPath(2084),
+      longUrl(2084),
+      null,
+    ].map((value): [string, new () => object, string | null] => [name, dto, value]),
+  );
+  const authorPageBad = authorPage.flatMap(([name, dto]) =>
+    [
+      'javascript:alert(1)',
+      'data:text/html,x',
+      '//evil.example/x',
+      'ftp://example.com/x',
+      'example.com',
+      'ru/author/x',
+      '/ru/author/<x>',
+      '/ru/author/x>',
+      '/ru/author/a b',
+      '/ru\\evil',
+      '/ru/\u0000x',
+      '/ru/\u007fx',
+      '/ru/\nx',
+      longPath(2085),
+      longUrl(2085),
+    ].map((value): [string, new () => object, string] => [name, dto, value]),
+  );
+
+  it.each(authorPageGood)('%s: authorPageUrl принимает значение #%#', (_name, dto, value) => {
+    expect(dtoFieldErrors(dto, { authorPageUrl: value })).not.toContain('authorPageUrl');
+  });
+
+  it.each(authorPageBad)('%s: authorPageUrl отбивает значение #%#', (_name, dto, value) => {
+    expect(dtoFieldErrors(dto, { authorPageUrl: value })).toContain('authorPageUrl');
+  });
+
+  it.each(authorPage)('%s: authorPageUrl допускает отсутствие поля', (_name, dto) => {
+    expect(dtoFieldErrors(dto, {})).not.toContain('authorPageUrl');
+  });
+
+  // `''` — «не задано» в каналах версии, как при прежнем `@IsString()` (решение арбитра
+  // 03.10.2026); канал клиренса и раньше отбивал её голым `@IsUrl()` — поведение сохранено.
+  it.each([
+    ['создание версии', CreateBookVersionDto],
+    ['PATCH версии', UpdateBookVersionDto],
+  ] as Array<[string, new () => object]>)(
+    '%s: authorPageUrl допускает пустую строку',
+    (_name, dto) => {
+      expect(dtoFieldErrors(dto, { authorPageUrl: '' })).not.toContain('authorPageUrl');
+    },
+  );
+
+  it('создание книги из клиренса: authorPageUrl отбивает пустую строку', () => {
+    expect(dtoFieldErrors(CreateBookFromClearanceVersionDto, { authorPageUrl: '' })).toContain(
+      'authorPageUrl',
+    );
+  });
+
+  // У `sourceUrl` правового изменения свой предел `@MaxLength(2000)` поверх 2084 у `isURL`.
+  it('создание правового изменения: sourceUrl длиннее 2000 отбивается', () => {
+    expect(dtoFieldErrors(CreateLegalChangeDto, { sourceUrl: longUrl(2000) })).not.toContain(
+      'sourceUrl',
+    );
+    expect(dtoFieldErrors(CreateLegalChangeDto, { sourceUrl: longUrl(2001) })).toContain(
+      'sourceUrl',
+    );
+  });
+
+  it.each(authorPage)('%s: authorPageUrl отбивает не строку', (_name, dto) => {
+    for (const value of [123, {}, ['/ru/author/x']]) {
+      expect(dtoFieldErrors(dto, { authorPageUrl: value })).toContain('authorPageUrl');
+    }
   });
 });

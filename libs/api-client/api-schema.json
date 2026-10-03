@@ -6708,7 +6708,7 @@
             "type": "object"
           },
           "authorPageUrl": {
-            "description": "Author page URL",
+            "description": "Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `null` — «не задано»",
             "type": "object"
           },
           "copyrightStatus": {
@@ -6881,7 +6881,7 @@
             "type": "object"
           },
           "authorPageUrl": {
-            "description": "Ссылка на страницу автора",
+            "description": "Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `''` и `null` — «не задано»",
             "example": "https://example.com/author/oscar-wilde",
             "type": "object"
           },
@@ -22126,7 +22126,7 @@
             "type": "object"
           },
           "authorPageUrl": {
-            "description": "Ссылка на страницу автора",
+            "description": "Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `''` и `null` — «не задано»",
             "example": "https://example.com/author/oscar-wilde",
             "nullable": true,
             "type": "object"

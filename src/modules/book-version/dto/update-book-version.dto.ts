@@ -16,7 +16,10 @@ import {
   IsArray,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
+import {
+  IsAbsoluteHttpUrl,
+  IsAbsoluteHttpUrlOrRootPath,
+} from '../../../shared/validators/absolute-http-url.decorator';
 import { Language as PrismaLanguage, BookType as PrismaBookType } from '@prisma/client';
 import {
   BookVersionCharacterDto,
@@ -214,12 +217,14 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   coverAlt?: string | null;
 
   @ApiPropertyOptional({
-    description: 'Ссылка на страницу автора',
+    description:
+      "Ссылка на страницу автора: абсолютный http(s) или путь от корня (`/ru/author/oscar-wilde`); `''` и `null` — «не задано»",
     example: 'https://example.com/author/oscar-wilde',
     nullable: true,
   })
-  @IsOptional()
-  @IsString()
+  // `''` и `null` — «не задано», как было при `@IsString()` (решение арбитра 03.10.2026, `T94`).
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsAbsoluteHttpUrlOrRootPath()
   authorPageUrl?: string | null;
 
   @ApiPropertyOptional({
