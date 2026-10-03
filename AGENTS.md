@@ -24,7 +24,7 @@
 **What you CAN do:**
 
 - Read and modify schema, DTOs, services, controllers
-- Write migration SQL files in `prisma/migrations/` — the **user** applies them on the VPS
+- Write migration SQL files in `prisma/migrations/` (how they are applied and reach production: `books/CLAUDE.md` §«Жёсткие запреты» п.2)
 - Run `yarn prisma:generate` after changing `schema.prisma`. Это **кодогенерация типов из файла схемы**, к базе она не обращается вовсе — в отличие от `migrate`/`seed`/`studio`, вместе с которыми запрет стоял до 08.08.2026. Без неё после правки схемы падают typecheck и lint (`prisma.<новаяМодель>` — «error typed value»), и работа встаёт на ровном месте
 - Run e2e against the local test DB: `yarn test:e2e` (see below)
 - Start/stop the local test services: `docker compose up -d postgres redis`, `docker compose ps`, `docker compose stop postgres redis`
@@ -40,7 +40,7 @@ it here: the copy that used to stand in this spot is how the two files drifted a
 
 ```bash
 cd D:/newDev/books                     # every command in this block is relative to the repo root
-docker compose up -d postgres redis   # once per session; user starts it if not running
+docker compose up -d postgres redis   # once per session, if not already running
 # Требует REDIS_PASSWORD в `.env` — без переменной redis не поднимется (LEGACY-071)
 yarn test:e2e                          # all test/**/*.e2e-spec.ts (sentry self-skips); count via `find test -name "*.e2e-spec.ts" | wc -l`
 # Duration scales with that count and is not quoted here: measure it on your own machine once.
