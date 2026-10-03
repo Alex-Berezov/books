@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { ContributorRole, RightsConfidence } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
@@ -12,6 +13,7 @@ import {
   parseBooleanFlag,
   parseRiskLevel,
   type RiskAssessmentInput,
+  toRiskFactorDtos,
 } from '../rights-lawyer/rights-risk.util';
 import { mapRightsAction } from './rights-action.mapper';
 import { TerritoryRegionAggregationService } from './territory-region-aggregation.service';
@@ -401,7 +403,7 @@ export class RightsProfileService {
       // карточка показывала CRITICAL и «нужен юрист» там, где гейт ту же книгу пропускал.
       // В базу не пишем: это GET (решение арбитра 18.09.2026, decisions-log.md).
       riskLevel: riskAssessment.riskLevel,
-      riskFactors: riskAssessment.factors as unknown as Record<string, unknown>[],
+      riskFactors: toRiskFactorDtos(riskAssessment),
       riskAssessedAt: riskAssessedAt.toISOString(),
       lawyerReviewRequired,
       lawyerReviewBlocking: (profile['lawyerReviewBlocking'] as boolean) ?? undefined,
@@ -657,7 +659,7 @@ export class RightsProfileService {
       rightsProfileId: record['rightsProfileId'] as string,
       rightsComponentId: (record['rightsComponentId'] as string) ?? null,
       personId: (record['personId'] as string) ?? null,
-      role: record['role'] as string,
+      role: record['role'] as ContributorRole,
       roleOtherRu: (record['roleOtherRu'] as string) ?? null,
       displayName: record['displayName'] as string,
       canonicalName: (record['canonicalName'] as string) ?? null,
@@ -674,7 +676,7 @@ export class RightsProfileService {
         ? (record['sourceEvidenceIds'] as string[])
         : null,
       publicDomainFromYear: (record['publicDomainFromYear'] as number) ?? null,
-      confidence: (record['confidence'] as string) ?? null,
+      confidence: (record['confidence'] as RightsConfidence | null) ?? null,
       notesRu: (record['notesRu'] as string) ?? null,
       person: personRaw
         ? {

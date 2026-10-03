@@ -1,3 +1,7 @@
+// Лист: файл импортирует только `@nestjs/swagger` и лист `../rights-lawyer-interface`. Его DTO
+// (`RiskFactorDto`) берёт `rights-intake` (`rights-profile-response.dto.ts`), а модуль юристов
+// сам импортирует `RightsIntakeModule`: значимый импорт сервиса или модуля юристов сюда замкнёт
+// цикл файлов (ADR-003). Новые импорты — только из листьев.
 import { ApiProperty } from '@nestjs/swagger';
 import {
   RightsLawyerConditionStatus,

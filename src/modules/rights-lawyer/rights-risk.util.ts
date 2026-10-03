@@ -118,6 +118,24 @@ const isPlannedButUnassessedMaterial = (component: {
   component.territoryAssessmentCount === 0 &&
   PLANNED_MATERIAL_REQUIRED_ACTIONS.includes(component.requiredAction);
 
+/**
+ * Фактор в форме ответа (`RiskFactorDto`): `details` всегда ключом, `null` у фактора без деталей.
+ * Живёт в листе, а не в сервисе оценки: его зовёт и `rights-intake` (`RightsProfileService`),
+ * которому модуль юристов доступен только через импорт-свободные листья (ADR-003). Тип выводится
+ * из `RiskFactor` этого листа, а не из DTO: DTO в лист не импортируется даже типом.
+ */
+export type RiskFactorResponse = Omit<RiskFactor, 'details'> & {
+  details: Record<string, unknown> | null;
+};
+
+export const toRiskFactorDtos = (result: RiskAssessmentResult): RiskFactorResponse[] =>
+  result.factors.map((factor) => ({
+    code: factor.code,
+    level: factor.level,
+    messageRu: factor.messageRu,
+    details: factor.details ?? null,
+  }));
+
 export const computeRiskAssessment = (input: RiskAssessmentInput): RiskAssessmentResult => {
   const factors: RiskFactor[] = [];
 

@@ -6,6 +6,7 @@ import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-
 import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
 import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { RightsRiskFactorCode } from '../rights-lawyer/rights-lawyer-interface';
 
 // Настоящий ConfigService читает process.env, и заданный снаружи RIGHTS_LAWYER_* переворачивал бы
 // ожидания про lawyerReviewRequired без единой правки кода. Подставной — как в соседних спеках.
@@ -709,6 +710,41 @@ describe('RightsProfileService', () => {
           expect.objectContaining({ code: 'CRITICAL_CLAIM_OPEN' }),
         ]);
         expect(result.lawyerReviewRequired).toBe(true);
+      });
+
+      // T95: элемент `riskFactors` — ровно форма `RiskFactorDto`, `details` всегда ключом (`null`, а не пропуск).
+      it('returns each risk factor in the RiskFactorDto shape, details as null when the factor has none', async () => {
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeProfile({ publicationGate: 'BLOCK' }),
+        );
+        mockEmptyRelations();
+        (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+        const result = await service.getById('profile-1');
+
+        const factor = (result.riskFactors ?? []).find(
+          (f) => f.code === RightsRiskFactorCode.PUBLICATION_GATE_BLOCK,
+        );
+        expect(factor).toBeTruthy();
+        expect(Object.keys(factor ?? {}).sort()).toEqual(['code', 'details', 'level', 'messageRu']);
+        expect(factor?.details).toBeNull();
+      });
+
+      it('passes a risk factor details through unchanged when the factor has them', async () => {
+        (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          staleCriticalProfile(),
+        );
+        mockEmptyRelations();
+        (prisma['rightsClaim'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+          { id: 'claim-1', status: 'OPEN', severity: 'CRITICAL', requiresLawyerReview: false },
+        ]);
+
+        const result = await service.getById('profile-1');
+
+        const factor = (result.riskFactors ?? []).find(
+          (f) => f.code === RightsRiskFactorCode.CRITICAL_CLAIM_OPEN,
+        );
+        expect(factor?.details).toEqual({ claimIds: ['claim-1'] });
       });
 
       it('reports the moment of this recomputation in riskAssessedAt, not the stored one', async () => {

@@ -10570,7 +10570,8 @@ export interface components {
     RightsProfileContributorDto: {
       birthYear: number | null;
       canonicalName: string | null;
-      confidence: string | null;
+      /** @enum {string|null} */
+      confidence: 'HIGH' | 'MEDIUM' | 'LOW' | null;
       createdAt: string;
       creditedLanguage: string | null;
       creditedName: string | null;
@@ -10586,7 +10587,21 @@ export interface components {
       publicDomainFromYear: number | null;
       rightsComponentId: string | null;
       rightsProfileId: string;
-      role: string;
+      /** @enum {string} */
+      role:
+        | 'AUTHOR'
+        | 'TRANSLATOR'
+        | 'EDITOR'
+        | 'ILLUSTRATOR'
+        | 'NARRATOR'
+        | 'ADAPTER'
+        | 'COMPILER'
+        | 'COMMENTATOR'
+        | 'INTRODUCTION_AUTHOR'
+        | 'AFTERWORD_AUTHOR'
+        | 'COVER_ARTIST'
+        | 'RIGHTS_HOLDER'
+        | 'OTHER';
       roleOtherRu: string | null;
       sourceEvidenceIds: string[] | null;
       updatedAt: string;
@@ -10605,7 +10620,7 @@ export interface components {
       rightsComponentId: string | null;
       rightsProfileContributorId: string;
       /** @enum {string|null} */
-      role?:
+      role:
         | 'AUTHOR'
         | 'TRANSLATOR'
         | 'EDITOR'
@@ -10672,8 +10687,9 @@ export interface components {
       revokedLicensesCount: number;
       rightsIntakeId: string;
       riskAssessedAt: string | null;
-      riskFactors?: Record<string, never>[];
-      riskLevel?: string;
+      riskFactors?: components['schemas']['RiskFactorDto'][];
+      /** @enum {string} */
+      riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
       sourceEdition: components['schemas']['SourceEditionDto'] | null;
       status: string;
       summaryRu: string;
@@ -10742,7 +10758,8 @@ export interface components {
     RightsReviewApprovalDto: {
       createdAt: string;
       decidedByUser: components['schemas']['DecidedByUserDto'] | null;
-      decision: string;
+      /** @enum {string} */
+      decision: 'APPROVED' | 'REJECTED';
       id: string;
       notesRu: string | null;
       rightsIntakeId: string;

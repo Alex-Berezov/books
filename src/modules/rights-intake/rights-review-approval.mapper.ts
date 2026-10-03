@@ -1,3 +1,4 @@
+import type { RightsApprovalDecision } from '@prisma/client';
 import type { DecidedByUserDto, RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
 
 /**
@@ -21,7 +22,7 @@ export const mapRightsReviewApproval = (
   rightsReviewId: record['rightsReviewId'] as string,
   rightsProfileId: record['rightsProfileId'] as string,
   rightsIntakeId: record['rightsIntakeId'] as string,
-  decision: record['decision'] as string,
+  decision: record['decision'] as RightsApprovalDecision,
   decidedByUser: mapDecidedByUser(record['decidedByUser'] as Record<string, unknown> | null),
   notesRu: (record['notesRu'] as string | null) ?? null,
   createdAt: new Date(record['createdAt'] as string).toISOString(),

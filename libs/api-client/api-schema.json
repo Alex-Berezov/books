@@ -18298,6 +18298,11 @@
             "type": "string"
           },
           "confidence": {
+            "enum": [
+              "HIGH",
+              "MEDIUM",
+              "LOW"
+            ],
             "nullable": true,
             "type": "string"
           },
@@ -18362,6 +18367,21 @@
             "type": "string"
           },
           "role": {
+            "enum": [
+              "AUTHOR",
+              "TRANSLATOR",
+              "EDITOR",
+              "ILLUSTRATOR",
+              "NARRATOR",
+              "ADAPTER",
+              "COMPILER",
+              "COMMENTATOR",
+              "INTRODUCTION_AUTHOR",
+              "AFTERWORD_AUTHOR",
+              "COVER_ARTIST",
+              "RIGHTS_HOLDER",
+              "OTHER"
+            ],
             "type": "string"
           },
           "roleOtherRu": {
@@ -18492,6 +18512,7 @@
           "rightsComponentId",
           "sourceEditionId",
           "personId",
+          "role",
           "displayName",
           "creditedName",
           "snapshot",
@@ -18699,11 +18720,17 @@
           },
           "riskFactors": {
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/RiskFactorDto"
             },
             "type": "array"
           },
           "riskLevel": {
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ],
             "type": "string"
           },
           "sourceEdition": {
@@ -19016,6 +19043,10 @@
             "nullable": true
           },
           "decision": {
+            "enum": [
+              "APPROVED",
+              "REJECTED"
+            ],
             "type": "string"
           },
           "id": {

@@ -1,11 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ContributorRole, RightsProfileContributorEventType } from '@prisma/client';
+import {
+  ContributorRole,
+  RightsConfidence,
+  RightsProfileContributorEventType,
+} from '@prisma/client';
 import {
   LicenseCoverageResultDto,
   RightsLicenseSummaryDto,
 } from '../../rights-licenses/dto/rights-license-response.dto';
 import { TerritoryRegionSummaryDto } from './territory-region-summary.dto';
 import { RightsReviewApprovalDto } from './rights-review-approval.dto';
+import { RiskFactorDto } from '../../rights-lawyer/dto/lawyer-review-response.dto';
+// Тот же источник, что у `RiskFactorDto.level`: у одного ответа одно перечисление уровня риска.
+import { RightsRiskLevel } from '../../rights-lawyer/rights-lawyer-interface';
 
 /** WP-7.1: права одной языковой версии издания. Одна запись на язык. */
 export class EditionRightsDto {
@@ -163,7 +170,7 @@ export class RightsProfileContributorDto {
   @ApiProperty() rightsProfileId!: string;
   @ApiProperty({ type: String, nullable: true }) rightsComponentId!: string | null;
   @ApiProperty({ type: String, nullable: true }) personId!: string | null;
-  @ApiProperty() role!: string;
+  @ApiProperty({ enum: ContributorRole }) role!: ContributorRole;
   @ApiProperty({ type: String, nullable: true }) roleOtherRu!: string | null;
   @ApiProperty() displayName!: string;
   @ApiProperty({ type: String, nullable: true }) canonicalName!: string | null;
@@ -178,7 +185,7 @@ export class RightsProfileContributorDto {
   @ApiProperty({ type: String, nullable: true }) creditedLanguage!: string | null;
   @ApiProperty({ type: [String], nullable: true }) sourceEvidenceIds!: string[] | null;
   @ApiProperty({ type: Number, nullable: true }) publicDomainFromYear!: number | null;
-  @ApiProperty({ type: String, nullable: true }) confidence!: string | null;
+  @ApiProperty({ enum: RightsConfidence, nullable: true }) confidence!: RightsConfidence | null;
   @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
   @ApiProperty({ type: PersonSummaryDto, nullable: true }) person!: PersonSummaryDto | null;
   @ApiProperty() createdAt!: string;
@@ -215,7 +222,7 @@ export class RightsProfileContributorEventDto {
   @ApiProperty({ type: String, nullable: true }) rightsComponentId!: string | null;
   @ApiProperty({ type: String, nullable: true }) sourceEditionId!: string | null;
   @ApiProperty({ type: String, nullable: true }) personId!: string | null;
-  @ApiPropertyOptional({ enum: ContributorRole, nullable: true })
+  @ApiProperty({ enum: ContributorRole, nullable: true })
   role!: ContributorRole | null;
   @ApiProperty({ type: String, nullable: true }) displayName!: string | null;
   @ApiProperty({ type: String, nullable: true }) creditedName!: string | null;
@@ -419,8 +426,8 @@ export class RightsProfileDetailDto {
   // смене статуса претензии его никто не обновляет. `riskAssessedAt` — момент этого пересчёта.
   // Маппинг делает ради них один запрос претензий; остальной вход у него уже загружен.
   // `lawyerReviewBlocking` и поля утверждения ниже остаются снимком: их ведёт `syncWorkflowStatuses`.
-  @ApiPropertyOptional() riskLevel?: string;
-  @ApiPropertyOptional({ type: [Object] }) riskFactors?: Record<string, unknown>[];
+  @ApiPropertyOptional({ enum: RightsRiskLevel }) riskLevel?: RightsRiskLevel;
+  @ApiPropertyOptional({ type: [RiskFactorDto] }) riskFactors?: RiskFactorDto[];
   @ApiProperty({ type: String, nullable: true }) riskAssessedAt!: string | null;
   @ApiPropertyOptional() lawyerReviewRequired?: boolean;
   @ApiPropertyOptional() lawyerReviewBlocking?: boolean;

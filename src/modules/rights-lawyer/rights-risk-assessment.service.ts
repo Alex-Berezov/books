@@ -20,8 +20,8 @@ import {
   parseRiskLevel,
   type RiskAssessmentInput,
   type RiskAssessmentResult,
+  toRiskFactorDtos,
 } from './rights-risk.util';
-import type { RiskFactorDto } from './dto/lawyer-review-response.dto';
 import type { RiskAssessmentSnapshotDto } from './dto/risk-assessment-response.dto';
 
 /** Resolved Phase 19 risk policy. */
@@ -230,14 +230,6 @@ export const isOpinionInForce = (
   if (!lawyerApprovedAt || blocking) return false;
   return !validUntil || validUntil.getTime() > now.getTime();
 };
-
-export const toRiskFactorDtos = (result: RiskAssessmentResult): RiskFactorDto[] =>
-  result.factors.map((factor) => ({
-    code: factor.code,
-    level: factor.level,
-    messageRu: factor.messageRu,
-    details: factor.details ?? null,
-  }));
 
 /** Two snapshots are equivalent when they hold the same set of factor codes. */
 const sameFactorCodes = (stored: unknown, result: RiskAssessmentResult): boolean => {
