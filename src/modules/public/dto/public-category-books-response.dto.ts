@@ -27,6 +27,13 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 export class PublicCategoryTranslationDto extends CategoryTranslationScalarsDto {
   @ApiPropertyOptional({ type: SeoResponseDto, nullable: true })
   seo!: SeoResponseDto | null;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'False when the Robots field of the translation SEO record says noindex or none (`LEGACY-422`, `T90`).',
+  })
+  indexable!: boolean;
 }
 
 /** The `category` envelope: the `Category` row plus the resolved translation. */

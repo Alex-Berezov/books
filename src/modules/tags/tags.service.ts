@@ -32,7 +32,6 @@ import {
   parseRelatedSlugs,
   type WithParsedRelatedSlugs,
 } from '../../shared/prisma/json-string-array.util';
-import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
 import { isTagTermOpen } from '../../shared/seo/term-indexable.util';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { PaginationInfoDto, totalPagesOf } from '../../shared/dto/paginated-response.dto';
@@ -506,11 +505,13 @@ export class TagsService {
     return {
       tag: {
         ...baseTag,
-        // Флаг тега и перевода на этот язык (`LEGACY-422`, `T74`) — та же свёртка, что в
-        // `findCardsByTag`. ⚠️ Публичный `list` с `T81` сворачивает ещё и `noindex` поля Robots `Seo`
-        // перевода, а эта выдача — нет: расхождение записано остатком `LEGACY-422`.
-        indexable: isTagTranslationIndexable(baseTag, trans),
-        translation: trans ? parseRelatedSlugs(trans) : null,
+        // Флаг тега, перевода на этот язык и `noindex` поля Robots `Seo` перевода — то же правило,
+        // что у `list` и `findCardsByTag` (`LEGACY-422`, `T74`/`T81`/`T90`).
+        indexable: isTagTermOpen(baseTag, trans, trans?.seo),
+        // `indexable` перевода — свёрнутый с полем Robots, как в карточках тега и ответе книги (`T90`).
+        translation: trans
+          ? { ...parseRelatedSlugs(trans), indexable: isTagTermOpen(null, trans, trans.seo) }
+          : null,
         description: trans?.description ?? null,
       },
       seo: trans?.seo ?? null,

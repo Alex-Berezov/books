@@ -55,7 +55,7 @@ export class CategoryTranslationResponse {
 
   @ApiPropertyOptional({
     description:
-      'Public lists only (GET /:lang/categories): false when the Robots field of the SEO record of this translation says noindex or none. Absent in admin lists: category translations have no editorial flag of their own.',
+      'Folded outputs only (GET /:lang/categories, GET /categories/tree?lang= — the admin tree sends lang too, read-only there): false when the Robots field of the SEO record of this translation says noindex or none. Absent in GET /admin/categories and in the tree without lang: category translations have no editorial flag of their own.',
   })
   indexable?: boolean;
 }

@@ -98,13 +98,32 @@ export class CategoryTranslationScalarsDto {
   updatedAt!: Date;
 }
 
-/** `Category` row with its translations (`include: { translations: true }`). */
-export class BookCategoryWithTranslationsDto extends BookCategoryDto {
-  @ApiProperty({ type: CategoryTranslationScalarsDto, isArray: true })
-  translations!: CategoryTranslationScalarsDto[];
+/**
+ * Category translation in the book overview (`categories[]`, `primaryCategory`) and the category cards
+ * (`findCardsByCategory`): the scalars plus the folded indexability of its page
+ * (`foldCategoryTranslation`, `LEGACY-422`, `T90`).
+ */
+export class BookCategoryTranslationDto extends CategoryTranslationScalarsDto {
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'False when the Robots field of the translation SEO record says noindex or none (`LEGACY-422`, `T90`). ' +
+      'Category translations have no editorial switch of their own. The book-page chips do not link a translation with false.',
+  })
+  indexable!: boolean;
 }
 
-/** `Tag` row with its translations (`include: { translations: true }`). */
+/** `Category` row with its translations, `seo` stripped and `indexable` folded (`getOverview`). */
+export class BookCategoryWithTranslationsDto extends BookCategoryDto {
+  @ApiProperty({ type: BookCategoryTranslationDto, isArray: true })
+  translations!: BookCategoryTranslationDto[];
+}
+
+/**
+ * `Tag` row with its translations. In the book overview (`BookOverviewTagDto`) `seo` is stripped and
+ * `translations[].indexable` is folded with `noindex` from the Robots field (`foldTagTranslation`,
+ * `T90`); in book lists (`tags[].tag`) it is `include: { translations: true }` and the editorial switch.
+ */
 export class BookTagWithTranslationsDto extends BookTagDto {
   @ApiProperty({ type: TagTranslationDto, isArray: true })
   translations!: TagTranslationDto[];

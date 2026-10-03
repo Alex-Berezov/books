@@ -7,7 +7,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { totalPagesOf } from '../../shared/dto/paginated-response.dto';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
-import { isCategoryTermOpen } from '../../shared/seo/term-indexable.util';
+import {
+  foldCategoryTranslation,
+  isCategoryTermOpen,
+  withoutSeo,
+} from '../../shared/seo/term-indexable.util';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import {
   CATEGORY_TREE_TX_OPTIONS,
@@ -57,6 +61,8 @@ export type CategoryTreeNode = {
     slug: string;
     bookCount?: number;
     autoIndexable?: boolean;
+    /** Только с `?lang`: нет `noindex` в поле Robots `Seo` перевода (`LEGACY-422`, `T90`). */
+    indexable?: boolean;
   }>;
   children: CategoryTreeNode[];
 };
@@ -828,16 +834,22 @@ export class CategoryService {
     // `undefined`: `{ ...trans, category: undefined }` оставлял ключ в типе, хотя
     // `JSON.stringify` его выкидывает, и схема ответа была вынуждена описывать
     // поле, которого клиент не видит никогда.
-    let translation: Omit<NonNullable<typeof trans>, 'category'> | null = null;
+    // `indexable` перевода — тот же свёрнутый флаг, что у перевода в карточках категории и в ответе
+    // книги (`LEGACY-422`, `T90`); `seo` перевода здесь остаётся — его читает страница категории.
+    let translation: (Omit<NonNullable<typeof trans>, 'category'> & { indexable: boolean }) | null =
+      null;
     if (trans) {
       const { category: categoryBackRelation, ...rest } = trans;
       void categoryBackRelation; // нужна только выше, для поиска категории; в ответ не идёт
-      translation = rest;
+      translation = { ...rest, indexable: isCategoryTermOpen(null, rest.seo) };
     }
 
     return {
       category: {
         ...category,
+        // Флаг категории и `noindex` поля Robots `Seo` перевода на язык пути — правило публичных
+        // списков (`LEGACY-422`, `T81`/`T90`, решение арбитра 03.10.2026).
+        indexable: isCategoryTermOpen(category, trans?.seo),
         translation,
         description: trans?.description ?? null,
         language: pathLang,
@@ -1515,6 +1527,8 @@ export class CategoryService {
             slug: true,
             bookCount: true,
             autoIndexable: true,
+            // Только на публичном пути с языком — для свёртки `indexable` ниже; в ответ не уходит.
+            ...(lang ? { seo: { select: { robots: true } } } : {}),
           },
         },
       },
@@ -1555,10 +1569,18 @@ export class CategoryService {
             booksCount: countMap.get(c.id) || 0,
             langBookCount: langTranslation?.bookCount,
             autoIndexable: langTranslation?.autoIndexable,
+            // Флаг самой категории — с языком и без: админка (`CategoryModal`) кладёт его в форму и
+            // шлёт PATCH-ем, свёрнутое значение здесь записало бы `false` на всю категорию.
             indexable: c.indexable ?? true,
             isVisible: c.isVisible ?? true,
             sortOrder: c.sortOrder ?? 0,
-            translations: c.translations,
+            // С языком каждый перевод получает свой `indexable` — нет `noindex` в поле Robots его `Seo`
+            // (`LEGACY-422`, `T81`/`T90`, решение арбитра 03.10.2026); обзоры `/categories`, `/genres`,
+            // `/collections` ставят по нему ссылки. `seo` в ответ не уходит.
+            // Без языка `seo` не выбирается, поля `indexable` у перевода нет.
+            translations: c.translations.map((tr) =>
+              lang ? foldCategoryTranslation(tr) : withoutSeo(tr),
+            ),
             children: [],
           } as CategoryNode,
         ];

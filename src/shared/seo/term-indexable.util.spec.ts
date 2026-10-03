@@ -1,4 +1,6 @@
 import {
+  foldCategoryTranslation,
+  foldTagTranslation,
   isCategoryTermIndexable,
   isCategoryTermOpen,
   isTagTermIndexable,
@@ -82,5 +84,66 @@ describe('isTagTermOpen / isCategoryTermOpen / seoAllowsIndex', () => {
     expect(isCategoryTermOpen({ indexable: true }, null)).toBe(true);
     expect(isCategoryTermOpen({ indexable: false }, null)).toBe(false);
     expect(isCategoryTermOpen({ indexable: true }, { robots: 'noindex, follow' })).toBe(false);
+  });
+});
+
+// `T90` (решение арбитра 03.10.2026): разбор по запятой и пробелам, префикс бота снимается.
+describe('robotsHasNoindex — пробел и префикс бота', () => {
+  it.each([
+    'noindex nofollow',
+    'googlebot: noindex',
+    'googlebot:noindex',
+    'index, googlebot: none',
+    'max-image-preview:none noindex',
+    'unavailable_after: 25 Jun 2026 15:00:00 PST, noindex',
+    'unavailable_after: 2026-12-31 noindex',
+    'unavailable_after: 2026-12-31 none',
+  ])('«%s» закрывает', (robots) => {
+    expect(robotsHasNoindex(robots)).toBe(true);
+  });
+
+  it.each([
+    'max-snippet:-1, index',
+    'googlebot: index follow',
+    'unavailable_after: 2026-01-01',
+    'index, follow, max-image-preview:none',
+    'index, max-image-preview: none',
+    'googlebot: max-image-preview:none',
+    'unavailable_after: 25 Jun 2026 15:00:00 PST',
+  ])('«%s» не закрывает', (robots) => {
+    expect(robotsHasNoindex(robots)).toBe(false);
+  });
+});
+
+// `T90`: свёртка перевода для публичной выдачи — `seo` снят, `indexable` по правилу.
+describe('foldCategoryTranslation / foldTagTranslation', () => {
+  it.each([
+    [{ robots: 'noindex' }, false],
+    [{ robots: 'index, follow' }, true],
+    [null, true],
+  ])('категория: seo %j -> indexable %s', (seo, expected) => {
+    const folded = foldCategoryTranslation({ language: 'en', slug: 'cat', seo });
+
+    expect(folded).toEqual({ language: 'en', slug: 'cat', indexable: expected });
+  });
+
+  it.each([
+    [true, null, true],
+    [false, null, false],
+    [true, { robots: 'googlebot: noindex' }, false],
+    [null, { robots: 'max-image-preview:none' }, true],
+  ])('тег: флаг %s, seo %j -> indexable %s', (indexable, seo, expected) => {
+    const folded = foldTagTranslation({
+      language: 'en',
+      slug: 'tag',
+      indexable,
+      autoIndexable: false,
+      seo,
+    });
+
+    expect(folded).not.toHaveProperty('seo');
+    expect(folded.indexable).toBe(expected);
+    // `autoIndexable` в `indexable` не сворачивается — идёт отдельным полем.
+    expect(folded).toHaveProperty('autoIndexable', false);
   });
 });

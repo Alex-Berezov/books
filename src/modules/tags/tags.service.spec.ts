@@ -427,6 +427,27 @@ describe('TagsService', () => {
       expect(res.tag.indexable).toBe(false);
     });
 
+    // `LEGACY-422`, `T90`: то же правило, что у `list`, — `noindex` поля Robots `Seo` перевода.
+    it('верхний indexable закрыт noindex поля Robots перевода', async () => {
+      arrange({ indexable: true, ...jsonColumns }, true);
+      const translation = (await prisma.tagTranslation.findUnique()) as Record<string, unknown>;
+      prisma.tagTranslation.findUnique.mockClear();
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        ...translation,
+        seo: { robots: 'noindex, follow' },
+      });
+
+      const res = await service.versionsByTagLangSlug(Language.en, 'tag');
+
+      expect(prisma.tagTranslation.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.tagTranslation.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { tag: true, seo: true } }),
+      );
+      expect(res.tag.indexable).toBe(false);
+      // Перевод несёт то же свёрнутое поле, что в карточках тега и ответе книги.
+      expect(res.tag.translation?.indexable).toBe(false);
+    });
+
     it('верхний indexable закрыт флагом тега, даже когда перевод открыт', async () => {
       arrange({ indexable: true, ...jsonColumns }, false);
 
@@ -461,6 +482,36 @@ describe('TagsService', () => {
 
       expect(prisma.tagTranslation.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { tagId: 't1', language: Language.ru } }),
+      );
+      expect(res.tag.indexable).toBe(false);
+    });
+
+    // `T90`: на запасном пути поле Robots берётся у перевода, найденного по тегу и языку.
+    it('на запасном пути noindex поля Robots перевода закрывает indexable', async () => {
+      prisma.tagTranslation.findUnique.mockResolvedValue(null);
+      prisma.tag.findFirst.mockResolvedValue({
+        id: 't1',
+        name: 'Tag',
+        slug: 'fantasy',
+        isVisible: true,
+        indexable: true,
+      });
+      prisma.tagTranslation.findFirst.mockResolvedValue({
+        tagId: 't1',
+        indexable: true,
+        seo: { robots: 'noindex, follow' },
+        description: null,
+        ...jsonColumns,
+      });
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.count.mockResolvedValue(0);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      const res = await service.versionsByTagLangSlug(Language.ru, 'fantasy');
+
+      expect(prisma.tagTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.tagTranslation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { tag: true, seo: true } }),
       );
       expect(res.tag.indexable).toBe(false);
     });

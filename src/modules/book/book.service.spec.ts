@@ -22,10 +22,12 @@ interface PrismaStub {
   bookVersion: { findMany: jest.Mock; findFirst: jest.Mock; groupBy: jest.Mock };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock; findMany: jest.Mock };
-  bookCategory: { findMany: jest.Mock };
+  bookCategory: { findMany: jest.Mock; groupBy: jest.Mock };
   bookTag: { findMany: jest.Mock; groupBy: jest.Mock };
   tag: { findFirst: jest.Mock; findUnique: jest.Mock };
   tagTranslation: { findUnique: jest.Mock; findFirst: jest.Mock };
+  category: { findFirst: jest.Mock; findUnique: jest.Mock };
+  categoryTranslation: { findUnique: jest.Mock; findFirst: jest.Mock };
   bookRating: {
     aggregate: jest.Mock;
     upsert: jest.Mock;
@@ -56,13 +58,18 @@ const createPrismaStub = (): PrismaStub => {
     },
     bookSummary: { findFirst: jest.fn() },
     seo: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
-    bookCategory: { findMany: jest.fn().mockResolvedValue([]) },
+    bookCategory: {
+      findMany: jest.fn().mockResolvedValue([]),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
     bookTag: {
       findMany: jest.fn().mockResolvedValue([]),
       groupBy: jest.fn().mockResolvedValue([]),
     },
     tag: { findFirst: jest.fn(), findUnique: jest.fn() },
     tagTranslation: { findUnique: jest.fn(), findFirst: jest.fn() },
+    category: { findFirst: jest.fn(), findUnique: jest.fn() },
+    categoryTranslation: { findUnique: jest.fn(), findFirst: jest.fn() },
     bookRating: {
       aggregate: jest.fn().mockResolvedValue({ _avg: { score: 5.0 } }),
       upsert: jest.fn(),
@@ -657,7 +664,9 @@ describe('BookService.getOverview', () => {
     expect(args.include).toBeUndefined();
     expect(args.select).toEqual({
       categoryId: true,
-      category: { include: { translations: true } },
+      category: {
+        include: { translations: { include: { seo: { select: { robots: true } } } } },
+      },
     });
   });
 
@@ -1605,6 +1614,148 @@ describe('BookService: выдача тега (LEGACY-417, T74)', () => {
 
       expect(res.tag?.indexable).toBe(expected);
     });
+
+    // `LEGACY-422`, `T90`: правило `TagsService.list` — `noindex` поля Robots `Seo` перевода
+    // закрывает флаг, а сам `seo` в ответ не уходит.
+    it('noindex в поле Robots перевода закрывает indexable, seo в ответ не уходит', async () => {
+      arrange(true, true);
+      const translation = (await prisma.tagTranslation.findUnique()) as Record<string, unknown>;
+      prisma.tagTranslation.findUnique.mockClear();
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        ...translation,
+        seo: { robots: 'googlebot: noindex' },
+      });
+
+      const res = await service.findCardsByTag('tag', Language.en, 1, 20, true);
+
+      expect(res.tag?.indexable).toBe(false);
+      expect(res.tag?.translation).not.toHaveProperty('seo');
+    });
+
+    it('просит у базы поле Robots перевода', async () => {
+      arrange(true, true);
+
+      await service.findCardsByTag('tag', Language.en, 1, 20, true);
+
+      expect(prisma.tagTranslation.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.tagTranslation.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { seo: { select: { robots: true } } } }),
+      );
+    });
+
+    // Слаг из адреса не совпал с переводом: тег найден по базовому слагу, перевод и его поле
+    // Robots берутся по `tagId` и языку.
+    it('на запасном пути noindex поля Robots перевода закрывает indexable', async () => {
+      arrange(true, true);
+      const translation = (await prisma.tagTranslation.findUnique()) as Record<string, unknown>;
+      prisma.tagTranslation.findUnique.mockClear();
+      prisma.tagTranslation.findUnique.mockResolvedValue(null);
+      prisma.tag.findFirst.mockResolvedValue({ id: 't1' });
+      prisma.tagTranslation.findFirst.mockResolvedValue({
+        ...translation,
+        seo: { robots: 'noindex' },
+      });
+
+      const res = await service.findCardsByTag('tag', Language.en, 1, 20, true);
+
+      expect(prisma.tagTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.tagTranslation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { seo: { select: { robots: true } } } }),
+      );
+      expect(res.tag?.indexable).toBe(false);
+      expect(res.tag?.translation).not.toHaveProperty('seo');
+    });
+
+    it('поле Robots без noindex флаг не закрывает', async () => {
+      arrange(true, true);
+      const translation = (await prisma.tagTranslation.findUnique()) as Record<string, unknown>;
+      prisma.tagTranslation.findUnique.mockClear();
+      prisma.tagTranslation.findUnique.mockResolvedValue({
+        ...translation,
+        seo: { robots: 'index, follow' },
+      });
+
+      const res = await service.findCardsByTag('tag', Language.en, 1, 20, true);
+
+      expect(res.tag?.indexable).toBe(true);
+    });
+  });
+
+  // `LEGACY-422`, `T90` (решение арбитра 03.10.2026, ревью): карточки категории — то же правило,
+  // что детали категории: флаг категории ∧ нет `noindex` в поле Robots `Seo` перевода.
+  describe('cards категории', () => {
+    const arrange = (categoryIndexable: boolean, robots: string | null) => {
+      prisma.categoryTranslation.findUnique.mockResolvedValue({
+        id: 'ctr-1',
+        categoryId: 'c1',
+        language: Language.en,
+        slug: 'cat',
+        name: 'Cat',
+        seo: robots === null ? null : { robots },
+      });
+      prisma.category.findUnique.mockResolvedValue({
+        id: 'c1',
+        key: 'cat',
+        slug: 'cat',
+        name: 'Cat',
+        type: 'category',
+        parentId: null,
+        indexable: categoryIndexable,
+        isVisible: true,
+        sortOrder: 0,
+      });
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookVersion.groupBy.mockResolvedValue([]);
+    };
+
+    it.each([
+      [true, 'noindex, follow', false, false],
+      [true, 'index, follow', true, true],
+      [true, null, true, true],
+      [false, null, false, true],
+    ])(
+      'категория %s, Robots %s -> indexable %s, перевод %s',
+      async (flag, robots, expected, translationExpected) => {
+        arrange(flag, robots);
+
+        const res = await service.findCardsByCategory('cat', Language.en, 1, 20);
+
+        expect(prisma.categoryTranslation.findUnique).toHaveBeenCalledTimes(1);
+        expect(prisma.categoryTranslation.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ include: { seo: { select: { robots: true } } } }),
+        );
+        expect(res.category?.indexable).toBe(expected);
+        expect(res.category?.translation).not.toHaveProperty('seo');
+        // Перевод в карточках несёт то же свёрнутое поле, что в ответе книги и `/:lang/categories`.
+        expect((res.category?.translation as { indexable?: boolean }).indexable).toBe(
+          translationExpected,
+        );
+      },
+    );
+    // Слаг из адреса не совпал с переводом: категория найдена по базовому слагу, перевод и его поле
+    // Robots берутся по `categoryId` и языку.
+    it('на запасном пути noindex поля Robots перевода закрывает indexable', async () => {
+      arrange(true, null);
+      prisma.categoryTranslation.findUnique.mockResolvedValue(null);
+      prisma.category.findFirst.mockResolvedValue({ id: 'c1' });
+      prisma.categoryTranslation.findFirst.mockResolvedValue({
+        id: 'ctr-1',
+        categoryId: 'c1',
+        language: Language.en,
+        slug: 'cat',
+        name: 'Cat',
+        seo: { robots: 'none' },
+      });
+
+      const res = await service.findCardsByCategory('cat', Language.en, 1, 20);
+
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { seo: { select: { robots: true } } } }),
+      );
+      expect(res.category?.indexable).toBe(false);
+      expect(res.category?.translation).not.toHaveProperty('seo');
+    });
   });
 
   describe('overview', () => {
@@ -1634,6 +1785,116 @@ describe('BookService: выдача тега (LEGACY-417, T74)', () => {
       const res = await service.getOverview('slug-1', Language.en);
 
       expect(res.tags[0].translations[0]).toMatchObject(parsedColumns);
+    });
+
+    it('переводы главной категории несут тот же свёрнутый indexable, seo наружу не уходит', async () => {
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-text-en',
+          language: Language.en,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          primaryCategoryId: 'c9',
+          _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+        },
+      ]);
+      prisma.category.findUnique.mockResolvedValue({
+        id: 'c9',
+        slug: 'main',
+        indexable: true,
+        translations: [
+          { language: Language.en, slug: 'main', seo: { robots: 'none' } },
+          { language: Language.ru, slug: 'glavnaya', seo: null },
+        ],
+      });
+
+      const res = await service.getOverview('slug-1', Language.en);
+
+      expect(prisma.category.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.category.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { translations: { include: { seo: { select: { robots: true } } } } },
+        }),
+      );
+      const translations = (res.primaryCategory?.translations ?? []) as Array<
+        Record<string, unknown>
+      >;
+      expect(translations.map((t) => t.indexable)).toEqual([false, true]);
+      translations.forEach((t) => expect(t).not.toHaveProperty('seo'));
+    });
+
+    // `LEGACY-422`, `T90` (решение арбитра 03.10.2026): чипы книги читают `translations[].indexable`,
+    // бэкенд сворачивает в него `noindex` поля Robots `Seo` перевода; `seo` наружу не уходит.
+    it('translations[].indexable тегов и категорий сворачивает noindex поля Robots', async () => {
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-text-en',
+          language: Language.en,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+        },
+      ]);
+      const tagTr = (
+        id: string,
+        language: Language,
+        indexable: boolean,
+        robots: string | null,
+      ) => ({
+        id,
+        language,
+        slug: id,
+        indexable,
+        ...rawColumns,
+        seo: robots === null ? null : { robots },
+      });
+      prisma.bookTag.findMany.mockResolvedValue([
+        {
+          tagId: 't1',
+          tag: {
+            id: 't1',
+            slug: 'tag',
+            translations: [
+              tagTr('tr-1', Language.en, true, 'noindex nofollow'),
+              tagTr('tr-2', Language.ru, true, null),
+              tagTr('tr-3', Language.fr, false, null),
+            ],
+          },
+        },
+      ]);
+      prisma.bookCategory.findMany.mockResolvedValue([
+        {
+          categoryId: 'c1',
+          category: {
+            id: 'c1',
+            slug: 'cat',
+            indexable: true,
+            translations: [
+              { language: Language.en, slug: 'cat', seo: { robots: 'googlebot:noindex' } },
+              { language: Language.ru, slug: 'kat', seo: { robots: 'index, follow' } },
+            ],
+          },
+        },
+      ]);
+
+      const res = await service.getOverview('slug-1', Language.en);
+
+      const tagTranslations = res.tags[0].translations as Array<Record<string, unknown>>;
+      expect(tagTranslations.map((t) => t.indexable)).toEqual([false, true, false]);
+      tagTranslations.forEach((t) => expect(t).not.toHaveProperty('seo'));
+      const categoryTranslations = res.categories[0].translations as Array<Record<string, unknown>>;
+      expect(categoryTranslations.map((t) => t.indexable)).toEqual([false, true]);
+      categoryTranslations.forEach((t) => expect(t).not.toHaveProperty('seo'));
+      // Запрос просит поле Robots, а не только мок его отдаёт.
+      expect(prisma.bookTag.findMany).toHaveBeenCalledTimes(1);
+      const [tagArgs] = prisma.bookTag.findMany.mock.calls[0] as [Record<string, unknown>];
+      expect(tagArgs.include).toEqual({
+        tag: { include: { translations: { include: { seo: { select: { robots: true } } } } } },
+      });
     });
   });
 });

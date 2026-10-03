@@ -1991,6 +1991,69 @@ describe('CategoryService', () => {
     );
   });
 
+  // `LEGACY-422`, `T90`: детали категории сворачивают `noindex` поля Robots перевода на язык пути.
+  it.each([
+    [{ robots: 'noindex' }, true, false],
+    [{ robots: 'index, follow' }, true, true],
+    [null, false, false],
+    [null, true, true],
+  ])(
+    'getByLangSlugWithBooks: seo %j, флаг категории %s -> indexable %s',
+    async (seo, flag, expected) => {
+      prisma.categoryTranslation.findUnique.mockResolvedValue({
+        category: { id: 'cat1', name: 'Cat', slug: 'cat', indexable: flag },
+        seo,
+        description: null,
+      });
+      prisma.book = {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      };
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      const res = await service.getByLangSlugWithBooks(Language.en, 'cat');
+
+      expect(prisma.categoryTranslation.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.categoryTranslation.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { category: true, seo: true } }),
+      );
+      expect(res.category.indexable).toBe(expected);
+      // Перевод несёт свёрнутое поле Robots без флага категории — как в карточках и ответе книги.
+      expect(res.category.translation?.indexable).toBe(seo?.robots !== 'noindex');
+    },
+  );
+
+  // `T90`: запасной путь — категория найдена по базовому слагу, перевод и его поле Robots берутся
+  // по `categoryId` и языку; перевода нет — флаг категории как есть.
+  it.each([
+    [{ seo: { robots: 'noindex' }, description: null }, false],
+    [null, true],
+  ])(
+    'getByLangSlugWithBooks на запасном пути: перевод %j -> indexable %s',
+    async (trans, expected) => {
+      prisma.categoryTranslation.findUnique.mockResolvedValue(null);
+      prisma.category.findFirst = jest
+        .fn()
+        .mockResolvedValue({ id: 'cat1', name: 'Cat', slug: 'cat', indexable: true });
+      prisma.categoryTranslation.findFirst = jest.fn().mockResolvedValue(trans);
+      prisma.book = {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      };
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+      prisma.bookRating.groupBy.mockResolvedValue([]);
+
+      const res = await service.getByLangSlugWithBooks(Language.en, 'cat');
+
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.categoryTranslation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { category: true, seo: true } }),
+      );
+      expect(res.category.indexable).toBe(expected);
+    },
+  );
+
   it('LEGACY-377: getByLangSlugWithBooks выбирает страницу и отдаёт честный meta', async () => {
     prisma.categoryTranslation.findUnique.mockResolvedValue({
       category: { id: 'cat1', name: 'Cat', slug: 'cat' },
@@ -2313,6 +2376,49 @@ describe('CategoryService', () => {
         expect.objectContaining({ language: Language.en, bookCount: 7, autoIndexable: true }),
         expect.objectContaining({ language: Language.ru, bookCount: 1, autoIndexable: false }),
       ]);
+    });
+
+    // `LEGACY-422`, `T90` (решение арбитра 03.10.2026): с языком `indexable` узла сворачивает
+    // `noindex` поля Robots `Seo` перевода на этот язык; `seo` в ответ не уходит.
+    describe('noindex поля Robots', () => {
+      beforeEach(async () => {
+        const rows = (await prisma.category.findMany()) as Array<{
+          translations: Array<Record<string, unknown>>;
+        }>;
+        rows[0].translations[0].seo = { robots: 'noindex' };
+        rows[0].translations[1].seo = null;
+        prisma.category.findMany.mockClear();
+        prisma.category.findMany.mockResolvedValue(rows);
+      });
+
+      // Ревью `T90` (решение арбитра 03.10.2026): админка кладёт `node.indexable` в форму и шлёт его
+      // PATCH-ем флагом всей категории — верхний флаг не сворачивается, свёртка идёт в переводы.
+      it('с языком сворачивает Robots в translations[].indexable, верхний флаг не трогает', async () => {
+        const roots = await service.getTree('genre', Language.en);
+        const node = roots.find((n) => n.id === 'c1');
+
+        expect(node?.indexable).toBe(true);
+        expect(node?.translations?.map((t) => t.indexable)).toEqual([false, true]);
+        (node?.translations ?? []).forEach((t) => expect(t).not.toHaveProperty('seo'));
+        expect(prisma.category.findMany).toHaveBeenCalledTimes(1);
+        const [args] = prisma.category.findMany.mock.calls[0] as [
+          { select: { translations: { select: Record<string, unknown> } } },
+        ];
+        expect(args.select.translations.select.seo).toEqual({ select: { robots: true } });
+      });
+
+      it('без языка отдаёт прежний флаг категории, без indexable переводов и не просит seo', async () => {
+        const roots = await service.getTree('genre');
+        const node = roots.find((n) => n.id === 'c1');
+
+        expect(node?.indexable).toBe(true);
+        (node?.translations ?? []).forEach((t) => expect(t.indexable).toBeUndefined());
+        const calls = prisma.category.findMany.mock.calls;
+        const [args] = calls[calls.length - 1] as [
+          { select: { translations: { select: Record<string, unknown> } } },
+        ];
+        expect(args.select.translations.select).not.toHaveProperty('seo');
+      });
     });
   });
 

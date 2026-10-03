@@ -1805,6 +1805,119 @@
         ],
         "type": "object"
       },
+      "BookCategoryTranslationDto": {
+        "properties": {
+          "autoIndexable": {
+            "default": true,
+            "type": "boolean"
+          },
+          "bookCount": {
+            "default": 0,
+            "type": "number"
+          },
+          "categoryId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "faq": {
+            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.",
+            "example": [
+              {
+                "answer": "This is...",
+                "question": "What is this?"
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/FaqItemDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "h1": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "indexable": {
+            "description": "False when the Robots field of the translation SEO record says noindex or none (`LEGACY-422`, `T90`). Category translations have no editorial switch of their own. The book-page chips do not link a translation with false.",
+            "type": "boolean"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "metaDescription": {
+            "nullable": true,
+            "type": "string"
+          },
+          "metaTitle": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ogDescription": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ogImageAlt": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ogImageUrl": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ogTitle": {
+            "nullable": true,
+            "type": "string"
+          },
+          "seoId": {
+            "nullable": true,
+            "type": "number"
+          },
+          "shortDescription": {
+            "nullable": true,
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "categoryId",
+          "language",
+          "name",
+          "slug",
+          "bookCount",
+          "autoIndexable",
+          "createdAt",
+          "updatedAt",
+          "indexable"
+        ],
+        "type": "object"
+      },
       "BookCategoryWithTranslationsDto": {
         "properties": {
           "id": {
@@ -1834,7 +1947,7 @@
           },
           "translations": {
             "items": {
-              "$ref": "#/components/schemas/CategoryTranslationScalarsDto"
+              "$ref": "#/components/schemas/BookCategoryTranslationDto"
             },
             "type": "array"
           },
@@ -2252,7 +2365,7 @@
           },
           "translations": {
             "items": {
-              "$ref": "#/components/schemas/CategoryTranslationScalarsDto"
+              "$ref": "#/components/schemas/BookCategoryTranslationDto"
             },
             "type": "array"
           },
@@ -4884,14 +4997,14 @@
           "translation": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/CategoryTranslationScalarsDto"
+                "$ref": "#/components/schemas/BookCategoryTranslationDto"
               }
             ],
             "nullable": true
           },
           "translations": {
             "items": {
-              "$ref": "#/components/schemas/CategoryTranslationScalarsDto"
+              "$ref": "#/components/schemas/BookCategoryTranslationDto"
             },
             "type": "array"
           },
@@ -5183,7 +5296,7 @@
             "type": "string"
           },
           "indexable": {
-            "description": "Public lists only (GET /:lang/categories): false when the Robots field of the SEO record of this translation says noindex or none. Absent in admin lists: category translations have no editorial flag of their own.",
+            "description": "Folded outputs only (GET /:lang/categories, GET /categories/tree?lang= — the admin tree sends lang too, read-only there): false when the Robots field of the SEO record of this translation says noindex or none. Absent in GET /admin/categories and in the tree without lang: category translations have no editorial flag of their own.",
             "type": "boolean"
           },
           "language": {
@@ -5235,114 +5348,6 @@
           "language",
           "name",
           "slug"
-        ],
-        "type": "object"
-      },
-      "CategoryTranslationScalarsDto": {
-        "properties": {
-          "autoIndexable": {
-            "default": true,
-            "type": "boolean"
-          },
-          "bookCount": {
-            "default": 0,
-            "type": "number"
-          },
-          "categoryId": {
-            "type": "string"
-          },
-          "createdAt": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "description": {
-            "nullable": true,
-            "type": "string"
-          },
-          "faq": {
-            "description": "Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.",
-            "example": [
-              {
-                "answer": "This is...",
-                "question": "What is this?"
-              }
-            ],
-            "items": {
-              "$ref": "#/components/schemas/FaqItemDto"
-            },
-            "nullable": true,
-            "type": "array"
-          },
-          "h1": {
-            "nullable": true,
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "language": {
-            "enum": [
-              "en",
-              "es",
-              "fr",
-              "pt",
-              "ru"
-            ],
-            "type": "string"
-          },
-          "metaDescription": {
-            "nullable": true,
-            "type": "string"
-          },
-          "metaTitle": {
-            "nullable": true,
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "ogDescription": {
-            "nullable": true,
-            "type": "string"
-          },
-          "ogImageAlt": {
-            "nullable": true,
-            "type": "string"
-          },
-          "ogImageUrl": {
-            "nullable": true,
-            "type": "string"
-          },
-          "ogTitle": {
-            "nullable": true,
-            "type": "string"
-          },
-          "seoId": {
-            "nullable": true,
-            "type": "number"
-          },
-          "shortDescription": {
-            "nullable": true,
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "updatedAt": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "categoryId",
-          "language",
-          "name",
-          "slug",
-          "bookCount",
-          "autoIndexable",
-          "createdAt",
-          "updatedAt"
         ],
         "type": "object"
       },
@@ -13203,6 +13208,10 @@
           "id": {
             "type": "string"
           },
+          "indexable": {
+            "description": "False when the Robots field of the translation SEO record says noindex or none (`LEGACY-422`, `T90`).",
+            "type": "boolean"
+          },
           "language": {
             "enum": [
               "en",
@@ -13273,7 +13282,8 @@
           "bookCount",
           "autoIndexable",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "indexable"
         ],
         "type": "object"
       },

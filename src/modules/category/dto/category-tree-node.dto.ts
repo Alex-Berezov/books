@@ -39,8 +39,9 @@ export class CategoryTreeNodeDto {
   /**
    * Обязательные: `CategoryService.getTree` собирает узел вручную и кладёт все
    * три безусловно — `indexable: c.indexable ?? true`, `isVisible: ... ?? true`,
-   * `sortOrder: ... ?? 0` (`category.service.ts:1018-1020`). Тип узла
-   * (`CategoryTreeNode`, `category.service.ts:35-37`) объявляет их так же.
+   * `sortOrder: ... ?? 0`. Тип узла (`CategoryTreeNode`) объявляет их так же.
+   * `indexable` — флаг самой категории и с `?lang`: админка шлёт его PATCH-ем; свёртка поля Robots
+   * идёт в `translations[].indexable` (`LEGACY-422`, `T90`, решение арбитра 03.10.2026).
    */
   @ApiProperty({ type: Boolean, default: true })
   indexable!: boolean;

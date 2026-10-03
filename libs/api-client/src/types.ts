@@ -4939,6 +4939,44 @@ export interface components {
       /** @enum {string} */
       type: 'category' | 'genre' | 'collection';
     };
+    BookCategoryTranslationDto: {
+      /** @default true */
+      autoIndexable: boolean;
+      /** @default 0 */
+      bookCount: number;
+      categoryId: string;
+      /** Format: date-time */
+      createdAt: string;
+      description?: string | null;
+      /**
+       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.
+       * @example [
+       *       {
+       *         "answer": "This is...",
+       *         "question": "What is this?"
+       *       }
+       *     ]
+       */
+      faq?: components['schemas']['FaqItemDto'][] | null;
+      h1?: string | null;
+      id: string;
+      /** @description False when the Robots field of the translation SEO record says noindex or none (`LEGACY-422`, `T90`). Category translations have no editorial switch of their own. The book-page chips do not link a translation with false. */
+      indexable: boolean;
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      metaDescription?: string | null;
+      metaTitle?: string | null;
+      name: string;
+      ogDescription?: string | null;
+      ogImageAlt?: string | null;
+      ogImageUrl?: string | null;
+      ogTitle?: string | null;
+      seoId?: number | null;
+      shortDescription?: string | null;
+      slug: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
     BookCategoryWithTranslationsDto: {
       id: string;
       indexable: boolean;
@@ -4948,7 +4986,7 @@ export interface components {
       parentId?: string | null;
       slug: string;
       sortOrder: number;
-      translations: components['schemas']['CategoryTranslationScalarsDto'][];
+      translations: components['schemas']['BookCategoryTranslationDto'][];
       /** @enum {string} */
       type: 'category' | 'genre' | 'collection';
     };
@@ -5062,7 +5100,7 @@ export interface components {
       parentId?: string | null;
       slug: string;
       sortOrder: number;
-      translations: components['schemas']['CategoryTranslationScalarsDto'][];
+      translations: components['schemas']['BookCategoryTranslationDto'][];
       /** @enum {string} */
       type: 'category' | 'genre' | 'collection';
     };
@@ -5877,8 +5915,8 @@ export interface components {
       parentId?: string | null;
       slug: string;
       sortOrder: number;
-      translation?: components['schemas']['CategoryTranslationScalarsDto'] | null;
-      translations: components['schemas']['CategoryTranslationScalarsDto'][];
+      translation?: components['schemas']['BookCategoryTranslationDto'] | null;
+      translations: components['schemas']['BookCategoryTranslationDto'][];
       /** @enum {string} */
       type: 'category' | 'genre' | 'collection';
     };
@@ -5963,7 +6001,7 @@ export interface components {
       description?: string | null;
       faq?: components['schemas']['FaqItemDto'][] | null;
       h1?: string | null;
-      /** @description Public lists only (GET /:lang/categories): false when the Robots field of the SEO record of this translation says noindex or none. Absent in admin lists: category translations have no editorial flag of their own. */
+      /** @description Folded outputs only (GET /:lang/categories, GET /categories/tree?lang= — the admin tree sends lang too, read-only there): false when the Robots field of the SEO record of this translation says noindex or none. Absent in GET /admin/categories and in the tree without lang: category translations have no editorial flag of their own. */
       indexable?: boolean;
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
@@ -5976,42 +6014,6 @@ export interface components {
       ogTitle?: string | null;
       shortDescription?: string | null;
       slug: string;
-    };
-    CategoryTranslationScalarsDto: {
-      /** @default true */
-      autoIndexable: boolean;
-      /** @default 0 */
-      bookCount: number;
-      categoryId: string;
-      /** Format: date-time */
-      createdAt: string;
-      description?: string | null;
-      /**
-       * @description Json column. Shape held by `@ValidateNested({ each: true })` on `CreateCategoryTranslationDto.faq`.
-       * @example [
-       *       {
-       *         "answer": "This is...",
-       *         "question": "What is this?"
-       *       }
-       *     ]
-       */
-      faq?: components['schemas']['FaqItemDto'][] | null;
-      h1?: string | null;
-      id: string;
-      /** @enum {string} */
-      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      metaDescription?: string | null;
-      metaTitle?: string | null;
-      name: string;
-      ogDescription?: string | null;
-      ogImageAlt?: string | null;
-      ogImageUrl?: string | null;
-      ogTitle?: string | null;
-      seoId?: number | null;
-      shortDescription?: string | null;
-      slug: string;
-      /** Format: date-time */
-      updatedAt: string;
     };
     CategoryTreeNodeDto: {
       /** @description Automatic indexability (hysteresis state) for the requested ?lang. Mirrors what meta robots and the sitemap decide. Undefined when lang is not passed or the term has no translation for it. */
@@ -8983,6 +8985,8 @@ export interface components {
       faq?: components['schemas']['FaqItemDto'][] | null;
       h1?: string | null;
       id: string;
+      /** @description False when the Robots field of the translation SEO record says noindex or none (`LEGACY-422`, `T90`). */
+      indexable: boolean;
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       metaDescription?: string | null;

@@ -20,7 +20,12 @@ import {
   parseRelatedSlugs,
   type WithParsedRelatedSlugs,
 } from '../../shared/prisma/json-string-array.util';
-import { isTagTranslationIndexable } from '../../shared/seo/tag-translation-indexable.util';
+import {
+  foldCategoryTranslation,
+  foldTagTranslation,
+  isCategoryTermOpen,
+  isTagTermOpen,
+} from '../../shared/seo/term-indexable.util';
 import {
   BookType,
   Language,
@@ -57,6 +62,9 @@ import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
  * Prisma (5000/2000 мс) отдал бы `P2028` на книге с большой историей.
  */
 const BOOK_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/** Перевод категории в ответе книги: одна форма на `categories` и `primaryCategory` (`T90`). */
+type OverviewCategoryTranslation = CategoryTranslation & { indexable: boolean };
 
 @Injectable()
 export class BookService {
@@ -528,14 +536,24 @@ export class BookService {
             // Поводом был `LEGACY-005` (мёртвая `isPrimary`, которая уйдёт `DROP COLUMN`
             // отдельным тегом), но возврат к `include` запрещён и после него — перечень держит
             // `src/common/testing/book-category-select.spec.ts`.
-            select: { categoryId: true, category: { include: { translations: true } } },
+            // Поле Robots `Seo` перевода — для свёртки `translations[].indexable` ниже, наружу не уходит.
+            select: {
+              categoryId: true,
+              category: {
+                include: { translations: { include: { seo: { select: { robots: true } } } } },
+              },
+            },
           })
         : [];
     const tagsRelation =
       activeVersion && this.prisma.bookTag
         ? await this.prisma.bookTag.findMany({
             where: { bookVersionId: activeVersion.id },
-            include: { tag: { include: { translations: true } } },
+            include: {
+              tag: {
+                include: { translations: { include: { seo: { select: { robots: true } } } } },
+              },
+            },
           })
         : [];
 
@@ -573,25 +591,40 @@ export class BookService {
       rows.forEach((row) => tagCountMap.set(row.tagId, row._count._all));
     }
 
+    // `translations[].indexable` сворачивает `noindex` поля Robots `Seo` перевода — то же правило, что
+    // у публичных списков (`LEGACY-422`, `T81`/`T90`, решение арбитра 03.10.2026): чипы книги
+    // (`BookTaxonomyChips`) читают этот флаг и не ставят ссылку на закрытую страницу. У перевода
+    // категории своего флага нет, поле аддитивное; сам `seo` в ответ не уходит.
     const categories = categoriesRelation.map((c) => ({
       ...c.category,
+      translations:
+        c.category.translations.map<OverviewCategoryTranslation>(foldCategoryTranslation),
       booksCount: categoryCountMap.get(c.categoryId) ?? 0,
     }));
     const tags = tagsRelation.map((t) => ({
       ...t.tag,
-      translations: t.tag.translations.map(parseRelatedSlugs),
+      translations: t.tag.translations.map((tr) => parseRelatedSlugs(foldTagTranslation(tr))),
       booksCount: tagCountMap.get(t.tagId) ?? 0,
     }));
 
     const book = await this.prisma.book.findUnique({ where: { id: bookId } });
 
-    let primaryCategory: (Category & { translations: CategoryTranslation[] }) | null = null;
+    // Переводы главной категории — то же правило `translations[].indexable`, что у `categories` выше
+    // (`T90`): одна форма перевода категории на весь ответ книги.
+    let primaryCategory: (Category & { translations: OverviewCategoryTranslation[] }) | null = null;
     const primaryCategoryId = activeVersion ? primaryCategoryIdOf.get(activeVersion.id) : null;
     if (primaryCategoryId) {
-      primaryCategory = await this.prisma.category.findUnique({
+      const row = await this.prisma.category.findUnique({
         where: { id: primaryCategoryId },
-        include: { translations: true },
+        include: { translations: { include: { seo: { select: { robots: true } } } } },
       });
+      primaryCategory = row
+        ? {
+            ...row,
+            translations:
+              row.translations.map<OverviewCategoryTranslation>(foldCategoryTranslation),
+          }
+        : null;
     }
 
     // 🔴 LEGACY-006. Публичный адрес автора отдаётся ключом, а не собирается фронтом
@@ -1138,13 +1171,16 @@ export class BookService {
     const skip = (effectivePage - 1) * effectiveLimit;
 
     // Resolve category slug to a stable category ID (prefer translation, fallback base slug)
+    // Поле Robots `Seo` перевода — для свёртки `indexable` ниже (`LEGACY-422`, `T90`), в ответ не уходит.
     const catTrans = await this.prisma.categoryTranslation.findUnique({
       where: { language_slug: { language: lang, slug: categorySlug } },
+      include: { seo: { select: { robots: true } } },
     });
 
     let categoryId: string | null = catTrans?.categoryId ?? null;
+    let matchedRobotsSeo = catTrans?.seo ?? null;
     let matchedTranslation: Record<string, unknown> | null = catTrans
-      ? { ...catTrans, category: undefined }
+      ? { ...foldCategoryTranslation(catTrans), category: undefined }
       : null;
 
     if (!categoryId) {
@@ -1168,8 +1204,12 @@ export class BookService {
 
       const trans = await this.prisma.categoryTranslation.findFirst({
         where: { categoryId, language: lang },
+        include: { seo: { select: { robots: true } } },
       });
-      matchedTranslation = trans ? { ...trans, category: undefined } : null;
+      matchedRobotsSeo = trans?.seo ?? null;
+      matchedTranslation = trans
+        ? { ...foldCategoryTranslation(trans), category: undefined }
+        : null;
     }
     // Fetch full category with translation
     const category = await this.prisma.category.findUnique({
@@ -1208,7 +1248,9 @@ export class BookService {
             name: matchedTranslation?.name ?? category.name,
             type: category.type,
             parentId: category.parentId,
-            indexable: category.indexable,
+            // Флаг категории и `noindex` поля Robots `Seo` перевода — правило деталей категории
+            // (`LEGACY-422`, `T90`, решение арбитра 03.10.2026).
+            indexable: isCategoryTermOpen(category, matchedRobotsSeo),
             isVisible: category.isVisible,
             sortOrder: category.sortOrder,
             booksCount: total,
@@ -1244,14 +1286,18 @@ export class BookService {
     const skip = (effectivePage - 1) * effectiveLimit;
 
     // Resolve tag slug to a stable tag ID (prefer translation, fallback base slug)
-    const tagTrans = await this.prisma.tagTranslation.findUnique({
+    // Поле Robots `Seo` перевода читается для свёртки `indexable` (`LEGACY-422`, `T90`) и в ответ
+    // не уходит: `translation` отдаётся целиком, поэтому `seo` снимается до `parseRelatedSlugs`.
+    const tagTransWithSeo = await this.prisma.tagTranslation.findUnique({
       where: { language_slug: { language: lang, slug: tagSlug } },
+      include: { seo: { select: { robots: true } } },
     });
-    let tagId: string | null = tagTrans?.tagId ?? null;
+    let tagId: string | null = tagTransWithSeo?.tagId ?? null;
+    let matchedRobotsSeo = tagTransWithSeo?.seo ?? null;
     // `related*Slugs` разбираются на выходе из базы: `translation` уходит в ответ целиком,
     // и сырой `Json` там не сверяла схема (`LEGACY-417`, `T74`).
-    let matchedTranslation: WithParsedRelatedSlugs<TagTranslation> | null = tagTrans
-      ? parseRelatedSlugs(tagTrans)
+    let matchedTranslation: WithParsedRelatedSlugs<TagTranslation> | null = tagTransWithSeo
+      ? parseRelatedSlugs(foldTagTranslation(tagTransWithSeo))
       : null;
 
     if (!tagId) {
@@ -1270,8 +1316,10 @@ export class BookService {
 
       const trans = await this.prisma.tagTranslation.findFirst({
         where: { tagId, language: lang },
+        include: { seo: { select: { robots: true } } },
       });
-      matchedTranslation = trans ? parseRelatedSlugs(trans) : null;
+      matchedRobotsSeo = trans?.seo ?? null;
+      matchedTranslation = trans ? parseRelatedSlugs(foldTagTranslation(trans)) : null;
     }
 
     // Find distinct bookIds that have a published version in this language with this tag
@@ -1322,10 +1370,10 @@ export class BookService {
           key: tag.key,
           slug: matchedTranslation?.slug ?? tag.slug,
           name: matchedTranslation?.name ?? tag.name,
-          // Флаг тега и перевода на этот язык (`LEGACY-422`, `T73`): по нему фронт решает robots,
-          // когда SEO-бандл не ответил. ⚠️ `TagsService.list` с `T81` сворачивает ещё и `noindex` поля
-          // Robots `Seo` перевода, а эта выдача — нет: расхождение записано остатком `LEGACY-422`.
-          indexable: isTagTranslationIndexable(tag, matchedTranslation),
+          // Флаг тега, перевода на этот язык и `noindex` поля Robots `Seo` перевода — то же правило,
+          // что у `TagsService.list` (`LEGACY-422`, `T73`/`T81`/`T90`): по нему фронт решает robots,
+          // когда SEO-бандл не ответил.
+          indexable: isTagTermOpen(tag, matchedTranslation, matchedRobotsSeo),
           isVisible: tag.isVisible,
           sortOrder: tag.sortOrder,
           booksCount: total,
