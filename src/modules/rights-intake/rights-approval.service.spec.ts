@@ -727,6 +727,27 @@ describe('RightsApprovalService', () => {
 
       expect(result[0].decidedByUser).toBeNull();
     });
+
+    // LEGACY-016 (T91): `User.name` nullable, DTO — `name?: string`: пустое имя не уходит `null`.
+    it('omits name of a deciding user without one', async () => {
+      const approvals = [
+        makeApproval({ decidedByUser: { id: 'user-2', name: null, email: 'nameless@test.com' } }),
+      ];
+      (prisma['rightsReviewApproval'] as Record<string, jest.Mock>).findMany.mockResolvedValue(
+        approvals,
+      );
+
+      const [byIntake] = await service.getApprovalsByIntake('intake-1');
+      const [byReview] = await service.getApprovalsByReview('review-1');
+
+      for (const approval of [byIntake, byReview]) {
+        expect(approval.decidedByUser?.name).toBeUndefined();
+        expect(JSON.parse(JSON.stringify(approval.decidedByUser))).toEqual({
+          id: 'user-2',
+          email: 'nameless@test.com',
+        });
+      }
+    });
   });
 
   describe('getApprovalsByReview', () => {

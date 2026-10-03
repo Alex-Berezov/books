@@ -1122,10 +1122,7 @@ export class BookService {
     });
 
     if (!authorTranslation) {
-      return {
-        items: [],
-        pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
-      };
+      return paginated([], { page: effectivePage, limit: effectiveLimit, total: 0 });
     }
 
     const authorId = authorTranslation.authorId;
@@ -1196,8 +1193,7 @@ export class BookService {
       if (!baseCat) {
         return {
           category: null,
-          items: [],
-          pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
+          ...paginated([], { page: effectivePage, limit: effectiveLimit, total: 0 }),
         };
       }
       categoryId = baseCat.id;
@@ -1308,8 +1304,7 @@ export class BookService {
       if (!baseTag) {
         return {
           tag: null,
-          items: [],
-          pagination: { page: effectivePage, limit: effectiveLimit, total: 0, totalPages: 0 },
+          ...paginated([], { page: effectivePage, limit: effectiveLimit, total: 0 }),
         };
       }
       tagId = baseTag.id;

@@ -19,6 +19,7 @@ import { RightsProfileService } from './rights-profile.service';
 import { ApproveRightsReviewDto } from './dto/approve-rights-review.dto';
 import { RejectRightsReviewDto } from './dto/reject-rights-review.dto';
 import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
+import { mapRightsReviewApproval } from './rights-review-approval.mapper';
 
 /** Dynamic delegates return `unknown` columns; this keeps the risk input strictly typed. */
 const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -464,7 +465,7 @@ export class RightsApprovalService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return approvals.map((a) => this.mapApproval(a));
+    return approvals.map(mapRightsReviewApproval);
   }
 
   async getApprovalsByReview(reviewId: string): Promise<RightsReviewApprovalDto[]> {
@@ -478,26 +479,6 @@ export class RightsApprovalService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return approvals.map((a) => this.mapApproval(a));
-  }
-
-  private mapApproval(record: Record<string, unknown>): RightsReviewApprovalDto {
-    const decidedByUserRaw = record['decidedByUser'] as Record<string, unknown> | null;
-    return {
-      id: record['id'] as string,
-      rightsReviewId: record['rightsReviewId'] as string,
-      rightsProfileId: record['rightsProfileId'] as string,
-      rightsIntakeId: record['rightsIntakeId'] as string,
-      decision: record['decision'] as string,
-      decidedByUser: decidedByUserRaw
-        ? {
-            id: decidedByUserRaw['id'] as string,
-            name: decidedByUserRaw['name'] as string | undefined,
-            email: decidedByUserRaw['email'] as string,
-          }
-        : null,
-      notesRu: (record['notesRu'] as string | null) ?? null,
-      createdAt: new Date(record['createdAt'] as string).toISOString(),
-    };
+    return approvals.map(mapRightsReviewApproval);
   }
 }

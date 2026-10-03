@@ -81,8 +81,8 @@ describe('LEGACY-016: мета пагинации описана одним кл
  * Сторож ищет значение, которое уходит в `totalPages`: поле объекта (с любым ключом),
  * переменную того же имени (её потом кладут сокращённой записью) или присваивание
  * `totalPages = …` / `x.totalPages = …`. Ручной подсчёт — деление или вызов `Math.*`
- * **вне** вызова `totalPagesOf`. Литерал (`totalPages: 0` на пустом раннем выходе)
- * подсчётом не считается.
+ * **вне** вызова `totalPagesOf`, а также числовой литерал (`totalPages: 0` на пустом раннем
+ * выходе): пустой ответ собирается `paginated([], …)` (`T91`, 03.10.2026).
  * ⚠️ Чего сторож не видит — поток данных синтаксисом не прослеживается: подсчёт в переменной
  * с другим именем (`const pages = Math.ceil(…); … totalPages: pages`), в обёртке-помощнике
  * с другим именем (`totalPages: pageCount(total, limit)`), в поле класса и геттере
@@ -98,7 +98,22 @@ const TOTAL_PAGES_EXCEPTIONS = [
 const isTotalPagesName = (name: ts.Node): boolean =>
   (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === 'totalPages';
 
+/** Литерал и под скобками, `as`, `satisfies` и унарным знаком: `(0)`, `0 as number`, `-1`. */
+const isNumberLiteral = (node: ts.Node): boolean => {
+  if (ts.isNumericLiteral(node)) return true;
+  if (ts.isPrefixUnaryExpression(node)) return isNumberLiteral(node.operand);
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  ) {
+    return isNumberLiteral(node.expression);
+  }
+  return false;
+};
+
 const countsByHand = (value: ts.Node): boolean => {
+  if (isNumberLiteral(value)) return true;
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -165,7 +180,7 @@ describe('LEGACY-016: totalPages считается одним правилом'
     expect(found.map((f) => f.replace(/:\d+$/, ''))).toEqual(TOTAL_PAGES_EXCEPTIONS);
   });
 
-  it('проба на отказ: все формы ручного подсчёта находятся, литерал и помощник — нет', () => {
+  it('проба на отказ: все формы ручного подсчёта и литерал находятся, помощник — нет', () => {
     const text = [
       'const a = { totalPages: Math.ceil(total / limit) };',
       'const b = { totalPages: total === 0 ? 0 : Math.ceil(total / limit) };',
@@ -175,6 +190,8 @@ describe('LEGACY-016: totalPages считается одним правилом'
       "meta['totalPages'] = total / limit;",
       'totalPages = Math.ceil(total / limit);',
       'const d = { totalPages: 0 };',
+      'const g = { totalPages: (0) as number };',
+      'const h = { totalPages: -1 };',
       'const e = { totalPages: totalPagesOf(total, limit) };',
       'const f = { totalPages: totalPagesOf(Math.max(total, 0), limit / 2) };',
     ].join('\n');
@@ -186,6 +203,9 @@ describe('LEGACY-016: totalPages считается одним правилом'
       'probe.ts:5',
       'probe.ts:6',
       'probe.ts:7',
+      'probe.ts:8',
+      'probe.ts:9',
+      'probe.ts:10',
     ]);
   });
 });

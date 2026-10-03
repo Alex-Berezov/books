@@ -22,7 +22,7 @@ import type {
   RightsProfileSummaryDto,
   RightsReviewDto,
 } from './dto/rights-profile-response.dto';
-import { RightsReviewApprovalDto } from './dto/rights-review-approval.dto';
+import { mapDecidedByUser, mapRightsReviewApproval } from './rights-review-approval.mapper';
 import { loadContributorEvents } from './rights-profile-contributor-event.mapper';
 
 const EXPIRING_SOON_DAYS = 90;
@@ -497,49 +497,18 @@ export class RightsProfileService {
       chainRootReviewId: (record['chainRootReviewId'] as string | null) ?? null,
       revisionNumber: (record['revisionNumber'] as number | null) ?? 1,
       approvedByUserId: (record['approvedByUserId'] as string | null) ?? null,
-      approvedByUser: approvedByUserRaw
-        ? {
-            id: approvedByUserRaw['id'] as string,
-            name: approvedByUserRaw['name'] as string | undefined,
-            email: approvedByUserRaw['email'] as string,
-          }
-        : null,
+      approvedByUser: mapDecidedByUser(approvedByUserRaw),
       approvedAt: record['approvedAt']
         ? new Date(record['approvedAt'] as string).toISOString()
         : null,
       approvalNotesRu: (record['approvalNotesRu'] as string | null) ?? null,
       rejectedByUserId: (record['rejectedByUserId'] as string | null) ?? null,
-      rejectedByUser: rejectedByUserRaw
-        ? {
-            id: rejectedByUserRaw['id'] as string,
-            name: rejectedByUserRaw['name'] as string | undefined,
-            email: rejectedByUserRaw['email'] as string,
-          }
-        : null,
+      rejectedByUser: mapDecidedByUser(rejectedByUserRaw),
       rejectedAt: record['rejectedAt']
         ? new Date(record['rejectedAt'] as string).toISOString()
         : null,
       rejectionReasonRu: (record['rejectionReasonRu'] as string | null) ?? null,
-      approvals: (approvalsRaw ?? []).map((a) => {
-        const decidedByUserRaw = a['decidedByUser'] as Record<string, unknown> | null;
-        const dto: RightsReviewApprovalDto = {
-          id: a['id'] as string,
-          rightsReviewId: a['rightsReviewId'] as string,
-          rightsProfileId: a['rightsProfileId'] as string,
-          rightsIntakeId: a['rightsIntakeId'] as string,
-          decision: a['decision'] as string,
-          decidedByUser: decidedByUserRaw
-            ? {
-                id: decidedByUserRaw['id'] as string,
-                name: decidedByUserRaw['name'] as string | undefined,
-                email: decidedByUserRaw['email'] as string,
-              }
-            : null,
-          notesRu: (a['notesRu'] as string | null) ?? null,
-          createdAt: new Date(a['createdAt'] as string).toISOString(),
-        };
-        return dto;
-      }),
+      approvals: (approvalsRaw ?? []).map(mapRightsReviewApproval),
       createdAt: new Date(record['createdAt'] as string).toISOString(),
       updatedAt: new Date(record['updatedAt'] as string).toISOString(),
     };

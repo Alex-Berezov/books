@@ -323,6 +323,59 @@ describe('RightsProfileService', () => {
       );
     });
 
+    // LEGACY-016 (T91): `User.name` nullable, а DTO объявляет `name?: string` — пользователь
+    // без имени уходит без ключа, а не `name: null`, во всех трёх местах `mapReview`.
+    it('omits name of a user without one in approvedBy, rejectedBy and approvals', async () => {
+      (prisma['rightsProfile'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+        makeProfile(),
+      );
+      (prisma['sourceEdition'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      const createdAt = new Date('2026-07-02T00:00:00.000Z');
+      const nameless = { id: 'user-2', name: null, email: 'nameless@example.com' };
+      (prisma['rightsReview'] as Record<string, jest.Mock>).findMany.mockResolvedValue([
+        {
+          id: 'review-1',
+          rightsProfileId: 'profile-1',
+          rightsReviewImportId: 'import-1',
+          createdAt,
+          updatedAt: createdAt,
+          approvedByUser: nameless,
+          rejectedByUser: nameless,
+          approvals: [
+            {
+              id: 'approval-1',
+              rightsReviewId: 'review-1',
+              rightsProfileId: 'profile-1',
+              rightsIntakeId: 'intake-1',
+              decision: 'APPROVED',
+              decidedByUser: nameless,
+              notesRu: null,
+              createdAt,
+            },
+          ],
+        },
+      ]);
+      (prisma['rightsComponent'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsEvidence'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+
+      const [review] = (await service.getById('profile-1')).reviews;
+
+      const users = [
+        review.approvedByUser,
+        review.rejectedByUser,
+        review.approvals[0].decidedByUser,
+      ];
+      for (const user of users) {
+        expect(user?.name).toBeUndefined();
+        expect(JSON.parse(JSON.stringify(user))).toEqual({
+          id: 'user-2',
+          email: 'nameless@example.com',
+        });
+      }
+    });
+
     // LEGACY-037: журнал связей участников пишется с 02.08.2026 и до этой правки не читался
     // нигде — отвязанного участника можно было восстановить только прямым доступом к базе.
     describe('LEGACY-037: журнал связей участников', () => {

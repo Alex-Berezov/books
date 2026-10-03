@@ -1,5 +1,6 @@
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { BookService } from './book.service';
+import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
@@ -34,7 +35,7 @@ interface PrismaStub {
     findUnique: jest.Mock;
     groupBy: jest.Mock;
   };
-  authorTranslation: { findMany: jest.Mock };
+  authorTranslation: { findMany: jest.Mock; findFirst: jest.Mock };
   $queryRaw: jest.Mock;
   // `remove()` (LEGACY-395) читает после `book.delete` внутри той же
   // транзакции, чтобы своя же (уже удалённая) книга не мешала проверке.
@@ -76,7 +77,10 @@ const createPrismaStub = (): PrismaStub => {
       findUnique: jest.fn(),
       groupBy: jest.fn().mockResolvedValue([]),
     },
-    authorTranslation: { findMany: jest.fn().mockResolvedValue([]) },
+    authorTranslation: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     $queryRaw: jest.fn().mockResolvedValue([]),
     $transaction: jest.fn(),
   };
@@ -1896,5 +1900,65 @@ describe('BookService: выдача тега (LEGACY-417, T74)', () => {
         tag: { include: { translations: { include: { seo: { select: { robots: true } } } } } },
       });
     });
+  });
+});
+
+// LEGACY-016 (T91): пустой ответ карточек, когда автор, категория или тег не найдены, собирает
+// `paginated()` — те же `page`/`limit` после приведения, `totalPages` 0 и ключ сущности `null`.
+describe('BookService: пустые карточки по ненайденному слагу (LEGACY-016, T91)', () => {
+  let prisma: PrismaStub;
+  let service: BookService;
+  // Страница 0 и limit сверх потолка: в ответ уходят приведённые 1 и BOOK_CARDS_MAX_LIMIT.
+  const empty = {
+    items: [],
+    pagination: { page: 1, limit: BOOK_CARDS_MAX_LIMIT, total: 0, totalPages: 0 },
+  };
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    service = new BookService(
+      prisma as unknown as PrismaService,
+      createGeoBlockRuleServiceStub(),
+      { resolve: jest.fn() } as unknown as RelatedTaxonomyService,
+      createSlugRedirectStub(),
+      createModeratorRolesStub(),
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
+      { record: jest.fn() } as unknown as AdminAuditService,
+    );
+    prisma.categoryTranslation.findUnique.mockResolvedValue(null);
+    prisma.category.findFirst.mockResolvedValue(null);
+    prisma.tagTranslation.findUnique.mockResolvedValue(null);
+    prisma.tag.findFirst.mockResolvedValue(null);
+  });
+
+  it('автор', async () => {
+    await expect(
+      service.findCardsByAuthor('nobody', Language.en, 0, BOOK_CARDS_MAX_LIMIT + 1),
+    ).resolves.toEqual(empty);
+    expect(prisma.bookVersion.findMany).not.toHaveBeenCalled();
+  });
+
+  it('категория', async () => {
+    await expect(
+      service.findCardsByCategory('nothing', Language.en, 0, BOOK_CARDS_MAX_LIMIT + 1),
+    ).resolves.toEqual({
+      category: null,
+      ...empty,
+    });
+    expect(prisma.bookVersion.findMany).not.toHaveBeenCalled();
+  });
+
+  it('тег', async () => {
+    await expect(
+      service.findCardsByTag('nothing', Language.en, 0, BOOK_CARDS_MAX_LIMIT + 1, true),
+    ).resolves.toEqual({
+      tag: null,
+      ...empty,
+    });
+    expect(prisma.bookVersion.findMany).not.toHaveBeenCalled();
   });
 });
