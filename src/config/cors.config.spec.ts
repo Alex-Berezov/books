@@ -110,11 +110,8 @@ describe('CORS: состав allowedHeaders', () => {
  * на предзапросе, и на сервере не останется ни строчки лога. Спека краснеет на само
  * появление такой строки и требует, чтобы список в ней совпал с кодом.
  *
- * ⚠️ `scripts/apply-api-subdomain.sh` сюда намеренно не читается. Тот скрипт устарел:
- * он переписывает `/etc/caddy/Caddyfile` целиком своим телом, где `bibliaris.com`
- * редиректит на `/docs` вместо `import /etc/caddy/frontend-upstream.caddy`
- * (`configs/Caddyfile.prod:47-59`), то есть его запуск уронит публичный сайт.
- * Сверять с ним список - значит звать оператора его запустить. Судьба скрипта - за владельцем.
+ * Скрипт `apply-api-subdomain.sh`, переписывавший `/etc/caddy/Caddyfile` целиком, удалён
+ * 03.10.2026 (`LEGACY-054`); живой конфиг `Access-Control-Allow-Headers` не задаёт.
  */
 describe('CORS: копия списка заголовков в конфиге Caddy', () => {
   const caddyPath = join(__dirname, '../../configs/Caddyfile.prod');

@@ -5,6 +5,10 @@
 # ещё значился «future» и `bibliaris.com` редиректил на `/docs`, тогда как на
 # сервере он уже год проксировался на Next.js. Сверять при каждой правке —
 # источник правды на сервере, а не здесь.
+#
+# Сверено с `caddy adapt` боевой машины 03.10.2026: совпадает; `X-Robots-Tag`
+# на api закомментирован, потому что в живом конфиге его нет. Правила 403 на `/api/metrics`, rate limiting
+# и `encode` на api на сервере тоже нет.
 
 # ============================================
 # API Backend
@@ -35,9 +39,11 @@ api.bibliaris.com {
 		# The API subdomain must never be indexed. Deliberately NOT "Disallow: /"
 		# in robots.txt — the frontend fetches this host from the browser and
 		# blocking crawling would stop Googlebot from rendering the site.
-		# NestJS also sets this (robots-header.middleware.ts); kept here as a
-		# second layer for responses that bypass the app.
-		X-Robots-Tag "noindex"
+		# NestJS sets this (robots-header.middleware.ts). The line below is the
+		# intended second layer for responses that bypass the app (502, Caddy
+		# errors), but it is NOT live: commented out so this file stays a copy of
+		# the server config. Enabling it is a server change (owner, topic 2).
+		# X-Robots-Tag "noindex"
 	}
 }
 
