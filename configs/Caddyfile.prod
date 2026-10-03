@@ -6,17 +6,32 @@
 # сервере он уже год проксировался на Next.js. Сверять при каждой правке —
 # источник правды на сервере, а не здесь.
 #
-# Сверено с `caddy adapt` боевой машины 03.10.2026: совпадает; `X-Robots-Tag`
-# на api закомментирован, потому что в живом конфиге его нет. Правила 403 на `/api/metrics`, rate limiting
-# и `encode` на api на сервере тоже нет.
+# Сверено с живым `/etc/caddy/Caddyfile` 03.10.2026: совпадает. `X-Robots-Tag noindex`
+# на api (кроме `/static/*`) включён на сервере 03.10.2026 (LEGACY-054, слово владельца).
+# Правил 403 на `/api/metrics`, rate limiting и `encode` на api на сервере нет.
 
 # ============================================
 # API Backend
 # ============================================
 api.bibliaris.com {
+	# The API subdomain must never be indexed. Deliberately NOT "Disallow: /"
+	# in robots.txt — the frontend fetches this host from the browser and
+	# blocking crawling would stop Googlebot from rendering the site.
+	# NestJS sets this (robots-header.middleware.ts); this is the second layer
+	# for responses that bypass the app (502, Caddy errors). `/static/*` is
+	# excluded exactly like in the middleware (its mismatch with ServeStatic's
+	# serveRoot '/' is the LEGACY-054 remainder; prod covers live on R2).
+	# Set immediately (not deferred with `>`): a deferred header never reaches
+	# Caddy's own 502 when the upstream is down. The app's copy is dropped by
+	# `header_down`, so a proxied response carries the header once.
+	@apinoindex not path /static/*
+	header @apinoindex X-Robots-Tag noindex
+
 	# Proxy to internal application port
 	handle {
-		reverse_proxy localhost:5000
+		reverse_proxy localhost:5000 {
+			header_down -X-Robots-Tag
+		}
 	}
 
 	# Basic security headers
@@ -35,15 +50,6 @@ api.bibliaris.com {
 
 		# CORS headers (NestJS also sets these, but provides an additional layer of protection)
 		Access-Control-Allow-Credentials "true"
-
-		# The API subdomain must never be indexed. Deliberately NOT "Disallow: /"
-		# in robots.txt — the frontend fetches this host from the browser and
-		# blocking crawling would stop Googlebot from rendering the site.
-		# NestJS sets this (robots-header.middleware.ts). The line below is the
-		# intended second layer for responses that bypass the app (502, Caddy
-		# errors), but it is NOT live: commented out so this file stays a copy of
-		# the server config. Enabling it is a server change (owner, topic 2).
-		# X-Robots-Tag "noindex"
 	}
 }
 
