@@ -17,15 +17,15 @@
 
 ---
 
-## CRITICAL: Backend Execution Environment
+## Backend Execution Environment
 
-**Production backend runs ONLY in Docker on a VPS.** Locally there is exactly one thing: a **throwaway PostgreSQL + Redis pair for e2e tests** (added 31.07.2026, WP-0.3). It is not a dev environment and not a copy of production data.
+**Production backend runs only in Docker on a VPS.** Locally there is exactly one thing: a **throwaway PostgreSQL + Redis pair for e2e tests**. It is not a dev environment and not a copy of production data.
 
 **What you CAN do:**
 
 - Read and modify schema, DTOs, services, controllers
 - Write migration SQL files in `prisma/migrations/` (how they are applied and reach production: `books/CLAUDE.md` §«Жёсткие запреты» п.2)
-- Run `yarn prisma:generate` after changing `schema.prisma`. Это **кодогенерация типов из файла схемы**, к базе она не обращается вовсе — в отличие от `migrate`/`seed`/`studio`, вместе с которыми запрет стоял до 08.08.2026. Без неё после правки схемы падают typecheck и lint (`prisma.<новаяМодель>` — «error typed value»), и работа встаёт на ровном месте
+- Run `yarn prisma:generate` after changing `schema.prisma`. Это **кодогенерация типов из файла схемы**, к базе она не обращается. Без неё после правки схемы падают typecheck и lint (`prisma.<новаяМодель>` — «error typed value»)
 - Run e2e against the local test DB: `yarn test:e2e` (see below)
 - Start/stop the local test services: `docker compose up -d postgres redis`, `docker compose ps`, `docker compose stop postgres redis`
 
@@ -33,8 +33,7 @@
 production. The exact list — what is denied outright, where the line between the local database
 and production is drawn, and what a destructive migration means for the release tag — is a rule,
 not an environment fact, and lives in `books/CLAUDE.md` §«Жёсткие запреты» п.2. Do not restate
-it here: the copy that used to stand in this spot is how the two files drifted apart
-(`LEGACY-168`).
+it here: two copies of one rule drift apart.
 
 ### Local e2e
 
@@ -51,7 +50,7 @@ yarn test:e2e                          # all test/**/*.e2e-spec.ts (sentry self-
 Two consequences worth using:
 
 - **A hand-written migration is now testable before the VPS.** A full e2e run replays all migrations onto an empty database, so a broken one fails locally. `yarn drift-check` compares names (tables, columns, enums) and indexes (LEGACY-367), not column types, nullability, defaults, CHECK or FK targets — the e2e run is what catches those.
-- **A failing trace test can be shown to fail.** The landing rule (`books-app-docs/ai-context/tech-debt-autopilot.md`, «Посадка на каждую правку») requires a test that goes red when the defect comes back; without a database that was impossible for anything touching rights. The old address for that protocol — books-app-docs/tasks/fixes/PLAN.md, written here without backticks because it no longer resolves — has not existed for a long time: `tasks/` holds `authors-hub.md` and `relaxation/`, and the fixes stage was archived as `books-app-docs/history/rights-clearance-fixes.md` (`LEGACY-169`).
+- **A failing trace test can be shown to fail.** The landing rule (`books-app-docs/ai-context/tech-debt-autopilot.md`, «Посадка на каждую правку») requires a test that goes red when the defect comes back; the local database makes that possible for code touching rights.
 
 ⚠️ **`.env.test` must point at localhost.** The harness runs `CREATE DATABASE` / `DROP DATABASE` against whatever `DATABASE_URL` it finds there. Never edit that file to point anywhere else, and never run e2e if you cannot confirm it is local.
 
@@ -86,9 +85,7 @@ addresses; the legal semantics of book rights) live one level up, in `D:/newDev/
 §«Что остаётся за владельцем» — they are the same for all three repositories, so no repository
 keeps its own copy.
 
-The copy that stood here until 07.09.2026 had drifted (`LEGACY-168`): it prescribed running
-`yarn lint`, `yarn typecheck` and `yarn test` by hand and then **saying** the phrases «всё
-соответствует кодстайлу» and «документация не требует обновления». Both are ritual in place of
-output. What actually decides is the real output of `node D:/newDev/.claude/hooks/gates.js`,
+Phrases like «всё соответствует кодстайлу» or «документация не требует обновления» are not a
+check. What decides whether checks passed is the real output of `node D:/newDev/.claude/hooks/gates.js`,
 checked against the diff by `D:/newDev/.claude/hooks/report-honesty.js`, which does not let a
 claim of green checks through without a recorded run.
