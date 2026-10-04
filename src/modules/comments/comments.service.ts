@@ -408,6 +408,12 @@ export class CommentsService {
       >`SELECT "isDeleted", "ratingId" FROM "Comment" WHERE id = ${id} FOR UPDATE`;
       if (!row || row.isDeleted) return;
       await tx.comment.update({ where: { id }, data: { isDeleted: true } });
+      // `T101`: ответы запираются по `id`, как их запирает `UsersService.deleteById` у своего
+      // автора; `updateMany` берёт строки в физическом порядке, и два ответа одного автора
+      // под этим корнем давали встречный порядок — `40P01` (проба `legacy-433-writers-probe`).
+      await tx.$queryRaw`SELECT count(*)::int AS n FROM (
+        SELECT id FROM "Comment" WHERE "parentId" = ${id} ORDER BY id FOR UPDATE
+      ) locked`;
       await tx.comment.updateMany({ where: { parentId: id }, data: { isDeleted: true } });
       if (row.ratingId) {
         await tx.bookRating.delete({ where: { id: row.ratingId } });

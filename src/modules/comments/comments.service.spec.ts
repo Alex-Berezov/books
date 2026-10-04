@@ -691,10 +691,15 @@ describe('CommentsService', () => {
 
         const calls = prisma.$queryRaw.mock.calls;
         const sql = calls.map(sqlOf);
-        expect(calls.map((call: unknown[]) => call[1])).toEqual(['b1', 'v1', 'c1']);
+        expect(calls.map((call: unknown[]) => call[1])).toEqual(['b1', 'v1', 'c1', 'c1']);
         expect(sql[0]).toContain('FROM "Book" WHERE id = ? FOR KEY SHARE');
         expect(sql[1]).toContain('FROM "BookVersion" WHERE id = ? FOR KEY SHARE');
         expect(sql[2]).toContain('FROM "Comment" WHERE id = ? FOR UPDATE');
+        // `T101`: ответы запираются по `id` до `updateMany` — порядок `UsersService.deleteById`.
+        expect(sql[3]).toContain('FROM "Comment" WHERE "parentId" = ? ORDER BY id FOR UPDATE');
+        expect(prisma.$queryRaw.mock.invocationCallOrder[3]).toBeLessThan(
+          prisma.comment.updateMany.mock.invocationCallOrder[0],
+        );
         // `ratingId` перечитан под замком: каскад обнулил его — оценку не трогаем (у стаба нет
         // `bookRating`, вызов по снимку до замка упал бы здесь же).
         expect(prisma.comment.update).toHaveBeenCalledTimes(1);
@@ -743,7 +748,7 @@ describe('CommentsService', () => {
         await service.remove('c1', { userId: 'u1', email: 'x' });
 
         const calls = prisma.$queryRaw.mock.calls;
-        expect(calls.map((call: unknown[]) => call[1])).toEqual(['ch1', 'c1']);
+        expect(calls.map((call: unknown[]) => call[1])).toEqual(['ch1', 'c1', 'c1']);
         expect(sqlOf(calls[0] as unknown[])).toContain('FROM "Chapter" WHERE id = ? FOR KEY SHARE');
       });
 

@@ -244,8 +244,16 @@ describe('UsersService (unit)', () => {
 
   it('deleteById: performs cascading cleanup and returns public user', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
-    // comments authored by user
-    prismaMock.comment.findMany.mockResolvedValueOnce([{ id: 'c1' }, { id: 'c2' }]);
+    // замок пользователя, цели его контента, затем комментарии автора под замком (`T101`)
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([{ id: 'u1' }])
+      .mockResolvedValueOnce([])
+      // своих два и чужой прямой ответ: он заперт той же выборкой, но не удаляется (`T101`)
+      .mockResolvedValueOnce([
+        { id: 'c1', userId: 'u1' },
+        { id: 'c2', userId: 'u1' },
+        { id: 'r9', userId: 'u9' },
+      ]);
     prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.comment.updateMany.mockResolvedValue({ count: 0 });
     prismaMock.comment.deleteMany.mockResolvedValue({ count: 2 });
@@ -260,8 +268,14 @@ describe('UsersService (unit)', () => {
     const res = await service.deleteById('u1', 'admin-1');
     expect(prismaMock.$transaction).toHaveBeenCalled();
     expect(prismaMock.like.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+    expect(prismaMock.comment.deleteMany).toHaveBeenCalledTimes(1);
     expect(prismaMock.comment.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['c1', 'c2'] } },
+    });
+    expect(prismaMock.comment.updateMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.comment.updateMany).toHaveBeenCalledWith({
+      where: { parentId: { in: ['c1', 'c2'] } },
+      data: { parentId: null },
     });
     expect(res.email).toBe(baseUser.email);
   });
@@ -274,7 +288,6 @@ describe('UsersService (unit)', () => {
    */
   it('удаление пользователя пишет ROLE_REVOKED на каждую снятую роль и USER_DELETED (LEGACY-015)', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
-    prismaMock.comment.findMany.mockResolvedValueOnce([]);
     prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
@@ -353,7 +366,6 @@ describe('UsersService (unit)', () => {
 
   it('удаление пользователя без ролей событий об отзыве не пишет (LEGACY-015)', async () => {
     prismaMock.user.findUnique.mockResolvedValueOnce(baseUser);
-    prismaMock.comment.findMany.mockResolvedValueOnce([]);
     prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
@@ -681,7 +693,6 @@ describe('UsersService (unit)', () => {
       prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
       prismaMock.userRole.createMany.mockResolvedValue({ count: 1 });
       prismaMock.userRole.delete.mockResolvedValue({});
-      prismaMock.comment.findMany.mockResolvedValue([]);
       prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
       prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
       prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
@@ -720,8 +731,8 @@ describe('UsersService (unit)', () => {
         name: 'deleteById',
         strength: 'FOR UPDATE',
         call: () => service.deleteById('u1', 'admin-1'),
-        after: () => [prismaMock.comment.findMany, prismaMock.userRole.findMany],
-        targetLocks: 1,
+        after: () => [prismaMock.like.deleteMany, prismaMock.userRole.findMany],
+        targetLocks: 2,
         writes: () => [
           prismaMock.like.deleteMany,
           prismaMock.userRole.deleteMany,
@@ -758,7 +769,7 @@ describe('UsersService (unit)', () => {
       expect(Math.min(...insideTx)).toBeGreaterThan(lockAt);
     });
 
-    it('deleteById: цели читаются один раз, затем книги и версии FOR KEY SHARE по id — до первой записи (LEGACY-433, T97)', async () => {
+    it('deleteById: цели читаются один раз, затем книги и версии FOR KEY SHARE по id, версии сверки FOR NO KEY UPDATE, комментарии автора FOR UPDATE — до первой записи (LEGACY-433, T97, T101)', async () => {
       txQueryRaw
         .mockResolvedValueOnce([{ id: 'u1' }])
         .mockResolvedValueOnce([
@@ -766,12 +777,21 @@ describe('UsersService (unit)', () => {
           { kind: 'book', id: 'b1' },
           { kind: 'version', id: 'v1' },
           { kind: 'book', id: 'b9' },
+          { kind: 'chapter', id: 'ch2' },
+          { kind: 'audio', id: 'au1' },
+          { kind: 'chapter', id: 'ch1' },
         ])
-        .mockResolvedValue([{ n: 2 }]);
+        .mockResolvedValueOnce([{ n: 2 }])
+        .mockResolvedValueOnce([{ n: 2 }])
+        .mockResolvedValueOnce([{ n: 0 }])
+        .mockResolvedValueOnce([{ n: 2 }])
+        .mockResolvedValueOnce([{ n: 1 }])
+        .mockResolvedValue([{ id: 'c1', userId: 'u1' }]);
 
       await service.deleteById('u1', 'admin-1');
 
-      expect(txQueryRaw).toHaveBeenCalledTimes(4);
+      expect(txQueryRaw).toHaveBeenCalledTimes(8);
+      expect(prismaMock.comment.findMany).not.toHaveBeenCalled();
       const sqlAt = (i: number) => (txQueryRaw.mock.calls[i][0] as Prisma.Sql).sql;
       const valuesAt = (i: number) => (txQueryRaw.mock.calls[i][0] as Prisma.Sql).values;
       for (const source of [
@@ -783,11 +803,13 @@ describe('UsersService (unit)', () => {
         '"ReadingProgress"',
         '"ViewStat"',
         '"BookRating"',
+        '"rightsGeoBlockVerifiedByUserId"',
       ]) {
         expect(sqlAt(1)).toContain(source);
       }
       expect(sqlAt(1)).not.toMatch(/FOR (KEY SHARE|UPDATE|SHARE)/);
       expect(new Set(valuesAt(1))).toEqual(new Set(['u1']));
+      expect(sqlAt(1)).toContain('FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = ?');
       // Один параметр-массив, а не список `IN`: предел числа параметров запроса не касается.
       expect(sqlAt(2)).toContain(
         'SELECT id FROM "Book" WHERE id = ANY(?::text[]) ORDER BY id FOR KEY SHARE',
@@ -797,7 +819,31 @@ describe('UsersService (unit)', () => {
         'SELECT id FROM "BookVersion" WHERE id = ANY(?::text[]) ORDER BY id FOR KEY SHARE',
       );
       expect(valuesAt(3)).toEqual([['v2', 'v1']]);
-      const lastLockAt = txQueryRaw.mock.invocationCallOrder[3];
+      // Версии, где удаляемый — сверяющий гео-блокировки: `SetNull` при удалении строки
+      // пользователя пишет их, и замок записи берётся до лайков, а не в самом конце.
+      expect(sqlAt(4)).toMatch(
+        /FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = \?\s+ORDER BY id FOR NO KEY UPDATE/,
+      );
+      expect(valuesAt(4)).toEqual(['u1']);
+      // Главы и аудиоглавы комментариев — `KEY SHARE` после версий: удаление главы держит её
+      // строку, и удаление пользователя встаёт за ним раньше первого комментария.
+      expect(sqlAt(1)).toMatch(/'chapter', "chapterId" FROM "Comment" WHERE "userId" = \?/);
+      expect(sqlAt(1)).toMatch(/'audio', "audioChapterId" FROM "Comment" WHERE "userId" = \?/);
+      expect(sqlAt(5)).toContain(
+        'SELECT id FROM "Chapter" WHERE id = ANY(?::text[]) ORDER BY id FOR KEY SHARE',
+      );
+      expect(valuesAt(5)).toEqual([['ch2', 'ch1']]);
+      expect(sqlAt(6)).toContain(
+        'SELECT id FROM "AudioChapter" WHERE id = ANY(?::text[]) ORDER BY id FOR KEY SHARE',
+      );
+      expect(valuesAt(6)).toEqual([['au1']]);
+      // Свои комментарии и чужие прямые ответы на них — одной выборкой, корни раньше ответов,
+      // под замком до лайков: порядок `CommentsService.remove` и каскада главы.
+      expect(sqlAt(7)).toMatch(
+        /WHERE "userId" = \?\s+OR "parentId" IN \(SELECT id FROM "Comment" WHERE "userId" = \?\)\s+ORDER BY \("parentId" IS NOT NULL\), id FOR UPDATE/,
+      );
+      expect(valuesAt(7)).toEqual(['u1', 'u1']);
+      const lastLockAt = txQueryRaw.mock.invocationCallOrder[7];
       for (const write of [
         prismaMock.like.deleteMany,
         prismaMock.bookshelf.deleteMany,
@@ -809,11 +855,15 @@ describe('UsersService (unit)', () => {
     });
 
     it('deleteById: контента нет — замков книг и версий нет (пустой IN не собирается)', async () => {
-      txQueryRaw.mockResolvedValueOnce([{ id: 'u1' }]).mockResolvedValueOnce([]);
+      txQueryRaw
+        .mockResolvedValueOnce([{ id: 'u1' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       await service.deleteById('u1', 'admin-1');
 
-      expect(txQueryRaw).toHaveBeenCalledTimes(2);
+      // Замок пользователя, чтение целей и замок комментариев автора; книг и версий нет.
+      expect(txQueryRaw).toHaveBeenCalledTimes(3);
     });
 
     it.each(writers)('$name: строки под замком нет — 404 без записей и журнала', async (w) => {
@@ -942,7 +992,6 @@ describe('UsersService (unit)', () => {
     // и именно на ней дефолт Prisma отказывает первым.
     prismaMock.$transaction.mockClear();
     prismaMock.user.findUnique.mockResolvedValue(baseUser);
-    prismaMock.comment.findMany.mockResolvedValue([]);
     prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
@@ -1174,7 +1223,6 @@ describe('UsersService (unit)', () => {
 
     it('deleteById', async () => {
       seed('u1');
-      prismaMock.comment.findMany.mockResolvedValueOnce([]);
       prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
       prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
       prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });

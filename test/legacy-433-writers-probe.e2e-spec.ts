@@ -475,4 +475,350 @@ describe('LEGACY-433/434 — писатели вне замка группы п�
       expect(await prisma.user.count({ where: { id: author } })).toBe(0);
     });
   });
+  /**
+   * `T101`. Остаток `LEGACY-433` про `UsersService.deleteById`: встречный порядок строк `Comment`
+   * со снятием комментария, каскад главы «глава → комментарии → лайки» и обнуление
+   * `BookVersion.rightsGeoBlockVerifiedByUserId` при удалении пользователя. Держатель берёт строки
+   * в порядке соперника, ждёт, пока писатель встанет за ним, и делает следующий шаг соперника;
+   * цикл — `40P01` у одной из сторон.
+   * Проба на отказ 04.10.2026, по частям правки: без замка ответов по `id` в
+   * `CommentsService.remove` краснеет «снятие корня с двумя ответами», без `ORDER BY` в замке
+   * комментариев `deleteById` — «удаление аккаунта автора двух ответов», без раннего
+   * `FOR NO KEY UPDATE` версий сверки — оба кейса «сверяющего версию» против главы, без
+   * `KEY SHARE` на главы — оба кейса «двух комментариев к ней», без чужих прямых ответов в замке
+   * комментариев — «два аккаунта, ответившие друг другу». Без правки целиком красные первые восемь.
+   */
+  describe('удаление аккаунта против встречных писателей (LEGACY-433, T101)', () => {
+    type Tx = Prisma.TransactionClient;
+
+    /**
+     * Писатель дожидается всегда, даже если транзакция держателя упала: иначе он доживал бы
+     * на своём соединении до чистки, а проверка смотрела бы на заглушку.
+     */
+    const race = async (
+      lockFirst: (tx: Tx) => Promise<unknown>,
+      writer: () => Promise<unknown>,
+      holderStep: (tx: Tx) => Promise<unknown>,
+    ) => {
+      let op: Promise<PromiseSettledResult<unknown>> | undefined;
+      const holder = await settle(
+        withHolder(lockFirst, async (holderPid, tx) => {
+          op = settle(writer());
+          const blocked = await waitBlockedBy(prisma, holderPid);
+          return { blocked, step: text(await settle(holderStep(tx))) };
+        }),
+      );
+      return { holder, writer: op ? text(await op) : 'писатель не стартовал' };
+    };
+
+    const expectNoCycle = (r: Awaited<ReturnType<typeof race>>) => {
+      expect(text(r.holder)).toBe('');
+      const held = (r.holder as PromiseFulfilledResult<{ blocked: boolean; step: string }>).value;
+      expect(held.blocked).toBe(true);
+      expect(held.step).toBe('');
+      expect(r.writer).toBe('');
+    };
+
+    const forget = (userId: string) => {
+      const at = userIds.indexOf(userId);
+      if (at >= 0) userIds.splice(at, 1);
+    };
+
+    const lockComment = (tx: Tx, id: string) =>
+      tx.$queryRaw`SELECT id FROM "Comment" WHERE id = ${id} FOR UPDATE`;
+
+    it('снятие комментария с ответами против удаления аккаунта его автора — цикла нет', async () => {
+      const f = await makeBook();
+      const author = await makeUser('t101-root');
+      const replier = await makeUser('t101-reply');
+      const root = await prisma.comment.create({
+        data: { userId: author, bookVersionId: f.low, text: 'root' },
+      });
+      const reply = await prisma.comment.create({
+        data: { userId: replier, bookVersionId: f.low, text: 'reply', parentId: root.id },
+      });
+
+      // Держатель — `CommentsService.remove`: сначала строка корня, потом его ответы.
+      const r = await race(
+        (tx) => lockComment(tx, root.id),
+        () => users.deleteById(author, null),
+        (tx) => tx.comment.updateMany({ where: { parentId: root.id }, data: { isDeleted: true } }),
+      );
+
+      expectNoCycle(r);
+      forget(author);
+      expect(await prisma.comment.count({ where: { id: root.id } })).toBe(0);
+      const left = await prisma.comment.findUnique({ where: { id: reply.id } });
+      expect(left).toMatchObject({ parentId: null, isDeleted: true });
+    });
+
+    /**
+     * Два ответа одного автора под чужим корнем, `id` против порядка вставки: `updateMany` в
+     * `CommentsService.remove` берёт строки в физическом порядке (по вставке), а `deleteById` —
+     * по `id`. Обе стороны запирают ответы по `id` — кейсы держат каждую по отдельности.
+     */
+    const makeInvertedReplies = async () => {
+      const f = await makeBook();
+      const owner = await makeUser('t101-owner');
+      const leaver = await makeUser('t101-leaver');
+      const root = await prisma.comment.create({
+        data: { userId: owner, bookVersionId: f.low, text: 'root' },
+      });
+      const n = userIds.length;
+      // Старший `id` вставлен первым — физический порядок обратен порядку `id`.
+      const high = await prisma.comment.create({
+        data: {
+          id: `t101-z-${stamp}-${n}`,
+          userId: leaver,
+          bookVersionId: f.low,
+          text: 'r-high',
+          parentId: root.id,
+        },
+      });
+      const low = await prisma.comment.create({
+        data: {
+          id: `t101-a-${stamp}-${n}`,
+          userId: leaver,
+          bookVersionId: f.low,
+          text: 'r-low',
+          parentId: root.id,
+        },
+      });
+      return { owner, leaver, root, high, low };
+    };
+
+    it('снятие корня с двумя ответами одного автора: ответы по id, как у удаления аккаунта — цикла нет', async () => {
+      const { owner, root, high, low } = await makeInvertedReplies();
+
+      // Держатель — `deleteById` автора ответов: младший `id`, потом старший.
+      const r = await race(
+        (tx) => lockComment(tx, low.id),
+        () => comments.remove(root.id, { userId: owner, email: 'x@ex.com' }),
+        (tx) => lockComment(tx, high.id),
+      );
+
+      expectNoCycle(r);
+      expect(await prisma.comment.count({ where: { parentId: root.id, isDeleted: true } })).toBe(2);
+    });
+
+    it('удаление аккаунта автора двух ответов: ответы по id, как у снятия корня — цикла нет', async () => {
+      const { leaver, root, high, low } = await makeInvertedReplies();
+
+      // Держатель — `CommentsService.remove` корня: корень, потом ответы по `id`.
+      const r = await race(
+        async (tx) => {
+          await lockComment(tx, root.id);
+          await lockComment(tx, low.id);
+        },
+        () => users.deleteById(leaver, null),
+        (tx) => lockComment(tx, high.id),
+      );
+
+      expectNoCycle(r);
+      forget(leaver);
+      expect(await prisma.comment.count({ where: { id: { in: [low.id, high.id] } } })).toBe(0);
+    });
+
+    /**
+     * Глава или аудиоглава на младшей версии и комментарий `userId` к ней (`id` — свой, если задан);
+     * `ref` — привязка к цели для следующих комментариев.
+     */
+    const makeChapterComment = async (
+      kind: string,
+      f: { low: string },
+      userId: string,
+      id?: string,
+    ) => {
+      if (kind === 'глава') {
+        const chapter = await prisma.chapter.create({
+          data: { bookVersionId: f.low, number: 1, title: 't', content: 'c' },
+        });
+        const ref = { chapterId: chapter.id };
+        const comment = await prisma.comment.create({ data: { id, userId, ...ref, text: 'c' } });
+        return {
+          comment,
+          ref,
+          lock: (tx: Tx) =>
+            tx.$queryRaw`SELECT id FROM "Chapter" WHERE id = ${chapter.id} FOR UPDATE`,
+          remove: (tx: Tx) => tx.chapter.delete({ where: { id: chapter.id } }),
+        };
+      }
+      const audio = await prisma.audioChapter.create({
+        data: {
+          bookVersionId: f.low,
+          number: 1,
+          title: 't',
+          audioUrl: 'https://example.com/a.mp3',
+          duration: 1,
+        },
+      });
+      const ref = { audioChapterId: audio.id };
+      const comment = await prisma.comment.create({ data: { id, userId, ...ref, text: 'c' } });
+      return {
+        comment,
+        ref,
+        lock: (tx: Tx) =>
+          tx.$queryRaw`SELECT id FROM "AudioChapter" WHERE id = ${audio.id} FOR UPDATE`,
+        remove: (tx: Tx) => tx.audioChapter.delete({ where: { id: audio.id } }),
+      };
+    };
+
+    // Держатель — удаление главы под `runInLockedClearance`: версия `FOR NO KEY UPDATE`, строка
+    // главы, её комментарий; дальше каскад сносит главу, комментарии и их лайки.
+    const holdChapter =
+      (versionId: string, target: { lock: (tx: Tx) => Promise<unknown> }, commentId: string) =>
+      async (tx: Tx) => {
+        await tx.$queryRaw`SELECT id FROM "BookVersion" WHERE id = ${versionId} FOR NO KEY UPDATE`;
+        await target.lock(tx);
+        await lockComment(tx, commentId);
+      };
+
+    it.each([['глава'], ['аудиоглава']])(
+      '%s: удаление против удаления аккаунта автора комментария с чужим лайком — цикла нет',
+      async (kind) => {
+        const f = await makeBook();
+        const author = await makeUser('t101-ch-author');
+        const liker = await makeUser('t101-ch-liker');
+        const target = await makeChapterComment(kind, f, author);
+        await prisma.like.create({ data: { userId: liker, commentId: target.comment.id } });
+
+        const r = await race(
+          holdChapter(f.low, target, target.comment.id),
+          () => users.deleteById(author, null),
+          (tx) => target.remove(tx),
+        );
+
+        expectNoCycle(r);
+        forget(author);
+      },
+    );
+
+    it.each([['глава'], ['аудиоглава']])(
+      '%s: удаление против удаления аккаунта автора двух комментариев к ней, id против порядка вставки — цикла нет',
+      async (kind) => {
+        // Каскад главы сносит комментарии в физическом порядке (по вставке), удаление аккаунта
+        // запирает их по `id`; встаёт же оно раньше — за строкой главы.
+        const f = await makeBook();
+        const author = await makeUser('t101-ch-two');
+        const n = userIds.length;
+        const target = await makeChapterComment(kind, f, author, `t101-z-${stamp}-${n}`);
+        await prisma.comment.create({
+          data: { id: `t101-a-${stamp}-${n}`, userId: author, ...target.ref, text: 'c2' },
+        });
+
+        const r = await race(
+          holdChapter(f.low, target, target.comment.id),
+          () => users.deleteById(author, null),
+          (tx) => target.remove(tx),
+        );
+
+        expectNoCycle(r);
+        forget(author);
+      },
+    );
+
+    it('два аккаунта, ответившие друг другу, удаляются встречно — цикла нет', async () => {
+      // У A корень a и ответ на корень B, у B — наоборот; ответ B на a младше по `id`.
+      const f = await makeBook();
+      const leaverA = await makeUser('t101-cross-a');
+      const leaverB = await makeUser('t101-cross-b');
+      const n = userIds.length;
+      const rootA = await prisma.comment.create({
+        data: { userId: leaverA, bookVersionId: f.low, text: 'root-a' },
+      });
+      const rootB = await prisma.comment.create({
+        data: { userId: leaverB, bookVersionId: f.low, text: 'root-b' },
+      });
+      const replyAtoB = await prisma.comment.create({
+        data: {
+          id: `t101-y-${stamp}-${n}`,
+          userId: leaverA,
+          bookVersionId: f.low,
+          text: 'a->b',
+          parentId: rootB.id,
+        },
+      });
+      const replyBtoA = await prisma.comment.create({
+        data: {
+          id: `t101-b-${stamp}-${n}`,
+          userId: leaverB,
+          bookVersionId: f.low,
+          text: 'b->a',
+          parentId: rootA.id,
+        },
+      });
+
+      // Держатель — `deleteById(B)` в общем порядке: корень B, потом ответы по `id` (младший —
+      // ответ B на a), затем отвязка чужого ответа A на корень B.
+      const r = await race(
+        async (tx) => {
+          await lockComment(tx, rootB.id);
+          await lockComment(tx, replyBtoA.id);
+        },
+        () => users.deleteById(leaverA, null),
+        (tx) => lockComment(tx, replyAtoB.id),
+      );
+
+      expectNoCycle(r);
+      forget(leaverA);
+      expect(await prisma.comment.count({ where: { id: { in: [rootA.id, replyAtoB.id] } } })).toBe(
+        0,
+      );
+      expect(await prisma.comment.findUnique({ where: { id: replyBtoA.id } })).toMatchObject({
+        parentId: null,
+      });
+    });
+
+    it.each([['глава'], ['аудиоглава']])(
+      '%s: удаление против удаления аккаунта сверяющего версию с лайком на чужой комментарий — цикла нет',
+      async (kind) => {
+        const f = await makeBook();
+        const author = await makeUser('t101-geo-ch-author');
+        const verifier = await makeUser('t101-geo-ch-verifier');
+        await prisma.bookVersion.update({
+          where: { id: f.low },
+          data: { rightsGeoBlockVerifiedByUserId: verifier },
+        });
+        const target = await makeChapterComment(kind, f, author);
+        await prisma.like.create({ data: { userId: verifier, commentId: target.comment.id } });
+
+        const r = await race(
+          holdChapter(f.low, target, target.comment.id),
+          () => users.deleteById(verifier, null),
+          (tx) => target.remove(tx),
+        );
+
+        expectNoCycle(r);
+        forget(verifier);
+        const version = await prisma.bookVersion.findUnique({ where: { id: f.low } });
+        expect(version?.rightsGeoBlockVerifiedByUserId).toBeNull();
+      },
+    );
+
+    it('аккаунт сверяющего версию с лайком на чужой комментарий против удаления книги — цикла нет', async () => {
+      const f = await makeBook();
+      const author = await makeUser('t101-geo-author');
+      const verifier = await makeUser('t101-geo-verifier');
+      await prisma.bookVersion.update({
+        where: { id: f.high },
+        data: { rightsGeoBlockVerifiedByUserId: verifier },
+      });
+      const comment = await prisma.comment.create({
+        data: { userId: author, bookVersionId: f.low, text: 'liked' },
+      });
+      await prisma.like.create({ data: { userId: verifier, commentId: comment.id } });
+
+      const r = await race(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Book" WHERE id = ${f.bookId} FOR UPDATE`;
+          await tx.$queryRaw`SELECT id FROM "BookVersion" WHERE "bookId" = ${f.bookId} ORDER BY id FOR UPDATE`;
+        },
+        () => users.deleteById(verifier, null),
+        (tx) => tx.book.delete({ where: { id: f.bookId } }),
+      );
+
+      expectNoCycle(r);
+      forget(verifier);
+    });
+  });
 });

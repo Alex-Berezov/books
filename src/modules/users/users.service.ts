@@ -109,11 +109,23 @@ async function lockUserRow(
  * запроса их не касается. Сами замки строк в память не отдают — наружу идёт только счёт.
  * Лайки на чужие комментарии в цели не входят: каскад книги ждёт такую строку `Like`, а удалению
  * пользователя от каскада ждать нечего — цикла нет.
- * Не покрыто: удаление главы и аудиоглавы (`runInLockedClearance` держит версию
- * `FOR NO KEY UPDATE`, с `FOR KEY SHARE` совместимо) — остаток `LEGACY-433`.
+ *
+ * 🔴 `T101`. Версии, где пользователь — `rightsGeoBlockVerifiedByUserId`, входят в цели и сверх
+ * `KEY SHARE` берутся `FOR NO KEY UPDATE` по возрастанию `id`: `tx.user.delete` обнуляет это поле
+ * (`SetNull`) и иначе брал бы тот же замок в самом конце, уже держа лайки, которые нужны каскаду
+ * удаления книги или главы (держит версию `FOR UPDATE` или `FOR NO KEY UPDATE`), — `deadlock
+ * detected` (проба `legacy-433-writers-probe`). Остальные версии остаются `KEY SHARE`: `NO KEY UPDATE`
+ * на все версии встал бы в очередь за писателями под `runInLockedClearance`, которые после версии
+ * ставят ссылку на того же пользователя (`createdByUserId` и соседние), — встречный порядок
+ * «пользователь → версия» против «версия → пользователь». Последними — главы и аудиоглавы его
+ * комментариев, `FOR KEY SHARE` по возрастанию `id`, как `CommentsService.lockTargets`: удаление
+ * главы держит её строку и сносит комментарии каскадом в физическом порядке, а не по `id`, —
+ * удаление пользователя встаёт за ним раньше, чем возьмёт первый комментарий.
  */
 async function lockUserContentTargets(tx: Prisma.TransactionClient, userId: string): Promise<void> {
-  const targets = await tx.$queryRaw<Array<{ kind: 'book' | 'version'; id: string }>>(Prisma.sql`
+  const targets = await tx.$queryRaw<
+    Array<{ kind: 'book' | 'version' | 'chapter' | 'audio'; id: string }>
+  >(Prisma.sql`
     WITH v AS (
       SELECT "bookVersionId" AS id FROM "Like" WHERE "userId" = ${userId} AND "bookVersionId" IS NOT NULL
       UNION SELECT COALESCE(c."bookVersionId", ch."bookVersionId", ac."bookVersionId")
@@ -124,10 +136,13 @@ async function lockUserContentTargets(tx: Prisma.TransactionClient, userId: stri
       UNION SELECT "bookVersionId" FROM "Bookshelf" WHERE "userId" = ${userId}
       UNION SELECT "bookVersionId" FROM "ReadingProgress" WHERE "userId" = ${userId}
       UNION SELECT "bookVersionId" FROM "ViewStat" WHERE "userId" = ${userId}
+      UNION SELECT id FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = ${userId}
     )
     SELECT 'version' AS kind, id FROM v WHERE id IS NOT NULL
     UNION SELECT 'book', bv."bookId" FROM "BookVersion" bv WHERE bv.id IN (SELECT id FROM v)
-    UNION SELECT 'book', "bookId" FROM "BookRating" WHERE "userId" = ${userId}`);
+    UNION SELECT 'book', "bookId" FROM "BookRating" WHERE "userId" = ${userId}
+    UNION SELECT 'chapter', "chapterId" FROM "Comment" WHERE "userId" = ${userId} AND "chapterId" IS NOT NULL
+    UNION SELECT 'audio', "audioChapterId" FROM "Comment" WHERE "userId" = ${userId} AND "audioChapterId" IS NOT NULL`);
   const bookIds = targets.filter((t) => t.kind === 'book').map((t) => t.id);
   const versionIds = targets.filter((t) => t.kind === 'version').map((t) => t.id);
   if (bookIds.length > 0) {
@@ -140,6 +155,25 @@ async function lockUserContentTargets(tx: Prisma.TransactionClient, userId: stri
     await tx.$queryRaw(Prisma.sql`
       SELECT count(*)::int AS n FROM (
         SELECT id FROM "BookVersion" WHERE id = ANY(${versionIds}::text[]) ORDER BY id FOR KEY SHARE
+      ) locked`);
+    await tx.$queryRaw(Prisma.sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT id FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = ${userId}
+        ORDER BY id FOR NO KEY UPDATE
+      ) locked`);
+  }
+  const chapterIds = targets.filter((t) => t.kind === 'chapter').map((t) => t.id);
+  const audioIds = targets.filter((t) => t.kind === 'audio').map((t) => t.id);
+  if (chapterIds.length > 0) {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT id FROM "Chapter" WHERE id = ANY(${chapterIds}::text[]) ORDER BY id FOR KEY SHARE
+      ) locked`);
+  }
+  if (audioIds.length > 0) {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT id FROM "AudioChapter" WHERE id = ANY(${audioIds}::text[]) ORDER BY id FOR KEY SHARE
       ) locked`);
   }
 }
@@ -262,12 +296,18 @@ export class UsersService {
       async (tx) => {
         await lockUserRow(tx, userId, 'UPDATE');
         await lockUserContentTargets(tx, userId);
-        // 1) Collect user's comment IDs
-        const userComments = await tx.comment.findMany({
-          where: { userId },
-          select: { id: true },
-        });
-        const commentIds = userComments.map((c) => c.id);
+        // 1) Collect user's comment IDs. `T101`: строки запираются здесь, корни раньше ответов
+        // и до лайков на них — порядок `CommentsService.remove` (комментарий, потом его ответы)
+        // и каскада главы (комментарий, потом его лайки). Чужие прямые ответы, которые шаг 4
+        // отвязывает, запираются той же выборкой в том же порядке: два удаления аккаунтов,
+        // ответивших друг другу, иначе брали чужие ответы встречно. Новая строка с этим `userId`
+        // не вставится: пользователь заперт, так что набор не меняется до конца транзакции.
+        const lockedComments = await tx.$queryRaw<Array<{ id: string; userId: string }>>(Prisma.sql`
+          SELECT id, "userId" FROM "Comment"
+          WHERE "userId" = ${userId}
+            OR "parentId" IN (SELECT id FROM "Comment" WHERE "userId" = ${userId})
+          ORDER BY ("parentId" IS NOT NULL), id FOR UPDATE`);
+        const commentIds = lockedComments.filter((c) => c.userId === userId).map((c) => c.id);
 
         // 2) Remove likes written by the user
         await tx.like.deleteMany({ where: { userId } });
