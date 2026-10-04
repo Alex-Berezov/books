@@ -95,6 +95,8 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
   'RightsNotification.payload': 'уведомление, пишет сервер (RightsNotificationsService.create)',
   'RightsRecheckEvent.payload': 'журнал событий, пишет сервер',
   'RightsLawyerReviewEvent.payload': 'журнал событий, пишет сервер',
+  'Legacy400OrphanSeo.row':
+    'резервная копия удалённых ничьих Seo для отката LEGACY-400, пишет только миграция; держать медиа она не должна — ради этого строки и удалены',
 };
 
 const jsonFields = (): string[] =>

@@ -386,6 +386,16 @@ model Legacy400PersonSeo {
   @@map("_legacy400_person_seo")
 }
 
+/// Копии ничьих `Seo`, удалённых словом владельца (`LEGACY-400`, миграция
+/// `20261004180000_legacy_400_delete_orphan_seo`): строка целиком в `row`. Нужна только для отката;
+/// приложение её не читает. Снимается пачкой `T106` по слову владельца 04.10.2026 (срок — решение арбитра).
+model Legacy400OrphanSeo {
+  id  Int  @id
+  row Json
+
+  @@map("_legacy400_orphan_seo")
+}
+
 model Like {
   id            String       @id @default(uuid())
   userId        String
