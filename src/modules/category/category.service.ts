@@ -33,6 +33,7 @@ import { UpdateCategoryTranslationDto } from './dto/update-category-translation.
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { uniqueViolationFields } from '../../shared/prisma/prisma-error.util';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import { mirrorTranslationMetaToSeo } from '../../shared/seo/translation-meta-seo.util';
 
 export type CategoryTreeNode = {
   id: string;
@@ -898,6 +899,9 @@ export class CategoryService {
           }
         }
 
+        // `LEGACY-436`: плоские meta/OG — и в `Seo`, публика читает только его.
+        const mirroredSeoId = await mirrorTranslationMetaToSeo(tx, seoId ?? null, dto, dto.seo);
+
         return tx.categoryTranslation.create({
           data: {
             categoryId,
@@ -922,7 +926,7 @@ export class CategoryService {
             ...(dto.ogImageUrl !== undefined ? { ogImageUrl: dto.ogImageUrl } : {}),
             ...(dto.ogImageAlt !== undefined ? { ogImageAlt: dto.ogImageAlt } : {}),
             ...(dto.faq !== undefined ? { faq: toJsonInput(dto.faq) } : {}),
-            ...(seoId !== undefined ? { seoId } : {}),
+            ...(mirroredSeoId !== null ? { seoId: mirroredSeoId } : {}),
           },
           include: { seo: true },
         });
@@ -982,6 +986,13 @@ export class CategoryService {
             // перевод (`LEGACY-400`, `T55b` — `Seo` может делить строку с сущностью другого типа).
             finalSeoId = null;
           }
+        }
+
+        // `LEGACY-436`: плоские meta/OG — и в `Seo`; отвязку через `seo` не перебиваем.
+        if (finalSeoId !== null) {
+          const currentSeoId = finalSeoId ?? tr.seoId;
+          const mirroredSeoId = await mirrorTranslationMetaToSeo(tx, currentSeoId, dto, dto.seo);
+          if (mirroredSeoId !== currentSeoId) finalSeoId = mirroredSeoId;
         }
 
         // Смена слага и запись редиректа — одна транзакция (LEGACY-062).

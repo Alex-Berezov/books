@@ -8,6 +8,7 @@ import { ImportTagDto, ImportTagTranslationDto } from './dto/import-tag.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CategoryTreeService, MismatchedChildEdge } from '../category/category-tree.service';
 import { TagLockService } from '../tags/tag-lock.service';
+import { mirrorTranslationMetaToSeo } from '../../shared/seo/translation-meta-seo.util';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 const SUPPORTED_LANGS_TEXT = Object.values(Language).join(', ');
@@ -803,12 +804,15 @@ export class ImportService {
               tx,
             );
           }
+          // `LEGACY-436`: meta/OG — и в `Seo`, публика читает только его.
+          const seoId = await mirrorTranslationMetaToSeo(tx, existingTr.seoId, tr);
           await tx.categoryTranslation.update({
             where: { categoryId_language: { categoryId: existing.id, language } },
             data: {
               name: tr.name,
               slug: tr.slug,
               ...this.buildCategoryTranslationData(tr),
+              seoId,
             },
           });
         } else {
@@ -848,13 +852,15 @@ export class ImportService {
   }
 
   private async createCategoryTranslation(
-    db: PrismaLike,
+    tx: Prisma.TransactionClient,
     categoryId: string,
     language: Language,
     tr: TranslationInput,
   ) {
     const data = this.buildCategoryTranslationData(tr);
-    return db.categoryTranslation.create({
+    // `LEGACY-436`: meta/OG — и в `Seo`, публика читает только его.
+    const seoId = await mirrorTranslationMetaToSeo(tx, null, tr);
+    return tx.categoryTranslation.create({
       data: {
         categoryId,
         language,
@@ -864,6 +870,7 @@ export class ImportService {
         bookCount: 0,
         autoIndexable: false,
         ...data,
+        ...(seoId !== null ? { seoId } : {}),
       },
     });
   }
@@ -1022,12 +1029,15 @@ export class ImportService {
               tx,
             );
           }
+          // `LEGACY-436`: meta/OG — и в `Seo`, публика читает только его.
+          const seoId = await mirrorTranslationMetaToSeo(tx, existingTr.seoId, tr);
           await tx.tagTranslation.update({
             where: { tagId_language: { tagId: existing.id, language } },
             data: {
               name: tr.name,
               slug: tr.slug,
               ...this.buildTagTranslationData(tr),
+              seoId,
             },
           });
         } else {
@@ -1040,13 +1050,15 @@ export class ImportService {
   }
 
   private async createTagTranslation(
-    db: PrismaLike,
+    tx: Prisma.TransactionClient,
     tagId: string,
     language: Language,
     tr: TranslationInput,
   ) {
     const data = this.buildTagTranslationData(tr);
-    return db.tagTranslation.create({
+    // `LEGACY-436`: meta/OG — и в `Seo`, публика читает только его.
+    const seoId = await mirrorTranslationMetaToSeo(tx, null, tr);
+    return tx.tagTranslation.create({
       data: {
         tagId,
         language,
@@ -1056,6 +1068,7 @@ export class ImportService {
         bookCount: 0,
         autoIndexable: false,
         ...data,
+        ...(seoId !== null ? { seoId } : {}),
       },
     });
   }

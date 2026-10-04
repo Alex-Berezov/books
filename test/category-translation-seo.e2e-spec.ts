@@ -240,9 +240,19 @@ describe('Category Translation Content & SEO (e2e)', () => {
 
     const row = await prisma.categoryTranslation.findUniqueOrThrow({
       where: { categoryId_language: { categoryId, language: 'en' } },
+      include: { seo: true },
     });
     expect(row).toMatchObject({ h1: null, metaTitle: null, ogTitle: null, ogImageAlt: null });
     expect(row.faq).toBeNull();
+    // `LEGACY-436`, `T100`: плоские meta/OG переносятся в `Seo` — плоский `null` очищает и его.
+    expect(row.seo).toMatchObject({ metaTitle: null, ogTitle: null, ogImageAlt: null });
+
+    // Следующие тесты читают публичную мету, заданную через `seo` выше, — вернуть её.
+    await request(http())
+      .patch(`/categories/${categoryId}/translations/en`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ seo: { metaTitle: 'Updated Fiction Title', ogTitle: 'Fiction OG Title' } })
+      .expect(200);
   });
 
   it('should return description and seo in public endpoint', async () => {

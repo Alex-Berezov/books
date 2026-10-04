@@ -396,6 +396,21 @@ model Legacy400OrphanSeo {
   @@map("_legacy400_orphan_seo")
 }
 
+/// Журнал переноса плоских meta/OG перевода тега и категории в `Seo` (`LEGACY-436`, миграция
+/// `20261004200000_legacy_436_backfill_translation_seo`): `created` — строку `Seo` создала миграция,
+/// `old` — прежние шесть полей. Нужен только для отката; приложение его не читает. Снятие таблицы —
+/// решение владельца (`DROP TABLE`, `work-queue.md`, «Что ждёт владельца», п. 6).
+model Legacy436Backfill {
+  kind          String
+  translationId String
+  seoId         Int
+  created       Boolean
+  old           Json?
+
+  @@id([kind, translationId])
+  @@map("_legacy436_backfill")
+}
+
 model Like {
   id            String       @id @default(uuid())
   userId        String

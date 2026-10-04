@@ -36,6 +36,7 @@ import { isTagTermOpen } from '../../shared/seo/term-indexable.util';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { PaginationInfoDto, totalPagesOf } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import { mirrorTranslationMetaToSeo } from '../../shared/seo/translation-meta-seo.util';
 
 /**
  * Форма ответа трёх ручек перевода тега (`listTranslations`/`createTranslation`/
@@ -563,6 +564,9 @@ export class TagsService {
         }
       }
 
+      // `LEGACY-436`: плоские meta/OG — и в `Seo`, публика читает только его.
+      const mirroredSeoId = await mirrorTranslationMetaToSeo(tx, seoId ?? null, dto, dto.seo);
+
       // После отказа оператора транзакция Postgres прервана: к `tx` больше
       // не обращаемся, откат снимает и `Seo`.
       try {
@@ -603,7 +607,7 @@ export class TagsService {
             ...(dto.relatedCollectionSlugs !== undefined
               ? { relatedCollectionSlugs: dto.relatedCollectionSlugs }
               : {}),
-            ...(seoId !== undefined ? { seoId } : {}),
+            ...(mirroredSeoId !== null ? { seoId: mirroredSeoId } : {}),
           },
           include: { seo: true },
         });
@@ -651,6 +655,13 @@ export class TagsService {
           // Строка удаляется после отвязки ниже и только ничья (`LEGACY-400`, `T55b`).
           finalSeoId = null;
         }
+      }
+
+      // `LEGACY-436`: плоские meta/OG — и в `Seo`; отвязку через `seo` не перебиваем.
+      if (finalSeoId !== null) {
+        const currentSeoId = finalSeoId ?? tr.seoId;
+        const mirroredSeoId = await mirrorTranslationMetaToSeo(tx, currentSeoId, dto, dto.seo);
+        if (mirroredSeoId !== currentSeoId) finalSeoId = mirroredSeoId;
       }
 
       // Та же транзакция, что и смена слага (LEGACY-062): порознь существовал бы

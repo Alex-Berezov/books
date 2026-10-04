@@ -1083,10 +1083,25 @@ describe('TagsService — писатели тега идут под замком
     canonicalUrl: 'https://example.com/c',
   };
 
+  // `LEGACY-436`: шесть meta/OG из `CONTENT_FIELDS` — то, что уходит и в `Seo`.
+  const META_IN_SEO = {
+    metaTitle: 'MT',
+    metaDescription: 'MD',
+    ogTitle: 'OT',
+    ogDescription: 'OD',
+    ogImageUrl: 'https://example.com/og.jpg',
+    ogImageAlt: 'alt',
+  };
+
   it('createTranslation: девять полей контента и indexable пишутся, robots/canonicalUrl — нет', async () => {
     let written: Record<string, unknown> | undefined;
+    const seoCreated: unknown[] = [];
     const { tagsService } = setup({
       'tag.findUnique': () => ({ id: 't1' }),
+      'seo.create': (args: unknown) => {
+        seoCreated.push((args as { data: unknown }).data);
+        return { id: 9 };
+      },
       'tagTranslation.create': (args: unknown) => {
         written = (args as { data: Record<string, unknown> }).data;
         return { id: 'tr1' };
@@ -1103,6 +1118,9 @@ describe('TagsService — писатели тега идут под замком
     });
 
     expect(written).toMatchObject({ ...CONTENT_FIELDS, indexable: false, autoIndexable: false });
+    // `LEGACY-436`: плоские meta/OG — и в новую строку `Seo`, публика читает только её.
+    expect(written?.seoId).toBe(9);
+    expect(seoCreated).toEqual([META_IN_SEO]);
     for (const key of Object.keys(NOT_WRITTEN)) expect(written).not.toHaveProperty(key);
 
     // Не передан — колонку не трогаем: умолчание схемы, а не `undefined` в `data`.
@@ -1112,8 +1130,13 @@ describe('TagsService — писатели тега идут под замком
 
   it('updateTranslation: девять полей контента пишутся, faq: null очищает через DbNull', async () => {
     let written: Record<string, unknown> | undefined;
+    const seoCreated: unknown[] = [];
     const { tagsService } = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'n', seoId: null }),
+      'seo.create': (args: unknown) => {
+        seoCreated.push((args as { data: unknown }).data);
+        return { id: 9 };
+      },
       'tagTranslation.update': (args: unknown) => {
         written = (args as { data: Record<string, unknown> }).data;
         return { id: 'tr1' };
@@ -1125,7 +1148,8 @@ describe('TagsService — писатели тега идут под замком
       ...NOT_WRITTEN,
       indexable: false,
     });
-    expect(written).toMatchObject({ ...CONTENT_FIELDS, indexable: false });
+    expect(written).toMatchObject({ ...CONTENT_FIELDS, indexable: false, seoId: 9 });
+    expect(seoCreated).toEqual([META_IN_SEO]);
     for (const key of Object.keys(NOT_WRITTEN)) expect(written).not.toHaveProperty(key);
 
     // `LEGACY-430`, `T87`: `null` в `faq` объявлен типом DTO и очищает колонку.
