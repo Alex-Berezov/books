@@ -1,5 +1,9 @@
 import { Prisma } from '@prisma/client';
-import { mirrorTranslationMetaToSeo } from './translation-meta-seo.util';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  assertTranslationSeoPatchAllowed,
+  mirrorTranslationMetaToSeo,
+} from './translation-meta-seo.util';
 
 describe('mirrorTranslationMetaToSeo (LEGACY-436)', () => {
   /** `owners` — владельцы строки `Seo` для `seoOwnersCount`: по умолчанию только сам перевод. */
@@ -123,5 +127,128 @@ describe('mirrorTranslationMetaToSeo (LEGACY-436)', () => {
     await expect(mirrorTranslationMetaToSeo(tx, 5, {})).resolves.toBe(5);
     expect(create).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+/** Мок `tx` для счёта владельцев: `row` — то, что вернёт `seo.findUnique` (`null` — строки нет). */
+const txWithRow = (row: Record<string, { id: string } | null> | null) => {
+  const update = jest.fn().mockResolvedValue({});
+  const findUnique = jest.fn().mockResolvedValue(row);
+  const $queryRaw = jest.fn().mockResolvedValue([]);
+  return {
+    tx: { seo: { update, findUnique }, $queryRaw } as unknown as Prisma.TransactionClient,
+    update,
+    findUnique,
+    $queryRaw,
+  };
+};
+
+describe('mirrorTranslationMetaToSeo — строки Seo нет (LEGACY-436, T107)', () => {
+  it('owners === null: не пишет и возвращает прежний seoId', async () => {
+    const { tx, update } = txWithRow(null);
+    await expect(mirrorTranslationMetaToSeo(tx, 5, { metaTitle: 'T' })).resolves.toBe(5);
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertTranslationSeoPatchAllowed (LEGACY-436, T107)', () => {
+  const own = { tagTranslation: { id: 'tr' } };
+  const shared = { tagTranslation: { id: 'tr' }, categoryTranslation: { id: 'c' } };
+
+  it('отвязка seo из одних null и непустое плоское X без seo.X — 400 с именем поля', async () => {
+    const { tx, $queryRaw } = txWithRow(own);
+    const call = assertTranslationSeoPatchAllowed(
+      tx,
+      5,
+      { ogTitle: 'Flat' },
+      { metaTitle: null, metaDescription: null },
+    );
+    await expect(call).rejects.toThrow(BadRequestException);
+    await expect(call).rejects.toThrow(/ogTitle/);
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('отвязка с 400 не зависит от seoId перевода', async () => {
+    const { tx } = txWithRow(null);
+    await expect(
+      assertTranslationSeoPatchAllowed(tx, null, { metaTitle: 'X' }, { metaTitle: undefined }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('отвязка с плоским null или пробелами допустима', async () => {
+    const { tx } = txWithRow(own);
+    await expect(
+      assertTranslationSeoPatchAllowed(
+        tx,
+        5,
+        { metaTitle: null, ogTitle: '  ' },
+        { ogImageUrl: null },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  // Уточнение решения 1 (арбитр 04.10.2026): при отвязке строки `Seo` не будет, `seo.X = null`
+  // ничего не выигрывает — плоское X иначе молча легло бы в колонку, которую публика не читает.
+  it('отвязка с явным seo.X = null и непустым плоским X — тоже 400', async () => {
+    const { tx } = txWithRow(own);
+    await expect(
+      assertTranslationSeoPatchAllowed(tx, 5, { metaTitle: 'X' }, { metaTitle: null }),
+    ).rejects.toThrow(/metaTitle/);
+  });
+
+  it('вложенный seo в общую строку Seo — 409, строка запирается до счёта', async () => {
+    const { tx, $queryRaw, findUnique } = txWithRow(shared);
+    await expect(assertTranslationSeoPatchAllowed(tx, 5, {}, { metaTitle: 'Seo' })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(($queryRaw.mock.calls[0] as [TemplateStringsArray])[0].join('?')).toContain(
+      'FOR UPDATE',
+    );
+    expect($queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      findUnique.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('плоское зеркало в общую строку Seo — 409', async () => {
+    const { tx } = txWithRow(shared);
+    await expect(assertTranslationSeoPatchAllowed(tx, 5, { metaTitle: 'Flat' })).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it('ноль владельцев (строку отпустили) — 409: «ровно один», а не «не больше одного»', async () => {
+    const { tx, update } = txWithRow({ tagTranslation: null, categoryTranslation: null });
+    await expect(assertTranslationSeoPatchAllowed(tx, 5, { metaTitle: 'Flat' })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('строки Seo нет (owners === null) — 409', async () => {
+    const { tx } = txWithRow(null);
+    await expect(assertTranslationSeoPatchAllowed(tx, 5, { metaTitle: 'Flat' })).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it('единственный владелец — проходит', async () => {
+    const { tx } = txWithRow(own);
+    await expect(
+      assertTranslationSeoPatchAllowed(tx, 5, { metaTitle: 'Flat' }, { ogTitle: 'Seo' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('запрос без meta/OG и без данных seo — строку не запирает', async () => {
+    const { tx, $queryRaw } = txWithRow(shared);
+    await expect(assertTranslationSeoPatchAllowed(tx, 5, {})).resolves.toBeUndefined();
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('у перевода нет Seo — проверки владельцев нет (новая строка создаётся без замка)', async () => {
+    const { tx, $queryRaw } = txWithRow(shared);
+    await expect(
+      assertTranslationSeoPatchAllowed(tx, null, { metaTitle: 'Flat' }, { ogTitle: 'Seo' }),
+    ).resolves.toBeUndefined();
+    expect($queryRaw).not.toHaveBeenCalled();
   });
 });

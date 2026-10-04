@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { deleteSeoIfUnreferenced, SEO_OWNER_RELATIONS, seoOwnersCount } from './seo-orphan.util';
+import {
+  deleteSeoIfUnreferenced,
+  lockSeoAndCountOwners,
+  SEO_OWNER_RELATIONS,
+  seoOwnersCount,
+} from './seo-orphan.util';
 
 const owners = (held: string[]) =>
   Object.fromEntries(
@@ -41,6 +46,23 @@ describe('seoOwnersCount', () => {
 
   it('строки нет — null, а не ноль владельцев', async () => {
     expect(await seoOwnersCount(txWith(null).client, 7)).toBeNull();
+  });
+});
+
+describe('lockSeoAndCountOwners', () => {
+  it('запирает строку Seo и только потом считает владельцев', async () => {
+    const { tx, client } = txWith(owners(['tagTranslation', 'page']));
+
+    expect(await lockSeoAndCountOwners(client, 7)).toBe(2);
+    const lockSql = (tx.$queryRaw.mock.calls[0][0] as { raw: readonly string[] }).raw.join(' ');
+    expect(lockSql).toContain('FOR UPDATE');
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.seo.findUnique.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('строки нет — null', async () => {
+    expect(await lockSeoAndCountOwners(txWith(null).client, 7)).toBeNull();
   });
 });
 

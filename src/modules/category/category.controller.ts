@@ -268,6 +268,16 @@ export class CategoryController {
   @ApiParam({ name: 'id' })
   @ApiParam({ name: 'language', enum: Object.values(Language) })
   @ApiOkResponse({ type: CategoryTranslationEntityDto })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Validation error, duplicate (language, slug), or seo detached (all seo fields null) together with a non-empty flat meta/OG field (LEGACY-436, T107)',
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'The translation SEO record is missing or shared with another entity; nothing is written (LEGACY-436, T107)',
+  })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)

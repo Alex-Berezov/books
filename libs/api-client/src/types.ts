@@ -18304,6 +18304,20 @@ export interface operations {
           'application/json': components['schemas']['CategoryTranslationEntityDto'];
         };
       };
+      /** @description Validation error, duplicate (language, slug), or seo detached (all seo fields null) together with a non-empty flat meta/OG field (LEGACY-436, T107) */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The translation SEO record is missing or shared with another entity; nothing is written (LEGACY-436, T107) */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
     };
   };
   ChapterController_get: {
@@ -19255,6 +19269,20 @@ export interface operations {
         content: {
           'application/json': components['schemas']['TagTranslationEntityDto'];
         };
+      };
+      /** @description Validation error, duplicate (language, slug), or seo detached (all seo fields null) together with a non-empty flat meta/OG field (LEGACY-436, T107) */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The translation SEO record is missing or shared with another entity; nothing is written (LEGACY-436, T107) */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

@@ -8,7 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Language, Prisma } from '@prisma/client';
 
 interface PrismaStub {
@@ -2731,6 +2731,74 @@ describe('CategoryService', () => {
         tx.seo.deleteMany.mock.invocationCallOrder[0],
       );
       expect(prisma.seo.delete).not.toHaveBeenCalled();
+    });
+
+    // `LEGACY-436`, `T100`: плоские meta/OG без вложенного `seo` переносятся в `Seo` перевода.
+    it('плоский metaTitle без Seo — новая строка Seo через tx и seoId у перевода', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: null });
+
+      await service.updateTranslation('c1', Language.en, { metaTitle: 'Flat' });
+
+      expect(tx.seo.create).toHaveBeenCalledTimes(1);
+      expect(tx.seo.update).not.toHaveBeenCalled();
+      expect(tx.seo.create).toHaveBeenCalledWith({
+        data: { metaTitle: 'Flat' },
+        select: { id: true },
+      });
+      expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+      expect(tx.categoryTranslation.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ metaTitle: 'Flat', seoId: 9 }),
+        }),
+      );
+    });
+
+    it('плоский metaTitle при своей строке Seo — пишется в неё после замка', async () => {
+      const { tx, log } = withLockedTx({ id: 'tr1', slug: 's', seoId: 5 });
+      tx.seo.findUnique.mockImplementation(() => {
+        log.push('seo.owners');
+        return Promise.resolve({ page: null, categoryTranslation: { id: 'tr1' } });
+      });
+
+      await service.updateTranslation('c1', Language.en, { metaTitle: 'Flat' });
+
+      expect(tx.seo.update).toHaveBeenCalledTimes(1);
+      expect(tx.seo.create).not.toHaveBeenCalled();
+      expect(tx.seo.update).toHaveBeenCalledWith({ where: { id: 5 }, data: { metaTitle: 'Flat' } });
+      const owners = log.indexOf('seo.owners');
+      expect(log[owners - 1]).toBe('lock');
+      expect(owners).toBeLessThan(log.indexOf('seo.update'));
+    });
+
+    // `LEGACY-436`, `T107` (решения арбитра 04.10.2026).
+    it('общая строка Seo — 409, ни Seo, ни перевод не пишутся', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: 5 });
+      tx.seo.findUnique.mockResolvedValue({
+        page: { id: 'p1' },
+        categoryTranslation: { id: 'tr1' },
+      });
+
+      await expect(
+        service.updateTranslation('c1', Language.en, { seo: { metaTitle: 'T' } } as never),
+      ).rejects.toBeInstanceOf(ConflictException);
+      await expect(
+        service.updateTranslation('c1', Language.en, { metaTitle: 'Flat' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.seo.update).not.toHaveBeenCalled();
+      expect(tx.categoryTranslation.update).not.toHaveBeenCalled();
+    });
+
+    it('отвязка seo с непустым плоским ogTitle — 400, отвязки и записи нет', async () => {
+      const { tx } = withLockedTx({ id: 'tr1', slug: 's', seoId: 5 });
+
+      await expect(
+        service.updateTranslation('c1', Language.en, {
+          seo: { metaTitle: null },
+          ogTitle: 'Flat',
+        } as never),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.categoryTranslation.update).not.toHaveBeenCalled();
+      expect(tx.seo.deleteMany).not.toHaveBeenCalled();
     });
 
     it('перевода нет под замком — 404 без записи', async () => {

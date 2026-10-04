@@ -65,6 +65,8 @@ interface FakeClient {
   categoryTranslation: Pick<FakeModel, 'create' | 'update'>;
   tag: FakeModel;
   tagTranslation: Pick<FakeModel, 'create' | 'update'>;
+  // `LEGACY-436`: плоские meta/OG перевода импорт переносит в `Seo` той же транзакцией.
+  seo: Pick<FakeModel, 'create' | 'update'>;
 }
 
 type LockedTranslationRow = { id?: string; language: Language; slug: string };
@@ -139,6 +141,10 @@ const makeClient = (
     tagTranslation: {
       create: note('tagTranslation.create', {}),
       update: note('tagTranslation.update', {}),
+    },
+    seo: {
+      create: note('seo.create', { id: 41 }),
+      update: note('seo.update', {}),
     },
   };
   return client;
@@ -415,6 +421,58 @@ describe('ImportService — создание термина и переводо�
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(writesOf(log).filter((call) => call.startsWith('root.'))).toEqual([]);
     expect(log).toContain('tx.tag.create');
+  });
+});
+
+describe('ImportService — плоские meta/OG перевода уходят в Seo (LEGACY-436)', () => {
+  it('категория: metaTitle из файла — новая строка Seo через tx и seoId у перевода', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    const dto = categoryDto();
+    dto.translations[Language.en] = {
+      ...dto.translations[Language.en],
+      metaTitle: 'Imported title',
+    } as (typeof dto.translations)[Language];
+
+    const result = await service.importCategories([dto]);
+
+    expect(result.errors).toEqual([]);
+    expect(tx.seo.create).toHaveBeenCalledTimes(1);
+    expect(tx.seo.create).toHaveBeenCalledWith({
+      data: { metaTitle: 'Imported title' },
+      select: { id: true },
+    });
+    expect(root.seo.create).not.toHaveBeenCalled();
+    // Два языка в файле — два перевода, и только один из них с meta.
+    expect(tx.categoryTranslation.create).toHaveBeenCalledTimes(2);
+    expect(tx.categoryTranslation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ language: Language.en, seoId: 41 }),
+    });
+  });
+
+  it('тег: ogTitle из файла — новая строка Seo через tx и seoId у перевода', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    const dto = tagDto();
+    dto.translations[Language.ru] = {
+      ...dto.translations[Language.ru],
+      ogTitle: 'Импорт OG',
+    } as (typeof dto.translations)[Language];
+
+    const result = await service.importTags([dto]);
+
+    expect(result.errors).toEqual([]);
+    expect(tx.seo.create).toHaveBeenCalledTimes(1);
+    expect(tx.seo.create).toHaveBeenCalledWith({
+      data: { ogTitle: 'Импорт OG' },
+      select: { id: true },
+    });
+    expect(root.seo.create).not.toHaveBeenCalled();
+    // Два языка в файле — два перевода, и только один из них с meta.
+    expect(tx.tagTranslation.create).toHaveBeenCalledTimes(2);
+    expect(tx.tagTranslation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ language: Language.ru, seoId: 41 }),
+    });
   });
 });
 

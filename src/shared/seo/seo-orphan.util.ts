@@ -39,6 +39,20 @@ export async function seoOwnersCount(
 }
 
 /**
+ * Запирает строку `Seo` (`FOR UPDATE`) и считает её владельцев; `null` — строки нет.
+ * Замок до счёта: привязка (`FOR KEY SHARE` проверки внешнего ключа) встаёт в очередь и не попадает
+ * между счётом и тем, что вызывающий делает со строкой дальше (удаление, запись). Звать в `tx`
+ * вызывающего под его замком владельца: порядок «строка владельца → `Seo`» (`LEGACY-400`, `LEGACY-436`).
+ */
+export async function lockSeoAndCountOwners(
+  tx: Prisma.TransactionClient,
+  seoId: number,
+): Promise<number | null> {
+  await tx.$queryRaw`SELECT id FROM "Seo" WHERE id = ${seoId} FOR UPDATE`;
+  return seoOwnersCount(tx, seoId);
+}
+
+/**
  * Удаляет строку `Seo`, если её больше никто не держит. Зовётся **после** того, как владелец её отпустил
  * (отвязка, удаление), тем же `tx` — иначе сирота переживает откат или удаляется из-под живого владельца.
  * Сирота не безобидна: её адресные колонки держат медиа от уборки (`LEGACY-413`).
@@ -51,10 +65,8 @@ export async function deleteSeoIfUnreferenced(
   seoId: number | null | undefined,
 ): Promise<void> {
   if (!seoId) return;
-  // Строка запирается до счёта: привязка (`FOR KEY SHARE` проверки внешнего ключа) встаёт
-  // в очередь и после удаления получает `P2003`, а не ссылку на удалённую строку. Без замка
-  // встречная привязка, закоммиченная между счётом и удалением, теряла бы `seoId` через SetNull.
-  await tx.$queryRaw`SELECT id FROM "Seo" WHERE id = ${seoId} FOR UPDATE`;
-  if ((await seoOwnersCount(tx, seoId)) !== 0) return;
+  // Встречная привязка после удаления получает `P2003`, а не ссылку на удалённую строку. Без замка
+  // она, закоммиченная между счётом и удалением, теряла бы `seoId` через SetNull.
+  if ((await lockSeoAndCountOwners(tx, seoId)) !== 0) return;
   await tx.seo.deleteMany({ where: { id: seoId } });
 }

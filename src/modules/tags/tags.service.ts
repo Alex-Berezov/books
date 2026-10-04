@@ -36,7 +36,11 @@ import { isTagTermOpen } from '../../shared/seo/term-indexable.util';
 import { jsonField, toJsonInput } from '../../shared/prisma/json-field.util';
 import { PaginationInfoDto, totalPagesOf } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
-import { mirrorTranslationMetaToSeo } from '../../shared/seo/translation-meta-seo.util';
+import {
+  assertTranslationSeoPatchAllowed,
+  seoInputHasData,
+  mirrorTranslationMetaToSeo,
+} from '../../shared/seo/translation-meta-seo.util';
 
 /**
  * Форма ответа трёх ручек перевода тега (`listTranslations`/`createTranslation`/
@@ -557,7 +561,7 @@ export class TagsService {
 
       let seoId: number | undefined;
       if (dto.seo) {
-        const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+        const hasSeoData = seoInputHasData(dto.seo);
         if (hasSeoData) {
           const newSeo = await tx.seo.create({ data: dto.seo });
           seoId = newSeo.id;
@@ -640,9 +644,12 @@ export class TagsService {
           throw new BadRequestException('Translation with same (language, slug) already exists');
       }
 
+      // `LEGACY-436`, `T107`: отвязка с плоским meta — 400, общая строка `Seo` — 409, до записи.
+      await assertTranslationSeoPatchAllowed(tx, tr.seoId, dto, dto.seo);
+
       let finalSeoId: number | null | undefined = undefined;
       if (dto.seo) {
-        const hasSeoData = Object.values(dto.seo).some((v) => v !== null && v !== undefined);
+        const hasSeoData = seoInputHasData(dto.seo);
         if (hasSeoData) {
           if (tr.seoId) {
             await tx.seo.update({ where: { id: tr.seoId }, data: dto.seo });

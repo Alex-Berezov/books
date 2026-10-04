@@ -1187,9 +1187,56 @@ describe('TagsService — писатели тега идут под замком
     expect(written).toMatchObject({ indexable: true });
   });
 
+  it('updateTranslation: общая строка Seo — 409, ни Seo, ни перевод не пишутся (LEGACY-436, T107)', async () => {
+    const { tagsService, log } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+      'seo.findUnique': () => ({ tagTranslation: { id: 'tr1' }, page: { id: 'p1' } }),
+    });
+
+    await expect(
+      tagsService.updateTranslation('t1', Language.en, { seo: { metaTitle: 'T' } }),
+    ).rejects.toThrow(ConflictException);
+    expect(log).not.toContain('tx.seo.update');
+    expect(log).not.toContain('tx.tagTranslation.update');
+  });
+
+  it('updateTranslation: плоское зеркало в общую строку Seo — 409, ни Seo, ни колонка не пишутся (LEGACY-436, T107)', async () => {
+    const { tagsService, log } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+      'seo.findUnique': () => ({
+        tagTranslation: { id: 'tr1' },
+        categoryTranslation: { id: 'c1' },
+      }),
+    });
+
+    await expect(
+      tagsService.updateTranslation('t1', Language.en, { metaTitle: 'Flat' }),
+    ).rejects.toThrow(ConflictException);
+    expect(log.filter((call) => call === 'tx.forUpdate')).toHaveLength(2);
+    expect(log).not.toContain('tx.seo.update');
+    expect(log).not.toContain('tx.seo.create');
+    expect(log).not.toContain('tx.tagTranslation.update');
+  });
+
+  it('updateTranslation: отвязка seo с непустым плоским metaTitle — 400 до записи (LEGACY-436, T107)', async () => {
+    const { tagsService, log } = setup({
+      'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+    });
+
+    await expect(
+      tagsService.updateTranslation('t1', Language.en, {
+        seo: { metaTitle: null },
+        ogTitle: 'Flat',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(log).not.toContain('tx.tagTranslation.update');
+    expect(log).not.toContain('tx.seo.deleteMany');
+  });
+
   it('updateTranslation: чтения, Seo, редирект и запись — под замком через tx', async () => {
     const { tagsService, log, $transaction, tx, redirects } = setup({
       'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: 5 }),
+      'seo.findUnique': () => ({ tagTranslation: { id: 'tr1' } }),
       'tagTranslation.update': () => ({ id: 'tr1' }),
     });
 
@@ -1203,6 +1250,9 @@ describe('TagsService — писатели тега идут под замком
       'tx.forUpdate',
       'tx.tagTranslation.findUnique',
       'tx.tagTranslation.findFirst',
+      // `LEGACY-436`, `T107`: строка `Seo` запирается и считается до записи вложенного `seo`.
+      'tx.forUpdate',
+      'tx.seo.findUnique',
       'tx.seo.update',
       'tx.tagTranslation.update',
     ]);
