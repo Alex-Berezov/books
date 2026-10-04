@@ -375,6 +375,17 @@ model Legacy429CommentText {
   @@map("_legacy429_comment_text")
 }
 
+/// Пары старого и нового `Seo` перевода персоны, разведённого с автором (`LEGACY-400`, миграция
+/// `20261004120000_legacy_400_split_person_seo`). Нужна только для отката; приложение её не читает.
+/// Удаление таблицы — решение владельца.
+model Legacy400PersonSeo {
+  personTranslationId String @id
+  oldSeoId            Int
+  newSeoId            Int
+
+  @@map("_legacy400_person_seo")
+}
+
 model Like {
   id            String       @id @default(uuid())
   userId        String
