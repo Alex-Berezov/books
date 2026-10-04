@@ -631,9 +631,16 @@ describe('CommentsService', () => {
         isDeleted: false,
         userId: 'u1',
         ratingId: 'r1',
+        bookVersionId: 'v1',
+        rating: { bookId: 'b1' },
       });
 
       const txMock = {
+        $queryRaw: jest
+          .fn()
+          .mockResolvedValueOnce([{ id: 'b1' }])
+          .mockResolvedValueOnce([{ id: 'v1' }])
+          .mockResolvedValueOnce([{ isDeleted: false, ratingId: 'r1' }]),
         comment: {
           update: jest.fn().mockResolvedValueOnce({ id: 'c1', isDeleted: true }),
           updateMany: jest.fn().mockResolvedValueOnce({ count: 0 }),
@@ -660,6 +667,110 @@ describe('CommentsService', () => {
       });
       expect(txMock.bookRating.delete).toHaveBeenCalledWith({
         where: { id: 'r1' },
+      });
+    });
+
+    describe('против каскада удаления книги и версии (LEGACY-433, T97)', () => {
+      const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
+
+      it('запирает книгу и версию раньше строки комментария — порядок BookService.remove', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce({
+          id: 'c1',
+          isDeleted: false,
+          userId: 'u1',
+          ratingId: 'r1',
+          bookVersionId: 'v1',
+          rating: { bookId: 'b1' },
+        });
+        prisma.$queryRaw
+          .mockResolvedValueOnce([{ id: 'b1' }])
+          .mockResolvedValueOnce([{ id: 'v1' }])
+          .mockResolvedValueOnce([{ isDeleted: false, ratingId: null }]);
+
+        await service.remove('c1', { userId: 'u1', email: 'x' });
+
+        const calls = prisma.$queryRaw.mock.calls;
+        const sql = calls.map(sqlOf);
+        expect(calls.map((call: unknown[]) => call[1])).toEqual(['b1', 'v1', 'c1']);
+        expect(sql[0]).toContain('FROM "Book" WHERE id = ? FOR KEY SHARE');
+        expect(sql[1]).toContain('FROM "BookVersion" WHERE id = ? FOR KEY SHARE');
+        expect(sql[2]).toContain('FROM "Comment" WHERE id = ? FOR UPDATE');
+        // `ratingId` перечитан под замком: каскад обнулил его — оценку не трогаем (у стаба нет
+        // `bookRating`, вызов по снимку до замка упал бы здесь же).
+        expect(prisma.comment.update).toHaveBeenCalledTimes(1);
+        expect(prisma.comment.update).toHaveBeenCalledWith({
+          where: { id: 'c1' },
+          data: { isDeleted: true },
+        });
+        expect(prisma.comment.updateMany).toHaveBeenCalledWith({
+          where: { parentId: 'c1' },
+          data: { isDeleted: true },
+        });
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+          timeout: 30_000,
+          maxWait: 10_000,
+        });
+      });
+
+      it('книга отзыва стёрта встречным каскадом — снимать нечего, без записи и без 500', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce({
+          id: 'c1',
+          isDeleted: false,
+          userId: 'u1',
+          ratingId: 'r1',
+          bookVersionId: 'v1',
+          rating: { bookId: 'b1' },
+        });
+        prisma.$queryRaw.mockResolvedValueOnce([]);
+
+        await expect(service.remove('c1', { userId: 'u1', email: 'x' })).resolves.toBeUndefined();
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(prisma.comment.update).not.toHaveBeenCalled();
+      });
+
+      it('комментарий к главе: глава запирается раньше строки комментария', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce({
+          id: 'c1',
+          isDeleted: false,
+          userId: 'u1',
+          chapterId: 'ch1',
+        });
+        prisma.$queryRaw
+          .mockResolvedValueOnce([{ id: 'ch1' }])
+          .mockResolvedValueOnce([{ isDeleted: false, ratingId: null }]);
+
+        await service.remove('c1', { userId: 'u1', email: 'x' });
+
+        const calls = prisma.$queryRaw.mock.calls;
+        expect(calls.map((call: unknown[]) => call[1])).toEqual(['ch1', 'c1']);
+        expect(sqlOf(calls[0] as unknown[])).toContain('FROM "Chapter" WHERE id = ? FOR KEY SHARE');
+      });
+
+      it('цель стёрта встречным каскадом — снимать нечего, без записи и без 500', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce({
+          id: 'c1',
+          isDeleted: false,
+          userId: 'u1',
+          bookVersionId: 'v1',
+        });
+        prisma.$queryRaw.mockResolvedValueOnce([]);
+
+        await expect(service.remove('c1', { userId: 'u1', email: 'x' })).resolves.toBeUndefined();
+        expect(prisma.comment.update).not.toHaveBeenCalled();
+      });
+
+      it('комментарий стёрт или снят, пока ждали замок, — без записи', async () => {
+        prisma.comment.findUnique.mockResolvedValueOnce({
+          id: 'c1',
+          isDeleted: false,
+          userId: 'u1',
+          bookVersionId: 'v1',
+        });
+        prisma.$queryRaw.mockResolvedValueOnce([{ id: 'v1' }]).mockResolvedValueOnce([]);
+
+        await expect(service.remove('c1', { userId: 'u1', email: 'x' })).resolves.toBeUndefined();
+        expect(prisma.comment.update).not.toHaveBeenCalled();
       });
     });
   });

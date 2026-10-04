@@ -658,6 +658,8 @@ describe('UsersService (unit)', () => {
       after: () => jest.Mock[];
       // Записи, которых не должно быть, если строки под замком нет.
       writes: () => jest.Mock[];
+      // Запросов после замка строки пользователя: у удаления — чтение целей его контента (`T97`).
+      targetLocks?: number;
     };
 
     // Колбэк транзакции получает отдельный клиент со своим `$queryRaw`: замок, взятый корневым
@@ -719,6 +721,7 @@ describe('UsersService (unit)', () => {
         strength: 'FOR UPDATE',
         call: () => service.deleteById('u1', 'admin-1'),
         after: () => [prismaMock.comment.findMany, prismaMock.userRole.findMany],
+        targetLocks: 1,
         writes: () => [
           prismaMock.like.deleteMany,
           prismaMock.userRole.deleteMany,
@@ -732,7 +735,7 @@ describe('UsersService (unit)', () => {
       await w.call();
 
       expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
-      expect(txQueryRaw).toHaveBeenCalledTimes(1);
+      expect(txQueryRaw).toHaveBeenCalledTimes(1 + (w.targetLocks ?? 0));
       const lock = txQueryRaw.mock.calls[0][0] as Prisma.Sql;
       expect(lock.sql).toBe(`SELECT id FROM "User" WHERE id = ? ${w.strength}`);
       expect(lock.values).toEqual(['u1']);
@@ -753,6 +756,64 @@ describe('UsersService (unit)', () => {
         .filter((at) => at > txAt);
       expect(insideTx.length).toBeGreaterThan(0);
       expect(Math.min(...insideTx)).toBeGreaterThan(lockAt);
+    });
+
+    it('deleteById: цели читаются один раз, затем книги и версии FOR KEY SHARE по id — до первой записи (LEGACY-433, T97)', async () => {
+      txQueryRaw
+        .mockResolvedValueOnce([{ id: 'u1' }])
+        .mockResolvedValueOnce([
+          { kind: 'version', id: 'v2' },
+          { kind: 'book', id: 'b1' },
+          { kind: 'version', id: 'v1' },
+          { kind: 'book', id: 'b9' },
+        ])
+        .mockResolvedValue([{ n: 2 }]);
+
+      await service.deleteById('u1', 'admin-1');
+
+      expect(txQueryRaw).toHaveBeenCalledTimes(4);
+      const sqlAt = (i: number) => (txQueryRaw.mock.calls[i][0] as Prisma.Sql).sql;
+      const valuesAt = (i: number) => (txQueryRaw.mock.calls[i][0] as Prisma.Sql).values;
+      for (const source of [
+        '"Like"',
+        '"Comment"',
+        '"Chapter"',
+        '"AudioChapter"',
+        '"Bookshelf"',
+        '"ReadingProgress"',
+        '"ViewStat"',
+        '"BookRating"',
+      ]) {
+        expect(sqlAt(1)).toContain(source);
+      }
+      expect(sqlAt(1)).not.toMatch(/FOR (KEY SHARE|UPDATE|SHARE)/);
+      expect(new Set(valuesAt(1))).toEqual(new Set(['u1']));
+      // Один параметр-массив, а не список `IN`: предел числа параметров запроса не касается.
+      expect(sqlAt(2)).toContain(
+        'SELECT id FROM "Book" WHERE id = ANY(?::text[]) ORDER BY id FOR KEY SHARE',
+      );
+      expect(valuesAt(2)).toEqual([['b1', 'b9']]);
+      expect(sqlAt(3)).toContain(
+        'SELECT id FROM "BookVersion" WHERE id = ANY(?::text[]) ORDER BY id FOR KEY SHARE',
+      );
+      expect(valuesAt(3)).toEqual([['v2', 'v1']]);
+      const lastLockAt = txQueryRaw.mock.invocationCallOrder[3];
+      for (const write of [
+        prismaMock.like.deleteMany,
+        prismaMock.bookshelf.deleteMany,
+        prismaMock.readingProgress.deleteMany,
+        prismaMock.viewStat.updateMany,
+      ]) {
+        expect(lastLockAt).toBeLessThan(write.mock.invocationCallOrder[0]);
+      }
+    });
+
+    it('deleteById: контента нет — замков книг и версий нет (пустой IN не собирается)', async () => {
+      txQueryRaw.mockResolvedValueOnce([{ id: 'u1' }]).mockResolvedValueOnce([]);
+
+      await service.deleteById('u1', 'admin-1');
+
+      expect(txQueryRaw).toHaveBeenCalledTimes(2);
     });
 
     it.each(writers)('$name: строки под замком нет — 404 без записей и журнала', async (w) => {

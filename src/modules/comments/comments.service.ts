@@ -52,10 +52,13 @@ const THREAD_NODE_SELECT = {
 type ThreadNode = Prisma.CommentGetPayload<{ select: typeof THREAD_NODE_SELECT }>;
 type ThreadTarget = Pick<ThreadNode, 'bookVersionId' | 'chapterId' | 'audioChapterId'>;
 const THREAD_MAX_HOPS = 32;
-// Ответ ждёт замки цели и корня (`lockThreadRoot`): удаление версии держит её строку всё
-// время каскада, и дефолтные 5 с Prisma превращали бы ожидание в `P2028` и 500 (L-020).
-const COMMENT_CREATE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+// Запись и снятие ждут замки цели и корня (`lockThreadRoot`, `lockTargets`): удаление версии
+// держит её строку всё время каскада, и дефолтные 5 с Prisma превращали бы ожидание в `P2028`
+// и 500 (L-020).
+const COMMENT_LOCK_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 const threadNotFound = () => new NotFoundException('Parent comment not found');
+/** Цель снимаемого комментария стёрта встречным каскадом — снимать нечего (`remove`, `T97`). */
+class RemovedTargetGoneException extends NotFoundException {}
 const isSameTarget = (a: Partial<ThreadTarget>, b: ThreadTarget): boolean =>
   (a.bookVersionId ?? null) === b.bookVersionId &&
   (a.chapterId ?? null) === b.chapterId &&
@@ -200,7 +203,7 @@ export class CommentsService {
           children: commentChildren(false),
         },
       });
-    }, COMMENT_CREATE_TX_OPTIONS);
+    }, COMMENT_LOCK_TX_OPTIONS);
 
     return {
       ...comment,
@@ -374,19 +377,42 @@ export class CommentsService {
   }
 
   async remove(id: string, actor: { userId: string; email: string }) {
-    const existing = await this.prisma.comment.findUnique({ where: { id } });
+    const existing = await this.prisma.comment.findUnique({
+      where: { id },
+      include: { rating: { select: { bookId: true } } },
+    });
     if (!existing || existing.isDeleted) return; // idempotent
     if (existing.userId !== actor.userId) {
       const can = await this.isModerator(actor.email, actor.userId);
       if (!can) throw new ForbiddenException('Not allowed to delete this comment');
     }
     await this.prisma.$transaction(async (tx) => {
+      // 🔴 `LEGACY-433`, пачка `T97`. Цель запирается раньше строки комментария, в порядке
+      // `BookService.remove` (книга, потом версии) и удаления версии: каскад книги сносит оценку
+      // и обнуляет `Comment.ratingId`, и снятие отзыва, запершее комментарий раньше книги,
+      // ловило с ним `40P01`. Цель или сам комментарий стёрты встречным каскадом — снимать
+      // нечего, ответ тот же, что у повторного снятия (было `P2025` и 500).
+      try {
+        await this.lockTargets(
+          tx,
+          existing,
+          existing.rating?.bookId,
+          () => new RemovedTargetGoneException(),
+        );
+      } catch (e: unknown) {
+        if (e instanceof RemovedTargetGoneException) return;
+        throw e;
+      }
+      const [row] = await tx.$queryRaw<
+        Array<{ isDeleted: boolean; ratingId: string | null }>
+      >`SELECT "isDeleted", "ratingId" FROM "Comment" WHERE id = ${id} FOR UPDATE`;
+      if (!row || row.isDeleted) return;
       await tx.comment.update({ where: { id }, data: { isDeleted: true } });
       await tx.comment.updateMany({ where: { parentId: id }, data: { isDeleted: true } });
-      if (existing.ratingId) {
-        await tx.bookRating.delete({ where: { id: existing.ratingId } });
+      if (row.ratingId) {
+        await tx.bookRating.delete({ where: { id: row.ratingId } });
       }
-    });
+    }, COMMENT_LOCK_TX_OPTIONS);
   }
 
   /**
@@ -425,13 +451,17 @@ export class CommentsService {
   }
 
   /**
-   * Цель комментария `FOR KEY SHARE` после автора: версия, глава или аудиоглава, удалённые
-   * между проверкой на пуле и `comment.create`, давали `P2003` и 500 (`LEGACY-434`). Порядок —
-   * книга (только у отзыва с оценкой: внешний ключ `BookRating.bookId`), версия, глава,
-   * аудиоглава, как у `BookService.remove` (строка книги, потом версии) и удаления версии
-   * (сначала цель, потом её комментарии). Версия раньше книги дала бы с удалением книги 40P01.
-   * Пустой ответ — цель стёрта, 404: у корня — своим текстом цели, у ответа — `gone`, тем же
-   * «Parent comment not found», что и стёртый каскадом корень (ветки больше нет).
+   * Цель комментария `FOR KEY SHARE` раньше любой строки комментария: версия, глава или
+   * аудиоглава, удалённые между проверкой на пуле и `comment.create`, давали `P2003` и 500
+   * (`LEGACY-434`). Порядок — книга (только у отзыва с оценкой: внешний ключ `BookRating.bookId`,
+   * каскад книги сносит оценку и обнуляет `Comment.ratingId`), версия, глава, аудиоглава, как
+   * у `BookService.remove` (строка книги, потом версии) и удаления версии (сначала цель, потом
+   * её комментарии). Версия или строка комментария раньше книги дали бы с удалением книги 40P01.
+   * Зовут трое: `create` (после `lockAuthor`), `lockThreadRoot` и `remove` (без автора — снятие
+   * ничего не вставляет; `LEGACY-433`, `T97`).
+   * Пустой ответ — цель стёрта: исключение от `gone`, без него 404 текстом цели. У ответа `gone`
+   * даёт «Parent comment not found», как и стёртый каскадом корень (ветки больше нет); у `remove` —
+   * `RemovedTargetGoneException`, который он ловит: комментарий ушёл с целью, снимать нечего.
    */
   private async lockTargets(
     tx: Prisma.TransactionClient,
@@ -443,7 +473,7 @@ export class CommentsService {
       const rows = await tx.$queryRaw<
         unknown[]
       >`SELECT id FROM "Book" WHERE id = ${ratedBookId} FOR KEY SHARE`;
-      if (rows.length === 0) throw new NotFoundException('Book not found');
+      if (rows.length === 0) throw gone?.() ?? new NotFoundException('Book not found');
     }
     if (target.bookVersionId) {
       const rows = await tx.$queryRaw<

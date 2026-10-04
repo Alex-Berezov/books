@@ -93,6 +93,58 @@ async function lockUserRow(
 }
 
 /**
+ * 🔴 `LEGACY-433`, пачка `T97`. Удаление пользователя сносит его лайки версий, комментарии, полки,
+ * прогресс, обнуляет просмотры, а каскад удаления книги и версии сносит те же строки по версии.
+ * Строки пользователя запирались раньше версий, а каскад держит версию и ждёт эти строки —
+ * `deadlock detected` (живая проба `legacy-433-writers-probe`). Поэтому до первой записи —
+ * книги его оценок и книги затронутых версий, затем сами версии, `FOR KEY SHARE` по возрастанию
+ * `id`: порядок `BookService.remove` (книга, потом версии `ORDER BY id`) и удаления версии
+ * (сначала её строка). Встречное удаление держит их `FOR UPDATE` — удаление пользователя встаёт
+ * в очередь, не взяв ни одной строки каскада.
+ *
+ * Цели читаются один раз и без замка: строка пользователя уже заперта `FOR UPDATE`, и новая строка
+ * с его `userId` не вставится (проверка внешнего ключа берёт `FOR KEY SHARE` на неё). Ответ — по
+ * строке на версию и книгу, которых пользователь касался: не больше размера каталога. Обратно
+ * они уходят одним параметром-массивом (`= ANY`), а не списком `IN` — предел числа параметров
+ * запроса их не касается. Сами замки строк в память не отдают — наружу идёт только счёт.
+ * Лайки на чужие комментарии в цели не входят: каскад книги ждёт такую строку `Like`, а удалению
+ * пользователя от каскада ждать нечего — цикла нет.
+ * Не покрыто: удаление главы и аудиоглавы (`runInLockedClearance` держит версию
+ * `FOR NO KEY UPDATE`, с `FOR KEY SHARE` совместимо) — остаток `LEGACY-433`.
+ */
+async function lockUserContentTargets(tx: Prisma.TransactionClient, userId: string): Promise<void> {
+  const targets = await tx.$queryRaw<Array<{ kind: 'book' | 'version'; id: string }>>(Prisma.sql`
+    WITH v AS (
+      SELECT "bookVersionId" AS id FROM "Like" WHERE "userId" = ${userId} AND "bookVersionId" IS NOT NULL
+      UNION SELECT COALESCE(c."bookVersionId", ch."bookVersionId", ac."bookVersionId")
+        FROM "Comment" c
+        LEFT JOIN "Chapter" ch ON ch.id = c."chapterId"
+        LEFT JOIN "AudioChapter" ac ON ac.id = c."audioChapterId"
+        WHERE c."userId" = ${userId}
+      UNION SELECT "bookVersionId" FROM "Bookshelf" WHERE "userId" = ${userId}
+      UNION SELECT "bookVersionId" FROM "ReadingProgress" WHERE "userId" = ${userId}
+      UNION SELECT "bookVersionId" FROM "ViewStat" WHERE "userId" = ${userId}
+    )
+    SELECT 'version' AS kind, id FROM v WHERE id IS NOT NULL
+    UNION SELECT 'book', bv."bookId" FROM "BookVersion" bv WHERE bv.id IN (SELECT id FROM v)
+    UNION SELECT 'book', "bookId" FROM "BookRating" WHERE "userId" = ${userId}`);
+  const bookIds = targets.filter((t) => t.kind === 'book').map((t) => t.id);
+  const versionIds = targets.filter((t) => t.kind === 'version').map((t) => t.id);
+  if (bookIds.length > 0) {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT id FROM "Book" WHERE id = ANY(${bookIds}::text[]) ORDER BY id FOR KEY SHARE
+      ) locked`);
+  }
+  if (versionIds.length > 0) {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT id FROM "BookVersion" WHERE id = ANY(${versionIds}::text[]) ORDER BY id FOR KEY SHARE
+      ) locked`);
+  }
+}
+
+/**
  * Карточка книги на странице активности пользователя — своя, главы или
  * аудиоглавы (`getActivities`). Одна константа вместо трёх одинаковых
  * вложенных селектов подряд (`LEGACY-218`): разъедутся при правке иначе.
@@ -209,6 +261,7 @@ export class UsersService {
     const deleted = await this.prisma.$transaction(
       async (tx) => {
         await lockUserRow(tx, userId, 'UPDATE');
+        await lockUserContentTargets(tx, userId);
         // 1) Collect user's comment IDs
         const userComments = await tx.comment.findMany({
           where: { userId },

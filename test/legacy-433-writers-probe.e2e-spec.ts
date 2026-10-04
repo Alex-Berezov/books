@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BookType, CategoryType, Language, Prisma, PrismaClient } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { LikesService } from '../src/modules/likes/likes.service';
 import { CategoryService } from '../src/modules/category/category.service';
 import { CommentsService } from '../src/modules/comments/comments.service';
 import { TagsService } from '../src/modules/tags/tags.service';
@@ -34,6 +35,7 @@ describe('LEGACY-433/434 — писатели вне замка группы п�
   let categories: CategoryService;
   let comments: CommentsService;
   let users: UsersService;
+  let likes: LikesService;
 
   const stamp = Date.now();
   const slugs: string[] = [];
@@ -48,6 +50,7 @@ describe('LEGACY-433/434 — писатели вне замка группы п�
     categories = moduleRef.get(CategoryService);
     comments = moduleRef.get(CommentsService);
     users = moduleRef.get(UsersService);
+    likes = moduleRef.get(LikesService);
     await moduleRef.init();
   });
 
@@ -310,6 +313,166 @@ describe('LEGACY-433/434 — писатели вне замка группы п�
           text: 'reply-after',
         } as never),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  /**
+   * `T97`. `Like` крепится только к версии и к комментарию (`schema.prisma`, модель `Like`):
+   * вставка — один оператор с одной проверкой внешнего ключа на цель, ждать ей больше нечего,
+   * цикла с каскадом нет; цель, стёртая за время ожидания, — 404 (`P2003` в `LikesService`).
+   * Снятие комментария до правки запирало строку комментария раньше книги, а каскад книги
+   * сносит оценку и обнуляет `Comment.ratingId` — `deadlock detected` в гонке отзыва
+   * с удалением книги и `P2025` (500), когда комментарий стёрт между чтением и записью.
+   * Удаление аккаунта сносило лайки и отзывы автора раньше, чем каскад книги, держащий версию,
+   * добирался до тех же строк, — `deadlock detected`.
+   * Проба на отказ: без `lockTargets` в `CommentsService.remove` красные оба кейса снятия
+   * комментария; без `lockUserContentTargets` в `UsersService.deleteById` — кейс удаления аккаунта
+   * против удаления книги.
+   */
+  describe('лайки и снятие комментария против каскада (LEGACY-433, T97)', () => {
+    /**
+     * Держатель — удаление книги: строка книги `FOR UPDATE`, затем (`commentId` задан) версии
+     * `ORDER BY id` и строка комментария, как их запер бы каскад, пока писатель ждёт. Писатель
+     * стартует, держатель дожидается его в очереди и сносит книгу настоящим каскадом.
+     */
+    const againstBookRemoval = (
+      bookId: string,
+      commentId: string | null,
+      writer: () => Promise<unknown>,
+    ) =>
+      withHolder(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Book" WHERE id = ${bookId} FOR UPDATE`;
+          if (commentId === null) return;
+          await tx.$queryRaw`SELECT id FROM "BookVersion" WHERE "bookId" = ${bookId} ORDER BY id FOR UPDATE`;
+          await tx.$queryRaw`SELECT id FROM "Comment" WHERE id = ${commentId} FOR UPDATE`;
+        },
+        async (holderPid, tx) => {
+          const op = settle(writer());
+          const blocked = await waitBlockedBy(prisma, holderPid);
+          await tx.$queryRaw`SELECT id FROM "BookVersion" WHERE "bookId" = ${bookId} ORDER BY id FOR UPDATE`;
+          await tx.book.delete({ where: { id: bookId } });
+          return { op, blocked };
+        },
+      );
+
+    it('лайк версии против удаления версии — 404, а не P2003 и 500', async () => {
+      const f = await makeBook();
+      const reader = await makeUser('liker');
+
+      const held = await withHolder(
+        (tx) => lockVersion(tx, f.low),
+        async (holderPid, tx) => {
+          const op = settle(likes.like(reader, { bookVersionId: f.low }));
+          const blocked = await waitBlockedBy(prisma, holderPid);
+          await tx.bookVersion.delete({ where: { id: f.low } });
+          return { op, blocked };
+        },
+      );
+
+      expect(held.blocked).toBe(true);
+      const writer = await held.op;
+      expect(writer.status).toBe('rejected');
+      expect((writer as PromiseRejectedResult).reason).toBeInstanceOf(NotFoundException);
+    });
+
+    it('лайк комментария против удаления книги: комментарий заперт каскадом — 404, цикла нет', async () => {
+      const f = await makeBook();
+      const author = await makeUser('c-author');
+      const reader = await makeUser('c-liker');
+      const comment = await prisma.comment.create({
+        data: { userId: author, bookVersionId: f.low, text: 'liked' },
+      });
+
+      const held = await againstBookRemoval(f.bookId, comment.id, () =>
+        likes.like(reader, { commentId: comment.id }),
+      );
+
+      expect(held.blocked).toBe(true);
+      const writer = await held.op;
+      expect(writer.status).toBe('rejected');
+      expect((writer as PromiseRejectedResult).reason).toBeInstanceOf(NotFoundException);
+      expect(await prisma.like.count({ where: { userId: reader } })).toBe(0);
+    });
+
+    it('снятие комментария против удаления книги: комментарий снесён между чтением и записью — не 500', async () => {
+      const f = await makeBook();
+      const author = await makeUser('remover');
+      const comment = await prisma.comment.create({
+        data: { userId: author, bookVersionId: f.low, text: 'to-remove' },
+      });
+
+      const held = await againstBookRemoval(f.bookId, comment.id, () =>
+        comments.remove(comment.id, { userId: author, email: 'x@ex.com' }),
+      );
+
+      expect(held.blocked).toBe(true);
+      expect(text(await held.op)).toBe('');
+    });
+
+    it('снятие отзыва с оценкой встаёт за удалением книги на её строке — цикла нет', async () => {
+      // Без замка книги снятие запирает строку комментария и удаляет оценку мимо держателя, а каскад
+      // книги, снёсший оценку, ждал бы строку комментария для `SET NULL` — `deadlock detected`.
+      const f = await makeBook();
+      const author = await makeUser('rr');
+      const review = (await comments.create(author, {
+        bookVersionId: f.low,
+        text: 'rated',
+        rating: 4,
+      } as never)) as { id: string };
+
+      const held = await againstBookRemoval(f.bookId, null, () =>
+        comments.remove(review.id, { userId: author, email: 'x@ex.com' }),
+      );
+
+      expect(held.blocked).toBe(true);
+      expect(text(await held.op)).toBe('');
+      expect(await prisma.comment.count({ where: { id: review.id } })).toBe(0);
+      expect(await prisma.bookRating.count({ where: { userId: author } })).toBe(0);
+    });
+
+    it('удаление аккаунта против удаления книги: комментарий заперт каскадом — не 500', async () => {
+      // `deleteById` сносит лайки и отзывы автора; каскад книги сносит те же строки по версии.
+      const f = await makeBook();
+      const author = await makeUser('leaver');
+      const review = (await comments.create(author, {
+        bookVersionId: f.low,
+        text: 'rated-leaver',
+        rating: 3,
+      } as never)) as { id: string };
+      await likes.like(author, { bookVersionId: f.low });
+
+      const held = await againstBookRemoval(f.bookId, review.id, () =>
+        users.deleteById(author, null),
+      );
+
+      expect(held.blocked).toBe(true);
+      expect(text(await held.op)).toBe('');
+      userIds.splice(userIds.indexOf(author), 1);
+      expect(await prisma.user.count({ where: { id: author } })).toBe(0);
+    });
+
+    it('удаление аккаунта против удаления версии: встаёт за строкой версии — не 500', async () => {
+      const f = await makeBook();
+      const author = await makeUser('leaver-v');
+      await prisma.comment.create({ data: { userId: author, bookVersionId: f.low, text: 'v' } });
+      await likes.like(author, { bookVersionId: f.low });
+
+      const held = await withHolder(
+        (tx) => lockVersion(tx, f.low),
+        async (holderPid, tx) => {
+          const op = settle(users.deleteById(author, null));
+          const blocked = await waitBlockedBy(prisma, holderPid);
+          // Как `BookVersionService.remove`: строка версии заперта, удаление — каскадом.
+          await tx.bookVersion.delete({ where: { id: f.low } });
+          return { op, blocked };
+        },
+      );
+
+      expect(held.blocked).toBe(true);
+      expect(text(await held.op)).toBe('');
+      userIds.splice(userIds.indexOf(author), 1);
+      expect(await prisma.user.count({ where: { id: author } })).toBe(0);
     });
   });
 });
