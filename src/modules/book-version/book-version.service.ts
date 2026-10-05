@@ -44,6 +44,7 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AuthorService } from '../author/author.service';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
+import { findVersionSlugConflict } from '../../shared/slug/book-version-slug-conflict';
 import { uniqueViolationFields, violationModelName } from '../../shared/prisma/prisma-error.util';
 
 interface BookWithRights {
@@ -92,6 +93,13 @@ const BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE =
 /** Один текст на «слаг занят» (`@@unique([language, slug])`) в `create` и в `update`. */
 const BOOK_VERSION_SLUG_TAKEN_MESSAGE = 'Slug is already used by another version in this language';
 
+// Пространство имён двухаргументного `pg_advisory_xact_lock`; занятые — в перечне у `RECHECK_SCAN_LOCK_KEY`.
+const BOOK_VERSION_SLUG_LOCK_NAMESPACE = 831_427_005;
+
+/** Слаг держит другая книга (`Book.slug` или версия в другом языке) — `findVersionSlugConflict`. */
+const BOOK_VERSION_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE =
+  'Slug is already used by another book: it would take over that book’s public address';
+
 /** `P2002` версии, индекс которого не разобрался: причину не угадываем (решение арбитра 28.09.2026). */
 const BOOK_VERSION_CONFLICT_MESSAGE =
   'Version conflicts with an existing version (language or slug)';
@@ -131,6 +139,13 @@ function bookVersionUniqueViolation(e: unknown): unknown {
  * как гейт публикацию уже пропустил.
  */
 const BOOK_VERSION_VISIBILITY_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/**
+ * Явный дедлайн создания версии (`L-020`): транзакция ждёт замок слага (`assertVersionSlugFree`),
+ * который встречная правка слага держит до своего коммита. На дефолтных 5 секундах создание
+ * получило бы `P2028` и 500 вместо отказа или успеха.
+ */
+const BOOK_VERSION_CREATE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 @Injectable()
 export class BookVersionService {
@@ -331,6 +346,8 @@ export class BookVersionService {
         // belong to it: keeping them would leave "rules checked" text on an unverified version.
         const rightsGeoBlockNotesRu = null;
 
+        await this.assertVersionSlugFree(tx, dto.slug, effectiveLanguage, { bookId });
+
         const newVersion = await tx.bookVersion.create({
           data: {
             bookId,
@@ -428,7 +445,7 @@ export class BookVersionService {
         );
 
         return newVersion;
-      });
+      }, BOOK_VERSION_CREATE_TX_OPTIONS);
     } catch (e: unknown) {
       throw bookVersionUniqueViolation(e);
     }
@@ -945,6 +962,34 @@ export class BookVersionService {
   }
 
   /**
+   * Слаг версии не должен перехватить публичный адрес другой книги (`findVersionSlugConflict`).
+   * Своя книга берётся только с сервера: маршрут при создании, строка версии при правке — не из
+   * тела запроса. Конфликт внутри языка ловит и `@@unique([language, slug])`; здесь он приходит
+   * раньше, но тем же текстом, что и отказ индекса.
+   */
+  private async assertVersionSlugFree(
+    tx: Prisma.TransactionClient,
+    slug: string | undefined,
+    language: Language,
+    owner: { versionId?: string; bookId: string },
+  ): Promise<void> {
+    if (!slug) return;
+    // Межкнижный и межъязыковой конфликт индекс не держит (только `@@unique([language, slug])`):
+    // две встречные записи одного слага прошли бы проверку обе. Транзакционный замок на сам слаг
+    // ставит их в очередь до коммита — вторая увидит строку первой.
+    await tx.$queryRaw`
+      SELECT true AS locked
+        FROM pg_advisory_xact_lock(${BOOK_VERSION_SLUG_LOCK_NAMESPACE}::int4, hashtext(${slug}::text))`;
+    const conflict = await findVersionSlugConflict(tx, slug, language, owner);
+    if (!conflict) return;
+    throw new BadRequestException(
+      conflict.language === language
+        ? BOOK_VERSION_SLUG_TAKEN_MESSAGE
+        : BOOK_VERSION_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE,
+    );
+  }
+
+  /**
    * Какие поля содержимого правка **стирает** — то есть заменяет непустое значение пустым.
    *
    * Именно стирание, а не наполненность вообще: версии с пустым описанием в базе есть (блокер
@@ -1016,6 +1061,7 @@ export class BookVersionService {
         const current = await tx.bookVersion.findUnique({
           where: { id },
           select: {
+            bookId: true,
             language: true,
             author: true,
             slug: true,
@@ -1080,6 +1126,14 @@ export class BookVersionService {
           ...jsonField('alternativeTitles', alternativeTitles),
           ...jsonField('symbols', symbols),
         };
+
+        // Только при смене слага: прежний, уже записанный слаг сохранению не мешает.
+        if (updateData.slug && updateData.slug !== current.slug) {
+          await this.assertVersionSlugFree(tx, updateData.slug, current.language, {
+            versionId: id,
+            bookId: current.bookId,
+          });
+        }
 
         // Слаг версии — публичный адрес книги в этом языке. Его смена без записи в
         // историю превращает проиндексированный URL в 404 и теряет накопленные

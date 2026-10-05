@@ -2130,6 +2130,122 @@ describe('BookVersionService', () => {
     );
   });
 
+  /**
+   * Запись слага версии проверяет то же правило, что подсказка админки
+   * (`findVersionSlugConflict`): слаг другой книги — 400, свой — нет. Своя книга берётся
+   * с сервера (маршрут при создании, строка версии при правке), проверка идёт под
+   * транзакционным замком слага, а при правке — только при смене слага.
+   */
+  describe('version slug on write: conflict rule, own book, lock', () => {
+    const slugLocks = () =>
+      (prisma.$queryRaw.mock.calls as [readonly string[], ...unknown[]][]).filter(([parts]) =>
+        parts.join('?').includes('pg_advisory_xact_lock'),
+      );
+
+    const arrangeCurrentWithBook = (slug: string | null) =>
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        id: 'v1',
+        bookId: 'b1',
+        seoId: null,
+        status: 'draft',
+        description: 'D',
+        coverImageUrl: 'https://cdn.example.com/cover.jpg',
+        language: Language.en,
+        author: 'A',
+        slug,
+      } as unknown as BookVersion);
+
+    const createDto = (slug?: string): CreateBookVersionDto => ({
+      language: Language.en,
+      ...(slug ? { slug } : {}),
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+    });
+
+    it('update: a new slug is checked under the slug lock, own book from the version row', async () => {
+      arrangeCurrentWithBook('old');
+      (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+
+      await service.update('v1', { slug: 'hamlet' });
+
+      const locks = slugLocks();
+      expect(locks).toHaveLength(1);
+      expect(locks[0]).toContain(831_427_005);
+      expect(locks[0]).toContain('hamlet');
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'hamlet', language: Language.en, NOT: { id: 'v1' } },
+        select: { bookId: true, language: true },
+      });
+      expect(prisma.book.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'hamlet', NOT: { id: 'b1' } },
+        select: { id: true },
+      });
+      expect(prisma.bookVersion.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('update: the kept slug is not checked and takes no lock', async () => {
+      arrangeCurrentWithBook('hamlet');
+      (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+
+      await service.update('v1', { slug: 'hamlet', title: 'T2' });
+
+      expect(slugLocks()).toHaveLength(0);
+      expect(prisma.book.findFirst).not.toHaveBeenCalled();
+      expect(prisma.bookVersion.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('update: another book is refused with its own text and nothing is written', async () => {
+      arrangeCurrentWithBook('old');
+      (prisma.book.findFirst as jest.Mock).mockResolvedValueOnce({ id: 'b2' });
+
+      await expect(service.update('v1', { slug: 'hamlet' })).rejects.toThrow('another book');
+      expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+    });
+
+    it('update: a version of the same language keeps the old text', async () => {
+      arrangeCurrentWithBook('old');
+      (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValueOnce({
+        bookId: 'b2',
+        language: Language.en,
+      });
+
+      await expect(service.update('v1', { slug: 'hamlet' })).rejects.toThrow(
+        'Slug is already used by another version in this language',
+      );
+      expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+    });
+
+    it('create: the slug is checked for the book of the route, with the explicit deadline', async () => {
+      arrangeSimpleCreate();
+      const transaction = jest.spyOn(prisma, '$transaction');
+
+      await service.create('b1', createDto('hamlet'));
+
+      expect(slugLocks()).toHaveLength(1);
+      expect(prisma.book.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'hamlet', NOT: { id: 'b1' } },
+        select: { id: true },
+      });
+      expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+        timeout: 30_000,
+        maxWait: 10_000,
+      });
+    });
+
+    it('create: without a slug there is no check and no lock', async () => {
+      arrangeSimpleCreate();
+
+      await service.create('b1', createDto());
+
+      expect(slugLocks()).toHaveLength(0);
+      expect(prisma.book.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getRightsDashboard', () => {
     it('throws NotFoundException when version does not exist', async () => {
       (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(null);

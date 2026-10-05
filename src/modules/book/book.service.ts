@@ -54,6 +54,10 @@ import {
 } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
+import {
+  findVersionSlugConflict,
+  type VersionSlugOwner,
+} from '../../shared/slug/book-version-slug-conflict';
 
 /**
  * `remove()` каскадом сносит все версии книги вместе с их главами и
@@ -1752,6 +1756,36 @@ export class BookService {
   }
 
   /**
+   * Check if a slug can be given to a book version in `language` - the rule of
+   * `findVersionSlugConflict` (`src/shared/slug/book-version-slug-conflict.ts`), the same one
+   * the version write path enforces.
+   * @param slug - The slug to check
+   * @param language - Version language
+   * @param exclude - The edited version and/or the own book (see `resolveVersionSlugOwner`)
+   * @returns The book id and slug of the conflict, or null if the slug is available
+   */
+  async checkVersionSlugExists(slug: string, language: Language, exclude: VersionSlugOwner = {}) {
+    const owner = await this.resolveVersionSlugOwner(exclude);
+    const conflict = await findVersionSlugConflict(this.prisma, slug, language, owner);
+    return conflict ? { id: conflict.bookId, slug: conflict.slug } : null;
+  }
+
+  /**
+   * The own book of a checked version slug. With a version id it is that version's book, and the
+   * client's `bookId` is ignored: a mismatched pair must not clear a conflict. Without one - the
+   * client's `bookId` (a version being created). A version id that does not exist gives no own
+   * book: every match is then a conflict.
+   */
+  private async resolveVersionSlugOwner(exclude: VersionSlugOwner): Promise<VersionSlugOwner> {
+    if (!exclude.versionId) return { bookId: exclude.bookId };
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: exclude.versionId },
+      select: { bookId: true },
+    });
+    return { versionId: exclude.versionId, bookId: version?.bookId };
+  }
+
+  /**
    * Check if a slug exists for books.
    * @param slug - The slug to check
    * @param excludeId - Optional book ID to exclude (when editing)
@@ -1775,14 +1809,27 @@ export class BookService {
   /**
    * Generate a unique slug by appending a numeric suffix.
    * @param baseSlug - The base slug to make unique
+   * @param language - When set, the suffix is free for a version in this language by the rules
+   *   of `checkVersionSlugExists`; otherwise among `Book.slug`
+   * @param exclude - The edited version and/or the own book, as in `checkVersionSlugExists`
    * @returns A unique slug with numeric suffix (e.g., "harry-potter-2")
    */
-  async generateUniqueSuggestedSlug(baseSlug: string): Promise<string> {
+  async generateUniqueSuggestedSlug(
+    baseSlug: string,
+    language?: Language,
+    exclude: VersionSlugOwner = {},
+  ): Promise<string> {
     let suffix = 2;
     let candidateSlug = `${baseSlug}-${suffix}`;
+    // The own book is resolved once, not per candidate.
+    const owner = language ? await this.resolveVersionSlugOwner(exclude) : {};
+    const isTaken = (candidate: string) =>
+      language
+        ? findVersionSlugConflict(this.prisma, candidate, language, owner)
+        : this.checkSlugExists(candidate);
 
     // Find first available suffix
-    while (await this.checkSlugExists(candidateSlug)) {
+    while (await isTaken(candidateSlug)) {
       suffix++;
       candidateSlug = `${baseSlug}-${suffix}`;
     }

@@ -73,6 +73,34 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
     return (res.body as { id: string }).id;
   };
 
+  /**
+   * Опубликованная версия другой книги со слагом, который уже держит чужая книга. С 05.10.2026
+   * (`version-slug`) API такую запись отклоняет (`findVersionSlugConflict`), но строки, записанные
+   * раньше, в базе остаются — уборка истории слагов обязана их видеть. Поэтому состояние
+   * заводится прямо в базе, а не через `POST /books/:id/versions`.
+   */
+  const insertLegacySharedVersion = async (
+    bookId: string,
+    language: Language,
+    slug: string,
+  ): Promise<void> => {
+    await prisma.bookVersion.create({
+      data: {
+        bookId,
+        language,
+        slug,
+        title: 'Test title',
+        author: 'Test author',
+        description: 'Test description',
+        coverImageUrl: 'https://example.com/cover.jpg',
+        type: BookType.text,
+        isFree: true,
+        status: 'published',
+        publishedAt: new Date(),
+      },
+    });
+  };
+
   const publishVersion = async (bookId: string, versionId: string): Promise<void> => {
     await markBookRightsFreshForTests(prisma, bookId, rightsContentHashService);
     await request(http())
@@ -241,8 +269,7 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
 
       const otherFixtureSlug = uniqueMark('l395-book2-other');
       const otherId = await newBook(otherFixtureSlug);
-      const otherVersionId = await createVersion(otherId, Language.en, deadSlug);
-      await publishVersion(otherId, otherVersionId);
+      await insertLegacySharedVersion(otherId, Language.en, deadSlug);
 
       await request(http())
         .delete(`/books/${victimId}`)
@@ -303,8 +330,7 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
       expect(await readSlugRedirect(prisma, 'book', Language.ru, oldSlug)).toBe(sharedSlug);
 
       const otherBookId = await newBook(uniqueMark('l320-cascade2-other'));
-      const otherVersionId = await createVersion(otherBookId, Language.en, sharedSlug);
-      await publishVersion(otherBookId, otherVersionId);
+      await insertLegacySharedVersion(otherBookId, Language.en, sharedSlug);
 
       await request(http())
         .delete(`/books/${victimBookId}`)
@@ -363,8 +389,7 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
 
       const otherFixtureSlug = uniqueMark('l395-bv2-other');
       const otherBookId = await newBook(otherFixtureSlug);
-      const otherVersionId = await createVersion(otherBookId, Language.en, deadSlug);
-      await publishVersion(otherBookId, otherVersionId);
+      await insertLegacySharedVersion(otherBookId, Language.en, deadSlug);
 
       await request(http())
         .delete(`/versions/${victimVersionId}`)
@@ -401,8 +426,12 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
       // Версия B (en) держит тот же слаг параллельно — разным языкам
       // `@@unique([language, slug])` делить слаг не мешает.
       const bookBId = await newBook(uniqueMark('l395-bv3-b'));
-      const versionBId = await createVersion(bookBId, Language.en, sharedSlug);
-      await publishVersion(bookBId, versionBId);
+      await insertLegacySharedVersion(bookBId, Language.en, sharedSlug);
+      const versionB = await prisma.bookVersion.findFirstOrThrow({
+        where: { bookId: bookBId, language: Language.en },
+        select: { id: true },
+      });
+      const versionBId = versionB.id;
 
       // A снята — слаг пережил это: его по-прежнему держит B (en, любой язык
       // не важен для языконезависимого фоллбэка). Запись обязана уцелеть.

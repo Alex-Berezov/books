@@ -20,7 +20,12 @@ interface PrismaStub {
     delete: jest.Mock;
     update: jest.Mock;
   };
-  bookVersion: { findMany: jest.Mock; findFirst: jest.Mock; groupBy: jest.Mock };
+  bookVersion: {
+    findMany: jest.Mock;
+    findFirst: jest.Mock;
+    findUnique: jest.Mock;
+    groupBy: jest.Mock;
+  };
   bookSummary: { findFirst: jest.Mock };
   seo: { findUnique: jest.Mock; findMany: jest.Mock };
   bookCategory: { findMany: jest.Mock; groupBy: jest.Mock };
@@ -55,6 +60,7 @@ const createPrismaStub = (): PrismaStub => {
     bookVersion: {
       findMany: jest.fn(),
       findFirst: jest.fn().mockResolvedValue(null),
+      findUnique: jest.fn().mockResolvedValue(null),
       groupBy: jest.fn(),
     },
     bookSummary: { findFirst: jest.fn() },
@@ -1960,5 +1966,96 @@ describe('BookService: пустые карточки по ненайденном
       ...empty,
     });
     expect(prisma.bookVersion.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Слаг языковой версии проверяется так, как разрешается публичный адрес (`getOverview`):
+ * версия в языке пути, версия с этим слагом в любом языке, `Book.slug`. Занят слаг другой
+ * версии того же языка, `Book.slug` другой книги и слаг версии другой книги в любом языке;
+ * свои слаги ведут в ту же книгу. Здесь закреплены сами условия запросов - e2e проверяет их
+ * на базе, а эта спека краснеет без неё.
+ */
+describe('BookService.checkVersionSlugExists', () => {
+  let service: BookService;
+  let prisma: PrismaStub;
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    service = new BookService(
+      prisma as unknown as PrismaService,
+      createGeoBlockRuleServiceStub(),
+      new RelatedTaxonomyService(prisma as unknown as PrismaService),
+      createSlugRedirectStub(),
+      createModeratorRolesStub(),
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
+      { record: jest.fn() } as unknown as AdminAuditService,
+    );
+  });
+
+  it('takes the own book from the edited version and ignores the client bookId', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue({ bookId: 'book-1' });
+
+    await service.checkVersionSlugExists('hamlet', Language.ru, {
+      versionId: 'version-1',
+      bookId: 'book-2',
+    });
+
+    expect(prisma.bookVersion.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(2);
+    expect(prisma.bookVersion.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({ NOT: { bookId: 'book-1' } }),
+      }),
+    );
+    expect(prisma.book.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.book.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'hamlet', NOT: { id: 'book-1' } },
+      select: { id: true },
+    });
+  });
+
+  it('answers with the book of the conflict in the controller shape', async () => {
+    prisma.bookVersion.findFirst.mockResolvedValue({ bookId: 'book-2', language: Language.es });
+
+    const result = await service.checkVersionSlugExists('hamlet', Language.ru, {
+      bookId: 'book-1',
+    });
+
+    expect(result).toEqual({ id: 'book-2', slug: 'hamlet' });
+    expect(prisma.bookVersion.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('suggests the first free suffix, resolving the own book once for all candidates', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue({ bookId: 'book-1' });
+    prisma.bookVersion.findFirst
+      .mockResolvedValueOnce({ bookId: 'book-2', language: Language.ru })
+      .mockResolvedValueOnce(null);
+
+    const suggested = await service.generateUniqueSuggestedSlug('hamlet', Language.ru, {
+      versionId: 'version-1',
+    });
+
+    expect(suggested).toBe('hamlet-3');
+    expect(prisma.bookVersion.findUnique).toHaveBeenCalledTimes(1);
+    // hamlet-2: same language is taken (one query); hamlet-3: same language, other books, Book.slug.
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(3);
+    expect(prisma.bookVersion.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { slug: 'hamlet-2', language: Language.ru, NOT: { id: 'version-1' } },
+      }),
+    );
+    expect(prisma.bookVersion.findFirst).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        where: expect.objectContaining({ slug: 'hamlet-3', NOT: { bookId: 'book-1' } }),
+      }),
+    );
   });
 });

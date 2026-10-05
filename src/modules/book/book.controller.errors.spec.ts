@@ -50,6 +50,11 @@ const HANDLERS: HandlerCase[] = [
     serviceMethod: 'checkSlugExists',
     invoke: (c) => c.checkSlug({ slug: 'harry-potter' } as CheckBookSlugQueryDto),
   },
+  {
+    handler: 'checkSlug (lang)',
+    serviceMethod: 'checkVersionSlugExists',
+    invoke: (c) => c.checkSlug({ slug: 'harry-potter', lang: 'en' } as CheckBookSlugQueryDto),
+  },
   { handler: 'getThemes', serviceMethod: 'getAllThemes', invoke: (c) => c.getThemes() },
   {
     handler: 'findAll',

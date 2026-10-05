@@ -17684,8 +17684,12 @@ export interface operations {
       query: {
         /** @description Slug to check for uniqueness */
         slug: string;
-        /** @description Book ID to exclude from the check (when editing) */
+        /** @description Book ID to exclude from the check (when editing); with lang - the own book of the version, whose slugs are not a conflict */
         excludeId?: string;
+        /** @description Version language: check BookVersion slug within this language instead of Book.slug */
+        lang?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+        /** @description Book version ID to exclude from the check (when editing); requires lang */
+        excludeVersionId?: string;
       };
       header?: never;
       path?: never;
@@ -17702,7 +17706,7 @@ export interface operations {
           'application/json': components['schemas']['CheckBookSlugResponseDto'];
         };
       };
-      /** @description Invalid slug format */
+      /** @description Invalid slug format, or excludeVersionId without lang */
       400: {
         headers: {
           [name: string]: unknown;

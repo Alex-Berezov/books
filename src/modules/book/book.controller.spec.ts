@@ -2,6 +2,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { BookController } from './book.controller';
 import { BookService } from './book.service';
 import type { PaginationDto } from '../../shared/dto/pagination.dto';
+import type { CheckBookSlugQueryDto } from './dto/check-slug-query.dto';
 
 /**
  * WP-10.6 (R2-02) + WP-10.7 (R2-04). Phase 6 made an approved rights intake the only entrance for
@@ -80,5 +81,67 @@ describe('BookController.findAll — админский список в форм
     }).findAll({ page: 1, limit: 0 } as PaginationDto);
 
     expect(body.pagination.totalPages).toBe(0);
+  });
+});
+
+/**
+ * `GET /books/check-slug`: с `lang` проверяется слаг языковой версии, и подсказка подбирается
+ * по тем же правилам и с той же своей книгой. Без `lang` - прежняя проверка `Book.slug`, на ней
+ * держится создание книги.
+ */
+describe('BookController.checkSlug', () => {
+  const makeService = () => ({
+    checkSlugExists: jest.fn().mockResolvedValue({ id: 'book-2', slug: 'hamlet' }),
+    checkVersionSlugExists: jest.fn().mockResolvedValue({ id: 'book-2', slug: 'hamlet' }),
+    generateUniqueSuggestedSlug: jest.fn().mockResolvedValue('hamlet-2'),
+  });
+
+  it('with lang: checks the version slug and suggests with the same exclusions', async () => {
+    const service = makeService();
+    const controller = new BookController(service as unknown as BookService);
+
+    const body = await controller.checkSlug({
+      slug: 'hamlet',
+      lang: 'ru',
+      excludeVersionId: 'version-1',
+      excludeId: 'book-1',
+    } as CheckBookSlugQueryDto);
+
+    const exclude = { versionId: 'version-1', bookId: 'book-1' };
+    expect(service.checkVersionSlugExists).toHaveBeenCalledTimes(1);
+    expect(service.checkVersionSlugExists).toHaveBeenCalledWith('hamlet', 'ru', exclude);
+    expect(service.generateUniqueSuggestedSlug).toHaveBeenCalledTimes(1);
+    expect(service.generateUniqueSuggestedSlug).toHaveBeenCalledWith('hamlet', 'ru', exclude);
+    expect(service.checkSlugExists).not.toHaveBeenCalled();
+    expect(body).toEqual({
+      exists: true,
+      suggestedSlug: 'hamlet-2',
+      existingBook: { id: 'book-2', slug: 'hamlet' },
+    });
+  });
+
+  it('without lang: the old Book.slug check', async () => {
+    const service = makeService();
+    const controller = new BookController(service as unknown as BookService);
+
+    await controller.checkSlug({ slug: 'hamlet', excludeId: 'book-1' } as CheckBookSlugQueryDto);
+
+    expect(service.checkSlugExists).toHaveBeenCalledTimes(1);
+    expect(service.checkSlugExists).toHaveBeenCalledWith('hamlet', 'book-1');
+    expect(service.checkVersionSlugExists).not.toHaveBeenCalled();
+  });
+
+  it('excludeVersionId without lang is a 400 before any lookup', async () => {
+    const service = makeService();
+    const controller = new BookController(service as unknown as BookService);
+
+    await expect(
+      controller.checkSlug({
+        slug: 'hamlet',
+        excludeVersionId: 'version-1',
+      } as CheckBookSlugQueryDto),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(service.checkSlugExists).not.toHaveBeenCalled();
+    expect(service.checkVersionSlugExists).not.toHaveBeenCalled();
   });
 });

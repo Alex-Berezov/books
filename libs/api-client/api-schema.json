@@ -34452,9 +34452,36 @@
             }
           },
           {
-            "description": "Book ID to exclude from the check (when editing)",
+            "description": "Book ID to exclude from the check (when editing); with lang - the own book of the version, whose slugs are not a conflict",
             "in": "query",
             "name": "excludeId",
+            "required": false,
+            "schema": {
+              "example": "550e8400-e29b-41d4-a716-446655440000",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Version language: check BookVersion slug within this language instead of Book.slug",
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "enum": [
+                "en",
+                "es",
+                "fr",
+                "pt",
+                "ru"
+              ],
+              "example": "en",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Book version ID to exclude from the check (when editing); requires lang",
+            "in": "query",
+            "name": "excludeVersionId",
             "required": false,
             "schema": {
               "example": "550e8400-e29b-41d4-a716-446655440000",
@@ -34474,7 +34501,7 @@
             "description": "Slug check result"
           },
           "400": {
-            "description": "Invalid slug format"
+            "description": "Invalid slug format, or excludeVersionId without lang"
           }
         },
         "security": [

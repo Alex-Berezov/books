@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -76,13 +77,20 @@ export class BookController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid slug format',
+    description: 'Invalid slug format, or excludeVersionId without lang',
   })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   async checkSlug(@Query() query: CheckBookSlugQueryDto): Promise<CheckBookSlugResponseDto> {
-    const existingBook = await this.bookService.checkSlugExists(query.slug, query.excludeId);
+    if (query.excludeVersionId && !query.lang) {
+      throw new BadRequestException('excludeVersionId requires lang');
+    }
+    // With `lang`, `excludeId` is the own book of the version: its slugs lead to the same book.
+    const exclude = { versionId: query.excludeVersionId, bookId: query.excludeId };
+    const existingBook = query.lang
+      ? await this.bookService.checkVersionSlugExists(query.slug, query.lang, exclude)
+      : await this.bookService.checkSlugExists(query.slug, query.excludeId);
 
     if (!existingBook) {
       // Slug is available
@@ -92,7 +100,11 @@ export class BookController {
     }
 
     // Slug is taken - generate suggestion
-    const suggestedSlug = await this.bookService.generateUniqueSuggestedSlug(query.slug);
+    const suggestedSlug = await this.bookService.generateUniqueSuggestedSlug(
+      query.slug,
+      query.lang,
+      exclude,
+    );
 
     return {
       exists: true,

@@ -60,6 +60,8 @@ describe('Books: Check Slug (e2e)', () => {
                 'test-book-existing',
                 'test-book-for-edit',
                 'multi-book-slug',
+                'version-slug-book',
+                'version-slug-other',
               ],
             },
           },
@@ -81,6 +83,8 @@ describe('Books: Check Slug (e2e)', () => {
                 'test-book-existing',
                 'test-book-for-edit',
                 'multi-book-slug',
+                'version-slug-book',
+                'version-slug-other',
               ],
             },
           },
@@ -194,6 +198,140 @@ describe('Books: Check Slug (e2e)', () => {
           },
         },
       });
+    });
+  });
+
+  /**
+   * С `lang` ручка проверяет слаг языковой версии так, как разрешается публичный адрес
+   * (`getOverview`): версия в языке пути, затем версия с этим слагом в любом языке, затем
+   * `Book.slug`. Занят слаг другой версии того же языка, `Book.slug` другой книги и слаг версии
+   * другой книги в любом языке - иначе живой адрес чужой книги молча уходит на эту. Свои слаги
+   * (своя книга и её версии в других языках) ведут в ту же книгу и свободны.
+   */
+  describe('GET /books/check-slug?lang=… (слаг языковой версии)', () => {
+    let bookId: string;
+    let otherBookId: string;
+    let ruVersionId: string;
+
+    const versionData = (book: string, language: 'en' | 'es' | 'ru', slug: string | null) => ({
+      bookId: book,
+      language,
+      slug,
+      title: 't',
+      author: 'a',
+      description: 'd',
+      coverImageUrl: 'https://example.com/c.jpg',
+      type: 'text' as const,
+      isFree: true,
+    });
+
+    beforeAll(async () => {
+      bookId = (await createBookFixture(prisma, 'version-slug-book')).id;
+      ruVersionId = (
+        await prisma.bookVersion.create({ data: versionData(bookId, 'ru', 'version-slug-ru') })
+      ).id;
+      await prisma.bookVersion.create({ data: versionData(bookId, 'en', 'version-slug-en') });
+
+      // Чужая книга: черновая версия es со своим слагом и версия en без слага, которая
+      // живёт по адресу книги `version-slug-other`.
+      otherBookId = (await createBookFixture(prisma, 'version-slug-other')).id;
+      await prisma.bookVersion.create({
+        data: versionData(otherBookId, 'es', 'version-slug-other-es'),
+      });
+      await prisma.bookVersion.create({ data: versionData(otherBookId, 'en', null) });
+    });
+
+    const check = (query: Record<string, string>) =>
+      request(http())
+        .get('/books/check-slug')
+        .query(query)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+    it('слаг другой версии того же языка занят, подсказка подбирается по тем же правилам', async () => {
+      const response = await check({
+        slug: 'version-slug-en',
+        lang: 'en',
+        excludeVersionId: ruVersionId,
+      }).expect(200);
+
+      expect(response.body).toEqual({
+        exists: true,
+        suggestedSlug: 'version-slug-en-2',
+        existingBook: { id: bookId, slug: 'version-slug-en' },
+      });
+    });
+
+    it('своя версия исключается через excludeVersionId', async () => {
+      const response = await check({
+        slug: 'version-slug-ru',
+        lang: 'ru',
+        excludeVersionId: ruVersionId,
+      }).expect(200);
+
+      expect(response.body).toEqual({ exists: false });
+    });
+
+    it('слаг своей версии в другом языке и свой Book.slug свободны', async () => {
+      const ownOtherLanguage = await check({
+        slug: 'version-slug-en',
+        lang: 'ru',
+        excludeVersionId: ruVersionId,
+      }).expect(200);
+      expect(ownOtherLanguage.body).toEqual({ exists: false });
+
+      // Форма создания версии знает только свою книгу.
+      const ownBookSlug = await check({
+        slug: 'version-slug-book',
+        lang: 'es',
+        excludeId: bookId,
+      }).expect(200);
+      expect(ownBookSlug.body).toEqual({ exists: false });
+    });
+
+    it('Book.slug другой книги занят: адрес её версии без слага ушёл бы на эту книгу', async () => {
+      const response = await check({
+        slug: 'version-slug-other',
+        lang: 'ru',
+        excludeVersionId: ruVersionId,
+      }).expect(200);
+
+      expect(response.body).toMatchObject({
+        exists: true,
+        existingBook: { id: otherBookId, slug: 'version-slug-other' },
+      });
+    });
+
+    it('слаг черновой версии другой книги в другом языке занят', async () => {
+      const response = await check({
+        slug: 'version-slug-other-es',
+        lang: 'ru',
+        excludeId: bookId,
+      }).expect(200);
+
+      expect(response.body).toMatchObject({
+        exists: true,
+        existingBook: { id: otherBookId, slug: 'version-slug-other-es' },
+      });
+    });
+
+    it('без своей книги занято любое совпадение', async () => {
+      const response = await check({ slug: 'version-slug-ru', lang: 'en' }).expect(200);
+
+      expect((response.body as { exists: boolean }).exists).toBe(true);
+    });
+
+    it('слаг, не занятый нигде, свободен', async () => {
+      const response = await check({ slug: 'version-slug-free', lang: 'ru' }).expect(200);
+
+      expect(response.body).toEqual({ exists: false });
+    });
+
+    it('excludeVersionId без lang — 400', async () => {
+      await check({ slug: 'version-slug-ru', excludeVersionId: ruVersionId }).expect(400);
+    });
+
+    it('неизвестный язык — 400', async () => {
+      await check({ slug: 'version-slug-ru', lang: 'xx' }).expect(400);
     });
   });
 });
