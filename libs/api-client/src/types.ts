@@ -8714,7 +8714,8 @@ export interface components {
       nationalityCountryCode: string | null;
       slug: string | null;
       sortName: string | null;
-      type: string;
+      /** @enum {string} */
+      type: 'NATURAL_PERSON' | 'ORGANIZATION' | 'UNKNOWN';
       viafId: string | null;
       wikidataId: string | null;
     };
@@ -10687,9 +10688,9 @@ export interface components {
       revokedLicensesCount: number;
       rightsIntakeId: string;
       riskAssessedAt: string | null;
-      riskFactors?: components['schemas']['RiskFactorDto'][];
+      riskFactors: components['schemas']['RiskFactorDto'][];
       /** @enum {string} */
-      riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
       sourceEdition: components['schemas']['SourceEditionDto'] | null;
       status: string;
       summaryRu: string;

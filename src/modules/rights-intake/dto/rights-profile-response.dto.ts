@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ContributorRole,
+  PersonType,
   RightsConfidence,
   RightsProfileContributorEventType,
 } from '@prisma/client';
@@ -152,7 +153,7 @@ export class ComponentTerritoryAssessmentDto {
 
 export class PersonSummaryDto {
   @ApiProperty() id!: string;
-  @ApiProperty() type!: string;
+  @ApiProperty({ enum: PersonType }) type!: PersonType;
   @ApiProperty() canonicalName!: string;
   @ApiProperty({ type: String, nullable: true }) sortName!: string | null;
   @ApiProperty({ type: String, nullable: true }) slug!: string | null;
@@ -185,7 +186,9 @@ export class RightsProfileContributorDto {
   @ApiProperty({ type: String, nullable: true }) creditedLanguage!: string | null;
   @ApiProperty({ type: [String], nullable: true }) sourceEvidenceIds!: string[] | null;
   @ApiProperty({ type: Number, nullable: true }) publicDomainFromYear!: number | null;
-  @ApiProperty({ enum: RightsConfidence, nullable: true }) confidence!: RightsConfidence | null;
+  // OAS 3.0: `nullable: true` без `null` в списке `enum` значение `null` не допускает.
+  @ApiProperty({ enum: [...Object.values(RightsConfidence), null], nullable: true })
+  confidence!: RightsConfidence | null;
   @ApiProperty({ type: String, nullable: true }) notesRu!: string | null;
   @ApiProperty({ type: PersonSummaryDto, nullable: true }) person!: PersonSummaryDto | null;
   @ApiProperty() createdAt!: string;
@@ -222,7 +225,7 @@ export class RightsProfileContributorEventDto {
   @ApiProperty({ type: String, nullable: true }) rightsComponentId!: string | null;
   @ApiProperty({ type: String, nullable: true }) sourceEditionId!: string | null;
   @ApiProperty({ type: String, nullable: true }) personId!: string | null;
-  @ApiProperty({ enum: ContributorRole, nullable: true })
+  @ApiProperty({ enum: [...Object.values(ContributorRole), null], nullable: true })
   role!: ContributorRole | null;
   @ApiProperty({ type: String, nullable: true }) displayName!: string | null;
   @ApiProperty({ type: String, nullable: true }) creditedName!: string | null;
@@ -426,8 +429,8 @@ export class RightsProfileDetailDto {
   // смене статуса претензии его никто не обновляет. `riskAssessedAt` — момент этого пересчёта.
   // Маппинг делает ради них один запрос претензий; остальной вход у него уже загружен.
   // `lawyerReviewBlocking` и поля утверждения ниже остаются снимком: их ведёт `syncWorkflowStatuses`.
-  @ApiPropertyOptional({ enum: RightsRiskLevel }) riskLevel?: RightsRiskLevel;
-  @ApiPropertyOptional({ type: [RiskFactorDto] }) riskFactors?: RiskFactorDto[];
+  @ApiProperty({ enum: RightsRiskLevel }) riskLevel!: RightsRiskLevel;
+  @ApiProperty({ type: [RiskFactorDto] }) riskFactors!: RiskFactorDto[];
   @ApiProperty({ type: String, nullable: true }) riskAssessedAt!: string | null;
   @ApiPropertyOptional() lawyerReviewRequired?: boolean;
   @ApiPropertyOptional() lawyerReviewBlocking?: boolean;

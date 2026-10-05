@@ -12244,6 +12244,11 @@
             "type": "string"
           },
           "type": {
+            "enum": [
+              "NATURAL_PERSON",
+              "ORGANIZATION",
+              "UNKNOWN"
+            ],
             "type": "string"
           },
           "viafId": {
@@ -18301,7 +18306,8 @@
             "enum": [
               "HIGH",
               "MEDIUM",
-              "LOW"
+              "LOW",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -18487,7 +18493,8 @@
               "AFTERWORD_AUTHOR",
               "COVER_ARTIST",
               "RIGHTS_HOLDER",
-              "OTHER"
+              "OTHER",
+              null
             ],
             "nullable": true,
             "type": "string"
@@ -18801,6 +18808,8 @@
           "licenseRequiredCountriesCount",
           "licenseCoveredCountriesCount",
           "licenseUncoveredCountriesCount",
+          "riskLevel",
+          "riskFactors",
           "riskAssessedAt",
           "currentLawyerReviewId",
           "lawyerApprovedAt",

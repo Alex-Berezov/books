@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { ContributorRole, RightsConfidence } from '@prisma/client';
+import type { ContributorRole, PersonType, RightsConfidence } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-coverage.service';
 import { RightsLicensesService } from '../rights-licenses/rights-licenses.service';
@@ -681,7 +681,7 @@ export class RightsProfileService {
       person: personRaw
         ? {
             id: personRaw['id'] as string,
-            type: personRaw['type'] as string,
+            type: personRaw['type'] as PersonType,
             canonicalName: personRaw['canonicalName'] as string,
             sortName: (personRaw['sortName'] as string) ?? null,
             slug: (personRaw['slug'] as string) ?? null,
