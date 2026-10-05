@@ -6717,7 +6717,7 @@ export interface components {
        */
       shortDescription?: Record<string, never>;
       /**
-       * @description Слаг версии книги
+       * @description Слаг версии книги. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123"
        * @example harry-potter
        */
       slug?: string;
@@ -11876,7 +11876,7 @@ export interface components {
        */
       shortDescription?: Record<string, never> | null;
       /**
-       * @description Слаг версии книги
+       * @description Слаг версии книги. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123"
        * @example harry-potter
        */
       slug?: string;
@@ -17686,7 +17686,7 @@ export interface operations {
         slug: string;
         /** @description Book ID to exclude from the check (when editing); with lang - the own book of the version, whose slugs are not a conflict */
         excludeId?: string;
-        /** @description Version language: check BookVersion slug within this language instead of Book.slug */
+        /** @description Version language: check the slug of a language version; without it, the slug of the book (Book.slug). Both are taken when another book holds them: its Book.slug, a version or an old address */
         lang?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
         /** @description Book version ID to exclude from the check (when editing); requires lang */
         excludeVersionId?: string;

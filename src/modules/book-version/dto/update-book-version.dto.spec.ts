@@ -50,3 +50,18 @@ describe('UpdateBookVersionDto: форма элементов symbols/characters
     ).toContain('faq');
   });
 });
+
+describe('UpdateBookVersionDto: формат слага (LEGACY-437)', () => {
+  it('принимает слаг по SLUG_PATTERN и правку без слага', () => {
+    expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'harry-potter-2' })).toEqual([]);
+    expect(dtoFieldErrors(UpdateBookVersionDto, { title: 'Harry Potter' })).toEqual([]);
+  });
+
+  it('отбивает слаг не по формату и длиннее 100 символов', () => {
+    for (const slug of ['Harry-Potter', 'harry potter', 'harry-', 'harry_potter', 'гарри', '']) {
+      expect(dtoFieldErrors(UpdateBookVersionDto, { slug })).toContain('slug');
+    }
+    expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'a'.repeat(101) })).toContain('slug');
+    expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'a'.repeat(100) })).toEqual([]);
+  });
+});

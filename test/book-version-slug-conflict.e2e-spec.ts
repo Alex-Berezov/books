@@ -152,4 +152,109 @@ describe('BookVersion slug conflicts on write (e2e)', () => {
     await cleanupBookWithRights(prisma, `${otherSlug}-ru`);
     expect(JSON.stringify(takenInRu.body)).toContain('another version in this language');
   });
+
+  /**
+   * `LEGACY-437`: правило держится с обеих сторон и на старых адресах. Старый адрес другой книги
+   * в любом языке занят (версия отвечает на адрес во всех языках, а фронт спрашивает редирект только
+   * после 404); `Book.slug` не берёт слаг версии или старого адреса другой книги; подсказка без
+   * `lang` говорит то же, что запись; слаг версии не по формату — 400.
+   */
+  describe('LEGACY-437: both directions, old addresses, format', () => {
+    const retiredSlug = `vsc-retired-${stamp}`;
+
+    beforeAll(async () => {
+      // Старый fr-адрес другой книги, ведущий на её es-версию.
+      await prisma.slugRedirect.create({
+        data: {
+          entityType: 'book',
+          language: Language.fr,
+          oldSlug: retiredSlug,
+          newSlug: otherVersionSlug,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.slugRedirect.deleteMany({ where: { oldSlug: retiredSlug } });
+    });
+
+    const patchBook = (slug: string) =>
+      request(http())
+        .patch(`/books/${ownBookId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ slug });
+
+    it('a version slug that is an old address of another book in another language is refused', async () => {
+      const en = await prisma.bookVersion.findFirstOrThrow({
+        where: { bookId: ownBookId, language: Language.en },
+        select: { id: true },
+      });
+      const res = await request(http())
+        .patch(`/versions/${en.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ slug: retiredSlug })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain('another book');
+      const redirect = await prisma.slugRedirect.findFirst({ where: { oldSlug: retiredSlug } });
+      expect(redirect?.newSlug).toBe(otherVersionSlug);
+    });
+
+    it('Book.slug does not take a version slug or an old address of another book', async () => {
+      const toVersion = await patchBook(otherVersionSlug).expect(400);
+      expect(JSON.stringify(toVersion.body)).toContain('another book');
+      await patchBook(retiredSlug).expect(400);
+      // `Book.slug` другой книги — тоже 400, а не 500 от `P2002`.
+      await patchBook(otherSlug).expect(400);
+
+      const book = await prisma.book.findUnique({
+        where: { id: ownBookId },
+        select: { slug: true },
+      });
+      expect(book?.slug).toBe(ownSlug);
+    });
+
+    it('check-slug without lang says the same as the write', async () => {
+      for (const slug of [otherVersionSlug, retiredSlug]) {
+        const res = await request(http())
+          .get('/books/check-slug')
+          .query({ slug, excludeId: ownBookId })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        expect((res.body as { exists: boolean }).exists).toBe(true);
+      }
+    });
+
+    it('check-slug with lang sees an old address of another book too', async () => {
+      const res = await request(http())
+        .get('/books/check-slug')
+        .query({ slug: retiredSlug, lang: Language.ru, excludeId: ownBookId })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect((res.body as { exists: boolean }).exists).toBe(true);
+    });
+
+    it('an old address of the own book is free to take back', async () => {
+      const ownRetired = `vsc-own-retired-${stamp}`;
+      await prisma.slugRedirect.create({
+        data: { entityType: 'book', language: Language.pt, oldSlug: ownRetired, newSlug: ownSlug },
+      });
+      try {
+        const res = await request(http())
+          .get('/books/check-slug')
+          .query({ slug: ownRetired, excludeId: ownBookId })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        expect((res.body as { exists: boolean }).exists).toBe(false);
+      } finally {
+        await prisma.slugRedirect.deleteMany({ where: { oldSlug: ownRetired } });
+      }
+    });
+
+    it('a version slug out of SLUG_PATTERN or longer than 100 is refused by validation', async () => {
+      await create(Language.ru, 'Bad--Slug').expect(400);
+      await create(Language.ru, 'a'.repeat(101)).expect(400);
+    });
+  });
 });

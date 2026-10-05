@@ -26,14 +26,16 @@ export class CheckBookSlugQueryDto {
   excludeId?: string;
 
   /**
-   * When set, the slug of a language version is checked the way a public address resolves:
-   * versions of this language, then versions of other books in any language, then `Book.slug`
-   * of other books (`BookService.checkVersionSlugExists`). When absent, the old `Book.slug`
-   * check applies: book creation relies on it (`books-front` `useCreateBookModal.ts`).
+   * When set, the slug of a language version is taken by another version of this language, or by
+   * another book: its `Book.slug`, its version in any language or its old address in any language
+   * (`BookService.checkVersionSlugExists`; the order of the checks only picks which holder is
+   * named, the verdict is the same). When absent, `Book.slug` is checked by the rule of
+   * its write (`findBookSlugConflict`, `LEGACY-437`): `Book.slug`, a version or an old address of
+   * another book. Book creation relies on it (`books-front` `useCreateBookModal.ts`).
    */
   @ApiPropertyOptional({
     description:
-      'Version language: check BookVersion slug within this language instead of Book.slug',
+      'Version language: check the slug of a language version; without it, the slug of the book (Book.slug). Both are taken when another book holds them: its Book.slug, a version or an old address',
     example: 'en',
     enum: Object.values(Language),
   })

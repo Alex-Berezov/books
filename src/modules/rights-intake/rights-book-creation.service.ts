@@ -16,6 +16,7 @@ import { CreateBookFromClearanceVersionDto } from './dto/create-book-from-cleara
 import { BookType, Prisma } from '@prisma/client';
 import { AuthorService } from '../author/author.service';
 import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
+import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-version-slug-conflict';
 
 /**
  * WP-L.2: версия, на которую ложится снимок прав. В обычном режиме она создаётся из запроса, в
@@ -27,6 +28,15 @@ interface ClearanceVersionPlan {
   existingVersionId: string | null;
   dto: CreateBookFromClearanceVersionDto | null;
 }
+
+/**
+ * Один текст на `SLUG_TAKEN` — и у быстрого отказа по `Book.slug` до проверок прав, и у полной
+ * проверки под замком слага в транзакции (`LEGACY-437`): причина одна — слаг держит другая книга.
+ */
+const BOOK_CREATION_SLUG_TAKEN_MESSAGE = (slug: string) =>
+  `Slug '${slug}' is already used by another book: its slug, a version or an old address`;
+const BOOK_CREATION_SLUG_TAKEN_MESSAGE_RU =
+  'Слаг занят другой книгой: её адресом, версией или старым адресом.';
 
 /** WP-H: тело отказа с машинным кодом. Текст сообщения остаётся прежним. */
 const failure = (
@@ -241,8 +251,8 @@ export class RightsBookCreationService {
     // WP-L.2: «слаг книги» в приложении — это `BookVersion.slug`; `Book.slug` остался legacy и в
     // `findBySlug` / `getOverview` служит запасным вариантом. Редактор знает именно версионный
     // слаг — он в публичном адресе, — поэтому привязка ищет книгу так же, как читающая сторона.
-    // Проверка занятости слага при **создании** осталась прежней (только `Book.slug`): расширять
-    // её — менять поведение, к смягчению не относящееся.
+    // Занятость слага при **создании**: здесь — `Book.slug` (быстрый отказ до проверок прав); то же
+    // и ещё версия и старый адрес другой книги — в транзакции под замком слага (`LEGACY-437`).
     const existingBook =
       bookByOwnSlug ??
       (attachToExisting
@@ -255,8 +265,8 @@ export class RightsBookCreationService {
       throw new ConflictException(
         failure(
           BOOK_CREATION_ERROR_CODES.SLUG_TAKEN,
-          `Book with slug '${dto.slug}' already exists`,
-          'Книга с таким слагом уже существует.',
+          BOOK_CREATION_SLUG_TAKEN_MESSAGE(dto.slug),
+          BOOK_CREATION_SLUG_TAKEN_MESSAGE_RU,
           { slug: dto.slug },
         ),
       );
@@ -438,6 +448,23 @@ export class RightsBookCreationService {
         approvedRightsReviewId: approvedReviewId,
         rightsCreatedAt: new Date(),
       };
+
+      // `LEGACY-437`: новая книга не берёт слаг, который держит `Book.slug`, версия или старый адрес
+      // другой книги, — `getOverview` нашёл бы версию и редирект раньше `Book.slug`, а `Book.slug`
+      // встречного писателя дал бы `P2002`. Замок слага — общий с писателями версий.
+      if (!attachTargetBookId) {
+        await lockBookSlugs(tx, dto.slug);
+        if (await findBookSlugConflict(tx, dto.slug, undefined)) {
+          throw new ConflictException(
+            failure(
+              BOOK_CREATION_ERROR_CODES.SLUG_TAKEN,
+              BOOK_CREATION_SLUG_TAKEN_MESSAGE(dto.slug),
+              BOOK_CREATION_SLUG_TAKEN_MESSAGE_RU,
+              { slug: dto.slug },
+            ),
+          );
+        }
+      }
 
       // Create the book, or bind the clearance to the existing one (WP-L.2).
       const book = attachTargetBookId

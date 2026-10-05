@@ -7,6 +7,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { AuthorService } from '../author/author.service';
 import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
+import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-version-slug-conflict';
+
+// `LEGACY-437`: правило слага книги проверено в своём файле; здесь — что создание его зовёт
+// под замком в транзакции и что отказ не создаёт книгу. По умолчанию слаг свободен.
+jest.mock('../../shared/slug/book-version-slug-conflict', () => ({
+  ...jest.requireActual<typeof import('../../shared/slug/book-version-slug-conflict')>(
+    '../../shared/slug/book-version-slug-conflict',
+  ),
+  lockBookSlugs: jest.fn().mockResolvedValue(undefined),
+  findBookSlugConflict: jest.fn().mockResolvedValue(null),
+}));
 
 const createPrismaStub = () => {
   const stub: Record<string, unknown> = {
@@ -419,6 +430,101 @@ describe('RightsBookCreationService', () => {
       await expect(service.createBookFromApprovedClearance('intake-1', makeDto())).rejects.toThrow(
         ConflictException,
       );
+    });
+
+    describe('the new book must not take over another book (LEGACY-437)', () => {
+      const arrangeTx = () => {
+        (prisma['rightsIntake'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeIntake(),
+        );
+        (prisma['rightsReview'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(
+          makeReview(),
+        );
+        (prisma['rightsAction'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        (prisma['book'] as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+        (prisma['territoryDecision'] as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+        const txStub = {
+          book: {
+            create: jest.fn().mockResolvedValue({
+              id: 'book-1',
+              slug: 'test-book',
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            }),
+          },
+          bookVersion: { create: jest.fn().mockResolvedValue({ id: 'version-1' }) },
+          rightsIntake: { update: jest.fn().mockResolvedValue({}) },
+        };
+        (prisma['$transaction'] as jest.Mock).mockImplementation((fn) =>
+          Promise.resolve(fn(txStub)),
+        );
+        return txStub;
+      };
+
+      it('checks the slug against other books under the slug lock, inside the transaction', async () => {
+        const txStub = arrangeTx();
+        // Моки модуля живут на весь файл: без сброса проверка увидела бы вызов из прошлого теста.
+        (lockBookSlugs as jest.Mock).mockClear();
+        (findBookSlugConflict as jest.Mock).mockClear();
+
+        await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+        expect(lockBookSlugs).toHaveBeenCalledTimes(1);
+        expect(findBookSlugConflict).toHaveBeenCalledTimes(1);
+        expect(lockBookSlugs).toHaveBeenLastCalledWith(txStub, makeDto().slug);
+        expect(findBookSlugConflict).toHaveBeenLastCalledWith(txStub, makeDto().slug, undefined);
+        const lockOrder = (lockBookSlugs as jest.Mock).mock.invocationCallOrder.at(-1)!;
+        const checkOrder = (findBookSlugConflict as jest.Mock).mock.invocationCallOrder.at(-1)!;
+        expect(lockOrder).toBeLessThan(checkOrder);
+        expect(checkOrder).toBeLessThan(txStub.book.create.mock.invocationCallOrder[0]);
+      });
+
+      it('refuses with SLUG_TAKEN and creates nothing when another book holds the slug', async () => {
+        const txStub = arrangeTx();
+        (findBookSlugConflict as jest.Mock).mockResolvedValueOnce({ bookId: 'book-2' });
+
+        const error: unknown = await service
+          .createBookFromApprovedClearance('intake-1', makeDto())
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toEqual(
+          expect.objectContaining({ code: 'BOOK_CREATION_SLUG_TAKEN' }),
+        );
+        expect(txStub.book.create).not.toHaveBeenCalled();
+        expect(txStub.bookVersion.create).not.toHaveBeenCalled();
+      });
+
+      it('the real rule runs on the transaction client: a version of another book refuses', async () => {
+        const actual = jest.requireActual<
+          typeof import('../../shared/slug/book-version-slug-conflict')
+        >('../../shared/slug/book-version-slug-conflict');
+        (findBookSlugConflict as jest.Mock).mockImplementationOnce(actual.findBookSlugConflict);
+        const txStub = arrangeTx();
+        const reads = {
+          book: { findFirst: jest.fn().mockResolvedValue(null) },
+          bookVersion: {
+            findFirst: jest.fn().mockResolvedValue({ bookId: 'book-2', language: 'fr' }),
+          },
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        };
+        Object.assign(txStub.book, reads.book);
+        Object.assign(txStub.bookVersion, reads.bookVersion);
+        Object.assign(txStub, { $queryRaw: reads.$queryRaw });
+
+        await expect(
+          service.createBookFromApprovedClearance('intake-1', makeDto()),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(reads.book.findFirst).toHaveBeenCalledWith({
+          where: { slug: makeDto().slug },
+          select: { id: true },
+        });
+        expect(reads.bookVersion.findFirst).toHaveBeenCalledTimes(1);
+        expect(reads.book.findFirst).toHaveBeenCalledTimes(1);
+        // Версия нашлась — до старых адресов дело не дошло.
+        expect(reads.$queryRaw).not.toHaveBeenCalled();
+        expect(txStub.book.create).not.toHaveBeenCalled();
+      });
     });
 
     it('should throw BadRequestException if version language not in targetLanguages', async () => {
@@ -1317,6 +1423,17 @@ describe('RightsBookCreationService', () => {
         }),
       );
       expect(result.rightsProfileId).toBe('profile-1');
+    });
+
+    it('does not check or lock the slug: it is the slug of the attached book itself (LEGACY-437)', async () => {
+      arrangeAttach();
+      (findBookSlugConflict as jest.Mock).mockClear();
+      (lockBookSlugs as jest.Mock).mockClear();
+
+      await service.createBookFromApprovedClearance('intake-1', attachDto());
+
+      expect(findBookSlugConflict).not.toHaveBeenCalled();
+      expect(lockBookSlugs).not.toHaveBeenCalled();
     });
 
     it('writes the rights snapshot onto the existing versions without touching their content', async () => {

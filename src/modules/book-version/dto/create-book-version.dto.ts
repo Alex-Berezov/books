@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   MinLength,
   IsInt,
@@ -28,6 +29,7 @@ import {
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
+import { SLUG_PATTERN, SLUG_REGEX, SLUG_REGEX_README } from '../../../shared/validators/slug';
 
 export class CreateBookVersionDto {
   @ApiProperty({
@@ -38,9 +40,17 @@ export class CreateBookVersionDto {
   @IsIn(Object.values(PrismaLanguage))
   language!: PrismaLanguage;
 
-  @ApiPropertyOptional({ description: 'Слаг версии книги', example: 'harry-potter' })
+  @ApiPropertyOptional({
+    description: `Слаг версии книги. ${SLUG_REGEX_README}`,
+    example: 'harry-potter',
+    pattern: SLUG_PATTERN,
+    maxLength: 100,
+  })
   @IsOptional()
   @IsString()
+  // `LEGACY-437`: формат держался только формой админки и `check-slug`; длина — как у `check-slug`.
+  @Matches(SLUG_REGEX, { message: SLUG_REGEX_README })
+  @MaxLength(100, { message: 'Slug must be at most 100 characters long' })
   slug?: string;
 
   @ApiProperty({ description: 'Заголовок', example: "Harry Potter and the Philosopher's Stone" })

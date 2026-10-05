@@ -7007,8 +7007,10 @@
             "type": "object"
           },
           "slug": {
-            "description": "Слаг версии книги",
+            "description": "Слаг версии книги. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: \"harry-potter\", \"book-123\"",
             "example": "harry-potter",
+            "maxLength": 100,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
             "type": "string"
           },
           "summaryShort": {
@@ -22303,8 +22305,10 @@
             "type": "object"
           },
           "slug": {
-            "description": "Слаг версии книги",
+            "description": "Слаг версии книги. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: \"harry-potter\", \"book-123\"",
             "example": "harry-potter",
+            "maxLength": 100,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
             "type": "string"
           },
           "summaryShort": {
@@ -34462,7 +34466,7 @@
             }
           },
           {
-            "description": "Version language: check BookVersion slug within this language instead of Book.slug",
+            "description": "Version language: check the slug of a language version; without it, the slug of the book (Book.slug). Both are taken when another book holds them: its Book.slug, a version or an old address",
             "in": "query",
             "name": "lang",
             "required": false,

@@ -5,7 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { BookType, Language } from '@prisma/client';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RedirectException } from '../../common/exceptions/redirect.exception';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
@@ -47,7 +47,14 @@ interface PrismaStub {
   $transaction: jest.Mock;
 }
 
+/**
+ * Ответ на сырой запрос к старым адресам (`"SlugRedirect"`), см. `routeOldAddresses`. Вне объекта
+ * `prisma`: имя поля стенда читалось бы `delegate-check` как обращение к несуществующей модели.
+ */
+const oldAddressHolders = jest.fn();
+
 const createPrismaStub = (): PrismaStub => {
+  oldAddressHolders.mockReset().mockResolvedValue([]);
   const stub: PrismaStub = {
     book: {
       findUnique: jest.fn(),
@@ -137,6 +144,24 @@ const createModeratorRolesStub = (): ModeratorRolesService =>
     isModerator: jest.fn().mockResolvedValue(false),
     isAdmin: jest.fn().mockResolvedValue(false),
   }) as unknown as ModeratorRolesService;
+
+/**
+ * `LEGACY-437`: правило слага читает старые адреса и их держателей одним сырым запросом. Этот
+ * обёртчик уводит его в `oldAddressHolders`, а остальные сырые запросы (замки) — в то,
+ * что тест уже настроил на `$queryRaw`.
+ */
+const routeOldAddresses = (prisma: PrismaStub) => {
+  const base = prisma.$queryRaw.getMockImplementation() as
+    | ((...call: unknown[]) => Promise<unknown>)
+    | undefined;
+  prisma.$queryRaw.mockImplementation((...call: unknown[]) =>
+    renderSql(call).includes('"SlugRedirect"')
+      ? (oldAddressHolders() as Promise<unknown>)
+      : base
+        ? base(...call)
+        : Promise.resolve(undefined),
+  );
+};
 
 describe('BookService.getOverview', () => {
   let service: BookService;
@@ -1127,12 +1152,25 @@ describe('BookService.update (LEGACY-320)', () => {
   it('locks the book row first and records the redirect from the locked slug', async () => {
     const order: string[] = [];
     prisma.$queryRaw.mockImplementation((...call: unknown[]) => {
+      // `LEGACY-437`: после строки книги — общий замок слагов, тот же, что у писателей версий:
+      // и нового, и прежнего (он становится старым адресом), в отсортированном порядке.
+      // Ключи замков — `hashtext` слагов, отсортированные базой; здесь их подставляет стенд.
+      if (renderSql(call).includes('unnest')) {
+        order.push(`slug-keys:${(call[1] as string[]).join(',')}`);
+        return Promise.resolve([{ key: 11 }, { key: 22 }]);
+      }
+      if (renderSql(call).includes('pg_advisory_xact_lock')) {
+        expect(call).toContain(831_427_005);
+        order.push(`slug-lock:${String(call[2])}`);
+        return Promise.resolve([{ locked: true }]);
+      }
       order.push('lock');
       // Сила — `FOR NO KEY UPDATE`: вставки версий, лайков и оценок по FK не ждут PATCH
       // (решение арбитра 25.09.2026). `FOR UPDATE` здесь — регресс, а не «надёжнее».
       expect(renderSql(call)).toContain('FOR NO KEY UPDATE');
       return Promise.resolve([{ slug: 'committed-meanwhile' }]);
     });
+    routeOldAddresses(prisma);
     slugRedirects.recordBaseSlugChange.mockImplementation(() => {
       order.push('redirect');
       return Promise.resolve();
@@ -1142,9 +1180,23 @@ describe('BookService.update (LEGACY-320)', () => {
       return Promise.resolve({ id: 'b1', slug: 'new-slug' });
     });
 
+    const transaction = jest.spyOn(prisma, '$transaction');
+
     await service.update('b1', { slug: 'new-slug' });
 
-    expect(order).toEqual(['lock', 'redirect', 'write']);
+    expect(order).toEqual([
+      'lock',
+      'slug-keys:committed-meanwhile,new-slug',
+      'slug-lock:11',
+      'slug-lock:22',
+      'redirect',
+      'write',
+    ]);
+    // Явный дедлайн (`L-020`): замок слага держит и создание версии до своего коммита.
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 30_000,
+      maxWait: 10_000,
+    });
     // Чтения на пуле больше нет: слаг берётся только из запертой строки.
     expect(prisma.book.findUnique).not.toHaveBeenCalled();
     expect(slugRedirects.recordBaseSlugChange).toHaveBeenCalledWith(
@@ -1162,6 +1214,10 @@ describe('BookService.update (LEGACY-320)', () => {
     await service.update('b1', { slug: 'same' });
 
     expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    // Слаг не меняется — ни замка слага, ни проверки конфликта (`LEGACY-437`).
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(oldAddressHolders).not.toHaveBeenCalled();
+    expect(prisma.bookVersion.findFirst).not.toHaveBeenCalled();
     expect(prisma.book.update).toHaveBeenCalledTimes(1);
     expect(prisma.book.update).toHaveBeenCalledWith({
       where: { id: 'b1' },
@@ -1175,6 +1231,86 @@ describe('BookService.update (LEGACY-320)', () => {
     await expect(service.update('b1', { slug: 'b' })).rejects.toThrow(NotFoundException);
     expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
     expect(prisma.book.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `LEGACY-437`: `Book.slug` — фоллбэк резолва, поэтому книга не берёт слаг, который `getOverview`
+   * отдал бы раньше неё (версию другой книги, её старый адрес в любом языке), и чужой `Book.slug`
+   * приходит отказом 400, а не `P2002`.
+   */
+  describe('the new Book.slug must not take over another book (LEGACY-437)', () => {
+    /** Версии по слагу (`slug` — строка или `{ in }`): книга, которая держит слаг. */
+    const versionsBySlug = (bookIdBySlug: Record<string, string>) =>
+      prisma.bookVersion.findFirst.mockImplementation(
+        ({ where }: { where: { slug: string | { in: string[] }; NOT?: { bookId: string } } }) => {
+          const slugs = typeof where.slug === 'string' ? [where.slug] : where.slug.in;
+          const bookId = slugs
+            .map((slug) => bookIdBySlug[slug])
+            .find((holder) => holder && where.NOT?.bookId !== holder);
+          return Promise.resolve(bookId ? { bookId, language: Language.en } : null);
+        },
+      );
+
+    beforeEach(() => {
+      prisma.$queryRaw.mockResolvedValue([{ slug: 'old-slug' }]);
+      routeOldAddresses(prisma);
+      prisma.book.update.mockResolvedValue({ id: 'b1', slug: 'new-slug' });
+    });
+
+    const expectRejected = async () => {
+      await expect(service.update('b1', { slug: 'new-slug' })).rejects.toThrow(
+        new BadRequestException(
+          'Slug is already used by another book: it would take over that book’s public address',
+        ),
+      );
+      expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+      expect(prisma.book.update).not.toHaveBeenCalled();
+    };
+
+    it('rejects Book.slug of another book with 400 before the write', async () => {
+      prisma.book.findFirst.mockResolvedValueOnce({ id: 'b2' });
+
+      await expectRejected();
+      expect(prisma.book.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.book.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'new-slug', NOT: { id: 'b1' } },
+        select: { id: true },
+      });
+    });
+
+    it('rejects a slug held by a version of another book in any language', async () => {
+      versionsBySlug({ 'new-slug': 'b2' });
+
+      await expectRejected();
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith({
+        where: {
+          slug: 'new-slug',
+          language: { in: Object.values(Language) },
+          NOT: { bookId: 'b1' },
+        },
+        select: { bookId: true, language: true },
+      });
+    });
+
+    it('rejects an old address of another book, in any language', async () => {
+      oldAddressHolders.mockResolvedValue([{ bookId: 'b2' }]);
+
+      await expectRejected();
+      expect(oldAddressHolders).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes its own id into the old-address query: its own old addresses are free', async () => {
+      await service.update('b1', { slug: 'new-slug' });
+
+      const oldAddressCalls = prisma.$queryRaw.mock.calls.filter((call: unknown[]) =>
+        renderSql(call).includes('"SlugRedirect"'),
+      );
+      expect(oldAddressCalls).toHaveLength(1);
+      expect(oldAddressCalls[0]).toContain('new-slug');
+      expect(oldAddressCalls[0]).toContain('b1');
+      expect(prisma.book.update).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -2057,5 +2193,77 @@ describe('BookService.checkVersionSlugExists', () => {
         where: expect.objectContaining({ slug: 'hamlet-3', NOT: { bookId: 'book-1' } }),
       }),
     );
+  });
+});
+
+/**
+ * `LEGACY-437`: подсказка `GET /books/check-slug` без `lang` — над тем же правилом, что запись
+ * `Book.slug` (`findBookSlugConflict`), иначе она говорит «свободно» на слаг, который запись отобьёт.
+ * Форма ответа прежняя: `id` — книга, которая держит слаг.
+ */
+describe('BookService.checkSlugExists (LEGACY-437)', () => {
+  let service: BookService;
+  let prisma: PrismaStub;
+
+  beforeEach(() => {
+    prisma = createPrismaStub();
+    routeOldAddresses(prisma);
+    service = new BookService(
+      prisma as unknown as PrismaService,
+      createGeoBlockRuleServiceStub(),
+      new RelatedTaxonomyService(prisma as unknown as PrismaService),
+      createSlugRedirectStub(),
+      createModeratorRolesStub(),
+      new AuthorService(
+        prisma as unknown as PrismaService,
+        {} as unknown as SlugRedirectService,
+        { record: jest.fn() } as unknown as AdminAuditService,
+      ),
+      { record: jest.fn() } as unknown as AdminAuditService,
+    );
+  });
+
+  it('a version of another book makes the slug taken, named by its book', async () => {
+    prisma.bookVersion.findFirst.mockResolvedValueOnce({ bookId: 'book-2', language: Language.es });
+
+    await expect(service.checkSlugExists('hamlet', 'book-1')).resolves.toEqual({
+      id: 'book-2',
+      slug: 'hamlet',
+    });
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith({
+      where: {
+        slug: 'hamlet',
+        language: { in: Object.values(Language) },
+        NOT: { bookId: 'book-1' },
+      },
+      select: { bookId: true, language: true },
+    });
+  });
+
+  it('an old address of another book makes the slug taken', async () => {
+    oldAddressHolders.mockResolvedValue([{ bookId: 'book-2' }]);
+
+    await expect(service.checkSlugExists('hamlet', 'book-1')).resolves.toEqual({
+      id: 'book-2',
+      slug: 'hamlet',
+    });
+    expect(oldAddressHolders).toHaveBeenCalledTimes(1);
+  });
+
+  it('a free slug is free; the suggestion skips candidates held by another book', async () => {
+    await expect(service.checkSlugExists('hamlet', 'book-1')).resolves.toBeNull();
+
+    prisma.bookVersion.findFirst.mockImplementation(({ where }: { where: { slug: unknown } }) =>
+      Promise.resolve(
+        where.slug === 'hamlet-2' ? { bookId: 'book-2', language: Language.en } : null,
+      ),
+    );
+    await expect(
+      service.generateUniqueSuggestedSlug('hamlet', undefined, { bookId: 'book-1' }),
+    ).resolves.toBe('hamlet-3');
+    expect(prisma.book.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'hamlet-3', NOT: { id: 'book-1' } },
+      select: { id: true },
+    });
   });
 });

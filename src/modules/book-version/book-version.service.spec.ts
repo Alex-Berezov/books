@@ -114,7 +114,15 @@ interface PrismaStub {
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
 
+/**
+ * `LEGACY-437`: правило слага читает старые адреса и их держателей одним сырым запросом; стенд
+ * `$queryRaw` уводит его сюда. По умолчанию держателей нет. Вне объекта `prisma`: имя поля стенда
+ * читалось бы `delegate-check` как обращение к несуществующей модели.
+ */
+const oldAddressHolders = jest.fn();
+
 const createPrismaStub = (): PrismaStub => {
+  oldAddressHolders.mockReset().mockResolvedValue([]);
   const stub = {
     book: {
       findUnique: jest.fn(),
@@ -174,16 +182,20 @@ const createPrismaStub = (): PrismaStub => {
     },
     // Снимок под замком: `unpublish` читает его внутри транзакции сырым запросом.
     // Стенд отдаёт одну строку — иначе метод сочтёт версию удалённой.
-    $queryRaw: jest.fn().mockResolvedValue([
-      {
-        status: 'published',
-        publishedAt: null,
-        rightsLicenseIds: null,
-        rightsLicenseCoverageStatus: null,
-        rightsLicenseCheckedAt: null,
-        rightsLicenseUncoveredCountryCodes: null,
-      },
-    ]),
+    $queryRaw: jest.fn().mockImplementation((parts: readonly string[]) =>
+      parts.join('?').includes('"SlugRedirect"')
+        ? (oldAddressHolders() as Promise<unknown>)
+        : Promise.resolve([
+            {
+              status: 'published',
+              publishedAt: null,
+              rightsLicenseIds: null,
+              rightsLicenseCoverageStatus: null,
+              rightsLicenseCheckedAt: null,
+              rightsLicenseUncoveredCountryCodes: null,
+            },
+          ]),
+    ),
     $transaction: async <T>(fn: (tx: PrismaStub) => Promise<T> | T) => fn(stub),
   } as unknown as PrismaStub;
   return stub;
@@ -2169,16 +2181,31 @@ describe('BookVersionService', () => {
     it('update: a new slug is checked under the slug lock, own book from the version row', async () => {
       arrangeCurrentWithBook('old');
       (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+      // Ключи замков (`hashtext`) отдаёт база; здесь их подставляет стенд.
+      const baseQueryRaw = prisma.$queryRaw.getMockImplementation() as (
+        ...call: unknown[]
+      ) => Promise<unknown>;
+      prisma.$queryRaw.mockImplementation((parts: readonly string[], ...values: unknown[]) =>
+        parts.join('?').includes('unnest')
+          ? Promise.resolve([{ key: 5 }, { key: 9 }])
+          : baseQueryRaw(parts, ...values),
+      );
 
       await service.update('v1', { slug: 'hamlet' });
 
-      const locks = slugLocks();
-      expect(locks).toHaveLength(1);
-      expect(locks[0]).toContain(831_427_005);
-      expect(locks[0]).toContain('hamlet');
+      // `LEGACY-437`: запирается и прежний слаг — он становится старым адресом; порядок отсортирован.
+      const keyQueries = (
+        prisma.$queryRaw.mock.calls as [readonly string[], ...unknown[]][]
+      ).filter(([parts]) => parts.join('?').includes('unnest'));
+      expect(keyQueries).toHaveLength(1);
+      expect(keyQueries[0].slice(1)).toEqual([['hamlet', 'old']]);
+      expect(slugLocks().map((call) => call.slice(1))).toEqual([
+        [831_427_005, 5],
+        [831_427_005, 9],
+      ]);
       expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith({
         where: { slug: 'hamlet', language: Language.en, NOT: { id: 'v1' } },
-        select: { bookId: true, language: true },
+        select: { bookId: true },
       });
       expect(prisma.book.findFirst).toHaveBeenCalledWith({
         where: { slug: 'hamlet', NOT: { id: 'b1' } },
@@ -2204,6 +2231,43 @@ describe('BookVersionService', () => {
 
       await expect(service.update('v1', { slug: 'hamlet' })).rejects.toThrow('another book');
       expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+    });
+
+    /** Сырые запросы к старым адресам (`"SlugRedirect"`) — их держатели одним оператором. */
+    const redirectQueries = () =>
+      (prisma.$queryRaw.mock.calls as [readonly string[], ...unknown[]][]).filter(([parts]) =>
+        parts.join('?').includes('"SlugRedirect"'),
+      );
+
+    it('update: an old address of another book in any language is refused as another book (LEGACY-437)', async () => {
+      arrangeCurrentWithBook('old');
+      oldAddressHolders.mockResolvedValue([{ bookId: 'b2' }]);
+
+      await expect(service.update('v1', { slug: 'hamlet' })).rejects.toThrow('another book');
+      expect(redirectQueries()).toHaveLength(1);
+      expect(redirectQueries()[0]).toContain('hamlet');
+      expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+      expect(slugRedirects.record).not.toHaveBeenCalled();
+    });
+
+    it('create: an old address of another book is refused too (LEGACY-437)', async () => {
+      arrangeSimpleCreate();
+      oldAddressHolders.mockResolvedValue([{ bookId: 'b2' }]);
+
+      await expect(service.create('b1', createDto('hamlet'))).rejects.toThrow('another book');
+      expect(redirectQueries()).toHaveLength(1);
+      expect(prisma.bookVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('update: the own book goes into the old-address query as the excluded holder (LEGACY-437)', async () => {
+      arrangeCurrentWithBook('old');
+      (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+
+      await service.update('v1', { slug: 'hamlet' });
+
+      expect(redirectQueries()).toHaveLength(1);
+      expect(redirectQueries()[0]).toContain('b1');
+      expect(prisma.bookVersion.update).toHaveBeenCalledTimes(1);
     });
 
     it('update: a version of the same language keeps the old text', async () => {

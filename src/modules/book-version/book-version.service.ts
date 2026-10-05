@@ -44,7 +44,11 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AuthorService } from '../author/author.service';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
-import { findVersionSlugConflict } from '../../shared/slug/book-version-slug-conflict';
+import {
+  BOOK_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE,
+  findVersionSlugConflict,
+  lockBookSlugs,
+} from '../../shared/slug/book-version-slug-conflict';
 import { uniqueViolationFields, violationModelName } from '../../shared/prisma/prisma-error.util';
 
 interface BookWithRights {
@@ -92,13 +96,6 @@ const BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE =
 
 /** Один текст на «слаг занят» (`@@unique([language, slug])`) в `create` и в `update`. */
 const BOOK_VERSION_SLUG_TAKEN_MESSAGE = 'Slug is already used by another version in this language';
-
-// Пространство имён двухаргументного `pg_advisory_xact_lock`; занятые — в перечне у `RECHECK_SCAN_LOCK_KEY`.
-const BOOK_VERSION_SLUG_LOCK_NAMESPACE = 831_427_005;
-
-/** Слаг держит другая книга (`Book.slug` или версия в другом языке) — `findVersionSlugConflict`. */
-const BOOK_VERSION_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE =
-  'Slug is already used by another book: it would take over that book’s public address';
 
 /** `P2002` версии, индекс которого не разобрался: причину не угадываем (решение арбитра 28.09.2026). */
 const BOOK_VERSION_CONFLICT_MESSAGE =
@@ -972,20 +969,19 @@ export class BookVersionService {
     slug: string | undefined,
     language: Language,
     owner: { versionId?: string; bookId: string },
+    previousSlug?: string | null,
   ): Promise<void> {
     if (!slug) return;
-    // Межкнижный и межъязыковой конфликт индекс не держит (только `@@unique([language, slug])`):
-    // две встречные записи одного слага прошли бы проверку обе. Транзакционный замок на сам слаг
-    // ставит их в очередь до коммита — вторая увидит строку первой.
-    await tx.$queryRaw`
-      SELECT true AS locked
-        FROM pg_advisory_xact_lock(${BOOK_VERSION_SLUG_LOCK_NAMESPACE}::int4, hashtext(${slug}::text))`;
+    // Межкнижный и межъязыковой конфликт индекс не держит: очередь до коммита — общим замком слага,
+    // его же берут писатели `Book.slug` (`LEGACY-437`). Прежний слаг правки запирается тоже:
+    // он становится старым адресом (`SlugRedirect.oldSlug`).
+    await lockBookSlugs(tx, slug, previousSlug);
     const conflict = await findVersionSlugConflict(tx, slug, language, owner);
     if (!conflict) return;
     throw new BadRequestException(
       conflict.language === language
         ? BOOK_VERSION_SLUG_TAKEN_MESSAGE
-        : BOOK_VERSION_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE,
+        : BOOK_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE,
     );
   }
 
@@ -1129,10 +1125,13 @@ export class BookVersionService {
 
         // Только при смене слага: прежний, уже записанный слаг сохранению не мешает.
         if (updateData.slug && updateData.slug !== current.slug) {
-          await this.assertVersionSlugFree(tx, updateData.slug, current.language, {
-            versionId: id,
-            bookId: current.bookId,
-          });
+          await this.assertVersionSlugFree(
+            tx,
+            updateData.slug,
+            current.language,
+            { versionId: id, bookId: current.bookId },
+            current.slug,
+          );
         }
 
         // Слаг версии — публичный адрес книги в этом языке. Его смена без записи в

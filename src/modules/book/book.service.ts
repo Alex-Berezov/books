@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   PUBLIC_BOOK_SELECT,
   PUBLIC_BOOK_VERSION_OVERVIEW_SELECT,
@@ -55,7 +55,10 @@ import {
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
 import {
+  BOOK_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE,
+  findBookSlugConflict,
   findVersionSlugConflict,
+  lockBookSlugs,
   type VersionSlugOwner,
 } from '../../shared/slug/book-version-slug-conflict';
 
@@ -69,6 +72,9 @@ const BOOK_REMOVE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 /** Перевод категории в ответе книги: одна форма на `categories` и `primaryCategory` (`T90`). */
 type OverviewCategoryTranslation = CategoryTranslation & { indexable: boolean };
+
+/** Дедлайн транзакции смены `Book.slug` — тот же, что у создания версии, которое ждёт тот же замок слага. */
+const BOOK_SLUG_WRITE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 @Injectable()
 export class BookService {
@@ -1604,11 +1610,20 @@ export class BookService {
       const currentSlug = await this.lockBookRow(tx, id, 'noKeyUpdate');
 
       if (data.slug && data.slug !== currentSlug) {
+        // `LEGACY-437`: `Book.slug` — фоллбэк резолва, версия чужой книги с этим слагом или её
+        // старый адрес нашлись бы раньше него. Замок слагов — общий с писателями версий; прежний
+        // запирается тоже: ниже он становится старым адресом.
+        await lockBookSlugs(tx, currentSlug, data.slug);
+        if (await findBookSlugConflict(tx, data.slug, id)) {
+          throw new BadRequestException(BOOK_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE);
+        }
         await this.slugRedirects.recordBaseSlugChange('book', currentSlug, data.slug, tx);
       }
 
       return tx.book.update({ where: { id }, data });
-    });
+      // Явный дедлайн (`L-020`): замок слага держит и создание версии до своего коммита
+      // (`BOOK_VERSION_CREATE_TX_OPTIONS`); на дефолтных 5 секундах здесь был бы `P2028` и 500.
+    }, BOOK_SLUG_WRITE_TX_OPTIONS);
   }
 
   /**
@@ -1786,24 +1801,16 @@ export class BookService {
   }
 
   /**
-   * Check if a slug exists for books.
+   * Check if a `Book.slug` is taken, by the rule of its write (`findBookSlugConflict`,
+   * `LEGACY-437`): `Book.slug` of another book, a version of another book in any language, or an old
+   * address of another book in any language. The answer keeps its shape: `id` is the holding book.
    * @param slug - The slug to check
-   * @param excludeId - Optional book ID to exclude (when editing)
-   * @returns The existing book or null if slug is available
+   * @param excludeId - Optional own book ID (when editing): its slugs are no conflict
+   * @returns The holding book and the slug, or null if the slug is available
    */
   async checkSlugExists(slug: string, excludeId?: string) {
-    const where: { slug: string; NOT?: { id: string } } = {
-      slug,
-    };
-
-    if (excludeId) {
-      where.NOT = { id: excludeId };
-    }
-
-    return this.prisma.book.findFirst({
-      where,
-      select: { id: true, slug: true },
-    });
+    const conflict = await findBookSlugConflict(this.prisma, slug, excludeId);
+    return conflict ? { id: conflict.bookId, slug } : null;
   }
 
   /**
@@ -1826,7 +1833,7 @@ export class BookService {
     const isTaken = (candidate: string) =>
       language
         ? findVersionSlugConflict(this.prisma, candidate, language, owner)
-        : this.checkSlugExists(candidate);
+        : this.checkSlugExists(candidate, exclude.bookId);
 
     // Find first available suffix
     while (await isTaken(candidateSlug)) {
