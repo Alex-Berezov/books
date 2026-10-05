@@ -93,7 +93,7 @@ export class AuthorController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   list(@Query() pagination: ListAuthorsQueryDto) {
-    return this.service.list(pagination.page, pagination.limit, undefined, pagination.q);
+    return this.service.list(pagination.page, pagination.limit, pagination.q);
   }
 
   @Post('admin/authors')

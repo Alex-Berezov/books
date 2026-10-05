@@ -301,22 +301,14 @@ export class AuthorService {
    * Считаются различные **книги**, а не версии: одна книга в трёх языках — одна
    * книга, иначе счётчик мерил бы полноту перевода, а не наполненность автора.
    */
-  private async countPublishedBooksByAuthor(
-    authorIds: string[],
-    lang?: Language,
-  ): Promise<Map<string, number>> {
+  private async countPublishedBooksByAuthor(authorIds: string[]): Promise<Map<string, number>> {
     if (authorIds.length === 0) return new Map();
-
-    const conditions: Prisma.Sql[] = [Prisma.sql`t."authorId" IN (${Prisma.join(authorIds)})`];
-    if (lang) {
-      conditions.push(Prisma.sql`t.language = ${lang}::"Language"`);
-    }
 
     const rows = await this.prisma.$queryRaw<Array<{ authorId: string; booksCount: number }>>`
       SELECT t."authorId", COUNT(DISTINCT bv."bookId")::int AS "booksCount"
       FROM "AuthorTranslation" t
       JOIN "BookVersion" bv ${PUBLISHED_BOOKS_JOIN}
-      WHERE ${Prisma.join(conditions, ' AND ')}
+      WHERE t."authorId" IN (${Prisma.join(authorIds)})
       GROUP BY t."authorId"
     `;
 
@@ -351,12 +343,6 @@ export class AuthorService {
   }
 
   /**
-   * @param lang Язык публичного списка. Когда задан, автор без перевода на него
-   * из выдачи исключается: страницы на этом языке у него нет вовсе, и ссылка
-   * вела бы в 404 (soft-404 закрыт 05.08.2026). Админский список ходит без
-   * языка и видит всех.
-   */
-  /**
    * Форма элемента админской выдачи автора — одна на список и на одиночное чтение.
    *
    * 🔴 Одним методом, а не двумя копиями: `GET /admin/authors/:id` обещает
@@ -365,9 +351,7 @@ export class AuthorService {
    * поле, а страница правки отдала бы по нему `undefined`, причём `tsc`
    * промолчал бы: обе стороны читает один рукописный тип `Author` на фронте.
    *
-   * @param lang С языком берётся перевод на него (он гарантированно есть — список
-   * по нему и отфильтрован). Без языка это админская выдача, там прежний порядок:
-   * английский, иначе первый попавшийся.
+   * Перевод для верхнеуровневых полей — английский, иначе первый попавшийся.
    */
   private toAuthorItem(
     // Тип с `seo` внутри перевода, а не просто `translations: true`: оба
@@ -376,11 +360,9 @@ export class AuthorService {
     // ради которой метод и заведён, не сработала бы.
     author: Prisma.AuthorGetPayload<{ include: { translations: { include: { seo: true } } } }>,
     booksCount: number,
-    lang?: Language,
   ) {
-    const mainTrans = lang
-      ? author.translations.find((t) => t.language === lang)
-      : author.translations.find((t) => t.language === 'en') || author.translations[0];
+    const mainTrans =
+      author.translations.find((t) => t.language === 'en') || author.translations[0];
 
     return {
       id: author.id,
@@ -396,31 +378,25 @@ export class AuthorService {
     };
   }
 
-  async list(page = 1, limit = 20, lang?: Language, search?: string) {
+  async list(page = 1, limit = 20, search?: string) {
     const skip = (page - 1) * limit;
 
-    // Язык и имя идут одним `some`, а не двумя: раздельными условиями автор
-    // с русским именем попал бы в выдачу с `lang=en` — совпасть они могли бы
-    // в разных переводах.
-    const translationWhere: Prisma.AuthorTranslationWhereInput = {};
-    if (lang) translationWhere.language = lang;
-
     const term = search?.trim();
-    if (term) {
-      const escaped = escapeLikeWildcards(term);
-      translationWhere.name = { contains: escaped, mode: 'insensitive' };
-    }
-
-    const where: Prisma.AuthorWhereInput | undefined =
-      Object.keys(translationWhere).length > 0
-        ? { translations: { some: translationWhere } }
-        : undefined;
+    const where: Prisma.AuthorWhereInput | undefined = term
+      ? {
+          translations: {
+            some: { name: { contains: escapeLikeWildcards(term), mode: 'insensitive' } },
+          },
+        }
+      : undefined;
 
     const [total, items] = await this.prisma.$transaction([
       this.prisma.author.count({ where }),
       this.prisma.author.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        // `id` — второй ключ: авторы одного импорта делят `createdAt`, и без него
+        // постраничное листание экрана могло бы показать автора дважды или потерять.
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
         include: {
@@ -431,17 +407,14 @@ export class AuthorService {
       }),
     ]);
 
-    const booksCounts = await this.countPublishedBooksByAuthor(
-      items.map((item) => item.id),
-      lang,
-    );
+    const booksCounts = await this.countPublishedBooksByAuthor(items.map((item) => item.id));
 
     // Единая форма списка (`LEGACY-177`). Метод обслуживает **только** админский
     // `GET /admin/authors` (`author.controller.ts`): публичная выдача авторов идёт
     // отдельным `listPublic`, поэтому форму можно менять здесь, а не обёрткой
     // в контроллере, и ни один кэшируемый публичный ответ этим не задет.
     return paginated(
-      items.map((item) => this.toAuthorItem(item, booksCounts.get(item.id) ?? 0, lang)),
+      items.map((item) => this.toAuthorItem(item, booksCounts.get(item.id) ?? 0)),
       { page, limit, total },
     );
   }

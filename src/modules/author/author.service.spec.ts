@@ -1007,7 +1007,7 @@ describe('AuthorService', () => {
       prisma.author.findMany.mockResolvedValue([]);
       prisma.$queryRaw.mockRejectedValue(new Error('$queryRaw must not be reached'));
 
-      const res = await service.list(99, 20, Language.en);
+      const res = await service.list(99, 20);
 
       // Тело целиком, а не по полям (`LEGACY-177`): форма ответа сведена
       // к `{items, pagination}`, и уцелевший рядом ключ `data` или `meta`
@@ -1027,7 +1027,7 @@ describe('AuthorService', () => {
       prisma.author.count.mockResolvedValue(0);
       prisma.author.findMany.mockResolvedValue([]);
 
-      const res = await service.list(1, 20, undefined, 'tolstoy');
+      const res = await service.list(1, 20, 'tolstoy');
 
       const expectedWhere = {
         translations: { some: { name: { contains: 'tolstoy', mode: 'insensitive' } } },
@@ -1051,7 +1051,7 @@ describe('AuthorService', () => {
       prisma.author.count.mockResolvedValue(0);
       prisma.author.findMany.mockResolvedValue([]);
 
-      await service.list(1, 20, undefined, '  100%_  ');
+      await service.list(1, 20, '  100%_  ');
 
       const expectedWhere = {
         translations: {
@@ -1074,7 +1074,7 @@ describe('AuthorService', () => {
       prisma.author.count.mockResolvedValue(0);
       prisma.author.findMany.mockResolvedValue([]);
 
-      await service.list(1, 20, undefined, '   ');
+      await service.list(1, 20, '   ');
 
       expect(prisma.author.count).toHaveBeenCalledTimes(1);
       expect(prisma.author.count).toHaveBeenCalledWith({ where: undefined });
@@ -1084,28 +1084,23 @@ describe('AuthorService', () => {
       );
     });
 
-    // Язык и имя — один `some`, иначе они могут совпасть в РАЗНЫХ переводах,
-    // и автор с русским именем попадёт в выдачу с `lang=en`.
-    it('puts lang and search into one translation condition, not two', async () => {
+    // Экран листает страницами по 20: авторы одного импорта делят `createdAt`,
+    // и без второго ключа сортировки Postgres вправе раздать их между страницами
+    // по-разному — автор попал бы на две страницы или ни на одну.
+    it('orders by createdAt with id as a tiebreaker', async () => {
       prisma.$transaction.mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops));
       prisma.author.count.mockResolvedValue(0);
       prisma.author.findMany.mockResolvedValue([]);
 
-      await service.list(1, 20, Language.en, 'tolstoy');
+      await service.list(2, 20);
 
-      const expectedWhere = {
-        translations: {
-          some: {
-            language: Language.en,
-            name: { contains: 'tolstoy', mode: 'insensitive' },
-          },
-        },
-      };
-      expect(prisma.author.count).toHaveBeenCalledTimes(1);
-      expect(prisma.author.count).toHaveBeenCalledWith({ where: expectedWhere });
       expect(prisma.author.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.author.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expectedWhere }),
+        expect.objectContaining({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: 20,
+          take: 20,
+        }),
       );
     });
   });

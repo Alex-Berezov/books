@@ -129,6 +129,40 @@ describe('Admin authors routing (e2e)', () => {
       expect(body.pagination.limit).toBe(PAGINATION_MAX_LIMIT);
     });
 
+    /**
+     * `LEGACY-352`: экран списка авторов ищет на сервере тем же `q`, что и выпадающий
+     * список формы книги, — по имени перевода. Живая база, а не мок: проверяется, что
+     * фильтр режет выдачу до одного автора, а не что Prisma получила нужный объект.
+     */
+    it('находит автора по части имени без учёта регистра', async () => {
+      const mark = Date.now().toString(36);
+      const created = await request(http())
+        .post('/admin/authors')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          translations: [{ language: 'en', name: `Zxq Name ${mark}`, slug: `qwv-slug-${mark}` }],
+        })
+        .expect(201);
+      const id = (created.body as { id: string }).id;
+
+      try {
+        const res = await request(http())
+          .get('/admin/authors')
+          .query({ q: `zxq name ${mark}` })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+        const body = res.body as { items: Array<{ id: string }>; pagination: { total: number } };
+        expect(body.items.map((author) => author.id)).toEqual([id]);
+        expect(body.pagination.total).toBe(1);
+      } finally {
+        // Уборка без `expect`: отказ удаления не должен подменять в отчёте настоящую
+        // причину падения теста выше.
+        await request(http())
+          .delete(`/admin/authors/${id}`)
+          .set('Authorization', `Bearer ${adminToken}`);
+      }
+    });
+
     it('без токена отвечает 401 от гварда, а не 404 от чужого маршрута', async () => {
       await request(http()).get('/admin/authors').expect(401);
     });
