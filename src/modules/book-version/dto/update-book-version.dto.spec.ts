@@ -63,5 +63,8 @@ describe('UpdateBookVersionDto: формат слага (LEGACY-437)', () => {
     }
     expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'a'.repeat(101) })).toContain('slug');
     expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'a'.repeat(100) })).toEqual([]);
+    // `null` записал бы NULL в колонку слага без редиректа (`LEGACY-437`, класс `LEGACY-062`).
+    expect(dtoFieldErrors(UpdateBookVersionDto, { slug: null })).toContain('slug');
+    expect(dtoFieldErrors(UpdateBookVersionDto, {})).toEqual([]);
   });
 });

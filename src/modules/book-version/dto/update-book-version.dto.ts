@@ -44,7 +44,9 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
     pattern: SLUG_PATTERN,
     maxLength: 100,
   })
-  @IsOptional()
+  // `LEGACY-437`: `null` не «не менять», а запись NULL в колонку без редиректа (класс `LEGACY-062`):
+  // пропускается только отсутствующее поле.
+  @ValidateIf((o: UpdateBookVersionDto) => o.slug !== undefined)
   @IsString()
   // `LEGACY-437`: формат держался только формой админки и `check-slug`; длина — как у `check-slug`.
   @Matches(SLUG_REGEX, { message: SLUG_REGEX_README })
