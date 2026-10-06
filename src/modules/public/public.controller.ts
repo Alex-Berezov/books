@@ -148,7 +148,7 @@ export class PublicController {
     // (`language-resolver.guard.ts:28`), а маршрут объявлен
     // `public, s-maxage=300`. Прежняя строка приглашала к этому прямо
     // («reqLanguage is also available if needed») и убрана. Сторож
-    // `public-cache-no-language-header.spec.ts` ловит и `@Language()`,
+    // `public-cache-caller-independent.spec.ts` ловит и `@Language()`,
     // и `req.language`.
     return this.books.getOverview(slug, pathLang);
   }

@@ -29,7 +29,7 @@ import { PRIVATE_NO_STORE, PUBLIC_CACHE, PUBLIC_CACHE_DEGRADED } from './cache-c
  *
  * Требование «тело публичного ответа не зависит от заголовков запроса»
  * держится теперь тестом, а не заголовком:
- * `src/common/testing/public-cache-no-language-header.spec.ts`. ⚠️ Рубеж
+ * `src/common/testing/public-cache-caller-independent.spec.ts`. ⚠️ Рубеж
  * у́же снятого: `Vary` покрывал всю публичную ветку, сторож смотрит
  * обработчики из `PUBLIC_CACHE_HANDLERS` и только их контроллеры.
  * Решение арбитра 13.09.2026, вариант A.

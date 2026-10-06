@@ -1,20 +1,35 @@
 import { readdirSync, readFileSync } from 'fs';
 import { join, relative, resolve } from 'path';
+import * as ts from 'typescript';
 import { stripComments } from './module-registration';
 
 /**
- * Разбор декораторов контроллеров по тексту файла. Вынесен из
+ * Разбор декораторов контроллеров через TypeScript compiler API. Вынесен из
  * `roles-guard-wiring.spec.ts` (`LEGACY-110`), когда тем же разбором
- * понадобилось собрать список закрытых маршрутов (`LEGACY-234`).
+ * понадобилось собрать список закрытых маршрутов (`LEGACY-234`); с 06.10.2026
+ * (`T108`, `LEGACY-290`) разбор целиком на AST: текстовый разбор по балансу
+ * скобок отвечал на один вход иначе, чем AST-разбор импортов в соседнем
+ * стороже, и обоим приходилось верить на слово.
  *
- * Почему по тексту, а не по метаданным поднятого приложения: сторожу нужно
- * видеть **все** контроллеры репозитория, включая те, что не попали ни в один
- * модуль. Поднятый `AppModule` показывает только подключённое.
+ * Почему по исходникам, а не по метаданным поднятого приложения: сторожу
+ * нужно видеть **все** контроллеры репозитория, включая те, что не попали ни
+ * в один модуль. Поднятый `AppModule` показывает только подключённое.
+ *
+ * ⚠️ Имена декораторов, гвардов и интерцепторов сравниваются **по тому, что
+ * импортировано**, а не по тексту в коде: `import { UseGuards as G }`,
+ * `import * as common from '@nestjs/common'` и `@common.UseGuards(...)`,
+ * подпуть пакета, импорт с расширением — всё это один и тот же декоратор.
+ * Все вхождения `@UseGuards`/`@UseInterceptors` складываются: Nest исполняет
+ * гварды из каждого.
+ *
+ * ⚠️ Чего разбор не видит и видеть не обязан: гвард, спрятанный в составной
+ * декоратор (`applyDecorators`) или в базовый класс, — для сторожа публичного
+ * кэша это отдельное нарушение (`public-cache-caller-independent.spec.ts`),
+ * для прочих — граница.
  *
  * ⚠️ `stripComments` здесь не переписывается, а берётся из
- * `module-registration.ts`: копия того же разбора уже лежала бы в четырёх
- * местах, и правка краевого случая (`//` внутри `'https://...'`) уехала бы
- * в одну из них. Оставшиеся копии — `LEGACY-290`.
+ * `module-registration.ts`: правка краевого случая (`//` внутри
+ * `'https://...'`) иначе уехала бы в одну из копий.
  */
 
 export { stripComments };
@@ -45,105 +60,427 @@ export const readController = (file: string): string => readFileSync(file, 'utf8
 
 export const relativeToSrc = (file: string): string => relative(SRC_ROOT, file).replace(/\\/g, '/');
 
-/**
- * Строка без содержимого литералов и построчных комментариев. Скобки внутри
- * `@ApiOperation({ summary: 'Rate this :(' })` иначе перекашивают баланс, и
- * остаток файла склеивается в один блок — а склеенный блок выглядит закрытым,
- * потому что где-то ниже по файлу `RolesGuard` есть.
- *
- * Не экспортируется намеренно: снаружи она годится только вместе с
- * `stripComments`, а порознь даёт склеенный блок на файле с блочным
- * комментарием внутри списка декораторов.
- */
-const stripLiterals = (line: string): string =>
-  line
-    .replace(/\\./g, '')
-    .replace(/'[^']*'/g, "''")
-    .replace(/"[^"]*"/g, '""')
-    .replace(/`[^`]*`/g, '``')
-    .replace(/\/\/.*$/, '');
+export const parseSource = (content: string, fileName = 'fixture.controller.ts'): ts.SourceFile =>
+  ts.createSourceFile(fileName, content, ts.ScriptTarget.Latest, true);
 
-const balance = (line: string): number => {
-  const clean = stripLiterals(line);
-  return (clean.match(/\(/g) ?? []).length - (clean.match(/\)/g) ?? []).length;
+/**
+ * Совпадает ли путь импорта с модулем кандидата: пакет целиком или его
+ * подпуть (`@nestjs/common/decorators/...` — так пишет автоимпорт IDE),
+ * либо последний сегмент относительного пути; расширение (`.js`, `.ts`)
+ * и `/index` не мешают. Подстрокой нельзя — `@nestjs/common` входит
+ * в `@nestjs/common-x` (`L-008`). Пустой модуль — любой.
+ */
+export const isFromModule = (from: string, module: string): boolean => {
+  const path = from.replace(/\.[cm]?[jt]s$/, '').replace(/\/index$/, '');
+  return (
+    module === '' || path === module || path.startsWith(`${module}/`) || path.endsWith(`/${module}`)
+  );
 };
 
-export type DecoratorBlock = { text: string; ownerLine: string };
+/** Что импортировано в файле: имя в коде → откуда и под каким экспортируемым именем. */
+export type ImportTable = {
+  named: Map<string, { module: string; name: string }>;
+  /** `import * as common from '@nestjs/common'`: `common` → `@nestjs/common`. */
+  namespaces: Map<string, string>;
+};
 
-/**
- * Режет файл на блоки декораторов: подряд идущие декораторы одного члена
- * класса плюс строка, к которой они относятся (сигнатура метода или
- * `export class`). Многострочный декоратор собирается по балансу скобок.
- */
-export const decoratorBlocks = (content: string): DecoratorBlock[] => {
-  const lines = content.split(/\r?\n/);
-  const blocks: DecoratorBlock[] = [];
-  let current: string[] = [];
-  let i = 0;
-
-  const flush = (ownerLine: string): void => {
-    if (current.length === 0) return;
-    blocks.push({ text: current.join('\n'), ownerLine });
-    current = [];
-  };
-
-  while (i < lines.length) {
-    const trimmed = lines[i].trim();
-
-    if (trimmed.startsWith('@')) {
-      let depth = 0;
-      do {
-        depth += balance(lines[i]);
-        current.push(lines[i]);
-        i += 1;
-      } while (i < lines.length && depth > 0);
+export const importsOf = (source: ts.SourceFile): ImportTable => {
+  const table: ImportTable = { named: new Map(), namespaces: new Map() };
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    if (!ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
+    const module = statement.moduleSpecifier.text;
+    const clause = statement.importClause;
+    if (!clause) continue;
+    // Имя экспорта по умолчанию не известно без разбора чужого модуля; берётся локальное —
+    // `import JwtAuthGuard from './jwt.guard'` остаётся `JwtAuthGuard`, а не безликим `default`.
+    if (clause.name) table.named.set(clause.name.text, { module, name: clause.name.text });
+    const bindings = clause.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      table.namespaces.set(bindings.name.text, module);
       continue;
     }
-
-    // Пустые строки и любые комментарии блок декораторов не разрывают.
-    const isComment = /^(\/\/|\/\*|\*)/.test(trimmed);
-    if (trimmed !== '' && !isComment) flush(trimmed);
-    i += 1;
+    for (const element of bindings.elements) {
+      table.named.set(element.name.text, {
+        module,
+        name: (element.propertyName ?? element.name).text,
+      });
+    }
   }
-
-  flush('');
-  return blocks;
+  return table;
 };
 
 /**
- * Содержимое ближайшего `@<decorator>(...)` блока, разобранное по балансу
- * скобок. Регулярка `\([^)]*Имя` здесь не годится: она обрывается на первой
- * `)`, то есть `@UseGuards(AuthGuard('jwt'), RolesGuard)` объявила бы закрытый
- * маршрут открытым, а `@UseInterceptors(FileInterceptor('file'),
- * PublicCacheInterceptor)` — публично кэшируемый обработчик обычным.
+ * Ссылка на имя: откуда оно пришло и как называется **там**, а не в этом файле.
+ * `module` пуст у имени, которое не импортировано (объявлено в файле или глобально),
+ * `name` пуст у выражения, которое разобрать нельзя (`...GUARDS`, `cond ? A : B`).
+ * `text` — как написано в коде, для внятного отказа.
  */
-export const decoratorArgs = (text: string, decorator: string): string =>
-  decoratorArgsAll(text, decorator)[0] ?? '';
+export type Reference = { name: string; module: string; text: string };
 
-/**
- * Содержимое **всех** вхождений `@<decorator>(...)` в блоке.
- *
- * 🔴 Нужно потому, что часть декораторов Nest повторяема: `@Header(...)`
- * ставится по одному на заголовок, и у обработчика их бывает несколько.
- * Разбор «по первому вхождению» на таком блоке отвечает про чужой заголовок
- * и молча не видит нужный — тот же класс ошибки, что `L-008`. Для `@UseGuards`
- * и `@UseInterceptors`, которые не повторяются, первый элемент и есть ответ.
- */
-export const decoratorArgsAll = (text: string, decorator: string): string[] => {
-  const opening = `@${decorator}(`;
-  const found: string[] = [];
-  let from = 0;
-
+/** Выражение без скобок, `as`, `!`, `new` и вызова фабрики класса — одно место на все разборы. */
+export const unwrap = (expression: ts.Expression): ts.Expression => {
+  let current = expression;
   for (;;) {
-    const start = text.indexOf(opening, from);
-    if (start === -1) return found;
-
-    const close = closingParen(text, start + `@${decorator}`.length);
-    const end = close === -1 ? text.length : close + 1;
-    found.push(text.slice(start, end));
-    from = end;
+    if (ts.isParenthesizedExpression(current)) current = current.expression;
+    else if (ts.isAsExpression(current) || ts.isNonNullExpression(current)) {
+      current = current.expression;
+    } else if (ts.isNewExpression(current)) {
+      current = current.expression;
+    } else if (ts.isCallExpression(current)) {
+      // Вызов разворачивается только у фабрики класса с именем с большой буквы
+      // (`AuthGuard('jwt')`, `common.AuthGuard('jwt')`). `buildGuards()` и
+      // `[A, B].concat(extra)` — не имя гварда: вызов остаётся вызовом, и ссылка на него
+      // выходит с пустым именем («не разобрать»), а не с правдоподобным `concat`.
+      const callee = current.expression;
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)
+          ? callee.name.text
+          : '';
+      if (!/^[A-Z]/.test(name)) return current;
+      current = callee;
+    } else return current;
   }
 };
+
+/** `JwtAuthGuard`, `new JwtAuthGuard()`, `AuthGuard('jwt')`, `common.UseGuards` — к имени. */
+export const referenceOf = (expression: ts.Expression, imports: ImportTable): Reference => {
+  const target = unwrap(expression);
+  const text = target.getText();
+  if (ts.isIdentifier(target)) {
+    const imported = imports.named.get(target.text);
+    return imported ? { ...imported, text } : { name: target.text, module: '', text };
+  }
+  if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) {
+    const module = imports.namespaces.get(target.expression.text);
+    if (module !== undefined) return { name: target.name.text, module, text };
+    // `import { nest } from '../x'` и `@nest.UseGuards(...)`: имя справа пришло из модуля
+    // объекта, а не «ниоткуда» — иначе пустой модуль совпал бы с любым (`isFrom`).
+    const holder = imports.named.get(target.expression.text);
+    if (holder) return { name: target.name.text, module: holder.module, text };
+  }
+  if (ts.isPropertyAccessExpression(target)) return { name: target.name.text, module: '', text };
+  return { name: '', module: '', text };
+};
+
+/** Ссылки аргумента вызова: массив раскрывается по элементам, выражение — в одну ссылку. */
+export const referencesOf = (expression: ts.Expression, imports: ImportTable): Reference[] => {
+  const target = unwrap(expression);
+  return ts.isArrayLiteralExpression(target)
+    ? target.elements.flatMap((element) => referencesOf(element, imports))
+    : [referenceOf(expression, imports)];
+};
+
+/**
+ * Назван ли `ref` так-то и пришёл ли оттуда-то. Не импортированное имя (`module` пуст)
+ * проходит по имени: так устроены и синтетические входы сторожей, и объявленное в файле.
+ */
+export const isFrom = (ref: Reference, name: string, module: string): boolean =>
+  ref.name === name && (ref.module === '' || isFromModule(ref.module, module));
+
+export const NEST_COMMON = '@nestjs/common';
+export const NEST_SWAGGER = '@nestjs/swagger';
+
+export type DecoratorUse = Reference & {
+  args: readonly ts.Expression[];
+  /** Аргументы, разложенные в ссылки на имена (`new X()`, `X('a')`, `[A, B]`). */
+  argRefs: Reference[];
+};
+
+/** Все декораторы узла — класса, метода или параметра, — с именами по импортам. */
+export const decoratorsOf = (node: ts.Node, imports: ImportTable): DecoratorUse[] =>
+  (ts.canHaveDecorators(node) ? (ts.getDecorators(node) ?? []) : []).map((decorator) => {
+    const expression = decorator.expression;
+    const call = ts.isCallExpression(expression);
+    const args: readonly ts.Expression[] = call ? expression.arguments : [];
+    const ref = referenceOf(call ? expression.expression : expression, imports);
+    return {
+      ...ref,
+      args,
+      argRefs: args.flatMap((argument) => referencesOf(argument, imports)),
+    };
+  });
+
+/** Ссылки на все гварды из **всех** вхождений `@UseGuards(...)` в наборе декораторов. */
+export const guardsOf = (uses: readonly DecoratorUse[]): Reference[] =>
+  uses.filter((use) => isFrom(use, 'UseGuards', NEST_COMMON)).flatMap((use) => use.argRefs);
+
+/** Ссылки на все интерцепторы из **всех** вхождений `@UseInterceptors(...)`. */
+export const interceptorsOf = (uses: readonly DecoratorUse[]): Reference[] =>
+  uses.filter((use) => isFrom(use, 'UseInterceptors', NEST_COMMON)).flatMap((use) => use.argRefs);
+
+/**
+ * Назван ли гвард в наборе декораторов — сравнение по имени целиком, не подстрокой:
+ * `JwtAuthGuard` входит в `OptionalJwtAuthGuard`, который анонима как раз пропускает,
+ * а `RolesGuard` — в любой будущий `SoftRolesGuard`, который ролей не читает.
+ */
+export const hasGuard = (uses: readonly DecoratorUse[], guard: string): boolean =>
+  guardsOf(uses).some((ref) => ref.name === guard);
+
+export const hasInterceptor = (uses: readonly DecoratorUse[], interceptor: string): boolean =>
+  interceptorsOf(uses).some((ref) => ref.name === interceptor);
+
+/** Строковое значение литерала или `undefined` для всего остального. */
+export const stringValue = (expression: ts.Expression | undefined): string | undefined => {
+  if (!expression) return undefined;
+  const target = unwrap(expression);
+  return ts.isStringLiteralLike(target) ? target.text : undefined;
+};
+
+/**
+ * Восемь глаголов Nest, а не пять расхожих: обработчик, объявленный `@All(...)`
+ * или `@Options(...)`, невидимый одному сторожу и видимый другому, — это два
+ * зелёных сторожа с разными ответами на один и тот же вход.
+ */
+export const VERBS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'all'] as const;
+
+export type HttpVerb = (typeof VERBS)[number];
+
+/** Имя декоратора Nest для глагола: `get` → `Get`. Одно место на всех сторожей. */
+export const verbDecoratorName = (verb: HttpVerb): string => verb[0].toUpperCase() + verb.slice(1);
+
+/** Глагол маршрута, который объявляет декоратор, или `undefined`, если это не HTTP-декоратор Nest. */
+export const verbOf = (use: DecoratorUse): HttpVerb | undefined =>
+  VERBS.find((verb) => isFrom(use, verbDecoratorName(verb), NEST_COMMON));
+
+export type HandlerInfo = {
+  name: string;
+  /** Строка, к которой относился блок декораторов, — для внятного отказа. */
+  ownerLine: string;
+  node: ts.MethodDeclaration;
+  decorators: DecoratorUse[];
+};
+
+export type ControllerInfo = {
+  /** Путь файла относительно `src`; у синтетического входа — его имя. */
+  file: string;
+  className: string;
+  imports: ImportTable;
+  node: ts.ClassDeclaration;
+  decorators: DecoratorUse[];
+  /** Базовые пути из `@Controller('x')`, `@Controller({ path: 'x' })`, `@Controller(['a', 'b'])`. */
+  bases: string[];
+  hasBaseClass: boolean;
+  handlers: HandlerInfo[];
+};
+
+const pathsOf = (expression: ts.Expression | undefined): string[] => {
+  if (!expression) return [''];
+  const target = unwrap(expression);
+  if (ts.isArrayLiteralExpression(target)) {
+    return target.elements.flatMap((element) => pathsOf(element));
+  }
+  const literal = stringValue(target);
+  // Путь, собранный выражением, разобрать нельзя; он остаётся видимым в отказе, а не
+  // превращается молча в корень.
+  return [literal ?? `<${target.getText()}>`];
+};
+
+/**
+ * Ключ свойства объектного литерала: `path`, `'path'` и `"path"` — один и тот же ключ.
+ * Вычисляемый ключ и `...spread` ключа не имеют — `undefined`.
+ */
+export const propertyKey = (property: ts.ObjectLiteralElementLike): string | undefined =>
+  property.name && (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name))
+    ? property.name.text
+    : undefined;
+
+const controllerBases = (use: DecoratorUse): string[] => {
+  const [first] = use.args;
+  const target = first ? unwrap(first) : undefined;
+  if (target && ts.isObjectLiteralExpression(target)) {
+    const path = target.properties.find((property) => propertyKey(property) === 'path');
+    if (path && ts.isPropertyAssignment(path)) return pathsOf(path.initializer);
+    // `{ path }` краткой записью и `{ ...options }` — путь собран выражением: он остаётся
+    // видимым, а не превращается молча в корень.
+    if (path) return [`<${path.getText()}>`];
+    const spread = target.properties.find(ts.isSpreadAssignment);
+    return spread ? [`<${spread.getText()}>`] : [''];
+  }
+  return pathsOf(first);
+};
+
+const ownerLineOf = (source: ts.SourceFile, member: ts.MethodDeclaration): string => {
+  const first: ts.Node =
+    member.modifiers?.find((modifier) => !ts.isDecorator(modifier)) ?? member.name;
+  // Начала строк берутся из той же карты TS, что и номер строки: `split` по `\n` разошёлся бы
+  // с ней на одиночном `\r` или U+2028 и не резал бы весь файл заново на каждый метод.
+  const { line } = source.getLineAndCharacterOfPosition(first.getStart(source));
+  const starts = source.getLineStarts();
+  return source.text.slice(starts[line], starts[line + 1] ?? source.text.length).trim();
+};
+
+/** Классы файла под `@Controller(...)` — с разобранными декораторами и обработчиками. */
+export const controllersIn = (source: ts.SourceFile, file: string): ControllerInfo[] => {
+  const imports = importsOf(source);
+  const out: ControllerInfo[] = [];
+  for (const statement of source.statements) {
+    if (!ts.isClassDeclaration(statement)) continue;
+    const decorators = decoratorsOf(statement, imports);
+    const controller = decorators.find((use) => isFrom(use, 'Controller', NEST_COMMON));
+    if (!controller) continue;
+    out.push({
+      file,
+      className: statement.name?.text ?? '<без имени>',
+      imports,
+      node: statement,
+      decorators,
+      bases: controllerBases(controller),
+      hasBaseClass: (statement.heritageClauses ?? []).some(
+        (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+      ),
+      handlers: statement.members.filter(ts.isMethodDeclaration).map((member) => ({
+        name: member.name.getText(source),
+        ownerLine: ownerLineOf(source, member),
+        node: member,
+        decorators: decoratorsOf(member, imports),
+      })),
+    });
+  }
+  return out;
+};
+
+/** Контроллеры файла по пути. `file` в результате — путь относительно `src`. */
+export const parseControllerFile = (file: string): ControllerInfo[] =>
+  controllersIn(parseSource(readFileSync(file, 'utf8'), file), relativeToSrc(file));
+
+export type RouteDecorator = {
+  verb: HttpVerb;
+  paths: string[];
+  /** Как декоратор написан в коде: `Get`, `G`, `common.Get` — для сверки с сырым счётом. */
+  text: string;
+};
+
+/** HTTP-декораторы обработчика: по одному на каждое вхождение, пути — по каждому из массива. */
+export const routeDecoratorsOf = (handler: HandlerInfo): RouteDecorator[] =>
+  handler.decorators.flatMap((use) => {
+    const verb = verbOf(use);
+    return verb ? [{ verb, paths: pathsOf(use.args[0]), text: use.text }] : [];
+  });
+
+export type ControllerRoute = {
+  /** Путь файла относительно `src`. */
+  file: string;
+  verb: HttpVerb;
+  /** Путь маршрута с ведущей косой; параметры оставлены как `:name`. */
+  path: string;
+  /** Строка, к которой относился блок декораторов, — для внятного отказа. */
+  ownerLine: string;
+  /**
+   * Стоит ли на маршруте `@ApiBearerAuth()` — на самом методе или на его классе
+   * (`LEGACY-132`). Складывается так же, как гварды: декоратор класса действует
+   * на все его методы.
+   */
+  bearerAuth: boolean;
+};
+
+const joinPath = (base: string, sub: string): string => {
+  const parts = [base, sub].filter((part) => part !== '').join('/');
+  return (
+    '/' +
+    parts
+      .replace(/^\/+/, '')
+      .replace(/\/{2,}/g, '/')
+      .replace(/\/+$/, '')
+  );
+};
+
+const hasApiBearerAuth = (uses: readonly DecoratorUse[]): boolean =>
+  uses.some((use) => isFrom(use, 'ApiBearerAuth', NEST_SWAGGER));
+
+/**
+ * Маршруты контроллеров, разложенные на закрытые названным гвардом и открытые.
+ * Отдельно от обхода репозитория, чтобы сторожа прогонялись и на синтетическом
+ * входе, а не только на дереве, где нарушений нет (`L-017`).
+ *
+ * ⚠️ Гварды в Nest **складываются**: гвард класса действует на метод, даже если
+ * у метода есть свой `@UseGuards(...)`, и несколько `@UseGuards` на одном узле
+ * действуют все. Закрытым считается обработчик, у которого гвард нашёлся хоть
+ * где-то из двух мест.
+ */
+export const routesOf = (
+  controllers: readonly ControllerInfo[],
+  guard?: string,
+): { closed: ControllerRoute[]; open: ControllerRoute[] } => {
+  const closed: ControllerRoute[] = [];
+  const open: ControllerRoute[] = [];
+
+  for (const controller of controllers) {
+    // Гвард не назван — закрытых нет, весь список приходит в `open`.
+    const classGuarded = guard !== undefined && hasGuard(controller.decorators, guard);
+    const classBearerAuth = hasApiBearerAuth(controller.decorators);
+
+    for (const handler of controller.handlers) {
+      // Nest пишет путь и метод в метаданные самого обработчика, и из нескольких
+      // HTTP-декораторов на одном методе действует верхний (применяется последним) —
+      // остальные маршрута не дают.
+      for (const { verb, paths } of routeDecoratorsOf(handler).slice(0, 1)) {
+        for (const base of controller.bases) {
+          for (const sub of paths) {
+            const route: ControllerRoute = {
+              file: controller.file,
+              verb,
+              path: joinPath(base, sub),
+              ownerLine: handler.ownerLine,
+              bearerAuth: classBearerAuth || hasApiBearerAuth(handler.decorators),
+            };
+            if (classGuarded || (guard !== undefined && hasGuard(handler.decorators, guard))) {
+              closed.push(route);
+            } else open.push(route);
+          }
+        }
+      }
+    }
+  }
+
+  return { closed, open };
+};
+
+/**
+ * Все маршруты всех контроллеров репозитория, разложенные на закрытые
+ * названным гвардом и открытые.
+ *
+ * ⚠️ Файл `*.controller.ts` без класса под `@Controller` пропускается, и пропуск
+ * считается: `skipped` возвращается наружу, чтобы сторож мог отличить
+ * «таких нет» от «разбор сломался и молча ничего не нашёл».
+ */
+export const collectRoutes = (
+  guard?: string,
+): { closed: ControllerRoute[]; open: ControllerRoute[]; skipped: string[] } => {
+  const closed: ControllerRoute[] = [];
+  const open: ControllerRoute[] = [];
+  const skipped: string[] = [];
+
+  for (const file of listControllerFiles()) {
+    const controllers = parseControllerFile(file);
+    if (controllers.length === 0) {
+      skipped.push(relativeToSrc(file));
+      continue;
+    }
+    const found = routesOf(controllers, guard);
+    closed.push(...found.closed);
+    open.push(...found.open);
+  }
+
+  return { closed, open, skipped };
+};
+
+/**
+ * Все маршруты репозитория одним списком — вход для сторожей, которым гварды
+ * безразличны (`LEGACY-024`: пути e2e-спек против объявленных маршрутов).
+ *
+ * ⚠️ `skipped` возвращается наружу так же, как у `collectRoutes`: файл без
+ * контроллера в список не попадает, и сторож обязан отличать «такого маршрута
+ * нет» от «файл не разобран».
+ */
+export const allRoutes = (): { routes: ControllerRoute[]; skipped: string[] } => {
+  const { closed, open, skipped } = collectRoutes();
+  return { routes: [...closed, ...open], skipped };
+};
+
+/* Текстовые помощники ниже декораторов не разбирают: ими пользуется `clearance-lock-writers.spec.ts`. */
 
 /**
  * Строка, шаблон или комментарий, начинающиеся на `i`: индекс их последнего символа, иначе `-1`.
@@ -203,169 +540,4 @@ export const topLevelArgs = (text: string, open: number, close: number): string[
   const last = text.slice(start, close).trim();
   if (last) args.push(last);
   return args;
-};
-
-/** Содержимое ближайшего `@UseGuards(...)`. Частный случай `decoratorArgs`. */
-export const useGuardsArgs = (text: string): string => decoratorArgs(text, 'UseGuards');
-
-/**
- * Назван ли `name` среди аргументов `@<decorator>(...)` — по границам слова.
- *
- * ⚠️ Границы слова обязательны по той же причине, что и в `guardsInclude`:
- * `PublicCacheInterceptor` вошло бы в любой будущий
- * `SoftPublicCacheInterceptor`, который кэша не объявляет.
- */
-export const decoratorIncludes = (text: string, decorator: string, name: string): boolean =>
-  new RegExp(`\\b${name}\\b`).test(decoratorArgs(text, decorator));
-
-/**
- * Есть ли среди гвардов блока названный — по границам слова.
- *
- * ⚠️ Сравнивать подстрокой нельзя: `JwtAuthGuard` входит в
- * `OptionalJwtAuthGuard`, который анонима как раз пропускает, а `RolesGuard` —
- * в любой будущий `SoftRolesGuard`, который ролей не читает. Соседи такого
- * вида в проекте уже есть: `RateLimitGuard` ⊂ `AuthRateLimitGuard`.
- */
-export const guardsInclude = (text: string, guard: string): boolean =>
-  decoratorIncludes(text, 'UseGuards', guard);
-
-/**
- * Восемь глаголов Nest, а не пять расхожих. Список совпадает с `HTTP_METHODS`
- * в `route-order.spec.ts` намеренно: обработчик, объявленный `@All(...)` или
- * `@Options(...)`, невидимый одному сторожу и видимый другому, — это два
- * зелёных сторожа с разными ответами на один и тот же вход.
- */
-export const VERBS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'all'] as const;
-
-export type HttpVerb = (typeof VERBS)[number];
-
-export type ControllerRoute = {
-  /** Путь файла относительно `src`. */
-  file: string;
-  verb: HttpVerb;
-  /** Путь маршрута с ведущей косой; параметры оставлены как `:name`. */
-  path: string;
-  /** Строка, к которой относился блок декораторов, — для внятного отказа. */
-  ownerLine: string;
-  /**
-   * Стоит ли на маршруте `@ApiBearerAuth()` — на самом методе или на его классе
-   * (`LEGACY-132`). Складывается так же, как гварды: декоратор класса действует
-   * на все его методы.
-   */
-  bearerAuth: boolean;
-};
-
-/**
- * Есть ли в блоке настоящий `@ApiBearerAuth(...)`.
- *
- * ⚠️ Со скобкой в шаблоне, а не подстрокой `@ApiBearerAuth`: строка импорта
- * `import { ApiBearerAuth } from '@nestjs/swagger'` в блок декораторов не
- * попадает, но упоминание в тексте — попадёт.
- *
- * 🔴 Поиск идёт по строке, из которой вырезаны литералы и комментарии, — теми
- * же `stripLiterals`, что считают баланс скобок. По сырому тексту сторож
- * обманывался дважды: `// @ApiBearerAuth()` в комментарии над методом и
- * буквальная подстрока внутри `@ApiOperation({ description: '...' })` того же
- * маршрута сходили за настоящий декоратор. Это тот же класс ошибки, из-за
- * которого текстовый сторож `LEGACY-190` был заменён разбором через компилятор
- * (`L-008`, правило «разбор кода регулярками»); здесь он закрыт вырезанием
- * литералов, потому что блок декораторов уже разобран по балансу скобок.
- */
-const hasApiBearerAuth = (text: string): boolean =>
-  stripComments(text)
-    .split(/\r?\n/)
-    .map(stripLiterals)
-    .some((line) => /@ApiBearerAuth\s*\(/.test(line));
-
-/** `Get` -> `/@Get\s*\(/`. Экранирование обычное, одним местом на оба вызова. */
-const decoratorOpening = (decorator: string): RegExp => new RegExp(`@${decorator}\\s*\\(`);
-
-const capitalize = (verb: string): string => verb[0].toUpperCase() + verb.slice(1);
-
-/** Первый строковый аргумент декоратора: `@Get(':id')` -> `:id`, `@Get()` -> ''. */
-const firstStringArg = (text: string, decorator: string): string => {
-  const opening = decoratorOpening(decorator).exec(text);
-  if (!opening) return '';
-  const rest = text.slice(opening.index + opening[0].length);
-  const quoted = /^\s*(['"`])([^'"`]*)/.exec(rest);
-  return quoted ? quoted[2] : '';
-};
-
-const joinPath = (base: string, sub: string): string => {
-  const parts = [base, sub].filter((part) => part !== '').join('/');
-  return (
-    '/' +
-    parts
-      .replace(/^\/+/, '')
-      .replace(/\/{2,}/g, '/')
-      .replace(/\/+$/, '')
-  );
-};
-
-/**
- * Все маршруты всех контроллеров репозитория, разложенные на закрытые
- * названным гвардом и открытые.
- *
- * ⚠️ Гварды в Nest **складываются**: гвард класса действует на метод, даже если
- * у метода есть свой `@UseGuards(...)`. Поэтому закрытым считается обработчик,
- * у которого гвард нашёлся хоть где-то из двух мест.
- *
- * ⚠️ Контроллер без блока декораторов у класса пропускается, и пропуск
- * считается: `skipped` возвращается наружу, чтобы сторож мог отличить
- * «таких нет» от «разбор сломался и молча ничего не нашёл».
- */
-export const collectRoutes = (
-  guard?: string,
-): { closed: ControllerRoute[]; open: ControllerRoute[]; skipped: string[] } => {
-  const closed: ControllerRoute[] = [];
-  const open: ControllerRoute[] = [];
-  const skipped: string[] = [];
-
-  for (const fileName of listControllerFiles()) {
-    const content = readController(fileName);
-    const blocks = decoratorBlocks(content);
-    const classBlock = blocks.find((block) => block.ownerLine.includes('class '));
-    if (!classBlock) {
-      skipped.push(relativeToSrc(fileName));
-      continue;
-    }
-
-    const base = firstStringArg(classBlock.text, 'Controller');
-    // Гвард не назван — закрытых нет, весь список приходит в `open`.
-    const classGuarded = guard !== undefined && guardsInclude(classBlock.text, guard);
-    const classBearerAuth = hasApiBearerAuth(classBlock.text);
-
-    for (const block of blocks) {
-      if (block === classBlock) continue;
-      for (const verb of VERBS) {
-        const decorator = capitalize(verb);
-        if (!decoratorOpening(decorator).test(block.text)) continue;
-        const route: ControllerRoute = {
-          file: relativeToSrc(fileName),
-          verb,
-          path: joinPath(base, firstStringArg(block.text, decorator)),
-          ownerLine: block.ownerLine,
-          bearerAuth: classBearerAuth || hasApiBearerAuth(block.text),
-        };
-        if (classGuarded || (guard !== undefined && guardsInclude(block.text, guard)))
-          closed.push(route);
-        else open.push(route);
-      }
-    }
-  }
-
-  return { closed, open, skipped };
-};
-
-/**
- * Все маршруты репозитория одним списком — вход для сторожей, которым гварды
- * безразличны (`LEGACY-024`: пути e2e-спек против объявленных маршрутов).
- *
- * ⚠️ `skipped` возвращается наружу так же, как у `collectRoutes`: контроллер без
- * блока декораторов у класса в список не попадает, и сторож обязан отличать
- * «такого маршрута нет» от «файл не разобран».
- */
-export const allRoutes = (): { routes: ControllerRoute[]; skipped: string[] } => {
-  const { closed, open, skipped } = collectRoutes();
-  return { routes: [...closed, ...open], skipped };
 };

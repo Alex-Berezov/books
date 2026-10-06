@@ -1,5 +1,16 @@
-import { readdirSync, readFileSync } from 'fs';
-import { join, relative, resolve } from 'path';
+import { readFileSync } from 'fs';
+import {
+  SRC_ROOT,
+  controllersIn,
+  listControllerFiles,
+  parseSource,
+  routeDecoratorsOf,
+  relativeToSrc,
+  routesOf,
+  VERBS,
+  verbDecoratorName,
+} from './controller-decorators';
+import type { ControllerInfo } from './controller-decorators';
 import { earlier, Rank, registrationOf, stripComments } from './module-registration';
 
 /**
@@ -34,22 +45,19 @@ import { earlier, Rank, registrationOf, stripComments } from './module-registrat
  * проверка обязана видеть этот случай: пока `PublicModule` регистрировался
  * первым, он выигрывал такие гонки молча, а теперь он последний и проигрывает
  * их так же молча.
+ *
+ * ⚠️ Маршруты и базу контроллера даёт общий разбор `controller-decorators.ts`
+ * (AST, `LEGACY-290`): `@Get` под псевдонимом, `@Controller({ path })`, массив
+ * путей и второй глагол на том же методе видны ему так же, как и остальным
+ * сторожам. Собственной регулярки на `@Get('...')` здесь больше нет.
  */
-
-const SRC_ROOT = resolve(__dirname, '../..');
 
 /** Ниже этих чисел обход считается сломанным, а не репозиторий — поредевшим. */
 const MIN_CONTROLLERS = 40;
 const MIN_ROUTES = 250;
 
-const HTTP_METHODS = ['Get', 'Post', 'Put', 'Patch', 'Delete', 'Head', 'Options', 'All'] as const;
-
-const listControllers = (dir: string): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) return listControllers(full);
-    return entry.isFile() && entry.name.endsWith('.controller.ts') ? [full] : [];
-  });
+/** Сырой счёт по тексту — имена глаголов из общего `VERBS`, а не восьмая копия списка. */
+const RAW_VERB_DECORATOR = new RegExp(`@(${VERBS.map(verbDecoratorName).join('|')})\\s*\\(`, 'g');
 
 const segments = (path: string): string[] => path.split('/').filter((s) => s !== '');
 
@@ -65,25 +73,67 @@ type Route = {
   rank?: Rank;
 };
 
-const routesOf = (file: string, content: string, rank?: Rank): Route[] => {
-  const clean = stripComments(content);
-  const base = clean.match(/@Controller\(\s*'([^']*)'\s*\)/)?.[1] ?? '';
-  const decorator = new RegExp(`@(${HTTP_METHODS.join('|')})\\(\\s*(?:'([^']*)')?\\s*\\)`, 'g');
-
-  const out: Route[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = decorator.exec(clean)) !== null) {
-    const path = [...segments(base), ...segments(match[2] ?? '')].join('/');
-    out.push({
+/**
+ * Маршруты контроллеров одного файла в порядке объявления — из общего `routesOf`
+ * (`LEGACY-290`: склейка базы и пути, массивы путей и разбор `@Controller` живут одним
+ * местом) — и число HTTP-декораторов, написанных голым именем глагола (`@Get(`), для
+ * точной сверки с сырым текстовым счётом.
+ */
+const routesIn = (
+  file: string,
+  controllers: readonly ControllerInfo[],
+  rank?: Rank,
+): { routes: Route[]; bareDecorators: number } => {
+  const routes = routesOf(controllers).open.map((route, index): Route => {
+    const path = segments(route.path).join('/');
+    return {
       file,
-      method: match[1],
+      method: verbDecoratorName(route.verb),
       path,
       segments: segments(path),
-      index: out.length,
+      index,
       rank,
-    });
+    };
+  });
+  const bareDecorators = controllers
+    .flatMap((controller) => controller.handlers)
+    .flatMap(routeDecoratorsOf)
+    .filter((decorator) => decorator.text === verbDecoratorName(decorator.verb)).length;
+  return { routes, bareDecorators };
+};
+
+/**
+ * Разбор держится на предпосылках, и все они проверяются здесь же, а не
+ * подразумеваются: один контроллер на файл (второй склеил бы два независимых
+ * порядка объявления в одну нумерацию) и пути строками (путь, собранный
+ * выражением, разобрать нельзя, и межфайловая проверка начала бы сравнивать
+ * заглушки).
+ */
+const assumptionsBroken = (short: string, controllers: readonly ControllerInfo[]): string[] => {
+  const broken: string[] = [];
+  if (controllers.length !== 1) {
+    broken.push(`${short}: @Controller встречается ${controllers.length} раз, ожидался один`);
   }
-  return out;
+  for (const controller of controllers) {
+    if (controller.bases.some((base) => base.startsWith('<'))) {
+      broken.push(`${short}: @Controller объявлен не строкой — разбор базы пути не применим`);
+    }
+    for (const handler of controller.handlers) {
+      // Nest регистрирует только верхний HTTP-декоратор метода: второй — мёртвый маршрут,
+      // а сырой счёт его видит. Не молча, а поломкой предпосылки.
+      if (routeDecoratorsOf(handler).length > 1) {
+        broken.push(
+          `${short}: у ${handler.name} несколько HTTP-декораторов — живёт только верхний`,
+        );
+      }
+      for (const { paths } of routeDecoratorsOf(handler)) {
+        if (paths.some((path) => path.startsWith('<'))) {
+          broken.push(`${short}: путь ${handler.name} собран выражением — разбор не применим`);
+        }
+      }
+    }
+  }
+  return broken;
 };
 
 /** `@All` перехватывает любой метод, остальные — только свой. */
@@ -111,67 +161,55 @@ const swallows = (covering: Route, covered: Route): boolean => {
   return true;
 };
 
+/** Внутри файла порядок объявления и решает исход — сравнение направленное. */
+const shadowedIn = (routes: readonly Route[]): string[] => {
+  const shadowed: string[] = [];
+  for (const covered of routes) {
+    for (const covering of routes) {
+      if (covering.index >= covered.index) continue;
+      if (swallows(covering, covered)) {
+        shadowed.push(
+          `${covered.file}: @${covered.method}('${covered.path}') объявлен ниже ` +
+            `@${covering.method}('${covering.path}')`,
+        );
+      }
+    }
+  }
+  return shadowed;
+};
+
 describe('порядок маршрутов: литеральный выше динамического', () => {
-  const controllers = listControllers(SRC_ROOT);
+  const controllers = listControllerFiles(SRC_ROOT);
   const { ranks, problems } = registrationOf(SRC_ROOT);
   const brokenAssumptions = [...problems];
 
   const byFile = new Map<string, Route[]>();
   let rawDecoratorOccurrences = 0;
+  let bareDecorators = 0;
 
   for (const file of controllers) {
     const content = readFileSync(file, 'utf8');
-    const short = relative(SRC_ROOT, file).replace(/\\/g, '/');
-    const clean = stripComments(content);
+    const short = relativeToSrc(file);
+    const parsed = controllersIn(parseSource(content, file), short);
 
-    // Разбор держится на трёх предпосылках, и все три проверяются здесь же, а не
-    // подразумеваются: база берётся из **первого** `@Controller` файла и только
-    // в строковой форме. Второй контроллер в файле склеил бы два независимых
-    // порядка объявления в одну нумерацию, а форма `@Controller({ path: ... })`
-    // молча дала бы базу `''` — и межфайловая проверка начала бы сравнивать
-    // обрезанные пути.
-    const declarations = clean.match(/@Controller\(/g) ?? [];
-    if (declarations.length !== 1) {
-      brokenAssumptions.push(
-        `${short}: @Controller встречается ${declarations.length} раз, ожидался один`,
-      );
-    }
-    if (!/@Controller\(\s*(?:'[^']*')?\s*\)/.test(clean)) {
-      brokenAssumptions.push(
-        `${short}: @Controller объявлен не строкой — разбор базы пути не применим`,
-      );
-    }
-    // Третья: контроллер обязан быть найден в `controllers` какого-то модуля,
-    // иначе его место в очереди регистрации неизвестно и межфайловая проверка
-    // молча пропустит весь файл.
+    brokenAssumptions.push(...assumptionsBroken(short, parsed));
+    // Контроллер обязан быть найден в `controllers` какого-то модуля, иначе его место
+    // в очереди регистрации неизвестно и межфайловая проверка молча пропустит весь файл.
     if (!ranks.has(file)) {
       brokenAssumptions.push(
         `${short}: контроллер не найден ни в одном модуле — очередь регистрации неизвестна`,
       );
     }
-    rawDecoratorOccurrences += (
-      clean.match(new RegExp(`@(${HTTP_METHODS.join('|')})\\s*\\(`, 'g')) ?? []
-    ).length;
-    byFile.set(short, routesOf(short, content, ranks.get(file)));
+    // Сырой счёт по тексту — независимый свидетель: разбор не должен терять обработчики.
+    rawDecoratorOccurrences += (stripComments(content).match(RAW_VERB_DECORATOR) ?? []).length;
+    const found = routesIn(short, parsed, ranks.get(file));
+    bareDecorators += found.bareDecorators;
+    byFile.set(short, found.routes);
   }
 
   const allRoutes = [...byFile.values()].flat();
 
-  // Внутри файла порядок объявления и решает исход — сравнение направленное.
-  const shadowed: string[] = [];
-  for (const routes of byFile.values()) {
-    for (const covered of routes) {
-      for (const covering of routes) {
-        if (covering.index >= covered.index) continue;
-        if (swallows(covering, covered)) {
-          shadowed.push(
-            `${covered.file}: @${covered.method}('${covered.path}') объявлен ниже ` +
-              `@${covering.method}('${covering.path}')`,
-          );
-        }
-      }
-    }
-  }
+  const shadowed = [...byFile.values()].flatMap(shadowedIn);
 
   // Между файлами исход решает очередь регистрации модулей. Красным считается
   // только проигрыш: пара, где перехваченный маршрут зарегистрирован раньше
@@ -208,7 +246,7 @@ describe('порядок маршрутов: литеральный выше д�
     expect(controllers.length).toBeGreaterThanOrEqual(MIN_CONTROLLERS);
   });
 
-  it('предпосылки разбора в силе: один @Controller на файл, база — строкой, модуль найден', () => {
+  it('предпосылки разбора в силе: один @Controller на файл, пути — строками, модуль найден', () => {
     expect(brokenAssumptions).toEqual([]);
   });
 
@@ -216,8 +254,15 @@ describe('порядок маршрутов: литеральный выше д�
     expect(allRoutes.length).toBeGreaterThanOrEqual(MIN_ROUTES);
   });
 
+  /**
+   * Точная сверка с сырым счётом по тому же правилу, что и текст: разбор считает только
+   * декораторы, написанные голым именем глагола (`@Get(`), — псевдоним и `@common.Get`
+   * текст не видит, и в счёт они не идут ни с одной стороны. Потерянный обработчик
+   * (например, `Get` из локального реэкспорта, который разбор не признал) и лишний
+   * (декоратор, засчитанный дважды) одинаково красят проверку.
+   */
   it('видит все обработчики до единого — разбор декораторов ничего не потерял', () => {
-    expect(allRoutes.length).toBe(rawDecoratorOccurrences);
+    expect(bareDecorators).toBe(rawDecoratorOccurrences);
   });
 
   it('не оставляет ни одного литерального маршрута под динамическим в своём файле', () => {
@@ -230,5 +275,116 @@ describe('порядок маршрутов: литеральный выше д�
 
   it('не объявляет один и тот же путь дважды', () => {
     expect(duplicated).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 Дерево без нарушений зелёное и у слепого разбора: краевые входы прогоняются
+ * на синтетическом контроллере, чистый вход — рядом (`L-017`, `LEGACY-290`).
+ */
+describe('детектор порядка краснеет на краевых входах', () => {
+  const IMPORTS = "import { Controller, Get, All } from '@nestjs/common';\n";
+  const shadowedFor = (code: string): string[] =>
+    shadowedIn(
+      routesIn('x.controller.ts', controllersIn(parseSource(IMPORTS + code), 'x.controller.ts'))
+        .routes,
+    );
+  const brokenFor = (code: string): string[] =>
+    assumptionsBroken('x.controller.ts', controllersIn(parseSource(IMPORTS + code), 'x.ts'));
+
+  it('динамический выше литерального — перехват', () => {
+    const code = "@Controller('b') class C { @Get(':id') a() {} @Get('check') b() {} }";
+    expect(shadowedFor(code)).toEqual([
+      "x.controller.ts: @Get('b/check') объявлен ниже @Get('b/:id')",
+    ]);
+  });
+
+  it('литеральный выше динамического — чисто', () => {
+    expect(
+      shadowedFor("@Controller('b') class C { @Get('check') a() {} @Get(':id') b() {} }"),
+    ).toEqual([]);
+  });
+
+  it('@Get под псевдонимом импорта видна', () => {
+    const code = [
+      "import { Get as G } from '@nestjs/common';",
+      "@Controller('b') class C { @G(':id') a() {} @G('check') b() {} }",
+    ].join('\n');
+    expect(shadowedFor(code)).toHaveLength(1);
+  });
+
+  it('@Get через пространство имён видна', () => {
+    const code = [
+      "import * as common from '@nestjs/common';",
+      "@common.Controller('b') class C { @common.Get(':id') a() {} @common.Get('check') b() {} }",
+    ].join('\n');
+    expect(shadowedFor(code)).toHaveLength(1);
+  });
+
+  it('база из @Controller({ path }) учитывается', () => {
+    const code = "@Controller({ path: 'b' }) class C { @Get(':id') a() {} @Get('check') b() {} }";
+    expect(shadowedFor(code)).toHaveLength(1);
+  });
+
+  it('массив путей раскладывается на маршруты', () => {
+    const code = "@Controller('b') class C { @Get([':id', 'x']) a() {} @Get('check') b() {} }";
+    // Элемент массива `x` объявлен после `:id` так же, как и `check` ниже.
+    expect(shadowedFor(code)).toHaveLength(2);
+  });
+
+  it('@All перехватывает любой метод', () => {
+    const code = "@Controller('b') class C { @All(':id') a() {} @Get('check') b() {} }";
+    expect(shadowedFor(code)).toHaveLength(1);
+  });
+
+  it('другой метод литерал не перехватывает', () => {
+    expect(
+      shadowedFor("@Controller('b') class C { @Get(':id') a() {} @Post('check') b() {} }"),
+    ).toEqual([]);
+  });
+
+  it('закомментированный маршрут не считается', () => {
+    const code = "@Controller('b') class C { @Get(':id') a() {}\n // @Get('check')\n b() {} }";
+    expect(shadowedFor(code)).toEqual([]);
+  });
+
+  it('предпосылки: два контроллера в файле и путь выражением ломают разбор', () => {
+    expect(brokenFor('@Controller() class A {} @Controller() class B {}')[0]).toContain(
+      'ожидался один',
+    );
+    expect(brokenFor("@Controller(BASE) class A { @Get('x') a() {} }")[0]).toContain('не строкой');
+    expect(brokenFor('@Controller() class A { @Get(PATH) a() {} }')[0]).toContain(
+      'собран выражением',
+    );
+    expect(brokenFor("@Controller('x') class A { @Get('y') a() {} }")).toEqual([]);
+  });
+
+  it('предпосылки: второй HTTP-декоратор на методе — мёртвый маршрут', () => {
+    expect(brokenFor("@Controller('x') class A { @Get('a') @Get('b') m() {} }")[0]).toContain(
+      'живёт только верхний',
+    );
+  });
+
+  it('предпосылки: { path } краткой записью и { ...options } — не строка, а не корень', () => {
+    expect(brokenFor("@Controller({ path }) class A { @Get('y') a() {} }")[0]).toContain(
+      'не строкой',
+    );
+    expect(brokenFor("@Controller({ ...options }) class A { @Get('y') a() {} }")[0]).toContain(
+      'не строкой',
+    );
+    expect(brokenFor("@Controller({ 'path': 'x' }) class A { @Get('y') a() {} }")).toEqual([]);
+  });
+
+  it('декоратор, который разбор не признал маршрутом, выпадает из точного счёта', () => {
+    const count = (code: string): number =>
+      routesIn('x.controller.ts', controllersIn(parseSource(code), 'x.controller.ts'))
+        .bareDecorators;
+    // Тот же текст `@Get(` с глаголом из чужого модуля: сырой счёт видит его, разбор — нет.
+    expect(
+      count(
+        "import { Controller } from '@nestjs/common';\nimport { Get } from '../http';\n@Controller() class A { @Get('y') a() {} }",
+      ),
+    ).toBe(0);
+    expect(count(`${IMPORTS}@Controller() class A { @Get('y') a() {} }`)).toBe(1);
   });
 });

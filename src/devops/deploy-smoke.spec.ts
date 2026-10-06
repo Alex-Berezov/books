@@ -1,6 +1,13 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { stripComments } from '../common/testing/module-registration';
+import {
+  controllersIn,
+  listControllerFiles,
+  parseControllerFile,
+  parseSource,
+  routesOf,
+} from '../common/testing/controller-decorators';
+import type { ControllerInfo, ControllerRoute } from '../common/testing/controller-decorators';
 
 /**
  * Сторож дымовой проверки маршрутов на выкате (`LEGACY-232`).
@@ -32,7 +39,6 @@ import { stripComments } from '../common/testing/module-registration';
  */
 
 const ROOT = resolve(__dirname, '..', '..');
-const SRC_ROOT = resolve(__dirname, '..');
 const DEPLOY = readFileSync(join(ROOT, '.github', 'workflows', 'deploy.yml'), 'utf8');
 const LINES = DEPLOY.split(/\r?\n/);
 /**
@@ -123,65 +129,14 @@ const verifyLoopLines = (): string[] => {
 
 const verifyLoopBody = (): string => verifyLoopLines().join('\n');
 
-/** Баланс скобок строки без содержимого литералов — приём из `roles-guard-wiring.spec.ts`. */
-const balance = (line: string): number => {
-  const clean = line
-    .replace(/\\./g, '')
-    .replace(/'[^']*'/g, "''")
-    .replace(/"[^"]*"/g, '""')
-    .replace(/`[^`]*`/g, '``')
-    .replace(/\/\/.*$/, '');
-  return (clean.match(/\(/g) ?? []).length - (clean.match(/\)/g) ?? []).length;
-};
-
-/**
- * Подряд идущие декораторы одного члена класса. `@Get(...)` и относящийся к нему
- * `@UseGuards(...)` всегда лежат в одном таком блоке, а гвард соседнего метода —
- * в другом. Многострочный декоратор собирается по балансу скобок: `@ApiOperation({
- * summary: '...' })` иначе разорвал бы блок посередине.
- */
-const decoratorBlocks = (content: string): string[] => {
-  const lines = content.split(/\r?\n/);
-  const blocks: string[] = [];
-  let current: string[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const trimmed = lines[i].trim();
-    if (trimmed.startsWith('@')) {
-      let depth = 0;
-      do {
-        depth += balance(lines[i]);
-        current.push(lines[i]);
-        i += 1;
-      } while (i < lines.length && depth > 0);
-      continue;
-    }
-    if (trimmed !== '') {
-      if (current.length > 0) blocks.push(current.join('\n'));
-      current = [];
-    }
-    i += 1;
-  }
-  if (current.length > 0) blocks.push(current.join('\n'));
-  return blocks;
-};
-
-/**
- * Строгий `JwtAuthGuard`, а не подстрока: `OptionalJwtAuthGuard` содержит это имя
- * целиком и пропускает анонима, отдавая 200 вместо 401. Границы слова его
- * отсекают — между `Optional` и `Jwt` границы нет.
- */
-const hasStrictJwtGuard = (text: string): boolean => /\bJwtAuthGuard\b/.test(text);
-
 type DeclaredRoute = {
   file: string;
-  /** Закрыт ли **этот обработчик**: строгий `JwtAuthGuard` в своём блоке либо на классе. */
+  /** Закрыт ли **этот обработчик**: строгий `JwtAuthGuard` на нём либо на классе. */
   guarded: boolean;
 };
 
 /**
- * Полные пути всех объявленных GET-маршрутов: база контроллера плюс путь метода.
+ * Полные пути GET-маршрутов контроллеров: база контроллера плюс путь метода.
  *
  * ⚠️ Гвард считается **по обработчику, а не по файлу**: у `BookController`
  * класс-левел `@UseGuards` нет вовсе, гвард стоит поштучно на методах, и
@@ -189,43 +144,42 @@ type DeclaredRoute = {
  * ровно до первого снятого гварда — тот же довод записан в шапке
  * `roles-guard-wiring.spec.ts`.
  *
- * ⚠️ Комментарии срезаются `stripComments` до разбора: закомментированный
- * `// @Get('admin/authors')` иначе считался бы живым маршрутом, и спека молчала
- * бы ровно в том случае, ради которого написана — маршрут удалён, дым остался.
+ * ⚠️ Строгий `JwtAuthGuard`, а не подстрока: `OptionalJwtAuthGuard` пропускает
+ * анонима и отдаёт 200 вместо 401. Имя сравнивается целиком и по импортированному
+ * имени: псевдоним импорта и любой из нескольких `@UseGuards` узла видны.
+ *
+ * ⚠️ Разбор — общий, по AST, из `controller-decorators.ts` (`LEGACY-290`): здесь
+ * больше нет ни своего счёта скобок, ни своих блоков декораторов, ни своего обхода
+ * каталогов. Закомментированный `// @Get('admin/authors')` декоратором не
+ * считается — иначе спека молчала бы ровно в том случае, ради которого написана:
+ * маршрут удалён, дым остался.
  */
-const declaredGetRoutes = (): Map<string, DeclaredRoute> => {
-  const files: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.isFile() && entry.name.endsWith('.controller.ts')) files.push(full);
-    }
-  };
-  walk(SRC_ROOT);
-
+const declaredGetRoutesIn = (
+  controllers: readonly ControllerInfo[],
+): Map<string, DeclaredRoute> => {
+  // Маршруты и сложение гвардов — из общего `routesOf` (`LEGACY-290`): дым и
+  // `test/closed-routes-unauthorized.e2e-spec.ts` обязаны одинаково решать, закрыт ли маршрут.
   const out = new Map<string, DeclaredRoute>();
-  for (const file of files) {
-    const content = stripComments(readFileSync(file, 'utf8'));
-    const base = content.match(/@Controller\(\s*'([^']*)'\s*\)/)?.[1] ?? '';
-    const blocks = decoratorBlocks(content);
-    const classBlock = blocks.find((block) => block.includes('@Controller(')) ?? '';
-
-    for (const block of blocks) {
-      for (const match of block.matchAll(/@Get\(\s*(?:'([^']*)')?\s*\)/g)) {
-        const path = [...base.split('/'), ...(match[1] ?? '').split('/')]
-          .filter((segment) => segment !== '')
-          .join('/');
-        if (out.has(path)) continue;
-        out.set(path, {
-          file,
-          guarded: hasStrictJwtGuard(block) || hasStrictJwtGuard(classBlock),
-        });
-      }
+  // По одному контроллеру за раз: ключ закрытости не путается с одноимённым маршрутом
+  // соседнего класса в том же файле. Первый одноимённый путь побеждает.
+  const keyOf = (route: ControllerRoute): string =>
+    `${route.verb} ${route.path} ${route.ownerLine}`;
+  for (const controller of controllers) {
+    const closed = new Set(routesOf([controller], 'JwtAuthGuard').closed.map(keyOf));
+    // Без названного гварда `routesOf` кладёт все маршруты в `open` в порядке объявления.
+    for (const route of routesOf([controller]).open) {
+      // `@All` отвечает и на GET — так же его читают `langless-public-routes` и общий `VERBS`.
+      if (route.verb !== 'get' && route.verb !== 'all') continue;
+      const path = route.path.replace(/^\//, '');
+      if (out.has(path)) continue;
+      out.set(path, { file: route.file, guarded: closed.has(keyOf(route)) });
     }
   }
   return out;
 };
+
+const declaredGetRoutes = (): Map<string, DeclaredRoute> =>
+  declaredGetRoutesIn(listControllerFiles().flatMap(parseControllerFile));
 
 /** Путь смоука → маршрут в контроллерах, без префикса `/api` и без query. */
 const routeOf = (declared: Map<string, DeclaredRoute>, path: string): DeclaredRoute | undefined =>
@@ -584,5 +538,77 @@ describe('DevOps: дым по маршрутам на выкате', () => {
         expect(REQUIRED[path]).toBe('200');
       }
     });
+  });
+});
+
+/**
+ * 🔴 Дерево без нарушений зелёное и у слепого разбора: ожидание 401 держится на
+ * том, что гвард узнаётся на любом входе. Каждый краевой вход — на синтетическом
+ * контроллере (`L-017`, `LEGACY-290`).
+ */
+describe('DevOps: разбор GET-маршрутов для дыма на краевых входах', () => {
+  const IMPORTS = "import { Controller, Get, Post, UseGuards } from '@nestjs/common';\n";
+  const routesFor = (code: string): Map<string, { file: string; guarded: boolean }> =>
+    declaredGetRoutesIn(controllersIn(parseSource(IMPORTS + code), 'x.controller.ts'));
+  const guardedOf = (code: string, path: string): boolean | undefined =>
+    routesFor(code).get(path)?.guarded;
+
+  it('гвард на обработчике закрывает его, соседний остаётся открытым', () => {
+    const code =
+      "@Controller('a') class C { @Get('x') @UseGuards(JwtAuthGuard) x() {} @Get('y') y() {} }";
+    expect(guardedOf(code, 'a/x')).toBe(true);
+    expect(guardedOf(code, 'a/y')).toBe(false);
+  });
+
+  it('гвард во втором @UseGuards того же обработчика виден', () => {
+    const code =
+      "@Controller('a') class C { @Get('x') @UseGuards(A) @UseGuards(JwtAuthGuard) x() {} }";
+    expect(guardedOf(code, 'a/x')).toBe(true);
+  });
+
+  it('гвард класса закрывает все обработчики', () => {
+    const code = "@UseGuards(JwtAuthGuard) @Controller('a') class C { @Get('x') x() {} }";
+    expect(guardedOf(code, 'a/x')).toBe(true);
+  });
+
+  it('JwtAuthGuard под псевдонимом импорта — тот же гвард', () => {
+    const code = [
+      "import { JwtAuthGuard as G } from '../guards/jwt-auth.guard';",
+      "@Controller('a') class C { @Get('x') @UseGuards(G) x() {} }",
+    ].join('\n');
+    expect(guardedOf(code, 'a/x')).toBe(true);
+  });
+
+  it('OptionalJwtAuthGuard — не JwtAuthGuard: аноним проходит, ответ 200', () => {
+    const code = "@Controller('a') class C { @Get('x') @UseGuards(OptionalJwtAuthGuard) x() {} }";
+    expect(guardedOf(code, 'a/x')).toBe(false);
+  });
+
+  it('@Get под псевдонимом и через пространство имён объявляет маршрут', () => {
+    const code = [
+      "import { Get as G } from '@nestjs/common';",
+      "import * as common from '@nestjs/common';",
+      "@common.Controller('a') class C { @G('x') x() {} @common.Get('y') y() {} }",
+    ].join('\n');
+    expect([...routesFor(code).keys()]).toEqual(['a/x', 'a/y']);
+  });
+
+  it('@All отвечает и на GET — его гвард учитывается', () => {
+    const code = [
+      "import { All } from '@nestjs/common';",
+      "@Controller('a') class C { @All('x') @UseGuards(JwtAuthGuard) x() {} }",
+    ].join('\n');
+    expect(guardedOf(code, 'a/x')).toBe(true);
+  });
+
+  it('закомментированный маршрут и не-GET не попадают в список', () => {
+    const code =
+      "@Controller('a') class C { // @Get('gone')\n @Post('p') p() {} @Get() root() {} }";
+    expect([...routesFor(code).keys()]).toEqual(['a']);
+  });
+
+  it('база из @Controller({ path }) и корень без пути', () => {
+    const code = "@Controller({ path: 'a/b' }) class C { @Get() root() {} @Get('/c/') c() {} }";
+    expect([...routesFor(code).keys()]).toEqual(['a/b', 'a/b/c']);
   });
 });

@@ -1,7 +1,17 @@
 import { readFileSync } from 'fs';
-import { relative } from 'path';
 import * as ts from 'typescript';
-import { SRC_ROOT, listControllerFiles, listDtoFiles } from './controller-decorators';
+import {
+  NEST_COMMON,
+  NEST_SWAGGER,
+  decoratorsOf,
+  importsOf,
+  isFrom,
+  listControllerFiles,
+  listDtoFiles,
+  parseSource,
+  relativeToSrc,
+} from './controller-decorators';
+import type { ImportTable } from './controller-decorators';
 
 /**
  * Сторож «поле DTO описано в OpenAPI» (`LEGACY-133`).
@@ -38,16 +48,42 @@ const MIN_CONTROLLERS = 40;
 
 const DTO_DECORATORS = ['ApiProperty', 'ApiPropertyOptional'];
 
-const decoratorNames = (node: ts.Node): string[] =>
-  (ts.getDecorators(node as ts.HasDecorators) ?? []).map((decorator) => {
-    const expression = ts.isCallExpression(decorator.expression)
-      ? decorator.expression.expression
-      : decorator.expression;
-    return expression.getText();
-  });
+/**
+ * Есть ли на узле один из `names` из `@nestjs/swagger` — по импортированному имени, а не по
+ * тексту: `import { ApiProperty as P }` и `@swagger.ApiProperty()` — тот же декоратор
+ * (общий разбор, `LEGACY-290`).
+ */
+const hasSwaggerDecorator = (node: ts.Node, imports: ImportTable, names: string[]): boolean =>
+  decoratorsOf(node, imports).some((use) => names.some((name) => isFrom(use, name, NEST_SWAGGER)));
 
 const hasModifier = (node: ts.PropertyDeclaration, kind: ts.SyntaxKind): boolean =>
-  (node.modifiers ?? []).some((modifier) => modifier.kind === kind);
+  node.modifiers?.some((modifier) => modifier.kind === kind) ?? false;
+
+/**
+ * Поля классов файла без `@ApiProperty`/`@ApiPropertyOptional`. Отдельно от обхода
+ * репозитория, чтобы прогоняться и на синтетическом входе (`L-017`).
+ */
+const undocumentedIn = (
+  source: ts.SourceFile,
+  where: string,
+): { properties: number; undocumented: string[] } => {
+  const imports = importsOf(source);
+  let properties = 0;
+  const undocumented: string[] = [];
+  source.forEachChild((node) => {
+    if (!ts.isClassDeclaration(node) || !node.name) return;
+    for (const member of node.members) {
+      if (!ts.isPropertyDeclaration(member)) continue;
+      if (hasModifier(member, ts.SyntaxKind.PrivateKeyword)) continue;
+      if (hasModifier(member, ts.SyntaxKind.DeclareKeyword)) continue;
+
+      properties += 1;
+      if (hasSwaggerDecorator(member, imports, DTO_DECORATORS)) continue;
+      undocumented.push(`${where} → ${node.name.text}.${member.name.getText()}`);
+    }
+  });
+  return { properties, undocumented };
+};
 
 describe('every DTO property is described in OpenAPI', () => {
   const files = listDtoFiles();
@@ -62,22 +98,9 @@ describe('every DTO property is described in OpenAPI', () => {
       ts.ScriptTarget.Latest,
       true,
     );
-
-    source.forEachChild((node) => {
-      if (!ts.isClassDeclaration(node) || !node.name) return;
-      for (const member of node.members) {
-        if (!ts.isPropertyDeclaration(member)) continue;
-        if (hasModifier(member, ts.SyntaxKind.PrivateKeyword)) continue;
-        if (hasModifier(member, ts.SyntaxKind.DeclareKeyword)) continue;
-
-        properties += 1;
-        const names = decoratorNames(member);
-        if (names.some((name) => DTO_DECORATORS.includes(name))) continue;
-
-        const where = relative(SRC_ROOT, file).replace(/\\/g, '/');
-        undocumented.push(`${where} → ${node.name.text}.${member.name.getText()}`);
-      }
-    });
+    const found = undocumentedIn(source, relativeToSrc(file));
+    properties += found.properties;
+    undocumented.push(...found.undocumented);
   }
 
   it(`находит не меньше ${MIN_DTO_FILES} файлов dto`, () => {
@@ -116,12 +139,13 @@ describe('controllers declare no DTO classes of their own', () => {
       ts.ScriptTarget.Latest,
       true,
     );
+    const imports = importsOf(source);
 
     source.forEachChild((node) => {
       if (!ts.isClassDeclaration(node) || !node.name) return;
-      if (decoratorNames(node).includes('Controller')) return;
+      if (decoratorsOf(node, imports).some((use) => isFrom(use, 'Controller', NEST_COMMON))) return;
 
-      const where = relative(SRC_ROOT, file).replace(/\\/g, '/');
+      const where = relativeToSrc(file);
       declared.push(`${where} → class ${node.name.text}`);
     });
   }
@@ -132,5 +156,46 @@ describe('controllers declare no DTO classes of their own', () => {
 
   it('не оставляет ни одного класса, объявленного в файле контроллера', () => {
     expect(declared).toEqual([]);
+  });
+});
+
+describe('детектор поля DTO без @ApiProperty краснеет на краевых входах', () => {
+  const SWAGGER = "import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';\n";
+  const undocumentedFor = (code: string): string[] =>
+    undocumentedIn(parseSource(code, 'x.dto.ts'), 'x').undocumented;
+
+  it('поле без декоратора — нарушение', () => {
+    expect(undocumentedFor(`${SWAGGER}class D { a: string; }`)).toEqual(['x → D.a']);
+  });
+
+  it('@ApiProperty и @ApiPropertyOptional засчитываются', () => {
+    const code = `${SWAGGER}class D { @ApiProperty() a: string; @ApiPropertyOptional() b?: string; }`;
+    expect(undocumentedFor(code)).toEqual([]);
+  });
+
+  it('@ApiProperty под псевдонимом импорта — тот же декоратор', () => {
+    const code = "import { ApiProperty as P } from '@nestjs/swagger';\nclass D { @P() a: string; }";
+    expect(undocumentedFor(code)).toEqual([]);
+  });
+
+  it('@ApiProperty через пространство имён — тот же декоратор', () => {
+    const code =
+      "import * as swagger from '@nestjs/swagger';\nclass D { @swagger.ApiProperty() a: string; }";
+    expect(undocumentedFor(code)).toEqual([]);
+  });
+
+  it('чужой декоратор под именем ApiProperty — не тот', () => {
+    const code =
+      "import { Soft as ApiProperty } from '../soft';\nclass D { @ApiProperty() a: string; }";
+    expect(undocumentedFor(code)).toEqual(['x → D.a']);
+  });
+
+  it('@ApiProperty в комментарии — не декоратор', () => {
+    const code = `${SWAGGER}class D {\n // @ApiProperty()\n a: string; }`;
+    expect(undocumentedFor(code)).toEqual(['x → D.a']);
+  });
+
+  it('private и declare поля не требуют декоратора', () => {
+    expect(undocumentedFor('class D { private a: string; declare b: string; }')).toEqual([]);
   });
 });

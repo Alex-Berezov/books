@@ -1,4 +1,10 @@
-import { collectRoutes, type ControllerRoute } from './controller-decorators';
+import {
+  collectRoutes,
+  controllersIn,
+  parseSource,
+  routesOf,
+  type ControllerRoute,
+} from './controller-decorators';
 
 /**
  * `LEGACY-010`. Публичный маршрут, у которого есть языковой двойник, — это один
@@ -58,7 +64,7 @@ const KNOWN_LANGLESS_TWINS: ReadonlyArray<string> = ['/books'];
 /**
  * `all` учитывается наравне с `get`: `@All('pages/:slug')` отвечает на `GET /pages/about`
  * ровно так же, как `@Get`, и сторож, видящий только один из двух декораторов, зелен
- * от слепоты (`controller-decorators.ts:182-188` — тот же довод).
+ * от слепоты (`VERBS` в `controller-decorators.ts` — тот же довод).
  */
 const READ_VERBS: ReadonlyArray<ControllerRoute['verb']> = ['get', 'all'];
 
@@ -75,16 +81,19 @@ const pathsOf = (routes: ControllerRoute[]): Set<string> =>
     routes.filter((route) => READ_VERBS.includes(route.verb)).map((route) => normalize(route.path)),
   );
 
+/** `/pages/:slug` при живом `/:lang/pages/:slug` — двойник; `/health` — нет. */
+const twinsOf = (paths: Set<string>): string[] =>
+  [...paths]
+    .filter((path) => !path.startsWith('/:param/'))
+    .filter((path) => paths.has(`/:param${path}`))
+    .sort();
+
 describe('LEGACY-010: публичный маршрут не дублирует языковой без префикса', () => {
   // Гвард не назван — `collectRoutes()` кладёт весь разбор в `open`.
   const { open, skipped } = collectRoutes();
   const paths = pathsOf(open);
 
-  /** `/pages/:slug` при живом `/:lang/pages/:slug` — двойник; `/health` — нет. */
-  const langlessTwins = [...paths]
-    .filter((path) => !path.startsWith('/:param/'))
-    .filter((path) => paths.has(`/:param${path}`))
-    .sort();
+  const langlessTwins = twinsOf(paths);
 
   it('снятых маршрутов в коде нет', () => {
     // Сравнение идёт по нормализованному пути, поэтому возврат под другим именем
@@ -107,7 +116,7 @@ describe('LEGACY-010: публичный маршрут не дублирует 
 
   /**
    * 🔴 Без этого кейса сторож зелен от слепоты, а не от чистоты. Контроллер, у которого
-   * `decoratorBlocks` не нашёл блока декораторов класса, уходит в `skipped` и пропадает
+   * общий разбор не нашёл класс под `@Controller`, уходит в `skipped` и пропадает
    * из `paths` целиком — вместе с любым безъязыким маршрутом внутри. Оба кейса выше
    * тогда проходят вхолостую, а порог `paths.size` потерю одного файла из двух с лишним
    * сотен маршрутов не замечает.
@@ -118,5 +127,47 @@ describe('LEGACY-010: публичный маршрут не дублирует 
 
   it('разбор вообще что-то видит — иначе сторож зелен от пустоты', () => {
     expect(paths.size).toBeGreaterThan(100);
+  });
+});
+
+/**
+ * 🔴 Дерево без двойников зелёное и у слепого разбора: каждый краевой вход
+ * прогоняется на синтетическом контроллере (`L-017`, `LEGACY-290`).
+ */
+describe('детектор безъязыкого двойника краснеет на краевых входах', () => {
+  const IMPORTS = "import { Controller, Get, All } from '@nestjs/common';\n";
+  const twinsFor = (code: string): string[] => {
+    const controllers = controllersIn(parseSource(IMPORTS + code), 'x.controller.ts');
+    return twinsOf(pathsOf(routesOf(controllers).open));
+  };
+
+  it('маршрут без языка при живом языковом — двойник', () => {
+    const code =
+      "@Controller() class C { @Get('pages/:slug') a() {} @Get(':lang/pages/:slug') b() {} }";
+    expect(twinsFor(code)).toEqual(['/pages/:param']);
+  });
+
+  it('двойник виден под псевдонимом @Get и через @All', () => {
+    const code = [
+      "import { Get as G } from '@nestjs/common';",
+      "@Controller() class C { @G('pages/:slug') a() {} @All(':lang/pages/:slug') b() {} }",
+    ].join('\n');
+    expect(twinsFor(code)).toEqual(['/pages/:param']);
+  });
+
+  it('переименованный параметр не прячет двойника', () => {
+    const code =
+      "@Controller() class C { @Get('pages/:pageSlug') a() {} @Get(':lang/pages/:slug') b() {} }";
+    expect(twinsFor(code)).toEqual(['/pages/:param']);
+  });
+
+  it('маршрут под базой :lang сам себе не двойник', () => {
+    const code = "@Controller(':lang') class C { @Get('pages/:slug') a() {} }";
+    expect(twinsFor(code)).toEqual([]);
+  });
+
+  it('чистый вход: только языковой маршрут и /health', () => {
+    const code = "@Controller() class C { @Get('health') h() {} @Get(':lang/pages/:slug') b() {} }";
+    expect(twinsFor(code)).toEqual([]);
   });
 });

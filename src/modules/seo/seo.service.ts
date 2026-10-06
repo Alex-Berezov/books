@@ -73,7 +73,7 @@ interface BookCategoryLink {
  * объявлены `public, s-maxage=300`, а общий кэш ключует по URL — значит язык
  * ответа обязан складываться только из адреса. Поле, оставленное «на всякий
  * случай», было бы приглашением вернуть зависимость от заголовка: сторож
- * `public-cache-no-language-header.spec.ts` смотрит контроллеры и такого
+ * `public-cache-caller-independent.spec.ts` смотрит контроллеры и такого
  * возврата через сервис не поймал бы.
  *
  * Ветку `Accept-Language` в самой `resolveRequestedLanguage` это не трогает —
