@@ -8387,8 +8387,8 @@ export interface components {
       requiredOutputs: string[];
     };
     ManifestExpectedResultSchemaDto: {
-      /** @example json */
-      format: string;
+      /** @enum {string} */
+      format: 'json';
       notes: string[];
       requiredTopLevelFields: string[];
       /** @example https://api.bibliaris.com/api/rights/agent/report-schema/1.0 */
@@ -8426,10 +8426,18 @@ export interface components {
       derivedFromUrl: boolean;
       externalId: string | null;
       language: string | null;
-      provider: string;
+      /** @enum {string} */
+      provider: 'PROJECT_GUTENBERG' | 'OTHER' | 'UNKNOWN';
       /** @example Wikisource (ru) */
       providerHint: string | null;
-      textType: string;
+      /** @enum {string} */
+      textType:
+        | 'ORIGINAL_TEXT'
+        | 'TRANSLATION'
+        | 'ADAPTATION'
+        | 'ABRIDGMENT'
+        | 'COMPILATION'
+        | 'UNKNOWN';
       title: string | null;
       url: string | null;
     };
@@ -9735,8 +9743,8 @@ export interface components {
       generatedAt: string;
       generatedBy: components['schemas']['ManifestGeneratedByDto'];
       intake: components['schemas']['ManifestIntakeDto'];
-      /** @example BIBLIARIS_RIGHTS_CLEARANCE_INPUT */
-      manifestType: string;
+      /** @enum {string} */
+      manifestType: 'BIBLIARIS_RIGHTS_CLEARANCE_INPUT';
       manifestVersion: string;
       publicationPlan: components['schemas']['ManifestPublicationPlanDto'];
       readiness: components['schemas']['ManifestReadinessDto'];
@@ -10810,7 +10818,8 @@ export interface components {
       /** @description PDF-версия отчёта загружена */
       hasReportPdf: boolean;
       id: string;
-      importStatus: string;
+      /** @enum {string} */
+      importStatus: 'VALIDATED' | 'VALIDATION_FAILED' | 'SUPERSEDED';
       importedByUserId: string | null;
       inputManifestSha256: string | null;
       inputManifestVersion: string | null;
@@ -10840,7 +10849,8 @@ export interface components {
     RightsReviewImportListItemDto: {
       createdAt: string;
       id: string;
-      importStatus: string;
+      /** @enum {string} */
+      importStatus: 'VALIDATED' | 'VALIDATION_FAILED' | 'SUPERSEDED';
       importedByUserId: string | null;
       isCurrent: boolean;
       rightsIntakeId: string;

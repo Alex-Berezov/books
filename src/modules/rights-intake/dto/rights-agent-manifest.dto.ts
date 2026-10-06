@@ -1,4 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { RightsSourceProvider, RightsSourceTextType } from '@prisma/client';
+import { RIGHTS_AGENT_MANIFEST_TYPE } from '../rights-intake.constants';
 import { RightsIntakeReadinessItemDto } from './rights-intake-readiness.dto';
 
 class ManifestIntakeDto {
@@ -14,7 +16,7 @@ class ManifestIntakeDto {
 }
 
 class ManifestSourceDto {
-  @ApiProperty() provider!: string;
+  @ApiProperty({ enum: RightsSourceProvider }) provider!: string;
   /**
    * WP-M.1: имя площадки, выведенное из ссылки. `provider` — значение enum'а из трёх
    * вариантов, и для всего, кроме Gutenberg, это `OTHER`; агент по нему не отличит Викитеку
@@ -26,7 +28,7 @@ class ManifestSourceDto {
   @ApiProperty({ type: String, nullable: true }) url!: string | null;
   @ApiProperty({ type: String, nullable: true }) title!: string | null;
   @ApiProperty({ type: String, nullable: true }) language!: string | null;
-  @ApiProperty() textType!: string;
+  @ApiProperty({ enum: RightsSourceTextType }) textType!: string;
   /**
    * WP-F.1: `true` — провайдер и внешний ID выведены приложением из ссылки. Это догадка
    * Bibliaris, а не факт, установленный человеком, и агент обязан её проверить.
@@ -65,7 +67,7 @@ class ManifestSubmissionDto {
 
 class ManifestExpectedResultSchemaDto {
   @ApiProperty() schemaVersion!: string;
-  @ApiProperty({ example: 'json' }) format!: string;
+  @ApiProperty({ enum: ['json'] }) format!: string;
   @ApiProperty({
     type: String,
     example: 'https://api.bibliaris.com/api/rights/agent/report-schema/1.0',
@@ -83,7 +85,7 @@ class ManifestGeneratedByDto {
 
 export class RightsAgentManifestDto {
   @ApiProperty() manifestVersion!: string;
-  @ApiProperty({ example: 'BIBLIARIS_RIGHTS_CLEARANCE_INPUT' }) manifestType!: string;
+  @ApiProperty({ enum: [RIGHTS_AGENT_MANIFEST_TYPE] }) manifestType!: string;
   @ApiProperty() generatedAt!: string;
   @ApiProperty({ type: ManifestGeneratedByDto }) generatedBy!: ManifestGeneratedByDto;
   @ApiProperty({ type: ManifestIntakeDto }) intake!: ManifestIntakeDto;

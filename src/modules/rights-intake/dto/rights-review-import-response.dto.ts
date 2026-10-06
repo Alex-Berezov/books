@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { RightsReviewImportStatus } from '@prisma/client';
 import { IsOptional, IsInt, IsString, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ValidationIssueDto } from './rights-review-import-validation.dto';
@@ -18,7 +19,7 @@ export class RightsReviewImportBaseDto {
   @ApiProperty() id!: string;
   @ApiProperty() rightsIntakeId!: string;
   @ApiProperty({ type: String, nullable: true }) schemaVersion!: string | null;
-  @ApiProperty() importStatus!: string;
+  @ApiProperty({ enum: RightsReviewImportStatus }) importStatus!: string;
   @ApiProperty() isCurrent!: boolean;
   @ApiProperty({ type: String, nullable: true }) sourceFileName!: string | null;
   @ApiProperty({ type: String, nullable: true }) importedByUserId!: string | null;
@@ -106,7 +107,7 @@ export class RightsReviewImportRecordDto {
   @ApiProperty() rightsIntakeId!: string;
   @ApiProperty({ type: String, nullable: true }) schemaVersion!: string | null;
 
-  @ApiProperty({ enum: ['VALIDATED', 'VALIDATION_FAILED', 'SUPERSEDED'] })
+  @ApiProperty({ enum: RightsReviewImportStatus })
   importStatus!: string;
 
   @ApiProperty() isCurrent!: boolean;

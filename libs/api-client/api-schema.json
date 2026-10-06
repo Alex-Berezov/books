@@ -11221,7 +11221,9 @@
       "ManifestExpectedResultSchemaDto": {
         "properties": {
           "format": {
-            "example": "json",
+            "enum": [
+              "json"
+            ],
             "type": "string"
           },
           "notes": {
@@ -11391,6 +11393,11 @@
             "type": "string"
           },
           "provider": {
+            "enum": [
+              "PROJECT_GUTENBERG",
+              "OTHER",
+              "UNKNOWN"
+            ],
             "type": "string"
           },
           "providerHint": {
@@ -11399,6 +11406,14 @@
             "type": "string"
           },
           "textType": {
+            "enum": [
+              "ORIGINAL_TEXT",
+              "TRANSLATION",
+              "ADAPTATION",
+              "ABRIDGMENT",
+              "COMPILATION",
+              "UNKNOWN"
+            ],
             "type": "string"
           },
           "title": {
@@ -15755,7 +15770,9 @@
             "$ref": "#/components/schemas/ManifestIntakeDto"
           },
           "manifestType": {
-            "example": "BIBLIARIS_RIGHTS_CLEARANCE_INPUT",
+            "enum": [
+              "BIBLIARIS_RIGHTS_CLEARANCE_INPUT"
+            ],
             "type": "string"
           },
           "manifestVersion": {
@@ -19265,6 +19282,11 @@
             "type": "string"
           },
           "importStatus": {
+            "enum": [
+              "VALIDATED",
+              "VALIDATION_FAILED",
+              "SUPERSEDED"
+            ],
             "type": "string"
           },
           "importedByUserId": {
@@ -19404,6 +19426,11 @@
             "type": "string"
           },
           "importStatus": {
+            "enum": [
+              "VALIDATED",
+              "VALIDATION_FAILED",
+              "SUPERSEDED"
+            ],
             "type": "string"
           },
           "importedByUserId": {

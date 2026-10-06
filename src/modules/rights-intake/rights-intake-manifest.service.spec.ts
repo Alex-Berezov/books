@@ -81,6 +81,8 @@ describe('RightsIntakeManifestService', () => {
       expect(manifest.publicationPlan.targetLanguages).toEqual(['en', 'fr']);
       expect(manifest.agentTask.requiredChecks.length).toBeGreaterThan(0);
       expect(manifest.expectedResultSchema.requiredTopLevelFields).toContain('schemaVersion');
+      // The OpenAPI schema declares `format` as the single value 'json' (LEGACY-183, T104i).
+      expect(manifest.expectedResultSchema.format).toBe('json');
     });
 
     it('throws NotFoundException when intake missing', async () => {
