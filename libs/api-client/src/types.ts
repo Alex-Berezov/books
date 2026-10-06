@@ -11164,7 +11164,7 @@ export interface components {
     };
     SlugRedirectResponseDto: {
       /** @description Current slug the retired one redirects to, null when there is none */
-      newSlug?: string | null;
+      newSlug: string | null;
     };
     SnoozeRecheckTaskDto: {
       reasonRu?: string;

@@ -20384,6 +20384,9 @@
             "type": "string"
           }
         },
+        "required": [
+          "newSlug"
+        ],
         "type": "object"
       },
       "SnoozeRecheckTaskDto": {

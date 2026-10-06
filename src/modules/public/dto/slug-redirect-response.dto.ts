@@ -1,8 +1,8 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 
 /** Response of `GET /:lang/slug-redirect` (`PublicController.slugRedirect`). */
 export class SlugRedirectResponseDto {
-  @ApiPropertyOptional({
+  @ApiProperty({
     type: String,
     description: 'Current slug the retired one redirects to, null when there is none',
     nullable: true,
